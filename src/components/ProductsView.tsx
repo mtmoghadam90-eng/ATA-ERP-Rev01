@@ -1,0 +1,3084 @@
+import { parsePersianDate } from '../dateUtils';
+import React, { useState } from 'react';
+import { 
+  Plus, 
+  Search, 
+  Filter, 
+  Package, 
+  Edit, 
+  Trash2, 
+  X,
+  Calculator,
+  Percent,
+  Info,
+  TrendingUp,
+  Image as ImageIcon,
+  Download,
+  Maximize2,
+  Minimize2,
+  ArrowUp,
+  ArrowDown
+} from 'lucide-react';
+import { Product, ProductVariant, ERPSettings, InventoryTransaction, ProductFeature, ExchangeRate, ProductConfigRule } from '../types';
+import { toShamsiStr, toGregorianStr } from '../dateUtils';
+import CustomFieldsForm from './CustomFieldsForm';
+import CustomFieldsDetailView from './CustomFieldsDetailView';
+import ConfirmModal from './ConfirmModal';
+import { uploadFile, downloadFileFromServer } from '../imageUtils';
+import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
+import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
+
+interface ProductsViewProps {
+  products: Product[];
+  inventoryTransactions: InventoryTransaction[];
+  addProduct: (product: Omit<Product, 'id' | 'stockLevel'> & { stockLevel?: number, transactionDate?: string, customValues?: Record<string, any> }) => void;
+  updateProduct: (product: Product) => void;
+  deleteProduct: (id: string) => void;
+  adjustProductStock: (id: string, amount: number, variantId?: string, referenceId?: string, referenceType?: 'MANUAL' | 'PURCHASE_ORDER' | 'PROFORMA', notes?: string, transactionDate?: string) => void;
+  batchImportProducts: (items: Array<{
+    code?: string;
+    name?: string;
+    category?: string;
+    supplyType?: 'INVENTORY' | 'ORDER';
+    notes?: string;
+    amt?: number;
+    type?: string;
+    dateVal?: string;
+  }>) => { successCount: number; createCount: number };
+  categories: string[];
+  units: string[];
+  settings: ERPSettings;
+  exchangeRates?: ExchangeRate[];
+}
+
+export default function ProductsView({
+  products,
+  addProduct,
+  updateProduct,
+  deleteProduct,
+  adjustProductStock,
+  batchImportProducts,
+  categories,
+  settings,
+  inventoryTransactions,
+  exchangeRates = []
+}: ProductsViewProps) {
+  const [search, setSearch] = useState('');
+  const [activeTab, setActiveTab] = useState<'PRODUCTS' | 'TRANSACTIONS'>('PRODUCTS');
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [showModal, setShowModal] = useState(false);
+  const [isProductModalFullscreen, setIsProductModalFullscreen] = useState(false);
+  const [isStockModalFullscreen, setIsStockModalFullscreen] = useState(false);
+  const [isBatchModalFullscreen, setIsBatchModalFullscreen] = useState(false);
+  const [isCalculatorFullscreen, setIsCalculatorFullscreen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+
+  // Dynamic Custom Fields State
+  const [customValues, setCustomValues] = useState<Record<string, any>>({});
+
+  // Delete confirm state
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [productToDeleteId, setProductToDeleteId] = useState<string | null>(null);
+  const [productToDeleteName, setProductToDeleteName] = useState<string>('');
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+
+  // Form states (Only Category, Equipment Type, and Technical Specs are managed in UI)
+  const [displayName, setDisplayName] = useState('');
+  const [productCode, setProductCode] = useState('');
+  const [category, setCategory] = useState('');
+  const [brand, setBrand] = useState('');
+  const [description, setDescription] = useState('');
+  const [images, setImages] = useState<string[]>([]);
+  const [supplyType, setSupplyType] = useState<'INVENTORY' | 'ORDER'>('INVENTORY');
+  const [initialStock, setInitialStock] = useState<string>('0');
+  const [features, setFeatures] = useState<ProductFeature[]>([]);
+  const [hasVariants, setHasVariants] = useState(false);
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
+  const [configRules, setConfigRules] = useState<ProductConfigRule[]>([]);
+  const [showAddRuleForm, setShowAddRuleForm] = useState(false);
+  const [newRuleConditions, setNewRuleConditions] = useState<{ featureName: string; values: string[] }[]>([]);
+  const [newRuleActionFeature, setNewRuleActionFeature] = useState<string>('');
+  const [newRuleActionValues, setNewRuleActionValues] = useState<string[]>([]);
+  const [newRuleName, setNewRuleName] = useState<string>('');
+
+  // SKU Filters & Bulk Pricing States
+  const [variantSearchQuery, setVariantSearchQuery] = useState('');
+  const [variantAttributeFilters, setVariantAttributeFilters] = useState<Record<string, string>>({});
+  const [variantCurrentPage, setVariantCurrentPage] = useState(1);
+  const VARIANT_PAGE_SIZE = 50;
+  const [bulkPriceForeign, setBulkPriceForeign] = useState<string>('');
+  const [bulkCurrencyForeign, setBulkCurrencyForeign] = useState<string>('یورو');
+  const [bulkPriceRIYAL, setBulkPriceRIYAL] = useState<string>('');
+  const [bulkApplyToFilteredOnly, setBulkApplyToFilteredOnly] = useState<boolean>(false);
+  const [bulkSuccessMsg, setBulkSuccessMsg] = useState<string>('');
+  const [bulkErrorMsg, setBulkErrorMsg] = useState<string>('');
+
+  const handleAddFeature = () => {
+    const newId = Date.now().toString();
+    setFeatures(prev => [...prev, { id: newId, name: '', options: [] }]);
+    setTimeout(() => {
+      const el = document.getElementById(`feature-name-${newId}`);
+      if (el) {
+        el.focus();
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+  };
+
+  // Simple Product Price States
+  const [simplePriceForeign, setSimplePriceForeign] = useState<string>('');
+  const [simpleCurrencyForeign, setSimpleCurrencyForeign] = useState<string>('یورو');
+  const [simplePriceRIYAL, setSimplePriceRIYAL] = useState<string>('');
+  const [simpleCalcDetails, setSimpleCalcDetails] = useState<Partial<ProductVariant>>({});
+
+  // Batch upload modal state
+  const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [batchFile, setBatchFile] = useState<File | null>(null);
+
+  // Selling Price Calculator State
+  const [showCalculator, setShowCalculator] = useState(false);
+  const [calcVariantIndex, setCalcVariantIndex] = useState<number | null>(null);
+  const [calcPriceForeign, setCalcPriceForeign] = useState<string>('0');
+  const [calcCurrency, setCalcCurrency] = useState<string>('یورو');
+  const [calcExchangeRate, setCalcExchangeRate] = useState<string>('0');
+  const [calcRemittanceFee, setCalcRemittanceFee] = useState<string>('0');
+  const [calcRemittancePct, setCalcRemittancePct] = useState<string>('0');
+  const [calcShippingCost, setCalcShippingCost] = useState<string>('0');
+  const [calcCustomsDutyRIYAL, setCalcCustomsDutyRIYAL] = useState<string>('0');
+  const [calcOtherCostsForeign, setCalcOtherCostsForeign] = useState<string>('0');
+  const [calcOtherCostsRIYAL, setCalcOtherCostsRIYAL] = useState<string>('0');
+  const [calcProfitPct, setCalcProfitPct] = useState<string>('55');
+  const [calcProfitRIYAL, setCalcProfitRIYAL] = useState<string>('0');
+  const [calcMarginType, setCalcMarginType] = useState<'PERCENT' | 'FIXED'>('PERCENT');
+
+  const handleOpenCalculator = (variant: ProductVariant, index: number) => {
+    setCalcVariantIndex(index);
+    const curr = simpleCurrencyForeign || 'یورو';
+    let initialPriceForeign = variant.calcPriceForeign !== undefined ? variant.calcPriceForeign : (variant.priceForeign || 0);
+    
+    // Fallback: If no FOB price is set, automatically calculate it from its combined attribute values!
+    if (!initialPriceForeign && variant.attributes) {
+      initialPriceForeign = getCombinedVariantFOBPrice(variant.attributes, curr);
+    }
+
+    setCalcPriceForeign(String(initialPriceForeign));
+    setCalcCurrency(curr);
+    
+    // Find rate in exchangeRates
+    const mappedEng = curr === 'دلار' ? 'USD' : curr === 'یورو' ? 'EUR' : curr === 'درهم' ? 'AED' : curr === 'یوان' ? 'CNY' : null;
+    const storeRate = mappedEng ? exchangeRates.find(r => r.currency === mappedEng)?.rateToRIYAL : null;
+    const defaultRate = storeRate ? String(storeRate) : '700000';
+
+    setCalcExchangeRate(variant.calcExchangeRate !== undefined ? String(variant.calcExchangeRate) : defaultRate);
+    setCalcRemittanceFee(variant.calcRemittanceFee !== undefined ? String(variant.calcRemittanceFee) : '0');
+    setCalcRemittancePct(variant.calcRemittancePct !== undefined ? String(variant.calcRemittancePct) : '0');
+    setCalcShippingCost(variant.calcShippingCost !== undefined ? String(variant.calcShippingCost) : '0');
+    setCalcCustomsDutyRIYAL(variant.calcCustomsDutyRIYAL !== undefined ? String(variant.calcCustomsDutyRIYAL) : '0');
+    setCalcOtherCostsForeign(variant.calcOtherCostsForeign !== undefined ? String(variant.calcOtherCostsForeign) : '0');
+    setCalcOtherCostsRIYAL(variant.calcOtherCostsRIYAL !== undefined ? String(variant.calcOtherCostsRIYAL) : '0');
+    setCalcProfitPct(variant.calcProfitPct !== undefined ? String(variant.calcProfitPct) : '55');
+    setCalcProfitRIYAL(variant.calcProfitRIYAL !== undefined ? String(variant.calcProfitRIYAL) : '0');
+    setCalcMarginType(variant.calcMarginType || 'PERCENT');
+    setShowCalculator(true);
+  };
+
+  const handleApplyCalculatedPrice = (enteredPriceForeign: number, finalPriceRial: number, details: Partial<ProductVariant>) => {
+    if (calcVariantIndex === null) return;
+    if (calcVariantIndex === -1) {
+      setSimplePriceForeign(String(enteredPriceForeign));
+      setSimplePriceRIYAL(String(Math.round(finalPriceRial)));
+      setSimpleCurrencyForeign(calcCurrency);
+      setSimpleCalcDetails(details);
+    } else {
+      const newV = [...variants];
+      newV[calcVariantIndex] = {
+        ...newV[calcVariantIndex],
+        priceForeign: enteredPriceForeign,
+        priceRIYAL: Math.round(finalPriceRial),
+        currencyForeign: calcCurrency,
+        ...details
+      };
+      setVariants(newV);
+    }
+    setShowCalculator(false);
+    setIsCalculatorFullscreen(false);
+  };
+
+  const convertForeignToRialSimple = (priceForeign: number, currency: string) => {
+    const mappedEng = currency === 'دلار' ? 'USD' : currency === 'یورو' ? 'EUR' : currency === 'درهم' ? 'AED' : currency === 'یوان' ? 'CNY' : null;
+    const storeRate = mappedEng ? exchangeRates.find(r => r.currency === mappedEng)?.rateToRIYAL : null;
+    const rate = storeRate || 700000;
+    return Math.round(priceForeign * rate);
+  };
+
+  const getCombinedVariantFOBPrice = (attributes: Record<string, string>, targetCurrency: string) => {
+    let sum = 0;
+    for (const [fName, fVal] of Object.entries(attributes)) {
+      const feat = features.find(f => f.name === fName);
+      if (feat) {
+        const opt = feat.options.find(o => o.value === fVal);
+        if (opt && opt.price) {
+          sum += opt.price;
+        }
+      }
+    }
+    return Math.round(sum * 100) / 100;
+  };
+
+  const calculateAutoRialPrice = (priceForeign: number, currency: string, variantDetails: Partial<ProductVariant>) => {
+    const mappedEng = currency === 'دلار' ? 'USD' : currency === 'یورو' ? 'EUR' : currency === 'درهم' ? 'AED' : currency === 'یوان' ? 'CNY' : null;
+    const storeRate = mappedEng ? exchangeRates.find(r => r.currency === mappedEng)?.rateToRIYAL : null;
+    const defaultRate = storeRate || 700000;
+
+    const baseOrig = priceForeign;
+    const remitPct = variantDetails.calcRemittancePct !== undefined ? variantDetails.calcRemittancePct : 0;
+    const remitFee = variantDetails.calcRemittanceFee !== undefined ? variantDetails.calcRemittanceFee : 0;
+    const shipCost = variantDetails.calcShippingCost !== undefined ? variantDetails.calcShippingCost : 0;
+    const otherCostForeign = variantDetails.calcOtherCostsForeign !== undefined ? variantDetails.calcOtherCostsForeign : 0;
+    const rate = variantDetails.calcExchangeRate !== undefined ? variantDetails.calcExchangeRate : defaultRate;
+    const customsDuty = variantDetails.calcCustomsDutyRIYAL !== undefined ? variantDetails.calcCustomsDutyRIYAL : 0;
+    const otherCostRial = variantDetails.calcOtherCostsRIYAL !== undefined ? variantDetails.calcOtherCostsRIYAL : 0;
+    const profitPct = variantDetails.calcProfitPct !== undefined ? variantDetails.calcProfitPct : 55;
+    const profitRial = variantDetails.calcProfitRIYAL !== undefined ? variantDetails.calcProfitRIYAL : 0;
+    const marginType = variantDetails.calcMarginType || 'PERCENT';
+
+    const calculatedRemittanceForeign = remitFee + (baseOrig * remitPct / 100);
+    const totalForeignCost = baseOrig + calculatedRemittanceForeign + shipCost + otherCostForeign;
+    const rawRialCost = totalForeignCost * rate;
+    const finalLandedRialCost = rawRialCost + customsDuty + otherCostRial;
+
+    let finalSellingPriceRial = 0;
+    if (marginType === 'PERCENT') {
+      finalSellingPriceRial = finalLandedRialCost * (1 + profitPct / 100);
+    } else {
+      finalSellingPriceRial = finalLandedRialCost + profitRial;
+    }
+
+    return Math.round(finalSellingPriceRial);
+  };
+
+  // Stock adjust modal state
+  const [stockModalOpen, setStockModalOpen] = useState(false);
+  const [stockAdjustProd, setStockAdjustProd] = useState<Product | null>(null);
+  const [stockAdjustAmount, setStockAdjustAmount] = useState('');
+  const [stockAdjustType, setStockAdjustType] = useState<'IN' | 'OUT'>('IN');
+  const [stockAdjustNotes, setStockAdjustNotes] = useState('');
+  const [stockAdjustVariantId, setStockAdjustVariantId] = useState('');
+
+  // Trigger modal for adding
+  const handleOpenAdd = () => {
+    setEditingProduct(null);
+    setDisplayName('');
+    setCategory(categories[0] || 'ابزار دقیق - فشار');
+    setBrand('');
+    setDescription('');
+    setImages([]);
+    setSupplyType('INVENTORY');
+    setInitialStock('0');
+    setProductCode('');
+    setCustomValues({});
+    setFeatures([]);
+    setHasVariants(false);
+    setVariants([]);
+    setConfigRules([]);
+    setSimplePriceForeign('');
+    setSimpleCurrencyForeign('یورو');
+    setSimplePriceRIYAL('');
+    setSimpleCalcDetails({});
+    setShowModal(true);
+  };
+
+  // Trigger modal for editing
+  const handleOpenEdit = (prod: Product) => {
+    setEditingProduct(prod);
+    setProductCode(prod.code || '');
+    setDisplayName(prod.displayName);
+    setCategory(prod.category);
+    setBrand(prod.brand || '');
+    setDescription(prod.description);
+    setImages(prod.images || []);
+    setSupplyType(prod.supplyType === 'ORDER' ? 'ORDER' : 'INVENTORY');
+    setCustomValues(prod.customValues || {});
+    setFeatures(prod.features || []);
+    setHasVariants(prod.hasVariants || false);
+    setVariants(prod.variants || []);
+    setConfigRules(prod.configRules || []);
+    setSimplePriceForeign(prod.priceForeign !== undefined ? String(prod.priceForeign) : '');
+    setSimpleCurrencyForeign(prod.currencyForeign || 'یورو');
+    setSimplePriceRIYAL(prod.basePriceRIYAL !== undefined ? String(prod.basePriceRIYAL) : '');
+    setSimpleCalcDetails({
+      calcPriceForeign: prod.calcPriceForeign,
+      calcExchangeRate: prod.calcExchangeRate,
+      calcRemittanceFee: prod.calcRemittanceFee,
+      calcRemittancePct: prod.calcRemittancePct,
+      calcShippingCost: prod.calcShippingCost,
+      calcCustomsDutyRIYAL: prod.calcCustomsDutyRIYAL,
+      calcOtherCostsForeign: prod.calcOtherCostsForeign,
+      calcOtherCostsRIYAL: prod.calcOtherCostsRIYAL,
+      calcProfitPct: prod.calcProfitPct,
+      calcProfitRIYAL: prod.calcProfitRIYAL,
+      calcMarginType: prod.calcMarginType
+    });
+    setShowModal(true);
+  };
+
+  // Handle Save (Add / Edit)
+
+  const handleDownloadTemplate = async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Inventory_Template");
+
+    // Add headers
+    worksheet.columns = [
+      { header: "کد کالا", key: "code", width: 15 },
+      { header: "نام تجهیز", key: "name", width: 25 },
+      { header: "دسته بندی", key: "category", width: 20 },
+      { header: "برند", key: "brand", width: 15 },
+      { header: "نوع تامین", key: "supplyType", width: 15 },
+      { header: "تعداد تغییر / موجودی اولیه", key: "amount", width: 25 },
+      { header: "نوع تغییر", key: "type", width: 15 },
+      { header: "تاریخ", key: "date", width: 15 },
+      { header: "توضیحات", key: "notes", width: 30 },
+      { header: "ویژگی‌های قابل تنظیم", key: "features", width: 35 },
+      { header: "قیمت ارزی", key: "priceForeign", width: 15 },
+      { header: "نوع ارز", key: "currencyForeign", width: 15 },
+      { header: "قیمت فروش (ریال)", key: "priceRIYAL", width: 20 },
+    ];
+
+    // Add some sample rows
+    worksheet.addRow({
+      code: "EQ-12345", name: "پرشر ترانسمیتر", category: categories.length > 0 ? categories[0] : "ابزار دقیق - فشار", brand: "WIKA",
+      supplyType: "INVENTORY", amount: 10, type: "IN", date: "1403/05/12", 
+      notes: "خرید جدید",
+      features: "سایز(sz):۱ اینچ،۲ اینچ|متریال بدنه(mat):استیل،برنج",
+      priceForeign: 120, currencyForeign: "یورو", priceRIYAL: 145000000
+    });
+    worksheet.addRow({
+      code: "EQ-67890", name: "", category: "", brand: "",
+      supplyType: "", amount: 5, type: "OUT", date: "", 
+      notes: "مصرف پروژه",
+      priceForeign: "", currencyForeign: "", priceRIYAL: ""
+    });
+
+    // Add data validations for 200 rows
+    let catList = '"بدون دسته بندی"';
+    if (categories && categories.length > 0) {
+      // exceljs requires comma separated string in double quotes for lists
+      catList = '"' + categories.join(',') + '"';
+    }
+    
+    for (let i = 2; i <= 200; i++) {
+      // Category Dropdown (Column C)
+      worksheet.getCell(`C${i}`).dataValidation = {
+        type: 'list',
+        allowBlank: true,
+        formulae: [catList]
+      };
+      
+      // Supply Type Dropdown (Column E)
+      worksheet.getCell(`E${i}`).dataValidation = {
+        type: 'list',
+        allowBlank: true,
+        formulae: ['"INVENTORY,ORDER"']
+      };
+
+      // Change Type Dropdown (Column G)
+      worksheet.getCell(`G${i}`).dataValidation = {
+        type: 'list',
+        allowBlank: true,
+        formulae: ['"IN,OUT"']
+      };
+
+      // Currency Dropdown (Column L)
+      worksheet.getCell(`L${i}`).dataValidation = {
+        type: 'list',
+        allowBlank: true,
+        formulae: ['"یورو,دلار,درهم,یوان"']
+      };
+    }
+
+    // Save
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(blob, "Batch_Inventory_Template.xlsx");
+  };
+
+  const handleProcessBatch = async () => {
+    if (!batchFile) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheet = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheet];
+        const jsonData = XLSX.utils.sheet_to_json<any>(worksheet);
+        
+        // Helper to convert shamsi date to ISO
+        const parseDate = (dateStr: string) => {
+          if (!dateStr) return undefined;
+          try {
+            const str = String(dateStr).trim();
+            if (/^(13|14)\d{2}[-/]\d{1,2}[-/]\d{1,2}/.test(str)) {
+               const gStr = toGregorianStr(str);
+               if (gStr) {
+                 const d = new Date(gStr);
+                 if (!isNaN(d.getTime())) return d.toISOString();
+               }
+            }
+            const d = new Date(str);
+            if (!isNaN(d.getTime())) return d.toISOString();
+            return undefined;
+          } catch {
+            return undefined;
+          }
+        };
+
+        const itemsToImport = jsonData.map(row => {
+          const code = row["کد کالا"] || "";
+          const amt = Number(row["تعداد تغییر / موجودی اولیه"]) || Number(row["تعداد تغییر"]);
+          const type = row["نوع تغییر"];
+          const notes = row["توضیحات"] || "ویرایش گروهی";
+          const dateVal = row["تاریخ"] ? parseDate(String(row["تاریخ"])) : undefined;
+          
+          const name = row["نام تجهیز"];
+          const category = row["دسته بندی"];
+          const brand = row["برند"] || "";
+          const supplyType = (row["نوع تامین"] === 'ORDER' ? 'ORDER' : 'INVENTORY') as 'INVENTORY' | 'ORDER';
+          const featuresRaw = row["ویژگی‌های قابل تنظیم"] || "";
+          const priceForeign = row["قیمت ارزی"] !== undefined && row["قیمت ارزی"] !== "" ? Number(row["قیمت ارزی"]) : undefined;
+          const currencyForeign = row["نوع ارز"] || undefined;
+          const priceRIYAL = row["قیمت فروش (ریال)"] !== undefined && row["قیمت فروش (ریال)"] !== "" ? Number(row["قیمت فروش (ریال)"]) : undefined;
+
+          return {
+            code,
+            name,
+            category,
+            brand,
+            supplyType,
+            notes,
+            amt,
+            type,
+            dateVal,
+            featuresRaw,
+            priceForeign,
+            currencyForeign,
+            priceRIYAL
+          };
+        });
+
+        const { successCount, createCount } = batchImportProducts(itemsToImport);
+        
+        alert(`عملیات موفقیت آمیز بود. ${successCount} کالا بروزرسانی شد و ${createCount} کالای جدید تعریف شد.`);
+        setBatchModalOpen(false);
+        setIsBatchModalFullscreen(false);
+        setBatchFile(null);
+      } catch (err) {
+        alert('خطا در پردازش فایل اکسل');
+      }
+    };
+    reader.readAsArrayBuffer(batchFile);
+  };
+
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    // Custom Fields Validation
+    const moduleFields = (settings?.customFields || []).filter(f => f.module === 'products');
+    for (const field of moduleFields) {
+      if (field.required) {
+        const val = customValues[field.id];
+        if (val === undefined || val === null || val === '') {
+          alert(`لطفاً فیلد سفارشی اجباری "${field.name}" را تکمیل کنید.`);
+          return;
+        }
+      }
+    }
+
+    if (!productCode.trim()) {
+      alert('لطفاً کد کالا را وارد کنید.');
+      return;
+    }
+    
+    // Check for duplicate code
+    const duplicate = products.find(p => p.code === productCode.trim() && p.id !== editingProduct?.id);
+    if (duplicate) {
+      alert('کد کالای وارد شده تکراری است. لطفاً کد دیگری انتخاب کنید.');
+      return;
+    }
+
+    if (editingProduct) {
+      updateProduct({
+        ...editingProduct,
+        displayName,
+        name: displayName, // Synchronize name with displayName
+        category,
+        brand,
+        description,
+        images,
+        supplyType,
+        code: productCode.trim(),
+        customValues,
+        features,
+        hasVariants,
+        variants,
+        configRules,
+        basePriceRIYAL: Number(simplePriceRIYAL) || 0,
+        priceForeign: simplePriceForeign ? Number(simplePriceForeign) : undefined,
+        currencyForeign: simpleCurrencyForeign,
+        calcPriceForeign: simpleCalcDetails.calcPriceForeign,
+        calcExchangeRate: simpleCalcDetails.calcExchangeRate,
+        calcRemittanceFee: simpleCalcDetails.calcRemittanceFee,
+        calcRemittancePct: simpleCalcDetails.calcRemittancePct,
+        calcShippingCost: simpleCalcDetails.calcShippingCost,
+        calcCustomsDutyRIYAL: simpleCalcDetails.calcCustomsDutyRIYAL,
+        calcOtherCostsForeign: simpleCalcDetails.calcOtherCostsForeign,
+        calcOtherCostsRIYAL: simpleCalcDetails.calcOtherCostsRIYAL,
+        calcProfitPct: simpleCalcDetails.calcProfitPct,
+        calcProfitRIYAL: simpleCalcDetails.calcProfitRIYAL,
+        calcMarginType: simpleCalcDetails.calcMarginType,
+      });
+    } else {
+      addProduct({
+        displayName,
+        name: displayName,
+        category,
+        brand,
+        description,
+        images,
+        supplyType,
+        code: productCode.trim(),
+        modelNumber: "N/A",
+        unit: "عدد",
+        basePriceRIYAL: Number(simplePriceRIYAL) || 0,
+        minStockLevel: 0,
+        stockLevel: supplyType === 'INVENTORY' ? (hasVariants ? variants.reduce((sum, v) => sum + (v.stockLevel || 0), 0) : Number(initialStock) || 0) : 0,
+        customValues,
+        features,
+        hasVariants,
+        variants,
+        configRules,
+        priceForeign: simplePriceForeign ? Number(simplePriceForeign) : undefined,
+        currencyForeign: simpleCurrencyForeign,
+        calcPriceForeign: simpleCalcDetails.calcPriceForeign,
+        calcExchangeRate: simpleCalcDetails.calcExchangeRate,
+        calcRemittanceFee: simpleCalcDetails.calcRemittanceFee,
+        calcRemittancePct: simpleCalcDetails.calcRemittancePct,
+        calcShippingCost: simpleCalcDetails.calcShippingCost,
+        calcCustomsDutyRIYAL: simpleCalcDetails.calcCustomsDutyRIYAL,
+        calcOtherCostsForeign: simpleCalcDetails.calcOtherCostsForeign,
+        calcOtherCostsRIYAL: simpleCalcDetails.calcOtherCostsRIYAL,
+        calcProfitPct: simpleCalcDetails.calcProfitPct,
+        calcProfitRIYAL: simpleCalcDetails.calcProfitRIYAL,
+        calcMarginType: simpleCalcDetails.calcMarginType,
+      });
+    }
+    setShowModal(false);
+  };
+
+  // Filters
+  const filteredProducts = products.filter(p => {
+    const matchesSearch = 
+      p.displayName.toLowerCase().includes(search.toLowerCase()) ||
+      p.category.toLowerCase().includes(search.toLowerCase()) ||
+      p.description.toLowerCase().includes(search.toLowerCase()) ||
+      (p.code || '').toLowerCase().includes(search.toLowerCase());
+    
+    const matchesCategory = selectedCategory === 'all' || p.category === selectedCategory;
+
+    return matchesSearch && matchesCategory;
+  });
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      {/* View Header */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">کاتالوگ تجهیزات ابزاردقیق</h1>
+          <p className="text-slate-500 text-sm mt-1">تعریف مشخصات فنی، نوع تجهیزات و گروه‌بندی تخصصی کالاها</p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto mt-4 md:mt-0">
+          <button 
+            onClick={() => { setBatchFile(null); setBatchModalOpen(true); }}
+            className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-indigo-500/15 flex items-center justify-center gap-2"
+          >
+            <Package size={16} />
+            ورود/خروج گروهی
+          </button>
+          <button 
+            onClick={handleOpenAdd}
+            className="px-4 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-sky-500/15 flex items-center justify-center gap-2"
+          >
+            <Plus size={16} />
+            تعریف تجهیز جدید
+          </button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-slate-200">
+        <button
+          className={`px-6 py-3 font-semibold text-sm transition-colors ${activeTab === 'PRODUCTS' ? 'text-sky-600 border-b-2 border-sky-600' : 'text-slate-500 hover:text-slate-700'}`}
+          onClick={() => setActiveTab('PRODUCTS')}
+        >
+          فهرست کالاها
+        </button>
+        <button
+          className={`px-6 py-3 font-semibold text-sm transition-colors ${activeTab === 'TRANSACTIONS' ? 'text-sky-600 border-b-2 border-sky-600' : 'text-slate-500 hover:text-slate-700'}`}
+          onClick={() => setActiveTab('TRANSACTIONS')}
+        >
+          تاریخچه تراکنش‌های انبار
+        </button>
+      </div>
+
+      {activeTab === 'PRODUCTS' ? (
+        <>
+      {/* Filter and Search Bar */}
+      <div className="flex flex-col md:flex-row gap-4 bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
+        <div className="relative flex-1">
+          <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+          <input
+            type="text"
+            placeholder="جستجو در نوع تجهیز، دسته‌بندی یا مشخصات فنی..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pr-10 pl-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition text-right"
+          />
+        </div>
+
+        <div className="relative w-full md:w-64 flex items-center gap-2">
+          <Filter size={16} className="text-slate-400 flex-shrink-0" />
+          <select
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            className="w-full border border-slate-200 rounded-lg text-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition appearance-none text-right bg-white"
+          >
+            <option value="all">همه دسته‌بندی‌ها</option>
+            {categories.map((cat, i) => (
+              <option key={i} value={cat}>{cat}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Products Table Card */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-right border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-xs font-bold">
+                <th className="p-4 w-1/3">نوع تجهیز و نام کالا</th>
+                <th className="p-4 w-1/4">دسته‌بندی</th>
+                <th className="p-4 w-1/4">مشخصات فنی و توضیحات</th>
+                <th className="p-4 w-24">انبار و تامین</th>
+                <th className="p-4 text-center w-28">عملیات</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700 text-xs">
+              {filteredProducts.map((p) => {
+                return (
+                  <tr key={p.id} className="hover:bg-slate-50/50 transition">
+                    {/* Display Name */}
+                    <td className="p-4">
+                      <div className="flex items-start gap-3">
+                        {p.images && p.images.length > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setLightboxUrl(p.images[0])}
+                            className="w-12 h-12 rounded-lg border border-slate-200 bg-slate-50 flex-shrink-0 overflow-hidden cursor-pointer hover:opacity-85 transition relative group"
+                            title="مشاهده و دانلود تصویر"
+                          >
+                            <img
+                              src={p.images[0]}
+                              alt={p.displayName}
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                          </button>
+                        ) : (
+                          <div className="w-12 h-12 rounded-lg border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-slate-300 flex-shrink-0">
+                            <Package size={18} />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-bold text-slate-800 text-sm leading-snug">{p.displayName}</div>
+                          {p.code && (
+                            <div className="text-[11px] font-mono font-bold text-sky-600 mt-1 flex items-center gap-1">
+                              <span>کد کالا:</span>
+                              <span className="bg-sky-50/70 dark:bg-sky-950/40 border border-sky-100/80 dark:border-sky-900/40 px-1.5 py-0.5 rounded select-all font-mono tracking-wider text-xs">{p.code}</span>
+                            </div>
+                          )}
+                          
+                          <div className="flex flex-wrap gap-1.5 mt-1 text-[10px]">
+                            {p.brand && (
+                              <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-md font-medium">
+                                برند: {p.brand}
+                              </span>
+                            )}
+                            {p.images && p.images.length > 0 && (
+                              <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md font-medium">
+                                🖼️ {p.images.length} تصویر
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="mt-1">
+                            <CustomFieldsDetailView
+                              module="products"
+                              customFields={settings?.customFields || []}
+                              customValues={p.customValues}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Category */}
+                    <td className="p-4 text-slate-600 font-medium">
+                      {p.category}
+                    </td>
+
+                    {/* Technical Specifications / Description */}
+                    <td className="p-4 max-w-md">
+                      <p className="text-slate-500 leading-relaxed whitespace-pre-wrap line-clamp-3">
+                        {p.description || 'ثبت نشده'}
+                      </p>
+                    </td>
+
+                    {/* Stock & Supply Type */}
+                    <td className="p-4">
+                      <div className="flex flex-col gap-1.5">
+                        
+                        {(() => {
+                          const totalStock = p.hasVariants && p.variants ? p.variants.reduce((acc, v) => acc + (v.stockLevel || 0), 0) : (p.stockLevel || 0);
+                          const effectiveSupplyType = totalStock === 0 ? 'ORDER' : (p.supplyType || 'INVENTORY');
+                          return (
+                            <span className={`text-xs font-semibold px-2 py-1 rounded-md inline-block w-max ${
+                              effectiveSupplyType === 'INVENTORY' ? 'bg-indigo-50 text-indigo-700' :
+                              effectiveSupplyType === 'ORDER' ? 'bg-amber-50 text-amber-700' :
+                              'bg-emerald-50 text-emerald-700'
+                            }`}>
+                              {effectiveSupplyType === 'ORDER' ? 'قابل سفارش' : 'موجود در انبار'}
+                            </span>
+                          );
+                        })()}
+                        {(() => {
+                          const totalStock = p.hasVariants && p.variants ? p.variants.reduce((acc, v) => acc + (v.stockLevel || 0), 0) : (p.stockLevel || 0);
+                          const effectiveSupplyType = totalStock === 0 ? 'ORDER' : (p.supplyType || 'INVENTORY');
+                          return (effectiveSupplyType === 'INVENTORY') && (
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <span className="text-slate-500 text-xs">موجودی:</span>
+                            <span className={`text-sm font-bold ${(p.hasVariants && p.variants ? p.variants.reduce((acc, v) => acc + (v.stockLevel || 0), 0) : p.stockLevel || 0) > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {p.hasVariants && p.variants ? p.variants.reduce((acc, v) => acc + (v.stockLevel || 0), 0) : p.stockLevel || 0}
+                            </span>
+                          </div>
+                        )})()}
+                      </div>
+                    </td>
+
+                    {/* Actions */}
+                    <td className="p-4">
+                      <div className="flex items-center justify-center gap-2">
+                        {/* Adjust Stock */}
+                        {(p.supplyType === 'INVENTORY' || !p.supplyType) && (
+                          <button
+                            onClick={() => {
+                              setStockAdjustProd(p);
+                              setStockAdjustAmount('');
+                              setStockAdjustNotes('');
+                              setStockAdjustType('IN');
+                              setStockAdjustVariantId('');
+                              setStockModalOpen(true);
+                            }}
+                            className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition"
+                            title="ورود/خروج انبار"
+                          >
+                            <Package size={14} />
+                          </button>
+                        )}
+                        {/* Edit */}
+                        <button
+                          onClick={() => handleOpenEdit(p)}
+                          className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-slate-50 rounded-lg transition"
+                          title="ویرایش تجهیز"
+                        >
+                          <Edit size={14} />
+                        </button>
+
+                        {/* Delete */}
+                        <button
+                          onClick={() => {
+                            setProductToDeleteId(p.id);
+                            setProductToDeleteName(p.displayName || p.name);
+                            setDeleteConfirmOpen(true);
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
+                          title="حذف تجهیز"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {filteredProducts.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="text-center p-12 text-slate-400 bg-white">
+                    <Package className="mx-auto text-slate-300 mb-3" size={40} />
+                    هیچ کالایی متناسب با فیلتر شما در سیستم ثبت نشده است.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      ) : (
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-right border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-xs font-bold">
+                <th className="p-4 w-1/4">تاریخ</th>
+                <th className="p-4 w-1/4">کالا</th>
+                <th className="p-4 w-1/6 text-center">نوع</th>
+                <th className="p-4 w-1/6 text-center">تعداد</th>
+                <th className="p-4 w-1/3">توضیحات و رفرنس</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700 text-xs">
+              {inventoryTransactions.length === 0 && (
+                 <tr>
+                    <td colSpan={5} className="text-center p-12 text-slate-400">هیچ تراکنشی یافت نشد.</td>
+                 </tr>
+              )}
+              {inventoryTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(tr => {
+                const p = products.find(prod => prod.id === tr.productId);
+                return (
+                  <tr key={tr.id} className="hover:bg-slate-50/50 transition">
+                    <td className="p-4 font-mono">{toShamsiStr(tr.date)}</td>
+                    <td className="p-4 font-bold">{p ? p.displayName : 'کالای حذف شده'}</td>
+                    <td className="p-4 text-center">
+                       <span className={`px-2 py-1 rounded text-xs font-bold ${tr.type === 'IN' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
+                         {tr.type === 'IN' ? 'ورود' : 'خروج'}
+                       </span>
+                    </td>
+                    <td className="p-4 text-center font-bold font-mono text-sm">{tr.quantity}</td>
+                    <td className="p-4 text-slate-500 text-[11px] leading-tight">
+                       {tr.referenceType && <div className="font-bold text-slate-700 mb-0.5">منبع: {tr.referenceType}</div>}
+                       {tr.notes}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      )}
+
+      {/* Add / Edit Product Modal */}
+      {showModal && (
+        <div className={`fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 overflow-y-auto ${isProductModalFullscreen ? 'p-0' : 'p-4'}`}>
+          <div className={`bg-white shadow-xl border border-slate-100 overflow-hidden animate-scale-in flex flex-col transition-all duration-300 ${
+            isProductModalFullscreen 
+              ? 'w-screen h-screen rounded-none my-0 max-w-full max-h-screen' 
+              : 'rounded-2xl w-full max-w-xl my-4 max-h-[calc(100vh-2rem)]'
+          }`}>
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
+              <h3 className="font-bold text-slate-800 text-sm sm:text-base">
+                {editingProduct ? `ویرایش اطلاعات فنی: ${editingProduct.displayName}` : 'تعریف تجهیز ابزاردقیق جدید'}
+              </h3>
+              <div className="flex items-center gap-1.5">
+                <button 
+                  type="button"
+                  onClick={() => setIsProductModalFullscreen(!isProductModalFullscreen)}
+                  className="p-1.5 hover:bg-slate-200 text-slate-500 rounded-lg transition flex items-center justify-center"
+                  title={isProductModalFullscreen ? "خروج از تمام‌صفحه" : "تمام‌صفحه"}
+                >
+                  {isProductModalFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => { setShowModal(false); setIsProductModalFullscreen(false); }}
+                  className="p-1 hover:bg-slate-200 text-slate-500 rounded-lg transition flex items-center justify-center"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleSave} className="p-6 space-y-4 overflow-y-auto flex-1">
+              <div className="space-y-4">
+                
+                {/* Category */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'products', 'category', 'دسته‌بندی تخصصی ابزاردقیق')}</label>
+                  <select
+                    value={category}
+                    required={isFieldRequired(settings, 'products', 'category')}
+                    onChange={(e) => setCategory(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
+                  >
+                    {categories.map((cat, i) => (
+                      <option key={i} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Product Code */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'products', 'productCode', 'کد کالا')}</label>
+                  <input
+                    type="text"
+                    required={isFieldRequired(settings, 'products', 'productCode')}
+                    value={productCode}
+                    onChange={(e) => setProductCode(e.target.value)}
+                    placeholder="مثال: PRD-001"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none transition-all"
+                  />
+                  <p className="text-[10px] text-slate-500">کد کالا باید یکتا باشد.</p>
+                </div>
+
+                {/* Equipment Type / Display Name */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'products', 'displayName', 'نوع تجهیز و نام کالا')}</label>
+                  <input
+                    type="text"
+                    required={isFieldRequired(settings, 'products', 'displayName')}
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    placeholder="مثال: ترانسمیتر اختلاف فشار (DP Transmitter)"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right font-medium"
+                  />
+                </div>
+
+                {/* Brand */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'products', 'brand', 'برند (سازنده)')}</label>
+                  <input
+                    type="text"
+                    required={isFieldRequired(settings, 'products', 'brand')}
+                    value={brand}
+                    onChange={(e) => setBrand(e.target.value)}
+                    placeholder="مثال: WIKA, Rosemount, Siemens"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right font-medium"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Supply Type */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'products', 'supplyType', 'نوع تامین')}</label>
+                    <select
+                      value={supplyType}
+                      required={isFieldRequired(settings, 'products', 'supplyType')}
+                      onChange={(e) => setSupplyType(e.target.value as any)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
+                    >
+                      <option value="INVENTORY">موجود در انبار</option>
+                      <option value="ORDER">قابل سفارش</option>
+                    </select>
+                  </div>
+
+                  {/* Currency Selection */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'products', 'currencyForeign', 'ارز مرجع کالا')}</label>
+                    <select
+                      value={simpleCurrencyForeign}
+                      required={isFieldRequired(settings, 'products', 'currencyForeign')}
+                      onChange={(e) => {
+                        const curr = e.target.value;
+                        setSimpleCurrencyForeign(curr);
+                        // Also update simple RIYAL price if a simple price is set
+                        if (simplePriceForeign !== "") {
+                          const calculatedRial = convertForeignToRialSimple(Number(simplePriceForeign), curr);
+                          setSimplePriceRIYAL(String(calculatedRial));
+                        }
+                        // Update variants currency if they exist
+                        if (variants.length > 0) {
+                          const updated = variants.map(v => ({
+                            ...v,
+                            currencyForeign: curr,
+                            priceRIYAL: v.priceForeign !== undefined ? convertForeignToRialSimple(v.priceForeign, curr) : undefined
+                          }));
+                          setVariants(updated);
+                        }
+                      }}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white font-medium text-slate-800"
+                    >
+                      <option value="یورو">یورو</option>
+                      <option value="دلار">دلار</option>
+                      <option value="درهم">درهم</option>
+                      <option value="یوان">یوان</option>
+                    </select>
+                  </div>
+                  {/* Initial Stock (Only for New Products & Inventory) */}
+                  {!editingProduct && supplyType === 'INVENTORY' && !hasVariants && (
+                    <div className="space-y-1.5 border-t border-slate-100 pt-3 mt-3 col-span-2">
+                      <label className="text-xs font-semibold text-emerald-600">{renderFieldLabelWithAsterisk(settings, 'products', 'initialStock', 'موجودی اولیه در انبار')}</label>
+                      <input
+                        type="number"
+                        min="0"
+                        required={isFieldRequired(settings, 'products', 'initialStock')}
+                        value={initialStock}
+                        onChange={(e) => setInitialStock(e.target.value)}
+                        placeholder="0"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 outline-none text-right font-medium bg-emerald-50/30"
+                      />
+                      <p className="text-[10px] text-slate-500">برای تغییر موجودی پس از تعریف کالا، از دکمه‌های ورود/خروج انبار استفاده کنید.</p>
+                    </div>
+                  )}
+
+
+                </div>
+
+                {!hasVariants && (
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <h4 className="text-sm font-bold text-slate-800">قیمت‌گذاری محصول</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 p-4 bg-slate-50 border border-slate-200 rounded-xl items-end">
+                      {/* Foreign Price and Currency */}
+                      <div className="md:col-span-5 space-y-1.5 w-full">
+                        <label className="text-xs font-semibold text-slate-500">قیمت ارزی</label>
+                        <div className="relative flex items-center">
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={simplePriceForeign}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setSimplePriceForeign(val);
+                              if (val !== "") {
+                                const calculatedRial = convertForeignToRialSimple(Number(val), simpleCurrencyForeign);
+                                setSimplePriceRIYAL(String(calculatedRial));
+                              } else {
+                                setSimplePriceRIYAL("");
+                              }
+                            }}
+                            placeholder="0"
+                            className="w-full border border-slate-200 rounded-lg pl-16 pr-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-center font-mono bg-white"
+                          />
+                          <div className="absolute inset-y-0 left-0 flex items-center justify-center bg-slate-100 border-r border-slate-200 text-xs font-bold text-slate-600 px-3 rounded-l-lg select-none min-w-[55px]">
+                            {simpleCurrencyForeign}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Calculator Button */}
+                      <div className="md:col-span-2 w-full">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenCalculator({
+                            priceForeign: simplePriceForeign ? Number(simplePriceForeign) : undefined,
+                            currencyForeign: simpleCurrencyForeign,
+                            priceRIYAL: simplePriceRIYAL ? Number(simplePriceRIYAL) : undefined,
+                            ...simpleCalcDetails
+                          }, -1)}
+                          className="w-full h-[38px] bg-sky-50 border border-sky-200 text-sky-600 rounded-lg hover:bg-sky-100 transition-colors flex items-center justify-center gap-1.5 text-xs font-bold whitespace-nowrap"
+                          title="محاسبه‌گر حرفه‌ای قیمت فروش"
+                        >
+                          <Calculator size={15} />
+                          محاسبه‌گر
+                        </button>
+                      </div>
+
+                      {/* Selling Price (Rials) */}
+                      <div className="md:col-span-5 space-y-1.5 w-full">
+                        <label className="text-xs font-semibold text-slate-500">قیمت فروش (ریال)</label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={simplePriceRIYAL ? Number(simplePriceRIYAL).toLocaleString('fa-IR') : ''}
+                            onChange={(e) => {
+                              const rawVal = e.target.value
+                                .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+                                .replace(/[^\d]/g, '');
+                              setSimplePriceRIYAL(rawVal);
+                            }}
+                            placeholder="۰"
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-center font-mono font-bold text-slate-800 bg-white"
+                          />
+                          {simplePriceRIYAL && (
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">ریال</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Product Images */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500">تصاویر محصول</label>
+                  
+                  {/* Drag and Drop Zone */}
+                  <div className="border-2 border-dashed border-slate-250 hover:border-sky-500 rounded-xl p-4 transition text-center cursor-pointer bg-slate-50/50 hover:bg-slate-50 relative">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      onChange={async (e) => {
+                        const files = e.target.files;
+                        if (files) {
+                          for (const file of Array.from(files) as File[]) {
+                            try {
+                              const url = await uploadFile(file);
+                              setImages(prev => [...prev, url]);
+                            } catch (err: any) {
+                              alert(err.message || 'خطا در بارگذاری تصویر محصول');
+                            }
+                          }
+                        }
+                        if (e.target) e.target.value = '';
+                      }}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+                    />
+                    <div className="text-slate-500 space-y-1">
+                      <div className="text-xs font-bold text-slate-700">انتخاب یا رها کردن تصاویر کالا</div>
+                      <div className="text-[10px] text-slate-400">فرمت‌های تصویری (JPG, PNG) - ذخیره‌سازی محلی</div>
+                    </div>
+                  </div>
+
+                  {/* Thumbnail Previews */}
+                  {images.length > 0 && (
+                    <div className="grid grid-cols-4 gap-3 pt-2">
+                      {images.map((img, idx) => (
+                        <div key={idx} className="relative group aspect-square rounded-lg border border-slate-200 overflow-hidden bg-slate-50">
+                          <button
+                            type="button"
+                            onClick={() => setLightboxUrl(img)}
+                            className="w-full h-full text-right outline-none cursor-pointer"
+                            title="بزرگنمایی و دانلود تصویر"
+                          >
+                            <img
+                              src={img}
+                              alt={`Product image ${idx + 1}`}
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setImages(prev => prev.filter((_, i) => i !== idx))}
+                            className="absolute top-1 right-1 p-1 bg-red-600 text-white rounded-full opacity-0 group-hover:opacity-100 transition shadow-sm hover:bg-red-700 z-20"
+                            title="حذف تصویر"
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Description / Technical Specifications */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'products', 'description', 'مشخصات فنی و توضیحات')}</label>
+                  <textarea
+                    rows={4}
+                    required={isFieldRequired(settings, 'products', 'description')}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="جزئیات متریال بدنه، اتصالات، کلاس کاری، رنج فشار یا دما، سیگنال خروجی و گواهینامه‌ها..."
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right leading-relaxed"
+                  />
+                </div>
+
+                {/* Product Features Configuration */}
+                <div className="space-y-4 pt-4 border-t border-slate-100">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800">ویژگی‌های قابل تنظیم (کانفیگوراتور)</h4>
+                      <p className="text-xs text-slate-500 mt-1">ویژگی‌هایی که در زمان پیش‌فاکتور قابل انتخاب هستند.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddFeature}
+                      className="px-3 py-1.5 bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg hover:bg-slate-200 transition flex items-center gap-1"
+                    >
+                      <Plus size={14} />
+                      افزودن ویژگی
+                    </button>
+                  </div>
+                  
+                  {features.map((feature, fIndex) => (
+                    <div key={feature.id} className="p-4 border border-slate-200 rounded-xl bg-slate-50 space-y-3">
+                      <div className="flex justify-between items-start gap-3">
+                        <div className="flex-1 flex flex-col sm:flex-row gap-2 w-full">
+                          <input
+                            type="text"
+                            id={`feature-name-${feature.id}`}
+                            value={feature.name}
+                            onChange={(e) => {
+                              const newF = [...features];
+                              newF[fIndex] = { ...newF[fIndex], name: e.target.value };
+                              setFeatures(newF);
+                            }}
+                            placeholder="نام ویژگی (مثل: سایز)"
+                            className="w-full sm:flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-sky-500"
+                          />
+                          <input
+                            type="text"
+                            value={feature.code || ''}
+                            onChange={(e) => {
+                              const newF = [...features];
+                              newF[fIndex] = { ...newF[fIndex], code: e.target.value };
+                              setFeatures(newF);
+                            }}
+                            placeholder="کد (مثل: s)"
+                            className="w-full sm:w-24 border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-sky-500 sm:text-center"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                          <button
+                            type="button"
+                            disabled={fIndex === 0}
+                            onClick={() => {
+                              if (fIndex === 0) return;
+                              const newF = [...features];
+                              const temp = newF[fIndex];
+                              newF[fIndex] = newF[fIndex - 1];
+                              newF[fIndex - 1] = temp;
+                              setFeatures(newF);
+                            }}
+                            className={`p-1.5 rounded-lg transition ${
+                              fIndex === 0 
+                                ? 'text-slate-300 cursor-not-allowed' 
+                                : 'text-slate-500 hover:bg-slate-200 hover:text-slate-700'
+                            }`}
+                            title="انتقال به بالا"
+                          >
+                            <ArrowUp size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={fIndex === features.length - 1}
+                            onClick={() => {
+                              if (fIndex === features.length - 1) return;
+                              const newF = [...features];
+                              const temp = newF[fIndex];
+                              newF[fIndex] = newF[fIndex + 1];
+                              newF[fIndex + 1] = temp;
+                              setFeatures(newF);
+                            }}
+                            className={`p-1.5 rounded-lg transition ${
+                              fIndex === features.length - 1 
+                                ? 'text-slate-300 cursor-not-allowed' 
+                                : 'text-slate-500 hover:bg-slate-200 hover:text-slate-700'
+                            }`}
+                            title="انتقال به پایین"
+                          >
+                            <ArrowDown size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newF = [...features];
+                              newF.splice(fIndex, 1);
+                              setFeatures(newF);
+                            }}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
+                            title="حذف ویژگی"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        {feature.options.length > 0 && (
+                          <div className="bg-white rounded-lg border border-slate-150 overflow-hidden divide-y divide-slate-100">
+                            <div className="bg-slate-50 px-3 py-1.5 grid grid-cols-12 gap-2 text-[10px] font-bold text-slate-500 text-right">
+                              <div className="col-span-5 sm:col-span-6">مقدار ویژگی</div>
+                              <div className="col-span-4 sm:col-span-3 text-center">قیمت ارزی مبدا ({simpleCurrencyForeign})</div>
+                              <div className="col-span-2 text-center">ترتیب</div>
+                              <div className="col-span-1 text-center">حذف</div>
+                            </div>
+                            {feature.options.map((opt, oIndex) => (
+                              <div key={opt.id} className="px-3 py-1.5 grid grid-cols-12 gap-2 items-center text-xs">
+                                <div className="col-span-5 sm:col-span-6 font-medium text-slate-700">
+                                  {opt.value}
+                                </div>
+                                <div className="col-span-4 sm:col-span-3 flex justify-center items-center gap-1.5">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    value={opt.price === undefined ? "" : opt.price}
+                                    onChange={(e) => {
+                                      const val = e.target.value === "" ? 0 : Number(e.target.value);
+                                      const newF = [...features];
+                                      const updatedOptions = [...newF[fIndex].options];
+                                      updatedOptions[oIndex] = { ...updatedOptions[oIndex], price: val, currency: simpleCurrencyForeign };
+                                      newF[fIndex] = { ...newF[fIndex], options: updatedOptions };
+                                      setFeatures(newF);
+                                    }}
+                                    placeholder="0"
+                                    className="w-full max-w-[100px] text-center font-mono border border-slate-200 rounded px-2 py-0.5 text-xs outline-none focus:border-sky-500 bg-white"
+                                  />
+                                  <span className="text-[10px] text-slate-500 font-bold">{simpleCurrencyForeign}</span>
+                                </div>
+                                <div className="col-span-2 flex justify-center items-center gap-1">
+                                  <button
+                                    type="button"
+                                    disabled={oIndex === 0}
+                                    onClick={() => {
+                                      if (oIndex === 0) return;
+                                      const newF = [...features];
+                                      const updatedOptions = [...newF[fIndex].options];
+                                      const temp = updatedOptions[oIndex];
+                                      updatedOptions[oIndex] = updatedOptions[oIndex - 1];
+                                      updatedOptions[oIndex - 1] = temp;
+                                      newF[fIndex] = { ...newF[fIndex], options: updatedOptions };
+                                      setFeatures(newF);
+                                    }}
+                                    className={`p-1 rounded transition ${
+                                      oIndex === 0 
+                                        ? 'text-slate-300 cursor-not-allowed' 
+                                        : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                                    }`}
+                                    title="انتقال به بالا"
+                                  >
+                                    <ArrowUp size={12} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={oIndex === feature.options.length - 1}
+                                    onClick={() => {
+                                      if (oIndex === feature.options.length - 1) return;
+                                      const newF = [...features];
+                                      const updatedOptions = [...newF[fIndex].options];
+                                      const temp = updatedOptions[oIndex];
+                                      updatedOptions[oIndex] = updatedOptions[oIndex + 1];
+                                      updatedOptions[oIndex + 1] = temp;
+                                      newF[fIndex] = { ...newF[fIndex], options: updatedOptions };
+                                      setFeatures(newF);
+                                    }}
+                                    className={`p-1 rounded transition ${
+                                      oIndex === feature.options.length - 1 
+                                        ? 'text-slate-300 cursor-not-allowed' 
+                                        : 'text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+                                    }`}
+                                    title="انتقال به پایین"
+                                  >
+                                    <ArrowDown size={12} />
+                                  </button>
+                                </div>
+                                <div className="col-span-1 flex justify-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const newF = [...features];
+                                      newF[fIndex] = {
+                                        ...newF[fIndex],
+                                        options: newF[fIndex].options.filter((_, idx) => idx !== oIndex)
+                                      };
+                                      setFeatures(newF);
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-red-500 hover:bg-slate-100 rounded"
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex flex-col gap-1">
+                          <div className="flex flex-col sm:flex-row gap-2 sm:items-center w-full">
+                            <input
+                              type="text"
+                              id={`feature-input-${feature.id}`}
+                              placeholder="مقدار جدید (برای چند مقدار با ویرگول جدا کنید)..."
+                              className="w-full sm:flex-1 border border-slate-200 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-sky-500"
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  const inputEl = e.currentTarget;
+                                  const val = inputEl.value.trim();
+                                  if (val) {
+                                    const vals = val.split(/[,،]/).map(v => v.trim()).filter(Boolean);
+                                    if (vals.length > 0) {
+                                      const newOptions = vals.map((v, i) => ({
+                                        id: Date.now().toString() + i.toString() + Math.random().toString(),
+                                        value: v,
+                                        price: 0,
+                                        currency: simpleCurrencyForeign
+                                      }));
+                                      const newF = [...features];
+                                      newF[fIndex] = {
+                                        ...newF[fIndex],
+                                        options: [...newF[fIndex].options, ...newOptions]
+                                      };
+                                      setFeatures(newF);
+                                    }
+                                    inputEl.value = '';
+                                  }
+                                }
+                              }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const inputEl = document.getElementById(`feature-input-${feature.id}`) as HTMLInputElement;
+                                if (inputEl) {
+                                  const val = inputEl.value.trim();
+                                  if (val) {
+                                    const vals = val.split(/[,،]/).map(v => v.trim()).filter(Boolean);
+                                    if (vals.length > 0) {
+                                      const newOptions = vals.map((v, i) => ({
+                                        id: Date.now().toString() + i.toString() + Math.random().toString(),
+                                        value: v,
+                                        price: 0,
+                                        currency: simpleCurrencyForeign
+                                      }));
+                                      const newF = [...features];
+                                      newF[fIndex] = {
+                                        ...newF[fIndex],
+                                        options: [...newF[fIndex].options, ...newOptions]
+                                      };
+                                      setFeatures(newF);
+                                    }
+                                    inputEl.value = '';
+                                  }
+                                }
+                              }}
+                              className="w-full sm:w-auto px-3 py-1.5 bg-sky-50 text-sky-600 font-semibold text-xs rounded-lg hover:bg-sky-100 transition whitespace-nowrap"
+                            >
+                              افزودن
+                            </button>
+                          </div>
+                          <span className="text-[10px] text-slate-400">برای ثبت Enter بزنید یا روی دکمه افزودن کلیک کنید. برای ثبت چند مقدار همزمان از ویرگول (,) استفاده کنید.</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                  {features.length > 0 && (
+                    <div className="flex justify-end pt-2">
+                      <button
+                        type="button"
+                        onClick={handleAddFeature}
+                        className="px-4 py-2 bg-sky-50 text-sky-600 border border-sky-200 text-xs font-bold rounded-xl hover:bg-sky-100 transition flex items-center gap-1.5 shadow-sm"
+                      >
+                        <Plus size={15} />
+                        افزودن ویژگی جدید
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Configurator Rules Engine */}
+                {features.length > 0 && (
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <div className="flex justify-between items-center">
+                      <label className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                        قوانین فیلترینگ و شرط‌های انتخاب ویژگی‌ها
+                      </label>
+                      {!showAddRuleForm && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewRuleName('');
+                            setNewRuleConditions([{ featureName: features[0]?.name || '', values: [] }]);
+                            setNewRuleActionFeature(features[1]?.name || features[0]?.name || '');
+                            setNewRuleActionValues([]);
+                            setShowAddRuleForm(true);
+                          }}
+                          className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-semibold text-xs rounded-lg transition-colors flex items-center gap-1 border border-indigo-150"
+                        >
+                          <Plus size={14} />
+                          قانون جدید (یا / و)
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Rule Builder Form */}
+                    {showAddRuleForm && (
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-4 text-right">
+                        <div className="flex justify-between items-center pb-2 border-b border-slate-150">
+                          <span className="text-xs font-bold text-slate-700">تعریف قانون محدودیت جدید</span>
+                          <button
+                            type="button"
+                            onClick={() => setShowAddRuleForm(false)}
+                            className="text-slate-400 hover:text-slate-600"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+
+                        {/* Rule Name */}
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-semibold text-slate-500">عنوان قانون (اختیاری)</label>
+                          <input
+                            type="text"
+                            placeholder="مثال: فیلتر لاینر رابر برای سایزهای بزرگ"
+                            value={newRuleName}
+                            onChange={(e) => setNewRuleName(e.target.value)}
+                            className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-indigo-500 bg-white"
+                          />
+                        </div>
+
+                        {/* Conditions List */}
+                        <div className="space-y-3">
+                          <label className="text-xs font-semibold text-slate-600 block">شرط‌ها (اگر ویژگی‌های زیر انتخاب شده باشند - رابطه "و" بین شرط‌ها):</label>
+                          
+                          {newRuleConditions.map((cond, cIdx) => {
+                            const selectedFeatureObj = features.find(f => f.name === cond.featureName);
+                            return (
+                              <div key={cIdx} className="bg-white border border-slate-200 rounded-lg p-3 space-y-3 relative">
+                                <div className="flex justify-between items-center">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded text-slate-500 font-bold font-mono">شرط {cIdx + 1}</span>
+                                    <select
+                                      value={cond.featureName}
+                                      onChange={(e) => {
+                                        const next = [...newRuleConditions];
+                                        next[cIdx] = { featureName: e.target.value, values: [] };
+                                        setNewRuleConditions(next);
+                                      }}
+                                      className="border border-slate-200 rounded px-2 py-1 text-xs outline-none focus:border-indigo-500 font-bold text-slate-700 bg-white"
+                                    >
+                                      {features.map((f, i) => (
+                                        <option key={i} value={f.name}>{f.name}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  
+                                  {newRuleConditions.length > 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setNewRuleConditions(prev => prev.filter((_, idx) => idx !== cIdx));
+                                      }}
+                                      className="text-red-500 hover:text-red-600 hover:bg-red-50 p-1 rounded transition text-xs font-bold"
+                                    >
+                                      حذف شرط
+                                    </button>
+                                  )}
+                                </div>
+
+                                {/* Option Checklist for Condition (OR relation within a single condition) */}
+                                {selectedFeatureObj && (
+                                  <div className="space-y-1.5 pt-1">
+                                    <span className="text-[10px] text-slate-400 font-medium block">
+                                      برابر با یکی از مقادیر زیر باشد (رابطه "یا" بین گزینه‌ها):
+                                    </span>
+                                    <div className="flex flex-wrap gap-2.5">
+                                      {selectedFeatureObj.options.map((opt) => {
+                                        const isChecked = cond.values.includes(opt.value);
+                                        return (
+                                          <label
+                                            key={opt.id}
+                                            className="flex items-center gap-1.5 bg-slate-50 border border-slate-150 px-2.5 py-1 rounded-md text-[11px] text-slate-600 cursor-pointer hover:bg-indigo-50/50 hover:text-indigo-700 hover:border-indigo-200 transition select-none"
+                                          >
+                                            <input
+                                              type="checkbox"
+                                              checked={isChecked}
+                                              onChange={(e) => {
+                                                const next = [...newRuleConditions];
+                                                if (e.target.checked) {
+                                                  next[cIdx].values = [...cond.values, opt.value];
+                                                } else {
+                                                  next[cIdx].values = cond.values.filter(v => v !== opt.value);
+                                                }
+                                                setNewRuleConditions(next);
+                                              }}
+                                              className="w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                                            />
+                                            <span>{opt.value}</span>
+                                          </label>
+                                        );
+                                      })}
+                                      {selectedFeatureObj.options.length === 0 && (
+                                        <span className="text-[10px] text-amber-500">هیچ مقداری برای این ویژگی تعریف نشده است.</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // Find first feature not already added as condition
+                              const remaining = features.find(f => !newRuleConditions.some(c => c.featureName === f.name));
+                              const featName = remaining ? remaining.name : (features[0]?.name || '');
+                              setNewRuleConditions(prev => [...prev, { featureName: featName, values: [] }]);
+                            }}
+                            className="text-xs text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1"
+                          >
+                            <Plus size={12} />
+                            افزودن شرط جدید (AND / و)
+                          </button>
+                        </div>
+
+                        {/* Action / Consequence */}
+                        <div className="bg-white border border-slate-200 rounded-lg p-3 space-y-3">
+                          <label className="text-xs font-bold text-slate-700 block">
+                            آنگاه (Action) در ویژگی هدف:
+                          </label>
+
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500">ویژگی هدف:</span>
+                            <select
+                              value={newRuleActionFeature}
+                              onChange={(e) => {
+                                setNewRuleActionFeature(e.target.value);
+                                setNewRuleActionValues([]);
+                              }}
+                              className="border border-slate-200 rounded px-2 py-1 text-xs outline-none focus:border-indigo-500 font-bold text-slate-700 bg-white"
+                            >
+                              {features.map((f, i) => (
+                                <option key={i} value={f.name}>{f.name}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Target options checklist */}
+                          {(() => {
+                            const actFeat = features.find(f => f.name === newRuleActionFeature);
+                            if (!actFeat) return null;
+                            return (
+                              <div className="space-y-1.5 pt-1">
+                                <span className="text-[10px] text-red-500 font-bold block">
+                                  مقادیر زیر غیرقابل انتخاب و غیرمجاز شوند:
+                                </span>
+                                <div className="flex flex-wrap gap-2.5">
+                                  {actFeat.options.map((opt) => {
+                                    const isChecked = newRuleActionValues.includes(opt.value);
+                                    return (
+                                      <label
+                                        key={opt.id}
+                                        className="flex items-center gap-1.5 bg-slate-50 border border-slate-150 px-2.5 py-1 rounded-md text-[11px] text-slate-600 cursor-pointer hover:bg-red-50 hover:text-red-700 hover:border-red-200 transition select-none"
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={(e) => {
+                                            if (e.target.checked) {
+                                              setNewRuleActionValues(prev => [...prev, opt.value]);
+                                            } else {
+                                              setNewRuleActionValues(prev => prev.filter(v => v !== opt.value));
+                                            }
+                                          }}
+                                          className="w-3.5 h-3.5 text-red-600 rounded border-slate-300 focus:ring-red-500 cursor-pointer"
+                                        />
+                                        <span>{opt.value}</span>
+                                      </label>
+                                    );
+                                  })}
+                                  {actFeat.options.length === 0 && (
+                                    <span className="text-[10px] text-amber-500">هیچ مقداری برای این ویژگی تعریف نشده است.</span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+
+                        {/* Submit rule buttons */}
+                        <div className="flex justify-end gap-2 pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowAddRuleForm(false)}
+                            className="px-3 py-1.5 border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-lg text-xs font-semibold transition"
+                          >
+                            انصراف
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // Validation
+                              const validConditions = newRuleConditions.filter(c => c.featureName && c.values.length > 0);
+                              if (validConditions.length === 0) {
+                                alert('لطفاً حداقل یک شرط معتبر با مقادیر مشخص انتخاب کنید.');
+                                return;
+                              }
+                              if (!newRuleActionFeature || newRuleActionValues.length === 0) {
+                                alert('لطفاً ویژگی هدف و مقادیر غیرمجاز مربوطه را انتخاب کنید.');
+                                return;
+                              }
+
+                              const ruleId = `rule-${Date.now()}`;
+                              const rule: ProductConfigRule = {
+                                id: ruleId,
+                                name: newRuleName.trim() || undefined,
+                                active: true,
+                                conditions: validConditions,
+                                actions: [{ featureName: newRuleActionFeature, values: newRuleActionValues }]
+                              };
+
+                              setConfigRules(prev => [...prev, rule]);
+                              setShowAddRuleForm(false);
+                            }}
+                            className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition shadow-sm"
+                          >
+                            ثبت قانون
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Rules List */}
+                    <div className="space-y-2">
+                      {configRules.length === 0 ? (
+                        <div className="text-center py-4 bg-slate-50 border border-slate-150 rounded-xl text-slate-400 text-xs font-medium">
+                          هیچ قانون و شرط فیلترینگی برای این کالا تعریف نشده است.
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5">
+                          {configRules.map((rule, rIdx) => {
+                            return (
+                              <div key={rule.id} className="bg-slate-50/50 border border-slate-200 rounded-xl p-3 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 text-right">
+                                <div className="space-y-1 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
+                                    <span className="text-xs font-bold text-slate-800">
+                                      {rule.name || `قانون فیلتر شماره ${rIdx + 1}`}
+                                    </span>
+                                    {!rule.active && (
+                                      <span className="text-[9px] bg-slate-200 text-slate-600 font-bold px-1.5 py-0.5 rounded">غیرفعال</span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                                    <span className="text-slate-400 font-bold">اگر: </span>
+                                    {rule.conditions.map((cond, cI) => (
+                                      <span key={cI}>
+                                        {cI > 0 && <span className="text-indigo-500 font-bold"> و </span>}
+                                        {`[${cond.featureName}] برابر با [${cond.values.join(' یا ')}] باشد`}
+                                      </span>
+                                    ))}
+                                    <span className="text-slate-400 font-bold"> ؛ آنگاه: </span>
+                                    {rule.actions.map((act, aI) => (
+                                      <span key={aI}>
+                                        {`در [${act.featureName}] مقادیر `}
+                                        <span className="text-red-500 font-bold">[{act.values.join('، ')}]</span>
+                                        {` غیرمجاز شود`}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setConfigRules(prev => prev.map(r => r.id === rule.id ? { ...r, active: !r.active } : r));
+                                    }}
+                                    className={`px-2.5 py-1 rounded text-[10px] font-bold transition-colors ${
+                                      rule.active 
+                                        ? 'bg-emerald-50 text-emerald-600 border border-emerald-150 hover:bg-emerald-100' 
+                                        : 'bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200'
+                                    }`}
+                                  >
+                                    {rule.active ? 'فعال' : 'غیرفعال'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setConfigRules(prev => prev.filter(r => r.id !== rule.id));
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition"
+                                    title="حذف قانون"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Variants Configuration */}
+                {features.length > 0 && (
+                  <div className="space-y-4 pt-4 border-t border-slate-100">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={hasVariants}
+                        onChange={(e) => setHasVariants(e.target.checked)}
+                        className="w-4 h-4 text-sky-600 rounded border-slate-300 focus:ring-sky-500 cursor-pointer"
+                      />
+                      <span className="text-sm font-bold text-slate-800">مدیریت موجودی در سطح ویژگی‌ها (SKU)</span>
+                    </label>
+
+                    {hasVariants && (
+                      <div className="space-y-3 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                        <div className="flex justify-between items-center mb-2">
+                          <p className="text-xs text-slate-500">برای ترکیب‌های مختلف ویژگی‌ها کدهای کالا (SKU) و موجودی مجزا تعریف کنید.</p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // Generate cartesian product of all feature options
+                              const getCombinations = (featuresArr: ProductFeature[]): Record<string, string>[] => {
+                                if (featuresArr.length === 0) return [{}];
+                                const current = featuresArr[0];
+                                const rest = getCombinations(featuresArr.slice(1));
+                                const combos: Record<string, string>[] = [];
+                                
+                                if (current.options.length === 0) {
+                                  return rest;
+                                }
+
+                                for (const opt of current.options) {
+                                  for (const r of rest) {
+                                    combos.push({ ...r, [current.name]: opt.value });
+                                  }
+                                }
+                                return combos;
+                              };
+
+                              const combinations = getCombinations(features);
+                              
+                              // Filter combinations based on configRules
+                              const validCombinations = combinations.filter(combo => {
+                                if (!configRules || !Array.isArray(configRules)) return true;
+                                return !configRules.some(rule => {
+                                  if (!rule || !rule.active || !rule.conditions || !rule.actions) return false;
+                                  
+                                  // Check if all conditions match this combination
+                                  const conditionsMatch = rule.conditions.every(cond => {
+                                    if (!cond || !cond.values || cond.values.length === 0) return false;
+                                    return cond.values.includes(combo[cond.featureName]);
+                                  });
+                                  
+                                  if (!conditionsMatch) return false;
+                                  
+                                  // If conditions match, check if this combination uses a forbidden action value
+                                  return rule.actions.some(action => {
+                                    if (!action || !action.values || !Array.isArray(action.values)) return false;
+                                    return action.values.includes(combo[action.featureName]);
+                                  });
+                                });
+                              });
+
+                              const pCode = productCode.trim() || 'SKU';
+                              const newVariants = validCombinations.map((combo, i) => {
+                                // Generate SKU
+                                const skuParts = [pCode];
+                                features.forEach((feat) => {
+                                  const fVal = combo[feat.name];
+                                  if (fVal) {
+                                    const optIndex = feat.options.findIndex(o => o.value === fVal);
+                                    if (optIndex !== -1) {
+                                      const prefix = feat.code ? feat.code : '';
+                                      skuParts.push(`${prefix}${optIndex + 1}`);
+                                    }
+                                  }
+                                });
+                                const generatedSku = skuParts.join('-');
+
+                                // check if exists
+                                const existing = variants.find(v => {
+                                  const vKeys = Object.keys(v.attributes);
+                                  const cKeys = Object.keys(combo);
+                                  if (vKeys.length !== cKeys.length) return false;
+                                  return vKeys.every(k => v.attributes[k] === combo[k]);
+                                });
+                                
+                                const targetCurrency = simpleCurrencyForeign || "یورو";
+                                const calculatedFob = getCombinedVariantFOBPrice(combo, targetCurrency);
+
+                                if (existing) {
+                                  const existingPrice = existing.priceForeign !== undefined ? existing.priceForeign : (calculatedFob > 0 ? calculatedFob : undefined);
+                                  const existingRiyal = existing.priceRIYAL !== undefined ? existing.priceRIYAL : (existingPrice !== undefined ? convertForeignToRialSimple(existingPrice, existing.currencyForeign || targetCurrency) : undefined);
+                                  return { 
+                                    ...existing, 
+                                    sku: existing.sku || generatedSku,
+                                    priceForeign: existingPrice,
+                                    priceRIYAL: existingRiyal,
+                                    currencyForeign: existing.currencyForeign || targetCurrency
+                                  };
+                                }
+
+                                return {
+                                  id: `var-${Date.now()}-${i}`,
+                                  sku: generatedSku,
+                                  attributes: combo,
+                                  stockLevel: 0,
+                                  minStockLevel: 0,
+                                  priceForeign: calculatedFob > 0 ? calculatedFob : undefined,
+                                  currencyForeign: targetCurrency,
+                                  priceRIYAL: calculatedFob > 0 ? convertForeignToRialSimple(calculatedFob, targetCurrency) : undefined
+                                };
+                              });
+                              setVariants(newVariants);
+                            }}
+                            className="px-3 py-1.5 bg-sky-50 text-sky-600 border border-sky-200 text-xs font-semibold rounded-lg hover:bg-sky-100 transition shadow-sm"
+                          >
+                            تولید ترکیب‌ها
+                          </button>
+                          {variants.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = variants.map(v => {
+                                  const targetCurrency = v.currencyForeign || simpleCurrencyForeign || "یورو";
+                                  const calculatedFob = getCombinedVariantFOBPrice(v.attributes, targetCurrency);
+                                  if (calculatedFob > 0) {
+                                    return {
+                                      ...v,
+                                      priceForeign: calculatedFob,
+                                      priceRIYAL: convertForeignToRialSimple(calculatedFob, targetCurrency)
+                                    };
+                                  }
+                                  return v;
+                                });
+                                setVariants(updated);
+                              }}
+                              className="px-3 py-1.5 bg-emerald-50 text-emerald-600 border border-emerald-200 text-xs font-semibold rounded-lg hover:bg-emerald-100 transition shadow-sm"
+                              title="محاسبه مجدد قیمت ارزی ردیف‌ها بر اساس مبالغ ویژگی‌ها"
+                            >
+                              به‌روزرسانی قیمت‌های ارزی بر اساس ویژگی‌ها
+                            </button>
+                          )}
+                        </div>
+                        
+                        {variants.length > 0 ? (
+                          <div className="space-y-4">
+                            {/* SKU Filters and Search */}
+                            <div className="space-y-4 p-4 bg-slate-50 border border-slate-200 rounded-xl text-right">
+                              <div className="flex flex-col lg:flex-row gap-4 justify-between items-start lg:items-center">
+                                <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
+                                  ابزارهای جستجو و فیلتر SKUها ({variants.filter(v => {
+                                    if (variantSearchQuery) {
+                                      const q = variantSearchQuery.toLowerCase();
+                                      const skuMatch = v.sku.toLowerCase().includes(q);
+                                      const attrMatch = Object.entries(v.attributes).some(([key, val]) => 
+                                        key.toLowerCase().includes(q) || String(val).toLowerCase().includes(q)
+                                      );
+                                      if (!skuMatch && !attrMatch) return false;
+                                    }
+                                    for (const [featName, featValue] of Object.entries(variantAttributeFilters)) {
+                                      if (featValue && featValue !== 'all') {
+                                        if (v.attributes[featName] !== featValue) return false;
+                                      }
+                                    }
+                                    return true;
+                                  }).length} از {variants.length})
+                                </h4>
+                                
+                                {/* Clear Filters button */}
+                                {(variantSearchQuery || Object.values(variantAttributeFilters).some(v => v !== 'all')) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setVariantSearchQuery('');
+                                      setVariantAttributeFilters({});
+                                    }}
+                                    className="text-xs text-red-500 hover:text-red-600 transition font-medium"
+                                  >
+                                    حذف فیلترها
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Filters Row */}
+                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                                {/* Text Search */}
+                                <div className="space-y-1 sm:col-span-2">
+                                  <label className="text-[11px] text-slate-500 font-medium block">جستجو در SKU یا نام ویژگی</label>
+                                  <input
+                                    type="text"
+                                    value={variantSearchQuery}
+                                    onChange={(e) => setVariantSearchQuery(e.target.value)}
+                                    placeholder="مثال: قرمز، XL، یا SKU..."
+                                    className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-sky-500 bg-white"
+                                  />
+                                </div>
+
+                                {/* Dynamic Dropdowns for Features */}
+                                {features.map((feature) => {
+                                  const selectedVal = variantAttributeFilters[feature.name] || 'all';
+                                  return (
+                                    <div key={feature.id} className="space-y-1">
+                                      <label className="text-[11px] text-slate-500 font-medium block">فیلتر {feature.name}</label>
+                                      <select
+                                        value={selectedVal}
+                                        onChange={(e) => {
+                                          setVariantAttributeFilters(prev => ({
+                                            ...prev,
+                                            [feature.name]: e.target.value
+                                          }));
+                                        }}
+                                        className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-sky-500 bg-white"
+                                      >
+                                        <option value="all">همه {feature.name}ها</option>
+                                        {feature.options.map(opt => (
+                                          <option key={opt.id} value={opt.value}>{opt.value}</option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+
+                              {/* Bulk Pricing Section */}
+                              <div className="border-t border-slate-200 pt-4 mt-2">
+                                <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1.5 mb-3">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                  قیمت‌گذاری گروهی (همسان‌سازی قیمت‌ها)
+                                </h4>
+                                
+                                <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 gap-3 items-end">
+                                  <div className="space-y-1">
+                                    <label className="text-[11px] text-slate-500 font-medium block">قیمت ارزی یکسان</label>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="any"
+                                      value={bulkPriceForeign}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setBulkPriceForeign(val);
+                                        if (val !== "") {
+                                          const converted = convertForeignToRialSimple(Number(val), simpleCurrencyForeign);
+                                          setBulkPriceRIYAL(String(converted));
+                                        } else {
+                                          setBulkPriceRIYAL("");
+                                        }
+                                      }}
+                                      placeholder="مثلا ۱۰۰"
+                                      className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-emerald-500 bg-white text-center font-mono"
+                                    />
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <label className="text-[11px] text-slate-500 font-medium block">واحد ارز</label>
+                                    <div className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-center font-bold text-slate-600 min-h-[32px] flex items-center justify-center select-none">
+                                      {simpleCurrencyForeign}
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <label className="text-[11px] text-slate-500 font-medium block">قیمت فروش یکسان (ریال)</label>
+                                    <input
+                                      type="text"
+                                      value={bulkPriceRIYAL !== "" ? Number(bulkPriceRIYAL).toLocaleString('fa-IR') : ""}
+                                      onChange={(e) => {
+                                        const rawVal = e.target.value
+                                          .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+                                          .replace(/[^\d]/g, '');
+                                        setBulkPriceRIYAL(rawVal);
+                                      }}
+                                      placeholder="مثلا ۷۰,۰۰۰,۰۰۰"
+                                      className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-emerald-500 bg-white text-center font-mono font-bold"
+                                    />
+                                  </div>
+
+                                  <div className="space-y-2 py-1">
+                                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-600 font-medium select-none">
+                                      <input
+                                        type="checkbox"
+                                        checked={bulkApplyToFilteredOnly}
+                                        onChange={(e) => setBulkApplyToFilteredOnly(e.target.checked)}
+                                        className="w-3.5 h-3.5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                                      />
+                                      <span>فقط روی ردیف‌های فیلتر شده اعمال شود</span>
+                                    </label>
+                                    
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setBulkErrorMsg('');
+                                        setBulkSuccessMsg('');
+                                        if (bulkPriceForeign === "" && bulkPriceRIYAL === "") {
+                                          setBulkErrorMsg("لطفاً قیمت ارزی یا ریالی را جهت اعمال گروهی وارد نمایید.");
+                                          return;
+                                        }
+                                        const currentFiltered = variants.filter(v => {
+                                          if (variantSearchQuery) {
+                                            const q = variantSearchQuery.toLowerCase();
+                                            const skuMatch = v.sku.toLowerCase().includes(q);
+                                            const attrMatch = Object.entries(v.attributes).some(([key, val]) => 
+                                              key.toLowerCase().includes(q) || String(val).toLowerCase().includes(q)
+                                            );
+                                            if (!skuMatch && !attrMatch) return false;
+                                          }
+                                          for (const [featName, featValue] of Object.entries(variantAttributeFilters)) {
+                                            if (featValue && featValue !== 'all') {
+                                              if (v.attributes[featName] !== featValue) return false;
+                                            }
+                                          }
+                                          return true;
+                                        });
+
+                                        const targetList = bulkApplyToFilteredOnly ? currentFiltered : variants;
+                                        if (targetList.length === 0) {
+                                          setBulkErrorMsg("هیچ ردیفی برای اعمال قیمت پیدا نشد.");
+                                          return;
+                                        }
+
+                                        const targetIds = new Set(targetList.map(v => v.id));
+                                        const updatedVariants = variants.map(v => {
+                                          if (targetIds.has(v.id)) {
+                                            return {
+                                              ...v,
+                                              priceForeign: bulkPriceForeign !== "" ? Number(bulkPriceForeign) : undefined,
+                                              currencyForeign: simpleCurrencyForeign,
+                                              priceRIYAL: bulkPriceRIYAL !== "" ? Number(bulkPriceRIYAL) : undefined
+                                            };
+                                          }
+                                          return v;
+                                        });
+
+                                        setVariants(updatedVariants);
+                                        setBulkSuccessMsg(`قیمت‌گذاری با موفقیت روی ${targetList.length} ردیف اعمال شد.`);
+                                        setTimeout(() => setBulkSuccessMsg(''), 5000);
+                                      }}
+                                      className="w-full px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-lg hover:bg-emerald-700 transition shadow-sm flex items-center justify-center gap-1"
+                                    >
+                                      اعمال گروهی قیمت
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {bulkSuccessMsg && (
+                                  <div className="mt-2 text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 rounded-lg p-2 text-center">
+                                    {bulkSuccessMsg}
+                                  </div>
+                                )}
+                                {bulkErrorMsg && (
+                                  <div className="mt-2 text-xs font-bold text-red-600 bg-red-50 border border-red-100 rounded-lg p-2 text-center">
+                                    {bulkErrorMsg}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* SKU Variants Table */}
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-right border-collapse">
+                                <thead>
+                                  <tr className="border-b border-slate-200">
+                                    <th className="w-56 min-w-[220px] py-2 px-3 text-xs font-semibold text-slate-600">کد SKU</th>
+                                    <th className="py-2 px-3 text-xs font-semibold text-slate-600">ترکیب</th>
+                                    {supplyType === 'INVENTORY' && <th className="py-2 px-3 text-xs font-semibold text-slate-600">موجودی اولیه</th>}
+                                    <th className="py-2 px-3 text-xs font-semibold text-slate-600">قیمت ارزی</th>
+                                    <th className="py-2 px-3 text-xs font-semibold text-slate-600">قیمت فروش (ریال)</th>
+                                    <th className="py-2 px-3 text-xs font-semibold text-slate-600">عملیات</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(() => {
+                                    const filteredVariants = variants.filter(v => {
+                                      // Filter rows dynamically
+                                      if (variantSearchQuery) {
+                                        const q = variantSearchQuery.toLowerCase();
+                                        const skuMatch = v.sku.toLowerCase().includes(q);
+                                        const attrMatch = Object.entries(v.attributes).some(([key, val]) => 
+                                          key.toLowerCase().includes(q) || String(val).toLowerCase().includes(q)
+                                        );
+                                        if (!skuMatch && !attrMatch) return false;
+                                      }
+                                      for (const [featName, featValue] of Object.entries(variantAttributeFilters)) {
+                                        if (featValue && featValue !== 'all') {
+                                          if (v.attributes[featName] !== featValue) return false;
+                                        }
+                                      }
+                                      return true;
+                                    });
+
+                                    const totalVariantPages = Math.max(1, Math.ceil(filteredVariants.length / VARIANT_PAGE_SIZE));
+                                    // Ensure page is within bounds when filters change
+                                    const currentPage = Math.min(variantCurrentPage, totalVariantPages);
+                                    
+                                    const paginatedVariants = filteredVariants.slice(
+                                      (currentPage - 1) * VARIANT_PAGE_SIZE,
+                                      currentPage * VARIANT_PAGE_SIZE
+                                    );
+
+                                    return (
+                                      <>
+                                        {paginatedVariants.map((variant) => {
+                                          const originalIdx = variants.findIndex(v => v.id === variant.id);
+                                          if (originalIdx === -1) return null;
+
+                                          return (
+                                            <tr key={variant.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-100 transition">
+                                              <td className="py-2 px-3">
+                                                <input
+                                                  type="text"
+                                                  value={variant.sku}
+                                                  onChange={(e) => {
+                                                    const newV = [...variants];
+                                                    newV[originalIdx].sku = e.target.value;
+                                                    setVariants(newV);
+                                                  }}
+                                                  placeholder="SKU"
+                                                  className="w-full border border-slate-200 rounded px-2 py-1 text-xs outline-none focus:border-sky-500 font-mono text-left tracking-wider"
+                                                  dir="ltr"
+                                                />
+                                              </td>
+                                              <td className="py-2 px-3 text-xs text-slate-700 whitespace-nowrap">
+                                                {Object.entries(variant.attributes).map(([k, v]) => `${k}: ${v}`).join(' ، ')}
+                                              </td>
+                                              {supplyType === 'INVENTORY' && (
+                                                <td className="py-2 px-3">
+                                                  <input
+                                                    type="number"
+                                                    min="0"
+                                                    value={variant.stockLevel}
+                                                    onChange={(e) => {
+                                                      const newV = [...variants];
+                                                      newV[originalIdx].stockLevel = Number(e.target.value) || 0;
+                                                      setVariants(newV);
+                                                    }}
+                                                    className="w-20 border border-slate-200 rounded px-2 py-1 text-xs outline-none focus:border-sky-500"
+                                                  />
+                                                </td>
+                                              )}
+                                              <td className="py-2 px-3">
+                                                <div className="flex flex-col gap-1">
+                                                  <div className="flex items-center gap-1.5">
+                                                    <div className="relative flex items-center">
+                                                      <input
+                                                        type="number"
+                                                        min="0"
+                                                        step="any"
+                                                        value={variant.priceForeign !== undefined ? variant.priceForeign : ""}
+                                                        onChange={(e) => {
+                                                          const newV = [...variants];
+                                                          const val = e.target.value === "" ? undefined : Number(e.target.value);
+                                                          newV[originalIdx].priceForeign = val;
+                                                          if (val !== undefined) {
+                                                            newV[originalIdx].priceRIYAL = convertForeignToRialSimple(val, simpleCurrencyForeign);
+                                                            newV[originalIdx].currencyForeign = simpleCurrencyForeign;
+                                                          } else {
+                                                            newV[originalIdx].priceRIYAL = undefined;
+                                                          }
+                                                          setVariants(newV);
+                                                        }}
+                                                        placeholder="0"
+                                                        className="w-24 border border-slate-200 rounded-r pl-2 pr-2 py-1 text-xs outline-none focus:border-sky-500 font-mono text-center"
+                                                      />
+                                                      <div className="bg-slate-100 border-y border-l border-slate-200 text-[10px] font-bold text-slate-600 px-2.5 py-1 rounded-l select-none min-w-[50px] text-center">
+                                                        {simpleCurrencyForeign}
+                                                      </div>
+                                                    </div>
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => handleOpenCalculator(variant, originalIdx)}
+                                                      className="p-1 text-sky-600 hover:bg-sky-50 hover:text-sky-700 rounded-lg transition-colors flex items-center justify-center flex-shrink-0 border border-sky-100 bg-white"
+                                                      title="محاسبه‌گر حرفه‌ای قیمت فروش"
+                                                    >
+                                                      <Calculator size={13} />
+                                                    </button>
+                                                  </div>
+                                                  {(() => {
+                                                    const combinedPrice = getCombinedVariantFOBPrice(variant.attributes, simpleCurrencyForeign);
+                                                    if (combinedPrice > 0) {
+                                                      return (
+                                                        <div className="flex items-center gap-1 text-[9px] text-slate-500 mr-1 mt-0.5 whitespace-nowrap">
+                                                          <span>مجموع ویژگی‌ها:</span>
+                                                          <span className="font-mono font-bold text-sky-600">{combinedPrice}</span>
+                                                          <span>{simpleCurrencyForeign}</span>
+                                                        </div>
+                                                      );
+                                                    }
+                                                    return null;
+                                                  })()}
+                                                </div>
+                                              </td>
+                                              <td className="py-2 px-3">
+                                                <input
+                                                  type="text"
+                                                  value={variant.priceRIYAL !== undefined ? Number(variant.priceRIYAL).toLocaleString('fa-IR') : ""}
+                                                  onChange={(e) => {
+                                                    const rawVal = e.target.value
+                                                      .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+                                                      .replace(/[^\d]/g, '');
+                                                    const newV = [...variants];
+                                                    newV[originalIdx].priceRIYAL = rawVal === "" ? undefined : Number(rawVal);
+                                                    setVariants(newV);
+                                                  }}
+                                                  placeholder="۰"
+                                                  className="w-28 border border-slate-200 rounded px-2 py-1 text-xs outline-none focus:border-sky-500 font-mono text-center font-bold text-slate-800"
+                                                />
+                                              </td>
+                                              <td className="py-2 px-3">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    const newV = [...variants];
+                                                    newV.splice(originalIdx, 1);
+                                                    setVariants(newV);
+                                                  }}
+                                                  className="text-red-500 hover:text-red-600 hover:bg-red-50 p-1 rounded transition"
+                                                >
+                                                  <Trash2 size={14} />
+                                                </button>
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                        {totalVariantPages > 1 && (
+                                          <tr className="border-t border-slate-200 bg-slate-50/50">
+                                            <td colSpan={6} className="py-3 px-4">
+                                              <div className="flex items-center justify-between">
+                                                <span className="text-xs text-slate-500">
+                                                  نمایش {((currentPage - 1) * VARIANT_PAGE_SIZE) + 1} تا {Math.min(currentPage * VARIANT_PAGE_SIZE, filteredVariants.length)} از {filteredVariants.length} ترکیب
+                                                </span>
+                                                <div className="flex items-center gap-1">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => setVariantCurrentPage(p => Math.max(1, p - 1))}
+                                                    disabled={currentPage === 1}
+                                                    className="px-2 py-1 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                  >
+                                                    قبلی
+                                                  </button>
+                                                  <span className="px-3 py-1 text-xs font-bold text-slate-700">
+                                                    صفحه {currentPage} از {totalVariantPages}
+                                                  </span>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => setVariantCurrentPage(p => Math.min(totalVariantPages, p + 1))}
+                                                    disabled={currentPage === totalVariantPages}
+                                                    className="px-2 py-1 bg-white border border-slate-200 rounded text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                  >
+                                                    بعدی
+                                                  </button>
+                                                </div>
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center py-6 text-slate-400 text-xs">
+                            هیچ ترکیب SKU ایجاد نشده است.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Dynamic Custom Fields Form Section */}
+                <CustomFieldsForm
+                  module="products"
+                  customFields={settings?.customFields || []}
+                  customValues={customValues}
+                  onChange={setCustomValues}
+                />
+
+              </div>
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => { setShowModal(false); setIsProductModalFullscreen(false); }}
+                  className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-sm font-medium transition"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-sky-500/15"
+                >
+                  {editingProduct ? 'ثبت تغییرات تجهیز' : 'ذخیره تجهیز'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+
+      {/* Adjust Stock Modal */}
+      {stockModalOpen && stockAdjustProd && (
+        <div className={`fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 overflow-y-auto ${isStockModalFullscreen ? 'p-0' : 'p-4'}`}>
+          <div className={`bg-white shadow-xl border border-slate-100 overflow-hidden animate-scale-in flex flex-col transition-all duration-300 ${
+            isStockModalFullscreen 
+              ? 'w-screen h-screen rounded-none my-0 max-w-full max-h-screen' 
+              : 'rounded-2xl w-full max-w-sm my-4'
+          }`}>
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
+              <h3 className="font-bold text-slate-800">
+                ثبت ورود/خروج انبار
+              </h3>
+              <div className="flex items-center gap-1.5">
+                <button 
+                  type="button"
+                  onClick={() => setIsStockModalFullscreen(!isStockModalFullscreen)}
+                  className="p-1.5 hover:bg-slate-200 text-slate-500 rounded-lg transition flex items-center justify-center"
+                  title={isStockModalFullscreen ? "خروج از تمام‌صفحه" : "تمام‌صفحه"}
+                >
+                  {isStockModalFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => { setStockModalOpen(false); setIsStockModalFullscreen(false); }}
+                  className="p-1 hover:bg-slate-200 text-slate-500 rounded-lg transition"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const amt = Number(stockAdjustAmount);
+              if (amt > 0) {
+                if (stockAdjustProd.hasVariants && !stockAdjustVariantId) {
+                  alert('لطفاً نوع (SKU) مورد نظر را انتخاب کنید.');
+                  return;
+                }
+                
+                const finalAmt = stockAdjustType === 'IN' ? amt : -amt;
+                let currentStock = stockAdjustProd.stockLevel || 0;
+                
+                if (stockAdjustProd.hasVariants && stockAdjustVariantId) {
+                  const variant = stockAdjustProd.variants?.find(v => v.id === stockAdjustVariantId);
+                  if (variant) currentStock = variant.stockLevel || 0;
+                }
+                
+                if (stockAdjustType === 'OUT' && currentStock < amt) {
+                   if (!window.confirm('موجودی ثبت شده در سیستم برای این خروج کافی نیست. آیا مایلید با وجود مغایرت، موجودی منفی را در دفاتر انبار ثبت کنید؟')) return;
+                }
+                
+                adjustProductStock(stockAdjustProd.id, finalAmt, stockAdjustVariantId || undefined, 'MANUAL', stockAdjustNotes);
+                setStockModalOpen(false);
+                setIsStockModalFullscreen(false);
+              }
+            }} className="p-6 space-y-4 overflow-y-auto flex-1">
+              
+              <div className="text-sm text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-100 mb-4">
+                <div className="font-bold text-slate-800 mb-1">{stockAdjustProd.displayName}</div>
+                {!stockAdjustProd.hasVariants && (
+                  <div className="flex justify-between mt-2 text-xs">
+                    <span>موجودی فعلی:</span>
+                    <span className="font-bold">{stockAdjustProd.stockLevel || 0} عدد</span>
+                  </div>
+                )}
+              </div>
+              
+              {stockAdjustProd.hasVariants && stockAdjustProd.variants && (
+                <div className="space-y-1.5 mb-4">
+                  <label className="text-xs font-semibold text-slate-500">انتخاب نوع (SKU) *</label>
+                  <select
+                    value={stockAdjustVariantId}
+                    onChange={(e) => setStockAdjustVariantId(e.target.value)}
+                    required
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-emerald-500"
+                  >
+                    <option value="">-- انتخاب کنید --</option>
+                    {stockAdjustProd.variants.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.sku} - {Object.values(v.attributes).join(', ')} (موجودی: {v.stockLevel || 0})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <button
+                  type="button"
+                  onClick={() => setStockAdjustType('IN')}
+                  className={`py-2 text-sm font-bold rounded-lg border ${stockAdjustType === 'IN' ? 'bg-emerald-500 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                >
+                  ورود به انبار
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStockAdjustType('OUT')}
+                  className={`py-2 text-sm font-bold rounded-lg border ${stockAdjustType === 'OUT' ? 'bg-rose-500 text-white border-rose-600' : 'bg-white text-slate-600 border-slate-200'}`}
+                >
+                  خروج از انبار
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-500">تعداد *</label>
+                <input
+                  type="number"
+                  min="1"
+                  required
+                  value={stockAdjustAmount}
+                  onChange={(e) => setStockAdjustAmount(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 outline-none text-right font-medium"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-500">توضیحات (اختیاری)</label>
+                <textarea
+                  value={stockAdjustNotes}
+                  onChange={(e) => setStockAdjustNotes(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 outline-none text-right font-medium resize-none"
+                  rows={2}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => { setStockModalOpen(false); setIsStockModalFullscreen(false); }}
+                  className="flex-1 px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-sm font-medium transition"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="submit"
+                  className={`flex-1 px-5 py-2 text-white rounded-xl text-sm font-medium transition shadow-lg ${stockAdjustType === 'IN' ? 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20' : 'bg-rose-500 hover:bg-rose-600 shadow-rose-500/20'}`}
+                >
+                  ثبت
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+
+      {/* Batch Upload Modal */}
+      {batchModalOpen && (
+        <div className={`fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 overflow-y-auto ${isBatchModalFullscreen ? 'p-0' : 'p-4'}`}>
+          <div className={`bg-white shadow-xl border border-slate-100 overflow-hidden animate-scale-in flex flex-col transition-all duration-300 ${
+            isBatchModalFullscreen 
+              ? 'w-screen h-screen rounded-none my-0 max-w-full max-h-screen' 
+              : 'rounded-2xl w-full max-w-md my-4'
+          }`}>
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
+              <h3 className="font-bold text-slate-800">
+                ورود و خروج گروهی با اکسل
+              </h3>
+              <div className="flex items-center gap-1.5">
+                <button 
+                  type="button"
+                  onClick={() => setIsBatchModalFullscreen(!isBatchModalFullscreen)}
+                  className="p-1.5 hover:bg-slate-200 text-slate-500 rounded-lg transition flex items-center justify-center"
+                  title={isBatchModalFullscreen ? "خروج از تمام‌صفحه" : "تمام‌صفحه"}
+                >
+                  {isBatchModalFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => { setBatchModalOpen(false); setIsBatchModalFullscreen(false); }}
+                  className="p-1 hover:bg-slate-200 text-slate-500 rounded-lg transition"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6 space-y-6 overflow-y-auto flex-1">
+              <div className="bg-blue-50 text-blue-800 p-4 rounded-xl text-sm leading-relaxed border border-blue-100">
+                برای ویرایش موجودی یا <strong>تعریف گروهی تجهیزات جدید</strong>، ابتدا فایل نمونه را دانلود کنید. <br/>
+                - <strong>نوع تامین</strong>: برای کالاهای موجود در انبار مقدار <code>INVENTORY</code> و برای کالاهای سفارشی مقدار <code>ORDER</code> را وارد کنید.<br/>
+                - <strong>کد کالا</strong>: اگر خالی باشد، سیستم به صورت خودکار یک کد جدید برای کالا ایجاد می‌کند.<br/>
+                - <strong>تاریخ</strong>: تاریخ را می‌توانید به صورت شمسی (مثل 1403/05/12) وارد کنید. اگر خالی باشد، تاریخ امروز ثبت می‌شود.<br/>
+                - <strong>کد ویژگی‌ها</strong>: می‌توانید کد ویژگی را با پرانتز یا کروشه در ستون ویژگی‌های قابل تنظیم وارد کنید تا به ابتدای شماره سریال‌های SKUهای متغیرها اضافه شود؛ مثلاً: <code>سایز(sz): ۱ اینچ، ۲ اینچ</code>.
+              </div>
+              
+              <div className="flex justify-center">
+                <button
+                  onClick={handleDownloadTemplate}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg border border-slate-300 transition text-sm flex items-center gap-2"
+                >
+                  دانلود قالب اکسل
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700">آپلود فایل تکمیل شده</label>
+                <input
+                  type="file"
+                  accept=".xlsx, .xls"
+                  onChange={(e) => setBatchFile(e.target.files?.[0] || null)}
+                  className="block w-full text-sm text-slate-500
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-lg file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-indigo-50 file:text-indigo-700
+                    hover:file:bg-indigo-100 transition"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => { setBatchModalOpen(false); setIsBatchModalFullscreen(false); }}
+                  className="flex-1 px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-sm font-medium transition"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="button"
+                  onClick={handleProcessBatch}
+                  disabled={!batchFile}
+                  className="flex-1 px-5 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl text-sm font-medium transition shadow-lg shadow-emerald-500/20"
+                >
+                  پردازش و اعمال تغییرات
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* Selling Price Calculator Modal */}
+      {showCalculator && calcVariantIndex !== null && (() => {
+        // Calculations
+        const baseOrig = Number(calcPriceForeign) || 0;
+        const remitPct = Number(calcRemittancePct) || 0;
+        const remitFee = Number(calcRemittanceFee) || 0;
+        const shipCost = Number(calcShippingCost) || 0;
+        const otherCostForeign = Number(calcOtherCostsForeign) || 0;
+        const rate = Number(calcExchangeRate) || 0;
+        const customsDuty = Number(calcCustomsDutyRIYAL) || 0;
+        const otherCostRial = Number(calcOtherCostsRIYAL) || 0;
+        const profitPct = Number(calcProfitPct) || 0;
+        const profitRial = Number(calcProfitRIYAL) || 0;
+
+        // 1. Remittance fee in foreign currency
+        const calculatedRemittanceForeign = remitFee + (baseOrig * remitPct / 100);
+
+        // 2. Total foreign amount at origin + foreign costs (FOB/Landed foreign)
+        const totalForeignCost = baseOrig + calculatedRemittanceForeign + shipCost + otherCostForeign;
+
+        // 3. Convert foreign cost to Rial
+        const rawRialCost = totalForeignCost * rate;
+
+        // 4. Add Rial costs (customs & others)
+        const finalLandedRialCost = rawRialCost + customsDuty + otherCostRial;
+
+        // 5. Equivalent landed foreign currency cost
+        const finalLandedForeignCost = totalForeignCost + (rate > 0 ? (customsDuty + otherCostRial) / rate : 0);
+
+        // 6. Calculate selling price based on margin
+        let finalSellingPriceRial = 0;
+        let finalProfitAmountRial = 0;
+
+        if (calcMarginType === 'PERCENT') {
+          finalSellingPriceRial = finalLandedRialCost * (1 + profitPct / 100);
+          finalProfitAmountRial = finalSellingPriceRial - finalLandedRialCost;
+        } else {
+          finalSellingPriceRial = finalLandedRialCost + profitRial;
+          finalProfitAmountRial = profitRial;
+        }
+
+        // 7. Selling price in Foreign Currency (equivalent)
+        const finalSellingPriceForeign = rate > 0 ? (finalSellingPriceRial / rate) : 0;
+
+        return (
+          <div className={`fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-55 overflow-y-auto ${isCalculatorFullscreen ? 'p-0' : 'p-4'}`}>
+            <div className={`bg-white shadow-2xl border border-slate-150 overflow-hidden animate-scale-in flex flex-col transition-all duration-300 ${
+              isCalculatorFullscreen 
+                ? 'w-screen h-screen rounded-none my-0 max-w-full max-h-screen' 
+                : 'rounded-2xl w-full max-w-2xl my-8 max-h-[calc(100vh-4rem)]'
+            }`}>
+              {/* Header */}
+              <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
+                <div className="flex items-center gap-2">
+                  <Calculator className="text-sky-500" size={20} />
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-sm">محاسبه‌گر بهای تمام‌شده و قیمت فروش</h3>
+                    <p className="text-[10px] text-slate-500">
+                      {calcVariantIndex === -1 ? "محصول ساده (فاقد ویژگی)" : `برای ردیف SKU: ${variants[calcVariantIndex]?.sku}`}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button 
+                    type="button"
+                    onClick={() => setIsCalculatorFullscreen(!isCalculatorFullscreen)}
+                    className="p-1.5 hover:bg-slate-200 text-slate-500 rounded-lg transition flex items-center justify-center"
+                    title={isCalculatorFullscreen ? "خروج از تمام‌صفحه" : "تمام‌صفحه"}
+                  >
+                    {isCalculatorFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => { setShowCalculator(false); setIsCalculatorFullscreen(false); }}
+                    className="p-1.5 hover:bg-slate-200 text-slate-500 rounded-lg transition"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-5 overflow-y-auto text-right flex-1">
+                
+                {/* Result Display Box */}
+                <div className="bg-slate-900 text-white p-5 rounded-2xl relative overflow-hidden shadow-inner">
+                  <div className="absolute top-0 left-0 w-24 h-24 bg-sky-500/10 rounded-full blur-2xl"></div>
+                  <div className="absolute bottom-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl"></div>
+                  
+                  <div className="grid grid-cols-2 gap-4 divide-x divide-x-reverse divide-slate-800 relative z-10">
+                    <div className="text-center space-y-1">
+                      <p className="text-[10px] text-slate-400 font-medium">بهای تمام‌شده ارزی (Landed Cost)</p>
+                      <h4 className="text-xl font-black text-sky-400 font-mono">
+                        {finalLandedForeignCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-xs font-sans text-slate-300">{calcCurrency}</span>
+                      </h4>
+                      <p className="text-[10px] text-slate-300 font-mono">
+                        {Math.round(finalLandedRialCost).toLocaleString('fa-IR')} ریال
+                      </p>
+                    </div>
+
+                    <div className="text-center space-y-1">
+                      <p className="text-[10px] text-emerald-400 font-bold">قیمت فروش پیشنهادی (ارزی)</p>
+                      <h4 className="text-xl font-black text-emerald-400 font-mono">
+                        {finalSellingPriceForeign.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-xs font-sans text-slate-100">{calcCurrency}</span>
+                      </h4>
+                      <p className="text-[10px] text-emerald-300 font-mono">
+                        {Math.round(finalSellingPriceRial).toLocaleString('fa-IR')} ریال
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-800 mt-4 pt-3 flex justify-between items-center text-[10px] text-slate-400 relative z-10">
+                    <span>سود ناخالص فروش: {finalProfitAmountRial > 0 ? `${Math.round(finalProfitAmountRial).toLocaleString('fa-IR')} ریال` : '۰'}</span>
+                    <span className="font-mono bg-slate-800/60 px-2 py-0.5 rounded text-sky-300">ارز مرجع: {calcCurrency} | نرخ تسعیر: {rate.toLocaleString('fa-IR')}</span>
+                  </div>
+                </div>
+
+                {/* Form Inputs Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  
+                  {/* Left Side: Foreign/Origin Costs */}
+                  <div className="space-y-3.5 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                    <h4 className="text-xs font-extrabold text-indigo-700 flex items-center gap-1.5 pb-2 border-b border-dashed border-slate-200">
+                      <TrendingUp size={14} />
+                      هزینه‌های ارزی خرید و مبدا
+                    </h4>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="col-span-2 space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500">قیمت خرید در مبدا</label>
+                        <input
+                          type="number"
+                          value={calcPriceForeign}
+                          onChange={(e) => setCalcPriceForeign(e.target.value)}
+                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-mono text-center outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 bg-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500">نوع ارز</label>
+                        <select
+                          value={calcCurrency}
+                          onChange={(e) => {
+                            const newCurr = e.target.value;
+                            setCalcCurrency(newCurr);
+                            // Find matching rate
+                            const mappedEng = newCurr === 'دلار' ? 'USD' : newCurr === 'یورو' ? 'EUR' : newCurr === 'درهم' ? 'AED' : newCurr === 'یوان' ? 'CNY' : null;
+                            const storeRate = mappedEng ? exchangeRates.find(r => r.currency === mappedEng)?.rateToRIYAL : null;
+                            if (storeRate) setCalcExchangeRate(String(storeRate));
+                          }}
+                          className="w-full border border-slate-200 rounded-lg px-1.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-sky-500/20 bg-white"
+                        >
+                          <option value="یورو">یورو</option>
+                          <option value="دلار">دلار</option>
+                          <option value="درهم">درهم</option>
+                          <option value="یوان">یوان</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500">درصد کارمزد حواله</label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            value={calcRemittancePct}
+                            onChange={(e) => setCalcRemittancePct(e.target.value)}
+                            className="w-full border border-slate-200 rounded-lg pr-2 pl-6 py-1.5 text-xs font-mono text-center outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 bg-white"
+                          />
+                          <Percent size={12} className="absolute left-2.5 top-2.5 text-slate-400" />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500">کارمزد ثابت حواله ({calcCurrency})</label>
+                        <input
+                          type="number"
+                          value={calcRemittanceFee}
+                          onChange={(e) => setCalcRemittanceFee(e.target.value)}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-center outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500">هزینه حمل ارزی ({calcCurrency})</label>
+                        <input
+                          type="number"
+                          value={calcShippingCost}
+                          onChange={(e) => setCalcShippingCost(e.target.value)}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-center outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 bg-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500">سایر هزینه‌های ارزی ({calcCurrency})</label>
+                        <input
+                          type="number"
+                          value={calcOtherCostsForeign}
+                          onChange={(e) => setCalcOtherCostsForeign(e.target.value)}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-center outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 bg-white"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Side: Domestic/Rial Costs & Margin */}
+                  <div className="space-y-3.5 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                    <h4 className="text-xs font-extrabold text-emerald-700 flex items-center gap-1.5 pb-2 border-b border-dashed border-slate-200">
+                      <Info size={14} />
+                      ترخیص ریالی و سود فروش
+                    </h4>
+
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500">نرخ تسعیر ارز (ریال)</label>
+                      <input
+                        type="number"
+                        value={calcExchangeRate}
+                        onChange={(e) => setCalcExchangeRate(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-mono text-center outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 bg-white"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500">ترخیص و گمرک (ریال)</label>
+                        <input
+                          type="number"
+                          value={calcCustomsDutyRIYAL}
+                          onChange={(e) => setCalcCustomsDutyRIYAL(e.target.value)}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-center outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 bg-white"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500">سایر مخارج ریالی (ریال)</label>
+                        <input
+                          type="number"
+                          value={calcOtherCostsRIYAL}
+                          onChange={(e) => setCalcOtherCostsRIYAL(e.target.value)}
+                          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-center outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 bg-white"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-white rounded-lg border border-slate-150 space-y-2">
+                      <div className="flex justify-between items-center text-[10px] font-bold text-slate-500">
+                        <span>نوع سود فروش</span>
+                        <div className="flex gap-2 bg-slate-100 p-0.5 rounded-lg border">
+                          <button
+                            type="button"
+                            onClick={() => setCalcMarginType('PERCENT')}
+                            className={`px-2 py-0.5 rounded-md text-[9px] font-semibold transition ${calcMarginType === 'PERCENT' ? 'bg-white shadow-xs text-sky-600' : 'text-slate-500'}`}
+                          >
+                            درصدی
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCalcMarginType('FIXED')}
+                            className={`px-2 py-0.5 rounded-md text-[9px] font-semibold transition ${calcMarginType === 'FIXED' ? 'bg-white shadow-xs text-sky-600' : 'text-slate-500'}`}
+                          >
+                            ثابت (ریال)
+                          </button>
+                        </div>
+                      </div>
+
+                      {calcMarginType === 'PERCENT' ? (
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-bold text-slate-400">درصد سود روی بهای تمام‌شده</label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              value={calcProfitPct}
+                              onChange={(e) => setCalcProfitPct(e.target.value)}
+                              className="w-full border border-slate-200 rounded-lg pr-2.5 pl-6 py-1 text-xs font-mono text-center outline-none focus:ring-1 focus:ring-sky-500"
+                            />
+                            <Percent size={11} className="absolute left-2 top-2 text-slate-400" />
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-bold text-slate-400">مبلغ سود ثابت (ریال)</label>
+                          <input
+                            type="number"
+                            value={calcProfitRIYAL}
+                            onChange={(e) => setCalcProfitRIYAL(e.target.value)}
+                            className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs font-mono text-center outline-none focus:ring-1 focus:ring-sky-500"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+
+                </div>
+
+                {/* Math Step-by-Step Breakdown */}
+                <div className="bg-slate-50 p-4 rounded-xl space-y-2.5 font-mono text-[10px] leading-relaxed border border-slate-150">
+                  <p className="font-bold text-slate-700 pb-1.5 border-b border-dashed border-slate-200 font-sans text-xs flex items-center gap-1.5">
+                    <Info size={13} className="text-slate-500" />
+                    فرمول تسهیم و بهای تمام‌شده نهایی
+                  </p>
+                  
+                  <div className="flex justify-between text-slate-600">
+                    <span>۱. بهای خرید ارزی کالا:</span>
+                    <span>{baseOrig.toLocaleString()} {calcCurrency}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-500">
+                    <span>۲. کارمزد صرافی حواله ارز:</span>
+                    <span>+{calculatedRemittanceForeign.toLocaleString()} {calcCurrency}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-500">
+                    <span>۳. هزینه‌های جانبی ارزی (ترابری و غیره):</span>
+                    <span>+{(shipCost + otherCostForeign).toLocaleString()} {calcCurrency}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-700 border-t border-dashed pt-1.5">
+                    <span>مجموع بهای ارزی FOB/Landed:</span>
+                    <span className="font-bold text-indigo-700">{totalForeignCost.toLocaleString()} {calcCurrency}</span>
+                  </div>
+                  <div className="flex justify-between text-slate-500 pt-1">
+                    <span>معادل ریالی بهای ارزی کالا (تسعیر):</span>
+                    <span>{rawRialCost.toLocaleString()} ریال</span>
+                  </div>
+                  <div className="flex justify-between text-slate-500">
+                    <span>مخارج ریالی داخل کشور (ترخیص و عوارض + سایر):</span>
+                    <span>+{(customsDuty + otherCostRial).toLocaleString()} ریال</span>
+                  </div>
+                  <div className="flex justify-between text-slate-800 border-t border-dashed pt-1.5 text-xs font-bold">
+                    <span className="font-sans">بهای تمام‌شده کل کالا (ریال):</span>
+                    <span className="text-sky-700">{Math.round(finalLandedRialCost).toLocaleString()} ریال</span>
+                  </div>
+                  <div className="flex justify-between text-emerald-700 pt-1 text-xs font-bold">
+                    <span className="font-sans">سود فروش محاسبه شده ({calcMarginType === 'PERCENT' ? `${profitPct}%` : 'ثابت'}):</span>
+                    <span>+{Math.round(finalProfitAmountRial).toLocaleString()} ریال</span>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Actions Footer */}
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setShowCalculator(false); setIsCalculatorFullscreen(false); }}
+                  className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-xl text-xs font-medium transition"
+                >
+                  انصراف
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleApplyCalculatedPrice(Number(finalSellingPriceForeign.toFixed(2)), finalSellingPriceRial, {
+                    calcPriceForeign: baseOrig,
+                    calcExchangeRate: rate,
+                    calcRemittanceFee: remitFee,
+                    calcRemittancePct: remitPct,
+                    calcShippingCost: shipCost,
+                    calcCustomsDutyRIYAL: customsDuty,
+                    calcOtherCostsForeign: otherCostForeign,
+                    calcOtherCostsRIYAL: otherCostRial,
+                    calcProfitPct: profitPct,
+                    calcProfitRIYAL: profitRial,
+                    calcMarginType: calcMarginType
+                  })}
+                  className="px-5 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-sky-500/15 flex items-center gap-1.5"
+                >
+                  <Calculator size={14} />
+                  اعمال در ردیف کالا و ذخیره
+                </button>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Confirm Delete Modal */}
+      <ConfirmModal
+        isOpen={deleteConfirmOpen}
+        onClose={() => {
+          setDeleteConfirmOpen(false);
+          setProductToDeleteId(null);
+          setProductToDeleteName('');
+        }}
+        onConfirm={() => {
+          if (productToDeleteId) {
+            deleteProduct(productToDeleteId);
+          }
+        }}
+        title="حذف کالا/تجهیز"
+        message={`آیا از حذف کالا "${productToDeleteName}" اطمینان دارید؟ این عمل غیرقابل بازگشت است.`}
+      />
+
+      {/* Product Image Lightbox Modal */}
+      {lightboxUrl && (
+        <div 
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[150] flex flex-col items-center justify-center p-4" 
+          dir="rtl"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <div 
+            className="bg-white max-w-4xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="bg-slate-900 text-white p-4 flex justify-between items-center text-right">
+              <div className="flex items-center gap-2">
+                <ImageIcon size={18} className="text-sky-400" />
+                <h3 className="font-bold text-xs sm:text-sm">مشاهده تصویر کالا</h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => downloadFileFromServer(lightboxUrl, 'product-image.png')}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                >
+                  <Download size={13} />
+                  <span>دانلود مستقیم تصویر</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLightboxUrl(null)}
+                  className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
+                  title="بستن"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 overflow-auto bg-slate-50 flex items-center justify-center">
+              <img
+                src={lightboxUrl}
+                alt="Product High Resolution"
+                className="max-w-full max-h-[70vh] rounded-lg border border-slate-200 shadow-sm object-contain"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}

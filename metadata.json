@@ -1,0 +1,6 @@
+{
+  "name": "ERP ابزار تامین ارشیا",
+  "description": "سیستم جامع ERP شرکت ابزار تامین ارشیا - مدیریت پیشرفته موجودی انبار، پیش‌فاکتور خودکار و ردیابی سفارشات خرید تجهیزات ابزاردقیق",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

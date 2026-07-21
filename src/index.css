@@ -1,0 +1,260 @@
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Vazirmatn", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-brand-50: #f0f7ff;
+  --color-brand-100: #e0effe;
+  --color-brand-200: #bae0fd;
+  --color-brand-300: #7cc7fc;
+  --color-brand-400: #38a9f9;
+  --color-brand-500: #0ea5e9; /* Sky blue branding like screenshots */
+  --color-brand-600: #0284c7;
+  --color-brand-700: #0369a1;
+  --color-brand-800: #07557e;
+  --color-brand-900: #0c4869;
+}
+
+body {
+  font-family: var(--font-sans);
+  direction: rtl;
+  text-align: right;
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+/* Custom scrollbar for modern looks */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+@media print {
+  body {
+    background-color: white;
+  }
+  body > * {
+    visibility: hidden;
+  }
+  .printable-manual, .printable-manual * {
+    visibility: visible;
+  }
+  .printable-manual {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    box-shadow: none !important;
+    border: none !important;
+    background: white !important;
+  }
+  .hide-on-print {
+    display: none !important;
+  }
+  .page-break-after {
+    page-break-after: always;
+  }
+  .page-break-before {
+    page-break-before: always;
+  }
+  .page-break-inside-avoid {
+    page-break-inside: avoid;
+  }
+  /* Ensure colors print correctly */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+
+/* Dark Theme Configuration */
+:root {
+  --bg-app: #f8fafc;
+  --bg-card: #ffffff;
+  --bg-input: #ffffff;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --border-primary: #e2e8f0;
+  --border-light: #f1f5f9;
+  --bg-hover: #f1f5f9;
+}
+
+.dark {
+  --bg-app: #0b111e;       /* Sleek warm dark background */
+  --bg-card: #151f32;      /* Elegant deep dark card */
+  --bg-input: #1b263b;     /* Input fields background */
+  --text-primary: #f8fafc;  /* Bright slate-50 text */
+  --text-secondary: #cbd5e1;/* Slate-300 secondary text */
+  --text-muted: #94a3b8;    /* Slate-400 muted text */
+  --border-primary: #232f45;/* Slate-700/800 dark border */
+  --border-light: #1c2638;  /* Subtly darker border */
+  --bg-hover: #1e293b;      /* Slate-700 hover background */
+}
+
+/* Base Body Dark Styling */
+.dark body {
+  background-color: var(--bg-app) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Dark mode styling overrides for main, modals, dialogs, and cards */
+.dark main,
+.dark [role="dialog"],
+.dark .modal-content,
+.dark .task-calendar-modal {
+  color: var(--text-primary);
+}
+
+.dark main .bg-white,
+.dark [role="dialog"] .bg-white,
+.dark .task-calendar-modal .bg-white {
+  background-color: var(--bg-card) !important;
+}
+
+.dark main .bg-slate-50,
+.dark [role="dialog"] .bg-slate-50 {
+  background-color: var(--bg-app) !important;
+}
+
+.dark main .bg-slate-100,
+.dark [role="dialog"] .bg-slate-100 {
+  background-color: var(--bg-input) !important;
+}
+
+.dark main .bg-gray-50,
+.dark [role="dialog"] .bg-gray-50 {
+  background-color: var(--bg-app) !important;
+}
+
+.dark main .bg-gray-100,
+.dark [role="dialog"] .bg-gray-100 {
+  background-color: var(--bg-input) !important;
+}
+
+/* Inputs, Selects, and Textareas in Dark mode */
+.dark main input:not([type="checkbox"]):not([type="radio"]),
+.dark main select,
+.dark main textarea,
+.dark [role="dialog"] input:not([type="checkbox"]):not([type="radio"]),
+.dark [role="dialog"] select,
+.dark [role="dialog"] textarea {
+  background-color: var(--bg-input) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border-primary) !important;
+}
+
+.dark main input::placeholder,
+.dark main textarea::placeholder,
+.dark [role="dialog"] input::placeholder,
+.dark [role="dialog"] textarea::placeholder {
+  color: var(--text-muted) !important;
+  opacity: 0.7;
+}
+
+/* Main Text Overrides */
+.dark main .text-slate-900,
+.dark main .text-slate-800,
+.dark main .text-gray-900,
+.dark main .text-gray-800,
+.dark [role="dialog"] .text-slate-900,
+.dark [role="dialog"] .text-slate-800,
+.dark [role="dialog"] .text-gray-900,
+.dark [role="dialog"] .text-gray-800 {
+  color: var(--text-primary) !important;
+}
+
+.dark main .text-slate-700,
+.dark main .text-slate-600,
+.dark main .text-gray-700,
+.dark main .text-gray-600,
+.dark [role="dialog"] .text-slate-700,
+.dark [role="dialog"] .text-slate-600,
+.dark [role="dialog"] .text-gray-700,
+.dark [role="dialog"] .text-gray-600 {
+  color: var(--text-secondary) !important;
+}
+
+.dark main .text-slate-500,
+.dark main .text-slate-400,
+.dark main .text-gray-500,
+.dark main .text-gray-400,
+.dark [role="dialog"] .text-slate-500,
+.dark [role="dialog"] .text-slate-400,
+.dark [role="dialog"] .text-gray-500,
+.dark [role="dialog"] .text-gray-400 {
+  color: var(--text-muted) !important;
+}
+
+/* Main Border Overrides */
+.dark main .border-slate-200,
+.dark main .border-slate-100,
+.dark main .border-slate-150,
+.dark main .border-gray-200,
+.dark main .border-gray-100,
+.dark [role="dialog"] .border-slate-200,
+.dark [role="dialog"] .border-slate-100,
+.dark [role="dialog"] .border-gray-200,
+.dark [role="dialog"] .border-gray-100 {
+  border-color: var(--border-primary) !important;
+}
+
+.dark main .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+.dark main .divide-slate-200 > :not([hidden]) ~ :not([hidden]),
+.dark [role="dialog"] .divide-slate-100 > :not([hidden]) ~ :not([hidden]),
+.dark [role="dialog"] .divide-slate-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--border-primary) !important;
+}
+
+/* Tables and Headers */
+.dark main table th,
+.dark [role="dialog"] table th {
+  background-color: var(--bg-input) !important;
+  color: var(--text-secondary) !important;
+  border-color: var(--border-primary) !important;
+}
+
+.dark main table tr:hover,
+.dark [role="dialog"] table tr:hover {
+  background-color: var(--bg-hover) !important;
+}
+
+/* Hover Background States */
+.dark main .hover\:bg-slate-50:hover,
+.dark main .hover\:bg-gray-50:hover,
+.dark [role="dialog"] .hover\:bg-slate-50:hover,
+.dark [role="dialog"] .hover\:bg-gray-50:hover {
+  background-color: var(--bg-hover) !important;
+}
+
+.dark main .hover\:bg-slate-100:hover,
+.dark main .hover\:bg-gray-100:hover,
+.dark [role="dialog"] .hover\:bg-slate-100:hover,
+.dark [role="dialog"] .hover\:bg-gray-100:hover {
+  background-color: var(--bg-hover) !important;
+}
+
+/* Box Shadows for elevated contrast */
+.dark main .shadow-sm,
+.dark main .shadow-md,
+.dark main .shadow-lg,
+.dark [role="dialog"] .shadow-sm,
+.dark [role="dialog"] .shadow-md,
+.dark [role="dialog"] .shadow-lg {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3) !important;
+}
+
