@@ -17,6 +17,9 @@ import {
 } from "./src/seedData";
 // We need SEED_USERS and SEED_PROJECT_CATEGORY_GROUPS from useERPStore
 import { SEED_USERS, SEED_PROJECT_CATEGORY_GROUPS } from "./src/useERPStore";
+// Power BI reporting sync (one-way export into SQL Server)
+import { syncToSqlServer, testConnection, readConfigFromEnv } from "./src/reporting/sqlSync";
+import { buildReportingTables, StoreCollections } from "./src/reporting/flatten";
 
 // Overridable so a second instance can be started against a scratch database
 // (useful for testing, and for pointing a deployment at a specific data file).
@@ -370,6 +373,77 @@ async function startServer() {
     } catch (err: any) {
       console.error(`Error in POST /api/data/${key}:`, err);
       res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+  });
+
+  /* ------------------ Power BI reporting sync ------------------ */
+
+  /** Reads and parses every collection out of the store for reporting. */
+  const readStoreCollections = (): StoreCollections => {
+    const out: Record<string, any[]> = {};
+    for (const key of ALLOWED_KEYS) {
+      if (key === "erp_settings") continue; // not tabular
+      const row = getStmt.get(key) as { value: string } | undefined;
+      if (!row) continue;
+      try {
+        const parsed = JSON.parse(row.value);
+        if (Array.isArray(parsed)) out[key] = parsed;
+      } catch {
+        /* skip unparsable */
+      }
+    }
+    return out as StoreCollections;
+  };
+
+  /** Verifies the SQL Server connection without writing anything. */
+  app.get("/api/report/sql-test", async (req, res) => {
+    const cfg = readConfigFromEnv();
+    if (!cfg) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "اتصال SQL Server تنظیم نشده است. متغیرهای ERP_SQL_SERVER و ERP_SQL_DATABASE را در فایل .env مقدار دهید.",
+      });
+    }
+    res.json(await testConnection(cfg));
+  });
+
+  /** Runs the one-way sync into the SQL Server reporting schema. */
+  app.post("/api/report/sql-sync", async (req, res) => {
+    const cfg = readConfigFromEnv();
+    if (!cfg) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "اتصال SQL Server تنظیم نشده است. متغیرهای ERP_SQL_SERVER و ERP_SQL_DATABASE را در فایل .env مقدار دهید.",
+      });
+    }
+    try {
+      const result = await syncToSqlServer(readStoreCollections(), cfg);
+      res.status(result.ok ? 200 : 500).json(result);
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || String(err) });
+    }
+  });
+
+  /**
+   * Preview of what the sync produces — table names and row counts.
+   * Handy for checking the model without a database round-trip.
+   */
+  app.get("/api/report/preview", (req, res) => {
+    try {
+      const datasets = buildReportingTables(readStoreCollections());
+      res.json({
+        ok: true,
+        tables: datasets.map((d) => ({
+          table: d.table,
+          rows: d.rows.length,
+          columns: d.rows.length > 0 ? Object.keys(d.rows[0]) : [],
+        })),
+        totalRows: datasets.reduce((a, d) => a + d.rows.length, 0),
+      });
+    } catch (err: any) {
+      res.status(500).json({ ok: false, error: err?.message || String(err) });
     }
   });
 
