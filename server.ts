@@ -18,24 +18,77 @@ import {
 // We need SEED_USERS and SEED_PROJECT_CATEGORY_GROUPS from useERPStore
 import { SEED_USERS, SEED_PROJECT_CATEGORY_GROUPS } from "./src/useERPStore";
 
-const store = new Map<string, string>();
+// Overridable so a second instance can be started against a scratch database
+// (useful for testing, and for pointing a deployment at a specific data file).
+const DB_PATH = process.env.ERP_DB_PATH
+  ? path.resolve(process.env.ERP_DB_PATH)
+  : path.join(process.cwd(), "database.json");
 
-const db = {
-  transaction: (fn: any) => fn
-};
+function loadStore(): Record<string, string> {
+  try {
+    if (fs.existsSync(DB_PATH)) {
+      const raw = fs.readFileSync(DB_PATH, "utf-8");
+      return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.error("Failed to load database.json, starting fresh:", err);
+  }
+  return {};
+}
+
+/**
+ * Atomic write: serialize to a temp file, then rename over the real one.
+ * A crash mid-write can no longer leave a truncated/corrupt database.json.
+ */
+function saveStore(data: Record<string, string>) {
+  const tmpPath = `${DB_PATH}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(data), "utf-8");
+  fs.renameSync(tmpPath, DB_PATH);
+}
+
+/**
+ * True when a value is already a bcrypt hash.
+ * bcryptjs emits the `$2a$` prefix (not `$2b$`), so checking only for `$2b$`
+ * treated stored hashes as plaintext and re-hashed them on every save — which
+ * silently broke the affected user's login.
+ */
+const BCRYPT_HASH_RE = /^\$2[aby]\$\d{2}\$/;
+function isBcryptHash(value: unknown): boolean {
+  return typeof value === "string" && BCRYPT_HASH_RE.test(value);
+}
+
+const store: Record<string, string> = loadStore();
+
+/**
+ * Monotonic version per key, bumped on every write. Clients poll these to learn
+ * which collections changed (so they can refetch just those), and send the version
+ * they based their edit on so stale writes can be detected.
+ */
+const versions: Record<string, number> = {};
+function bumpVersion(key: string): number {
+  versions[key] = (versions[key] || 0) + 1;
+  return versions[key];
+}
+function getVersion(key: string): number {
+  return versions[key] || 0;
+}
 
 const insertStmt = {
-  run: (key: string, value: string) => store.set(key, value)
+  run: (key: string, value: string) => {
+    store[key] = value;
+    bumpVersion(key);
+    saveStore(store);
+  }
 };
 const getStmt = {
   get: (key: string) => {
-    const val = store.get(key);
+    const val = store[key];
     return val !== undefined ? { value: val } : undefined;
   }
 };
 
 // Seed data if empty
-if (store.size === 0) {
+if (Object.keys(store).length === 0) {
   console.log("Database is empty, seeding data...");
   
   const seedUsers = SEED_USERS.map(u => ({
@@ -61,19 +114,16 @@ if (store.size === 0) {
     'erp_after_sales_services': []
   };
 
-  const insertMany = db.transaction((data) => {
-    for (const [key, value] of Object.entries(data)) {
-      insertStmt.run(key, JSON.stringify(value));
-    }
-  });
-
-  insertMany(initialData);
+  for (const [key, value] of Object.entries(initialData)) {
+    store[key] = JSON.stringify(value);
+  }
+  saveStore(store);
   console.log("Database seeded successfully.");
 }
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   const UPLOADS_DIR = path.join(process.cwd(), "uploads");
   if (!fs.existsSync(UPLOADS_DIR)) {
@@ -254,10 +304,14 @@ async function startServer() {
   app.get("/api/init-data", (req, res) => {
     try {
       const responseData: Record<string, any> = {};
+      const versionData: Record<string, number> = {};
       for (const key of ALLOWED_KEYS) {
         const row = getStmt.get(key) as {value: string} | undefined;
         responseData[key] = row ? JSON.parse(row.value) : null;
+        versionData[key] = getVersion(key);
       }
+      // `__versions` is the baseline for change polling; it is not a stored key.
+      responseData.__versions = versionData;
       res.json(responseData);
     } catch (err: any) {
       console.error("Error in GET /api/init-data:", err);
@@ -301,8 +355,8 @@ async function startServer() {
         
         data = data.map((user: any) => {
           const existingUser = existingUsers.find((u: any) => u.id === user.id);
-          // If password is new or changed (and not already a hash starting with $2b$), hash it
-          if (user.password && !user.password.startsWith('$2b$')) {
+          // Hash only genuinely new/changed passwords; never re-hash a stored hash.
+          if (user.password && !isBcryptHash(user.password)) {
             user.password = bcrypt.hashSync(user.password, 10);
           } else if (!user.password && existingUser) {
             user.password = existingUser.password;
@@ -312,9 +366,130 @@ async function startServer() {
       }
 
       insertStmt.run(key, JSON.stringify(data));
-      res.json({ success: true });
+      res.json({ success: true, version: getVersion(key) });
     } catch (err: any) {
       console.error(`Error in POST /api/data/${key}:`, err);
+      res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+  });
+
+  /** Current version of every collection — clients poll this to detect changes. */
+  app.get("/api/versions", (req, res) => {
+    const out: Record<string, number> = {};
+    for (const key of ALLOWED_KEYS) out[key] = getVersion(key);
+    res.json({ versions: out });
+  });
+
+  /**
+   * Record-level merge. The client sends only what it changed, so two users editing
+   * different records no longer overwrite each other (the whole-array POST above
+   * loses the other user's concurrent edits).
+   *
+   * Body: { ops: [{ op: 'upsert'|'delete', id, record? }], baseVersion?: number }
+   *
+   * IMPORTANT: this handler is intentionally fully synchronous. Node will not
+   * interleave another request inside it, which makes the read-modify-write atomic.
+   * Do not introduce `await` here without adding an explicit write lock.
+   */
+  app.post("/api/data/:key/merge", (req, res) => {
+    const key = req.params.key;
+    if (!ALLOWED_KEYS.has(key)) {
+      return res.status(403).json({ error: "Access denied: Unauthorized key" });
+    }
+
+    try {
+      const { ops, baseVersion } = req.body || {};
+      if (!Array.isArray(ops)) {
+        return res.status(400).json({ success: false, error: "ops must be an array" });
+      }
+
+      const row = getStmt.get(key) as { value: string } | undefined;
+      const current = row ? JSON.parse(row.value) : [];
+      if (!Array.isArray(current)) {
+        // Object-shaped keys (e.g. erp_settings) cannot be merged by record id.
+        return res.status(409).json({
+          success: false,
+          error: "Merge is only supported for array collections",
+        });
+      }
+
+      // Index by id for O(1) upserts while preserving order.
+      const list: any[] = [...current];
+      const indexById = new Map<string, number>();
+      list.forEach((item, i) => {
+        if (item && item.id !== undefined) indexById.set(String(item.id), i);
+      });
+
+      let applied = 0;
+      const conflicts: string[] = [];
+      const removedIds: string[] = [];
+
+      for (const op of ops) {
+        if (!op || op.id === undefined) continue;
+        const id = String(op.id);
+
+        if (op.op === "delete") {
+          const idx = indexById.get(id);
+          if (idx !== undefined) {
+            list[idx] = undefined;
+            indexById.delete(id);
+            removedIds.push(id);
+            applied++;
+          }
+          continue;
+        }
+
+        if (op.op === "upsert" && op.record) {
+          let record = op.record;
+
+          // Never persist a plaintext password.
+          if (key === "erp_users") {
+            const idx = indexById.get(id);
+            const existing = idx !== undefined ? list[idx] : undefined;
+            if (record.password && !isBcryptHash(record.password)) {
+              record = { ...record, password: bcrypt.hashSync(record.password, 10) };
+            } else if (!record.password && existing) {
+              record = { ...record, password: existing.password };
+            }
+          }
+
+          const idx = indexById.get(id);
+          if (idx !== undefined) {
+            // Concurrent-edit detection: if the server's copy no longer matches
+            // what the client based its edit on, someone else changed it first.
+            if (op.baseRecord !== undefined) {
+              const serverCopy = JSON.stringify(list[idx]);
+              const clientBase = JSON.stringify(op.baseRecord);
+              if (serverCopy !== clientBase) conflicts.push(id);
+            }
+            list[idx] = record;
+          } else {
+            // Match the app's newest-first convention for new records.
+            list.unshift(record);
+            // Rebuild indices after the shift.
+            indexById.clear();
+            list.forEach((item, i) => {
+              if (item && item.id !== undefined) indexById.set(String(item.id), i);
+            });
+          }
+          applied++;
+        }
+      }
+
+      const merged = list.filter((x) => x !== undefined);
+      insertStmt.run(key, JSON.stringify(merged));
+
+      res.json({
+        success: true,
+        applied,
+        removedIds,
+        conflicts,
+        version: getVersion(key),
+        // Tells the client whether it was working from stale data, so it can refresh.
+        staleBase: baseVersion !== undefined && baseVersion !== getVersion(key) - 1,
+      });
+    } catch (err: any) {
+      console.error(`Error in POST /api/data/${key}/merge:`, err);
       res.status(500).json({ success: false, error: err.message || String(err) });
     }
   });

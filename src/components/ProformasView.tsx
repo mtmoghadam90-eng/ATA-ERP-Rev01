@@ -26,6 +26,7 @@ import {
   ChevronDown,
   Maximize2,
   Minimize2,
+  Calculator,
 } from "lucide-react";
 import {
   Proforma,
@@ -48,6 +49,12 @@ import { toPersianDigits } from "../numUtils";
 import ModuleNotesSection from "./ModuleNotesSection";
 import CustomerAgreementAlert from "./CustomerAgreementAlert";
 import { isFieldRequired, renderFieldLabelWithAsterisk } from "../utils/requiredFields";
+import { buildCustomerOptions, buildCustomerOptionsFromSubset } from "../utils/customerLabel";
+import { getContactInfoError } from "../utils/customerValidation";
+import { findCustomerDuplicates, DuplicateMatch } from "../utils/customerDuplicates";
+import DuplicateCustomerModal from "./DuplicateCustomerModal";
+import PriceCalculatorModal from "./PriceCalculatorModal";
+import { generateSku, getCombinedFeaturePrice, findVariantByAttributes } from "../utils/skuUtils";
 
 // Helper functions for dynamic delivery time notes generation
 const generateDeliveryNotes = (
@@ -211,6 +218,7 @@ interface ProformasViewProps {
   addProduct?: (
     product: Omit<Product, "id" | "stockLevel"> & { stockLevel?: number },
   ) => Product;
+  updateProduct?: (product: Product) => void;
   users?: User[];
   currentUser?: User | null;
   transactions?: any;
@@ -234,6 +242,7 @@ export default function ProformasView({
   updateCustomer,
   addProject,
   addProduct,
+  updateProduct,
   users = [],
   currentUser = null,
 }: ProformasViewProps) {
@@ -247,6 +256,8 @@ export default function ProformasView({
   >(null);
   const [isQuickAddingContact, setIsQuickAddingContact] = useState(false);
   const [isQuickAddingSentRecipient, setIsQuickAddingSentRecipient] = useState(false);
+  // Row-level price calculator state
+  const [calcModalItemIdx, setCalcModalItemIdx] = useState<number | null>(null);
   // Modals state
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [isCreateModalFullscreen, setIsCreateModalFullscreen] = useState(false);
@@ -413,6 +424,21 @@ export default function ProformasView({
   const [isEqualDelivery, setIsEqualDelivery] = useState(true);
   // Quick Customer Creation States
   const [showQuickCustomerModal, setShowQuickCustomerModal] = useState(false);
+
+  // Duplicate-customer warning state for the inline quick-customer form
+  const [dupMatches, setDupMatches] = useState<DuplicateMatch[]>([]);
+  const [dupPayload, setDupPayload] = useState<any>(null);
+
+  const commitQuickCustomer = (custData: any) => {
+    if (!addCustomer) return;
+    const created = addCustomer(custData);
+    setDupMatches([]);
+    setDupPayload(null);
+    if (created && created.id) {
+      setCustomerId(created.id);
+      setShowQuickCustomerModal(false);
+    }
+  };
   const [quickCustType, setQuickCustType] = useState<"حقوقی" | "حقیقی">(
     "حقوقی",
   );
@@ -2542,78 +2568,71 @@ export default function ProformasView({
                               const isAdminUser = currentUser?.role === "admin" || currentUser?.isSystemAdmin;
                               const isLocked = pf.status === "ارسال شده" && !isAdminUser;
                               return (
-                                <div className="flex items-center justify-center gap-2 flex-wrap">
-                                  {/* Print View Trigger */}
-                                  <button
-                                    onClick={() => handleOpenPrint(pf)}
-                                    className="p-1.5 bg-slate-50 hover:bg-sky-50 text-sky-600 rounded-lg border border-slate-200 hover:border-sky-200 transition"
-                                    title="مشاهده پیش‌فاکتور رسمی و چاپ"
-                                  >
-                                    <Eye size={14} />
-                                  </button>
-                                  {/* Edit Proforma */}
-                                  <button
-                                    onClick={() => {
-                                      if (isLocked) return;
-                                      handleOpenEdit(pf);
-                                    }}
-                                    disabled={isLocked}
-                                    className={`p-1.5 rounded-lg border transition ${
-                                      isLocked
-                                        ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
-                                        : "bg-slate-50 hover:bg-amber-50 text-amber-600 border-slate-200 hover:border-amber-200"
-                                    }`}
-                                    title={isLocked ? "ویرایش قفل شده است (پیش‌فاکتور ارسال شده است)" : "ویرایش پیش‌فاکتور"}
-                                  >
-                                    <Edit size={14} />
-                                  </button>
-                                  {/* Copy Proforma */}
-                                  <button
-                                    onClick={() => handleCopyProforma(pf)}
-                                    className="p-1.5 bg-slate-50 hover:bg-emerald-50 text-emerald-600 rounded-lg border border-slate-200 hover:border-emerald-200 transition"
-                                    title="کپی پیش‌فاکتور"
-                                  >
-                                    <Copy size={14} />
-                                  </button>
-                                  {/* Prominent status update button - Exactly fixing user complaint */}
-                                  <button
-                                    onClick={() =>
-                                      handleOpenStatusChange(pf.id, pf.status)
-                                    }
-                                    className="px-2.5 py-1.5 bg-sky-500 hover:bg-sky-600 text-white rounded-lg text-[10px] font-extrabold transition shadow-xs flex items-center gap-1"
-                                    title="تغییر وضعیت کلی پیش‌فاکتور و علت باخت"
-                                  >
-                                    <Settings size={10} />
-                                    تغییر وضعیت
-                                  </button>
-                                  {/* Manage Items Status */}
-                                  <button
-                                    onClick={() => handleOpenItemsModal(pf)}
-                                    className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-lg text-[10px] font-extrabold transition"
-                                    title="تغییر وضعیت تک‌تک ردیف‌های پیش‌فاکتور"
-                                  >
-                                    ردیف‌ها
-                                  </button>
-                                  {/* Delete */}
-                                  <button
-                                    onClick={() => {
-                                      if (isLocked) return;
-                                      setProformaToDeleteId(pf.id);
-                                      setProformaToDeleteNumber(
-                                        pf.proformaNumber || "",
-                                      );
-                                      setDeleteConfirmOpen(true);
-                                    }}
-                                    disabled={isLocked}
-                                    className={`p-1.5 rounded-lg border transition ${
-                                      isLocked
-                                        ? "bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed"
-                                        : "text-slate-400 hover:text-red-600 hover:bg-red-50 border-slate-150 hover:border-red-150"
-                                    }`}
-                                    title={isLocked ? "حذف قفل شده است (پیش‌فاکتور ارسال شده است)" : "حذف پیش‌فاکتور"}
-                                  >
-                                    <Trash2 size={13} />
-                                  </button>
+                                <div className="flex flex-col items-center gap-1.5">
+                                  {/* Row 1: Icon buttons */}
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      onClick={() => handleOpenPrint(pf)}
+                                      className="p-1.5 text-sky-600 hover:bg-sky-50 rounded-md transition"
+                                      title="مشاهده و چاپ"
+                                    >
+                                      <Eye size={15} />
+                                    </button>
+                                    <button
+                                      onClick={() => { if (!isLocked) handleOpenEdit(pf); }}
+                                      disabled={isLocked}
+                                      className={`p-1.5 rounded-md transition ${
+                                        isLocked
+                                          ? "text-slate-300 cursor-not-allowed"
+                                          : "text-amber-600 hover:bg-amber-50"
+                                      }`}
+                                      title={isLocked ? "قفل شده" : "ویرایش"}
+                                    >
+                                      <Edit size={15} />
+                                    </button>
+                                    <button
+                                      onClick={() => handleCopyProforma(pf)}
+                                      className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-md transition"
+                                      title="کپی"
+                                    >
+                                      <Copy size={15} />
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        if (isLocked) return;
+                                        setProformaToDeleteId(pf.id);
+                                        setProformaToDeleteNumber(pf.proformaNumber || "");
+                                        setDeleteConfirmOpen(true);
+                                      }}
+                                      disabled={isLocked}
+                                      className={`p-1.5 rounded-md transition ${
+                                        isLocked
+                                          ? "text-slate-300 cursor-not-allowed"
+                                          : "text-slate-400 hover:text-red-600 hover:bg-red-50"
+                                      }`}
+                                      title={isLocked ? "قفل شده" : "حذف"}
+                                    >
+                                      <Trash2 size={15} />
+                                    </button>
+                                  </div>
+                                  {/* Row 2: Text action buttons */}
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      onClick={() => handleOpenStatusChange(pf.id, pf.status)}
+                                      className="px-2 py-1 bg-sky-500 hover:bg-sky-600 text-white rounded-md text-[10px] font-bold transition flex items-center gap-1"
+                                      title="تغییر وضعیت کلی"
+                                    >
+                                      <Settings size={10} />
+                                      وضعیت
+                                    </button>
+                                    <button
+                                      onClick={() => handleOpenItemsModal(pf)}
+                                      className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-md text-[10px] font-bold transition"
+                                      title="مدیریت ردیف‌ها"
+                                    >
+                                      ردیف‌ها
+                                    </button>
+                                  </div>
                                 </div>
                               );
                             })()}
@@ -3140,7 +3159,7 @@ export default function ProformasView({
                 {/* Project Select */}
                 <div className="space-y-1.5 w-full min-w-0">
                   <label className="text-xs font-semibold text-slate-500">
-                    کد پروژه *
+                    {renderFieldLabelWithAsterisk(settings, 'proformas', 'projectId', 'کد پروژه')}
                   </label>
                   <div className="flex gap-1.5 items-center w-full min-w-0">
                     <SearchableSelect
@@ -3317,10 +3336,7 @@ export default function ProformasView({
                       required={isFieldRequired(settings, 'proformas', 'customerId')}
                       options={[
                         { value: "", label: "-- انتخاب مشتری --" },
-                        ...customers.map((c) => ({
-                          value: c.id,
-                          label: c.companyName,
-                        })),
+                        ...buildCustomerOptions(customers),
                       ]}
                       placeholder="-- انتخاب مشتری --"
                     />
@@ -3431,12 +3447,7 @@ export default function ProformasView({
                             required={isFieldRequired(settings, 'proformas', 'contactCustomerId')}
                             options={[
                               { value: "", label: "-- انتخاب مخاطب --" },
-                              ...filteredContacts.map((c) => ({
-                                value: c.id,
-                                label:
-                                  `${c.firstName || ""} ${c.lastName || ""}`.trim() ||
-                                  c.companyName,
-                              })),
+                              ...buildCustomerOptionsFromSubset(filteredContacts, customers),
                             ]}
                             placeholder="-- انتخاب مخاطب --"
                           />
@@ -3477,8 +3488,8 @@ export default function ProformasView({
                   id="proforma-issue-date-picker-wrapper"
                 >
                   <ShamsiDatePicker
-                    label="تاریخ صدور پیشنهاد"
-                    required
+                    label={renderFieldLabelWithAsterisk(settings, 'proformas', 'issueDate', 'تاریخ صدور پیشنهاد')}
+                    required={isFieldRequired(settings, 'proformas', 'issueDate')}
                     value={issueDate}
                     onChange={(val) => setIssueDate(val)}
                   />
@@ -3488,8 +3499,8 @@ export default function ProformasView({
                   id="proforma-expiry-date-picker-wrapper"
                 >
                   <ShamsiDatePicker
-                    label="تاریخ انقضای اعتبار پیشنهاد"
-                    required
+                    label={renderFieldLabelWithAsterisk(settings, 'proformas', 'expiryDate', 'تاریخ انقضای اعتبار پیشنهاد')}
+                    required={isFieldRequired(settings, 'proformas', 'expiryDate')}
                     value={expiryDate}
                     onChange={(val) => setExpiryDate(val)}
                   />
@@ -3652,7 +3663,7 @@ export default function ProformasView({
                 {/* Currency Selection */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-500">
-                    نوع ارز پیش‌فاکتور *
+                    {renderFieldLabelWithAsterisk(settings, 'proformas', 'currency', 'نوع ارز پیش‌فاکتور')}
                   </label>
                   <select
                     value={currency}
@@ -3662,7 +3673,7 @@ export default function ProformasView({
                       )
                     }
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white font-bold text-emerald-700 border-emerald-300"
-                    required
+                    required={isFieldRequired(settings, 'proformas', 'currency')}
                   >
                     <option value="ریال">ریال (IRR)</option>
                     <option value="دلار">دلار آمریکا (USD)</option>
@@ -4196,19 +4207,31 @@ export default function ProformasView({
                               <label className="text-[10px] font-bold text-slate-400 md:hidden block">
                                 بهای واحد ({currency}) *
                               </label>
-                              <input
-                                type="number"
-                                required
-                                value={item.unitPriceRIYAL}
-                                onChange={(e) =>
-                                  handleItemFieldChange(
-                                    idx,
-                                    "unitPriceRIYAL",
-                                    Number(e.target.value),
-                                  )
-                                }
-                                className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-left bg-white"
-                              />
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  required
+                                  value={item.unitPriceRIYAL}
+                                  onChange={(e) =>
+                                    handleItemFieldChange(
+                                      idx,
+                                      "unitPriceRIYAL",
+                                      Number(e.target.value),
+                                    )
+                                  }
+                                  className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-left bg-white"
+                                />
+                                {item.productId && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCalcModalItemIdx(idx)}
+                                    className="p-1.5 text-sky-600 hover:bg-sky-50 hover:text-sky-700 rounded-lg transition-colors flex items-center justify-center flex-shrink-0 border border-sky-100 bg-white"
+                                    title="محاسبه‌گر قیمت فروش"
+                                  >
+                                    <Calculator size={13} />
+                                  </button>
+                                )}
+                              </div>
                             </div>
                             {/* Total price for line */}
                             <div className="col-span-1 md:col-span-2 flex flex-col justify-center text-left px-2">
@@ -4438,10 +4461,11 @@ export default function ProformasView({
                 >
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">
-                      شرایط و توضیحات
+                      {renderFieldLabelWithAsterisk(settings, 'proformas', 'notes', 'شرایط و توضیحات')}
                     </label>
                     <textarea
                       rows={4}
+                      required={isFieldRequired(settings, 'proformas', 'notes')}
                       value={notes}
                       onChange={(e) => setNotes(e.target.value)}
                       placeholder="اعتبار پیشنهاد، شرایط تحویل، گارانتی قطعات..."
@@ -4605,6 +4629,119 @@ export default function ProformasView({
         message={`آیا از لغو تمام نسخه‌های پیش‌فاکتور مربوط به پروژه "${cancelProjectName}" اطمینان دارید؟`}
         confirmText="بله، لغو شود"
       />
+
+      {/* Row-Level Price Calculator Modal */}
+      {calcModalItemIdx !== null && (() => {
+        const item = items[calcModalItemIdx];
+        if (!item) return null;
+        const prod = products.find(p => p.id === item.productId);
+        if (!prod) return null;
+        const variant = item.variantId ? prod.variants?.find(v => v.id === item.variantId) : undefined;
+
+        // Determine the initial foreign price
+        const modalCurrency: string = variant?.currencyForeign || prod.currencyForeign || (currency && currency !== "ریال" ? currency : "یورو");
+        let initialForeign = 0;
+        if (variant?.priceForeign !== undefined) {
+          initialForeign = variant.priceForeign;
+        } else if (variant?.attributes && prod.features) {
+          initialForeign = getCombinedFeaturePrice(prod.features, variant.attributes);
+        } else if (prod.priceForeign !== undefined) {
+          initialForeign = prod.priceForeign;
+        }
+
+        const initialValues: Partial<ProductVariant> = variant
+          ? {
+              calcPriceForeign: variant.calcPriceForeign,
+              calcExchangeRate: variant.calcExchangeRate,
+              calcRemittanceFee: variant.calcRemittanceFee,
+              calcRemittancePct: variant.calcRemittancePct,
+              calcShippingCost: variant.calcShippingCost,
+              calcCustomsDutyRIYAL: variant.calcCustomsDutyRIYAL,
+              calcOtherCostsForeign: variant.calcOtherCostsForeign,
+              calcOtherCostsRIYAL: variant.calcOtherCostsRIYAL,
+              calcProfitPct: variant.calcProfitPct,
+              calcProfitRIYAL: variant.calcProfitRIYAL,
+              calcMarginType: variant.calcMarginType,
+            }
+          : {
+              calcPriceForeign: prod.calcPriceForeign,
+              calcExchangeRate: prod.calcExchangeRate,
+              calcRemittanceFee: prod.calcRemittanceFee,
+              calcRemittancePct: prod.calcRemittancePct,
+              calcShippingCost: prod.calcShippingCost,
+              calcCustomsDutyRIYAL: prod.calcCustomsDutyRIYAL,
+              calcOtherCostsForeign: prod.calcOtherCostsForeign,
+              calcOtherCostsRIYAL: prod.calcOtherCostsRIYAL,
+              calcProfitPct: prod.calcProfitPct,
+              calcProfitRIYAL: prod.calcProfitRIYAL,
+              calcMarginType: prod.calcMarginType,
+            };
+
+        const subtitle = variant
+          ? `SKU: ${variant.sku} — ${Object.entries(variant.attributes).map(([k, v]) => `${k}: ${v}`).join(" ، ")}`
+          : prod.displayName;
+
+        return (
+          <PriceCalculatorModal
+            open={calcModalItemIdx !== null}
+            onClose={() => setCalcModalItemIdx(null)}
+            subtitle={subtitle}
+            initialPriceForeign={initialForeign}
+            currency={modalCurrency}
+            initialValues={initialValues}
+            exchangeRates={exchangeRates}
+            onApply={(sellingForeign, sellingRial, details, appliedCurrency) => {
+              // Compute unit price in the proforma's currency
+              const engCurrency = mapPersianCurrencyToEnglish(currency || "ریال");
+              const proformaRateObj = engCurrency
+                ? exchangeRates?.find(r => r.currency === engCurrency)
+                : undefined;
+              const proformaRate = proformaRateObj ? proformaRateObj.rateToRIYAL : 1;
+
+              const unitPriceInProformaCurrency = currency === "ریال"
+                ? Math.round(sellingRial)
+                : Math.round((sellingRial / proformaRate) * 100) / 100;
+
+              // Update the proforma item
+              const newItems = [...items];
+              newItems[calcModalItemIdx] = {
+                ...newItems[calcModalItemIdx],
+                unitPriceRIYAL: unitPriceInProformaCurrency,
+              };
+              setItems(newItems);
+
+              // Persist to the variant (or product if no variant)
+              if (updateProduct) {
+                if (variant) {
+                  const updatedVariants = (prod.variants || []).map(v =>
+                    v.id === variant.id
+                      ? {
+                          ...v,
+                          priceForeign: sellingForeign,
+                          priceRIYAL: Math.round(sellingRial),
+                          currencyForeign: appliedCurrency,
+                          ...details,
+                        }
+                      : v,
+                  );
+                  updateProduct({ ...prod, variants: updatedVariants });
+                } else {
+                  updateProduct({
+                    ...prod,
+                    priceForeign: sellingForeign,
+                    basePriceRIYAL: Math.round(sellingRial),
+                    currencyForeign: appliedCurrency,
+                    ...details,
+                  });
+                }
+              }
+
+              setCalcModalItemIdx(null);
+            }}
+          />
+        );
+      })()}
+
       {/* Product Configurator Modal */}
       {showConfigModal !== null &&
         (() => {
@@ -4616,25 +4753,54 @@ export default function ProformasView({
 
           const handleConfirmConfig = () => {
             const configParts = [];
-            let matchedVariantId = undefined;
-            
+            let matchedVariantId: string | undefined = undefined;
+
             for (const feature of prod.features!) {
               const selected = configSelections[feature.id] || [];
               if (selected.length > 0) {
                 configParts.push(`${feature.name}: ${selected.join("، ")}`);
               }
             }
-            
-            if (prod.hasVariants && prod.variants) {
-                const match = prod.variants.find(v => {
-                    return Object.entries(v.attributes).every(([k, val]) => {
-                        const feature = prod.features?.find(f => f.name === k);
-                        if (!feature) return false;
-                        const selected = configSelections[feature.id] || [];
-                        return selected.length === 1 && selected[0] === val;
-                    });
-                });
-                if (match) matchedVariantId = match.id;
+
+            // Build attributes if each feature has exactly one value (a single, identifiable combination)
+            const singleValuePerFeature = (prod.features || []).every(f => (configSelections[f.id] || []).length === 1);
+            const canIdentifyCombination = singleValuePerFeature && (prod.features || []).length > 0;
+            let attributesForVariant: Record<string, string> | undefined = undefined;
+            if (canIdentifyCombination) {
+              attributesForVariant = {};
+              for (const f of prod.features!) {
+                attributesForVariant[f.name] = configSelections[f.id][0];
+              }
+            }
+
+            if (prod.hasVariants && prod.variants && attributesForVariant) {
+              const match = findVariantByAttributes(prod.variants, attributesForVariant);
+              if (match) matchedVariantId = match.id;
+            }
+
+            // Auto-create SKU when combination is identifiable but not in inventory
+            let productForItem = prod;
+            if (attributesForVariant && !matchedVariantId && updateProduct) {
+              const targetCurrency = prod.currencyForeign || "یورو";
+              const calculatedFob = getCombinedFeaturePrice(prod.features || [], attributesForVariant);
+              const newVariantId = `var-${Date.now()}`;
+              const newVariant: ProductVariant = {
+                id: newVariantId,
+                sku: generateSku(prod.code || "SKU", prod.features || [], attributesForVariant),
+                attributes: attributesForVariant,
+                stockLevel: 0,
+                minStockLevel: 0,
+                priceForeign: calculatedFob > 0 ? calculatedFob : undefined,
+                currencyForeign: targetCurrency,
+              };
+              const updatedProduct: Product = {
+                ...prod,
+                hasVariants: true,
+                variants: [...(prod.variants || []), newVariant],
+              };
+              updateProduct(updatedProduct);
+              productForItem = updatedProduct;
+              matchedVariantId = newVariantId;
             }
 
             let currentSpecs = item.techSpecs || "";
@@ -4653,18 +4819,18 @@ export default function ProformasView({
                 techSpecs: newTechSpecs,
             };
             if (matchedVariantId) {
-                const variant = prod.variants!.find(v => v.id === matchedVariantId);
+                const variant = productForItem.variants!.find(v => v.id === matchedVariantId);
                 newItems[itemIdx].variantId = matchedVariantId;
                 if (variant) {
                     newItems[itemIdx].productCode = variant.sku;
-                    newItems[itemIdx].unitPriceRIYAL = getProductOrVariantPriceInProformaCurrency(prod, variant);
-                    const effectiveSupplyType = variant.stockLevel === 0 ? "ORDER" : (prod.supplyType || "INVENTORY");
+                    newItems[itemIdx].unitPriceRIYAL = getProductOrVariantPriceInProformaCurrency(productForItem, variant);
+                    const effectiveSupplyType = variant.stockLevel === 0 ? "ORDER" : (productForItem.supplyType || "INVENTORY");
                     newItems[itemIdx].supplyMethod = effectiveSupplyType === "ORDER" ? "ORDER" : "INVENTORY";
                 }
             } else {
                 newItems[itemIdx].variantId = undefined;
             }
-            
+
             setItems(newItems);
             setShowConfigModal(null);
           };
@@ -5047,6 +5213,11 @@ export default function ProformasView({
                     alert("لطفاً نام و نام خانوادگی را وارد کنید.");
                     return;
                   }
+                  const quickContactError = getContactInfoError({ phone: quickCustPhone, email: quickCustEmail });
+                  if (quickContactError) {
+                    alert(quickContactError);
+                    return;
+                  }
                   const custData: any = {
                     type: quickCustType,
                     status: "فعال",
@@ -5075,13 +5246,17 @@ export default function ProformasView({
                     custData.contactName = quickCustFirstName;
                     custData.contactLastName = quickCustLastName;
                   }
-                  if (addCustomer) {
-                    const created = addCustomer(custData);
-                    if (created && created.id) {
-                      setCustomerId(created.id);
-                      setShowQuickCustomerModal(false);
-                    }
+                  // Warn before creating a record that looks like an existing customer.
+                  const dupes = findCustomerDuplicates(
+                    { ...custData, customerType: quickCustType },
+                    customers,
+                  );
+                  if (dupes.length > 0) {
+                    setDupPayload(custData);
+                    setDupMatches(dupes);
+                    return;
                   }
+                  commitQuickCustomer(custData);
                 }}
                 className="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition"
               >
@@ -5415,6 +5590,27 @@ export default function ProformasView({
           }}
         />
       )}
+
+      {/* Duplicate customer warning */}
+      <DuplicateCustomerModal
+        isOpen={dupMatches.length > 0}
+        candidateName={dupPayload?.companyName || ""}
+        matches={dupMatches}
+        allCustomers={customers}
+        onUseExisting={(existing) => {
+          setDupMatches([]);
+          setDupPayload(null);
+          setCustomerId(existing.id);
+          setShowQuickCustomerModal(false);
+        }}
+        onCreateAnyway={() => {
+          if (dupPayload) commitQuickCustomer(dupPayload);
+        }}
+        onCancel={() => {
+          setDupMatches([]);
+          setDupPayload(null);
+        }}
+      />
     </div>
   );
 }

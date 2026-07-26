@@ -5,6 +5,11 @@ import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
 import { uploadFile } from '../imageUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
+import { IRAN_PROVINCES, canonicalizeProvince } from '../utils/iranProvinces';
+import { getContactInfoError } from '../utils/customerValidation';
+import { findCustomerDuplicates, DuplicateMatch } from '../utils/customerDuplicates';
+import DuplicateCustomerModal from './DuplicateCustomerModal';
+import { SearchableSelect } from './SearchableSelect';
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -43,6 +48,10 @@ export default function QuickAddModal({
 
   // Unified Custom Fields state
   const [customValues, setCustomValues] = useState<Record<string, any>>({});
+
+  // Duplicate-customer warning state
+  const [dupMatches, setDupMatches] = useState<DuplicateMatch[]>([]);
+  const [dupPayload, setDupPayload] = useState<Omit<Customer, 'id' | 'createdAt'> | null>(null);
 
   // Nested Quick-Add States
   const [nestedQuickAddType, setNestedQuickAddType] = useState<'customer' | 'product' | null>(null);
@@ -159,7 +168,7 @@ export default function QuickAddModal({
   const [prodDescription, setProdDescription] = useState('');
   const [prodSize, setProdSize] = useState('');
   const [prodMeasurementRange, setProdMeasurementRange] = useState('');
-  const [prodSupplyType, setProdSupplyType] = useState<'INVENTORY' | 'ORDER'>('ORDER');
+  const [prodSupplyType, setProdSupplyType] = useState<'INVENTORY' | 'ORDER'>('INVENTORY');
   const [prodInitialStock, setProdInitialStock] = useState('');
   const [prodImages, setProdImages] = useState<string[]>([]);
 
@@ -196,6 +205,16 @@ export default function QuickAddModal({
   // ---------------------------------------------------------------------------
   // SUBMIT HANDLER
   // ---------------------------------------------------------------------------
+  /** Actually creates the customer and closes the modal. */
+  const commitCustomer = (payload: Omit<Customer, 'id' | 'createdAt'>) => {
+    if (!addCustomer) return;
+    const newCust = addCustomer(payload);
+    setDupMatches([]);
+    setDupPayload(null);
+    onSuccess(newCust);
+    onClose();
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -266,7 +285,14 @@ export default function QuickAddModal({
         return;
       }
 
-      const newCust = addCustomer({
+      // At least one identifying contact field is required beyond the name.
+      const contactError = getContactInfoError({ mobile: custMobile, phone: custPhone, email: custEmail, province: custProvince });
+      if (contactError) {
+        alert(contactError);
+        return;
+      }
+
+      const payload: Omit<Customer, 'id' | 'createdAt'> = {
         customerType: custType,
         companyName: custType === 'حقوقی' ? companyName.trim() : `${firstName} ${lastName}`.trim(),
         firstName: custType === 'حقیقی' ? firstName.trim() : undefined,
@@ -274,7 +300,7 @@ export default function QuickAddModal({
         phone: custPhone.trim(),
         mobile: custMobile.trim(),
         email: custEmail.trim(),
-        province: custProvince.trim(),
+        province: canonicalizeProvince(custProvince) || custProvince.trim(),
         address: custAddress.trim(),
         notes: custNotes.trim(),
         tags: custTags.trim(),
@@ -285,9 +311,17 @@ export default function QuickAddModal({
         keyPerson: custType === 'حقوقی' ? keyPerson.trim() || undefined : undefined,
         linkedCustomerIds: selectedLinks,
         customValues
-      });
-      onSuccess(newCust);
-      onClose();
+      } as Omit<Customer, 'id' | 'createdAt'>;
+
+      // Warn before creating a record that looks like an existing customer.
+      const matches = findCustomerDuplicates(payload, customers);
+      if (matches.length > 0) {
+        setDupPayload(payload);
+        setDupMatches(matches);
+        return;
+      }
+
+      commitCustomer(payload);
     } else if (type === 'project') {
       if (!addProject) return;
       if (isFieldRequired(settings, 'projects', 'name') && !projName.trim()) {
@@ -568,13 +602,13 @@ export default function QuickAddModal({
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-600">{renderFieldLabelWithAsterisk(settings, 'customers', 'province', 'استان')}</label>
-                      <input
-                        type="text"
+                      <SearchableSelect
+                        value={canonicalizeProvince(custProvince)}
+                        onChange={(val) => setCustProvince(val)}
                         required={isFieldRequired(settings, 'customers', 'province')}
-                        value={custProvince}
-                        onChange={(e) => setCustProvince(e.target.value)}
-                        placeholder="مثال: تهران"
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
+                        placeholder="انتخاب استان..."
+                        className="text-xs"
+                        options={IRAN_PROVINCES.map(p => ({ value: p, label: p }))}
                       />
                     </div>
                   </>
@@ -662,13 +696,13 @@ export default function QuickAddModal({
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-600">{renderFieldLabelWithAsterisk(settings, 'customers', 'province', 'استان')}</label>
-                      <input
-                        type="text"
+                      <SearchableSelect
+                        value={canonicalizeProvince(custProvince)}
+                        onChange={(val) => setCustProvince(val)}
                         required={isFieldRequired(settings, 'customers', 'province')}
-                        value={custProvince}
-                        onChange={(e) => setCustProvince(e.target.value)}
-                        placeholder="مثال: اصفهان"
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
+                        placeholder="انتخاب استان..."
+                        className="text-xs"
+                        options={IRAN_PROVINCES.map(p => ({ value: p, label: p }))}
                       />
                     </div>
                   </>
@@ -1572,6 +1606,27 @@ export default function QuickAddModal({
           }}
         />
       )}
+
+      {/* Duplicate customer warning */}
+      <DuplicateCustomerModal
+        isOpen={dupMatches.length > 0}
+        candidateName={dupPayload?.companyName || ''}
+        matches={dupMatches}
+        allCustomers={customers}
+        onUseExisting={(existing) => {
+          setDupMatches([]);
+          setDupPayload(null);
+          onSuccess(existing);
+          onClose();
+        }}
+        onCreateAnyway={() => {
+          if (dupPayload) commitCustomer(dupPayload);
+        }}
+        onCancel={() => {
+          setDupMatches([]);
+          setDupPayload(null);
+        }}
+      />
     </div>
   );
 }

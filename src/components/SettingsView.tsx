@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 
 import { 
   Settings, 
@@ -43,7 +43,8 @@ import {
   Wrench,
   History,
   GripVertical,
-  Copy
+  Copy,
+  ShieldAlert,
 } from 'lucide-react';
 import { ERPSettings, CustomField, ProjectCategoryGroup, User, Project, AuditLog, WorkflowRule, ExchangeRate } from '../types';
 import { formatERPNumber } from '../numUtils';
@@ -63,6 +64,8 @@ interface SettingsViewProps {
   currentUser?: User | null;
   projects?: Project[];
   auditLogs?: AuditLog[];
+  /** Removes audit-log entries (system administrator only). Omit ids to purge all. */
+  purgeAuditLogs?: (ids?: string[]) => { success: boolean; removed: number };
   exchangeRates?: ExchangeRate[];
   updateExchangeRate?: (id: string, newRate: number) => void;
   fetchRatesFromAPI?: (silent?: boolean) => Promise<boolean>;
@@ -78,6 +81,7 @@ export default function SettingsView({
   currentUser = null,
   projects = [],
   auditLogs = [],
+  purgeAuditLogs,
   exchangeRates = [],
   updateExchangeRate,
   fetchRatesFromAPI
@@ -127,6 +131,24 @@ export default function SettingsView({
   const [logSearch, setLogSearch] = useState('');
   const [logModuleFilter, setLogModuleFilter] = useState('all');
   const [logActionFilter, setLogActionFilter] = useState('all');
+
+  // Purging the audit log — system administrator only.
+  const [purgeMode, setPurgeMode] = useState<'all' | 'filtered' | null>(null);
+  const isSystemAdmin = !!currentUser?.isSystemAdmin;
+
+  const filteredAuditLogs = useMemo(() => {
+    return auditLogs.filter(log => {
+      const matchSearch = !logSearch ||
+        (log.description || '').toLowerCase().includes(logSearch.toLowerCase()) ||
+        (log.userFullName || '').toLowerCase().includes(logSearch.toLowerCase()) ||
+        (log.entityId || '').toLowerCase().includes(logSearch.toLowerCase());
+      const matchModule = logModuleFilter === 'all' || log.module === logModuleFilter;
+      const matchAction = logActionFilter === 'all' || log.action === logActionFilter;
+      return matchSearch && matchModule && matchAction;
+    });
+  }, [auditLogs, logSearch, logModuleFilter, logActionFilter]);
+
+  const isFilterActive = !!logSearch || logModuleFilter !== 'all' || logActionFilter !== 'all';
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
   // Loss reasons state
@@ -2426,10 +2448,47 @@ export default function SettingsView({
                   <p className="text-[11px] text-slate-500 mt-0.5">ثبت و بایگانی تمام اقدامات کاربران به همراه تغییرات فیلدها با فشرده‌سازی فشرده LZW</p>
                 </div>
               </div>
-              <div className="text-[10px] bg-slate-100 border border-slate-200/80 px-2.5 py-1 rounded font-bold text-slate-600">
-                مجموع لاگ‌های ثبت شده: {auditLogs.length.toLocaleString('fa-IR')} مورد
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-[10px] bg-slate-100 border border-slate-200/80 px-2.5 py-1 rounded font-bold text-slate-600">
+                  مجموع لاگ‌های ثبت شده: {auditLogs.length.toLocaleString('fa-IR')} مورد
+                </div>
+
+                {/* Purge controls — system administrator only */}
+                {isSystemAdmin && auditLogs.length > 0 && (
+                  <>
+                    {isFilterActive && filteredAuditLogs.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setPurgeMode('filtered')}
+                        className="text-[10px] font-bold px-2.5 py-1 rounded border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 transition flex items-center gap-1"
+                        title="حذف تنها سوابقی که با فیلترهای فعلی نمایش داده می‌شوند"
+                      >
+                        <Trash2 size={11} />
+                        حذف {filteredAuditLogs.length.toLocaleString('fa-IR')} مورد فیلترشده
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPurgeMode('all')}
+                      className="text-[10px] font-bold px-2.5 py-1 rounded border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100 transition flex items-center gap-1"
+                      title="پاک‌سازی کامل دفتر سوابق"
+                    >
+                      <Trash2 size={11} />
+                      پاک‌سازی کل سوابق
+                    </button>
+                  </>
+                )}
               </div>
             </div>
+
+            {!isSystemAdmin && (
+              <div className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                <ShieldAlert size={14} className="text-slate-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  حذف سوابق اقدامات تنها در اختیار مدیر ارشد سیستم است.
+                </p>
+              </div>
+            )}
 
             {/* Filter controls */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200/50">
@@ -2483,15 +2542,7 @@ export default function SettingsView({
             {/* List of Logs */}
             <div className="space-y-3">
               {(() => {
-                const filtered = auditLogs.filter(log => {
-                  const matchSearch = !logSearch || 
-                    (log.description || '').toLowerCase().includes(logSearch.toLowerCase()) || 
-                    (log.userFullName || '').toLowerCase().includes(logSearch.toLowerCase()) || 
-                    (log.entityId || '').toLowerCase().includes(logSearch.toLowerCase());
-                  const matchModule = logModuleFilter === 'all' || log.module === logModuleFilter;
-                  const matchAction = logActionFilter === 'all' || log.action === logActionFilter;
-                  return matchSearch && matchModule && matchAction;
-                });
+                const filtered = filteredAuditLogs;
 
                 if (filtered.length === 0) {
                   return (
@@ -3569,6 +3620,28 @@ export default function SettingsView({
           deleteType === 'customField' ? `آیا از حذف فیلد سفارشی "${deleteTargetName}" اطمینان دارید؟ تمامی مقادیر ذخیره شده برای این فیلد در رکوردهای موجود حذف خواهند شد.` : 
           deleteType === 'clearData' ? 'آیا مطمئن هستید که می‌خواهید تمامی داده‌های نرم‌افزار (شامل مشتریان، کالاها، پروژه‌ها و ...) را به طور کامل پاک کنید؟ این عملیات غیرقابل بازگشت است.' :
            deleteType === 'workflow' ? `آیا از حذف گردش کار "${deleteTargetName}" اطمینان دارید؟` : ''
+        }
+      />
+
+      {/* Audit-log purge confirmation (system administrator only) */}
+      <ConfirmModal
+        isOpen={!!purgeMode}
+        onClose={() => setPurgeMode(null)}
+        onConfirm={() => {
+          if (!purgeMode || !purgeAuditLogs) { setPurgeMode(null); return; }
+          const ids = purgeMode === 'filtered' ? filteredAuditLogs.map(l => l.id) : undefined;
+          const res = purgeAuditLogs(ids);
+          setPurgeMode(null);
+          if (!res.success) {
+            alert('حذف سوابق اقدامات تنها در اختیار مدیر ارشد سیستم است.');
+          }
+        }}
+        title={purgeMode === 'filtered' ? 'حذف سوابق فیلترشده' : 'پاک‌سازی کامل دفتر سوابق'}
+        confirmText={purgeMode === 'filtered' ? 'بله، حذف شود' : 'بله، کل سوابق پاک شود'}
+        message={
+          purgeMode === 'filtered'
+            ? `آیا از حذف ${filteredAuditLogs.length.toLocaleString('fa-IR')} مورد از سوابق اقدامات (نتایج فیلتر فعلی) اطمینان دارید؟ این عملیات غیرقابل بازگشت است.`
+            : `آیا از پاک‌سازی کامل دفتر سوابق اقدامات شامل ${auditLogs.length.toLocaleString('fa-IR')} مورد اطمینان دارید؟ این عملیات غیرقابل بازگشت است و سابقه تغییرات گذشته قابل بازیابی نخواهد بود. (یک مورد جهت ثبت همین اقدام باقی می‌ماند.)`
         }
       />
 

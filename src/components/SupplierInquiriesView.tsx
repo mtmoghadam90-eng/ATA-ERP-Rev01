@@ -21,6 +21,8 @@ import {
   Calendar, 
   ArrowLeftRight, 
   Trophy,
+  BadgeCheck,
+  Zap,
   AlertTriangle,
   FileSpreadsheet,
   Globe,
@@ -42,6 +44,8 @@ import ConfirmModal from './ConfirmModal';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
+import { withAutoSteps } from '../utils/inquirySteps';
+import { SearchableSelect } from './SearchableSelect';
 import { downloadFileFromServer } from '../imageUtils';
 
 interface SupplierInquiriesViewProps {
@@ -87,7 +91,8 @@ export default function SupplierInquiriesView({
   deleteSupplierInquiry,
   settings
 }: SupplierInquiriesViewProps) {
-  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
+  // Default to all projects so the module is immediately useful without a selection.
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('all');
   const [activeTab, setActiveTab] = useState<'cards' | 'compare'>('cards');
   
   // Modals state
@@ -137,11 +142,13 @@ export default function SupplierInquiriesView({
 
     supplierInquiries.forEach(inq => {
       if (inq.id === inquiryId) {
-        updateSupplierInquiry({
+        const next = {
           ...inq,
           isWinner: isNowWinner,
           winnerDate: isNowWinner ? getTodayShamsi() : undefined
-        });
+        };
+        // Declaring a winner is a workflow event — record it automatically.
+        updateSupplierInquiry(withAutoSteps(inq, next, settings, getTodayShamsi()));
       } else if (isNowWinner && inq.projectId === targetInq.projectId) {
         // If we set a new winner, all other inquiries for this same project become losers
         updateSupplierInquiry({
@@ -151,6 +158,19 @@ export default function SupplierInquiriesView({
         });
       }
     });
+  };
+
+  // Confirms the offer's validity -> the inquiry moves to the "final offer" stage.
+  const handleToggleOfferConfirmed = (inquiryId: string) => {
+    const inq = supplierInquiries.find(i => i.id === inquiryId);
+    if (!inq) return;
+    const isNowConfirmed = !inq.offerConfirmed;
+    const next: SupplierInquiry = {
+      ...inq,
+      offerConfirmed: isNowConfirmed,
+      offerConfirmedDate: isNowConfirmed ? getTodayShamsi() : undefined,
+    };
+    updateSupplierInquiry(withAutoSteps(inq, next, settings, getTodayShamsi()));
   };
 
   const handleOpenAddInquiry = () => {
@@ -208,18 +228,19 @@ export default function SupplierInquiriesView({
         {/* Project Selector */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto shrink-0" id="project-selector-wrapper">
           <label className="text-xs font-bold text-slate-600 whitespace-nowrap sm:text-right">پروژه مورد نظر:</label>
-          <select
-            value={selectedProjectId}
-            onChange={(e) => setSelectedProjectId(e.target.value)}
-            className="w-full sm:w-auto px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
-            id="project-selector"
-          >
-            <option value="">-- انتخاب پروژه --</option>
-            <option value="all">همه پروژه‌ها</option>
-            {projects.map(p => (
-              <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
-            ))}
-          </select>
+          <div id="project-selector" className="w-full sm:w-72">
+            <SearchableSelect
+              value={selectedProjectId}
+              onChange={(val) => setSelectedProjectId(val || 'all')}
+              placeholder="جستجو و انتخاب پروژه..."
+              required
+              className="text-xs"
+              options={[
+                { value: 'all', label: 'همه پروژه‌ها' },
+                ...projects.map(p => ({ value: p.id, label: `${p.name} (${p.code})` })),
+              ]}
+            />
+          </div>
         </div>
       </div>
 
@@ -370,14 +391,32 @@ export default function SupplierInquiriesView({
                                     پروژه: {projects.find(p => p.id === inq.projectId)?.name || 'نامشخص'}
                                   </span>
                                 )}
+                                {inq.offerConfirmed && (
+                                  <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded font-bold flex items-center gap-1 w-fit mt-1">
+                                    <BadgeCheck size={11} />
+                                    آفر نهایی تأییدشده {inq.offerConfirmedDate ? `- ${inq.offerConfirmedDate}` : ''}
+                                  </span>
+                                )}
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
+                                  onClick={() => handleToggleOfferConfirmed(inq.id)}
+                                  className={`p-1.5 rounded-lg transition ${
+                                    inq.offerConfirmed
+                                      ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+                                      : 'bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600'
+                                  }`}
+                                  title={inq.offerConfirmed ? "لغو تأیید صحت آفر" : "تأیید صحت آفر (ثبت به عنوان آفر نهایی)"}
+                                >
+                                  <BadgeCheck size={16} />
+                                </button>
+                                <button
+                                  type="button"
                                   onClick={() => handleSetWinner(inq.id)}
                                   className={`p-1.5 rounded-lg transition ${
-                                    inq.isWinner 
-                                      ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' 
+                                    inq.isWinner
+                                      ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
                                       : 'bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600'
                                   }`}
                                   title={inq.isWinner ? "لغو وضعیت برنده" : "علامت‌گذاری به عنوان پیشنهاد برنده"}
@@ -497,11 +536,22 @@ export default function SupplierInquiriesView({
                                   <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
                                     {inq.steps.map((step) => (
                                       <div key={step.id} className="relative pr-3 border-r-2 border-slate-200 space-y-0.5 text-[10px]">
-                                        {/* Timeline indicator circle */}
-                                        <div className="absolute right-[-4.5px] top-1.5 w-2 h-2 rounded-full bg-slate-300" />
-                                        
+                                        {/* Timeline indicator circle — sky for system-recorded steps */}
+                                        <div className={`absolute right-[-4.5px] top-1.5 w-2 h-2 rounded-full ${step.auto ? 'bg-sky-400' : 'bg-slate-300'}`} />
+
                                         <div className="flex justify-between items-start">
-                                          <span className="font-bold text-slate-700">{step.title}</span>
+                                          <span className="font-bold text-slate-700 flex items-center gap-1">
+                                            {step.title}
+                                            {step.auto && (
+                                              <span
+                                                className="inline-flex items-center gap-0.5 text-[8px] font-bold text-sky-600 bg-sky-50 border border-sky-100 px-1 py-px rounded"
+                                                title="این رویداد به صورت خودکار توسط سیستم ثبت شده است"
+                                              >
+                                                <Zap size={7} />
+                                                خودکار
+                                              </span>
+                                            )}
+                                          </span>
                                           <div className="flex items-center gap-1">
                                             <span className="text-[9px] text-slate-400 font-mono">{step.date}</span>
                                             <button
@@ -746,13 +796,13 @@ export default function SupplierInquiriesView({
                   settings={settings}
                   onClose={() => setIsInquiryModalOpen(false)}
                   onSubmit={(data) => {
+                    const today = getTodayShamsi();
                     if (editingInquiry) {
-                      updateSupplierInquiry({
-                        ...editingInquiry,
-                        ...data
-                      });
+                      const merged = { ...editingInquiry, ...data } as SupplierInquiry;
+                      updateSupplierInquiry(withAutoSteps(editingInquiry, merged, settings, today));
                     } else {
-                      addSupplierInquiry(data);
+                      // Auto-record the stage implied by the data entered at creation.
+                      addSupplierInquiry(withAutoSteps(undefined, data as SupplierInquiry, settings, today));
                     }
                     setIsInquiryModalOpen(false);
                   }}
@@ -1209,7 +1259,7 @@ function InquiryFormInner({
             <thead className="bg-slate-50 text-slate-500 font-bold sticky top-0 border-b border-slate-150 z-10">
               <tr>
                 <th className="p-2.5 w-1/4">نام کالا / شرح دقیق آفر</th>
-                <th className="p-2.5 w-12 text-center">تعداد</th>
+                <th className="p-2.5 w-20 text-center">تعداد</th>
                 <th className="p-2.5 w-24">مبلغ ارزی واحد</th>
                 <th className="p-2.5 w-20">نوع ارز</th>
                 <th className="p-2.5 w-28">معادل ریالی پیشنهادی</th>
@@ -1248,7 +1298,7 @@ function InquiryFormInner({
                       value={item.quantity}
                       onChange={(e) => handleItemFieldChange(index, 'quantity', e.target.value)}
                       required
-                      className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-center font-mono focus:outline-none bg-white"
+                      className="w-full px-1.5 py-1.5 border border-slate-200 rounded-lg text-center font-mono focus:outline-none bg-white [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     />
                   </td>
                   <td className="p-2">

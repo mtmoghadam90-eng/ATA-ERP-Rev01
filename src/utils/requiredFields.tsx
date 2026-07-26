@@ -20,13 +20,14 @@ export const REQUIRED_FIELDS_METADATA: ModuleConfig[] = [
       { key: 'companyName', label: 'نام شرکت (مشتری حقوقی)' },
       { key: 'firstName', label: 'نام (مشتری حقیقی)' },
       { key: 'lastName', label: 'نام خانوادگی (مشتری حقیقی)' },
+      { key: 'gender', label: 'جنسیت (مشتری حقیقی)' },
       { key: 'phone', label: 'تلفن ثابت' },
       { key: 'mobile', label: 'تلفن همراه' },
       { key: 'email', label: 'ایمیل' },
       { key: 'province', label: 'استان' },
-      { key: 'city', label: 'شهر' },
       { key: 'address', label: 'آدرس دقیق' },
       { key: 'industry', label: 'صنعت فعالیت (حقوقی)' },
+      { key: 'economicCode', label: 'کد اقتصادی (حقوقی)' },
       { key: 'keyPerson', label: 'شخص کلیدی (حقوقی)' },
       { key: 'position', label: 'سمت (حقیقی)' },
     ]
@@ -37,14 +38,19 @@ export const REQUIRED_FIELDS_METADATA: ModuleConfig[] = [
     fields: [
       { key: 'name', label: 'عنوان پروژه' },
       { key: 'customerId', label: 'مشتری پروژه' },
+      { key: 'status', label: 'وضعیت پروژه' },
       { key: 'salesExpert', label: 'کارشناس فروش' },
       { key: 'marketingChannel', label: 'کانال بازاریابی' },
       { key: 'leadQuality', label: 'کیفیت لید' },
       { key: 'referrerName', label: 'نام معرف' },
       { key: 'financialContact', label: 'فرد کلیدی مالی' },
       { key: 'technicalContact', label: 'فرد کلیدی فنی' },
+      { key: 'communicationMethod', label: 'روش ارتباط' },
       { key: 'customerInquiryNumber', label: 'شماره استعلام مشتری' },
+      { key: 'opportunityDate', label: 'تاریخ ایجاد فرصت' },
       { key: 'expectedCloseDate', label: 'تاریخ پیش‌بینی بسته شدن' },
+      { key: 'agreedDeliveryDate', label: 'تاریخ توافق‌شده تحویل' },
+      { key: 'winningDate', label: 'تاریخ برنده شدن' },
       { key: 'endUser', label: 'مصرف‌کننده نهایی' },
       { key: 'description', label: 'توضیحات پروژه' },
     ]
@@ -54,12 +60,12 @@ export const REQUIRED_FIELDS_METADATA: ModuleConfig[] = [
     name: 'کالا و انبار',
     fields: [
       { key: 'displayName', label: 'نام کالا' },
+      { key: 'productCode', label: 'کد کالا' },
       { key: 'category', label: 'دسته‌بندی کالا' },
       { key: 'brand', label: 'برند/سازنده' },
-      { key: 'modelNumber', label: 'مدل' },
-      { key: 'unit', label: 'واحد' },
-      { key: 'basePriceRIYAL', label: 'قیمت پایه ریالی' },
+      { key: 'currencyForeign', label: 'نوع ارز خرید' },
       { key: 'supplyType', label: 'نوع تامین' },
+      { key: 'initialStock', label: 'موجودی اولیه در انبار' },
       { key: 'description', label: 'توضیحات' },
     ]
   },
@@ -72,8 +78,8 @@ export const REQUIRED_FIELDS_METADATA: ModuleConfig[] = [
       { key: 'contactName', label: 'نام کارشناس/مخاطب' },
       { key: 'phone', label: 'تلفن تماس' },
       { key: 'email', label: 'ایمیل مکاتبه' },
-      { key: 'website', label: 'وب‌سایت' },
-      { key: 'paymentTerms', label: 'شرایط پرداخت' },
+      { key: 'status', label: 'وضعیت تأمین‌کننده' },
+      { key: 'providedCategories', label: 'دسته‌بندی‌های قابل تأمین' },
       { key: 'description', label: 'توضیحات' },
     ]
   },
@@ -82,6 +88,8 @@ export const REQUIRED_FIELDS_METADATA: ModuleConfig[] = [
     name: 'پیش‌فاکتورها',
     fields: [
       { key: 'customerId', label: 'مشتری' },
+      { key: 'contactCustomerId', label: 'مخاطب پیش‌فاکتور' },
+      { key: 'contactPrefix', label: 'پیشوند مخاطب' },
       { key: 'projectId', label: 'پروژه مرتبط' },
       { key: 'issueDate', label: 'تاریخ صدور' },
       { key: 'expiryDate', label: 'تاریخ اعتبار' },
@@ -106,7 +114,6 @@ export const REQUIRED_FIELDS_METADATA: ModuleConfig[] = [
     fields: [
       { key: 'projectId', label: 'پروژه مرتبط' },
       { key: 'supplierId', label: 'تأمین‌کننده' },
-      { key: 'creationDate', label: 'تاریخ ثبت' },
     ]
   },
   {
@@ -119,6 +126,7 @@ export const REQUIRED_FIELDS_METADATA: ModuleConfig[] = [
       { key: 'orderDate', label: 'تاریخ سفارش' },
       { key: 'expectedDeliveryDate', label: 'تاریخ پیش‌بینی تحویل' },
       { key: 'currency', label: 'ارز فاکتور' },
+      { key: 'exchangeRateInput', label: 'نرخ تسعیر ارز' },
     ]
   },
   {
@@ -161,38 +169,44 @@ export const DEFAULT_REQUIRED_FIELDS: Record<string, Record<string, boolean>> = 
     companyName: true,
     firstName: true,
     lastName: true,
+    gender: false,
     phone: false,
     mobile: false,
     email: false,
     province: false,
-    city: false,
     address: false,
     industry: false,
+    economicCode: false,
     keyPerson: false,
     position: false,
   },
   projects: {
     name: true,
     customerId: true,
+    status: false,
     salesExpert: false,
     marketingChannel: false,
     leadQuality: false,
     referrerName: false,
     financialContact: false,
     technicalContact: false,
+    communicationMethod: false,
     customerInquiryNumber: false,
+    opportunityDate: false,
     expectedCloseDate: false,
+    agreedDeliveryDate: false,
+    winningDate: false,
     endUser: false,
     description: false,
   },
   products: {
     displayName: true,
+    productCode: false,
     category: false,
     brand: false,
-    modelNumber: false,
-    unit: false,
-    basePriceRIYAL: false,
+    currencyForeign: false,
     supplyType: false,
+    initialStock: false,
     description: false,
   },
   suppliers: {
@@ -201,16 +215,18 @@ export const DEFAULT_REQUIRED_FIELDS: Record<string, Record<string, boolean>> = 
     contactName: true,
     phone: false,
     email: false,
-    website: false,
-    paymentTerms: false,
+    status: false,
+    providedCategories: false,
     description: false,
   },
   proformas: {
     customerId: true,
-    projectId: false,
+    contactCustomerId: false,
+    contactPrefix: false,
+    projectId: true,
     issueDate: true,
-    expiryDate: false,
-    currency: false,
+    expiryDate: true,
+    currency: true,
     notes: false,
   },
   tasks: {
@@ -223,15 +239,15 @@ export const DEFAULT_REQUIRED_FIELDS: Record<string, Record<string, boolean>> = 
   supplierInquiries: {
     projectId: true,
     supplierId: true,
-    creationDate: false,
   },
   purchaseOrders: {
     supplierId: true,
     projectId: false,
     proformaId: false,
-    orderDate: false,
-    expectedDeliveryDate: false,
+    orderDate: true,
+    expectedDeliveryDate: true,
     currency: false,
+    exchangeRateInput: false,
   },
   packagingDelivery: {
     projectId: true,
@@ -247,10 +263,10 @@ export const DEFAULT_REQUIRED_FIELDS: Record<string, Record<string, boolean>> = 
   },
   transactions: {
     type: false,
-    receiptType: false,
-    documentNumber: false,
+    receiptType: true,
+    documentNumber: true,
     amountRIYAL: true,
-    date: false,
+    date: true,
     paymentType: false,
     referenceNumber: false,
   }
@@ -262,10 +278,14 @@ export const isFieldRequired = (
   fieldKey: string
 ): boolean => {
   if (!settings) return false;
-  // If requiredFields structure is missing, return standard default fallback
-  const fields = settings.requiredFields || DEFAULT_REQUIRED_FIELDS;
-  if (!fields[moduleKey]) return false;
-  return !!fields[moduleKey][fieldKey];
+  // A saved value (even `false`) always wins for that specific field.
+  const savedModule = settings.requiredFields?.[moduleKey];
+  if (savedModule && Object.prototype.hasOwnProperty.call(savedModule, fieldKey)) {
+    return !!savedModule[fieldKey];
+  }
+  // Otherwise fall back to the built-in default so newly added fields still
+  // honor their intended default even when older saved settings omit them.
+  return !!DEFAULT_REQUIRED_FIELDS[moduleKey]?.[fieldKey];
 };
 
 export const getFieldAsterisk = (

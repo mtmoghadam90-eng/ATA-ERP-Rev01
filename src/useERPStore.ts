@@ -50,6 +50,9 @@ import {
   addWorkingDaysToShamsi,
 } from "./dateUtils";
 import { formatERPNumber } from "./numUtils";
+import { describeInquiryAmount, describeInquiryStatus } from "./utils/inquirySteps";
+import { countCustomerReferences, migrateCustomerReferences } from "./utils/customerMigration";
+import { getOptionToken } from "./utils/skuUtils";
 
 export const getProformaOutcomeStatus = (
   pf: Proforma,
@@ -192,6 +195,144 @@ const saveToServer = (key: string, data: any) => {
   }).catch((err) =>
     console.error(`Error saving to server for key: ${key}`, err),
   );
+};
+
+/* ------------------------------------------------------------------ *
+ * Multi-user concurrency
+ *
+ * Writing the whole collection back to the server loses whatever another
+ * user changed in the meantime. Instead we remember what the server last
+ * had, diff it against the new array, and send only the changed records so
+ * the server can merge them into its current copy.
+ * ------------------------------------------------------------------ */
+
+type DeltaOp = { op: "upsert" | "delete"; id: string; record?: any };
+
+/** Deep snapshot of what the server is believed to hold, per key. */
+const lastSyncedByKey: Record<string, any[]> = {};
+/** Latest server version seen, per key. Used for change polling. */
+const serverVersionByKey: Record<string, number> = {};
+
+const snapshot = (list: any[]): any[] => JSON.parse(JSON.stringify(list));
+
+export const getServerVersions = () => ({ ...serverVersionByKey });
+
+/** Records the baseline for a key right after it is loaded from the server. */
+export const registerSyncedBaseline = (key: string, data: any, version?: number) => {
+  if (Array.isArray(data)) lastSyncedByKey[key] = snapshot(data);
+  if (typeof version === "number") serverVersionByKey[key] = version;
+};
+
+/** Diffs two record arrays by id into the minimal set of merge operations. */
+const computeDeltaOps = (prev: any[], next: any[]): DeltaOp[] => {
+  const ops: DeltaOp[] = [];
+  const prevSerialized = new Map<string, string>();
+  for (const rec of prev) {
+    if (rec && rec.id !== undefined) prevSerialized.set(String(rec.id), JSON.stringify(rec));
+  }
+  const nextIds = new Set<string>();
+  for (const rec of next) {
+    if (!rec || rec.id === undefined) continue;
+    const id = String(rec.id);
+    nextIds.add(id);
+    if (prevSerialized.get(id) !== JSON.stringify(rec)) {
+      ops.push({ op: "upsert", id, record: rec });
+    }
+  }
+  for (const id of prevSerialized.keys()) {
+    if (!nextIds.has(id)) ops.push({ op: "delete", id });
+  }
+  return ops;
+};
+
+/** True when every element carries an id, so a per-record diff is meaningful. */
+const isDeltaCapable = (data: any): boolean =>
+  Array.isArray(data) && data.every((x) => x && x.id !== undefined);
+
+/**
+ * Persists a collection. Sends a minimal delta when possible so concurrent
+ * users don't clobber each other; falls back to a whole-blob write for
+ * object-shaped keys (e.g. erp_settings) or id-less arrays.
+ */
+const saveToServerMerged = (key: string, data: any) => {
+  const baseline = lastSyncedByKey[key];
+  if (!isDeltaCapable(data) || !Array.isArray(baseline)) {
+    saveToServer(key, data);
+    if (Array.isArray(data)) lastSyncedByKey[key] = snapshot(data);
+    return;
+  }
+
+  const ops = computeDeltaOps(baseline, data);
+  if (ops.length === 0) return; // nothing actually changed — skip the request
+
+  // For each edited record, send what we believed it looked like. The server
+  // compares that against its own copy to detect a concurrent edit by someone else.
+  const baselineById = new Map<string, any>();
+  for (const rec of baseline) {
+    if (rec && rec.id !== undefined) baselineById.set(String(rec.id), rec);
+  }
+  const opsWithBase = ops.map((op) =>
+    op.op === "upsert" && baselineById.has(op.id)
+      ? { ...op, baseRecord: baselineById.get(op.id) }
+      : op,
+  );
+
+  lastSyncedByKey[key] = snapshot(data);
+  fetch(`/api/data/${key}/merge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ops: opsWithBase, baseVersion: serverVersionByKey[key] }),
+  })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((res) => {
+      if (!res) return;
+      if (typeof res.version === "number") serverVersionByKey[key] = res.version;
+      if (Array.isArray(res.conflicts) && res.conflicts.length > 0) {
+        notifyConflicts(key, res.conflicts);
+      }
+    })
+    .catch((err) => console.error(`Error merging changes for key: ${key}`, err));
+};
+
+/** Persian labels for the collections users can collide on. */
+const COLLECTION_LABELS: Record<string, string> = {
+  erp_customers: "مشتریان",
+  erp_products: "کالاها",
+  erp_projects: "پروژه‌ها",
+  erp_proformas: "پیش‌فاکتورها",
+  erp_purchase_orders: "سفارشات خرید",
+  erp_transactions: "تراکنش‌ها",
+  erp_tasks: "وظایف",
+  erp_suppliers: "تأمین‌کنندگان",
+  erp_supplier_inquiries: "استعلام‌ها",
+  erp_packaging_deliveries: "بسته‌بندی و تحویل",
+  erp_after_sales_services: "خدمات پس از فروش",
+  erp_users: "کاربران",
+};
+
+/** Listeners for concurrent-edit notices, so the UI can surface them. */
+type ConflictNotice = { key: string; label: string; ids: string[]; at: number };
+const conflictListeners = new Set<(n: ConflictNotice) => void>();
+
+export const onEditConflict = (fn: (n: ConflictNotice) => void) => {
+  conflictListeners.add(fn);
+  return () => conflictListeners.delete(fn);
+};
+
+const notifyConflicts = (key: string, ids: string[]) => {
+  const notice: ConflictNotice = {
+    key,
+    label: COLLECTION_LABELS[key] || key,
+    ids,
+    at: Date.now(),
+  };
+  conflictListeners.forEach((fn) => {
+    try {
+      fn(notice);
+    } catch (e) {
+      console.error("conflict listener failed", e);
+    }
+  });
 };
 
 const faToEnDigits = (str: string): string => {
@@ -427,9 +568,40 @@ export function useERPStore() {
     setAuditLogs((prev) => {
       const updated = [newLog, ...prev];
       const truncated = updated.slice(0, 1000);
-      saveToServer("erp_audit_logs", truncated);
+      saveToServerMerged("erp_audit_logs", truncated);
       return truncated;
     });
+  };
+
+  /**
+   * Purges audit-log entries. Restricted to the system administrator.
+   *
+   * @param ids when provided, only those entries are removed; otherwise the whole log.
+   * A single entry recording the purge itself is written afterwards, so the log never
+   * loses the fact that it was cleared (and by whom).
+   */
+  const purgeAuditLogs = (ids?: string[]): { success: boolean; removed: number } => {
+    if (!currentUser?.isSystemAdmin) {
+      return { success: false, removed: 0 };
+    }
+
+    const idSet = ids ? new Set(ids) : null;
+    const remaining = idSet ? auditLogs.filter((l) => !idSet.has(l.id)) : [];
+    const removed = auditLogs.length - remaining.length;
+    if (removed === 0) return { success: true, removed: 0 };
+
+    saveToStorage("erp_audit_logs", remaining, setAuditLogs);
+    logAction(
+      "DELETE",
+      "دفتر ثبت سوابق",
+      "audit-log",
+      idSet
+        ? `حذف ${removed.toLocaleString("fa-IR")} مورد از سوابق اقدامات توسط مدیر سیستم`
+        : `پاک‌سازی کامل دفتر سوابق اقدامات (${removed.toLocaleString("fa-IR")} مورد) توسط مدیر سیستم`,
+      undefined,
+      undefined,
+    );
+    return { success: true, removed };
   };
 
   const [completionPrompt, setCompletionPrompt] = useState<{
@@ -525,6 +697,15 @@ export function useERPStore() {
               if (data.erp_users !== null) setUsers(data.erp_users || []);
               if (data.erp_audit_logs !== null)
                 setAuditLogs(data.erp_audit_logs || []);
+
+              // Record what the server holds, so later writes can be sent as
+              // minimal deltas instead of overwriting other users' changes.
+              const versions = data.__versions || {};
+              Object.keys(data).forEach((k) => {
+                if (k === "__versions") return;
+                registerSyncedBaseline(k, data[k], versions[k]);
+              });
+
               batchLoaded = true;
             }
           }
@@ -547,11 +728,14 @@ export function useERPStore() {
                 const data = await res.json();
                 if (data !== null) {
                   setter(data);
+                  registerSyncedBaseline(key, data);
                 } else {
                   setter(fallback);
+                  registerSyncedBaseline(key, fallback);
                 }
               } else {
                 setter(fallback);
+                registerSyncedBaseline(key, fallback);
               }
             } catch (e) {
               console.error(`Failed to fetch ${key}:`, e);
@@ -625,7 +809,7 @@ export function useERPStore() {
             }
             return r;
           });
-          saveToServer("erp_exchange_rates", updated);
+          saveToServerMerged("erp_exchange_rates", updated);
           return updated;
         });
         console.log("Exchange rates updated from tgju.com successfully!");
@@ -676,6 +860,79 @@ export function useERPStore() {
     }
   }, [isInitialized]);
 
+  /* ---------------- Live refresh (multi-user) ---------------- */
+
+  /** Which state setter owns each server key, for refetching on remote change. */
+  const collectionSetters: Record<string, Function> = {
+    erp_customers: setCustomers,
+    erp_products: setProducts,
+    erp_suppliers: setSuppliers,
+    erp_exchange_rates: setExchangeRates,
+    erp_projects: setProjects,
+    erp_proformas: setProformas,
+    erp_purchase_orders: setPurchaseOrders,
+    erp_transactions: setTransactions,
+    erp_inventory_transactions: setInventoryTransactions,
+    erp_tasks: setTasks,
+    erp_settings: setSettings,
+    erp_project_category_groups: setProjectCategoryGroups,
+    erp_packaging_deliveries: setPackagingDeliveries,
+    erp_after_sales_services: setAfterSalesServices,
+    erp_supplier_inquiries: setSupplierInquiries,
+    erp_users: setUsers,
+    erp_audit_logs: setAuditLogs,
+  };
+
+  /** Number of collections that changed on the server since our last refresh. */
+  const [remoteChangeCount, setRemoteChangeCount] = useState(0);
+
+  useEffect(() => {
+    if (!isInitialized) return;
+
+    let cancelled = false;
+
+    const pullChanges = async () => {
+      try {
+        const res = await fetch("/api/versions");
+        if (!res.ok) return;
+        const { versions } = await res.json();
+        if (!versions || cancelled) return;
+
+        const stale = Object.keys(versions).filter(
+          (key) =>
+            collectionSetters[key] &&
+            (serverVersionByKey[key] || 0) !== versions[key],
+        );
+        if (stale.length === 0) return;
+
+        // Refetch only the collections that actually changed.
+        await Promise.all(
+          stale.map(async (key) => {
+            try {
+              const r = await fetch(`/api/data/${key}`);
+              if (!r.ok) return;
+              const data = await r.json();
+              if (cancelled || data === null) return;
+              collectionSetters[key](data);
+              registerSyncedBaseline(key, data, versions[key]);
+            } catch (e) {
+              console.error(`Failed to refresh ${key}:`, e);
+            }
+          }),
+        );
+        if (!cancelled) setRemoteChangeCount((n) => n + stale.length);
+      } catch (e) {
+        // Network hiccup — the next tick will retry.
+      }
+    };
+
+    const interval = setInterval(pullChanges, 8000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isInitialized]);
+
   // Save changes helper
   const saveToStorage = (key: string, data: any, stateSetter: Function) => {
     try {
@@ -683,7 +940,7 @@ export function useERPStore() {
       if (key === "erp_current_user") {
         localStorage.setItem(key, JSON.stringify(data));
       } else {
-        saveToServer(key, data);
+        saveToServerMerged(key, data);
       }
     } catch (error) {
       console.error(`Error saving storage for key: ${key}`, error);
@@ -753,7 +1010,7 @@ export function useERPStore() {
       }
       
       try {
-        saveToServer("erp_project_category_groups", updatedGroups);
+        saveToServerMerged("erp_project_category_groups", updatedGroups);
       } catch (err) {}
       
       return updatedGroups;
@@ -809,7 +1066,7 @@ export function useERPStore() {
         return c;
       });
       updated = [newCustomer, ...updated];
-      saveToServer("erp_customers", updated);
+      saveToServerMerged("erp_customers", updated);
       logAction(
         "CREATE",
         "مشتریان",
@@ -830,7 +1087,7 @@ export function useERPStore() {
       const updated = prev.map((c) =>
         c.id === updatedCust.id ? updatedCust : c,
       );
-      saveToServer("erp_customers", updated);
+      saveToServerMerged("erp_customers", updated);
       logAction(
         "UPDATE",
         "مشتریان",
@@ -853,7 +1110,7 @@ export function useERPStore() {
     setCustomers((prev) => {
       const before = prev.find((c) => c.id === id);
       const updated = prev.filter((c) => c.id !== id);
-      saveToServer("erp_customers", updated);
+      saveToServerMerged("erp_customers", updated);
       if (before) {
         logAction(
           "DELETE",
@@ -866,6 +1123,46 @@ export function useERPStore() {
       }
       return updated;
     });
+  };
+
+  /**
+   * Reassigns every record that references `customerId` to `replacementId`, then
+   * deletes the customer. Used when deleting a customer that has history, so
+   * projects/proformas/transactions/tasks are never left orphaned.
+   */
+  const deleteCustomerWithMigration = (customerId: string, replacementId: string) => {
+    const before = customers.find((c) => c.id === customerId);
+    const replacement = customers.find((c) => c.id === replacementId);
+    if (!before || !replacement || customerId === replacementId) return;
+
+    const counts = countCustomerReferences(customerId, {
+      projects, proformas, transactions, tasks, customers,
+      supplierInquiries, purchaseOrders, packagingDeliveries, afterSalesServices,
+    });
+
+    const migrated = migrateCustomerReferences(customerId, replacement, {
+      projects, proformas, transactions, tasks, customers,
+    });
+
+    // Persist each affected collection, then remove the customer itself.
+    saveToStorage("erp_projects", migrated.projects, setProjects);
+    saveToStorage("erp_proformas", migrated.proformas, setProformas);
+    saveToStorage("erp_transactions", migrated.transactions, setTransactions);
+    saveToStorage("erp_tasks", migrated.tasks, setTasks);
+
+    const remainingCustomers = migrated.customers.filter((c) => c.id !== customerId);
+    saveToStorage("erp_customers", remainingCustomers, setCustomers);
+
+    const oldName = before.companyName || `${before.firstName || ""} ${before.lastName || ""}`.trim();
+    const newName = replacement.companyName || `${replacement.firstName || ""} ${replacement.lastName || ""}`.trim();
+    logAction(
+      "DELETE",
+      "مشتریان",
+      customerId,
+      `حذف مشتری «${oldName}» و انتقال ${counts.total} سابقه مرتبط به مشتری «${newName}» (${counts.projects} پروژه، ${counts.proformas} پیش‌فاکتور، ${counts.transactions} تراکنش، ${counts.tasks} وظیفه)`,
+      before,
+      undefined,
+    );
   };
 
   const batchUpdateCustomers = (updatedList: Customer[]) => {
@@ -975,6 +1272,58 @@ export function useERPStore() {
       }));
     }
 
+    // Detect stock changes and create inventory transactions
+    if (before) {
+      const stockTransactions: InventoryTransaction[] = [];
+      const nowStr = new Date().toISOString();
+
+      if (updatedProd.hasVariants && updatedProd.variants) {
+        // Compare each variant's stockLevel
+        for (const newV of updatedProd.variants) {
+          const oldV = before.variants?.find((v) => v.id === newV.id);
+          const oldStock = oldV ? (oldV.stockLevel || 0) : 0;
+          const newStock = newV.stockLevel || 0;
+          const diff = newStock - oldStock;
+          if (diff !== 0) {
+            stockTransactions.push({
+              id: `inv-tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}-${Math.floor(Math.random() * 1000)}`,
+              productId: updatedProd.id,
+              variantId: newV.id,
+              date: nowStr,
+              type: diff > 0 ? "IN" : "OUT",
+              quantity: Math.abs(diff),
+              referenceType: "MANUAL",
+              notes: `تغییر موجودی SKU ${newV.sku || ''} از ${oldStock} به ${newStock} (ویرایش کالا)`,
+            });
+          }
+        }
+      } else {
+        // Simple product stock change
+        const oldStock = before.stockLevel || 0;
+        const newStock = updatedProd.stockLevel || 0;
+        const diff = newStock - oldStock;
+        if (diff !== 0) {
+          stockTransactions.push({
+            id: `inv-tr-${Date.now()}-${Math.random().toString(36).substr(2, 5)}-${Math.floor(Math.random() * 1000)}`,
+            productId: updatedProd.id,
+            date: nowStr,
+            type: diff > 0 ? "IN" : "OUT",
+            quantity: Math.abs(diff),
+            referenceType: "MANUAL",
+            notes: `تغییر موجودی از ${oldStock} به ${newStock} (ویرایش کالا)`,
+          });
+        }
+      }
+
+      if (stockTransactions.length > 0) {
+        setInventoryTransactions((prev) => {
+          const updatedTr = [...stockTransactions, ...prev];
+          saveToServerMerged("erp_inventory_transactions", updatedTr);
+          return updatedTr;
+        });
+      }
+    }
+
     const updated = products.map((p) =>
       p.id === updatedProd.id ? updatedProd : p,
     );
@@ -1030,12 +1379,16 @@ export function useERPStore() {
         const currencyForeign = item.currencyForeign;
         const priceRIYAL = item.priceRIYAL;
 
+        /**
+         * Splits "نام(کد)" into its parts. The code must sit inside an explicit
+         * bracket pair — a bare space is NOT a delimiter, otherwise multi-word
+         * Persian names like "متریال بدنه(mat)" or "۲ اینچ(2I)" get mangled.
+         * With no bracketed code, the whole string is the name.
+         */
         const extractNameAndCode = (str: string) => {
-          const match = str.trim().match(/^([^[({]+?)(?:\s*[[({\s]\s*([^\])}]+?)\s*[\])}]+)?$/);
+          const match = str.trim().match(/^\s*(.+?)\s*[[({]\s*([^\])}]+?)\s*[\])}]\s*$/);
           if (match) {
-            const name = match[1].trim();
-            const code = match[2] ? match[2].trim() : undefined;
-            return { name, code };
+            return { name: match[1].trim(), code: match[2].trim() || undefined };
           }
           return { name: str.trim(), code: undefined };
         };
@@ -1058,9 +1411,13 @@ export function useERPStore() {
                   name: fName,
                   code: fCode,
                   options: options.map((o, oIdx) => {
+                    // Options accept the same "value(code)" convention as features.
+                    // Without a code, SKU generation falls back to the serial number.
+                    const { name: oValue, code: oCode } = extractNameAndCode(o);
                     return {
                       id: `opt-${Date.now()}-${oIdx}-${Math.random().toString(36).substr(2, 5)}`,
-                      value: o,
+                      value: oValue,
+                      code: oCode,
                     };
                   }),
                 });
@@ -1145,7 +1502,7 @@ export function useERPStore() {
                     const optIndex = feat.options.findIndex(o => o.value === fVal);
                     if (optIndex !== -1) {
                       const prefix = feat.code ? feat.code : '';
-                      skuParts.push(`${prefix}${optIndex + 1}`);
+                      skuParts.push(`${prefix}${getOptionToken(feat.options[optIndex], optIndex)}`);
                     }
                   }
                 });
@@ -1365,14 +1722,14 @@ export function useERPStore() {
         }
       });
 
-      saveToServer("erp_products", currentProducts);
+      saveToServerMerged("erp_products", currentProducts);
       return currentProducts;
     });
 
     if (newTransactions.length > 0) {
       setInventoryTransactions((prev) => {
         const updatedTr = [...newTransactions, ...prev];
-        saveToServer("erp_inventory_transactions", updatedTr);
+        saveToServerMerged("erp_inventory_transactions", updatedTr);
         return updatedTr;
       });
     }
@@ -1409,7 +1766,7 @@ export function useERPStore() {
 
     setInventoryTransactions((prev) => {
       const updatedTr = [...newTransactions, ...prev];
-      saveToServer("erp_inventory_transactions", updatedTr);
+      saveToServerMerged("erp_inventory_transactions", updatedTr);
       return updatedTr;
     });
 
@@ -1439,7 +1796,7 @@ export function useERPStore() {
         return updatedProduct;
       });
 
-      saveToServer("erp_products", updated);
+      saveToServerMerged("erp_products", updated);
 
       // Log actions for changed products
       validAdjustments.forEach(adj => {
@@ -2563,13 +2920,20 @@ export function useERPStore() {
   };
 
   const addSupplierInquiry = (si: any): any => {
-    const newSi = { ...si, id: `si-${Date.now()}`, createdAt: new Date().toISOString() };
+    // creationDate is what the type and the UI read (Shamsi, like winnerDate);
+    // createdAt is kept as the raw ISO timestamp.
+    const newSi = {
+      ...si,
+      id: `si-${Date.now()}`,
+      creationDate: si.creationDate || getTodayShamsi(),
+      createdAt: new Date().toISOString(),
+    };
     const updated = [...supplierInquiries, newSi];
     saveToStorage("erp_supplier_inquiries", updated, setSupplierInquiries);
     
     const supplierObj = suppliers.find(s => s.id === newSi.supplierId);
     const suppName = supplierObj ? (supplierObj.companyName || supplierObj.name) : (newSi.supplierName || newSi.supplierId || '');
-    autoLogFactActivity(newSi.projectId, 'استعلام قیمت تأمین‌کنندگان', `ثبت درخواست استعلام قیمت از تأمین‌کننده «${suppName}» (مبلغ اعلامی: ${newSi.price?.toLocaleString('fa-IR') || 0} ${newSi.currency || 'ریال'}، وضعیت: ${newSi.status}).`, newSi.id);
+    autoLogFactActivity(newSi.projectId, 'استعلام قیمت تأمین‌کنندگان', `ثبت درخواست استعلام قیمت از تأمین‌کننده «${suppName}» برای ${(newSi.items || []).length} قلم کالا (مبلغ اعلامی: ${describeInquiryAmount(newSi.items)}، وضعیت: ${describeInquiryStatus(newSi)}).`, newSi.id);
     notifyModuleResponsible('supplierInquiries', 'ثبت استعلام قیمت جدید', `استعلام قیمت جدید برای تأمین‌کننده «${suppName}» ثبت شد.`, newSi.projectId);
     processWorkflowRules('supplier_inquiry_created', newSi);
     return newSi;
@@ -2581,8 +2945,13 @@ export function useERPStore() {
     
     const supplierObj = suppliers.find(s => s.id === updatedSi.supplierId);
     const suppName = supplierObj ? (supplierObj.companyName || supplierObj.name) : (updatedSi.supplierName || updatedSi.supplierId || '');
-    autoLogFactActivity(updatedSi.projectId, 'استعلام قیمت تأمین‌کنندگان', `بروزرسانی وضعیت استعلام قیمت از تأمین‌کننده «${suppName}» به «${updatedSi.status}» (مبلغ اعلامی: ${updatedSi.price?.toLocaleString('fa-IR') || 0} ${updatedSi.currency || 'ریال'}).`, updatedSi.id);
-    processWorkflowRules('supplier_inquiry_status_change', { newStatus: updatedSi.status, oldStatus: oldSi?.status, ...updatedSi });
+    const newStatusText = describeInquiryStatus(updatedSi);
+    const oldStatusText = describeInquiryStatus(oldSi);
+    const statusPart = newStatusText !== oldStatusText
+      ? `وضعیت از «${oldStatusText}» به «${newStatusText}» تغییر یافت`
+      : `وضعیت: «${newStatusText}»`;
+    autoLogFactActivity(updatedSi.projectId, 'استعلام قیمت تأمین‌کنندگان', `بروزرسانی استعلام قیمت تأمین‌کننده «${suppName}» — ${statusPart} (مبلغ اعلامی: ${describeInquiryAmount(updatedSi.items)}).`, updatedSi.id);
+    processWorkflowRules('supplier_inquiry_status_change', { newStatus: newStatusText, oldStatus: oldStatusText, ...updatedSi });
   };
   const deleteSupplierInquiry = (id: string, deleteLogs: boolean = false) => {
     const record = supplierInquiries.find(s => s.id === id);
@@ -2707,7 +3076,7 @@ export function useERPStore() {
         }
         return g;
       });
-      saveToServer("erp_project_category_groups", updatedGroups);
+      saveToServerMerged("erp_project_category_groups", updatedGroups);
       return updatedGroups;
     });
 
@@ -2790,7 +3159,7 @@ export function useERPStore() {
         }
         return g;
       });
-      saveToServer("erp_project_category_groups", updatedGroups);
+      saveToServerMerged("erp_project_category_groups", updatedGroups);
       return updatedGroups;
     });
 
@@ -3120,12 +3489,14 @@ export function useERPStore() {
     users,
     currentUser,
     auditLogs,
+    purgeAuditLogs,
     isInitialized,
+    remoteChangeCount,
     userRole,
     completionPrompt,
     setCompletionPrompt,
     completeCategoryGroup,
-    addCustomer, updateCustomer, deleteCustomer, batchUpdateCustomers,
+    addCustomer, updateCustomer, deleteCustomer, deleteCustomerWithMigration, batchUpdateCustomers,
     addProduct, updateProduct, deleteProduct, batchImportProducts, adjustProductStock,
     addSupplier, updateSupplier, deleteSupplier, batchImportSuppliers,
     addTransaction, updateTransaction, deleteTransaction,

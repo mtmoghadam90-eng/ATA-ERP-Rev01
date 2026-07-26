@@ -24,23 +24,44 @@ import {
   Maximize2,
   Minimize2
 } from 'lucide-react';
-import { Customer, ERPSettings } from '../types';
+import {
+  Customer, ERPSettings, Project, Proforma, Transaction, Task,
+  SupplierInquiry, PurchaseOrder, PackagingDelivery, AfterSalesService,
+} from '../types';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import { exportToCSV } from '../excelUtils';
 import ConfirmModal from './ConfirmModal';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
+import { IRAN_PROVINCES, canonicalizeProvince } from '../utils/iranProvinces';
+import { getContactInfoError } from '../utils/customerValidation';
+import { findCustomerDuplicates, DuplicateMatch } from '../utils/customerDuplicates';
+import DuplicateCustomerModal from './DuplicateCustomerModal';
+import { countCustomerReferences, hasCustomerReferences, CustomerReferenceCounts } from '../utils/customerMigration';
+import CustomerDeleteMigrationModal from './CustomerDeleteMigrationModal';
+import { SearchableSelect } from './SearchableSelect';
 
 interface CustomersViewProps {
   customers: Customer[];
   addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => Customer;
   updateCustomer: (customer: Customer) => void;
   deleteCustomer: (id: string) => void;
+  /** Moves all references to a replacement customer, then deletes. */
+  deleteCustomerWithMigration: (customerId: string, replacementId: string) => void;
   batchUpdateCustomers: (updatedList: Customer[]) => void;
   industries: string[];
   settings: ERPSettings;
   initialSearchQuery?: string | null;
   onClearInitialSearchQuery?: () => void;
+  // Read-only collections, used to detect what references a customer before deleting.
+  projects?: Project[];
+  proformas?: Proforma[];
+  transactions?: Transaction[];
+  tasks?: Task[];
+  supplierInquiries?: SupplierInquiry[];
+  purchaseOrders?: PurchaseOrder[];
+  packagingDeliveries?: PackagingDelivery[];
+  afterSalesServices?: AfterSalesService[];
 }
 
 export default function CustomersView({
@@ -48,11 +69,20 @@ export default function CustomersView({
   addCustomer,
   updateCustomer,
   deleteCustomer,
+  deleteCustomerWithMigration,
   batchUpdateCustomers,
   industries,
   settings,
   initialSearchQuery,
-  onClearInitialSearchQuery
+  onClearInitialSearchQuery,
+  projects = [],
+  proformas = [],
+  transactions = [],
+  tasks = [],
+  supplierInquiries = [],
+  purchaseOrders = [],
+  packagingDeliveries = [],
+  afterSalesServices = []
 }: CustomersViewProps) {
   const [search, setSearch] = useState('');
 
@@ -123,6 +153,22 @@ export default function CustomersView({
   const [quickMobile, setQuickMobile] = useState('');
   const [quickEmail, setQuickEmail] = useState('');
   const [quickProvince, setQuickProvince] = useState('');
+
+  // Duplicate-customer warning state (main form)
+  const [dupMatches, setDupMatches] = useState<DuplicateMatch[]>([]);
+  const [dupCandidateName, setDupCandidateName] = useState('');
+  // ...and for the inline linked-customer ("relation") form
+  const [quickDupMatches, setQuickDupMatches] = useState<DuplicateMatch[]>([]);
+  const [quickDupPayload, setQuickDupPayload] = useState<Partial<Customer> | null>(null);
+
+  // Delete-with-migration state (customer that still has history)
+  const [migrationTarget, setMigrationTarget] = useState<Customer | null>(null);
+  const [migrationCounts, setMigrationCounts] = useState<CustomerReferenceCounts | null>(null);
+
+  const referenceCollections = {
+    projects, proformas, transactions, tasks, customers,
+    supplierInquiries, purchaseOrders, packagingDeliveries, afterSalesServices,
+  };
   const [quickAddress, setQuickAddress] = useState('');
   const [quickNotes, setQuickNotes] = useState('');
   const [quickTags, setQuickTags] = useState('');
@@ -158,14 +204,20 @@ export default function CustomersView({
     e.preventDefault();
     
     const targetType: Customer['customerType'] = customerType === 'حقوقی' ? 'حقیقی' : 'حقوقی';
-    
+
+    const quickContactError = getContactInfoError({ mobile: quickMobile, phone: quickPhone, email: quickEmail, province: quickProvince });
+    if (quickContactError) {
+      alert(quickContactError);
+      return;
+    }
+
     const data: Partial<Customer> = {
       customerType: targetType,
       status: 'فعال',
       phone: quickPhone,
       mobile: quickMobile,
       email: quickEmail,
-      province: quickProvince,
+      province: canonicalizeProvince(quickProvince) || quickProvince,
       address: quickAddress,
       notes: quickNotes,
       tags: quickTags,
@@ -197,7 +249,22 @@ export default function CustomersView({
       data.contactLastName = quickLastName;
     }
 
+    // Warn before creating a linked record that looks like an existing customer.
+    const dupes = findCustomerDuplicates(data, customers);
+    if (dupes.length > 0) {
+      setQuickDupPayload(data);
+      setQuickDupMatches(dupes);
+      return;
+    }
+
+    commitQuickRelationCustomer(data);
+  };
+
+  /** Creates the inline linked ("relation") customer and links it. */
+  const commitQuickRelationCustomer = (data: Partial<Customer>) => {
     const created = addCustomer(data as Omit<Customer, 'id' | 'createdAt'>);
+    setQuickDupMatches([]);
+    setQuickDupPayload(null);
     if (created && created.id) {
       setSelectedLinks(prev => [...prev, created.id]);
       resetQuickForm();
@@ -290,7 +357,14 @@ export default function CustomersView({
   // Handle Save
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    
+
+    // At least one identifying contact field is required beyond the name.
+    const contactError = getContactInfoError({ mobile, phone, email, province });
+    if (contactError) {
+      alert(contactError);
+      return;
+    }
+
     // Dynamic Custom Fields Validation
     const moduleFields = (settings?.customFields || []).filter(f => f.module === 'customers');
     for (const field of moduleFields) {
@@ -303,6 +377,31 @@ export default function CustomersView({
       }
     }
 
+    // Warn before creating a record that looks like an existing customer.
+    const candidateName = customerType === 'حقوقی' ? companyName.trim() : `${firstName} ${lastName}`.trim();
+    const matches = findCustomerDuplicates(
+      {
+        id: editingCustomer?.id,
+        customerType,
+        companyName: candidateName,
+        firstName: customerType === 'حقیقی' ? firstName : undefined,
+        lastName: customerType === 'حقیقی' ? lastName : undefined,
+        mobile, phone, email, province,
+        economicCode: customerType === 'حقوقی' ? economicCode : undefined,
+      },
+      customers,
+    );
+    if (matches.length > 0) {
+      setDupMatches(matches);
+      setDupCandidateName(candidateName);
+      return;
+    }
+
+    performSave();
+  };
+
+  const performSave = () => {
+    setDupMatches([]);
     let finalSelectedLinks = [...selectedLinks];
     let nextCustomers = [...customers];
 
@@ -320,7 +419,7 @@ export default function CustomersView({
             phone: quickPhone,
             mobile: quickMobile,
             email: quickEmail,
-            province: quickProvince,
+            province: canonicalizeProvince(quickProvince) || quickProvince,
             address: quickAddress,
             notes: quickNotes,
             tags: quickTags,
@@ -347,7 +446,7 @@ export default function CustomersView({
             phone: quickPhone,
             mobile: quickMobile,
             email: quickEmail,
-            province: quickProvince,
+            province: canonicalizeProvince(quickProvince) || quickProvince,
             address: quickAddress,
             notes: quickNotes,
             tags: quickTags,
@@ -403,7 +502,7 @@ export default function CustomersView({
       phone,
       mobile,
       email,
-      province,
+      province: canonicalizeProvince(province) || province,
       address,
       notes,
       tags,
@@ -936,7 +1035,14 @@ export default function CustomersView({
                             const nameStr = isLegal ? cust.companyName : `${cust.firstName || ''} ${cust.lastName || ''}`;
                             setCustomerToDeleteId(cust.id);
                             setCustomerToDeleteName(nameStr);
-                            setDeleteConfirmOpen(true);
+                            // If this customer still has history, require a replacement first.
+                            const refs = countCustomerReferences(cust.id, referenceCollections);
+                            if (hasCustomerReferences(refs)) {
+                              setMigrationTarget(cust);
+                              setMigrationCounts(refs);
+                            } else {
+                              setDeleteConfirmOpen(true);
+                            }
                           }}
                           className="p-1.5 hover:bg-red-50 text-slate-600 hover:text-red-600 rounded transition"
                           title="حذف مشتری"
@@ -1155,13 +1261,12 @@ export default function CustomersView({
                     {/* استان */}
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-600">{renderFieldLabelWithAsterisk(settings, 'customers', 'province', 'استان')}</label>
-                      <input
-                        type="text"
+                      <SearchableSelect
+                        value={canonicalizeProvince(province)}
+                        onChange={(val) => setProvince(val)}
                         required={isFieldRequired(settings, 'customers', 'province')}
-                        value={province}
-                        onChange={(e) => setProvince(e.target.value)}
-                        placeholder="مثال: تهران"
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
+                        placeholder="انتخاب استان..."
+                        options={IRAN_PROVINCES.map(p => ({ value: p, label: p }))}
                       />
                     </div>
                   </>
@@ -1274,13 +1379,12 @@ export default function CustomersView({
                     {/* استان */}
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-600">{renderFieldLabelWithAsterisk(settings, 'customers', 'province', 'استان')}</label>
-                      <input
-                        type="text"
+                      <SearchableSelect
+                        value={canonicalizeProvince(province)}
+                        onChange={(val) => setProvince(val)}
                         required={isFieldRequired(settings, 'customers', 'province')}
-                        value={province}
-                        onChange={(e) => setProvince(e.target.value)}
-                        placeholder="مثال: اصفهان"
-                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
+                        placeholder="انتخاب استان..."
+                        options={IRAN_PROVINCES.map(p => ({ value: p, label: p }))}
                       />
                     </div>
                   </>
@@ -1739,12 +1843,12 @@ export default function CustomersView({
                       </div>
                       <div className="space-y-1">
                         <label className="text-[10px] font-semibold text-slate-500">استان</label>
-                        <input
-                          type="text"
-                          value={quickProvince}
-                          onChange={(e) => setQuickProvince(e.target.value)}
-                          placeholder="مثال: خراسان رضوی"
-                          className="w-full border border-slate-200 rounded-md px-2.5 py-1.5 text-xs text-right focus:outline-none focus:ring-1 focus:ring-sky-500"
+                        <SearchableSelect
+                          value={canonicalizeProvince(quickProvince)}
+                          onChange={(val) => setQuickProvince(val)}
+                          placeholder="انتخاب استان..."
+                          className="text-xs !py-1.5"
+                          options={IRAN_PROVINCES.map(p => ({ value: p, label: p }))}
                         />
                       </div>
                       <div className="space-y-1 md:col-span-2">
@@ -1900,6 +2004,65 @@ export default function CustomersView({
         message={`آیا از حذف و قطع ارتباط با مشتری "${linkToDeleteName}" اطمینان دارید؟`}
         confirmText="بله، قطع ارتباط شود"
         cancelText="انصراف"
+      />
+
+      {/* Duplicate customer warning */}
+      <DuplicateCustomerModal
+        isOpen={dupMatches.length > 0}
+        candidateName={dupCandidateName}
+        matches={dupMatches}
+        allCustomers={customers}
+        onUseExisting={(existing) => {
+          setDupMatches([]);
+          setShowModal(false);
+          setSearch(existing.companyName || '');
+        }}
+        onCreateAnyway={() => performSave()}
+        onCancel={() => setDupMatches([])}
+      />
+
+      {/* Duplicate warning for the inline linked-customer form */}
+      <DuplicateCustomerModal
+        isOpen={quickDupMatches.length > 0}
+        candidateName={quickDupPayload?.companyName || ''}
+        matches={quickDupMatches}
+        allCustomers={customers}
+        onUseExisting={(existing) => {
+          setQuickDupMatches([]);
+          setQuickDupPayload(null);
+          setSelectedLinks(prev => prev.includes(existing.id) ? prev : [...prev, existing.id]);
+          resetQuickForm();
+        }}
+        onCreateAnyway={() => {
+          if (quickDupPayload) commitQuickRelationCustomer(quickDupPayload);
+        }}
+        onCancel={() => {
+          setQuickDupMatches([]);
+          setQuickDupPayload(null);
+        }}
+      />
+
+      {/* Deleting a customer that still has history: migrate first */}
+      <CustomerDeleteMigrationModal
+        isOpen={!!migrationTarget && !!migrationCounts}
+        customer={migrationTarget}
+        counts={migrationCounts || ({} as CustomerReferenceCounts)}
+        allCustomers={customers}
+        onConfirm={(replacementId) => {
+          if (migrationTarget) {
+            deleteCustomerWithMigration(migrationTarget.id, replacementId);
+          }
+          setMigrationTarget(null);
+          setMigrationCounts(null);
+          setCustomerToDeleteId(null);
+          setCustomerToDeleteName('');
+        }}
+        onCancel={() => {
+          setMigrationTarget(null);
+          setMigrationCounts(null);
+          setCustomerToDeleteId(null);
+          setCustomerToDeleteName('');
+        }}
       />
 
     </div>

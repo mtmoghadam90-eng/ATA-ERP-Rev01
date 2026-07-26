@@ -16,8 +16,8 @@ import AfterSalesServicesView from './components/AfterSalesServicesView';
 import PackagingDeliveryView from './components/PackagingDeliveryView';
 import SupplierInquiriesView from './components/SupplierInquiriesView';
 import LoginView from './components/LoginView';
-import { useERPStore } from './useERPStore';
-import { ShieldAlert, Bell, Inbox, Menu, Calendar, CheckCircle2, Clock, User, Sun, Moon } from 'lucide-react';
+import { useERPStore, onEditConflict } from './useERPStore';
+import { ShieldAlert, Bell, Inbox, Menu, Calendar, CheckCircle2, Clock, User, Sun, Moon, RefreshCw } from 'lucide-react';
 import TaskCalendarModal from './components/TaskCalendarModal';
 import { getTodayShamsi, toShamsiStr } from './dateUtils';
 import ShamsiDatePicker from './components/ShamsiDatePicker';
@@ -84,6 +84,32 @@ export default function App() {
       }
     }
   };
+
+  // Multi-user: notices about data refreshed from, or contended with, other users
+  const [syncNotice, setSyncNotice] = useState<{ text: string; kind: 'info' | 'warn' } | null>(null);
+  const lastRemoteCountRef = React.useRef(0);
+
+  useEffect(() => {
+    return onEditConflict((n) => {
+      setSyncNotice({
+        kind: 'warn',
+        text: `«${n.label}»: ${n.ids.length} مورد که ویرایش کردید، هم‌زمان توسط کاربر دیگری نیز تغییر کرده بود. تغییر شما ثبت شد؛ لطفاً صحت اطلاعات را بازبینی کنید.`,
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (store.remoteChangeCount > lastRemoteCountRef.current) {
+      lastRemoteCountRef.current = store.remoteChangeCount;
+      setSyncNotice({ kind: 'info', text: 'اطلاعات با تغییرات سایر کاربران به‌روزرسانی شد.' });
+    }
+  }, [store.remoteChangeCount]);
+
+  useEffect(() => {
+    if (!syncNotice) return;
+    const t = setTimeout(() => setSyncNotice(null), syncNotice.kind === 'warn' ? 12000 : 4000);
+    return () => clearTimeout(t);
+  }, [syncNotice]);
 
   // Project confirmation upload state
   const [projectToUploadDoc, setProjectToUploadDoc] = useState<Project | null>(null);
@@ -290,16 +316,25 @@ export default function App() {
         );
       case 'customers':
         return (
-          <CustomersView 
+          <CustomersView
             customers={store.customers}
             addCustomer={store.addCustomer}
             updateCustomer={store.updateCustomer}
             deleteCustomer={store.deleteCustomer}
+            deleteCustomerWithMigration={store.deleteCustomerWithMigration}
             batchUpdateCustomers={store.batchUpdateCustomers}
             industries={store.settings.dropdownItems.industries}
             settings={store.settings}
             initialSearchQuery={selectedCustomerNameForSearch}
             onClearInitialSearchQuery={() => setSelectedCustomerNameForSearch(null)}
+            projects={store.projects}
+            proformas={store.proformas}
+            transactions={store.transactions}
+            tasks={store.tasks}
+            supplierInquiries={store.supplierInquiries || []}
+            purchaseOrders={store.purchaseOrders}
+            packagingDeliveries={store.packagingDeliveries}
+            afterSalesServices={store.afterSalesServices}
           />
         );
       case 'products':
@@ -338,6 +373,7 @@ export default function App() {
             updateCustomer={store.updateCustomer}
             addProject={store.addProject}
             addProduct={store.addProduct}
+            updateProduct={store.updateProduct}
             users={store.users}
             transactions={store.transactions}
             packagingDeliveries={store.packagingDeliveries}
@@ -536,6 +572,7 @@ export default function App() {
             currentUser={store.currentUser}
             projects={store.projects}
             auditLogs={store.auditLogs}
+            purgeAuditLogs={store.purgeAuditLogs}
             exchangeRates={store.exchangeRates}
             updateExchangeRate={store.updateExchangeRate}
             fetchRatesFromAPI={store.fetchRatesFromAPI}
@@ -685,8 +722,31 @@ export default function App() {
         </div>
       </main>
 
+      {/* Multi-user sync notice */}
+      {syncNotice && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[1300] max-w-md w-[calc(100%-2rem)] animate-fade-in" dir="rtl">
+          <div className={`flex items-start gap-2.5 rounded-xl shadow-lg border px-4 py-3 ${
+            syncNotice.kind === 'warn'
+              ? 'bg-amber-50 border-amber-200 text-amber-800'
+              : 'bg-sky-50 border-sky-200 text-sky-800'
+          }`}>
+            {syncNotice.kind === 'warn'
+              ? <ShieldAlert size={16} className="shrink-0 mt-0.5" />
+              : <RefreshCw size={16} className="shrink-0 mt-0.5" />}
+            <p className="text-[11px] font-bold leading-relaxed flex-1">{syncNotice.text}</p>
+            <button
+              onClick={() => setSyncNotice(null)}
+              className="shrink-0 opacity-60 hover:opacity-100 transition text-xs font-bold"
+              title="بستن"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Task Calendar Modal */}
-      <TaskCalendarModal 
+      <TaskCalendarModal
         isOpen={calendarOpen} 
         onClose={() => setCalendarOpen(false)} 
         tasks={store.tasks} 

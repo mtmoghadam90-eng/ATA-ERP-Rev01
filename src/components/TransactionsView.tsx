@@ -35,6 +35,10 @@ import ConfirmModal from './ConfirmModal';
 import QuickAddModal from './QuickAddModal';
 import { SearchableSelect } from './SearchableSelect';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
+import { buildCustomerOptions } from '../utils/customerLabel';
+import { getContactInfoError } from '../utils/customerValidation';
+import { findCustomerDuplicates, DuplicateMatch } from '../utils/customerDuplicates';
+import DuplicateCustomerModal from './DuplicateCustomerModal';
 
 interface TransactionsViewProps {
   initialPrintDocId?: string;
@@ -126,6 +130,21 @@ export default function TransactionsView({
 
   // Quick Customer Creation States
   const [showQuickCustomerModal, setShowQuickCustomerModal] = useState(false);
+
+  // Duplicate-customer warning state for the inline quick-customer form
+  const [dupMatches, setDupMatches] = useState<DuplicateMatch[]>([]);
+  const [dupPayload, setDupPayload] = useState<any>(null);
+
+  const commitQuickCustomer = (custData: any) => {
+    if (!addCustomer) return;
+    const created = addCustomer(custData);
+    setDupMatches([]);
+    setDupPayload(null);
+    if (created && created.id) {
+      setCustomerId(created.id);
+      setShowQuickCustomerModal(false);
+    }
+  };
   const [quickCustType, setQuickCustType] = useState<'حقوقی' | 'حقیقی'>('حقوقی');
   const [quickCustName, setQuickCustName] = useState('');
   const [quickCustFirstName, setQuickCustFirstName] = useState('');
@@ -1347,7 +1366,7 @@ export default function TransactionsView({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Transaction Type */}
                 <div className="space-y-1.5 sm:col-span-2">
-                  <label className="text-xs font-semibold text-slate-500">نوع تراکنش مالی</label>
+                  <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'transactions', 'type', 'نوع تراکنش مالی')}</label>
                   <div className="grid grid-cols-2 gap-3">
                     <button
                       type="button"
@@ -1389,7 +1408,7 @@ export default function TransactionsView({
                 {/* Doc No */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-500 flex justify-between items-center">
-                    <span>شماره سند مالی *</span>
+                    <span>{renderFieldLabelWithAsterisk(settings, 'transactions', 'documentNumber', 'شماره سند مالی')}</span>
                     <button
                       type="button"
                       onClick={() => setDocumentNumber(generateAutoDocNo(type))}
@@ -1401,7 +1420,7 @@ export default function TransactionsView({
                   </label>
                   <input
                     type="text"
-                    required
+                    required={isFieldRequired(settings, 'transactions', 'documentNumber')}
                     value={documentNumber}
                     onChange={(e) => setDocumentNumber(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono text-left"
@@ -1411,8 +1430,8 @@ export default function TransactionsView({
                 {/* Date */}
                 <div className="space-y-1.5" id="transaction-date-picker-wrapper">
                   <ShamsiDatePicker
-                    label="تاریخ تراکنش"
-                    required
+                    label={renderFieldLabelWithAsterisk(settings, 'transactions', 'date', 'تاریخ تراکنش')}
+                    required={isFieldRequired(settings, 'transactions', 'date')}
                     value={date}
                     onChange={(val) => setDate(val)}
                   />
@@ -1466,7 +1485,7 @@ export default function TransactionsView({
                       required
                       options={[
                         { value: '', label: '-- انتخاب مشتری --' },
-                        ...customers.map(c => ({ value: c.id, label: c.companyName }))
+                        ...buildCustomerOptions(customers)
                       ]}
                       placeholder="-- انتخاب مشتری --"
                     />
@@ -1531,10 +1550,10 @@ export default function TransactionsView({
                 {/* Financial Amounts */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-500">مبلغ ریالی (یا معادل ریالی) *</label>
+                    <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'transactions', 'amountRIYAL', 'مبلغ ریالی (یا معادل ریالی)')}</label>
                     <input
                       type="number"
-                      required
+                      required={isFieldRequired(settings, 'transactions', 'amountRIYAL')}
                       value={amountRIYAL}
                       onChange={(e) => setAmountRIYAL(Number(e.target.value))}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono text-left"
@@ -1593,11 +1612,11 @@ export default function TransactionsView({
 
                 {/* Receipt Type */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-500">بابت / نوع دریافت و پرداخت *</label>
+                  <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'transactions', 'receiptType', 'بابت / نوع دریافت و پرداخت')}</label>
                   <select
                     value={receiptType}
                     onChange={(e) => setReceiptType(e.target.value)}
-                    required
+                    required={isFieldRequired(settings, 'transactions', 'receiptType')}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-right bg-white"
                   >
                     <option value="">-- انتخاب بابت تراکنش --</option>
@@ -1676,10 +1695,11 @@ export default function TransactionsView({
 
                 {/* Payment Type */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-500">شیوه پرداخت</label>
+                  <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'transactions', 'paymentType', 'شیوه پرداخت')}</label>
                   <select
                     value={paymentType}
                     onChange={(e) => setPaymentType(e.target.value as Transaction['paymentType'])}
+                    required={isFieldRequired(settings, 'transactions', 'paymentType')}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-right bg-white"
                   >
                     <option value="حواله بانکی">حواله بانکی (پایا/ساتنا)</option>
@@ -1928,6 +1948,12 @@ export default function TransactionsView({
                     return;
                   }
 
+                  const quickContactError = getContactInfoError({ phone: quickCustPhone, email: quickCustEmail });
+                  if (quickContactError) {
+                    alert(quickContactError);
+                    return;
+                  }
+
                   const custData: any = {
                     type: quickCustType,
                     status: 'فعال',
@@ -1957,13 +1983,17 @@ export default function TransactionsView({
                     custData.contactLastName = quickCustLastName;
                   }
 
-                  if (addCustomer) {
-                    const created = addCustomer(custData);
-                    if (created && created.id) {
-                      setCustomerId(created.id);
-                      setShowQuickCustomerModal(false);
-                    }
+                  // Warn before creating a record that looks like an existing customer.
+                  const dupes = findCustomerDuplicates(
+                    { ...custData, customerType: quickCustType },
+                    customers,
+                  );
+                  if (dupes.length > 0) {
+                    setDupPayload(custData);
+                    setDupMatches(dupes);
+                    return;
                   }
+                  commitQuickCustomer(custData);
                 }}
                 className="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition"
               >
@@ -2359,6 +2389,27 @@ export default function TransactionsView({
           </div>
         </div>
       )}
+
+      {/* Duplicate customer warning */}
+      <DuplicateCustomerModal
+        isOpen={dupMatches.length > 0}
+        candidateName={dupPayload?.companyName || ''}
+        matches={dupMatches}
+        allCustomers={customers}
+        onUseExisting={(existing) => {
+          setDupMatches([]);
+          setDupPayload(null);
+          setCustomerId(existing.id);
+          setShowQuickCustomerModal(false);
+        }}
+        onCreateAnyway={() => {
+          if (dupPayload) commitQuickCustomer(dupPayload);
+        }}
+        onCancel={() => {
+          setDupMatches([]);
+          setDupPayload(null);
+        }}
+      />
 
     </div>
   );

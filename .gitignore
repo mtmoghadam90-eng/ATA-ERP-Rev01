@@ -8,3 +8,12 @@ coverage/
 !.env.example
 uploads/
 
+# Live application database — contains real business data and password hashes.
+# Each deployment keeps its own; never commit it.
+database.json
+database.json.tmp
+database.sqlite
+
+# Machine-specific Claude Code permission grants (launch.json IS shared)
+.claude/settings.local.json
+

@@ -5,7 +5,7 @@ import { getTodayShamsi, gregorianToJalali, jalaliToGregorian } from '../dateUti
 interface ShamsiDatePickerProps {
   value: string; // "1405/04/14" or "YYYY/MM/DD"
   onChange: (val: string) => void;
-  label?: string;
+  label?: React.ReactNode;
   required?: boolean;
   placeholder?: string;
   className?: string;

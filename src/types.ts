@@ -723,6 +723,8 @@ export interface InquiryStep {
   notes?: string;
   method?: string; // e.g. ایمیل/تلفن/واتساپ/حضوری
   recipientName?: string; // نام شخص گیرنده در سمت تامین‌کننده
+  auto?: boolean; // ثبت خودکار توسط سیستم بر اساس اقدام کاربر
+  autoKey?: string; // کلید منطقی مرحله خودکار (جهت جلوگیری از ثبت تکراری)
 }
 
 export interface SupplierInquiryItem {
@@ -752,6 +754,8 @@ export interface SupplierInquiry {
   isWinner: boolean;
   winnerDate?: string;
   creationDate: string;
+  offerConfirmed?: boolean; // صحت آفر تأیید شده و آفر نهایی تلقی می‌شود
+  offerConfirmedDate?: string;
 }
 
 

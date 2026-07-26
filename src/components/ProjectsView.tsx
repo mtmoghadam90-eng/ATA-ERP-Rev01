@@ -15,7 +15,11 @@ import CustomFieldsForm from './CustomFieldsForm';
 import { uploadFile, compressImage, downloadFileFromServer } from '../imageUtils';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import { exportToCSV } from '../excelUtils';
+import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
+import { buildCustomerOptions } from '../utils/customerLabel';
 import ConfirmModal from './ConfirmModal';
 import QuickAddModal from './QuickAddModal';
 import { SearchableSelect } from './SearchableSelect';
@@ -324,6 +328,118 @@ export default function ProjectsView({
   };
   const handleRemoveItemLine = (index) => {
     setItemsNeeded(itemsNeeded.filter((_, i) => i !== index));
+  };
+
+  // --- Excel import for generic "مشخصات کلی" items ---
+  const itemsExcelInputRef = useRef<HTMLInputElement>(null);
+
+  const CATEGORY_LABELS: Record<string, string> = { FLOW: 'فلو', TEMPERATURE: 'دما', PRESSURE: 'فشار', LEVEL: 'سطح' };
+
+  const normalizeItemCategory = (raw: any): 'FLOW' | 'TEMPERATURE' | 'PRESSURE' | 'LEVEL' => {
+    const s = String(raw ?? '').trim().toLowerCase();
+    if (!s) return 'FLOW';
+    if (s.includes('دما') || s.includes('حرارت') || s.includes('temp')) return 'TEMPERATURE';
+    if (s.includes('فشار') || s.includes('press')) return 'PRESSURE';
+    if (s.includes('سطح') || s.includes('لول') || s.includes('level')) return 'LEVEL';
+    if (s.includes('فلو') || s.includes('جریان') || s.includes('flow')) return 'FLOW';
+    return 'FLOW';
+  };
+
+  const faToEnDigitsLocal = (str: any): string => {
+    return String(str ?? '')
+      .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+      .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+  };
+
+  const buildGenericItemName = (category: string, equipmentType: string, size: string): string => {
+    const catLabel = CATEGORY_LABELS[category] || 'فلو';
+    const sizeStr = size ? ` (سایز: ${size})` : '';
+    return `${catLabel} - ${equipmentType || 'تجهیز درخواستی'}${sizeStr}`;
+  };
+
+  const handleDownloadItemsTemplate = async () => {
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('اقلام درخواستی');
+      worksheet.views = [{ rightToLeft: true }];
+      worksheet.columns = [
+        { header: 'دسته کالا', key: 'category', width: 18 },
+        { header: 'نوع تجهیز', key: 'equipmentType', width: 30 },
+        { header: 'سایز', key: 'size', width: 14 },
+        { header: 'تگ نامبر', key: 'tagNumber', width: 16 },
+        { header: 'تعداد', key: 'quantity', width: 10 },
+      ];
+      worksheet.getRow(1).font = { bold: true };
+      worksheet.addRow({ category: 'فلو', equipmentType: 'فلومتر کوریولیس', size: '2 اینچ', tagNumber: 'FIT-101', quantity: 2 });
+      worksheet.addRow({ category: 'فشار', equipmentType: 'ترانسمیتر فشار', size: 'G1/2', tagNumber: 'PIT-201', quantity: 5 });
+      // Category dropdown validation
+      for (let i = 2; i <= 300; i++) {
+        worksheet.getCell(`A${i}`).dataValidation = {
+          type: 'list',
+          allowBlank: true,
+          formulae: ['"فلو,دما,فشار,سطح"'],
+        };
+      }
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, 'قالب_اقلام_درخواستی_پروژه.xlsx');
+    } catch (err) {
+      alert('خطا در ساخت قالب اکسل.');
+    }
+  };
+
+  const handleImportItemsFromExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = new Uint8Array(ev.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json<any>(worksheet);
+
+        // Tolerant column matching (ignores spaces / ZWNJ / case)
+        const getField = (row: any, targets: string[]) => {
+          const clean = (s: string) => String(s).replace(/[\s‌]/g, '').toLowerCase();
+          const cleanTargets = targets.map(clean);
+          for (const key of Object.keys(row)) {
+            if (cleanTargets.includes(clean(key))) return row[key];
+          }
+          return undefined;
+        };
+
+        const newItems = jsonData.map((row) => {
+          const category = normalizeItemCategory(getField(row, ['دسته کالا', 'دسته‌بندی', 'دسته بندی', 'دسته', 'category']));
+          const equipmentType = String(getField(row, ['نوع تجهیز', 'تجهیز', 'equipmentType']) ?? '').trim();
+          const size = String(getField(row, ['سایز', 'size']) ?? '').trim();
+          const tagNumber = String(getField(row, ['تگ نامبر', 'تگ‌نامبر', 'تگ', 'tag', 'tagNumber']) ?? '').trim();
+          const quantity = Math.max(1, Math.floor(Number(faToEnDigitsLocal(getField(row, ['تعداد', 'quantity', 'qty']))) || 1));
+          return {
+            productId: 'generic',
+            name: buildGenericItemName(category, equipmentType, size),
+            quantity,
+            supplyMethod: 'ORDER',
+            category,
+            equipmentType,
+            size,
+            tagNumber,
+          };
+        }).filter((it) => it.equipmentType || it.size || it.tagNumber);
+
+        if (newItems.length === 0) {
+          alert('هیچ ردیف معتبری در فایل اکسل یافت نشد. لطفاً از قالب استاندارد استفاده کنید (ستون‌های: دسته کالا، نوع تجهیز، سایز، تگ نامبر، تعداد).');
+        } else {
+          setItemsNeeded((prev) => [...prev, ...newItems]);
+          alert(`${newItems.length} ردیف با موفقیت از فایل اکسل به جدول مشخصات کلی افزوده شد.`);
+        }
+      } catch (err) {
+        alert('خطا در پردازش فایل اکسل. لطفاً از قالب استاندارد استفاده کنید.');
+      } finally {
+        if (itemsExcelInputRef.current) itemsExcelInputRef.current.value = '';
+      }
+    };
+    reader.readAsArrayBuffer(file);
   };
   const handleItemProductChange = (index, prodId) => {
     if (prodId === "generic") {
@@ -3251,7 +3367,7 @@ export default function ProjectsView({
                       required={isFieldRequired(settings, 'projects', 'customerId')}
                       options={[
                         { value: '', label: '-- انتخاب مشتری --' },
-                        ...customers.map(c => ({ value: c.id, label: c.companyName }))
+                        ...buildCustomerOptions(customers)
                       ]}
                       placeholder="-- انتخاب مشتری --"
                     />
@@ -3287,7 +3403,7 @@ export default function ProjectsView({
                       required={isFieldRequired(settings, 'projects', 'endUser')}
                       options={[
                         { value: '', label: '-- انتخاب مصرف‌کننده (مشتری) --' },
-                        ...customers.map(c => ({ value: c.id, label: c.companyName }))
+                        ...buildCustomerOptions(customers)
                       ]}
                       placeholder="-- انتخاب مصرف‌کننده (مشتری) --"
                     />
@@ -3599,6 +3715,31 @@ export default function ProjectsView({
                       )}
                       <button
                         type="button"
+                        onClick={handleDownloadItemsTemplate}
+                        className="px-2 py-1 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded text-xs font-bold flex items-center gap-1.5 transition border border-slate-200"
+                        title="دانلود قالب اکسل با ستون‌های دسته کالا، نوع تجهیز، سایز، تگ نامبر و تعداد"
+                      >
+                        <Download size={12} />
+                        دانلود قالب اکسل
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => itemsExcelInputRef.current?.click()}
+                        className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded text-xs font-bold flex items-center gap-1.5 transition"
+                        title="بارگذاری اقلام از فایل اکسل (در جدول مشخصات کلی ذخیره می‌شود)"
+                      >
+                        <Upload size={12} />
+                        بارگذاری از اکسل
+                      </button>
+                      <input
+                        ref={itemsExcelInputRef}
+                        type="file"
+                        accept=".xlsx, .xls"
+                        onChange={handleImportItemsFromExcel}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
                         onClick={handleAddItemLine}
                         className="px-2 py-1 bg-sky-50 hover:bg-sky-100 text-sky-600 rounded text-xs font-bold flex items-center gap-1.5 transition"
                       >
@@ -3817,9 +3958,10 @@ export default function ProjectsView({
 
                 {/* Description */}
                 <div className="space-y-1.5 md:col-span-2">
-                  <label className="text-xs font-semibold text-slate-500">مشخصات مهندسی مورد نیاز، بازه دما و فشارهای کاربری یا شرح عمومی</label>
+                  <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'projects', 'description', 'مشخصات مهندسی مورد نیاز، بازه دما و فشارهای کاربری یا شرح عمومی')}</label>
                   <textarea
                     rows={3}
+                    required={isFieldRequired(settings, 'projects', 'description')}
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="شرح اهداف کارفرما، نوع متریال درخواستی..."

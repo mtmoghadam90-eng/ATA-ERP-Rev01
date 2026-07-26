@@ -1263,8 +1263,8 @@ export default function PurchaseOrdersView({
                 {/* Order Date */}
                 <div className="space-y-1.5" id="po-order-date-picker-wrapper">
                   <ShamsiDatePicker
-                    label="تاریخ ثبت سفارش"
-                    required
+                    label={renderFieldLabelWithAsterisk(settings, 'purchaseOrders', 'orderDate', 'تاریخ ثبت سفارش')}
+                    required={isFieldRequired(settings, 'purchaseOrders', 'orderDate')}
                     value={orderDate}
                     onChange={(val) => {
                       setOrderDate(val);
@@ -1276,8 +1276,8 @@ export default function PurchaseOrdersView({
                 {/* Delivery Date */}
                 <div className="space-y-1.5" id="po-expected-delivery-date-picker-wrapper">
                   <ShamsiDatePicker
-                    label="تاریخ دریافت احتمالی کالا"
-                    required
+                    label={renderFieldLabelWithAsterisk(settings, 'purchaseOrders', 'expectedDeliveryDate', 'تاریخ دریافت احتمالی کالا')}
+                    required={isFieldRequired(settings, 'purchaseOrders', 'expectedDeliveryDate')}
                     value={expectedDeliveryDate}
                     onChange={(val) => setExpectedDeliveryDate(val)}
                   />
