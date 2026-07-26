@@ -1,3 +1,5 @@
+// Loads .env before anything reads process.env (PORT, ERP_DB_PATH, ERP_SQL_*).
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
