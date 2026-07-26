@@ -17,3 +17,6 @@ database.sqlite
 # Machine-specific Claude Code permission grants (launch.json IS shared)
 .claude/settings.local.json
 
+# Data backups produced by scripts/deploy.ps1 on the server
+backups/
+
