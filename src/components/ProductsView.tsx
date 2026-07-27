@@ -2529,7 +2529,9 @@ export default function ProductsView({
                    if (!window.confirm('موجودی ثبت شده در سیستم برای این خروج کافی نیست. آیا مایلید با وجود مغایرت، موجودی منفی را در دفاتر انبار ثبت کنید؟')) return;
                 }
                 
-                adjustProductStock(stockAdjustProd.id, finalAmt, stockAdjustVariantId || undefined, 'MANUAL', stockAdjustNotes);
+                // 4th arg is referenceId, 5th is referenceType — 'MANUAL' was
+                // landing in referenceId and the note in referenceType.
+                adjustProductStock(stockAdjustProd.id, finalAmt, stockAdjustVariantId || undefined, undefined, 'MANUAL', stockAdjustNotes);
                 setStockModalOpen(false);
                 setIsStockModalFullscreen(false);
               }

@@ -2296,7 +2296,7 @@ export default function ProjectsView({
               <h3 className="font-bold text-slate-800 text-xs">پوشه‌بندی هوشمند مدارک و اسناد پروژه</h3>
               <p className="text-slate-400 text-[10px] mt-0.5">لیست زیر شامل پوشه‌های ثابت هماهنگ با ماژول‌های سیستم است. مستندات تولیدشده هر ماژول به صورت خودکار در پوشه خود بایگانی می‌شود.</p>
             </div>
-            <span className="text-[10px] font-bold text-slate-600 bg-white px-2 py-1 rounded-md border border-slate-200">کل اسناد: {Object.values(folderFiles).reduce((acc: number, f) => acc + (f as any[]).length, 0)} فایل</span>
+            <span className="text-[10px] font-bold text-slate-600 bg-white px-2 py-1 rounded-md border border-slate-200">کل اسناد: {Object.values(folderFiles).reduce<number>((acc, f) => acc + (f as any[]).length, 0)} فایل</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

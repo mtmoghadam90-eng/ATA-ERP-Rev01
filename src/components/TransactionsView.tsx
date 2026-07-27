@@ -186,7 +186,7 @@ export default function TransactionsView({
 
   const netBalance = totalReceived - totalPaid;
 
-  const [activeViewTab, setActiveViewTab] = useState<'transactions' | 'projectsSummary'>('transactions');
+  const [activeViewTab, setActiveViewTab] = useState<'transactions' | 'projectsSummary' | 'incompleteData'>('transactions');
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
   const [projectSearch, setProjectSearch] = useState('');
   const [projectStatusFilter, setProjectStatusFilter] = useState<string>('all');

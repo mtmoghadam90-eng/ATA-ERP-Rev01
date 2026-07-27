@@ -3734,7 +3734,7 @@ export default function ProformasView({
                       disabled={(() => {
                         if (!editingProforma) return false;
                         return (
-                          editingProforma.outcome === "تأیید شده (برنده)" &&
+                          getProformaOutcomeStatus(editingProforma) === "تأیید شده (برنده)" &&
                           (editingProforma.historicalExchangeRate || 0) > 0
                         );
                       })()}

@@ -1,0 +1,1025 @@
+// ATA-ERP relational schema (SQL Server 2017)
+//
+// Design decisions, applied consistently throughout:
+//
+//  1. Custom fields  -> a single `customValues` JSON column. The field set is
+//     user-defined at runtime, so fixed columns are impossible and EAV would put
+//     a join on every query. When one specific field needs fast filtering, add a
+//     PERSISTED computed column over JSON_VALUE plus an index for that field only.
+//
+//  2. Dates -> stored twice: a real DATE for sorting, ranges, date maths and
+//     Power BI time intelligence, plus the Shamsi string exactly as the user saw
+//     it, so nothing is ever lost to a conversion round-trip.
+//     Convention: `xDate` (DATE) + `xDateJalali` (NVARCHAR(10), "1405/05/06").
+//
+//  3. Nested arrays -> child tables when the thing is an entity that is queried,
+//     aggregated or reported on (proforma items, variants, steps...). JSON when it
+//     is configuration that only ever travels with its parent (product features,
+//     packing checklist, settings).
+//
+//  4. Record ownership -> real foreign keys (ownerUserId), so record-level access
+//     rules can be enforced in the database rather than guessed from a name string.
+//
+// Note on ids: bounded NVARCHAR(36) so they can carry primary keys and unique
+// indexes (SQL Server caps index keys at 900 bytes).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Prisma 7 takes the connection URL from prisma.config.ts, not from here.
+datasource db {
+  provider = "sqlserver"
+}
+
+/* ============================ people & access ============================ */
+
+model User {
+  id           String  @id @default(uuid()) @db.NVarChar(36)
+  username     String  @unique @db.NVarChar(100)
+  passwordHash String  @db.NVarChar(200)
+  fullName     String  @db.NVarChar(200)
+  role         String  @default("user") @db.NVarChar(30)
+  isSystemAdmin Boolean @default(false)
+  position     String? @db.NVarChar(150)
+  signatureImage String? @db.NVarChar(500)
+  isActive     Boolean @default(true)
+
+  /// Module permissions, e.g. { "customers": true, "transactions": false }
+  permissions  String? @db.NVarChar(Max)
+
+  /// Bumped to invalidate every session cookie already issued to this user.
+  sessionEpoch Int     @default(0)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  ownedCustomers  Customer[]        @relation("CustomerOwner")
+  ownedProjects   Project[]         @relation("ProjectOwner")
+  createdProformas Proforma[]       @relation("ProformaCreator")
+  auditLogs       AuditLog[]
+  activities      ProjectActivity[]
+  assignedReferrals ProjectReferral[] @relation("ReferralAssignee")
+  raisedReferrals   ProjectReferral[] @relation("ReferralAuthor")
+  referralMessages  ReferralMessage[]
+
+  @@index([isActive])
+  @@map("users")
+}
+
+/* ================================ customers ============================== */
+
+model Customer {
+  id           String  @id @default(uuid()) @db.NVarChar(36)
+  customerType String  @db.NVarChar(20) // حقیقی | حقوقی
+  status       String  @default("فعال") @db.NVarChar(20)
+
+  /// Legal name, or the computed full name for an individual.
+  companyName  String  @db.NVarChar(300)
+  firstName    String? @db.NVarChar(150)
+  lastName     String? @db.NVarChar(150)
+  gender       String? @db.NVarChar(10)
+  position     String? @db.NVarChar(150)
+
+  economicCode String? @db.NVarChar(50)
+  industry     String? @db.NVarChar(150)
+  keyPerson    String? @db.NVarChar(200)
+
+  phone        String? @db.NVarChar(50)
+  mobile       String? @db.NVarChar(50)
+  email        String? @db.NVarChar(200)
+  province     String? @db.NVarChar(100)
+  city         String? @db.NVarChar(100)
+  address      String? @db.NVarChar(Max)
+  notes        String? @db.NVarChar(Max)
+  tags         String? @db.NVarChar(500)
+
+  /// Normalized for duplicate detection (fa digits -> ascii, +98 stripped).
+  mobileNormalized String? @db.NVarChar(30)
+
+  customValues String? @db.NVarChar(Max)
+
+  ownerUserId  String? @db.NVarChar(36)
+  owner        User?   @relation("CustomerOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  linksFrom    CustomerLink[] @relation("LinkFrom")
+  linksTo      CustomerLink[] @relation("LinkTo")
+  projects     Project[]      @relation("ProjectCustomer")
+  endUserOf    Project[]      @relation("ProjectEndUser")
+  financialFor Project[]      @relation("ProjectFinancialContact")
+  technicalFor Project[]      @relation("ProjectTechnicalContact")
+  proformas    Proforma[]     @relation("ProformaCustomer")
+  contactFor   Proforma[]     @relation("ProformaContact")
+  transactions Transaction[]
+  agreements   CustomerAgreement[]
+
+  // NOTE: economicCode must be unique only among customers that actually have
+  // one. A plain UNIQUE constraint cannot express that in SQL Server, which
+  // permits just a single NULL — it would block every customer after the first
+  // that has no economic code. A filtered unique index is added instead, in
+  // prisma/sql/extra-indexes.sql.
+  @@index([economicCode])
+  @@index([companyName])
+  @@index([mobileNormalized])
+  @@index([customerType, status])
+  @@index([ownerUserId])
+  @@map("customers")
+}
+
+/// Individual <-> company relationships (replaces the linkedCustomerIds array).
+model CustomerLink {
+  fromId String @db.NVarChar(36)
+  toId   String @db.NVarChar(36)
+  from   Customer @relation("LinkFrom", fields: [fromId], references: [id], onDelete: Cascade)
+  to     Customer @relation("LinkTo", fields: [toId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([fromId, toId])
+  @@index([toId])
+  @@map("customer_links")
+}
+
+model CustomerAgreement {
+  id         String   @id @default(uuid()) @db.NVarChar(36)
+  customerId String   @db.NVarChar(36)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  moduleName String   @db.NVarChar(100)
+  text       String   @db.NVarChar(Max)
+  createdBy  String?  @db.NVarChar(200)
+  createdAt  DateTime @default(now())
+
+  @@index([customerId, moduleName])
+  @@map("customer_agreements")
+}
+
+/* ================================ suppliers ============================== */
+
+model Supplier {
+  id           String  @id @default(uuid()) @db.NVarChar(36)
+  name         String  @db.NVarChar(300)
+  country      String? @db.NVarChar(100)
+  contactName  String? @db.NVarChar(200)
+  phone        String? @db.NVarChar(50)
+  email        String? @db.NVarChar(200)
+  website      String? @db.NVarChar(300)
+  paymentTerms String? @db.NVarChar(300)
+  status       String  @default("فعال") @db.NVarChar(20)
+  description  String? @db.NVarChar(Max)
+
+  /// String[] of product categories this supplier can provide.
+  providedCategories String? @db.NVarChar(Max)
+  customValues       String? @db.NVarChar(Max)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  purchaseOrders PurchaseOrder[]
+  inquiries      SupplierInquiry[]
+  transactions   Transaction[]
+
+  @@index([name])
+  @@index([status])
+  @@map("suppliers")
+}
+
+/* ============================ products & stock =========================== */
+
+model Product {
+  id            String  @id @default(uuid()) @db.NVarChar(36)
+  code          String  @unique @db.NVarChar(60)
+  name          String  @db.NVarChar(300)
+  displayName   String  @db.NVarChar(300)
+  category      String? @db.NVarChar(150)
+  brand         String? @db.NVarChar(150)
+  modelNumber   String? @db.NVarChar(150)
+  unit          String? @db.NVarChar(50)
+  description   String? @db.NVarChar(Max)
+  supplyType    String  @default("INVENTORY") @db.NVarChar(20)
+
+  hasVariants   Boolean @default(false)
+  stockLevel    Decimal @default(0) @db.Decimal(18, 3)
+  minStockLevel Decimal @default(0) @db.Decimal(18, 3)
+
+  basePriceRial Decimal? @db.Decimal(19, 2)
+  priceForeign  Decimal? @db.Decimal(19, 4)
+  currencyForeign String? @db.NVarChar(20)
+
+  /// Configuration that only travels with this product: features, option lists,
+  /// configRules, image paths and the price-calculator inputs.
+  features      String? @db.NVarChar(Max)
+  configRules   String? @db.NVarChar(Max)
+  images        String? @db.NVarChar(Max)
+  priceCalc     String? @db.NVarChar(Max)
+  customValues  String? @db.NVarChar(Max)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  variants              ProductVariant[]
+  inventoryTransactions InventoryTransaction[]
+  proformaItems         ProformaItem[]
+  purchaseOrderItems    PurchaseOrderItem[]
+  projectItems          ProjectItem[]
+
+  @@index([category])
+  @@index([brand])
+  @@index([displayName])
+  @@map("products")
+}
+
+/// A concrete SKU. A real entity: it carries its own stock and prices.
+model ProductVariant {
+  id        String  @id @default(uuid()) @db.NVarChar(36)
+  productId String  @db.NVarChar(36)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  sku       String  @db.NVarChar(120)
+  /// featureName -> optionValue for this combination.
+  attributes String? @db.NVarChar(Max)
+
+  stockLevel    Decimal @default(0) @db.Decimal(18, 3)
+  minStockLevel Decimal @default(0) @db.Decimal(18, 3)
+  priceRial     Decimal? @db.Decimal(19, 2)
+  priceForeign  Decimal? @db.Decimal(19, 4)
+  currencyForeign String? @db.NVarChar(20)
+  priceCalc     String? @db.NVarChar(Max)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inventoryTransactions InventoryTransaction[]
+  proformaItems         ProformaItem[]
+  purchaseOrderItems    PurchaseOrderItem[]
+
+  @@unique([sku], map: "UQ_product_variants_sku")
+  @@index([productId])
+  @@map("product_variants")
+}
+
+model InventoryTransaction {
+  id        String   @id @default(uuid()) @db.NVarChar(36)
+  productId String   @db.NVarChar(36)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantId String?  @db.NVarChar(36)
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  occurredAt       DateTime
+  occurredAtJalali String?  @db.NVarChar(10)
+
+  type      String   @db.NVarChar(5) // IN | OUT
+  quantity  Decimal  @db.Decimal(18, 3)
+  /// quantity signed by direction, so SUM() gives net stock movement directly.
+  signedQuantity Decimal @db.Decimal(18, 3)
+
+  referenceType String? @db.NVarChar(30)
+  referenceId   String? @db.NVarChar(36)
+  notes         String? @db.NVarChar(Max)
+
+  createdAt DateTime @default(now())
+
+  @@index([productId, occurredAt])
+  @@index([variantId])
+  @@index([referenceType, referenceId])
+  @@map("inventory_transactions")
+}
+
+/* ================================ projects =============================== */
+
+model Project {
+  id         String  @id @default(uuid()) @db.NVarChar(36)
+  code       String  @unique @db.NVarChar(60)
+  name       String  @db.NVarChar(400)
+
+  customerId String  @db.NVarChar(36)
+  customer   Customer @relation("ProjectCustomer", fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  status     String  @db.NVarChar(50)
+  lossReason String? @db.NVarChar(300)
+  description String? @db.NVarChar(Max)
+
+  creationDate        DateTime
+  creationDateJalali  String?  @db.NVarChar(10)
+  opportunityDate     DateTime?
+  opportunityDateJalali String? @db.NVarChar(10)
+  expectedCloseDate   DateTime?
+  expectedCloseDateJalali String? @db.NVarChar(10)
+  winningDate         DateTime?
+  winningDateJalali   String?  @db.NVarChar(10)
+  agreedDeliveryDate  DateTime?
+  agreedDeliveryDateJalali String? @db.NVarChar(10)
+  closingDate         DateTime?
+  closingDateJalali   String?  @db.NVarChar(10)
+
+  estimatedValueRial Decimal? @db.Decimal(19, 2)
+  probabilityPercent Int?
+
+  marketingChannel    String? @db.NVarChar(150)
+  leadQuality         String? @db.NVarChar(100)
+  referrerName        String? @db.NVarChar(200)
+  communicationMethod String? @db.NVarChar(100)
+  customerInquiryNumber String? @db.NVarChar(100)
+
+  /// Real references, so "only my projects" can be enforced in the database.
+  ownerUserId         String? @db.NVarChar(36)
+  owner               User?   @relation("ProjectOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  endUserCustomerId   String? @db.NVarChar(36)
+  endUser             Customer? @relation("ProjectEndUser", fields: [endUserCustomerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  financialContactId  String? @db.NVarChar(36)
+  financialContact    Customer? @relation("ProjectFinancialContact", fields: [financialContactId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  technicalContactId  String? @db.NVarChar(36)
+  technicalContact    Customer? @relation("ProjectTechnicalContact", fields: [technicalContactId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  /// Uploaded document metadata (paths only, never file bytes).
+  attachments      String? @db.NVarChar(Max)
+  manualDocuments  String? @db.NVarChar(Max)
+  milestoneRules   String? @db.NVarChar(Max)
+  customValues     String? @db.NVarChar(Max)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items          ProjectItem[]
+  milestones     ProjectMilestone[]
+  proformas      Proforma[]
+  purchaseOrders PurchaseOrder[]
+  transactions   Transaction[]
+  inquiries      SupplierInquiry[]
+  deliveries     PackagingDelivery[]
+  services       AfterSalesService[]
+  categoryGroups ProjectCategoryGroup[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([ownerUserId])
+  @@index([creationDate])
+  @@map("projects")
+}
+
+model ProjectItem {
+  id        String  @id @default(uuid()) @db.NVarChar(36)
+  projectId String  @db.NVarChar(36)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  lineNo    Int
+
+  /// Null when the row describes a generic requirement rather than a stock item.
+  productId String?  @db.NVarChar(36)
+  product   Product? @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  name          String  @db.NVarChar(400)
+  quantity      Decimal @default(1) @db.Decimal(18, 3)
+  supplyMethod  String? @db.NVarChar(20)
+  category      String? @db.NVarChar(30)
+  equipmentType String? @db.NVarChar(200)
+  size          String? @db.NVarChar(100)
+  tagNumber     String? @db.NVarChar(100)
+
+  @@index([projectId])
+  @@index([productId])
+  @@index([tagNumber])
+  @@map("project_items")
+}
+
+model ProjectMilestone {
+  id        String  @id @default(uuid()) @db.NVarChar(36)
+  projectId String  @db.NVarChar(36)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  lineNo    Int
+
+  name        String  @db.NVarChar(300)
+  isCompleted Boolean @default(false)
+  completedAt DateTime?
+  completedAtJalali String? @db.NVarChar(10)
+  dueDate     DateTime?
+  dueDateJalali String? @db.NVarChar(10)
+  notes       String? @db.NVarChar(Max)
+
+  triggerType         String? @db.NVarChar(30)
+  triggerCategoryName String? @db.NVarChar(200)
+
+  @@index([projectId])
+  @@map("project_milestones")
+}
+
+/* ================================ proformas ============================== */
+
+model Proforma {
+  id             String @id @default(uuid()) @db.NVarChar(36)
+  proformaNumber String @unique @db.NVarChar(60)
+  proformaType   String @default("FINANCIAL") @db.NVarChar(20)
+
+  customerId String   @db.NVarChar(36)
+  customer   Customer @relation("ProformaCustomer", fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  contactCustomerId String?   @db.NVarChar(36)
+  contact           Customer? @relation("ProformaContact", fields: [contactCustomerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  contactPrefix     String?   @db.NVarChar(100)
+
+  projectId String?  @db.NVarChar(36)
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  status      String  @db.NVarChar(50)
+  isCancelled Boolean @default(false)
+  lossReason  String? @db.NVarChar(300)
+  currency    String  @default("ریال") @db.NVarChar(20)
+
+  issueDate         DateTime
+  issueDateJalali   String?  @db.NVarChar(10)
+  expiryDate        DateTime?
+  expiryDateJalali  String?  @db.NVarChar(10)
+  deliveryDate      DateTime?
+  deliveryDateJalali String? @db.NVarChar(10)
+
+  totalAmount     Decimal @default(0) @db.Decimal(19, 2)
+  discountPercent Decimal @default(0) @db.Decimal(9, 4)
+  discountAmount  Decimal @default(0) @db.Decimal(19, 2)
+  taxPercent      Decimal @default(0) @db.Decimal(9, 4)
+  taxAmount       Decimal @default(0) @db.Decimal(19, 2)
+  extraCosts      Decimal @default(0) @db.Decimal(19, 2)
+  finalAmount     Decimal @default(0) @db.Decimal(19, 2)
+  historicalExchangeRate Decimal? @db.Decimal(19, 4)
+
+  notes          String? @db.NVarChar(Max)
+  sentMethod     String? @db.NVarChar(100)
+  sentRecipients String? @db.NVarChar(Max)
+  customValues   String? @db.NVarChar(Max)
+
+  creatorUserId String? @db.NVarChar(36)
+  creator       User?   @relation("ProformaCreator", fields: [creatorUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items          ProformaItem[]
+  purchaseOrders PurchaseOrder[]
+  transactions   Transaction[]
+  deliveries     PackagingDelivery[]
+
+  @@index([customerId])
+  @@index([projectId])
+  @@index([status])
+  @@index([issueDate])
+  @@map("proformas")
+}
+
+model ProformaItem {
+  id         String   @id @default(uuid()) @db.NVarChar(36)
+  proformaId String   @db.NVarChar(36)
+  proforma   Proforma @relation(fields: [proformaId], references: [id], onDelete: Cascade)
+  lineNo     Int
+
+  productId String?  @db.NVarChar(36)
+  product   Product? @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variantId String?  @db.NVarChar(36)
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  productName String  @db.NVarChar(400)
+  productCode String? @db.NVarChar(60)
+  brand       String? @db.NVarChar(150)
+  tagNumber   String? @db.NVarChar(100)
+
+  quantity       Decimal @default(1) @db.Decimal(18, 3)
+  unitPriceRial  Decimal @default(0) @db.Decimal(19, 2)
+  totalPriceRial Decimal @default(0) @db.Decimal(19, 2)
+
+  supplyMethod String? @db.NVarChar(20)
+  /// Per-line outcome: جاری | برنده | بازنده | لغو شده
+  status       String? @db.NVarChar(30)
+  lossReason   String? @db.NVarChar(300)
+  techSpecs    String? @db.NVarChar(Max)
+
+  deliveryRange   String? @db.NVarChar(50)
+  deliveryUnit    String? @db.NVarChar(20)
+  deliveryType    String? @db.NVarChar(20)
+  deliveryPostfix String? @db.NVarChar(100)
+
+  selectedFeatures String? @db.NVarChar(Max)
+  selectedImage    String? @db.NVarChar(500)
+
+  @@index([proformaId])
+  @@index([productId])
+  @@index([status])
+  @@index([tagNumber])
+  @@map("proforma_items")
+}
+
+/* ============================= purchase orders =========================== */
+
+model PurchaseOrder {
+  id       String @id @default(uuid()) @db.NVarChar(36)
+  poNumber String @unique @db.NVarChar(60)
+
+  supplierId String   @db.NVarChar(36)
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  projectId String?  @db.NVarChar(36)
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  proformaId String?   @db.NVarChar(36)
+  proforma   Proforma? @relation(fields: [proformaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  status       String  @db.NVarChar(60)
+  currency     String  @default("دلار") @db.NVarChar(20)
+  exchangeRate Decimal @default(1) @db.Decimal(19, 4)
+
+  orderDate               DateTime
+  orderDateJalali         String?  @db.NVarChar(10)
+  expectedDeliveryDate    DateTime?
+  expectedDeliveryDateJalali String? @db.NVarChar(10)
+  paymentDate             DateTime?
+  paymentDateJalali       String?  @db.NVarChar(10)
+  goodsReadyDate          DateTime?
+  goodsReadyDateJalali    String?  @db.NVarChar(10)
+  shipmentDate            DateTime?
+  shipmentDateJalali      String?  @db.NVarChar(10)
+  clearanceDate           DateTime?
+  clearanceDateJalali     String?  @db.NVarChar(10)
+  receivedDate            DateTime?
+  receivedDateJalali      String?  @db.NVarChar(10)
+
+  totalForeignAmount   Decimal @default(0) @db.Decimal(19, 4)
+  shippingCostRial     Decimal @default(0) @db.Decimal(19, 2)
+  customsDutyRial      Decimal @default(0) @db.Decimal(19, 2)
+  remittanceFeeRial    Decimal @default(0) @db.Decimal(19, 2)
+  shippingCostForeign  Decimal @default(0) @db.Decimal(19, 4)
+  remittanceFeeForeign Decimal @default(0) @db.Decimal(19, 4)
+  landedCostRial       Decimal @default(0) @db.Decimal(19, 2)
+  landedCostForeign    Decimal @default(0) @db.Decimal(19, 4)
+
+  notes        String? @db.NVarChar(Max)
+  customValues String? @db.NVarChar(Max)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items        PurchaseOrderItem[]
+  transactions Transaction[]
+
+  @@index([supplierId])
+  @@index([projectId])
+  @@index([status])
+  @@index([orderDate])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(uuid()) @db.NVarChar(36)
+  purchaseOrderId String        @db.NVarChar(36)
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  lineNo          Int
+
+  productId String?  @db.NVarChar(36)
+  product   Product? @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variantId String?  @db.NVarChar(36)
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  productName String  @db.NVarChar(400)
+  productCode String? @db.NVarChar(60)
+  brand       String? @db.NVarChar(150)
+  tagNumber   String? @db.NVarChar(100)
+
+  quantity            Decimal @default(1) @db.Decimal(18, 3)
+  unitPriceForeign    Decimal @default(0) @db.Decimal(19, 4)
+  totalPriceForeign   Decimal @default(0) @db.Decimal(19, 4)
+
+  proformaItemId   String? @db.NVarChar(36)
+  proformaItemName String? @db.NVarChar(400)
+  supplierNotes    String? @db.NVarChar(Max)
+
+  @@index([purchaseOrderId])
+  @@index([productId])
+  @@map("purchase_order_items")
+}
+
+/* =============================== transactions ============================ */
+
+model Transaction {
+  id             String @id @default(uuid()) @db.NVarChar(36)
+  documentNumber String @unique @db.NVarChar(60)
+
+  type        String  @db.NVarChar(20) // دریافت | پرداخت
+  receiptType String? @db.NVarChar(100)
+  status      String  @default("تأیید شده") @db.NVarChar(30)
+
+  occurredAt       DateTime
+  occurredAtJalali String?  @db.NVarChar(10)
+
+  customerId String?   @db.NVarChar(36)
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  supplierId String?   @db.NVarChar(36)
+  supplier   Supplier? @relation(fields: [supplierId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  projectId  String?   @db.NVarChar(36)
+  project    Project?  @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  proformaId String?   @db.NVarChar(36)
+  proforma   Proforma? @relation(fields: [proformaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchaseOrderId String?      @db.NVarChar(36)
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  /// Free-text counterparty, used when no customer/supplier record applies.
+  partyName String? @db.NVarChar(300)
+
+  amountRial      Decimal  @default(0) @db.Decimal(19, 2)
+  amountForeign   Decimal? @db.Decimal(19, 4)
+  exchangeRate    Decimal? @db.Decimal(19, 4)
+  isDirectForeign Boolean  @default(false)
+
+  paymentType     String  @db.NVarChar(50)
+  referenceNumber String? @db.NVarChar(100)
+  notes           String? @db.NVarChar(Max)
+
+  reversalOfTransactionId String? @db.NVarChar(36)
+  customValues            String? @db.NVarChar(Max)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+  @@index([projectId])
+  @@index([occurredAt])
+  @@index([type, status])
+  @@map("transactions")
+}
+
+/* =========================== supplier inquiries ========================== */
+
+model SupplierInquiry {
+  id String @id @default(uuid()) @db.NVarChar(36)
+
+  projectId String  @db.NVarChar(36)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  supplierId String   @db.NVarChar(36)
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  isWinner   Boolean   @default(false)
+  winnerDate DateTime?
+  winnerDateJalali String? @db.NVarChar(10)
+
+  offerConfirmed     Boolean   @default(false)
+  offerConfirmedDate DateTime?
+  offerConfirmedDateJalali String? @db.NVarChar(10)
+
+  creationDate       DateTime
+  creationDateJalali String?  @db.NVarChar(10)
+
+  technicalOfferUrl String? @db.NVarChar(500)
+  financialOfferUrl String? @db.NVarChar(500)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items SupplierInquiryItem[]
+  steps SupplierInquiryStep[]
+
+  @@index([projectId])
+  @@index([supplierId])
+  @@index([isWinner])
+  @@map("supplier_inquiries")
+}
+
+model SupplierInquiryItem {
+  id        String          @id @default(uuid()) @db.NVarChar(36)
+  inquiryId String          @db.NVarChar(36)
+  inquiry   SupplierInquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  lineNo    Int
+
+  name         String  @db.NVarChar(400)
+  brand        String? @db.NVarChar(150)
+  partNumber   String? @db.NVarChar(150)
+  tagNumber    String? @db.NVarChar(100)
+  quantity     Decimal @default(1) @db.Decimal(18, 3)
+  currency     String  @default("دلار") @db.NVarChar(20)
+  priceForeign Decimal @default(0) @db.Decimal(19, 4)
+  priceRial    Decimal @default(0) @db.Decimal(19, 2)
+  deliveryTime String? @db.NVarChar(100)
+  notes        String? @db.NVarChar(Max)
+
+  @@index([inquiryId])
+  @@map("supplier_inquiry_items")
+}
+
+model SupplierInquiryStep {
+  id        String          @id @default(uuid()) @db.NVarChar(36)
+  inquiryId String          @db.NVarChar(36)
+  inquiry   SupplierInquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  stepNo    Int
+
+  title       String  @db.NVarChar(300)
+  occurredAt  DateTime
+  occurredAtJalali String? @db.NVarChar(10)
+  method      String? @db.NVarChar(50)
+  recipientName String? @db.NVarChar(200)
+  notes       String? @db.NVarChar(Max)
+
+  /// Recorded automatically by the workflow engine rather than typed by a user.
+  isAuto  Boolean @default(false)
+  autoKey String? @db.NVarChar(40)
+
+  @@index([inquiryId])
+  @@map("supplier_inquiry_steps")
+}
+
+/* ========================= packaging & after-sales ======================= */
+
+model PackagingDelivery {
+  id                String @id @default(uuid()) @db.NVarChar(36)
+  packingListNumber String @unique @db.NVarChar(60)
+
+  projectId String  @db.NVarChar(36)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  proformaId String?   @db.NVarChar(36)
+  proforma   Proforma? @relation(fields: [proformaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  deliveryDate             DateTime
+  deliveryDateJalali       String?  @db.NVarChar(10)
+  actualDeliveryDate       DateTime?
+  actualDeliveryDateJalali String?  @db.NVarChar(10)
+
+  shippingMethod       String? @db.NVarChar(100)
+  preDeliveryTestNotes String? @db.NVarChar(Max)
+
+  /// Snapshot of the checklist as ticked for this shipment, and photo paths.
+  checklist String? @db.NVarChar(Max)
+  photos    String? @db.NVarChar(Max)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items PackingItem[]
+
+  @@index([projectId])
+  @@index([deliveryDate])
+  @@map("packaging_deliveries")
+}
+
+model PackingItem {
+  id         String            @id @default(uuid()) @db.NVarChar(36)
+  deliveryId String            @db.NVarChar(36)
+  delivery   PackagingDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  lineNo     Int
+
+  itemOrDocName String  @db.NVarChar(400)
+  productId     String? @db.NVarChar(36)
+  tagNumber     String? @db.NVarChar(100)
+  quantity      Decimal @default(1) @db.Decimal(18, 3)
+  packageType   String? @db.NVarChar(100)
+  dimensions    String? @db.NVarChar(100)
+  weight        Decimal @default(0) @db.Decimal(18, 3)
+  boxNumber     String? @db.NVarChar(50)
+
+  actualDeliveryDate       DateTime?
+  actualDeliveryDateJalali String? @db.NVarChar(10)
+
+  @@index([deliveryId])
+  @@map("packing_items")
+}
+
+model AfterSalesService {
+  id String @id @default(uuid()) @db.NVarChar(36)
+
+  projectId String  @db.NVarChar(36)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  proformaNumber   String? @db.NVarChar(60)
+  proformaItemName String? @db.NVarChar(400)
+  itemName         String  @db.NVarChar(400)
+
+  status           String  @db.NVarChar(50)
+  issueDescription String? @db.NVarChar(Max)
+  actionsTaken     String? @db.NVarChar(Max)
+
+  startDate        DateTime
+  startDateJalali  String?  @db.NVarChar(10)
+  endDate          DateTime?
+  endDateJalali    String?  @db.NVarChar(10)
+  returnDate       DateTime?
+  returnDateJalali String?  @db.NVarChar(10)
+
+  createdBy String?  @db.NVarChar(200)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items AfterSalesServiceItem[]
+
+  @@index([projectId])
+  @@index([status])
+  @@map("after_sales_services")
+}
+
+model AfterSalesServiceItem {
+  id        String            @id @default(uuid()) @db.NVarChar(36)
+  serviceId String            @db.NVarChar(36)
+  service   AfterSalesService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  lineNo    Int
+
+  productId        String? @db.NVarChar(36)
+  productName      String  @db.NVarChar(400)
+  status           String  @db.NVarChar(50)
+  issueDescription String? @db.NVarChar(Max)
+  actionsTaken     String? @db.NVarChar(Max)
+
+  startDate        DateTime?
+  startDateJalali  String?   @db.NVarChar(10)
+  endDate          DateTime?
+  endDateJalali    String?   @db.NVarChar(10)
+  returnDate       DateTime?
+  returnDateJalali String?   @db.NVarChar(10)
+
+  @@index([serviceId])
+  @@map("after_sales_service_items")
+}
+
+/* ====================== project activity & referrals ===================== */
+
+model ProjectCategoryGroup {
+  id        String  @id @default(uuid()) @db.NVarChar(36)
+  projectId String  @db.NVarChar(36)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  categoryId   String @db.NVarChar(36)
+  categoryName String @db.NVarChar(200)
+  status       String @default("جاری") @db.NVarChar(30)
+
+  startDate       DateTime?
+  startDateJalali String?   @db.NVarChar(10)
+  endDate         DateTime?
+  endDateJalali   String?   @db.NVarChar(10)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  activities ProjectActivity[]
+
+  @@index([projectId])
+  @@index([categoryId])
+  @@map("project_category_groups")
+}
+
+model ProjectActivity {
+  id      String               @id @default(uuid()) @db.NVarChar(36)
+  groupId String               @db.NVarChar(36)
+  group   ProjectCategoryGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  text String @db.NVarChar(Max)
+
+  authorUserId String? @db.NVarChar(36)
+  author       User?   @relation(fields: [authorUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  /// Kept alongside the FK so history stays readable if a user is removed.
+  authorName   String? @db.NVarChar(200)
+
+  attachmentName String? @db.NVarChar(300)
+  attachmentSize String? @db.NVarChar(50)
+  attachmentUrl  String? @db.NVarChar(500)
+
+  createdAt DateTime @default(now())
+
+  referral ProjectReferral?
+
+  @@index([groupId])
+  @@index([createdAt])
+  @@map("project_activities")
+}
+
+model ProjectReferral {
+  id         String          @id @default(uuid()) @db.NVarChar(36)
+  activityId String          @unique @db.NVarChar(36)
+  activity   ProjectActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  assignedToUserId String? @db.NVarChar(36)
+  assignedTo       User?   @relation("ReferralAssignee", fields: [assignedToUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  assignedToName   String? @db.NVarChar(200)
+
+  assignedByUserId String? @db.NVarChar(36)
+  assignedBy       User?   @relation("ReferralAuthor", fields: [assignedByUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  assignedByName   String? @db.NVarChar(200)
+
+  actionRequired String @db.NVarChar(Max)
+  status         String @default("در انتظار اقدام") @db.NVarChar(40)
+
+  createdAt DateTime @default(now())
+
+  messages ReferralMessage[]
+
+  @@index([assignedToUserId, status])
+  @@map("project_referrals")
+}
+
+model ReferralMessage {
+  id         String          @id @default(uuid()) @db.NVarChar(36)
+  referralId String          @db.NVarChar(36)
+  referral   ProjectReferral @relation(fields: [referralId], references: [id], onDelete: Cascade)
+
+  text String @db.NVarChar(Max)
+
+  responderUserId String? @db.NVarChar(36)
+  responder       User?   @relation(fields: [responderUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  responderName   String? @db.NVarChar(200)
+
+  attachmentName String? @db.NVarChar(300)
+  attachmentSize String? @db.NVarChar(50)
+  attachmentUrl  String? @db.NVarChar(500)
+
+  createdAt DateTime @default(now())
+
+  @@index([referralId])
+  @@map("referral_messages")
+}
+
+/* ================================== tasks ================================ */
+
+model Task {
+  id          String @id @default(uuid()) @db.NVarChar(36)
+  title       String @db.NVarChar(400)
+  description String? @db.NVarChar(Max)
+
+  relatedToType String? @db.NVarChar(50)
+  relatedToId   String? @db.NVarChar(36)
+  relatedToName String? @db.NVarChar(400)
+
+  priority String @default("متوسط") @db.NVarChar(20)
+  status   String @default("در حال انجام") @db.NVarChar(30)
+
+  dueDate       DateTime?
+  dueDateJalali String?   @db.NVarChar(10)
+
+  assignedToUserId String? @db.NVarChar(36)
+  assignedToName   String? @db.NVarChar(200)
+
+  reminderEnabled Boolean @default(false)
+  reminderDate    DateTime?
+  reminderDateJalali String? @db.NVarChar(10)
+  reminderTime    String? @db.NVarChar(5)
+
+  customValues String? @db.NVarChar(Max)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([assignedToUserId, status])
+  @@index([dueDate])
+  @@index([relatedToType, relatedToId])
+  @@map("tasks")
+}
+
+/* ========================= notes, audit, reference ======================= */
+
+/// Free-form notes attachable to several record types (proforma, PO, project,
+/// packing list, service). One table with a discriminator rather than five.
+model ModuleNote {
+  id         String   @id @default(uuid()) @db.NVarChar(36)
+  entityType String   @db.NVarChar(40)
+  entityId   String   @db.NVarChar(36)
+  text       String   @db.NVarChar(Max)
+  authorName String?  @db.NVarChar(200)
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@map("module_notes")
+}
+
+model AuditLog {
+  id     String @id @default(uuid()) @db.NVarChar(36)
+  action String @db.NVarChar(20)
+  module String @db.NVarChar(100)
+
+  entityId    String? @db.NVarChar(36)
+  description String  @db.NVarChar(Max)
+
+  userId       String? @db.NVarChar(36)
+  user         User?   @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  userFullName String? @db.NVarChar(200)
+
+  /// LZW-compressed JSON snapshots.
+  beforeState String? @db.NVarChar(Max)
+  afterState  String? @db.NVarChar(Max)
+
+  occurredAt       DateTime @default(now())
+  occurredAtJalali String?  @db.NVarChar(20)
+
+  @@index([occurredAt])
+  @@index([module, action])
+  @@index([entityId])
+  @@map("audit_logs")
+}
+
+model ExchangeRate {
+  id          String   @id @default(uuid()) @db.NVarChar(36)
+  currency    String   @unique @db.NVarChar(10)
+  name        String   @db.NVarChar(50)
+  rateToRial  Decimal  @db.Decimal(19, 4)
+  lastUpdated DateTime @default(now())
+
+  @@map("exchange_rates")
+}
+
+/// Application settings: a single configuration document, deliberately kept as
+/// JSON because it is read whole and never queried across rows.
+model AppSetting {
+  id        String   @id @default("singleton") @db.NVarChar(36)
+  data      String   @db.NVarChar(Max)
+  updatedAt DateTime @updatedAt
+
+  @@map("app_settings")
+}

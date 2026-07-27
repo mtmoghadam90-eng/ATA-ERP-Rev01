@@ -20,3 +20,7 @@ database.sqlite
 # Data backups produced by scripts/deploy.ps1 on the server
 backups/
 
+
+# Prisma generated client
+generated/
+prisma/generated/

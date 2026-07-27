@@ -1043,11 +1043,11 @@ export default function AfterSalesServicesView({
                           <td className="border border-slate-200 p-2 text-center font-mono">{idx + 1}</td>
                           <td className="border border-slate-200 p-2">{it.productName || 'عمومی / کل تجهیز'}</td>
                           <td className="border border-slate-200 p-2 text-slate-600">{it.issueDescription}</td>
-                          <td className="border border-slate-200 p-2 text-slate-800">{it.actionTaken || 'در حال بررسی فنی'}</td>
+                          <td className="border border-slate-200 p-2 text-slate-800">{it.actionsTaken || 'در حال بررسی فنی'}</td>
                           <td className="border border-slate-200 p-2 text-center">
                             <span className={`px-1.5 py-0.5 rounded text-[10px] ${
-                              it.status === 'انجام شده' ? 'bg-emerald-50 text-emerald-700' :
-                              it.status === 'کنسل شده' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'
+                              it.status === 'تکمیل شده' || it.status === 'تحویل داده شده' ? 'bg-emerald-50 text-emerald-700' :
+                              it.status === 'در حال تعمیر/خدمات' ? 'bg-sky-50 text-sky-700' : 'bg-amber-50 text-amber-700'
                             }`}>
                               {it.status}
                             </span>

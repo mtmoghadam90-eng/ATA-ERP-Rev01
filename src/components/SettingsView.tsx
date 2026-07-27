@@ -515,7 +515,7 @@ export default function SettingsView({
   const [isRequiredFieldsSaved, setIsRequiredFieldsSaved] = useState(false);
 
   // Custom Fields manager states
-  const [selectedModule, setSelectedModule] = useState<'customers' | 'projects' | 'products' | 'proformas' | 'suppliers' | 'purchaseOrders' | 'transactions' | 'tasks'>('customers');
+  const [selectedModule, setSelectedModule] = useState<'customers' | 'projects' | 'products' | 'proformas' | 'suppliers' | 'purchaseOrders' | 'transactions' | 'tasks' | 'packagingDelivery' | 'afterSalesServices'>('customers');
   const [newFieldName, setNewFieldName] = useState('');
   const [newFieldType, setNewFieldType] = useState<CustomField['type']>('text');
   const [newFieldRequired, setNewFieldRequired] = useState(false);
@@ -2801,6 +2801,7 @@ export default function SettingsView({
                       ],
                       actions: [
                         {
+                          id: `act-${Date.now()}`,
                           type: 'create_task',
                           taskConfig: {
                             titleTemplate: 'پیگیری سفارش خرید پروژه {projectName}',
@@ -3204,6 +3205,7 @@ export default function SettingsView({
                           actions: [
                             ...acts,
                             {
+                              id: `act-${Date.now()}`,
                               type: 'create_task',
                               taskConfig: {
                                 titleTemplate: 'وظیفه جدید پروژه {projectName}',
@@ -3242,6 +3244,8 @@ export default function SettingsView({
                                     const updatedActs = [...editingRule.actions];
                                     if (val === 'create_task') {
                                       updatedActs[actIdx] = {
+                                        // switching type must not drop the action's identity
+                                        id: updatedActs[actIdx].id,
                                         type: 'create_task',
                                         taskConfig: {
                                           titleTemplate: 'پیگیری برای پروژه {projectName}',
@@ -3253,6 +3257,7 @@ export default function SettingsView({
                                       };
                                     } else {
                                       updatedActs[actIdx] = {
+                                        id: updatedActs[actIdx].id,
                                         type: 'send_notification',
                                         notificationConfig: {
                                           module: 'purchaseOrders',

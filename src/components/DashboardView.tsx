@@ -377,13 +377,12 @@ export default function DashboardView({
                     />
                     <YAxis 
                       tick={{ fontSize: 10, fill: '#64748b' }} 
-                      axisLine={false} 
-                      tickLine={false} 
-                      textAlign="right"
+                      axisLine={false}
+                      tickLine={false}
                     />
                     <Tooltip 
                       formatter={(value) => [`${Number(value).toLocaleString('fa-IR')} میلیون تومان`, 'حجم سفارش']}
-                      contentStyle={{ textAlign: 'right', borderRadius: '12px', border: '1px solid #e2e8f0', fontFamily: 'inherit' }}
+                      contentStyle={{  borderRadius: '12px', border: '1px solid #e2e8f0', fontFamily: 'inherit' }}
                     />
                     <Bar dataKey="فروش" fill="#2563eb" radius={[4, 4, 0, 0]} barSize={36} />
                   </BarChart>

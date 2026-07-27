@@ -787,7 +787,7 @@ export default function PackagingDeliveryView({
     const hasIncompleteChecklist = checklist.some(c => !c.completed);
 
     if (isMarkedAsDelivered && hasIncompleteChecklist) {
-      const incompleteItems = checklist.filter(c => !c.completed).map(c => `- ${c.taskName}`);
+      const incompleteItems = checklist.filter(c => !c.completed).map(c => `- ${c.name}`);
       const confirmDeliv = window.confirm(
         `هشدار کنترل کیفیت (QC):\n` +
         `مواردی از چک‌لیست بسته‌بندی و فنی هنوز تایید نهایی نشده‌اند:\n` +

@@ -195,7 +195,7 @@ export interface CompletionPrompt {
 const sessionListeners = new Set<() => void>();
 export const onSessionExpired = (fn: () => void) => {
   sessionListeners.add(fn);
-  return () => sessionListeners.delete(fn);
+  return () => { sessionListeners.delete(fn); };
 };
 let sessionExpiredNotified = false;
 const notifySessionExpired = () => {
@@ -352,7 +352,7 @@ const conflictListeners = new Set<(n: ConflictNotice) => void>();
 
 export const onEditConflict = (fn: (n: ConflictNotice) => void) => {
   conflictListeners.add(fn);
-  return () => conflictListeners.delete(fn);
+  return () => { conflictListeners.delete(fn); };
 };
 
 const notifyConflicts = (key: string, ids: string[]) => {
@@ -2034,7 +2034,7 @@ export function useERPStore() {
     );
     
     const supplierObj = suppliers.find(s => s.id === newPO.supplierId);
-    const suppName = supplierObj ? (supplierObj.companyName || supplierObj.name) : (newPO.supplierName || newPO.supplierId || '');
+    const suppName = supplierObj ? (supplierObj.name) : (newPO.supplierName || newPO.supplierId || '');
     autoLogFactActivity(newPO.projectId, 'سفارشات خرید تامین‌کنندگان', `صدور سفارش خرید (شماره: ${newPO.poNumber}) برای تأمین‌کننده «${suppName}» جهت تأمین اقلام پروژه.`);
     notifyModuleResponsible('purchaseOrders', 'ثبت سفارش خرید جدید', `سفارش خرید شماره ${newPO.poNumber} ثبت شد.`, newPO.projectId);
     processWorkflowRules('purchase_order_created', newPO);
@@ -2057,7 +2057,7 @@ export function useERPStore() {
     );
     
     const supplierObj = suppliers.find(s => s.id === updatedPO.supplierId);
-    const suppName = supplierObj ? (supplierObj.companyName || supplierObj.name) : (updatedPO.supplierName || updatedPO.supplierId || '');
+    const suppName = supplierObj ? (supplierObj.name) : (updatedPO.supplierName || updatedPO.supplierId || '');
     autoLogFactActivity(updatedPO.projectId, 'سفارشات خرید تامین‌کنندگان', `تغییر وضعیت سفارش خرید (شماره: ${updatedPO.poNumber}) مرتبط با تأمین‌کننده «${suppName}» به «${updatedPO.status}».`);
     notifyModuleResponsible('purchaseOrders', 'ویرایش سفارش خرید', `سفارش خرید شماره ${updatedPO.poNumber} ویرایش شد.`, updatedPO.projectId);
 
@@ -2289,7 +2289,7 @@ export function useERPStore() {
   const relatedProj = newProforma.projectId ? projects.find(p => p.id === newProforma.projectId) : undefined;
   processWorkflowRules('proforma_outcome_change', {
     projectId: newProforma.projectId,
-    projectName: relatedProj?.name || relatedProj?.title || newProforma.customerName,
+    projectName: relatedProj?.name || newProforma.customerName,
     proformaNumber: newProforma.proformaNumber,
     oldOutcome: '',
     newOutcome,
@@ -2338,7 +2338,7 @@ export function useERPStore() {
     const relatedProj = finalUpdatedPf.projectId ? projects.find(p => p.id === finalUpdatedPf.projectId) : undefined;
     processWorkflowRules('proforma_outcome_change', {
       projectId: finalUpdatedPf.projectId,
-      projectName: relatedProj?.name || relatedProj?.title || finalUpdatedPf.customerName,
+      projectName: relatedProj?.name || finalUpdatedPf.customerName,
       proformaNumber: finalUpdatedPf.proformaNumber,
       oldOutcome,
       newOutcome,
@@ -2511,7 +2511,7 @@ export function useERPStore() {
       const relatedProj = oldProforma.projectId ? projects.find(p => p.id === oldProforma.projectId) : undefined;
       processWorkflowRules('proforma_outcome_change', {
         projectId: oldProforma.projectId,
-        projectName: relatedProj?.name || relatedProj?.title || oldProforma.customerName,
+        projectName: relatedProj?.name || oldProforma.customerName,
         proformaNumber: oldProforma.proformaNumber,
         oldOutcome,
         newOutcome,
@@ -2706,7 +2706,7 @@ export function useERPStore() {
     if (enrichedPayload.customerId) {
       const cust = customers.find(c => c.id === enrichedPayload.customerId);
       if (cust) {
-        if (!enrichedPayload.customerName) enrichedPayload.customerName = cust.name || cust.companyName;
+        if (!enrichedPayload.customerName) enrichedPayload.customerName = cust.companyName;
       }
     } else if (triggerType === 'customer_created' || triggerType === 'customer_updated') {
       if (!enrichedPayload.customerName) enrichedPayload.customerName = enrichedPayload.name || enrichedPayload.companyName;
@@ -2716,7 +2716,7 @@ export function useERPStore() {
     if (enrichedPayload.supplierId) {
       const supp = suppliers.find(s => s.id === enrichedPayload.supplierId);
       if (supp) {
-        if (!enrichedPayload.supplierName) enrichedPayload.supplierName = supp.companyName || supp.name;
+        if (!enrichedPayload.supplierName) enrichedPayload.supplierName = supp.name;
       }
     } else if (triggerType === 'supplier_created') {
       if (!enrichedPayload.supplierName) enrichedPayload.supplierName = enrichedPayload.companyName || enrichedPayload.name;
@@ -2877,7 +2877,8 @@ export function useERPStore() {
     autoLogFactActivity(updatedPd.projectId, 'بسته‌بندی و تحویل کالا', `تغییر وضعیت عملیات «${updatedPd.type === 'PACKAGING' ? 'بسته‌بندی' : 'ارسال و تحویل'}» کالا (شماره پکینگ‌لیست: ${updatedPd.packingListNumber}) به «${updatedPd.status}».`, updatedPd.id);
     notifyModuleResponsible('packagingDelivery', 'بروزرسانی مرحله بسته‌بندی/تحویل', `مرحله ${updatedPd.type === 'PACKAGING' ? 'بسته‌بندی' : 'ارسال/تحویل'} به وضعیت ${updatedPd.status} تغییر یافت.`, updatedPd.projectId);
 
-    processWorkflowRules('packaging_delivery_status_change', { newStatus: updatedPd.status, oldStatus: before?.status, ...updatedPd });
+    const deliveryStatus = (d: any) => (d?.actualDeliveryDate ? 'تحویل شده' : 'در حال آماده‌سازی');
+    processWorkflowRules('packaging_delivery_status_change', { newStatus: deliveryStatus(updatedPd), oldStatus: deliveryStatus(before), ...updatedPd });
 
     if (!before?.actualDeliveryDate && updatedPd.actualDeliveryDate) {
       setCompletionPrompt({
@@ -2990,7 +2991,7 @@ export function useERPStore() {
     saveToStorage("erp_supplier_inquiries", updated, setSupplierInquiries);
     
     const supplierObj = suppliers.find(s => s.id === newSi.supplierId);
-    const suppName = supplierObj ? (supplierObj.companyName || supplierObj.name) : (newSi.supplierName || newSi.supplierId || '');
+    const suppName = supplierObj ? (supplierObj.name) : (newSi.supplierName || newSi.supplierId || '');
     autoLogFactActivity(newSi.projectId, 'استعلام قیمت تأمین‌کنندگان', `ثبت درخواست استعلام قیمت از تأمین‌کننده «${suppName}» برای ${(newSi.items || []).length} قلم کالا (مبلغ اعلامی: ${describeInquiryAmount(newSi.items)}، وضعیت: ${describeInquiryStatus(newSi)}).`, newSi.id);
     notifyModuleResponsible('supplierInquiries', 'ثبت استعلام قیمت جدید', `استعلام قیمت جدید برای تأمین‌کننده «${suppName}» ثبت شد.`, newSi.projectId);
     processWorkflowRules('supplier_inquiry_created', newSi);
@@ -3002,7 +3003,7 @@ export function useERPStore() {
     saveToStorage("erp_supplier_inquiries", updated, setSupplierInquiries);
     
     const supplierObj = suppliers.find(s => s.id === updatedSi.supplierId);
-    const suppName = supplierObj ? (supplierObj.companyName || supplierObj.name) : (updatedSi.supplierName || updatedSi.supplierId || '');
+    const suppName = supplierObj ? (supplierObj.name) : (updatedSi.supplierName || updatedSi.supplierId || '');
     const newStatusText = describeInquiryStatus(updatedSi);
     const oldStatusText = describeInquiryStatus(oldSi);
     const statusPart = newStatusText !== oldStatusText
@@ -3128,7 +3129,7 @@ export function useERPStore() {
         ) {
           return {
             ...g,
-            status: "اتمام کار",
+            status: "اتمام کار" as const,
             endDate: getTodayShamsi(),
           };
         }
@@ -3206,11 +3207,13 @@ export function useERPStore() {
             text: `اتمام کار دسته‌بندی «${g.categoryName}»`,
             description: 'اتمام کار',
             createdBy: createdBy || 'سیستم',
-            type: 'اتمام کار'
+            type: 'اتمام کار',
+            attachment: null,
+            referral: null,
           };
           return {
             ...g,
-            status: "اتمام کار",
+            status: "اتمام کار" as const,
             endDate: getTodayShamsi(),
             activities: [...(g.activities || []), newActivity]
           };
@@ -3235,11 +3238,13 @@ export function useERPStore() {
           text: `بازگشایی مجدد دسته‌بندی «${g.categoryName}»`,
           description: 'بازگشایی مجدد',
           createdBy: createdBy || currentUser?.fullName || 'سیستم',
-          type: 'بازگشایی مجدد'
+          type: 'بازگشایی مجدد',
+          attachment: null,
+          referral: null,
         };
         return {
           ...g,
-          status: "جاری",
+          status: "جاری" as const,
           completedAt: undefined,
           endDate: undefined,
           activities: [...(g.activities || []), newActivity]

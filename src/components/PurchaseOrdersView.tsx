@@ -1154,11 +1154,12 @@ export default function PurchaseOrdersView({
                           id: `poi-${Date.now()}-${idx}`,
                           productId: 'generic',
                           productName: inqItem.name,
-                          productCode: '',
+                          productCode: inqItem.partNumber || '',
+                          brand: inqItem.brand || '',
+                          tagNumber: inqItem.tagNumber,
                           quantity: inqItem.quantity,
                           unitPriceForeignCurrency: inqItem.priceForeign,
-                          customsDutyRate: 0,
-                          shippingCostForeignRate: 0,
+                          totalPriceForeignCurrency: (inqItem.priceForeign || 0) * (inqItem.quantity || 0),
                           supplierNotes: inqItem.notes || (inqItem.deliveryTime ? `زمان تحویل: ${inqItem.deliveryTime}` : '')
                         }));
                         setItems(poItems);

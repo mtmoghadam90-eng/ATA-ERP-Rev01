@@ -244,6 +244,7 @@ export interface PurchaseOrderItem {
   proformaItemId?: string; // شناسه ردیف پیش‌فاکتور مرتبط
   proformaItemName?: string; // نام/عنوان ردیف پیش‌فاکتور مرتبط
   tagNumber?: string;
+  supplierNotes?: string; // یادداشت تأمین‌کننده (مثل زمان تحویل) از استعلام برنده
 }
 
 export interface PurchaseOrder {
@@ -374,6 +375,9 @@ export interface Transaction {
   isDirectForeign?: boolean; // آیا دریافت مستقیم ارز بوده است؟
   status?: 'تأیید شده' | 'پیش‌نویس' | 'لغو شده' | 'برگشت شده';
   reversalOfTransactionId?: string; // شناسه تراکنش اصلی جهت برگشت وجه
+  partyType?: string; // نوع طرف حساب: مشتری/تامین‌کننده/دستی
+  partyNameManual?: string; // نام طرف حساب وقتی رکورد مشتری/تامین‌کننده ندارد
+  bankName?: string; // نام بانک یا صرافی
 }
 
 export interface ModuleNotification {
@@ -650,6 +654,7 @@ export interface AfterSalesService {
   createdAt: string;
   createdBy: string;
   items?: AfterSalesServiceItem[];
+  notes?: string; // توضیحات کلی خدمت (در گزارش چاپی نمایش داده می‌شود)
   moduleNotes?: ModuleNote[];
 }
 
