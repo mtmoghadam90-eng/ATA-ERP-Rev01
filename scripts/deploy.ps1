@@ -112,11 +112,50 @@ Ok "build produced dist\server.cjs"
 
 # ---------------------------------------------------------------- 7. restart
 Step 7 "Restarting the application"
+# The task is registered with -MultipleInstances IgnoreNew: if the old process is
+# still alive, Start-ScheduledTask is silently ignored and the deploy has NO
+# effect while appearing to succeed. So confirm the port is actually free before
+# starting, and force-kill whatever still holds it.
+function Get-PortOwner {
+    param([int]$P)
+    try {
+        return (Get-NetTCPConnection -State Listen -LocalPort $P -ErrorAction Stop |
+                Select-Object -First 1 -ExpandProperty OwningProcess)
+    } catch { return $null }
+}
+
 try {
     Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 3
+
+    $freed = $false
+    foreach ($i in 1..15) {
+        Start-Sleep -Seconds 1
+        if (-not (Get-PortOwner -P $Port)) { $freed = $true; break }
+    }
+
+    if (-not $freed) {
+        $owner = Get-PortOwner -P $Port
+        if ($owner) {
+            $proc = Get-Process -Id $owner -ErrorAction SilentlyContinue
+            # Only ever kill our own runtime, never a neighbouring service.
+            if ($proc -and $proc.ProcessName -eq "node") {
+                Write-Host "    Port $Port still held by node (PID $owner) - stopping it." -ForegroundColor Yellow
+                Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 3
+            } else {
+                Fail "port $Port is held by '$($proc.ProcessName)' (PID $owner), which is not ours - not touching it"
+                exit 7
+            }
+        }
+    }
+
+    if (Get-PortOwner -P $Port) {
+        Fail "port $Port is still in use; refusing to start a second instance"
+        exit 7
+    }
+
     Start-ScheduledTask -TaskName $TaskName
-    Ok "task '$TaskName' restarted"
+    Ok "task '$TaskName' restarted on a free port"
 } catch {
     Fail "could not restart task: $($_.Exception.Message)"
     exit 7
@@ -132,7 +171,17 @@ foreach ($i in 1..20) {
         # protected endpoint: Invoke-WebRequest throws on 401, which would report
         # a perfectly healthy application as down.
         $r = Invoke-WebRequest "http://localhost:$Port/api/health" -UseBasicParsing -TimeoutSec 5
-        if ($r.StatusCode -eq 200) { $healthy = $true; break }
+        if ($r.StatusCode -eq 200) {
+            # A low uptime proves this is the process we just started, not an old
+            # one that survived and is still serving the previous build.
+            $uptime = ($r.Content | ConvertFrom-Json).uptimeSec
+            if ($uptime -ne $null -and $uptime -lt 120) {
+                $healthy = $true
+                Write-Host "    (fresh process, uptime ${uptime}s)" -ForegroundColor DarkGray
+                break
+            }
+            Write-Host "    Responding, but uptime is ${uptime}s - that is not the build we just deployed." -ForegroundColor Yellow
+        }
     } catch { }
 }
 if ($healthy) {
