@@ -34,6 +34,7 @@ import {
 } from '../types';
 import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
+import { getCodeError, cleanCode } from '../utils/documentCodes';
 import { getProformaOutcomeStatus, getWonItemsOfProforma } from '../useERPStore';
 import ConfirmModal from './ConfirmModal';
 import ShamsiDatePicker from './ShamsiDatePicker';
@@ -49,7 +50,7 @@ interface PackagingDeliveryViewProps {
   proformas: Proforma[];
   products: Product[];
   packagingDeliveries: PackagingDelivery[];
-  addPackagingDelivery: (delivery: Omit<PackagingDelivery, 'id' | 'createdAt' | 'packingListNumber'>) => any;
+  addPackagingDelivery: (delivery: Omit<PackagingDelivery, 'id' | 'createdAt' | 'packingListNumber'> & { packingListNumber?: string }) => any;
   updatePackagingDelivery: (delivery: PackagingDelivery) => void;
   deletePackagingDelivery: (id: string, deleteLogs?: boolean) => void;
   settings: ERPSettings;
@@ -91,6 +92,8 @@ export default function PackagingDeliveryView({
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [selectedProformaId, setSelectedProformaId] = useState<string>('');
+  // Editable packing-list number. Blank on create means "generate it".
+  const [packingListNumber, setPackingListNumber] = useState<string>('');
   const [deliveryDate, setDeliveryDate] = useState<string>(getTodayShamsi());
   const [actualDeliveryDate, setActualDeliveryDate] = useState<string>('');
   const [useItemizedDeliveryDates, setUseItemizedDeliveryDates] = useState<boolean>(false);
@@ -720,6 +723,7 @@ export default function PackagingDeliveryView({
   // Load delivery into form for editing
   const handleEditDelivery = (delivery: PackagingDelivery) => {
     setEditingDeliveryId(delivery.id);
+    setPackingListNumber(delivery.packingListNumber || '');
     setSelectedProjectId(delivery.projectId);
     setSelectedProformaId(delivery.proformaId || '');
     setDeliveryDate(delivery.deliveryDate);
@@ -816,11 +820,20 @@ export default function PackagingDeliveryView({
       }
     }
 
+    const packingCodeError = getCodeError(
+      'packingList', packingListNumber, packagingDeliveries, 'packingListNumber', editingDeliveryId || undefined,
+    );
+    if (packingCodeError) {
+      alert(packingCodeError);
+      return;
+    }
+
     if (editingDeliveryId) {
       const existingDelivery = packagingDeliveries.find(d => d.id === editingDeliveryId);
       if (existingDelivery) {
         updatePackagingDelivery({
           ...existingDelivery,
+          packingListNumber: cleanCode(packingListNumber) || existingDelivery.packingListNumber,
           projectId: selectedProjectId,
           projectName: proj?.name || '',
           proformaId: selectedProformaId || undefined,
@@ -836,6 +849,7 @@ export default function PackagingDeliveryView({
       }
     } else {
       const deliveryData = {
+        packingListNumber: cleanCode(packingListNumber),
         projectId: selectedProjectId,
         projectName: proj?.name || '',
         proformaId: selectedProformaId || undefined,
@@ -855,6 +869,7 @@ export default function PackagingDeliveryView({
     setEditingDeliveryId(null);
     setSelectedProjectId('');
     setSelectedProformaId('');
+    setPackingListNumber('');
     setDeliveryDate(getTodayShamsi());
     setActualDeliveryDate('');
     setUseItemizedDeliveryDates(false);
@@ -1211,6 +1226,24 @@ export default function PackagingDeliveryView({
                   <option key={p.id} value={p.id}>پیش‌فاکتور {p.proformaNumber}</option>
                 ))}
               </select>
+            </div>
+
+            {/* Packing-list number (editable; blank on create = auto-generate) */}
+            <div className="space-y-1">
+              <label className="block text-xs font-bold text-slate-700 flex justify-between items-center">
+                <span>شماره پکینگ لیست</span>
+                {!editingDeliveryId && (
+                  <span className="text-[10px] text-slate-400 font-normal">خالی = ساخت خودکار</span>
+                )}
+              </label>
+              <input
+                type="text"
+                value={packingListNumber}
+                onChange={(e) => setPackingListNumber(e.target.value)}
+                placeholder={editingDeliveryId ? "" : "اختیاری"}
+                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-sky-500 text-left font-mono"
+                dir="ltr"
+              />
             </div>
 
             {/* Delivery Date */}

@@ -51,6 +51,7 @@ import CustomerAgreementAlert from "./CustomerAgreementAlert";
 import { isFieldRequired, renderFieldLabelWithAsterisk } from "../utils/requiredFields";
 import { buildCustomerOptions, buildCustomerOptionsFromSubset } from "../utils/customerLabel";
 import { getContactInfoError } from "../utils/customerValidation";
+import { getCodeError, cleanCode } from "../utils/documentCodes";
 import { findCustomerDuplicates, DuplicateMatch } from "../utils/customerDuplicates";
 import DuplicateCustomerModal from "./DuplicateCustomerModal";
 import PriceCalculatorModal from "./PriceCalculatorModal";
@@ -191,7 +192,7 @@ interface ProformasViewProps {
   products: Product[];
   settings: ERPSettings;
   exchangeRates: ExchangeRate[];
-  addProforma: (proforma: Omit<Proforma, "id" | "proformaNumber">) => void;
+  addProforma: (proforma: Omit<Proforma, "id" | "proformaNumber"> & { proformaNumber?: string }) => void;
   updateProforma: (proforma: Proforma) => void;
   updateProformaStatus: (
     id: string,
@@ -398,6 +399,8 @@ export default function ProformasView({
   const [contactCustomerId, setContactCustomerId] = useState("");
   const [contactPrefix, setContactPrefix] = useState("");
   const [projectId, setProjectId] = useState("");
+  // Editable proforma number. Blank on create means "generate it".
+  const [proformaNumber, setProformaNumber] = useState("");
   const [issueDate, setIssueDate] = useState(getTodayShamsi());
   const [expiryDate, setExpiryDate] = useState(() =>
     addDaysToShamsi(getTodayShamsi(), 30),
@@ -480,6 +483,7 @@ export default function ProformasView({
     }
     setProjectId("");
     setProformaType("FINANCIAL");
+    setProformaNumber("");
     setIssueDate(getTodayShamsi());
     setExpiryDate(addDaysToShamsi(getTodayShamsi(), 30));
 
@@ -529,6 +533,7 @@ export default function ProformasView({
     setContactCustomerId(pf.contactCustomerId || "");
     setContactPrefix(pf.contactPrefix || "");
     setProjectId(pf.projectId || "");
+    setProformaNumber(pf.proformaNumber || "");
     setIssueDate(pf.issueDate);
     setExpiryDate(pf.expiryDate);
     setStatus(pf.status);
@@ -982,9 +987,18 @@ export default function ProformasView({
       }
     }
 
+    const proformaCodeError = getCodeError(
+      'proforma', proformaNumber, proformas, 'proformaNumber', editingProforma?.id,
+    );
+    if (proformaCodeError) {
+      alert(proformaCodeError);
+      return;
+    }
+
     if (editingProforma) {
       updateProforma({
         ...editingProforma,
+        proformaNumber: cleanCode(proformaNumber) || editingProforma.proformaNumber,
         proformaType,
         customerId,
         customerName,
@@ -1014,6 +1028,7 @@ export default function ProformasView({
       setEditingProforma(null);
     } else {
       addProforma({
+        proformaNumber: cleanCode(proformaNumber),
         proformaType,
         customerId,
         customerName,
@@ -3482,6 +3497,27 @@ export default function ProformasView({
                     </>
                   );
                 })()}
+
+                {/* Proforma number (editable; blank on create = auto-generate) */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500 flex justify-between items-center">
+                    <span>شماره پیش‌فاکتور</span>
+                    {!editingProforma && (
+                      <span className="text-[10px] text-slate-400 font-normal">
+                        خالی = ساخت خودکار
+                      </span>
+                    )}
+                  </label>
+                  <input
+                    type="text"
+                    value={proformaNumber}
+                    onChange={(e) => setProformaNumber(e.target.value)}
+                    placeholder={editingProforma ? "" : "اختیاری"}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-left font-mono bg-white"
+                    dir="ltr"
+                  />
+                </div>
+
                 {/* Dates */}
                 <div
                   className="space-y-1.5"

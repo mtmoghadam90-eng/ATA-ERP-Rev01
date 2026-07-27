@@ -30,6 +30,7 @@ import CustomFieldsDetailView from './CustomFieldsDetailView';
 import ConfirmModal from './ConfirmModal';
 import PriceCalculatorModal from './PriceCalculatorModal';
 import { generateSku, isOptionExcludedByRules, decodeSku, DecodedSkuResult } from '../utils/skuUtils';
+import { getCodeError } from '../utils/documentCodes';
 import { uploadFile, downloadFileFromServer } from '../imageUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import * as XLSX from 'xlsx';
@@ -512,10 +513,11 @@ export default function ProductsView({
       return;
     }
     
-    // Check for duplicate code
-    const duplicate = products.find(p => p.code === productCode.trim() && p.id !== editingProduct?.id);
-    if (duplicate) {
-      alert('کد کالای وارد شده تکراری است. لطفاً کد دیگری انتخاب کنید.');
+    // Check for duplicate code (digit- and case-insensitive, so "EQ-۱۲۳" and
+    // "eq-123" are recognized as the same code)
+    const productCodeError = getCodeError('product', productCode, products, 'code', editingProduct?.id);
+    if (productCodeError) {
+      alert(productCodeError);
       return;
     }
 

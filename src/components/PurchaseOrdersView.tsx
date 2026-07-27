@@ -36,6 +36,7 @@ import { SearchableSelect } from './SearchableSelect';
 import ModuleNotesSection from './ModuleNotesSection';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
+import { getCodeError, cleanCode } from '../utils/documentCodes';
 
 interface PurchaseOrdersViewProps {
   initialPrintDocId?: string;
@@ -47,7 +48,7 @@ interface PurchaseOrdersViewProps {
   supplierInquiries?: SupplierInquiry[];
   exchangeRates: ExchangeRate[];
   proformas: Proforma[];
-  addPurchaseOrder: (po: Omit<PurchaseOrder, 'id' | 'poNumber' | 'createdAt'> & { customValues?: Record<string, any> }) => void;
+  addPurchaseOrder: (po: Omit<PurchaseOrder, 'id' | 'poNumber' | 'createdAt'> & { customValues?: Record<string, any>; poNumber?: string }) => void;
   updatePurchaseOrder: (po: PurchaseOrder) => void;
   updatePurchaseOrderStatus: (id: string, status: PurchaseOrder['status']) => void;
   deletePurchaseOrder: (id: string) => void;
@@ -127,6 +128,8 @@ export default function PurchaseOrdersView({
   const [supplierId, setSupplierId] = useState('');
   const [projectId, setProjectId] = useState('');
   const [proformaId, setProformaId] = useState('');
+  // Editable PO number. Blank on create means "generate it".
+  const [poNumber, setPoNumber] = useState("");
   const [orderDate, setOrderDate] = useState(getTodayShamsi());
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState(() => addDaysToShamsi(getTodayShamsi(), 45));
   const [currency, setCurrency] = useState<PurchaseOrder['currency']>('دلار');
@@ -203,6 +206,7 @@ export default function PurchaseOrdersView({
     setProjectId('');
     setProformaId('');
     setSelectedInquiryId('');
+    setPoNumber("");
     setOrderDate(getTodayShamsi());
     setStatus('پرداخت و سفارش به سازنده');
     setExpectedDeliveryDate(addDaysToShamsi(getTodayShamsi(), 45));
@@ -231,6 +235,7 @@ export default function PurchaseOrdersView({
     setProjectId(po.projectId || '');
     setProformaId(po.proformaId || '');
     setSelectedInquiryId('');
+    setPoNumber(po.poNumber || "");
     setOrderDate(po.orderDate);
     setExpectedDeliveryDate(po.expectedDeliveryDate);
     setCurrency(po.currency);
@@ -363,9 +368,16 @@ export default function PurchaseOrdersView({
       }
     }
 
+    const poCodeError = getCodeError('purchaseOrder', poNumber, purchaseOrders, 'poNumber', editingPO?.id);
+    if (poCodeError) {
+      alert(poCodeError);
+      return;
+    }
+
     if (editingPO) {
       updatePurchaseOrder({
         ...editingPO,
+        poNumber: cleanCode(poNumber) || editingPO.poNumber,
         supplierId,
         supplierName,
         projectId: projectId || undefined,
@@ -396,6 +408,7 @@ export default function PurchaseOrdersView({
       });
     } else {
       addPurchaseOrder({
+        poNumber: cleanCode(poNumber),
         supplierId,
         supplierName,
         projectId: projectId || undefined,
@@ -1261,6 +1274,24 @@ export default function PurchaseOrdersView({
                 </div>
 
                 {/* Order Date */}
+                {/* PO number (editable; blank on create = auto-generate) */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500 flex justify-between items-center">
+                    <span>شماره سفارش خرید</span>
+                    {!editingPO && (
+                      <span className="text-[10px] text-slate-400 font-normal">خالی = ساخت خودکار</span>
+                    )}
+                  </label>
+                  <input
+                    type="text"
+                    value={poNumber}
+                    onChange={(e) => setPoNumber(e.target.value)}
+                    placeholder={editingPO ? "" : "اختیاری"}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-left font-mono"
+                    dir="ltr"
+                  />
+                </div>
+
                 <div className="space-y-1.5" id="po-order-date-picker-wrapper">
                   <ShamsiDatePicker
                     label={renderFieldLabelWithAsterisk(settings, 'purchaseOrders', 'orderDate', 'تاریخ ثبت سفارش')}

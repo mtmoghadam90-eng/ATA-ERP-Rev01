@@ -20,6 +20,7 @@ import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import { buildCustomerOptions } from '../utils/customerLabel';
+import { getCodeError, cleanCode } from '../utils/documentCodes';
 import ConfirmModal from './ConfirmModal';
 import QuickAddModal from './QuickAddModal';
 import { SearchableSelect } from './SearchableSelect';
@@ -152,6 +153,8 @@ export default function ProjectsView({
   const [groupToCompleteId, setGroupToCompleteId] = useState<any>(null);
   const [groupToCompleteName, setGroupToCompleteName] = useState("");
   const [name, setName] = useState("");
+  // Editable project code. Blank means "generate it from settings.documentFormats".
+  const [code, setCode] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [status, setStatus] = useState("جدید");
   const [description, setDescription] = useState("");
@@ -568,6 +571,7 @@ export default function ProjectsView({
   const handleOpenAdd = () => {
     setEditingProject(null);
     setName("");
+    setCode("");
     setCustomerId(customers[0]?.id || "");
     setStatus("جدید");
     setDescription("");
@@ -592,6 +596,7 @@ export default function ProjectsView({
   const handleOpenEdit = (proj) => {
     setEditingProject(proj);
     setName(proj.name);
+    setCode(proj.code || "");
     setCustomerId(proj.customerId);
     setStatus(proj.status);
     setDescription(proj.description);
@@ -641,8 +646,15 @@ export default function ProjectsView({
       }
     }
 
+    const codeError = getCodeError('project', code, projects, 'code', editingProject?.id);
+    if (codeError) {
+      alert(codeError);
+      return;
+    }
+
     const data = {
       name,
+      code: cleanCode(code),
       customerId,
       customerName,
       status,
@@ -3354,6 +3366,26 @@ export default function ProjectsView({
                       onChange={(e) => setName(e.target.value)}
                       placeholder="مثال: نوسازی تجهیزات کنترل نیروگاه ری"
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
+                    />
+                  </div>
+
+                  {/* Project code (editable; blank = auto-generate) */}
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className="text-xs font-semibold text-slate-500 flex justify-between items-center">
+                      <span>کد پروژه</span>
+                      {!editingProject && (
+                        <span className="text-[10px] text-slate-400 font-normal">
+                          خالی بگذارید تا خودکار ساخته شود
+                        </span>
+                      )}
+                    </label>
+                    <input
+                      type="text"
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      placeholder={editingProject ? "" : "مثال: ATA-1405-001 (اختیاری)"}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-left font-mono"
+                      dir="ltr"
                     />
                   </div>
 

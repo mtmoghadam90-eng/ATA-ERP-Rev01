@@ -37,6 +37,7 @@ import { SearchableSelect } from './SearchableSelect';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import { buildCustomerOptions } from '../utils/customerLabel';
 import { getContactInfoError } from '../utils/customerValidation';
+import { getCodeError } from '../utils/documentCodes';
 import { findCustomerDuplicates, DuplicateMatch } from '../utils/customerDuplicates';
 import DuplicateCustomerModal from './DuplicateCustomerModal';
 
@@ -375,6 +376,15 @@ export default function TransactionsView({
     // 1. شناسه تراکنش
     if (!documentNumber || documentNumber.trim() === '') {
       alert('شناسه تراکنش (شماره سند) نباید خالی باشد.');
+      return;
+    }
+
+    // A financial voucher number must be unique
+    const docNumberError = getCodeError(
+      'transaction', documentNumber, transactions, 'documentNumber', editingTransaction?.id,
+    );
+    if (docNumberError) {
+      alert(docNumberError);
       return;
     }
 
