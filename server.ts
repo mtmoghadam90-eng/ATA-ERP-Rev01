@@ -485,6 +485,15 @@ async function startServer() {
     }
   });
 
+  /**
+   * Liveness probe for deployment scripts and monitoring.
+   * Deliberately unauthenticated and free of any data — it only reports that the
+   * process is up and serving, so a health check never needs a session.
+   */
+  app.get("/api/health", (req, res) => {
+    res.json({ ok: true, uptimeSec: Math.round(process.uptime()) });
+  });
+
   /** Who am I? Lets the client restore its session on reload. */
   app.get("/api/me", (req, res) => {
     const user = getAuthUser(req);

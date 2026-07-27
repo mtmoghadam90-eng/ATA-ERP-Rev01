@@ -128,7 +128,10 @@ $healthy = $false
 foreach ($i in 1..20) {
     Start-Sleep -Seconds 2
     try {
-        $r = Invoke-WebRequest "http://localhost:$Port/api/versions" -UseBasicParsing -TimeoutSec 5
+        # /api/health is intentionally unauthenticated. Do not point this at a
+        # protected endpoint: Invoke-WebRequest throws on 401, which would report
+        # a perfectly healthy application as down.
+        $r = Invoke-WebRequest "http://localhost:$Port/api/health" -UseBasicParsing -TimeoutSec 5
         if ($r.StatusCode -eq 200) { $healthy = $true; break }
     } catch { }
 }
