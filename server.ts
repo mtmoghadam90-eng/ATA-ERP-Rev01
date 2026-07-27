@@ -22,6 +22,13 @@ import { SEED_USERS, SEED_PROJECT_CATEGORY_GROUPS } from "./src/useERPStore";
 // Power BI reporting sync (one-way export into SQL Server)
 import { syncToSqlServer, testConnection, readConfigFromEnv } from "./src/reporting/sqlSync";
 import { buildReportingTables, StoreCollections } from "./src/reporting/flatten";
+// Server-side authentication and authorization
+import {
+  signSession, verifySession, sanitizeUsers, checkKeyAccess, hasPermission,
+  parseCookies, buildSessionCookie, buildClearCookie, resolveSessionSecret,
+  canSeeFullUsers, toUserDirectory,
+  SESSION_COOKIE, AuthUser, AccessMode,
+} from "./src/server/auth";
 
 // Overridable so a second instance can be started against a scratch database
 // (useful for testing, and for pointing a deployment at a specific data file).
@@ -151,6 +158,7 @@ async function startServer() {
   });
 
   app.post("/api/upload", upload.single("file"), async (req, res) => {
+    if (!requireAuth(req, res)) return;
     try {
       if (!req.file) {
         return res.status(400).json({ success: false, error: "فایلی بارگذاری نشده است." });
@@ -219,6 +227,7 @@ async function startServer() {
 
   // Existing rates API
   app.get("/api/rates", async (req, res) => {
+    if (!requireAuth(req, res)) return;
     const fallbacks = {
       USD: 625000,
       EUR: 678000,
@@ -305,14 +314,104 @@ async function startServer() {
     'erp_audit_logs'
   ]);
 
+  /* ------------------------- authentication ------------------------- */
+
+  // Persisted outside ALLOWED_KEYS so it is never reachable through the data API.
+  const SESSION_SECRET = resolveSessionSecret(
+    () => {
+      const row = getStmt.get("__session_secret") as { value: string } | undefined;
+      return row?.value;
+    },
+    (secret) => {
+      store["__session_secret"] = secret;
+      saveStore(store);
+    },
+  );
+
+  const readUsers = (): any[] => {
+    const row = getStmt.get("erp_users") as { value: string } | undefined;
+    if (!row) return [];
+    try {
+      const parsed = JSON.parse(row.value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  /**
+   * Resolves the caller from their session cookie. The user record is re-read on
+   * every request so permission changes, deletions and `sessionEpoch` bumps take
+   * effect immediately rather than at next login.
+   */
+  const getAuthUser = (req: express.Request): AuthUser | null => {
+    const cookies = parseCookies(req.headers.cookie);
+    const payload = verifySession(cookies[SESSION_COOKIE], SESSION_SECRET);
+    if (!payload) return null;
+    const user = readUsers().find((u) => u && u.id === payload.uid);
+    if (!user) return null;
+    if ((user.sessionEpoch || 0) !== (payload.epoch || 0)) return null;
+    const { password: _pw, ...safe } = user;
+    return safe as AuthUser;
+  };
+
+  /** Rejects unauthenticated callers. */
+  const requireAuth = (
+    req: express.Request,
+    res: express.Response,
+  ): AuthUser | null => {
+    const user = getAuthUser(req);
+    if (!user) {
+      res.status(401).json({
+        success: false,
+        error: "برای دسترسی به این بخش باید وارد سامانه شوید.",
+        code: "UNAUTHENTICATED",
+      });
+      return null;
+    }
+    return user;
+  };
+
+  /** Rejects callers without permission on a collection. */
+  const requireKeyAccess = (
+    req: express.Request,
+    res: express.Response,
+    key: string,
+    mode: AccessMode,
+  ): AuthUser | null => {
+    const user = requireAuth(req, res);
+    if (!user) return null;
+    const denial = checkKeyAccess(user, key, mode);
+    if (denial) {
+      res.status(403).json({ success: false, error: denial, code: "FORBIDDEN" });
+      return null;
+    }
+    return user;
+  };
+
   // Batch GET API for initial data to optimize performance and prevent connection limits/drops
   app.get("/api/init-data", (req, res) => {
     try {
+      const user = requireAuth(req, res);
+      if (!user) return;
+
       const responseData: Record<string, any> = {};
       const versionData: Record<string, number> = {};
       for (const key of ALLOWED_KEYS) {
+        // Only ship collections this user is allowed to see.
+        if (checkKeyAccess(user, key, "read")) {
+          responseData[key] = null;
+          versionData[key] = getVersion(key);
+          continue;
+        }
         const row = getStmt.get(key) as {value: string} | undefined;
-        responseData[key] = row ? JSON.parse(row.value) : null;
+        let value = row ? JSON.parse(row.value) : null;
+        // Credentials never leave the server; users without the `users` permission
+        // get only a name directory, not other accounts' permission maps.
+        if (key === "erp_users" && Array.isArray(value)) {
+          value = canSeeFullUsers(user) ? sanitizeUsers(value) : toUserDirectory(value);
+        }
+        responseData[key] = value;
         versionData[key] = getVersion(key);
       }
       // `__versions` is the baseline for change polling; it is not a stored key.
@@ -330,11 +429,18 @@ async function startServer() {
     if (!ALLOWED_KEYS.has(key)) {
       return res.status(403).json({ error: "Access denied: Unauthorized key" });
     }
-    
+    const reader = requireKeyAccess(req, res, key, "read");
+    if (!reader) return;
+
     try {
       const row = getStmt.get(key) as {value: string} | undefined;
       if (row) {
-        res.json(JSON.parse(row.value));
+        const parsed = JSON.parse(row.value);
+        if (key === "erp_users" && Array.isArray(parsed)) {
+          res.json(canSeeFullUsers(reader) ? sanitizeUsers(parsed) : toUserDirectory(parsed));
+        } else {
+          res.json(parsed);
+        }
       } else {
         res.json(null);
       }
@@ -349,7 +455,8 @@ async function startServer() {
     if (!ALLOWED_KEYS.has(key)) {
       return res.status(403).json({ error: "Access denied: Unauthorized key" });
     }
-    
+    if (!requireKeyAccess(req, res, key, "write")) return;
+
     try {
       let data = req.body;
       
@@ -378,6 +485,21 @@ async function startServer() {
     }
   });
 
+  /** Who am I? Lets the client restore its session on reload. */
+  app.get("/api/me", (req, res) => {
+    const user = getAuthUser(req);
+    if (!user) {
+      return res.status(401).json({ success: false, code: "UNAUTHENTICATED" });
+    }
+    res.json({ success: true, user });
+  });
+
+  /** Ends the session. */
+  app.post("/api/logout", (req, res) => {
+    res.setHeader("Set-Cookie", buildClearCookie());
+    res.json({ success: true });
+  });
+
   /* ------------------ Power BI reporting sync ------------------ */
 
   /** Reads and parses every collection out of the store for reporting. */
@@ -399,6 +521,11 @@ async function startServer() {
 
   /** Verifies the SQL Server connection without writing anything. */
   app.get("/api/report/sql-test", async (req, res) => {
+    const u = requireAuth(req, res);
+    if (!u) return;
+    if (!hasPermission(u, "settings")) {
+      return res.status(403).json({ ok: false, error: "دسترسی به تنظیمات گزارش‌گیری مجاز نیست." });
+    }
     const cfg = readConfigFromEnv();
     if (!cfg) {
       return res.status(400).json({
@@ -412,6 +539,11 @@ async function startServer() {
 
   /** Runs the one-way sync into the SQL Server reporting schema. */
   app.post("/api/report/sql-sync", async (req, res) => {
+    const u = requireAuth(req, res);
+    if (!u) return;
+    if (!hasPermission(u, "settings")) {
+      return res.status(403).json({ ok: false, error: "اجرای همگام‌سازی گزارش‌گیری مجاز نیست." });
+    }
     const cfg = readConfigFromEnv();
     if (!cfg) {
       return res.status(400).json({
@@ -433,6 +565,11 @@ async function startServer() {
    * Handy for checking the model without a database round-trip.
    */
   app.get("/api/report/preview", (req, res) => {
+    const u = requireAuth(req, res);
+    if (!u) return;
+    if (!hasPermission(u, "settings")) {
+      return res.status(403).json({ ok: false, error: "دسترسی به پیش‌نمایش گزارش‌گیری مجاز نیست." });
+    }
     try {
       const datasets = buildReportingTables(readStoreCollections());
       res.json({
@@ -451,6 +588,7 @@ async function startServer() {
 
   /** Current version of every collection — clients poll this to detect changes. */
   app.get("/api/versions", (req, res) => {
+    if (!requireAuth(req, res)) return;
     const out: Record<string, number> = {};
     for (const key of ALLOWED_KEYS) out[key] = getVersion(key);
     res.json({ versions: out });
@@ -472,6 +610,7 @@ async function startServer() {
     if (!ALLOWED_KEYS.has(key)) {
       return res.status(403).json({ error: "Access denied: Unauthorized key" });
     }
+    if (!requireKeyAccess(req, res, key, "write")) return;
 
     try {
       const { ops, baseVersion } = req.body || {};
@@ -619,13 +758,20 @@ async function startServer() {
       ipLoginAttempts.delete(ipKey);
       
       const isDefaultPassword = bcrypt.compareSync('123', foundUser.password);
-      
+
+      // Issue the session cookie — this is what authorizes every later request.
+      const token = signSession(
+        { uid: foundUser.id, iat: Date.now(), epoch: foundUser.sessionEpoch || 0 },
+        SESSION_SECRET,
+      );
+      res.setHeader("Set-Cookie", buildSessionCookie(token));
+
       // Don't send the password hash back to the client
       const { password: _, ...safeUser } = foundUser;
-      res.json({ 
-        success: true, 
+      res.json({
+        success: true,
         user: safeUser,
-        mustChangePassword: isDefaultPassword 
+        mustChangePassword: isDefaultPassword
       });
     } else {
       // Increment failed attempts
@@ -675,13 +821,21 @@ async function startServer() {
       return res.status(400).json({ success: false, message: "نمی‌توانید از رمز عبور ساده و پیش‌فرض استفاده کنید" });
     }
     
-    // Update password
+    // Update password and invalidate any sessions issued before the change.
     foundUser.password = bcrypt.hashSync(newPassword, 10);
+    foundUser.sessionEpoch = (foundUser.sessionEpoch || 0) + 1;
     users[foundUserIndex] = foundUser;
-    
+
     // Save to DB
     insertStmt.run('erp_users', JSON.stringify(users));
-    
+
+    // Issue a fresh session so the user stays logged in on this device only.
+    const token = signSession(
+      { uid: foundUser.id, iat: Date.now(), epoch: foundUser.sessionEpoch },
+      SESSION_SECRET,
+    );
+    res.setHeader("Set-Cookie", buildSessionCookie(token));
+
     // Don't send the password hash back to the client
     const { password: _, ...safeUser } = foundUser;
     res.json({ success: true, user: safeUser, message: "رمز عبور با موفقیت تغییر یافت" });

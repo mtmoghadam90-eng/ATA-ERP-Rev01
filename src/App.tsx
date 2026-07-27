@@ -16,7 +16,7 @@ import AfterSalesServicesView from './components/AfterSalesServicesView';
 import PackagingDeliveryView from './components/PackagingDeliveryView';
 import SupplierInquiriesView from './components/SupplierInquiriesView';
 import LoginView from './components/LoginView';
-import { useERPStore, onEditConflict } from './useERPStore';
+import { useERPStore, onEditConflict, onSessionExpired } from './useERPStore';
 import { ShieldAlert, Bell, Inbox, Menu, Calendar, CheckCircle2, Clock, User, Sun, Moon, RefreshCw } from 'lucide-react';
 import TaskCalendarModal from './components/TaskCalendarModal';
 import { getTodayShamsi, toShamsiStr } from './dateUtils';
@@ -88,6 +88,12 @@ export default function App() {
   // Multi-user: notices about data refreshed from, or contended with, other users
   const [syncNotice, setSyncNotice] = useState<{ text: string; kind: 'info' | 'warn' } | null>(null);
   const lastRemoteCountRef = React.useRef(0);
+
+  // Session lost or expired: a write may not have been saved, so say so plainly.
+  const [sessionLost, setSessionLost] = useState(false);
+  useEffect(() => {
+    return onSessionExpired(() => setSessionLost(true));
+  }, []);
 
   useEffect(() => {
     return onEditConflict((n) => {
@@ -721,6 +727,33 @@ export default function App() {
           {renderActiveView()}
         </div>
       </main>
+
+      {/* Session lost — blocking, because unsaved changes may have been rejected */}
+      {sessionLost && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[1400] flex items-center justify-center p-4" dir="rtl">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-100 w-full max-w-md overflow-hidden">
+            <div className="bg-rose-500 p-4 text-white flex items-center gap-3">
+              <ShieldAlert size={22} />
+              <h3 className="font-bold text-sm sm:text-base">نشست شما پایان یافته است</h3>
+            </div>
+            <div className="p-5 space-y-3 text-right">
+              <p className="text-xs text-slate-600 leading-relaxed">
+                دسترسی شما به سامانه منقضی شده یا سطح دسترسی‌تان تغییر کرده است.
+                <strong className="text-rose-600"> آخرین تغییراتی که ثبت کرده‌اید ممکن است ذخیره نشده باشد.</strong>
+              </p>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                لطفاً دوباره وارد شوید و صحت آخرین اطلاعاتی که ثبت کردید را بررسی کنید.
+              </p>
+              <button
+                onClick={() => { store.logout(); window.location.reload(); }}
+                className="w-full py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition"
+              >
+                ورود دوباره به سامانه
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Multi-user sync notice */}
       {syncNotice && (

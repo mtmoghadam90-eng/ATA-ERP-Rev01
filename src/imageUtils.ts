@@ -45,9 +45,13 @@ export async function uploadFile(file: File): Promise<string> {
 
   const response = await fetch("/api/upload", {
     method: "POST",
+    credentials: "same-origin",
     body: formData,
   });
 
+  if (response.status === 401) {
+    throw new Error("نشست شما منقضی شده است. لطفاً دوباره وارد سامانه شوید.");
+  }
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
     throw new Error(errorData.error || "خطا در بارگذاری فایل در سرور");

@@ -188,14 +188,40 @@ export interface CompletionPrompt {
   message: string;
 }
 
+/**
+ * Listeners for a lost/expired session. A failed write must never look like a
+ * successful one, so the UI is told to stop and re-authenticate.
+ */
+const sessionListeners = new Set<() => void>();
+export const onSessionExpired = (fn: () => void) => {
+  sessionListeners.add(fn);
+  return () => sessionListeners.delete(fn);
+};
+let sessionExpiredNotified = false;
+const notifySessionExpired = () => {
+  if (sessionExpiredNotified) return; // only once per session loss
+  sessionExpiredNotified = true;
+  sessionListeners.forEach((fn) => {
+    try { fn(); } catch (e) { console.error("session listener failed", e); }
+  });
+};
+
+/** True when the response means "your session is gone". */
+const isAuthFailure = (res: Response): boolean => res.status === 401 || res.status === 403;
+
 const saveToServer = (key: string, data: any) => {
   fetch(`/api/data/${key}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
     body: JSON.stringify(data),
-  }).catch((err) =>
-    console.error(`Error saving to server for key: ${key}`, err),
-  );
+  })
+    .then((res) => {
+      if (isAuthFailure(res)) notifySessionExpired();
+    })
+    .catch((err) =>
+      console.error(`Error saving to server for key: ${key}`, err),
+    );
 };
 
 /* ------------------------------------------------------------------ *
@@ -282,9 +308,18 @@ const saveToServerMerged = (key: string, data: any) => {
   fetch(`/api/data/${key}/merge`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
     body: JSON.stringify({ ops: opsWithBase, baseVersion: serverVersionByKey[key] }),
   })
-    .then((res) => (res.ok ? res.json() : null))
+    .then((res) => {
+      if (isAuthFailure(res)) {
+        // The change was NOT saved — reset the baseline so a later retry resends it.
+        delete lastSyncedByKey[key];
+        notifySessionExpired();
+        return null;
+      }
+      return res.ok ? res.json() : null;
+    })
     .then((res) => {
       if (!res) return;
       if (typeof res.version === "number") serverVersionByKey[key] = res.version;
@@ -524,6 +559,8 @@ export function useERPStore() {
   const [readItems, setReadItems] = useState<string[]>([]);
   const [settings, setSettings] = useState<ERPSettings>(DEFAULT_SETTINGS);
   const [isInitialized, setIsInitialized] = useState(false);
+  /** Bumped after login so the data load re-runs once a session exists. */
+  const [dataReloadKey, setDataReloadKey] = useState(0);
 
   const [users, setUsers] = useState<User[]>([]);
 
@@ -660,7 +697,7 @@ export function useERPStore() {
       try {
         let batchLoaded = false;
         try {
-          const res = await fetch("/api/init-data");
+          const res = await fetch("/api/init-data", { credentials: "same-origin" });
           if (res.ok) {
             const data = await res.json();
             if (data && typeof data === "object") {
@@ -773,15 +810,25 @@ export function useERPStore() {
           ]);
         }
 
-        const storedCurrentUser = localStorage.getItem("erp_current_user");
-        if (storedCurrentUser) {
-          try {
-            const u = JSON.parse(storedCurrentUser);
-            setCurrentUser(u);
-            if (u && u.role) {
-              setUserRole(u.role);
+        // The server session is authoritative — the cached user in localStorage is
+        // only a UI convenience and must not be trusted on its own.
+        try {
+          const meRes = await fetch("/api/me", { credentials: "same-origin" });
+          if (meRes.ok) {
+            const me = await meRes.json();
+            if (me?.user) {
+              setCurrentUser(me.user);
+              if (me.user.role) setUserRole(me.user.role);
+              localStorage.setItem("erp_current_user", JSON.stringify(me.user));
             }
-          } catch (e) {}
+          } else {
+            // No valid session: drop the cached user so the login screen shows.
+            localStorage.removeItem("erp_current_user");
+            setCurrentUser(null);
+          }
+        } catch (e) {
+          localStorage.removeItem("erp_current_user");
+          setCurrentUser(null);
         }
         setIsInitialized(true);
       } catch (err) {
@@ -790,11 +837,12 @@ export function useERPStore() {
       }
     }
     loadData();
-  }, []);
+    // Re-runs after a successful login, since the data endpoints require a session.
+  }, [dataReloadKey]);
 
   const fetchRatesFromAPI = async (silent = false) => {
     try {
-      const response = await fetch("/api/rates");
+      const response = await fetch("/api/rates", { credentials: "same-origin" });
       if (!response.ok) throw new Error("API response not ok");
       const data = await response.json();
       if (data && data.success && data.rates) {
@@ -894,7 +942,8 @@ export function useERPStore() {
 
     const pullChanges = async () => {
       try {
-        const res = await fetch("/api/versions");
+        const res = await fetch("/api/versions", { credentials: "same-origin" });
+        if (isAuthFailure(res)) { notifySessionExpired(); return; }
         if (!res.ok) return;
         const { versions } = await res.json();
         if (!versions || cancelled) return;
@@ -3560,6 +3609,7 @@ export function useERPStore() {
         const res = await fetch("/api/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
           body: JSON.stringify({ username, password }),
         });
         const data = await res.json();
@@ -3570,6 +3620,8 @@ export function useERPStore() {
           saveToStorage("erp_current_user", data.user, setCurrentUser);
           setUserRole(data.user.role);
           localStorage.setItem("erp_simulated_role", data.user.role);
+          // The data endpoints need the session that login just established.
+          setDataReloadKey((k) => k + 1);
           return { success: true, mustChangePassword: false };
         } else {
           return {
@@ -3591,8 +3643,11 @@ export function useERPStore() {
       saveToStorage("erp_current_user", user, setCurrentUser);
       setUserRole(user.role);
       localStorage.setItem("erp_simulated_role", user.role);
+      setDataReloadKey((k) => k + 1);
     },
     logout: () => {
+      // Clear the server session too; the cookie is what actually grants access.
+      fetch("/api/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
       localStorage.removeItem("erp_current_user");
       setCurrentUser(null);
     },
