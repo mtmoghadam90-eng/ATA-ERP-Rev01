@@ -265,7 +265,7 @@ model InventoryTransaction {
   variantId String?  @db.NVarChar(36)
   variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  occurredAt       DateTime
+  occurredAt       DateTime @db.Date
   occurredAtJalali String?  @db.NVarChar(10)
 
   type      String   @db.NVarChar(5) // IN | OUT
@@ -299,17 +299,17 @@ model Project {
   lossReason String? @db.NVarChar(300)
   description String? @db.NVarChar(Max)
 
-  creationDate        DateTime
+  creationDate        DateTime @db.Date
   creationDateJalali  String?  @db.NVarChar(10)
-  opportunityDate     DateTime?
+  opportunityDate     DateTime? @db.Date
   opportunityDateJalali String? @db.NVarChar(10)
-  expectedCloseDate   DateTime?
+  expectedCloseDate   DateTime? @db.Date
   expectedCloseDateJalali String? @db.NVarChar(10)
-  winningDate         DateTime?
+  winningDate         DateTime? @db.Date
   winningDateJalali   String?  @db.NVarChar(10)
-  agreedDeliveryDate  DateTime?
+  agreedDeliveryDate  DateTime? @db.Date
   agreedDeliveryDateJalali String? @db.NVarChar(10)
-  closingDate         DateTime?
+  closingDate         DateTime? @db.Date
   closingDateJalali   String?  @db.NVarChar(10)
 
   estimatedValueRial Decimal? @db.Decimal(19, 2)
@@ -389,9 +389,9 @@ model ProjectMilestone {
 
   name        String  @db.NVarChar(300)
   isCompleted Boolean @default(false)
-  completedAt DateTime?
+  completedAt DateTime? @db.Date
   completedAtJalali String? @db.NVarChar(10)
-  dueDate     DateTime?
+  dueDate     DateTime? @db.Date
   dueDateJalali String? @db.NVarChar(10)
   notes       String? @db.NVarChar(Max)
 
@@ -424,11 +424,11 @@ model Proforma {
   lossReason  String? @db.NVarChar(300)
   currency    String  @default("ریال") @db.NVarChar(20)
 
-  issueDate         DateTime
+  issueDate         DateTime @db.Date
   issueDateJalali   String?  @db.NVarChar(10)
-  expiryDate        DateTime?
+  expiryDate        DateTime? @db.Date
   expiryDateJalali  String?  @db.NVarChar(10)
-  deliveryDate      DateTime?
+  deliveryDate      DateTime? @db.Date
   deliveryDateJalali String? @db.NVarChar(10)
 
   totalAmount     Decimal @default(0) @db.Decimal(19, 2)
@@ -523,19 +523,19 @@ model PurchaseOrder {
   currency     String  @default("دلار") @db.NVarChar(20)
   exchangeRate Decimal @default(1) @db.Decimal(19, 4)
 
-  orderDate               DateTime
+  orderDate               DateTime @db.Date
   orderDateJalali         String?  @db.NVarChar(10)
-  expectedDeliveryDate    DateTime?
+  expectedDeliveryDate    DateTime? @db.Date
   expectedDeliveryDateJalali String? @db.NVarChar(10)
-  paymentDate             DateTime?
+  paymentDate             DateTime? @db.Date
   paymentDateJalali       String?  @db.NVarChar(10)
-  goodsReadyDate          DateTime?
+  goodsReadyDate          DateTime? @db.Date
   goodsReadyDateJalali    String?  @db.NVarChar(10)
-  shipmentDate            DateTime?
+  shipmentDate            DateTime? @db.Date
   shipmentDateJalali      String?  @db.NVarChar(10)
-  clearanceDate           DateTime?
+  clearanceDate           DateTime? @db.Date
   clearanceDateJalali     String?  @db.NVarChar(10)
-  receivedDate            DateTime?
+  receivedDate            DateTime? @db.Date
   receivedDateJalali      String?  @db.NVarChar(10)
 
   totalForeignAmount   Decimal @default(0) @db.Decimal(19, 4)
@@ -602,7 +602,7 @@ model Transaction {
   receiptType String? @db.NVarChar(100)
   status      String  @default("تأیید شده") @db.NVarChar(30)
 
-  occurredAt       DateTime
+  occurredAt       DateTime @db.Date
   occurredAtJalali String?  @db.NVarChar(10)
 
   customerId String?   @db.NVarChar(36)
@@ -653,14 +653,14 @@ model SupplierInquiry {
   supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   isWinner   Boolean   @default(false)
-  winnerDate DateTime?
+  winnerDate DateTime? @db.Date
   winnerDateJalali String? @db.NVarChar(10)
 
   offerConfirmed     Boolean   @default(false)
-  offerConfirmedDate DateTime?
+  offerConfirmedDate DateTime? @db.Date
   offerConfirmedDateJalali String? @db.NVarChar(10)
 
-  creationDate       DateTime
+  creationDate       DateTime @db.Date
   creationDateJalali String?  @db.NVarChar(10)
 
   technicalOfferUrl String? @db.NVarChar(500)
@@ -732,9 +732,9 @@ model PackagingDelivery {
   proformaId String?   @db.NVarChar(36)
   proforma   Proforma? @relation(fields: [proformaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  deliveryDate             DateTime
+  deliveryDate             DateTime @db.Date
   deliveryDateJalali       String?  @db.NVarChar(10)
-  actualDeliveryDate       DateTime?
+  actualDeliveryDate       DateTime? @db.Date
   actualDeliveryDateJalali String?  @db.NVarChar(10)
 
   shippingMethod       String? @db.NVarChar(100)
@@ -769,7 +769,7 @@ model PackingItem {
   weight        Decimal @default(0) @db.Decimal(18, 3)
   boxNumber     String? @db.NVarChar(50)
 
-  actualDeliveryDate       DateTime?
+  actualDeliveryDate       DateTime? @db.Date
   actualDeliveryDateJalali String? @db.NVarChar(10)
 
   @@index([deliveryId])
@@ -790,11 +790,11 @@ model AfterSalesService {
   issueDescription String? @db.NVarChar(Max)
   actionsTaken     String? @db.NVarChar(Max)
 
-  startDate        DateTime
+  startDate        DateTime @db.Date
   startDateJalali  String?  @db.NVarChar(10)
-  endDate          DateTime?
+  endDate          DateTime? @db.Date
   endDateJalali    String?  @db.NVarChar(10)
-  returnDate       DateTime?
+  returnDate       DateTime? @db.Date
   returnDateJalali String?  @db.NVarChar(10)
 
   createdBy String?  @db.NVarChar(200)
@@ -820,11 +820,11 @@ model AfterSalesServiceItem {
   issueDescription String? @db.NVarChar(Max)
   actionsTaken     String? @db.NVarChar(Max)
 
-  startDate        DateTime?
+  startDate        DateTime? @db.Date
   startDateJalali  String?   @db.NVarChar(10)
-  endDate          DateTime?
+  endDate          DateTime? @db.Date
   endDateJalali    String?   @db.NVarChar(10)
-  returnDate       DateTime?
+  returnDate       DateTime? @db.Date
   returnDateJalali String?   @db.NVarChar(10)
 
   @@index([serviceId])
@@ -842,9 +842,9 @@ model ProjectCategoryGroup {
   categoryName String @db.NVarChar(200)
   status       String @default("جاری") @db.NVarChar(30)
 
-  startDate       DateTime?
+  startDate       DateTime? @db.Date
   startDateJalali String?   @db.NVarChar(10)
-  endDate         DateTime?
+  endDate         DateTime? @db.Date
   endDateJalali   String?   @db.NVarChar(10)
 
   createdAt DateTime @default(now())
@@ -941,14 +941,14 @@ model Task {
   priority String @default("متوسط") @db.NVarChar(20)
   status   String @default("در حال انجام") @db.NVarChar(30)
 
-  dueDate       DateTime?
+  dueDate       DateTime? @db.Date
   dueDateJalali String?   @db.NVarChar(10)
 
   assignedToUserId String? @db.NVarChar(36)
   assignedToName   String? @db.NVarChar(200)
 
   reminderEnabled Boolean @default(false)
-  reminderDate    DateTime?
+  reminderDate    DateTime? @db.Date
   reminderDateJalali String? @db.NVarChar(10)
   reminderTime    String? @db.NVarChar(5)
 
