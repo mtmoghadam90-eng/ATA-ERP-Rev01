@@ -33,6 +33,7 @@ import {
 // and coexist with the legacy /api/data/:key routes during the migration.
 import { registerCustomerRoutes } from "./src/server/routes/customers";
 import { registerProjectRoutes } from "./src/server/routes/projects";
+import { registerProformaRoutes } from "./src/server/routes/proformas";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 
 // Overridable so a second instance can be started against a scratch database
@@ -517,6 +518,7 @@ async function startServer() {
   const routeDeps = { requireAuth, requireKeyAccess };
   registerCustomerRoutes(app, routeDeps);
   registerProjectRoutes(app, routeDeps);
+  registerProformaRoutes(app, routeDeps);
 
   /** Who am I? Lets the client restore its session on reload. */
   app.get("/api/me", (req, res) => {
