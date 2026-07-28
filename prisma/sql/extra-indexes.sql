@@ -2,6 +2,14 @@
 -- Run once after `prisma migrate deploy`, and re-run after any migration that
 -- rebuilds these tables. Every statement is idempotent.
 
+-- Required for filtered indexes and computed-column indexes. sqlcmd connects
+-- with QUOTED_IDENTIFIER OFF (legacy ODBC default), which makes every CREATE
+-- INDEX below fail with "Msg 1934 ... SET options have incorrect settings".
+-- These persist for the whole session, so they only need setting once.
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
+
 /* ---------------------------------------------------------------------------
    1. Economic code: unique, but only among customers that have one.
 
