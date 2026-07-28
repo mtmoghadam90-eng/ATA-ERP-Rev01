@@ -358,10 +358,22 @@ function variantScalarData(row: ProductVariantInput): Record<string, unknown> {
  *
  * Matching is by id first, then by SKU — the SKU is what the user actually
  * edits, and a client that regenerated the list without ids would otherwise
- * duplicate every SKU. Variants absent from the incoming list are removed, but
- * only when nothing references them; a SKU that appears on a proforma or in the
- * ledger is kept, because deleting it would either fail on the foreign key or
- * silently take history with it.
+ * duplicate every SKU.
+ *
+ * A variant missing from the incoming list is removed only when it is safe:
+ *
+ *  - **On a business document** (proforma or purchase-order line) → kept. The
+ *    document's history would otherwise lose what was actually quoted or bought.
+ *  - **Holding stock** → kept. Removing it would silently write off physical
+ *    inventory, which no edit to a configuration list should ever do.
+ *  - Otherwise removed, together with its ledger rows. Those necessarily net to
+ *    zero (the stored level always equals the ledger sum), so they record only
+ *    that a SKU was created and emptied — nothing that survives the SKU itself.
+ *
+ * Deleting the rows is required, not incidental: `inventoryTransaction.variantId`
+ * is `onDelete: NoAction`, so the variant delete would fail on the foreign key.
+ * Every SKU gets an opening movement, so "has ledger rows" would have meant no
+ * SKU could ever be removed.
  */
 async function reconcileVariants(
   tx: Prisma.TransactionClient,
@@ -422,12 +434,29 @@ async function reconcileVariants(
   let removed = 0, kept = 0;
   for (const v of existing) {
     if (seen.has(v.id)) continue;
-    const referenced = await tx.proformaItem.count({ where: { variantId: v.id } })
-      + await tx.purchaseOrderItem.count({ where: { variantId: v.id } })
-      + await tx.inventoryTransaction.count({ where: { variantId: v.id } });
-    if (referenced > 0) { kept++; continue; }
+
+    // Current stock is read fresh: a movement earlier in this same call may have
+    // changed it since `existing` was loaded.
+    const current = await tx.productVariant.findUnique({
+      where: { id: v.id }, select: { stockLevel: true },
+    });
+    if (current && Number(current.stockLevel) !== 0) { kept++; continue; }
+
+    const onDocuments = await tx.proformaItem.count({ where: { variantId: v.id } })
+      + await tx.purchaseOrderItem.count({ where: { variantId: v.id } });
+    if (onDocuments > 0) { kept++; continue; }
+
+    await tx.inventoryTransaction.deleteMany({ where: { variantId: v.id } });
     await tx.productVariant.delete({ where: { id: v.id } });
     removed++;
+  }
+
+  if (removed > 0) {
+    // The parent total is the sum of its SKUs, and it just lost some.
+    const agg = await tx.productVariant.aggregate({
+      where: { productId }, _sum: { stockLevel: true },
+    });
+    await tx.product.update({ where: { id: productId }, data: { stockLevel: agg._sum.stockLevel ?? 0 } });
   }
 
   return { created, updated, removed, kept };
