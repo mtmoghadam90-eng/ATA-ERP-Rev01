@@ -32,6 +32,7 @@ import {
 // Relational data access (SQL Server via Prisma). These endpoints are paginated
 // and coexist with the legacy /api/data/:key routes during the migration.
 import { registerCustomerRoutes } from "./src/server/routes/customers";
+import { registerProjectRoutes } from "./src/server/routes/projects";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 
 // Overridable so a second instance can be started against a scratch database
@@ -513,7 +514,9 @@ async function startServer() {
 
   // Relational endpoints. Registered after the auth helpers exist, since they
   // close over the session secret and the user store.
-  registerCustomerRoutes(app, { requireAuth, requireKeyAccess });
+  const routeDeps = { requireAuth, requireKeyAccess };
+  registerCustomerRoutes(app, routeDeps);
+  registerProjectRoutes(app, routeDeps);
 
   /** Who am I? Lets the client restore its session on reload. */
   app.get("/api/me", (req, res) => {

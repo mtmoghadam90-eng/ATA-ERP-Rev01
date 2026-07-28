@@ -367,6 +367,11 @@ model ProjectItem {
   productId String?  @db.NVarChar(36)
   product   Product? @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  /// The specific SKU chosen for this line, when the product has variants. Kept
+  /// as a plain column rather than a FK: the client also uses the sentinel
+  /// 'generic' to mean "this product, no particular variant".
+  variantId String? @db.NVarChar(36)
+
   name          String  @db.NVarChar(400)
   quantity      Decimal @default(1) @db.Decimal(18, 3)
   supplyMethod  String? @db.NVarChar(20)

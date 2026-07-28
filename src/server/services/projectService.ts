@@ -1,0 +1,393 @@
+import { Prisma } from "@prisma/client";
+import { getDb } from "../db";
+import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
+import { AuthUser, hasPermission } from "../auth";
+import { expandDateFields, jalaliRangeFilter } from "../dates";
+import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
+
+/**
+ * Project data access.
+ *
+ * Projects are the sales opportunities the whole app hangs off, so this is the
+ * busiest list in the system and the one that made the in-memory client model
+ * untenable. Every read is a page; the requested-items and milestones grids are
+ * written with their parent inside one transaction.
+ */
+
+export const PROJECT_SORTABLE = [
+  "code", "name", "status", "creationDate", "expectedCloseDate",
+  "estimatedValueRial", "createdAt", "updatedAt",
+] as const;
+
+export const PROJECT_FILTERABLE = [
+  "status", "customerId", "ownerUserId", "marketingChannel", "leadQuality",
+] as const;
+
+const SEARCH_FIELDS = [
+  "code", "name", "description", "customerInquiryNumber", "referrerName",
+] as const;
+
+/** Business dates on a project, each stored as a DATE + Jalali string pair. */
+export const PROJECT_DATE_FIELDS = [
+  "creationDate", "opportunityDate", "expectedCloseDate",
+  "winningDate", "agreedDeliveryDate", "closingDate",
+] as const;
+
+/**
+ * Restricts a query to what `user` may see. Same rule as customers: the module
+ * permission grants the whole module, otherwise only owned records — expressed
+ * as a clause so pagination totals cannot leak records outside the scope.
+ */
+export function visibilityClause(user: AuthUser): Record<string, unknown> | undefined {
+  if (hasPermission(user, "projects")) return undefined;
+  return { ownerUserId: user.id };
+}
+
+/** Exported so the visibility rules can be asserted without a database. */
+export function buildProjectWhere(
+  q: ListQuery,
+  user: AuthUser,
+  extra: { dateFrom?: unknown; dateTo?: unknown } = {},
+): Record<string, unknown> {
+  const and: Record<string, unknown>[] = [];
+
+  const visibility = visibilityClause(user);
+  if (visibility) and.push(visibility);
+
+  const search = searchClause(q.search, SEARCH_FIELDS);
+  if (search) and.push(search);
+
+  for (const [field, value] of Object.entries(q.filters)) {
+    and.push({ [field]: value });
+  }
+
+  // Date range comes from Shamsi inputs but filters the real DATE column, so a
+  // range works correctly across month and year boundaries.
+  const range = jalaliRangeFilter(extra.dateFrom, extra.dateTo);
+  if (range) and.push({ creationDate: range });
+
+  return and.length === 0 ? {} : { AND: and };
+}
+
+/** List columns. The grids need the customer's name, so it is joined, not stored. */
+const LIST_SELECT = {
+  id: true,
+  code: true,
+  name: true,
+  status: true,
+  customerId: true,
+  creationDate: true,
+  creationDateJalali: true,
+  expectedCloseDate: true,
+  expectedCloseDateJalali: true,
+  winningDateJalali: true,
+  estimatedValueRial: true,
+  probabilityPercent: true,
+  marketingChannel: true,
+  leadQuality: true,
+  ownerUserId: true,
+  createdAt: true,
+  customer: { select: { id: true, companyName: true } },
+  owner: { select: { id: true, fullName: true } },
+  _count: { select: { items: true, proformas: true } },
+} satisfies Prisma.ProjectSelect;
+
+export async function listProjects(
+  q: ListQuery,
+  user: AuthUser,
+  extra: { dateFrom?: unknown; dateTo?: unknown } = {},
+): Promise<ListResult<Record<string, unknown>>> {
+  const db = getDb();
+  const where = buildProjectWhere(q, user, extra);
+  const orderBy = q.sort ? { [q.sort]: q.order } : { createdAt: "desc" as const };
+
+  const [rows, total] = await Promise.all([
+    db.project.findMany({ where, orderBy, select: LIST_SELECT, ...paginationArgs(q) }),
+    db.project.count({ where }),
+  ]);
+
+  return buildResult(rows as unknown as Record<string, unknown>[], total, q);
+}
+
+/** Full record with its children, for the detail form. Null when not visible. */
+export async function getProject(id: string, user: AuthUser) {
+  const db = getDb();
+  const visibility = visibilityClause(user);
+
+  return db.project.findFirst({
+    where: visibility ? { AND: [{ id }, visibility] } : { id },
+    include: {
+      customer: { select: { id: true, companyName: true, customerType: true } },
+      owner: { select: { id: true, fullName: true } },
+      endUser: { select: { id: true, companyName: true } },
+      financialContact: { select: { id: true, companyName: true } },
+      technicalContact: { select: { id: true, companyName: true } },
+      items: { orderBy: { lineNo: "asc" } },
+      milestones: { orderBy: { lineNo: "asc" } },
+      categoryGroups: {
+        orderBy: { createdAt: "asc" },
+        include: {
+          activities: {
+            orderBy: { createdAt: "desc" },
+            include: { referral: { include: { messages: { orderBy: { createdAt: "asc" } } } } },
+          },
+        },
+      },
+    },
+  });
+}
+
+/**
+ * Aggregate figures for the dashboard, computed in SQL.
+ *
+ * The client used to derive these by looping every project it had loaded, which
+ * is both a full table read and wrong as soon as pagination hides rows.
+ */
+export async function projectSummary(user: AuthUser) {
+  const db = getDb();
+  const visibility = visibilityClause(user);
+  const where = visibility ?? {};
+
+  const [byStatus, totals] = await Promise.all([
+    db.project.groupBy({ by: ["status"], where, _count: { _all: true }, _sum: { estimatedValueRial: true } }),
+    db.project.aggregate({ where, _count: { _all: true }, _sum: { estimatedValueRial: true } }),
+  ]);
+
+  return {
+    total: totals._count._all,
+    totalEstimatedValueRial: totals._sum.estimatedValueRial?.toString() ?? "0",
+    byStatus: byStatus.map((s) => ({
+      status: s.status,
+      count: s._count._all,
+      estimatedValueRial: s._sum.estimatedValueRial?.toString() ?? "0",
+    })),
+  };
+}
+
+/* --------------------------------- writes --------------------------------- */
+
+export interface ProjectItemInput {
+  productId?: string | null;
+  variantId?: string | null;
+  name?: string;
+  quantity?: unknown;
+  supplyMethod?: string | null;
+  category?: string | null;
+  equipmentType?: string | null;
+  size?: string | null;
+  tagNumber?: string | null;
+}
+
+export interface ProjectMilestoneInput {
+  name?: string;
+  isCompleted?: boolean;
+  completedAt?: string | null;
+  dueDate?: string | null;
+  notes?: string | null;
+  triggerType?: string | null;
+  triggerCategoryName?: string | null;
+}
+
+/** Scalar columns a client may set, before date expansion. */
+export interface ProjectScalarInput {
+  code?: string;
+  name?: string;
+  customerId?: string;
+  status?: string;
+  lossReason?: string | null;
+  description?: string | null;
+  estimatedValueRial?: unknown;
+  probabilityPercent?: unknown;
+  marketingChannel?: string | null;
+  leadQuality?: string | null;
+  referrerName?: string | null;
+  communicationMethod?: string | null;
+  customerInquiryNumber?: string | null;
+  ownerUserId?: string | null;
+  endUserCustomerId?: string | null;
+  financialContactId?: string | null;
+  technicalContactId?: string | null;
+  attachments?: unknown;
+  manualDocuments?: unknown;
+  milestoneRules?: unknown;
+  customValues?: unknown;
+}
+
+export interface ProjectInput extends ProjectScalarInput {
+  /** Shamsi strings; expanded into DATE + Jalali column pairs. */
+  creationDate?: string | null;
+  opportunityDate?: string | null;
+  expectedCloseDate?: string | null;
+  winningDate?: string | null;
+  agreedDeliveryDate?: string | null;
+  closingDate?: string | null;
+  items?: ProjectItemInput[];
+  milestones?: ProjectMilestoneInput[];
+}
+
+/** Maps the scalar half of an input to Prisma column values. */
+function scalarData(input: ProjectInput): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const set = (key: string, value: unknown) => {
+    if (value !== undefined) out[key] = value;
+  };
+
+  if ("code" in input) set("code", toNullableString(input.code, 60));
+  if ("name" in input) set("name", toNullableString(input.name, 400));
+  if ("customerId" in input) set("customerId", input.customerId);
+  if ("status" in input) set("status", toNullableString(input.status, 50));
+  if ("lossReason" in input) set("lossReason", toNullableString(input.lossReason, 300));
+  if ("description" in input) set("description", toNullableString(input.description));
+  if ("estimatedValueRial" in input) {
+    set("estimatedValueRial", input.estimatedValueRial == null || input.estimatedValueRial === ""
+      ? null : toNumber(input.estimatedValueRial));
+  }
+  if ("probabilityPercent" in input) {
+    set("probabilityPercent", input.probabilityPercent == null || input.probabilityPercent === ""
+      ? null : Math.round(toNumber(input.probabilityPercent)));
+  }
+  if ("marketingChannel" in input) set("marketingChannel", toNullableString(input.marketingChannel, 150));
+  if ("leadQuality" in input) set("leadQuality", toNullableString(input.leadQuality, 100));
+  if ("referrerName" in input) set("referrerName", toNullableString(input.referrerName, 200));
+  if ("communicationMethod" in input) set("communicationMethod", toNullableString(input.communicationMethod, 100));
+  if ("customerInquiryNumber" in input) set("customerInquiryNumber", toNullableString(input.customerInquiryNumber, 100));
+  if ("ownerUserId" in input) set("ownerUserId", toNullableString(input.ownerUserId, 36));
+  if ("endUserCustomerId" in input) set("endUserCustomerId", toNullableString(input.endUserCustomerId, 36));
+  if ("financialContactId" in input) set("financialContactId", toNullableString(input.financialContactId, 36));
+  if ("technicalContactId" in input) set("technicalContactId", toNullableString(input.technicalContactId, 36));
+  if ("attachments" in input) set("attachments", toJsonColumn(input.attachments));
+  if ("manualDocuments" in input) set("manualDocuments", toJsonColumn(input.manualDocuments));
+  if ("milestoneRules" in input) set("milestoneRules", toJsonColumn(input.milestoneRules));
+  if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
+
+  return { ...out, ...expandDateFields(input as Record<string, unknown>, PROJECT_DATE_FIELDS) };
+}
+
+/** Drops the blank trailing row these grids always carry. */
+function mapItem(row: ProjectItemInput): Record<string, unknown> | null {
+  const name = toNullableString(row?.name, 400);
+  if (!name) return null;
+  return {
+    productId: toNullableString(row.productId, 36),
+    variantId: toNullableString(row.variantId, 36),
+    name,
+    quantity: toNumber(row.quantity, 1),
+    supplyMethod: toNullableString(row.supplyMethod, 20),
+    category: toNullableString(row.category, 30),
+    equipmentType: toNullableString(row.equipmentType, 200),
+    size: toNullableString(row.size, 100),
+    tagNumber: toNullableString(row.tagNumber, 100),
+  };
+}
+
+function mapMilestone(row: ProjectMilestoneInput): Record<string, unknown> | null {
+  const name = toNullableString(row?.name, 300);
+  if (!name) return null;
+  return {
+    name,
+    isCompleted: !!row.isCompleted,
+    notes: toNullableString(row.notes),
+    triggerType: toNullableString(row.triggerType, 30),
+    triggerCategoryName: toNullableString(row.triggerCategoryName, 200),
+    ...expandDateFields(row as Record<string, unknown>, ["completedAt", "dueDate"]),
+  };
+}
+
+export async function createProject(input: ProjectInput, user: AuthUser) {
+  const db = getDb();
+
+  return db.$transaction(async (tx) => {
+    const project = await tx.project.create({
+      data: {
+        ...(scalarData(input) as Prisma.ProjectUncheckedCreateInput),
+        // Ownership defaults to the creator so record-level rules have a subject.
+        ownerUserId: input.ownerUserId ?? user.id,
+      } as Prisma.ProjectUncheckedCreateInput,
+    });
+
+    await syncChildren({
+      delegate: tx.projectItem, parentWhere: { projectId: project.id },
+      rows: input.items ?? [], map: mapItem,
+    });
+    await syncChildren({
+      delegate: tx.projectMilestone, parentWhere: { projectId: project.id },
+      rows: input.milestones ?? [], map: mapMilestone,
+    });
+
+    return project;
+  });
+}
+
+export async function updateProject(id: string, input: ProjectInput, user: AuthUser) {
+  const db = getDb();
+  const visibility = visibilityClause(user);
+
+  return db.$transaction(async (tx) => {
+    // Re-check visibility inside the transaction, before anything is written.
+    const existing = await tx.project.findFirst({
+      where: visibility ? { AND: [{ id }, visibility] } : { id },
+      select: { id: true },
+    });
+    if (!existing) return null;
+
+    const project = await tx.project.update({
+      where: { id },
+      data: scalarData(input) as Prisma.ProjectUncheckedUpdateInput,
+    });
+
+    // Absent means "not edited"; an empty array means "the user removed them all".
+    if (input.items !== undefined) {
+      await syncChildren({
+        delegate: tx.projectItem, parentWhere: { projectId: id },
+        rows: input.items, map: mapItem,
+      });
+    }
+    if (input.milestones !== undefined) {
+      await syncChildren({
+        delegate: tx.projectMilestone, parentWhere: { projectId: id },
+        rows: input.milestones, map: mapMilestone,
+      });
+    }
+
+    return project;
+  });
+}
+
+/** Records that would block deleting a project, for the confirmation dialog. */
+export async function countProjectReferences(id: string) {
+  const db = getDb();
+  const [proformas, purchaseOrders, transactions, inquiries, deliveries, services] =
+    await Promise.all([
+      db.proforma.count({ where: { projectId: id } }),
+      db.purchaseOrder.count({ where: { projectId: id } }),
+      db.transaction.count({ where: { projectId: id } }),
+      db.supplierInquiry.count({ where: { projectId: id } }),
+      db.packagingDelivery.count({ where: { projectId: id } }),
+      db.afterSalesService.count({ where: { projectId: id } }),
+    ]);
+  const total = proformas + purchaseOrders + transactions + inquiries + deliveries + services;
+  return { proformas, purchaseOrders, transactions, inquiries, deliveries, services, total };
+}
+
+/**
+ * Deletes a project. Items, milestones and category groups cascade with it;
+ * anything else (proformas, orders, transactions) does not, and blocks the
+ * delete instead — losing a proforma because its project was removed would be
+ * silent data loss.
+ */
+export async function deleteProject(id: string, user: AuthUser): Promise<"ok" | "forbidden" | "in-use"> {
+  const db = getDb();
+  const visibility = visibilityClause(user);
+  if (visibility) {
+    const allowed = await db.project.findFirst({
+      where: { AND: [{ id }, visibility] }, select: { id: true },
+    });
+    if (!allowed) return "forbidden";
+  }
+
+  const refs = await countProjectReferences(id);
+  if (refs.total > 0) return "in-use";
+
+  await db.project.delete({ where: { id } });
+  return "ok";
+}
