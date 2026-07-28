@@ -29,6 +29,10 @@ import {
   canSeeFullUsers, toUserDirectory,
   SESSION_COOKIE, AuthUser, AccessMode,
 } from "./src/server/auth";
+// Relational data access (SQL Server via Prisma). These endpoints are paginated
+// and coexist with the legacy /api/data/:key routes during the migration.
+import { registerCustomerRoutes } from "./src/server/routes/customers";
+import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 
 // Overridable so a second instance can be started against a scratch database
 // (useful for testing, and for pointing a deployment at a specific data file).
@@ -494,6 +498,23 @@ async function startServer() {
     res.json({ ok: true, uptimeSec: Math.round(process.uptime()) });
   });
 
+  /**
+   * Database connectivity, for diagnosing a bad DATABASE_URL after deployment.
+   * Gated: the error text names the server and database.
+   */
+  app.get("/api/db-health", async (req, res) => {
+    if (!requireAuth(req, res)) return;
+    if (!isDbConfigured()) {
+      return res.json({ ok: false, configured: false, error: "DATABASE_URL تنظیم نشده است." });
+    }
+    const result = await pingDb();
+    res.status(result.ok ? 200 : 503).json({ configured: true, ...result });
+  });
+
+  // Relational endpoints. Registered after the auth helpers exist, since they
+  // close over the session secret and the user store.
+  registerCustomerRoutes(app, { requireAuth, requireKeyAccess });
+
   /** Who am I? Lets the client restore its session on reload. */
   app.get("/api/me", (req, res) => {
     const user = getAuthUser(req);
@@ -865,9 +886,23 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
+
+  // Close the SQL Server pool on shutdown. A deploy restart kills this process
+  // while connections are open; releasing them lets the new process bind them
+  // immediately instead of waiting for the server to time them out.
+  const shutdown = (signal: string) => {
+    console.log(`${signal} received, shutting down.`);
+    server.close(() => {
+      disconnectDb().finally(() => process.exit(0));
+    });
+    // Do not hang forever on a stuck connection.
+    setTimeout(() => process.exit(0), 5000).unref();
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 startServer();

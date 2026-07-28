@@ -10,9 +10,13 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "sync:report": "tsx scripts/sync-reporting.ts"
+    "sync:report": "tsx scripts/sync-reporting.ts",
+    "seed:db": "tsx scripts/seedDb.ts",
+    "db:deploy": "prisma migrate deploy",
+    "db:generate": "prisma generate"
   },
   "dependencies": {
+    "@prisma/adapter-mssql": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
