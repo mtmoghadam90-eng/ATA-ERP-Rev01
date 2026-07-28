@@ -77,9 +77,14 @@ const AR_DIGITS = "٠١٢٣٤٥٦٧٨٩";
 
 /**
  * A number from whatever the form produced: a real number, a string with
- * thousands separators, or Persian digits. Returns `fallback` when there is no
- * number there at all — never NaN, which SQL Server would reject with an
+ * thousands separators, or Persian/Arabic digits. Returns `fallback` when there
+ * is no number there at all — never NaN, which SQL Server would reject with an
  * unhelpful conversion error far from the cause.
+ *
+ * Persian punctuation has to be translated, not just stripped. `٫` (U+066B) is
+ * the decimal separator, and leaving it in place turned "۱۲٫۵" into NaN and then
+ * into the fallback — a weight of 12.5 stored as 0, silently. `٬` (U+066C) and
+ * `،` (U+060C) are grouping marks and do go away.
  */
 export function toNumber(value: unknown, fallback = 0): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : fallback;
@@ -87,7 +92,8 @@ export function toNumber(value: unknown, fallback = 0): number {
   const cleaned = value
     .replace(/[۰-۹]/g, (c) => String(FA_DIGITS.indexOf(c)))
     .replace(/[٠-٩]/g, (c) => String(AR_DIGITS.indexOf(c)))
-    .replace(/[,٬\s]/g, "");
+    .replace(/٫/g, ".")
+    .replace(/[,٬،\s]/g, "");
   if (!cleaned) return fallback;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : fallback;

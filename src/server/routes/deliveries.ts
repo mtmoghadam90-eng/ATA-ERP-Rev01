@@ -1,0 +1,214 @@
+import express from "express";
+import { parseListQuery } from "../listing";
+import { RouteDeps, sendError } from "./types";
+import {
+  DELIVERY_FILTERABLE, DELIVERY_SORTABLE, DeliveryInput,
+  SERVICE_FILTERABLE, SERVICE_SORTABLE, ServiceInput,
+  createDelivery, createService, deleteDelivery, deleteService,
+  getDelivery, getService, listDeliveries, listServices,
+  updateDelivery, updateService,
+} from "../services/deliveryService";
+
+/** Packing lists and after-sales service records. Both gated by `packagingDelivery`. */
+
+const DELIVERY_WRITABLE: (keyof DeliveryInput)[] = [
+  "packingListNumber", "projectId", "proformaId", "deliveryDate", "actualDeliveryDate",
+  "shippingMethod", "preDeliveryTestNotes", "checklist", "photos", "items",
+];
+
+const SERVICE_WRITABLE: (keyof ServiceInput)[] = [
+  "projectId", "proformaNumber", "proformaItemName", "itemName", "status",
+  "issueDescription", "actionsTaken", "startDate", "endDate", "returnDate",
+  "createdBy", "items",
+];
+
+function pick<T>(body: unknown, keys: (keyof T)[]): T {
+  const src = (body ?? {}) as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (key in src) out[key as string] = src[key as string];
+  }
+  return out as T;
+}
+
+const denied = (res: express.Response) =>
+  res.status(403).json({ success: false, error: "شما اجازه دسترسی به این بخش را ندارید." });
+
+export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): void {
+  const DELIVERY_KEY = "erp_packaging_deliveries";
+  const SERVICE_KEY = "erp_after_sales_services";
+
+  /* ---------------------------- packing lists ---------------------------- */
+
+  app.get("/api/deliveries", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "read");
+    if (!user) return;
+    try {
+      const q = parseListQuery(req.query as Record<string, unknown>, DELIVERY_SORTABLE, DELIVERY_FILTERABLE);
+      const result = await listDeliveries(q, user, { dateFrom: req.query.dateFrom, dateTo: req.query.dateTo });
+      if (!result) return denied(res);
+      res.json({ success: true, ...result });
+    } catch (err) {
+      sendError(res, err, "GET /api/deliveries");
+    }
+  });
+
+  app.get("/api/deliveries/:id", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "read");
+    if (!user) return;
+    try {
+      const delivery = await getDelivery(req.params.id, user);
+      if (!delivery) {
+        res.status(404).json({ success: false, error: "لیست بسته‌بندی یافت نشد." });
+        return;
+      }
+      res.json({ success: true, delivery });
+    } catch (err) {
+      sendError(res, err, "GET /api/deliveries/:id");
+    }
+  });
+
+  app.post("/api/deliveries", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "write");
+    if (!user) return;
+    try {
+      const input = pick<DeliveryInput>(req.body, DELIVERY_WRITABLE);
+      if (!input.packingListNumber || !String(input.packingListNumber).trim()) {
+        res.status(400).json({ success: false, error: "شماره لیست بسته‌بندی الزامی است." });
+        return;
+      }
+      if (!input.projectId) {
+        res.status(400).json({ success: false, error: "انتخاب پروژه الزامی است." });
+        return;
+      }
+      if (!input.deliveryDate) {
+        res.status(400).json({ success: false, error: "تاریخ تحویل الزامی است." });
+        return;
+      }
+      const delivery = await createDelivery(input, user);
+      if (!delivery) return denied(res);
+      res.status(201).json({ success: true, delivery });
+    } catch (err) {
+      sendError(res, err, "POST /api/deliveries");
+    }
+  });
+
+  app.put("/api/deliveries/:id", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "write");
+    if (!user) return;
+    try {
+      const delivery = await updateDelivery(req.params.id, pick<DeliveryInput>(req.body, DELIVERY_WRITABLE), user);
+      if (!delivery) {
+        res.status(404).json({ success: false, error: "لیست بسته‌بندی یافت نشد." });
+        return;
+      }
+      res.json({ success: true, delivery });
+    } catch (err) {
+      sendError(res, err, "PUT /api/deliveries/:id");
+    }
+  });
+
+  app.delete("/api/deliveries/:id", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "write");
+    if (!user) return;
+    try {
+      const outcome = await deleteDelivery(req.params.id, user);
+      if (outcome === "forbidden") return denied(res);
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "لیست بسته‌بندی یافت نشد." });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      sendError(res, err, "DELETE /api/deliveries/:id");
+    }
+  });
+
+  /* -------------------------- after-sales service ------------------------- */
+
+  app.get("/api/after-sales", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, SERVICE_KEY, "read");
+    if (!user) return;
+    try {
+      const q = parseListQuery(req.query as Record<string, unknown>, SERVICE_SORTABLE, SERVICE_FILTERABLE);
+      const result = await listServices(q, user, { dateFrom: req.query.dateFrom, dateTo: req.query.dateTo });
+      if (!result) return denied(res);
+      res.json({ success: true, ...result });
+    } catch (err) {
+      sendError(res, err, "GET /api/after-sales");
+    }
+  });
+
+  app.get("/api/after-sales/:id", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, SERVICE_KEY, "read");
+    if (!user) return;
+    try {
+      const service = await getService(req.params.id, user);
+      if (!service) {
+        res.status(404).json({ success: false, error: "خدمات پس از فروش یافت نشد." });
+        return;
+      }
+      res.json({ success: true, service });
+    } catch (err) {
+      sendError(res, err, "GET /api/after-sales/:id");
+    }
+  });
+
+  app.post("/api/after-sales", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, SERVICE_KEY, "write");
+    if (!user) return;
+    try {
+      const input = pick<ServiceInput>(req.body, SERVICE_WRITABLE);
+      if (!input.projectId) {
+        res.status(400).json({ success: false, error: "انتخاب پروژه الزامی است." });
+        return;
+      }
+      if (!input.itemName || !String(input.itemName).trim()) {
+        res.status(400).json({ success: false, error: "نام کالا الزامی است." });
+        return;
+      }
+      if (!input.startDate) {
+        res.status(400).json({ success: false, error: "تاریخ شروع الزامی است." });
+        return;
+      }
+      if (!input.status) input.status = "در حال بررسی";
+
+      const service = await createService(input, user);
+      if (!service) return denied(res);
+      res.status(201).json({ success: true, service });
+    } catch (err) {
+      sendError(res, err, "POST /api/after-sales");
+    }
+  });
+
+  app.put("/api/after-sales/:id", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, SERVICE_KEY, "write");
+    if (!user) return;
+    try {
+      const service = await updateService(req.params.id, pick<ServiceInput>(req.body, SERVICE_WRITABLE), user);
+      if (!service) {
+        res.status(404).json({ success: false, error: "خدمات پس از فروش یافت نشد." });
+        return;
+      }
+      res.json({ success: true, service });
+    } catch (err) {
+      sendError(res, err, "PUT /api/after-sales/:id");
+    }
+  });
+
+  app.delete("/api/after-sales/:id", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, SERVICE_KEY, "write");
+    if (!user) return;
+    try {
+      const outcome = await deleteService(req.params.id, user);
+      if (outcome === "forbidden") return denied(res);
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "خدمات پس از فروش یافت نشد." });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      sendError(res, err, "DELETE /api/after-sales/:id");
+    }
+  });
+}
