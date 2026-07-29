@@ -164,7 +164,17 @@ export async function getCustomer(id: string, user: AuthUser) {
   return customer;
 }
 
-/** Counts of the records that reference a customer, for the delete flow. */
+/**
+ * What a customer is attached to, for the delete flow.
+ *
+ * `total` counts only **business history** — the records that would lose their
+ * meaning if the customer vanished, and so must be moved to a replacement
+ * instead. Links and agreements are reported for the confirmation dialog but
+ * deliberately excluded: a link is a relationship, not a document, and an
+ * agreement is a note the customer owns. Demanding a replacement customer merely
+ * because someone is linked to a company would make ordinary deletion
+ * impossible, so both are simply removed with the customer.
+ */
 export async function countCustomerReferences(id: string) {
   const db = getDb();
   const [projects, proformas, transactions, links, agreements] = await Promise.all([
@@ -174,8 +184,10 @@ export async function countCustomerReferences(id: string) {
     db.customerLink.count({ where: { OR: [{ fromId: id }, { toId: id }] } }),
     db.customerAgreement.count({ where: { customerId: id } }),
   ]);
-  const total = projects + proformas + transactions + links + agreements;
-  return { projects, proformas, transactions, links, agreements, total };
+  return {
+    projects, proformas, transactions, links, agreements,
+    total: projects + proformas + transactions,
+  };
 }
 
 export interface CustomerInput {
@@ -329,6 +341,96 @@ export async function updateCustomer(id: string, input: Partial<CustomerInput>, 
   return db.customer.update({ where: { id }, data });
 }
 
+/**
+ * Replaces a customer's links.
+ *
+ * The UI treats a link as symmetric — linking a person to a company shows on
+ * both — while the table stores a directed pair. The client used to keep the two
+ * sides in step by rewriting every customer's `linkedCustomerIds` array on every
+ * save, which is exactly the whole-collection write this migration removes.
+ *
+ * Here both directions are written together, inside one transaction, so the pair
+ * can never be observed half-linked. Passing an empty list clears them.
+ */
+export async function setCustomerLinks(
+  id: string,
+  linkedIds: string[],
+  user: AuthUser,
+): Promise<"ok" | "forbidden" | "not-found"> {
+  const db = getDb();
+  const visibility = visibilityClause(user);
+
+  const existing = await db.customer.findFirst({
+    where: visibility ? { AND: [{ id }, visibility] } : { id },
+    select: { id: true },
+  });
+  if (!existing) return visibility ? "forbidden" : "not-found";
+
+  // A customer linked to itself is meaningless, and duplicates would collide on
+  // the composite key.
+  const wanted = [...new Set(linkedIds.filter((other) => other && other !== id))];
+
+  return db.$transaction(async (tx) => {
+    // Only link to customers that exist — a stale id from an open form would
+    // otherwise fail the whole save on a foreign key.
+    const real = await tx.customer.findMany({
+      where: { id: { in: wanted.length > 0 ? wanted : [" "] } },
+      select: { id: true },
+    });
+    const valid = new Set(real.map((r) => r.id));
+
+    await tx.customerLink.deleteMany({ where: { OR: [{ fromId: id }, { toId: id }] } });
+
+    for (const other of wanted) {
+      if (!valid.has(other)) continue;
+      // Both directions, so either customer's detail view shows the link.
+      await tx.customerLink.create({ data: { fromId: id, toId: other } });
+      await tx.customerLink.create({ data: { fromId: other, toId: id } });
+    }
+    return "ok" as const;
+  });
+}
+
+/**
+ * Replaces a customer's per-module agreement texts.
+ *
+ * These are notes owned by the customer and referenced by nothing, so rebuilding
+ * them with the parent is safe — unlike the links above, which are shared.
+ */
+export async function setCustomerAgreements(
+  id: string,
+  agreements: { moduleName?: string; text?: string; createdBy?: string | null }[],
+  user: AuthUser,
+): Promise<"ok" | "forbidden" | "not-found"> {
+  const db = getDb();
+  const visibility = visibilityClause(user);
+
+  const existing = await db.customer.findFirst({
+    where: visibility ? { AND: [{ id }, visibility] } : { id },
+    select: { id: true },
+  });
+  if (!existing) return visibility ? "forbidden" : "not-found";
+
+  return db.$transaction(async (tx) => {
+    await tx.customerAgreement.deleteMany({ where: { customerId: id } });
+
+    for (const row of agreements ?? []) {
+      const text = (row?.text ?? "").trim();
+      const moduleName = (row?.moduleName ?? "").trim();
+      if (!text || !moduleName) continue; // a blank row in the form
+      await tx.customerAgreement.create({
+        data: {
+          customerId: id,
+          moduleName: moduleName.slice(0, 100),
+          text,
+          createdBy: row.createdBy ? String(row.createdBy).slice(0, 200) : null,
+        },
+      });
+    }
+    return "ok" as const;
+  });
+}
+
 export async function deleteCustomer(id: string, user: AuthUser): Promise<boolean> {
   const db = getDb();
   const visibility = visibilityClause(user);
@@ -336,7 +438,14 @@ export async function deleteCustomer(id: string, user: AuthUser): Promise<boolea
     const allowed = await db.customer.findFirst({ where: { AND: [{ id }, visibility] }, select: { id: true } });
     if (!allowed) return false;
   }
-  await db.customer.delete({ where: { id } });
+
+  await db.$transaction(async (tx) => {
+    // Links pointing *at* this customer are onDelete: NoAction, so they would
+    // block the delete on a foreign key. They are relationships rather than
+    // history and go with the customer.
+    await tx.customerLink.deleteMany({ where: { OR: [{ fromId: id }, { toId: id }] } });
+    await tx.customer.delete({ where: { id } });
+  });
   return true;
 }
 

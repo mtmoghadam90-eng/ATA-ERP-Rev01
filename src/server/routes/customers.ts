@@ -12,6 +12,8 @@ import {
   findDuplicateCandidates,
   getCustomer,
   listCustomers,
+  setCustomerAgreements,
+  setCustomerLinks,
   updateCustomer,
 } from "../services/customerService";
 // The duplicate rules live here and are shared with the client, so the two can
@@ -184,6 +186,71 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
       res.json({ success: true, customer });
     } catch (err) {
       sendError(res, err, "PUT /api/customers/:id");
+    }
+  });
+
+  /**
+   * Replaces this customer's links. Symmetric: both directions are written, so
+   * the link shows from either side.
+   */
+  app.put("/api/customers/:id/links", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const raw = (req.body as { linkedIds?: unknown })?.linkedIds;
+      if (!Array.isArray(raw)) {
+        res.status(400).json({ success: false, error: "فهرست ارتباطات نامعتبر است." });
+        return;
+      }
+      const linkedIds = raw.filter((v): v is string => typeof v === "string");
+
+      const outcome = await setCustomerLinks(req.params.id, linkedIds, user);
+      if (outcome === "forbidden") {
+        res.status(403).json({ success: false, error: "شما اجازه تغییر این مشتری را ندارید." });
+        return;
+      }
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "مشتری یافت نشد." });
+        return;
+      }
+      res.json({ success: true, customer: await getCustomer(req.params.id, user) });
+    } catch (err) {
+      sendError(res, err, "PUT /api/customers/:id/links");
+    }
+  });
+
+  /** Replaces this customer's per-module agreement texts. */
+  app.put("/api/customers/:id/agreements", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const raw = (req.body as { agreements?: unknown })?.agreements;
+      if (!Array.isArray(raw)) {
+        res.status(400).json({ success: false, error: "فهرست توافق‌ها نامعتبر است." });
+        return;
+      }
+
+      const agreements = raw.map((entry) => {
+        const e = (entry ?? {}) as Record<string, unknown>;
+        return {
+          moduleName: typeof e.moduleName === "string" ? e.moduleName : "",
+          text: typeof e.text === "string" ? e.text : "",
+          createdBy: typeof e.createdBy === "string" ? e.createdBy : null,
+        };
+      });
+
+      const outcome = await setCustomerAgreements(req.params.id, agreements, user);
+      if (outcome === "forbidden") {
+        res.status(403).json({ success: false, error: "شما اجازه تغییر این مشتری را ندارید." });
+        return;
+      }
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "مشتری یافت نشد." });
+        return;
+      }
+      res.json({ success: true, customer: await getCustomer(req.params.id, user) });
+    } catch (err) {
+      sendError(res, err, "PUT /api/customers/:id/agreements");
     }
   });
 

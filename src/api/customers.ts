@@ -169,6 +169,19 @@ export const customersApi = {
   update: (id: string, input: Partial<CustomerWriteInput>) =>
     api.put<{ customer: CustomerDetail }>(`/api/customers/${id}`, input).then((r) => r.customer),
 
+  /** Replaces this customer's links. Symmetric — both directions are written. */
+  setLinks: (id: string, linkedIds: string[]) =>
+    api.put<{ customer: CustomerDetail }>(`/api/customers/${id}/links`, { linkedIds })
+      .then((r) => r.customer),
+
+  /** Replaces this customer's per-module agreement texts. */
+  setAgreements: (
+    id: string,
+    agreements: { moduleName: string; text: string; createdBy?: string | null }[],
+  ) =>
+    api.put<{ customer: CustomerDetail }>(`/api/customers/${id}/agreements`, { agreements })
+      .then((r) => r.customer),
+
   /** Deletes outright. Throws with code HAS_HISTORY when the customer has records. */
   remove: (id: string) => api.delete<Record<string, never>>(`/api/customers/${id}`),
 
