@@ -217,6 +217,90 @@ export function normalizeMobile(value: string | null | undefined): string | null
   return d || null;
 }
 
+/**
+ * Existing customers that might be the same entity as `candidate`.
+ *
+ * Duplicate detection used to run over every customer the browser had loaded,
+ * which pagination makes impossible — the check would silently only see the
+ * current page and stop catching anything.
+ *
+ * The rules themselves stay in `src/utils/customerDuplicates.ts` and are not
+ * reimplemented here; two copies would drift and the weaker one would be the one
+ * making the decision. Instead this narrows the table to the handful of rows that
+ * could possibly match — same type, and sharing at least one identifying field —
+ * and the caller runs the real rules over that. The narrowing is deliberately
+ * looser than the rules (name OR phone, rather than name AND phone), so it can
+ * only ever return a superset.
+ */
+export async function findDuplicateCandidates(
+  candidate: {
+    id?: string;
+    customerType: string;
+    companyName?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    mobile?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    province?: string | null;
+    economicCode?: string | null;
+  },
+  user: AuthUser,
+) {
+  const db = getDb();
+  const or: Record<string, unknown>[] = [];
+
+  const economicCode = (candidate.economicCode ?? "").trim();
+  if (economicCode) or.push({ economicCode });
+
+  const mobileNormalized = normalizeMobile(candidate.mobile);
+  if (mobileNormalized) or.push({ mobileNormalized });
+
+  const email = (candidate.email ?? "").trim().toLowerCase();
+  if (email) or.push({ email });
+
+  const phone = (candidate.phone ?? "").trim();
+  if (phone) or.push({ phone });
+
+  const province = (candidate.province ?? "").trim();
+  if (province) or.push({ province });
+
+  // The name is what makes a phone or province match meaningful, so it has to be
+  // in the net too — searched across both the company name and the person's.
+  const name = (candidate.companyName ?? "").trim()
+    || `${candidate.firstName ?? ""} ${candidate.lastName ?? ""}`.trim();
+  if (name) {
+    or.push({ companyName: { contains: name } });
+    if (candidate.lastName) or.push({ lastName: { contains: candidate.lastName.trim() } });
+  }
+
+  // Nothing identifying was supplied, so nothing can be matched against.
+  if (or.length === 0) return [];
+
+  const and: Record<string, unknown>[] = [
+    // A حقیقی and a حقوقی are never the same entity.
+    { customerType: candidate.customerType },
+    { OR: or },
+  ];
+  // A record being edited must not match itself.
+  if (candidate.id) and.push({ id: { not: candidate.id } });
+
+  const visibility = visibilityClause(user);
+  if (visibility) and.push(visibility);
+
+  return db.customer.findMany({
+    where: { AND: and },
+    // A generous ceiling: the rules only need to describe the matches, and a
+    // candidate sharing a province with thousands of records is not a signal.
+    take: 50,
+    select: {
+      id: true, customerType: true, companyName: true, firstName: true, lastName: true,
+      mobile: true, phone: true, email: true, province: true, economicCode: true,
+      industry: true, city: true, createdAt: true,
+    },
+  });
+}
+
 export async function createCustomer(input: CustomerInput, user: AuthUser) {
   const db = getDb();
   return db.customer.create({

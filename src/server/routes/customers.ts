@@ -9,10 +9,17 @@ import {
   createCustomer,
   deleteCustomer,
   deleteCustomerWithMigration,
+  findDuplicateCandidates,
   getCustomer,
   listCustomers,
   updateCustomer,
 } from "../services/customerService";
+// The duplicate rules live here and are shared with the client, so the two can
+// never disagree about what counts as a duplicate.
+import {
+  CustomerCandidate, findCustomerDuplicates, hasHardDuplicate,
+} from "../../utils/customerDuplicates";
+import type { Customer } from "../../types";
 
 /**
  * Customers REST API — the reference shape for every other module.
@@ -85,6 +92,64 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
       res.json({ success: true, references: await countCustomerReferences(req.params.id) });
     } catch (err) {
       sendError(res, err, "GET /api/customers/:id/references");
+    }
+  });
+
+  /**
+   * Existing customers that look like the one being entered.
+   *
+   * A check, not a gate: it answers with matches and their severity and lets the
+   * form decide what to say. Hard duplicates (a colliding economic code) are
+   * refused by the database anyway; everything else is a warning, because a
+   * shared office line or a genuine namesake must not block data entry.
+   *
+   * POST rather than GET because the candidate is a record, not a lookup key.
+   */
+  app.post("/api/customers/check-duplicates", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const customerType = typeof body.customerType === "string" ? body.customerType : "";
+      if (!customerType) {
+        res.status(400).json({ success: false, error: "نوع مشتری الزامی است." });
+        return;
+      }
+
+      const candidate = {
+        id: typeof body.id === "string" ? body.id : undefined,
+        customerType,
+        companyName: typeof body.companyName === "string" ? body.companyName : null,
+        firstName: typeof body.firstName === "string" ? body.firstName : null,
+        lastName: typeof body.lastName === "string" ? body.lastName : null,
+        mobile: typeof body.mobile === "string" ? body.mobile : null,
+        phone: typeof body.phone === "string" ? body.phone : null,
+        email: typeof body.email === "string" ? body.email : null,
+        province: typeof body.province === "string" ? body.province : null,
+        economicCode: typeof body.economicCode === "string" ? body.economicCode : null,
+      };
+
+      const nearby = await findDuplicateCandidates(candidate, user);
+
+      // The narrowed set is scored by the same rules the client has always used,
+      // so server and client can never disagree about what counts as a duplicate.
+      const matches = findCustomerDuplicates(
+        candidate as CustomerCandidate,
+        nearby as unknown as Customer[],
+      );
+
+      res.json({
+        success: true,
+        matches: matches.map((m) => ({
+          customer: m.customer,
+          severity: m.severity,
+          primaryField: m.primaryField,
+          reason: m.reason,
+        })),
+        hasHardDuplicate: hasHardDuplicate(matches),
+      });
+    } catch (err) {
+      sendError(res, err, "POST /api/customers/check-duplicates");
     }
   });
 

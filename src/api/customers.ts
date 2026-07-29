@@ -82,6 +82,35 @@ export interface CustomerWriteInput {
   customValues?: string | null;
 }
 
+/** What the duplicate check is given: the record as the form has it so far. */
+export interface DuplicateCandidate {
+  /** Set when editing, so the record does not match itself. */
+  id?: string;
+  customerType: string;
+  companyName?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  mobile?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  province?: string | null;
+  economicCode?: string | null;
+}
+
+export interface DuplicateMatchRow {
+  customer: {
+    id: string; customerType: string; companyName: string;
+    firstName: string | null; lastName: string | null;
+    mobile: string | null; phone: string | null; email: string | null;
+    province: string | null; economicCode: string | null;
+  };
+  /** `hard` is a colliding economic code; everything else is a warning. */
+  severity: "hard" | "soft";
+  primaryField: string;
+  /** Persian explanation of what matched. */
+  reason: string;
+}
+
 export const customersApi = {
   list: (query: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     api.get<ListResponse<CustomerRow>>("/api/customers", query, signal),
@@ -123,6 +152,16 @@ export const customersApi = {
   references: (id: string) =>
     api.get<{ references: CustomerReferences }>(`/api/customers/${id}/references`)
       .then((r) => r.references),
+
+  /**
+   * Existing customers that look like this one.
+   *
+   * Replaces scanning every loaded customer in the browser, which pagination
+   * made impossible — the check would have silently seen only the current page.
+   */
+  checkDuplicates: (candidate: DuplicateCandidate) =>
+    api.post<{ matches: DuplicateMatchRow[]; hasHardDuplicate: boolean }>(
+      "/api/customers/check-duplicates", candidate),
 
   create: (input: CustomerWriteInput) =>
     api.post<{ customer: CustomerDetail }>("/api/customers", input).then((r) => r.customer),
