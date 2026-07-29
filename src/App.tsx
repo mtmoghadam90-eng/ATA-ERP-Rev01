@@ -322,25 +322,13 @@ export default function App() {
         );
       case 'customers':
         return (
+          // Reads its own data from the API: the eight collections this used to
+          // be handed are now queries, not props.
           <CustomersView
-            customers={store.customers}
-            addCustomer={store.addCustomer}
-            updateCustomer={store.updateCustomer}
-            deleteCustomer={store.deleteCustomer}
-            deleteCustomerWithMigration={store.deleteCustomerWithMigration}
-            batchUpdateCustomers={store.batchUpdateCustomers}
             industries={store.settings.dropdownItems.industries}
             settings={store.settings}
             initialSearchQuery={selectedCustomerNameForSearch}
             onClearInitialSearchQuery={() => setSelectedCustomerNameForSearch(null)}
-            projects={store.projects}
-            proformas={store.proformas}
-            transactions={store.transactions}
-            tasks={store.tasks}
-            supplierInquiries={store.supplierInquiries || []}
-            purchaseOrders={store.purchaseOrders}
-            packagingDeliveries={store.packagingDeliveries}
-            afterSalesServices={store.afterSalesServices}
           />
         );
       case 'products':

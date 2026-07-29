@@ -4,12 +4,14 @@ import { Customer } from '../types';
 import { CustomerReferenceCounts, summarizeReferences } from '../utils/customerMigration';
 import { buildCustomerOptions, getCustomerDisplayLabel } from '../utils/customerLabel';
 import { SearchableSelect } from './SearchableSelect';
+import { useEntitySearch } from '../api/useEntitySearch';
+import { CustomerRow } from '../api/customers';
+import { rowToCustomer } from '../api/customerAdapter';
 
 interface CustomerDeleteMigrationModalProps {
   isOpen: boolean;
   customer: Customer | null;
   counts: CustomerReferenceCounts;
-  allCustomers: Customer[];
   /** Confirms: migrate everything to `replacementId`, then delete the customer. */
   onConfirm: (replacementId: string) => void;
   onCancel: () => void;
@@ -24,17 +26,29 @@ export default function CustomerDeleteMigrationModal({
   isOpen,
   customer,
   counts,
-  allCustomers,
   onConfirm,
   onCancel,
 }: CustomerDeleteMigrationModalProps) {
   const [replacementId, setReplacementId] = useState('');
 
-  // Candidates exclude the customer being deleted.
-  const options = useMemo(
-    () => (customer ? buildCustomerOptions(allCustomers, (c) => c.id !== customer.id) : []),
-    [allCustomers, customer],
+  // Candidates come from the server as the user types. The replacement can be
+  // any customer in the table, which is far more than a screen can hold.
+  const search = useEntitySearch<CustomerRow>({
+    path: '/api/customers',
+    limit: 25,
+    selectedId: replacementId || null,
+    getLabel: (row) => row.companyName,
+  });
+
+  // The customer being deleted must not be offered as its own replacement.
+  const candidates = useMemo(
+    () => search.matches.filter((row) => row.id !== customer?.id).map(rowToCustomer),
+    [search.matches, customer?.id],
   );
+
+  // Disambiguation compares against the candidates on screen, which is what the
+  // user is actually choosing between.
+  const options = useMemo(() => buildCustomerOptions(candidates), [candidates]);
 
   const summary = useMemo(() => summarizeReferences(counts), [counts]);
 
@@ -44,7 +58,9 @@ export default function CustomerDeleteMigrationModal({
 
   if (!isOpen || !customer) return null;
 
-  const replacement = allCustomers.find((c) => c.id === replacementId);
+  const replacement = search.selected ? rowToCustomer(search.selected) : undefined;
+  // Labelling context: whatever is on screen, plus the resolved selection.
+  const labelPool = replacement ? [...candidates, replacement] : candidates;
 
   return (
     <div className="fixed inset-0 z-[1200] flex items-center justify-center p-4" dir="rtl">
@@ -58,7 +74,7 @@ export default function CustomerDeleteMigrationModal({
           <div className="flex-1">
             <h3 className="font-bold text-sm sm:text-base">این مشتری سابقه فعال دارد</h3>
             <p className="text-white/80 text-[11px] mt-0.5">
-              «{getCustomerDisplayLabel(customer, allCustomers)}» — {counts.total} سابقه مرتبط
+              «{getCustomerDisplayLabel(customer, labelPool)}» — {counts.total} سابقه مرتبط
             </p>
           </div>
           <button type="button" onClick={onCancel} className="text-white/80 hover:text-white p-1">
@@ -101,6 +117,8 @@ export default function CustomerDeleteMigrationModal({
               placeholder="جستجو و انتخاب مشتری جانشین..."
               className="text-xs"
               options={options}
+              onSearchChange={search.setTerm}
+              loading={search.loading}
             />
             <p className="text-[10px] text-slate-400">
               تمام پروژه‌ها، پیش‌فاکتورها، تراکنش‌ها و وظایف به این مشتری منتقل خواهند شد.
@@ -112,7 +130,7 @@ export default function CustomerDeleteMigrationModal({
             <div className="flex items-center gap-2 bg-sky-50 border border-sky-100 rounded-xl px-3 py-2.5 text-[11px] font-bold text-sky-800">
               <ArrowLeftRight size={14} className="shrink-0" />
               <span className="truncate">
-                {getCustomerDisplayLabel(customer, allCustomers)} → {getCustomerDisplayLabel(replacement, allCustomers)}
+                {getCustomerDisplayLabel(customer, labelPool)} → {getCustomerDisplayLabel(replacement, labelPool)}
               </span>
             </div>
           )}

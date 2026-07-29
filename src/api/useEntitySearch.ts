@@ -25,6 +25,14 @@ export interface EntitySearchOptions<T> {
   selectedId?: string | null;
   /** Pulls the display text out of a row. */
   getLabel: (row: T) => string;
+  /**
+   * Set false while the field is not on screen.
+   *
+   * A picker inside a closed modal is still mounted, and without this it queries
+   * on every render of the page around it — one request per keystroke elsewhere,
+   * for a list nobody is looking at.
+   */
+  enabled?: boolean;
 }
 
 export interface EntitySearchResult<T> {
@@ -41,7 +49,7 @@ export interface EntitySearchResult<T> {
 export function useEntitySearch<T extends { id: string }>(
   options: EntitySearchOptions<T>,
 ): EntitySearchResult<T> {
-  const { path, limit = 20, params, selectedId, getLabel } = options;
+  const { path, limit = 20, params, selectedId, getLabel, enabled = true } = options;
 
   const [term, setTerm] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -60,6 +68,7 @@ export function useEntitySearch<T extends { id: string }>(
 
   /* Suggestions for what is being typed. */
   useEffect(() => {
+    if (!enabled) return;
     const mine = ++seq.current;
     const controller = new AbortController();
     setLoading(true);
@@ -85,12 +94,13 @@ export function useEntitySearch<T extends { id: string }>(
       });
 
     return () => controller.abort();
-  }, [path, limit, debounced, paramsKey]);
+  }, [path, limit, debounced, paramsKey, enabled]);
 
   /* Resolve the current value.
      A stored id has to render as a name even when the record is not among the
      current matches — which is the normal case when a form first opens. */
   useEffect(() => {
+    if (!enabled) return;
     if (!selectedId) {
       setSelected(null);
       return;
@@ -117,7 +127,7 @@ export function useEntitySearch<T extends { id: string }>(
       });
 
     return () => { cancelled = true; };
-  }, [selectedId, matches, path, selected]);
+  }, [selectedId, matches, path, selected, enabled]);
 
   const setTermStable = useCallback((value: string) => setTerm(value), []);
 

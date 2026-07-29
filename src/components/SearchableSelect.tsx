@@ -15,6 +15,17 @@ interface SearchableSelectProps {
   wrapperClassName?: string;
   required?: boolean;
   disabled?: boolean;
+  /**
+   * Notified as the user types, for a picker whose options come from the server.
+   *
+   * When set, `options` is treated as already matching the term and the local
+   * filter is skipped — otherwise a server result would be filtered a second
+   * time against the same text and matches on fields the label does not show
+   * (a phone number, an economic code) would disappear.
+   */
+  onSearchChange?: (term: string) => void;
+  /** Shown in place of "no result" while the server is answering. */
+  loading?: boolean;
 }
 
 export const SearchableSelect: React.FC<SearchableSelectProps> = ({
@@ -26,6 +37,8 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   wrapperClassName = '',
   required = false,
   disabled = false,
+  onSearchChange,
+  loading = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -62,20 +75,31 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
       .toLowerCase();
   };
 
-  const filteredOptions = options.filter((opt) =>
-    opt && normalizePersian(opt.label).includes(normalizePersian(searchTerm))
-  );
+  // A server-backed picker has already matched; filtering again here would drop
+  // rows matched on something the label does not show.
+  const filteredOptions = onSearchChange
+    ? options.filter(Boolean)
+    : options.filter((opt) =>
+        opt && normalizePersian(opt.label).includes(normalizePersian(searchTerm))
+      );
+
+  const updateSearch = (term: string) => {
+    setSearchTerm(term);
+    onSearchChange?.(term);
+  };
 
   const handleSelect = (val: string) => {
     onChange(val);
     setIsOpen(false);
-    setSearchTerm('');
+    // Clears the parent's term too, so reopening starts from the full list
+    // rather than the last thing that was typed.
+    updateSearch('');
   };
 
   const handleClear = (e: React.MouseEvent) => {
     e.stopPropagation();
     onChange('');
-    setSearchTerm('');
+    updateSearch('');
   };
 
   return (
@@ -114,14 +138,14 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
               ref={inputRef}
               type="text"
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => updateSearch(e.target.value)}
               placeholder="جستجو..."
               className="w-full text-xs bg-transparent border-0 outline-none text-right py-1 placeholder-slate-400 focus:ring-0"
             />
             {searchTerm && (
               <button
                 type="button"
-                onClick={() => setSearchTerm('')}
+                onClick={() => updateSearch('')}
                 className="text-slate-400 hover:text-slate-600"
               >
                 <X size={14} />
@@ -130,7 +154,9 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
           </div>
 
           <div className="max-h-60 overflow-y-auto py-1">
-            {filteredOptions.length === 0 ? (
+            {loading && filteredOptions.length === 0 ? (
+              <div className="px-3 py-3 text-xs text-slate-400 text-center">در حال جستجو…</div>
+            ) : filteredOptions.length === 0 ? (
               <div className="px-3 py-3 text-xs text-slate-400 text-center">آیتمی یافت نشد</div>
             ) : (
               filteredOptions.map((opt) => {

@@ -22,7 +22,9 @@ import {
   FileSpreadsheet,
   ArrowLeft,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import {
   Customer, ERPSettings, Project, Proforma, Transaction, Task,
@@ -32,70 +34,66 @@ import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import { exportToCSV } from '../excelUtils';
 import ConfirmModal from './ConfirmModal';
+import { ApiError } from '../api/client';
+import { customersApi } from '../api/customers';
+import { customerToWriteInput, detailToCustomer, rowToCustomer } from '../api/customerAdapter';
+import { useCustomerList } from '../api/useCustomerList';
+import { useEntitySearch } from '../api/useEntitySearch';
+import type { CustomerRow } from '../api/customers';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import { IRAN_PROVINCES, canonicalizeProvince } from '../utils/iranProvinces';
 import { getContactInfoError } from '../utils/customerValidation';
-import { findCustomerDuplicates, DuplicateMatch } from '../utils/customerDuplicates';
+import { DuplicateMatch } from '../utils/customerDuplicates';
 import DuplicateCustomerModal from './DuplicateCustomerModal';
-import { countCustomerReferences, hasCustomerReferences, CustomerReferenceCounts } from '../utils/customerMigration';
+import { CustomerReferenceCounts } from '../utils/customerMigration';
 import CustomerDeleteMigrationModal from './CustomerDeleteMigrationModal';
 import { SearchableSelect } from './SearchableSelect';
 
 interface CustomersViewProps {
-  customers: Customer[];
-  addCustomer: (customer: Omit<Customer, 'id' | 'createdAt'>) => Customer;
-  updateCustomer: (customer: Customer) => void;
-  deleteCustomer: (id: string) => void;
-  /** Moves all references to a replacement customer, then deletes. */
-  deleteCustomerWithMigration: (customerId: string, replacementId: string) => void;
-  batchUpdateCustomers: (updatedList: Customer[]) => void;
   industries: string[];
   settings: ERPSettings;
   initialSearchQuery?: string | null;
   onClearInitialSearchQuery?: () => void;
-  // Read-only collections, used to detect what references a customer before deleting.
-  projects?: Project[];
-  proformas?: Proforma[];
-  transactions?: Transaction[];
-  tasks?: Task[];
-  supplierInquiries?: SupplierInquiry[];
-  purchaseOrders?: PurchaseOrder[];
-  packagingDeliveries?: PackagingDelivery[];
-  afterSalesServices?: AfterSalesService[];
 }
 
+/**
+ * Customers screen.
+ *
+ * Reads through the API rather than a prop holding every customer: search,
+ * filters, sorting and paging are query parameters, so what arrives is one page
+ * however large the table has grown. The reference counts that decide whether a
+ * customer can be deleted, and the duplicate check when saving one, are queries
+ * too — both used to need the entire table in the browser to answer.
+ */
 export default function CustomersView({
-  customers,
-  addCustomer,
-  updateCustomer,
-  deleteCustomer,
-  deleteCustomerWithMigration,
-  batchUpdateCustomers,
   industries,
   settings,
   initialSearchQuery,
   onClearInitialSearchQuery,
-  projects = [],
-  proformas = [],
-  transactions = [],
-  tasks = [],
-  supplierInquiries = [],
-  purchaseOrders = [],
-  packagingDeliveries = [],
-  afterSalesServices = []
 }: CustomersViewProps) {
-  const [search, setSearch] = useState('');
+  const list = useCustomerList(initialSearchQuery ?? '');
+  const search = list.search;
+  const setSearch = list.setSearch;
+
+  // The page of customers, in the shape this screen's markup was written for.
+  const customers = React.useMemo(() => list.rows.map(rowToCustomer), [list.rows]);
 
   React.useEffect(() => {
-    if (initialSearchQuery) {
-      setSearch(initialSearchQuery);
-      if (onClearInitialSearchQuery) {
-        onClearInitialSearchQuery();
-      }
+    if (initialSearchQuery && onClearInitialSearchQuery) {
+      onClearInitialSearchQuery();
     }
   }, [initialSearchQuery, onClearInitialSearchQuery]);
-  const [selectedIndustry, setSelectedIndustry] = useState('all');
-  const [selectedTypeFilter, setSelectedTypeFilter] = useState<'all' | 'حقوقی' | 'حقیقی'>('all');
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  const selectedIndustry = list.filters.industry;
+  const setSelectedIndustry = (value: string) => list.setFilter('industry', value);
+  const selectedTypeFilter = list.filters.customerType as 'all' | 'حقوقی' | 'حقیقی';
+  const setSelectedTypeFilter = (value: 'all' | 'حقوقی' | 'حقیقی') =>
+    list.setFilter('customerType', value);
   const [showModal, setShowModal] = useState(false);
   const [isCustomerModalFullscreen, setIsCustomerModalFullscreen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
@@ -165,10 +163,10 @@ export default function CustomersView({
   const [migrationTarget, setMigrationTarget] = useState<Customer | null>(null);
   const [migrationCounts, setMigrationCounts] = useState<CustomerReferenceCounts | null>(null);
 
-  const referenceCollections = {
-    projects, proformas, transactions, tasks, customers,
-    supplierInquiries, purchaseOrders, packagingDeliveries, afterSalesServices,
-  };
+  // Writes are round trips now, so the form has to say it is busy and refuse a
+  // second submit rather than sending the same record twice.
+  const [saving, setSaving] = useState(false);
+
   const [quickAddress, setQuickAddress] = useState('');
   const [quickNotes, setQuickNotes] = useState('');
   const [quickTags, setQuickTags] = useState('');
@@ -200,7 +198,7 @@ export default function CustomersView({
   };
 
   // Quick customer creation handler
-  const handleSaveQuickCustomer = (e: React.FormEvent) => {
+  const handleSaveQuickCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     
     const targetType: Customer['customerType'] = customerType === 'حقوقی' ? 'حقیقی' : 'حقوقی';
@@ -250,24 +248,49 @@ export default function CustomersView({
     }
 
     // Warn before creating a linked record that looks like an existing customer.
-    const dupes = findCustomerDuplicates(data, customers);
-    if (dupes.length > 0) {
-      setQuickDupPayload(data);
-      setQuickDupMatches(dupes);
+    try {
+      const { matches } = await customersApi.checkDuplicates({
+        customerType: targetType,
+        companyName: data.companyName,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        mobile: data.mobile,
+        phone: data.phone,
+        email: data.email,
+        province: data.province,
+        economicCode: data.economicCode,
+      });
+      if (matches.length > 0) {
+        setQuickDupPayload(data);
+        setQuickDupMatches(matches.map((m) => ({
+          customer: m.customer as unknown as Customer,
+          severity: m.severity,
+          primaryField: m.primaryField as DuplicateMatch['primaryField'],
+          reason: m.reason,
+        })));
+        return;
+      }
+    } catch (err) {
+      reportError(err, 'بررسی مشتری تکراری انجام نشد. لطفاً دوباره تلاش کنید.');
       return;
     }
 
-    commitQuickRelationCustomer(data);
+    await commitQuickRelationCustomer(data);
   };
 
   /** Creates the inline linked ("relation") customer and links it. */
-  const commitQuickRelationCustomer = (data: Partial<Customer>) => {
-    const created = addCustomer(data as Omit<Customer, 'id' | 'createdAt'>);
-    setQuickDupMatches([]);
-    setQuickDupPayload(null);
-    if (created && created.id) {
+  const commitQuickRelationCustomer = async (data: Partial<Customer>) => {
+    try {
+      const created = await customersApi.create(customerToWriteInput(data));
+      setQuickDupMatches([]);
+      setQuickDupPayload(null);
+      // Selected immediately, so the relation the user just created is linked
+      // when the parent record is saved.
       setSelectedLinks(prev => [...prev, created.id]);
       resetQuickForm();
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت مشتری مرتبط با خطا مواجه شد.');
     }
   };
 
@@ -332,30 +355,12 @@ export default function CustomersView({
     setCustomValues(customer.customValues || {});
     setShowModal(true);
   };
-
-  // Bidirectional link helper
-  const updateBidirectionalLinks = (customerId: string, newLinkedIds: string[]) => {
-    // For every customer in the entire list
-    customers.forEach(cust => {
-      if (cust.id === customerId) return; // skip self
-
-      const isCurrentlyLinked = cust.linkedCustomerIds?.includes(customerId);
-      const shouldBeLinked = newLinkedIds.includes(cust.id);
-
-      if (shouldBeLinked && !isCurrentlyLinked) {
-        // Add link
-        const updatedLinks = [...(cust.linkedCustomerIds || []), customerId];
-        updateCustomer({ ...cust, linkedCustomerIds: updatedLinks });
-      } else if (!shouldBeLinked && isCurrentlyLinked) {
-        // Remove link
-        const updatedLinks = (cust.linkedCustomerIds || []).filter(id => id !== customerId);
-        updateCustomer({ ...cust, linkedCustomerIds: updatedLinks });
-      }
-    });
-  };
+  // Links used to be kept symmetric by rewriting every other customer here.
+  // The server writes both directions in one transaction now, so the whole
+  // helper is gone; see customersApi.setLinks.
 
   // Handle Save
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // At least one identifying contact field is required beyond the name.
@@ -378,9 +383,11 @@ export default function CustomersView({
     }
 
     // Warn before creating a record that looks like an existing customer.
+    // The check is a query: scanning the loaded page would only ever see the
+    // handful of customers currently on screen.
     const candidateName = customerType === 'حقوقی' ? companyName.trim() : `${firstName} ${lastName}`.trim();
-    const matches = findCustomerDuplicates(
-      {
+    try {
+      const { matches } = await customersApi.checkDuplicates({
         id: editingCustomer?.id,
         customerType,
         companyName: candidateName,
@@ -388,33 +395,55 @@ export default function CustomersView({
         lastName: customerType === 'حقیقی' ? lastName : undefined,
         mobile, phone, email, province,
         economicCode: customerType === 'حقوقی' ? economicCode : undefined,
-      },
-      customers,
-    );
-    if (matches.length > 0) {
-      setDupMatches(matches);
-      setDupCandidateName(candidateName);
+      });
+
+      if (matches.length > 0) {
+        setDupMatches(matches.map((m) => ({
+          customer: m.customer as unknown as Customer,
+          severity: m.severity,
+          primaryField: m.primaryField as DuplicateMatch['primaryField'],
+          reason: m.reason,
+        })));
+        setDupCandidateName(candidateName);
+        return;
+      }
+    } catch (err) {
+      // A failed check must not silently allow a duplicate through; say so and
+      // let the user decide whether to retry.
+      reportError(err, 'بررسی مشتری تکراری انجام نشد. لطفاً دوباره تلاش کنید.');
       return;
     }
 
-    performSave();
+    await performSave();
   };
 
-  const performSave = () => {
+  /**
+   * Writes the customer, its inline quick-added relation, and its links.
+   *
+   * Each is its own call, because each is a different thing on the server: the
+   * record is a row, the links are a relationship maintained on both sides, and
+   * the agreements are a child collection. The old version rebuilt the entire
+   * customer array to express all three at once.
+   */
+  const performSave = async () => {
+    if (saving) return;
+    setSaving(true);
     setDupMatches([]);
-    let finalSelectedLinks = [...selectedLinks];
-    let nextCustomers = [...customers];
 
-    // 1. Auto-save inline quick-add form if there is input filled but not submitted yet
-    if (showQuickAddRelation) {
-      const targetType: Customer['customerType'] = customerType === 'حقوقی' ? 'حقیقی' : 'حقوقی';
-      if (targetType === 'حقیقی') {
-        if (quickFirstName.trim() || quickLastName.trim()) {
-          const quickId = `cust-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          const quickData: Customer = {
-            id: quickId,
-            createdAt: new Date().toISOString(),
-            customerType: 'حقیقی',
+    try {
+      const finalSelectedLinks = [...selectedLinks];
+
+      // 1. An inline quick-add that was filled in but never submitted still
+      //    counts as intent to create that relation.
+      if (showQuickAddRelation) {
+        const targetType: Customer['customerType'] = customerType === 'حقوقی' ? 'حقیقی' : 'حقوقی';
+        const quickFilled = targetType === 'حقیقی'
+          ? (quickFirstName.trim() || quickLastName.trim())
+          : quickCompanyName.trim();
+
+        if (quickFilled) {
+          const quick = await customersApi.create(customerToWriteInput({
+            customerType: targetType,
             status: 'فعال',
             phone: quickPhone,
             mobile: quickMobile,
@@ -423,139 +452,67 @@ export default function CustomersView({
             address: quickAddress,
             notes: quickNotes,
             tags: quickTags,
-            linkedCustomerIds: [],
-            firstName: quickFirstName,
-            lastName: quickLastName,
-            gender: quickGender,
-            position: quickPosition,
-            companyName: `${quickFirstName} ${quickLastName}`.trim(),
-            contactName: quickFirstName,
-            contactLastName: quickLastName
-          };
-          nextCustomers.unshift(quickData);
-          finalSelectedLinks.push(quickId);
-        }
-      } else {
-        if (quickCompanyName.trim()) {
-          const quickId = `cust-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-          const quickData: Customer = {
-            id: quickId,
-            createdAt: new Date().toISOString(),
-            customerType: 'حقوقی',
-            status: 'فعال',
-            phone: quickPhone,
-            mobile: quickMobile,
-            email: quickEmail,
-            province: canonicalizeProvince(quickProvince) || quickProvince,
-            address: quickAddress,
-            notes: quickNotes,
-            tags: quickTags,
-            linkedCustomerIds: [],
-            companyName: quickCompanyName,
-            economicCode: quickEconomicCode,
-            industry: quickIndustry,
-            keyPerson: quickKeyPerson,
-            contactName: quickKeyPerson || '',
-            contactLastName: ''
-          };
-          nextCustomers.unshift(quickData);
-          finalSelectedLinks.push(quickId);
+            ...(targetType === 'حقیقی'
+              ? {
+                  firstName: quickFirstName,
+                  lastName: quickLastName,
+                  gender: quickGender,
+                  position: quickPosition,
+                  companyName: `${quickFirstName} ${quickLastName}`.trim(),
+                }
+              : {
+                  companyName: quickCompanyName,
+                  economicCode: quickEconomicCode,
+                  industry: quickIndustry,
+                  keyPerson: quickKeyPerson,
+                }),
+          }));
+          finalSelectedLinks.push(quick.id);
         }
       }
+
+      // 2. The customer itself.
+      const payload = customerToWriteInput({
+        customerType,
+        status,
+        phone,
+        mobile,
+        email,
+        province: canonicalizeProvince(province) || province,
+        address,
+        notes,
+        tags,
+        customValues,
+        ...(customerType === 'حقوقی'
+          ? { companyName, economicCode, industry, keyPerson }
+          : {
+              companyName: `${firstName} ${lastName}`.trim(),
+              firstName,
+              lastName,
+              gender,
+              position,
+            }),
+      });
+
+      const saved = editingCustomer
+        ? await customersApi.update(editingCustomer.id, payload)
+        : await customersApi.create(payload);
+
+      // 3. Links and agreements, each maintained by the server.
+      await customersApi.setLinks(saved.id, finalSelectedLinks);
+      await customersApi.setAgreements(
+        saved.id,
+        (moduleAgreements || []).map((a) => ({ moduleName: a.moduleName, text: a.text })),
+      );
+
+      list.refresh();
+      setShowModal(false);
+      setIsCustomerModalFullscreen(false);
+    } catch (err) {
+      reportError(err, 'ذخیره مشتری با خطا مواجه شد.');
+    } finally {
+      setSaving(false);
     }
-
-    // 2. Construct main customer data
-    const mainId = editingCustomer ? editingCustomer.id : `cust-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    let mainCompanyName = '';
-    let mainFirstName: string | undefined = undefined;
-    let mainLastName: string | undefined = undefined;
-    let mainGender: 'مرد' | 'زن' | '' | undefined = undefined;
-    let mainPosition: string | undefined = undefined;
-    let mainEconomicCode: string | undefined = undefined;
-    let mainIndustry: string | undefined = undefined;
-    let mainKeyPerson: string | undefined = undefined;
-    let mainContactName = '';
-    let mainContactLastName = '';
-
-    if (customerType === 'حقوقی') {
-      mainCompanyName = companyName;
-      mainEconomicCode = economicCode;
-      mainIndustry = industry;
-      mainKeyPerson = keyPerson;
-      mainContactName = keyPerson || '';
-    } else {
-      mainCompanyName = `${firstName} ${lastName}`.trim();
-      mainFirstName = firstName;
-      mainLastName = lastName;
-      mainGender = gender;
-      mainPosition = position;
-      mainContactName = firstName;
-      mainContactLastName = lastName;
-    }
-
-    const mainData: Customer = {
-      id: mainId,
-      createdAt: editingCustomer ? editingCustomer.createdAt : new Date().toISOString(),
-      customerType,
-      status,
-      phone,
-      mobile,
-      email,
-      province: canonicalizeProvince(province) || province,
-      address,
-      notes,
-      tags,
-      moduleAgreements,
-      linkedCustomerIds: finalSelectedLinks,
-      customValues,
-      companyName: mainCompanyName,
-      firstName: mainFirstName,
-      lastName: mainLastName,
-      gender: mainGender,
-      position: mainPosition,
-      economicCode: mainEconomicCode,
-      industry: mainIndustry,
-      keyPerson: mainKeyPerson,
-      contactName: mainContactName,
-      contactLastName: mainContactLastName
-    };
-
-    // Insert or Update main customer in nextCustomers
-    if (editingCustomer) {
-      nextCustomers = nextCustomers.map(c => c.id === mainId ? mainData : c);
-    } else {
-      nextCustomers.unshift(mainData);
-    }
-
-    // 3. Update bidirectional links across all customers in nextCustomers
-    nextCustomers = nextCustomers.map(cust => {
-      if (cust.id === mainId) {
-        return cust; // Already set correctly in mainData
-      }
-
-      const isCurrentlyLinked = cust.linkedCustomerIds?.includes(mainId);
-      const shouldBeLinked = finalSelectedLinks.includes(cust.id);
-
-      if (shouldBeLinked && !isCurrentlyLinked) {
-        return {
-          ...cust,
-          linkedCustomerIds: [...(cust.linkedCustomerIds || []), mainId]
-        };
-      } else if (!shouldBeLinked && isCurrentlyLinked) {
-        return {
-          ...cust,
-          linkedCustomerIds: (cust.linkedCustomerIds || []).filter(id => id !== mainId)
-        };
-      }
-
-      return cust;
-    });
-
-    // Save everything in one single atomic state/localstorage update!
-    batchUpdateCustomers(nextCustomers);
-    setShowModal(false);
-    setIsCustomerModalFullscreen(false);
   };
 
   // Toggle link selection
@@ -575,90 +532,30 @@ export default function CustomersView({
   };
 
   // Filter and search logic
-  const filteredCustomers = customers.filter(c => {
-    const nameSearch = c.customerType === 'حقوقی' 
-      ? (c.companyName || '').toLowerCase() 
-      : `${c.firstName || ''} ${c.lastName || ''}`.toLowerCase();
-    
-    const matchesSearch = 
-      nameSearch.includes(search.toLowerCase()) ||
-      (c.phone || '').includes(search) ||
-      (c.mobile || '').includes(search) ||
-      (c.economicCode || '').includes(search) ||
-      (c.keyPerson || '').toLowerCase().includes(search.toLowerCase()) ||
-      (c.position || '').toLowerCase().includes(search.toLowerCase()) ||
-      (c.tags || '').toLowerCase().includes(search.toLowerCase()) ||
-      (c.industry || '').toLowerCase().includes(search.toLowerCase()) ||
-      (c.province || '').toLowerCase().includes(search.toLowerCase());
-    
-    const matchesIndustry = selectedIndustry === 'all' || 
-      (c.customerType === 'حقوقی' && c.industry === selectedIndustry);
+  // The server did the filtering; this page is already the answer.
+  const filteredCustomers = customers;
 
-    const matchesType = selectedTypeFilter === 'all' || c.customerType === selectedTypeFilter;
+  const [exporting, setExporting] = useState(false);
 
-    if (!(matchesSearch && matchesIndustry && matchesType)) return false;
+  /**
+   * Exports every customer matching the current filters — not the page on
+   * screen. Pagination would otherwise turn this into "export what you can see"
+   * without saying so.
+   */
+  const handleExportExcel = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const all = await customersApi.listAll(list.exportParams);
+      exportRows(all.map(rowToCustomer));
+    } catch (err) {
+      reportError(err, 'تهیه خروجی با خطا مواجه شد.');
+    } finally {
+      setExporting(false);
+    }
+  };
 
-    // Custom Fields Filters
-    const matchesCustom = (Object.entries(customFieldFilters) as [string, string][]).every(([fieldId, filterValue]) => {
-      if (!filterValue) return true;
-      const recordValue = c.customValues?.[fieldId] as any;
-      if (recordValue === undefined || recordValue === null || recordValue === '') return false;
-
-      const field = settings?.customFields?.find(f => f.id === fieldId);
-      if (!field) return true;
-
-      if (field.type === 'boolean') {
-        return String(recordValue) === filterValue;
-      }
-      if (field.type === 'select') {
-        return String(recordValue) === filterValue;
-      }
-      if (field.type === 'file') {
-        if (filterValue === 'has_file') {
-          return !!(recordValue && recordValue.name);
-        } else if (filterValue === 'no_file') {
-          return !(recordValue && recordValue.name);
-        }
-        return true;
-      }
-      return String(recordValue).toLowerCase().includes(filterValue.toLowerCase());
-    });
-
-    if (!matchesCustom) return false;
-
-    // Column-specific filters
-    return Object.entries(colFilters).every(([colId, filterValue]) => {
-      if (!filterValue) return true;
-      const fVal = String(filterValue).toLowerCase();
-      if (colId === 'name') {
-        const fullName = c.customerType === 'حقوقی' ? (c.companyName || '') : `${c.firstName || ''} ${c.lastName || ''}`;
-        return fullName.toLowerCase().includes(fVal);
-      }
-      if (colId === 'type') {
-        return c.customerType.toLowerCase().includes(fVal);
-      }
-      if (colId === 'industry') {
-        const val = c.customerType === 'حقوقی' ? (c.industry || '') : (c.position || '');
-        return val.toLowerCase().includes(fVal);
-      }
-      if (colId === 'keyPerson') {
-        return (c.keyPerson || '').toLowerCase().includes(fVal);
-      }
-      if (colId === 'contact') {
-        const contactStr = `${c.mobile || ''} ${c.phone || ''} ${c.email || ''}`;
-        return contactStr.toLowerCase().includes(fVal);
-      }
-      if (colId === 'province') {
-        return (c.province || '').toLowerCase().includes(fVal);
-      }
-      if (colId === 'tags') {
-        return (c.tags || '').toLowerCase().includes(fVal);
-      }
-      return true;
-    });
-  });
-
-  const handleExportExcel = () => {
+  const exportRows = (data: Customer[]) => {
     const headers = [
       'نوع مشتری',
       'نام شرکت / نام خانوادگی',
@@ -672,7 +569,7 @@ export default function CustomersView({
       'برچسب‌ها'
     ];
 
-    const rows = filteredCustomers.map(c => [
+    const rows = data.map(c => [
       c.customerType,
       c.customerType === 'حقوقی' ? c.companyName : `${c.firstName || ''} ${c.lastName || ''}`,
       c.customerType === 'حقوقی' ? c.industry : c.position,
@@ -689,20 +586,27 @@ export default function CustomersView({
   };
 
   // Get active candidates for relationship linking in modal
-  const relationCandidates = customers.filter(c => {
-    // If editing, can't link to self
-    if (editingCustomer && c.id === editingCustomer.id) return false;
-    
-    // Only link opposite types (Individual can link to Company, Company can link to Individual)
-    if (customerType === 'حقوقی') {
-      if (c.customerType !== 'حقیقی') return false;
-      const fullName = `${c.firstName || ''} ${c.lastName || ''}`.toLowerCase();
-      return fullName.includes(relationSearch.toLowerCase()) || (c.position || '').toLowerCase().includes(relationSearch.toLowerCase());
-    } else {
-      if (c.customerType !== 'حقوقی') return false;
-      return (c.companyName || '').toLowerCase().includes(relationSearch.toLowerCase());
-    }
+  // Candidates for the relationship picker, searched on the server. A link
+  // always joins the opposite type, so the query is filtered to it.
+  const relationSearchState = useEntitySearch<CustomerRow>({
+    path: '/api/customers',
+    limit: 25,
+    params: { customerType: customerType === 'حقوقی' ? 'حقیقی' : 'حقوقی' },
+    getLabel: (row) => row.companyName,
+    // Only while the form is open; otherwise it queries behind a closed modal.
+    enabled: showModal,
   });
+
+  React.useEffect(() => {
+    relationSearchState.setTerm(relationSearch);
+  }, [relationSearch, relationSearchState.setTerm]);
+
+  const relationCandidates = React.useMemo(
+    () => relationSearchState.matches
+      .filter((row) => !editingCustomer || row.id !== editingCustomer.id)
+      .map(rowToCustomer),
+    [relationSearchState.matches, editingCustomer],
+  );
 
   return (
     <div className="space-y-6 animate-fade-in" id="customers-view-container">
@@ -1030,18 +934,24 @@ export default function CustomersView({
                           <Edit size={14} />
                         </button>
                         <button
-                          onClick={() => {
+                          onClick={async () => {
                             const isLegal = cust.customerType === 'حقوقی';
                             const nameStr = isLegal ? cust.companyName : `${cust.firstName || ''} ${cust.lastName || ''}`;
                             setCustomerToDeleteId(cust.id);
                             setCustomerToDeleteName(nameStr);
-                            // If this customer still has history, require a replacement first.
-                            const refs = countCustomerReferences(cust.id, referenceCollections);
-                            if (hasCustomerReferences(refs)) {
-                              setMigrationTarget(cust);
-                              setMigrationCounts(refs);
-                            } else {
-                              setDeleteConfirmOpen(true);
+                            // If this customer still has history, require a
+                            // replacement first. One query, where the client
+                            // used to need every collection loaded to count.
+                            try {
+                              const refs = await customersApi.references(cust.id);
+                              if (refs.total > 0) {
+                                setMigrationTarget(cust);
+                                setMigrationCounts(refs as unknown as CustomerReferenceCounts);
+                              } else {
+                                setDeleteConfirmOpen(true);
+                              }
+                            } catch (err) {
+                              reportError(err, 'بررسی سوابق مشتری با خطا مواجه شد.');
                             }
                           }}
                           className="p-1.5 hover:bg-red-50 text-slate-600 hover:text-red-600 rounded transition"
@@ -1059,7 +969,29 @@ export default function CustomersView({
           </table>
         </div>
 
-        {filteredCustomers.length === 0 && (
+        {/* Before the first response there is nothing to say yet — showing
+            "no customers found" while still loading reads as an empty database. */}
+        {list.initialLoading && (
+          <div className="text-center bg-white p-12 border-t border-slate-100 w-full">
+            <Loader2 className="mx-auto text-slate-300 mb-3 animate-spin" size={40} />
+            <p className="text-sm text-slate-500 font-medium">در حال دریافت اطلاعات…</p>
+          </div>
+        )}
+
+        {list.error && !list.initialLoading && (
+          <div className="text-center bg-white p-12 border-t border-slate-100 w-full">
+            <AlertCircle className="mx-auto text-rose-300 mb-3" size={40} />
+            <p className="text-sm text-rose-600 font-medium">{list.error}</p>
+            <button
+              onClick={() => list.refresh()}
+              className="mt-3 text-xs text-sky-600 hover:underline font-bold"
+            >
+              تلاش دوباره
+            </button>
+          </div>
+        )}
+
+        {filteredCustomers.length === 0 && !list.initialLoading && !list.error && (
           <div className="text-center bg-white p-12 border-t border-slate-100 w-full">
             <Users className="mx-auto text-slate-300 mb-3" size={48} />
             <p className="text-sm text-slate-500 font-medium">مشتری با مشخصات وارد شده یافت نشد.</p>
@@ -1071,6 +1003,50 @@ export default function CustomersView({
                 پاک کردن فیلترهای ستونی
               </button>
             )}
+          </div>
+        )}
+
+        {/* Pagination. The grid holds one page; these move between them. */}
+        {list.totalPages > 1 && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-slate-100 bg-slate-50/60 flex-wrap">
+            <span className="text-[11px] text-slate-500 font-medium">
+              نمایش {list.rows.length.toLocaleString('fa-IR')} از {list.total.toLocaleString('fa-IR')} مشتری
+              {' — '}صفحه {list.page.toLocaleString('fa-IR')} از {list.totalPages.toLocaleString('fa-IR')}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => list.setPage(1)}
+                disabled={list.page === 1 || list.loading}
+                className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                اول
+              </button>
+              <button
+                type="button"
+                onClick={() => list.setPage(list.page - 1)}
+                disabled={list.page === 1 || list.loading}
+                className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                قبلی
+              </button>
+              <button
+                type="button"
+                onClick={() => list.setPage(list.page + 1)}
+                disabled={list.page >= list.totalPages || list.loading}
+                className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                بعدی
+              </button>
+              <button
+                type="button"
+                onClick={() => list.setPage(list.totalPages)}
+                disabled={list.page >= list.totalPages || list.loading}
+                className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                آخر
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -1978,9 +1954,23 @@ export default function CustomersView({
           setCustomerToDeleteId(null);
           setCustomerToDeleteName('');
         }}
-        onConfirm={() => {
-          if (customerToDeleteId) {
-            deleteCustomer(customerToDeleteId);
+        onConfirm={async () => {
+          if (!customerToDeleteId) return;
+          try {
+            await customersApi.remove(customerToDeleteId);
+            list.refresh();
+          } catch (err) {
+            // History can appear between opening this dialog and confirming it;
+            // fall through to the migration prompt rather than just failing.
+            if (err instanceof ApiError && err.code === 'HAS_HISTORY') {
+              const refs = await customersApi.references(customerToDeleteId);
+              const target = customers.find((c) => c.id === customerToDeleteId) ?? null;
+              setMigrationTarget(target);
+              setMigrationCounts(refs as unknown as CustomerReferenceCounts);
+              setDeleteConfirmOpen(false);
+              return;
+            }
+            reportError(err, 'حذف مشتری با خطا مواجه شد.');
           }
         }}
         title="حذف پرونده مشتری"
@@ -2047,10 +2037,14 @@ export default function CustomersView({
         isOpen={!!migrationTarget && !!migrationCounts}
         customer={migrationTarget}
         counts={migrationCounts || ({} as CustomerReferenceCounts)}
-        allCustomers={customers}
-        onConfirm={(replacementId) => {
+        onConfirm={async (replacementId) => {
           if (migrationTarget) {
-            deleteCustomerWithMigration(migrationTarget.id, replacementId);
+            try {
+              await customersApi.removeWithMigration(migrationTarget.id, replacementId);
+              list.refresh();
+            } catch (err) {
+              reportError(err, 'انتقال سوابق و حذف مشتری با خطا مواجه شد.');
+            }
           }
           setMigrationTarget(null);
           setMigrationCounts(null);
