@@ -47,6 +47,10 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
       const result = await listProjects(q, user, {
         dateFrom: req.query.dateFrom,
         dateTo: req.query.dateTo,
+        customField: req.query.customField,
+        // The derived figures are the grid's columns, but a picker listing
+        // projects does not need them and they cost three extra queries.
+        withSummary: req.query.withSummary !== "false",
       });
       res.json({ success: true, ...result });
     } catch (err) {

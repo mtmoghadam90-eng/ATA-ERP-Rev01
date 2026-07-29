@@ -5,6 +5,8 @@ import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { summarizeProject, summarizeProjects } from "./projectSummary";
+// The custom-field clause is identical for every module; defined once with customers.
+import { customFieldClause } from "./customerService";
 
 /**
  * Project data access.
@@ -48,18 +50,40 @@ export function visibilityClause(user: AuthUser): Record<string, unknown> | unde
 export function buildProjectWhere(
   q: ListQuery,
   user: AuthUser,
-  extra: { dateFrom?: unknown; dateTo?: unknown } = {},
+  extra: { dateFrom?: unknown; dateTo?: unknown; customField?: unknown } = {},
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
 
   const visibility = visibilityClause(user);
   if (visibility) and.push(visibility);
 
-  const search = searchClause(q.search, SEARCH_FIELDS);
-  if (search) and.push(search);
+  if (q.search) {
+    // The grid's search box also matches a customer's name and an equipment tag
+    // number, neither of which is a column on the project.
+    const own = searchClause(q.search, SEARCH_FIELDS);
+    const byCustomer = searchClause(q.search, ["companyName"]);
+    const byItem = searchClause(q.search, ["tagNumber", "name", "equipmentType"]);
+
+    const alternatives: Record<string, unknown>[] = [];
+    if (own) alternatives.push(...own.OR);
+    if (byCustomer) alternatives.push({ customer: byCustomer });
+    if (byItem) alternatives.push({ items: { some: byItem } });
+    if (alternatives.length > 0) and.push({ OR: alternatives });
+  }
 
   for (const [field, value] of Object.entries(q.filters)) {
     and.push({ [field]: value });
+  }
+
+  // Custom fields live in the customValues JSON column; same rules and the same
+  // caveats as customers — see customFieldClause there.
+  const specs = Array.isArray(extra.customField) ? extra.customField : [extra.customField];
+  for (const entry of specs) {
+    if (typeof entry !== "string") continue;
+    for (const spec of entry.split("|")) {
+      const clause = customFieldClause(spec);
+      if (clause) and.push(clause);
+    }
   }
 
   // Date range comes from Shamsi inputs but filters the real DATE column, so a
@@ -98,7 +122,7 @@ const LIST_SELECT = {
 export async function listProjects(
   q: ListQuery,
   user: AuthUser,
-  extra: { dateFrom?: unknown; dateTo?: unknown; withSummary?: boolean } = {},
+  extra: { dateFrom?: unknown; dateTo?: unknown; withSummary?: boolean; customField?: unknown } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
   const where = buildProjectWhere(q, user, extra);
