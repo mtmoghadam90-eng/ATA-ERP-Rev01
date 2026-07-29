@@ -17,11 +17,13 @@ export const CUSTOMER_SORTABLE = [
   "companyName", "customerType", "status", "province", "createdAt", "updatedAt",
 ] as const;
 
-export const CUSTOMER_FILTERABLE = ["status", "customerType", "province"] as const;
+export const CUSTOMER_FILTERABLE = [
+  "status", "customerType", "province", "industry", "city",
+] as const;
 
 const SEARCH_FIELDS = [
   "companyName", "firstName", "lastName", "mobile", "phone",
-  "email", "economicCode", "province", "tags",
+  "email", "economicCode", "province", "tags", "industry", "keyPerson", "position",
 ] as const;
 
 /**
@@ -36,8 +38,46 @@ export function visibilityClause(user: AuthUser): Record<string, unknown> | unde
   return { ownerUserId: user.id };
 }
 
+/**
+ * Filter clause for a user-defined custom field.
+ *
+ * Custom fields live together in the `customValues` JSON column, so there is no
+ * column to compare against. This matches the serialized `"fieldId":value`
+ * fragment instead, which is exact for the value types that are actually
+ * filtered — select lists and booleans, where the stored value is a whole token.
+ *
+ * It is a substring match, so it would also match a *longer* string value
+ * starting with the same text. That is why only equality-style fields expose a
+ * filter in the UI; free text is reached through search instead. If a field ever
+ * needs real indexed comparison, `prisma/sql/extra-indexes.sql` shows how to
+ * promote one to a persisted computed column.
+ *
+ * Input is `fieldId:value`; the id is restricted to the characters a generated
+ * field id can contain, so nothing arbitrary reaches the query.
+ */
+export function customFieldClause(spec: unknown): Record<string, unknown> | undefined {
+  if (typeof spec !== "string") return undefined;
+  const separator = spec.indexOf(":");
+  if (separator <= 0) return undefined;
+
+  const fieldId = spec.slice(0, separator);
+  const value = spec.slice(separator + 1);
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(fieldId) || !value) return undefined;
+
+  // Booleans serialize unquoted; everything else is a quoted string.
+  const fragment = value === "true" || value === "false"
+    ? `"${fieldId}":${value}`
+    : `"${fieldId}":"${value}"`;
+
+  return { customValues: { contains: fragment } };
+}
+
 /** Exported so the visibility rules can be asserted without a database. */
-export function buildCustomerWhere(q: ListQuery, user: AuthUser): Record<string, unknown> {
+export function buildCustomerWhere(
+  q: ListQuery,
+  user: AuthUser,
+  extra: { customField?: unknown } = {},
+): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
 
   const visibility = visibilityClause(user);
@@ -48,6 +88,18 @@ export function buildCustomerWhere(q: ListQuery, user: AuthUser): Record<string,
 
   for (const [field, value] of Object.entries(q.filters)) {
     and.push({ [field]: value });
+  }
+
+  // Several custom fields can be filtered at once. Express gives an array when
+  // the key repeats; the client instead sends one "|"-joined value, because a
+  // plain object cannot express a repeated key. Both are accepted.
+  const raw = Array.isArray(extra.customField) ? extra.customField : [extra.customField];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    for (const spec of entry.split("|")) {
+      const clause = customFieldClause(spec);
+      if (clause) and.push(clause);
+    }
   }
 
   return and.length === 0 ? {} : { AND: and };
@@ -71,14 +123,21 @@ const LIST_SELECT = {
   tags: true,
   ownerUserId: true,
   createdAt: true,
+  customValues: true,
+  // The grid shows who each customer is linked to. Joined here rather than
+  // fetched per row, which would be one request per visible customer.
+  linksFrom: {
+    select: { to: { select: { id: true, companyName: true, customerType: true } } },
+  },
 } as const;
 
 export async function listCustomers(
   q: ListQuery,
   user: AuthUser,
+  extra: { customField?: unknown } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
-  const where = buildCustomerWhere(q, user);
+  const where = buildCustomerWhere(q, user, extra);
   const orderBy = q.sort ? { [q.sort]: q.order } : { createdAt: "desc" as const };
 
   // One round trip for the page, one for the count.

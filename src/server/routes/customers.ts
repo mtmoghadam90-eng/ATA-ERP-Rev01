@@ -53,7 +53,10 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
         CUSTOMER_SORTABLE,
         CUSTOMER_FILTERABLE,
       );
-      res.json({ success: true, ...(await listCustomers(q, user)) });
+      // `customField=<id>:<value>`, repeatable. Kept out of parseListQuery's
+      // allowlist because the field ids are defined by users at runtime.
+      const result = await listCustomers(q, user, { customField: req.query.customField });
+      res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "GET /api/customers");
     }

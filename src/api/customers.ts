@@ -26,6 +26,10 @@ export interface CustomerRow {
   tags: string | null;
   ownerUserId: string | null;
   createdAt: string;
+  /** Serialized custom-field values, or null. */
+  customValues: string | null;
+  /** Joined in the list query so the grid does not fetch one per row. */
+  linksFrom: { to: { id: string; companyName: string; customerType: string } }[];
 }
 
 export interface CustomerDetail extends CustomerRow {
@@ -81,6 +85,37 @@ export interface CustomerWriteInput {
 export const customersApi = {
   list: (query: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     api.get<ListResponse<CustomerRow>>("/api/customers", query, signal),
+
+  /**
+   * Every row matching a query, fetched a page at a time.
+   *
+   * Only for export. A screen must never call this — it is the exact thing this
+   * migration removed. The server caps a page at 200, so exporting a large
+   * result is necessarily several round trips; `onProgress` lets the caller show
+   * that rather than appearing frozen, and `limit` stops an accidental
+   * unfiltered export from pulling an unbounded number of rows.
+   */
+  listAll: async (
+    query: Record<string, string | number | undefined>,
+    options: { limit?: number; onProgress?: (loaded: number, total: number) => void } = {},
+  ): Promise<CustomerRow[]> => {
+    const { limit = 20_000, onProgress } = options;
+    const rows: CustomerRow[] = [];
+    let page = 1;
+
+    for (;;) {
+      const batch = await api.get<ListResponse<CustomerRow>>("/api/customers", {
+        ...query, page, pageSize: 200,
+      });
+      rows.push(...batch.rows);
+      onProgress?.(rows.length, batch.total);
+
+      if (rows.length >= Math.min(batch.total, limit)) break;
+      if (batch.rows.length === 0 || page >= batch.totalPages) break;
+      page++;
+    }
+    return rows.slice(0, limit);
+  },
 
   get: (id: string) =>
     api.get<{ customer: CustomerDetail }>(`/api/customers/${id}`).then((r) => r.customer),
