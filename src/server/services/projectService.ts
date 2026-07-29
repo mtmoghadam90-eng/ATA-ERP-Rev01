@@ -4,6 +4,7 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
+import { summarizeProject, summarizeProjects } from "./projectSummary";
 
 /**
  * Project data access.
@@ -81,6 +82,8 @@ const LIST_SELECT = {
   expectedCloseDate: true,
   expectedCloseDateJalali: true,
   winningDateJalali: true,
+  opportunityDateJalali: true,
+  agreedDeliveryDateJalali: true,
   estimatedValueRial: true,
   probabilityPercent: true,
   marketingChannel: true,
@@ -95,7 +98,7 @@ const LIST_SELECT = {
 export async function listProjects(
   q: ListQuery,
   user: AuthUser,
-  extra: { dateFrom?: unknown; dateTo?: unknown } = {},
+  extra: { dateFrom?: unknown; dateTo?: unknown; withSummary?: boolean } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
   const where = buildProjectWhere(q, user, extra);
@@ -106,11 +109,36 @@ export async function listProjects(
     db.project.count({ where }),
   ]);
 
+  // The grid's derived columns — pipeline value, prepayment date, agreed versus
+  // actual delivery. Computed for the whole page in three queries; the client
+  // used to derive them by scanning four whole collections once per row.
+  if (extra.withSummary !== false && rows.length > 0) {
+    const summaries = await summarizeProjects(rows.map((r) => ({
+      id: r.id,
+      creationDateJalali: r.creationDateJalali,
+      winningDateJalali: r.winningDateJalali,
+      opportunityDateJalali: r.opportunityDateJalali,
+      agreedDeliveryDateJalali: r.agreedDeliveryDateJalali,
+    })));
+    const withSummary = rows.map((row) => ({ ...row, summary: summaries.get(row.id) ?? null }));
+    return buildResult(withSummary as unknown as Record<string, unknown>[], total, q);
+  }
+
   return buildResult(rows as unknown as Record<string, unknown>[], total, q);
 }
 
-/** Full record with its children, for the detail form. Null when not visible. */
+/**
+ * Full record with its children and its derived figures, for the detail view.
+ * Null when the caller may not see it.
+ */
 export async function getProject(id: string, user: AuthUser) {
+  const project = await getProjectRecord(id, user);
+  if (!project) return null;
+  return { ...project, summary: await summarizeProject(id) };
+}
+
+/** The stored record alone, without the derived figures. */
+async function getProjectRecord(id: string, user: AuthUser) {
   const db = getDb();
   const visibility = visibilityClause(user);
 
