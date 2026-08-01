@@ -573,9 +573,32 @@ export async function deleteProduct(
  * Stock belongs to the physical item, not the definition — a copy starts empty,
  * and any opening balance is then a movement someone records deliberately.
  */
+/**
+ * The first free `{base}-C{n}` code.
+ *
+ * The client used to find this by scanning every product it had loaded, which
+ * pagination reduces to "every product on this page" — so a copy would keep
+ * proposing a code that already exists further down the table. The uniqueness
+ * question belongs where the unique index is.
+ */
+export async function suggestCopyCode(baseCode: string): Promise<string> {
+  const db = getDb();
+  // One query for the whole family, rather than one probe per candidate.
+  const taken = new Set(
+    (await db.product.findMany({
+      where: { code: { startsWith: `${baseCode}-C` } },
+      select: { code: true },
+    })).map((row) => row.code),
+  );
+
+  let n = 1;
+  while (taken.has(`${baseCode}-C${n}`)) n++;
+  return `${baseCode}-C${n}`;
+}
+
 export async function copyProduct(
   id: string,
-  overrides: { code: string; name?: string; displayName?: string },
+  overrides: { code?: string; name?: string; displayName?: string },
   user: AuthUser,
 ) {
   if (!requireProductPermission(user)) return null;
@@ -585,12 +608,15 @@ export async function copyProduct(
     const source = await tx.product.findUnique({ where: { id }, include: { variants: true } });
     if (!source) return null;
 
+    // No code given: derive the next free one from the source's.
+    const code = overrides.code || await suggestCopyCode(source.code);
+
     const { id: _id, createdAt: _c, updatedAt: _u, variants, ...rest } = source;
 
     const copy = await tx.product.create({
       data: {
         ...rest,
-        code: overrides.code,
+        code,
         name: overrides.name ?? source.name,
         displayName: overrides.displayName ?? source.displayName,
         stockLevel: 0,
@@ -603,7 +629,7 @@ export async function copyProduct(
           productId: copy.id,
           // The SKU embeds the product code, so it has to be re-derived from the
           // new one; a duplicate would hit the unique index.
-          sku: v.sku.replace(source.code, overrides.code),
+          sku: v.sku.replace(source.code, code),
           attributes: v.attributes,
           minStockLevel: v.minStockLevel,
           priceRial: v.priceRial,

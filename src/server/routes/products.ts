@@ -153,13 +153,11 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
+      // Optional: omitted, the service derives the next free {code}-C{n}, which
+      // is a question only the unique index can answer correctly.
       const code = typeof body.code === "string" ? body.code.trim() : "";
-      if (!code) {
-        res.status(400).json({ success: false, error: "کد کالای جدید الزامی است." });
-        return;
-      }
       const product = await copyProduct(req.params.id, {
-        code,
+        code: code || undefined,
         name: typeof body.name === "string" ? body.name : undefined,
         displayName: typeof body.displayName === "string" ? body.displayName : undefined,
       }, user);
