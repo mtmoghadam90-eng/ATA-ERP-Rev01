@@ -411,15 +411,11 @@ export default function App() {
         );
       case 'projects':
         return (
-          <ProjectsView 
+          // Reads its own data from the API. The nine collections it used to be
+          // handed were mostly there to derive per-row figures the server now
+          // computes for the whole page.
+          <ProjectsView
             onOpenDocument={handleOpenDocument}
-            projects={store.projects}
-            customers={store.customers}
-            products={store.products}
-            proformas={store.proformas}
-            addProject={store.addProject}
-            updateProject={store.updateProject}
-            deleteProject={store.deleteProject}
             settings={store.settings}
             projectCategoryGroups={store.projectCategoryGroups}
             addProjectCategoryGroup={store.addProjectCategoryGroup}
@@ -433,12 +429,6 @@ export default function App() {
             currentUser={store.currentUser}
             addCustomer={store.addCustomer}
             addProduct={store.addProduct}
-            users={store.users}
-            transactions={store.transactions}
-            packagingDeliveries={store.packagingDeliveries}
-            purchaseOrders={store.purchaseOrders}
-            afterSalesServices={store.afterSalesServices}
-            supplierInquiries={store.supplierInquiries || []}
             initialSelectedProjectId={selectedProjectIdForActivities}
             onClearInitialSelectedProject={() => setSelectedProjectIdForActivities(null)}
           />

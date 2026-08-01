@@ -25,22 +25,26 @@ import ConfirmModal from './ConfirmModal';
 import QuickAddModal from './QuickAddModal';
 import { SearchableSelect } from './SearchableSelect';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
-import { Project, Customer, Product, Proforma, ERPSettings, ProjectCategoryGroup, User as UserType, Transaction, PackagingDelivery, PurchaseOrder, AfterSalesService, SupplierInquiry } from '../types';
+import { Project, Customer, Product, ERPSettings, ProjectCategoryGroup, User as UserType } from '../types';
+import { ApiError } from '../api/client';
+import { projectsApi, type ProjectRow, type ProjectSummary } from '../api/projects';
+import { detailToProject, projectToWriteInput, rowToProject } from '../api/projectAdapter';
+import { useProjectList } from '../api/useProjectList';
+import { useUserDirectory } from '../api/useUserDirectory';
+import { useEntitySearch } from '../api/useEntitySearch';
+import type { CustomerRow } from '../api/customers';
 
+/**
+ * Projects screen.
+ *
+ * Reads through the API rather than props holding whole collections. The nine it
+ * used to receive were mostly there so the grid could derive, per row, figures
+ * that are not stored anywhere — pipeline value, prepayment date, the
+ * agreed-versus-actual delivery schedule. Those now arrive with each row as
+ * `summary`, computed for the page in three queries.
+ */
 export interface ProjectsViewProps {
   onOpenDocument?: any;
-  projects: Project[];
-  customers: Customer[];
-  products: Product[];
-  proformas: Proforma[];
-  packagingDeliveries?: PackagingDelivery[];
-  transactions?: Transaction[];
-  purchaseOrders?: PurchaseOrder[];
-  afterSalesServices?: AfterSalesService[];
-  supplierInquiries?: SupplierInquiry[];
-  addProject: (p: any) => any;
-  updateProject: (p: any) => void;
-  deleteProject: (id: string, deleteLogs: boolean) => void;
   settings: ERPSettings;
   addCustomer: (c: any) => any;
   addProduct: (p: any) => any;
@@ -60,18 +64,41 @@ export interface ProjectsViewProps {
 }
 
 export default function ProjectsView({
-  onOpenDocument, projects, customers, products, proformas,
-  packagingDeliveries = [], transactions = [], purchaseOrders = [], afterSalesServices = [], supplierInquiries = [],
-  addProject, updateProject, deleteProject, settings, addCustomer, addProduct,
+  onOpenDocument,
+  settings, addCustomer, addProduct,
   projectCategoryGroups = [], addProjectCategoryGroup, updateProjectCategoryGroup, addProjectActivity,
   completeProjectCategoryGroup, resumeProjectCategoryGroup, deleteProjectCategoryGroup,
-  updateProjectActivity, deleteProjectActivity, currentUser, users = [],
+  updateProjectActivity, deleteProjectActivity, currentUser,
   initialSelectedProjectId, onClearInitialSelectedProject
 }: ProjectsViewProps) {
-  const [search, setSearch] = useState("");
+  const list = useProjectList();
+  const search = list.search;
+  const setSearch = list.setSearch;
+
+  /** The page of projects, in the shape this screen's markup was written for. */
+  const projects = React.useMemo(() => list.rows.map(rowToProject), [list.rows]);
+
+  /** Derived figures, keyed by project id — pipeline value, delivery schedule. */
+  const summaries = React.useMemo(() => {
+    const map = new Map<string, NonNullable<ProjectRow["summary"]>>();
+    for (const row of list.rows) if (row.summary) map.set(row.id, row.summary);
+    return map;
+  }, [list.rows]);
+
+  const { users } = useUserDirectory();
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
+
   const [colFilters, setColFilters] = useState<any>({});
-  const [customFieldFilters, setCustomFieldFilters] = useState<any>({});
-  const [selectedStatus, setSelectedStatus] = useState("all");
+  const customFieldFilters = list.filters.customFields;
+  const setCustomFieldFilters = (next: Record<string, string>) => {
+    for (const [fieldId, value] of Object.entries(next)) list.setCustomFieldFilter(fieldId, value);
+  };
+  const selectedStatus = list.filters.status;
+  const setSelectedStatus = (value: string) => list.setFilter('status', value);
   const [groupToDelete, setGroupToDelete] = useState<any>(null);
   const [showModal, setShowModal] = useState(false);
   const [isProjectModalFullscreen, setIsProjectModalFullscreen] = useState(false);
@@ -184,135 +211,97 @@ export default function ProjectsView({
   const [endUser, setEndUser] = useState("");
   const [attachments, setAttachments] = useState<any[]>([]);
   const [isUploading, setIsUploading] = useState(false);
-  const getLatestProformaOfProject = (projectId) => {
-    const projectProformas = proformas.filter((pf) => pf.projectId === projectId);
-    if (projectProformas.length === 0) return void 0;
-    return [...projectProformas].sort((a, b) => {
-      const dateCompare = b.issueDate.localeCompare(a.issueDate);
-      if (dateCompare !== 0) return dateCompare;
-      return b.id.localeCompare(a.id);
-    })[0];
+
+  // Writes are round trips now: the form refuses a second submit rather than
+  // sending the same project twice.
+  const [saving, setSaving] = useState(false);
+
+  /**
+   * Pickers backed by the server.
+   *
+   * The customer and product lists are unbounded, so neither can be held in the
+   * form. Both search as the user types and are disabled while the modal is
+   * closed, so a closed form does not query behind it.
+   */
+  const customerPicker = useEntitySearch<CustomerRow>({
+    path: '/api/customers',
+    limit: 25,
+    getLabel: (row) => row.companyName,
+    enabled: showModal,
+  });
+
+  const productPicker = useEntitySearch<{ id: string; displayName: string; hasVariants: boolean }>({
+    path: '/api/products',
+    limit: 25,
+    getLabel: (row) => row.displayName,
+    enabled: showModal,
+  });
+
+  /** Products currently offered by the picker, for resolving a chosen id. */
+  const products = productPicker.matches as unknown as Product[];
+  const customers = customerPicker.matches as unknown as Customer[];
+
+  /**
+   * The three contact fields are foreign keys on the server. The form holds the
+   * ids; the names come from the record the server joins for display.
+   */
+  const [endUserId, setEndUserId] = useState("");
+  const [financialContactId, setFinancialContactId] = useState("");
+  const [technicalContactId, setTechnicalContactId] = useState("");
+  /**
+   * The grid's derived figures.
+   *
+   * These used to be computed here by scanning proformas, transactions and
+   * packing lists once per visible row. They now arrive with each row, computed
+   * for the whole page in three queries — see `summarizeProjects` on the server.
+   * These readers just look them up.
+   */
+  const summaryOf = (projectId: string): ProjectSummary | undefined => summaries.get(projectId);
+
+  const getPipelineValue = (projectId: string): number =>
+    Number(summaryOf(projectId)?.pipelineValue ?? 0);
+
+  const getPipelineCurrency = (projectId: string): string =>
+    summaryOf(projectId)?.pipelineCurrency ?? "";
+
+  const getProjectPrepaymentDate = (projectId: string): string | null =>
+    summaryOf(projectId)?.prepaymentDate ?? null;
+
+  const getActualDeliveryDate = (projectId: string): string | null =>
+    summaryOf(projectId)?.actualDeliveryDate ?? null;
+
+  const getApprovedProformaDeliveryDate = (projectId: string): string | null =>
+    summaryOf(projectId)?.approvedDeliveryDate ?? null;
+
+  /** Customer name for a row. Joined by the server, so no lookup table here. */
+  const getCustomerDisplayName = (idOrName: string): string => {
+    const project = projects.find((p) => p.customerId === idOrName || p.id === idOrName);
+    return project?.customerName || idOrName;
   };
-  const getPipelineValue = (projectId) => {
-    const latest = getLatestProformaOfProject(projectId);
-    return latest ? latest.finalAmount : 0;
+
+  const EMPTY_DELIVERY = {
+    agreedItems: [] as ProjectSummary["agreedItems"],
+    actualItems: [] as ProjectSummary["actualItems"],
+    hasMultipleAgreed: false,
+    hasMultipleActual: false,
+    singleAgreedDate: "",
+    singleActualDate: "",
   };
-  const getPipelineCurrency = (projectId) => {
-    const latest = getLatestProformaOfProject(projectId);
-    return latest ? (latest.currency || 'ریال') : '';
-  };
-  const getCustomerDisplayName = (idOrName) => {
-    const cust = customers.find((c) => c.id === idOrName);
-    if (!cust) return idOrName;
-    return cust.customerType === "حقوقی" ? cust.companyName : `${cust.firstName || ""} ${cust.lastName || ""}`.trim();
-  };
-  const getProjectPrepaymentDate = (projectId) => {
-    const projectTx = transactions.filter((tx) => tx.projectId === projectId && tx.type === "دریافت").sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    return projectTx.length > 0 ? projectTx[0].date : null;
-  };
-  const getActualDeliveryDate = (projectId) => {
-    const delivery = packagingDeliveries.find((d) => d.projectId === projectId);
-    return delivery?.actualDeliveryDate;
-  };
-  const getApprovedProformaDeliveryDate = (projectId) => {
-    const approved = proformas.find((pf) => {
-      if (pf.projectId !== projectId) return false;
-      const outcome = getProformaOutcomeStatus(pf);
-      return outcome === "تأیید شده (برنده)" || outcome === "نیمه برنده";
-    });
-    return approved?.deliveryDate;
-  };
-  const faToEnDigits = (str) => {
-    const faDigits = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
-    const arDigits = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
-    let result = str;
-    for (let i = 0; i < 10; i++) {
-      result = result.replace(new RegExp(faDigits[i], "g"), i.toString());
-      result = result.replace(new RegExp(arDigits[i], "g"), i.toString());
-    }
-    return result;
-  };
-  const parseItemDeliveryToDays = (range, unit) => {
-    if (!range) return 0;
-    const normalizedRange = faToEnDigits(range.trim());
-    const matches = normalizedRange.match(/\d+/g);
-    if (!matches || matches.length === 0) return 0;
-    const lastNum = parseInt(matches[matches.length - 1], 10);
-    if (unit === "هفته") return lastNum * 7;
-    if (unit === "ماه") return lastNum * 30;
-    return lastNum;
-  };
-  const getProjectDeliveryDetails = (projectId) => {
-    const projectProformas = proformas.filter((pf) => pf.projectId === projectId);
-    const wonProformas = projectProformas.filter((pf) => {
-      const outcome = getProformaOutcomeStatus(pf);
-      return outcome === "تأیید شده (برنده)" || outcome === "نیمه برنده";
-    });
-    const prepaymentDate = getProjectPrepaymentDate(projectId);
-    const proj = projects.find((p) => p.id === projectId);
-    const baseDate = prepaymentDate || proj?.winningDate || proj?.opportunityDate || proj?.creationDate || getTodayShamsi();
-    const agreedItems = [];
-    wonProformas.forEach((pf) => {
-      let wonItems = [];
-      const hasExplicitWon = pf.items?.some((item) => item.status === "برنده");
-      if (hasExplicitWon) {
-        wonItems = pf.items.filter((item) => item.status === "برنده");
-      } else {
-        wonItems = pf.items?.filter((item) => item.status !== "بازنده") || [];
-      }
-      wonItems.forEach((item) => {
-        if (item.deliveryRange && item.deliveryUnit) {
-          const range = item.deliveryRange;
-          const unit = item.deliveryUnit;
-          const type = item.deliveryType || "کاری";
-          const postfix = item.deliveryPostfix || "";
-          const offsetDays = parseItemDeliveryToDays(range, unit);
-          const isWorkingDays = type === "کاری";
-          const calculatedDate = isWorkingDays ? addWorkingDaysToShamsi(baseDate, offsetDays) : addDaysToShamsi(baseDate, offsetDays);
-          agreedItems.push({
-            id: item.id,
-            productName: item.productName,
-            deliveryText: `${range} ${unit} ${type}${postfix ? ` ${postfix}` : ""}`,
-            calculatedDate
-          });
-        } else {
-          const pfDeliveryDate = pf.deliveryDate || proj?.agreedDeliveryDate || "";
-          agreedItems.push({
-            id: item.id,
-            productName: item.productName,
-            deliveryText: pfDeliveryDate || "فوری",
-            calculatedDate: proj?.agreedDeliveryDate || baseDate
-          });
-        }
-      });
-    });
-    const projectDeliveries = packagingDeliveries.filter((d) => d.projectId === projectId);
-    const actualItems = [];
-    projectDeliveries.forEach((del) => {
-      const mainActualDate = del.actualDeliveryDate || "";
-      del.items.forEach((item) => {
-        const itemActualDate = item.actualDeliveryDate || mainActualDate || "";
-        if (itemActualDate) {
-          actualItems.push({
-            id: item.id,
-            productName: item.itemOrDocName,
-            actualDate: itemActualDate,
-            boxNumber: item.boxNumber
-          });
-        }
-      });
-    });
-    const uniqueAgreedDates = new Set(agreedItems.map((x) => x.calculatedDate).filter(Boolean));
-    const uniqueActualDates = new Set(actualItems.map((x) => x.actualDate).filter(Boolean));
-    const singleAgreedDate = uniqueAgreedDates.size === 1 ? Array.from(uniqueAgreedDates)[0] : "";
-    const singleActualDate = uniqueActualDates.size === 1 ? Array.from(uniqueActualDates)[0] : "";
+
+  const getProjectDeliveryDetails = (projectId: string) => {
+    const summary = summaryOf(projectId);
+    if (!summary) return EMPTY_DELIVERY;
+
+    const agreedDates = new Set(summary.agreedItems.map((i) => i.calculatedDate).filter(Boolean));
+    const actualDates = new Set(summary.actualItems.map((i) => i.actualDate).filter(Boolean));
+
     return {
-      agreedItems,
-      actualItems,
-      hasMultipleAgreed: uniqueAgreedDates.size > 1,
-      hasMultipleActual: uniqueActualDates.size > 1,
-      singleAgreedDate,
-      singleActualDate
+      agreedItems: summary.agreedItems,
+      actualItems: summary.actualItems,
+      hasMultipleAgreed: agreedDates.size > 1,
+      hasMultipleActual: actualDates.size > 1,
+      singleAgreedDate: agreedDates.size === 1 ? [...agreedDates][0] ?? "" : "",
+      singleActualDate: summary.singleActualDate ?? "",
     };
   };
   const handleAddItemLine = () => {
@@ -677,47 +666,46 @@ export default function ProjectsView({
       endUser,
       attachments
     };
-    if (editingProject) {
-      updateProject({
-        ...editingProject,
-        ...data
-      });
-    } else {
-      addProject(data);
-    }
-    setShowModal(false);
+    void (async () => {
+      if (saving) return;
+      setSaving(true);
+      try {
+        const payload = projectToWriteInput({
+          ...(editingProject ?? {}),
+          ...data,
+          endUserCustomerId: endUserId || null,
+          financialContactId: financialContactId || null,
+          technicalContactId: technicalContactId || null,
+        });
+
+        if (editingProject) await projectsApi.update(editingProject.id, payload);
+        else await projectsApi.create(payload);
+
+        list.refresh();
+        setShowModal(false);
+      } catch (err) {
+        reportError(err, 'ذخیره پروژه با خطا مواجه شد.');
+      } finally {
+        setSaving(false);
+      }
+    })();
   };
+
+  /** Writes one already-loaded project back, then refreshes the page. */
+  const persistProject = async (project: any, changes: Record<string, unknown>) => {
+    try {
+      const saved = await projectsApi.update(project.id, projectToWriteInput({ ...project, ...changes }));
+      list.refresh();
+      return detailToProject(saved);
+    } catch (err) {
+      reportError(err, 'ثبت تغییرات پروژه با خطا مواجه شد.');
+      return null;
+    }
+  };
+
+  // The server has already filtered, sorted and paged this. What remains are the
+  // per-column filters, which narrow the page in hand.
   const filteredProjects = projects.filter((p) => {
-    const matchesSearch = !search || 
-      (p.name || '').toLowerCase().includes(search.toLowerCase()) || 
-      (p.code || '').toLowerCase().includes(search.toLowerCase()) || 
-      (p.customerName || '').toLowerCase().includes(search.toLowerCase()) ||
-      p.itemsNeeded?.some(item => item.tagNumber?.toLowerCase().includes(search.toLowerCase()));
-    const matchesStatus = selectedStatus === "all" || p.status === selectedStatus;
-    if (!(matchesSearch && matchesStatus)) return false;
-    const matchesCustom = Object.entries(customFieldFilters).every(([fieldId, filterValue]) => {
-      if (!filterValue) return true;
-      const recordValue = p.customValues?.[fieldId];
-      if (recordValue === void 0 || recordValue === null || recordValue === "") return false;
-      const field = settings?.customFields?.find((f) => f.id === fieldId);
-      if (!field) return true;
-      if (field.type === "boolean") {
-        return String(recordValue) === filterValue;
-      }
-      if (field.type === "select") {
-        return String(recordValue) === filterValue;
-      }
-      if (field.type === "file") {
-        if (filterValue === "has_file") {
-          return !!(recordValue && recordValue.name);
-        } else if (filterValue === "no_file") {
-          return !(recordValue && recordValue.name);
-        }
-        return true;
-      }
-      return String(recordValue).toLowerCase().includes(String(filterValue).toLowerCase());
-    });
-    if (!matchesCustom) return false;
     return Object.entries(colFilters).every(([colId, filterValue]) => {
       if (!filterValue) return true;
       const fVal = String(filterValue).toLowerCase();
@@ -796,7 +784,37 @@ export default function ProjectsView({
     ]);
     exportToCSV("گزارش_پروژه‌ها", headers, rows);
   };
-  const getProjectFoldersAndFiles = (p) => {
+  /**
+   * The documents tab's contents.
+   *
+   * A project's paperwork lives across seven tables. This used to be assembled
+   * here by holding all seven collections and filtering each by project id; it
+   * is now one call, made when the tab is opened rather than with the project.
+   */
+  const [projectDocuments, setProjectDocuments] = useState<Record<string, any[]>>({});
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+
+  React.useEffect(() => {
+    const projectId = selectedProjectForActivities?.id;
+    if (!projectId || modalTab !== "documents") return;
+
+    let cancelled = false;
+    setDocumentsLoading(true);
+    projectsApi
+      .documents(projectId)
+      .then((docs) => { if (!cancelled) setProjectDocuments(docs); })
+      .catch((err) => {
+        if (cancelled) return;
+        // An empty tab is better than a broken modal.
+        setProjectDocuments({});
+        reportError(err, "دریافت اسناد پروژه با خطا مواجه شد.");
+      })
+      .finally(() => { if (!cancelled) setDocumentsLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [selectedProjectForActivities?.id, modalTab]);
+
+  const getProjectFoldersAndFiles = (_p: any) => {
     const folders = [
       { id: "customer_inquiry", name: "درخواست مشتری و استعلام اولیه", desc: "اسناد درخواست اولیه، استعلام‌های فنی و مکاتبات مشتری", iconBg: "bg-indigo-50 text-indigo-600 border-indigo-100", icon: Paperclip },
       { id: "sales_proforma", name: "پیش‌فاکتورها و مهندسی فروش", desc: "پیش‌فاکتورهای صادر شده فنی و مالی و پروپوزال‌ها", iconBg: "bg-sky-50 text-sky-600 border-sky-100", icon: FileSpreadsheet },
@@ -807,146 +825,11 @@ export default function ProjectsView({
       { id: "after_sales", name: "خدمات پس از فروش", desc: "اسناد خدمات گارانتی، برگه ترخیص کالا برای تعمیر و گزارشات خرابی", iconBg: "bg-teal-50 text-teal-600 border-teal-100", icon: Sliders },
       { id: "manual_other", name: "سایر مدارک و فایل‌های دستی", desc: "مدارک متفرقه و فایل‌هایی که به طور مستقیم در بالا طبقه‌بندی نشده‌اند", iconBg: "bg-slate-50 text-slate-600 border-slate-150", icon: Folder }
     ];
-    const folderFiles = {};
-    folders.forEach((f) => {
-      folderFiles[f.name] = [];
-    });
-    if (p.attachments && p.attachments.length > 0) {
-      p.attachments.forEach((att, idx) => {
-        folderFiles["درخواست مشتری و استعلام اولیه"].push({
-          id: `attachment-${idx}`,
-          name: att.name || `فایل درخواست ${idx + 1}`,
-          url: att.url,
-          size: "پیوست پروژه",
-          date: p.creationDate || "مشخص نشده",
-          type: "attachment"
-        });
-      });
-    }
-    const projectProformas = proformas.filter((pf) => pf.projectId === p.id);
-    projectProformas.forEach((pf) => {
-      folderFiles["پیش‌فاکتورها و مهندسی فروش"].push({
-        id: `proforma-${pf.id}`,
-        name: `پیش‌فاکتور ${pf.proformaNumber} - مشتری: ${pf.customerName}.pdf`,
-        url: "#",
-        size: `${pf.items?.length || 0} ردیف کالا`,
-        date: pf.issueDate,
-        type: "system",
-        originalEntity: pf
-      });
-    });
 
-    const projectInquiries = (supplierInquiries || []).filter((inq) => inq.projectId === p.id);
-    projectInquiries.forEach((inq) => {
-      if (inq.technicalOfferUrl) {
-        folderFiles["استعلام قیمت تأمین‌کنندگان"].push({
-          id: `inquiry-tech-${inq.id}`,
-          name: `آفر فنی - تأمین‌کننده: ${inq.supplierName}`,
-          url: inq.technicalOfferUrl,
-          size: "پیشنهاد فنی",
-          date: inq.creationDate || p.creationDate || "مشخص نشده",
-          type: "system",
-          originalEntity: inq
-        });
-      }
-      if (inq.financialOfferUrl) {
-        folderFiles["استعلام قیمت تأمین‌کنندگان"].push({
-          id: `inquiry-fin-${inq.id}`,
-          name: `آفر مالی - تأمین‌کننده: ${inq.supplierName}`,
-          url: inq.financialOfferUrl,
-          size: "پیشنهاد مالی",
-          date: inq.creationDate || p.creationDate || "مشخص نشده",
-          type: "system",
-          originalEntity: inq
-        });
-      }
-    });
-    const projectPOs = (purchaseOrders || []).filter((po) => po.projectId === p.id);
-    projectPOs.forEach((po) => {
-      folderFiles["سفارشات خرید تامین‌کنندگان"].push({
-        id: `po-${po.id}`,
-        name: `سفارش خرید ${po.poNumber} - تامین‌کننده: ${po.supplierName}.pdf`,
-        url: "#",
-        size: `${po.items?.length || 0} ردیف کالا`,
-        date: po.orderDate,
-        type: "system",
-        originalEntity: po
-      });
-    });
-// 4. Packaging Deliveries
-    const projectDeliveries = (packagingDeliveries || []).filter(del => del.projectId === p.id);
-    projectDeliveries.forEach(del => {
-      folderFiles['بسته‌بندی و تحویل کالا'].push({
-        id: `delivery-pl-${del.id}`,
-        name: `پکینگ لیست ${del.packingListNumber} - روش ارسال: ${del.shippingMethod}.pdf`,
-        url: '#',
-        size: `${del.items?.length || 0} ردیف کالا`,
-        date: del.deliveryDate,
-        type: 'system',
-        originalEntity: del
-      });
-      if (del.photos && del.photos.length > 0) {
-        del.photos.forEach((photo, idx) => {
-          folderFiles['بسته‌بندی و تحویل کالا'].push({
-            id: `delivery-img-${del.id}-${idx}`,
-            name: `عکس بسته‌بندی ${idx + 1} - پکینگ لیست ${del.packingListNumber}.png`,
-            url: photo,
-            size: 'تصویر بسته‌بندی',
-            date: del.deliveryDate,
-            type: 'system',
-            originalEntity: del
-          });
-        });
-      }
-    });
-
-    // 5. Transactions
-    const projectTXs = (transactions || []).filter(tx => tx.projectId === p.id);
-    projectTXs.forEach(tx => {
-      folderFiles['تراکنش‌های مالی و پرداخت‌ها'].push({
-        id: `tx-${tx.id}`,
-        name: `رسید تراکنش مالی ${tx.documentNumber} (${tx.type}).pdf`,
-        url: '#',
-        size: `مبلغ: ${tx.amountRIYAL?.toLocaleString('fa-IR')} ریال`,
-        date: tx.date,
-        type: 'system',
-        originalEntity: tx
-      });
-    });
-
-    // 6. After Sales Services
-    const projectServices = (afterSalesServices || []).filter(as => as.projectId === p.id);
-    projectServices.forEach(as => {
-      folderFiles['خدمات پس از فروش'].push({
-        id: `service-${as.id}`,
-        name: `خدمات پس از فروش - تجهیز: ${as.itemName}.pdf`,
-        url: '#',
-        size: `وضعیت: ${as.status}`,
-        date: as.startDate,
-        type: 'system',
-        originalEntity: as
-      });
-    });
-
-    // 7. Manual Documents
-    if (p.manualDocuments && p.manualDocuments.length > 0) {
-      p.manualDocuments.forEach(doc => {
-        const targetFolderName = folders.some(f => f.name === doc.folderName) ? doc.folderName : 'سایر مدارک و فایل‌های دستی';
-        
-        // Prevent duplicate manual entries if the document with same URL is already added to that folder
-        const exists = folderFiles[targetFolderName]?.some((f: any) => f.url === doc.url);
-        if (exists) return;
-
-        folderFiles[targetFolderName].push({
-          id: doc.id,
-          name: doc.name,
-          url: doc.url,
-          size: doc.size || 'بارگذاری دستی',
-          date: doc.createdAt,
-          type: 'manual'
-        });
-      });
-    }
+    // The server groups by the same folder names; anything it did not fill in
+    // renders as an empty folder rather than a missing one.
+    const folderFiles: Record<string, any[]> = {};
+    folders.forEach((f) => { folderFiles[f.name] = projectDocuments[f.name] ?? []; });
 
     return { folders, folderFiles };
   };
@@ -991,9 +874,16 @@ export default function ProjectsView({
           manualDocuments: newDocs,
           attachments: attachmentsUpdated ? newAttachments : p.attachments
         };
-        updateProject(updatedProject);
-        setSelectedProjectForActivities(updatedProject);
-        alert('فایل‌ها با موفقیت در پوشه مربوطه بارگذاری شدند.');
+        const saved = await persistProject(p, {
+          manualDocuments: updatedProject.manualDocuments,
+          attachments: updatedProject.attachments,
+        });
+        if (saved) {
+          setSelectedProjectForActivities(saved);
+          // The documents tab is served by the API, so it has to re-read.
+          setProjectDocuments(await projectsApi.documents(p.id));
+          alert('فایل‌ها با موفقیت در پوشه مربوطه بارگذاری شدند.');
+        }
       }
     } catch (err: any) {
       alert(err.message || 'خطا در بارگذاری فایل');
@@ -1003,7 +893,7 @@ export default function ProjectsView({
     }
   };
 
-  const handleFileDelete = (docId: string, docName: string, docType: 'manual' | 'attachment') => {
+  const handleFileDelete = async (docId: string, docName: string, docType: 'manual' | 'attachment') => {
     if (!confirm(`آیا از حذف فایل "${docName}" اطمینان دارید؟`)) return;
     if (!selectedProjectForActivities) return;
 
@@ -1026,9 +916,15 @@ export default function ProjectsView({
       }
     }
 
-    updateProject(updatedProject);
-    setSelectedProjectForActivities(updatedProject);
-    alert('فایل با موفقیت حذف شد.');
+    const saved = await persistProject(p, {
+      manualDocuments: updatedProject.manualDocuments,
+      attachments: updatedProject.attachments,
+    });
+    if (saved) {
+      setSelectedProjectForActivities(saved);
+      setProjectDocuments(await projectsApi.documents(p.id));
+      alert('فایل با موفقیت حذف شد.');
+    }
   };
 
   const generateDocumentHtml = (doc: any, project: any) => {
@@ -1484,75 +1380,13 @@ export default function ProjectsView({
   };
 
   const renderProjectSupplyStatus = (project: Project) => {
-    // 1. Get proformas of this project
-    const projectProformas = proformas.filter(pf => pf.projectId === project.id);
-    
-    // 2. Filter won or semi-won proformas
-    const wonProformas = projectProformas.filter(pf => {
-      const outcome = getProformaOutcomeStatus(pf);
-      return outcome === 'تأیید شده (برنده)' || outcome === 'نیمه برنده';
-    });
-
-    // 3. Extract items
-    const allWonItems: {
-      id: string;
-      productName: string;
-      productCode: string;
-      brand: string;
-      quantity: number;
-      supplyMethod: 'INVENTORY' | 'ORDER' | 'NONE';
-      proformaNumber: string;
-      proformaId: string;
-      proformaStatus: string;
-      originalProforma: Proforma;
-    }[] = [];
-
-    wonProformas.forEach(pf => {
-      let wonItems = [];
-      const hasExplicitWon = pf.items?.some(item => item.status === 'برنده');
-      if (hasExplicitWon) {
-        wonItems = pf.items.filter(item => item.status === 'برنده');
-      } else {
-        wonItems = pf.items?.filter(item => item.status !== 'بازنده') || [];
-      }
-
-      wonItems.forEach(item => {
-        // Correctly resolve the supplyMethod: Check matching product from products list
-        const matchedProd = products?.find(p => p.id === item.productId || p.code === item.productCode);
-        
-        // Also check if the project has specified a supply method for this product
-        const projectItemNeeded = project.itemsNeeded?.find(i => i.productId === item.productId);
-        
-        let resolvedSupplyMethod: 'INVENTORY' | 'ORDER' | 'NONE' = 'INVENTORY';
-        
-        if (item.supplyMethod && item.supplyMethod !== 'INVENTORY') {
-          resolvedSupplyMethod = item.supplyMethod;
-        } else if (projectItemNeeded && projectItemNeeded.supplyMethod && projectItemNeeded.supplyMethod !== 'INVENTORY') {
-          resolvedSupplyMethod = projectItemNeeded.supplyMethod;
-        } else if (matchedProd && (matchedProd.stockLevel === 0 ? 'ORDER' : matchedProd.supplyType) === 'ORDER') {
-          resolvedSupplyMethod = 'ORDER';
-        } else if (item.supplyMethod) {
-          resolvedSupplyMethod = item.supplyMethod;
-        } else if (projectItemNeeded && projectItemNeeded.supplyMethod) {
-          resolvedSupplyMethod = projectItemNeeded.supplyMethod;
-        } else if (matchedProd && matchedProd.supplyType) {
-          resolvedSupplyMethod = matchedProd.stockLevel === 0 ? 'ORDER' : matchedProd.supplyType;
-        }
-
-        allWonItems.push({
-          id: item.id,
-          productName: item.productName,
-          productCode: item.productCode,
-          brand: item.brand,
-          quantity: item.quantity,
-          supplyMethod: resolvedSupplyMethod,
-          proformaNumber: pf.proformaNumber,
-          proformaId: pf.id,
-          proformaStatus: getProformaOutcomeStatus(pf),
-          originalProforma: pf
-        });
-      });
-    });
+    // Won lines and how each is supplied, resolved server-side. The client used
+    // to derive this by scanning proformas and products and reconciling three
+    // disagreeing sources per line.
+    const allWonItems = (summaryOf(project.id)?.wonItems ?? []).map((item) => ({
+      ...item,
+      quantity: Number(item.quantity),
+    }));
 
     // Calculations for metrics
     const totalCount = allWonItems.reduce((acc, item) => acc + item.quantity, 0);
@@ -1581,7 +1415,7 @@ export default function ProjectsView({
           <div className="flex gap-2">
             <span className="text-[10px] font-bold text-slate-600 bg-white px-2.5 py-1.5 rounded-lg border border-slate-200 flex items-center gap-1 shadow-sm">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-              <span>پیش‌فاکتورهای برنده شده: {wonProformas.length} عدد</span>
+              <span>پیش‌فاکتورهای برنده شده: {new Set(allWonItems.map(i => i.proformaId)).size} عدد</span>
             </span>
           </div>
         </div>
@@ -1735,9 +1569,10 @@ export default function ProjectsView({
                                   name: `پیش‌فاکتور ${item.proformaNumber}.pdf`,
                                   url: '#',
                                   size: 'سند سیستم',
-                                  date: item.originalProforma.issueDate,
+                                  date: '',
                                   type: 'system',
-                                  originalEntity: item.originalProforma
+                                  // The link only needs to identify the proforma.
+                                  originalEntity: { id: item.proformaId, proformaNumber: item.proformaNumber }
                                 });
                               }}
                               className="text-sky-600 hover:text-sky-700 font-bold hover:underline flex items-center gap-1 w-fit"
@@ -1807,7 +1642,7 @@ export default function ProjectsView({
         milestones: [...projectMilestones, newMs]
       };
 
-      updateProject(updated);
+      void persistProject(project, updated);
       setNewMilestoneName("");
       setNewMilestoneDueDate("");
       setNewMilestoneNotes("");
@@ -1833,7 +1668,7 @@ export default function ProjectsView({
         milestones: updatedMilestones
       };
 
-      updateProject(updated);
+      void persistProject(project, updated);
     };
 
     const handleDeleteMilestone = (milestoneId: string) => {
@@ -1847,7 +1682,7 @@ export default function ProjectsView({
         milestoneRules: updatedRules
       };
 
-      updateProject(updated);
+      void persistProject(project, updated);
     };
 
     const handleAddRule = (e: React.FormEvent) => {
@@ -1870,7 +1705,7 @@ export default function ProjectsView({
         milestoneRules: [...projectRules, newRule]
       };
 
-      updateProject(updated);
+      void persistProject(project, updated);
       setNewRuleTitle("");
       setNewRuleDesc("");
       setNewRuleAssignedTo("");
@@ -1885,7 +1720,7 @@ export default function ProjectsView({
         ...project,
         milestoneRules: updatedRules
       };
-      updateProject(updated);
+      void persistProject(project, updated);
     };
 
     return (
@@ -5215,9 +5050,15 @@ export default function ProjectsView({
           setProjectToDeleteId(null);
           setProjectToDeleteName('');
         }}
-        onConfirm={() => {
-          if (projectToDeleteId) {
-            deleteProject(projectToDeleteId, false);
+        onConfirm={async () => {
+          if (!projectToDeleteId) return;
+          try {
+            await projectsApi.remove(projectToDeleteId);
+            list.refresh();
+          } catch (err) {
+            // The server refuses while proformas, orders or transactions point
+            // at the project, and says which.
+            reportError(err, 'حذف پروژه با خطا مواجه شد.');
           }
         }}
         title="حذف پروژه"
@@ -5275,7 +5116,9 @@ export default function ProjectsView({
           addCustomer={addCustomer}
           products={products}
           addProduct={addProduct}
-          users={users}
+          // The directory carries names and ids, which is all this modal's
+          // picker renders — not the full account records.
+          users={users as unknown as UserType[]}
           initialCustType={(quickAddCustomerTarget === 'financialContact' || quickAddCustomerTarget === 'technicalContact') ? 'حقیقی' : undefined}
           initialLinkedCustomerIds={((quickAddCustomerTarget === 'financialContact' || quickAddCustomerTarget === 'technicalContact') && customerId) ? [customerId] : undefined}
           onSuccess={(newEntity) => {

@@ -24,7 +24,21 @@ export interface ActualDeliveryLine {
   boxNumber: string | null;
 }
 
+/** A won line, with how it will be supplied — resolved server-side. */
+export interface WonItem {
+  id: string;
+  productName: string;
+  productCode: string;
+  brand: string;
+  quantity: string;
+  supplyMethod: string;
+  proformaId: string;
+  proformaNumber: string;
+  proformaStatus: string;
+}
+
 export interface ProjectSummary {
+  wonItems: WonItem[];
   pipelineValue: string;
   pipelineCurrency: string;
   prepaymentDate: string | null;
@@ -34,6 +48,16 @@ export interface ProjectSummary {
   actualItems: ActualDeliveryLine[];
   singleActualDate: string | null;
   counts: { proformas: number; deliveries: number; receipts: number };
+}
+
+/** One entry in the documents tab. Paths and names only — never file contents. */
+export interface ProjectDocument {
+  id: string;
+  name: string;
+  url: string;
+  size: string;
+  date: string;
+  type: string;
 }
 
 export interface ProjectRow {
@@ -201,6 +225,17 @@ export const projectsApi = {
     }
     return rows.slice(0, limit);
   },
+
+  /**
+   * The documents tab's contents, grouped by folder.
+   *
+   * Separate from `get` because it touches seven tables — the project's own
+   * attachments plus its proformas, inquiries, orders, packing lists,
+   * transactions and services. Fetched when the tab is opened, not before.
+   */
+  documents: (projectId: string) =>
+    api.get<{ folders: { id: string; name: string }[]; documents: Record<string, ProjectDocument[]> }>(
+      `/api/projects/${projectId}/documents`).then((r) => r.documents),
 
   /* ------------------------ activity & referrals ------------------------ */
 

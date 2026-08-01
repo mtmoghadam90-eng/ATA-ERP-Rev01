@@ -33,7 +33,27 @@ export interface ActualDeliveryLine {
   boxNumber: string | null;
 }
 
+/**
+ * A won line, with how it is to be supplied.
+ *
+ * The supply panel needs this per project; it is assembled from the proformas
+ * this function has already loaded, so it costs nothing extra.
+ */
+export interface WonItem {
+  id: string;
+  productName: string;
+  productCode: string;
+  brand: string;
+  quantity: string;
+  supplyMethod: string;
+  proformaId: string;
+  proformaNumber: string;
+  proformaStatus: string;
+}
+
 export interface ProjectSummary {
+  /** Won lines across the project's proformas, for the supply panel. */
+  wonItems: WonItem[];
   /** Latest proforma's final amount, and the currency it was quoted in. */
   pipelineValue: string;
   pipelineCurrency: string;
@@ -51,6 +71,7 @@ export interface ProjectSummary {
 }
 
 const EMPTY: ProjectSummary = {
+  wonItems: [],
   pipelineValue: "0",
   pipelineCurrency: "",
   prepaymentDate: null,
@@ -83,6 +104,38 @@ function termToDays(range: string | null, unit: string | null): number {
   if (unit === "هفته") return value * 7;
   if (unit === "ماه") return value * 30;
   return value;
+}
+
+interface SupplyProduct { id: string; code: string; supplyType: string; stockLevel: unknown }
+interface SupplyLine { productId: string | null; productCode: string | null; supplyMethod: string | null }
+
+/**
+ * How a won line will actually be supplied.
+ *
+ * Three sources disagree in practice, so they are consulted in order of how
+ * specific they are: what the proforma line says, then what the project's own
+ * requested-items grid says, then the product's default. A product with nothing
+ * in stock has to be ordered whatever its default says, which is the case the
+ * fallback exists for.
+ */
+function resolveSupplyMethod(
+  line: SupplyLine,
+  projectItems: { productId: string | null; supplyMethod: string | null }[] | undefined,
+  productsById: Map<string, SupplyProduct>,
+): string {
+  const fromProject = projectItems?.find((i) => i.productId && i.productId === line.productId);
+  const product = line.productId ? productsById.get(line.productId) : undefined;
+
+  // An explicit non-default choice on the line wins outright.
+  if (line.supplyMethod && line.supplyMethod !== "INVENTORY") return line.supplyMethod;
+  if (fromProject?.supplyMethod && fromProject.supplyMethod !== "INVENTORY") return fromProject.supplyMethod;
+
+  if (product) {
+    const outOfStock = Number(product.stockLevel) === 0;
+    if (outOfStock || product.supplyType === "ORDER") return "ORDER";
+  }
+
+  return line.supplyMethod || fromProject?.supplyMethod || product?.supplyType || "INVENTORY";
 }
 
 /** The proforma whose figures represent the project: latest by issue date. */
@@ -121,12 +174,14 @@ export async function summarizeProjects(
     db.proforma.findMany({
       where: { projectId: { in: ids } },
       select: {
-        id: true, projectId: true, status: true, isCancelled: true, currency: true,
+        id: true, projectId: true, proformaNumber: true, status: true,
+        isCancelled: true, currency: true,
         finalAmount: true, issueDate: true, createdAt: true,
         deliveryDateJalali: true,
         items: {
           select: {
-            id: true, productName: true, status: true, supplyMethod: true,
+            id: true, productId: true, productName: true, productCode: true, brand: true, quantity: true,
+            status: true, supplyMethod: true,
             deliveryRange: true, deliveryUnit: true, deliveryType: true, deliveryPostfix: true,
           },
         },
@@ -163,6 +218,27 @@ export async function summarizeProjects(
   const proformasBy = byProject(proformas);
   const receiptsBy = byProject(receipts);
   const deliveriesBy = byProject(deliveries);
+
+  // The supply fallback consults the project's own requested items and the
+  // product's stock. Both are fetched once for the page, not per line.
+  const db2 = getDb();
+  const projectItems = await db2.projectItem.findMany({
+    where: { projectId: { in: ids } },
+    select: { projectId: true, productId: true, supplyMethod: true },
+  });
+  const projectItemsBy = byProject(projectItems);
+
+  const productIds = [...new Set(
+    proformas.flatMap((pf) => pf.items.map((i) => i.productId)).filter((id): id is string => !!id),
+  )];
+  const productsById = new Map<string, SupplyProduct>();
+  if (productIds.length > 0) {
+    const rows = await db2.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, code: true, supplyType: true, stockLevel: true },
+    });
+    for (const row of rows) productsById.set(row.id, row);
+  }
 
   for (const project of projects) {
     const pfs = proformasBy.get(project.id) ?? [];
@@ -234,7 +310,26 @@ export async function summarizeProjects(
     const distinctActual = new Set(actualItems.map((i) => i.actualDate));
     const approved = won[0];
 
+    // The same won lines the schedule is built from, with how each is supplied.
+    const wonItems: WonItem[] = [];
+    for (const pf of won) {
+      for (const item of getWonItems(pf, true)) {
+        wonItems.push({
+          id: item.id,
+          productName: item.productName,
+          productCode: item.productCode ?? "",
+          brand: item.brand ?? "",
+          quantity: item.quantity.toString(),
+          supplyMethod: resolveSupplyMethod(item, projectItemsBy.get(project.id), productsById),
+          proformaId: pf.id,
+          proformaNumber: pf.proformaNumber,
+          proformaStatus: getProformaOutcome(pf),
+        });
+      }
+    }
+
     result.set(project.id, {
+      wonItems,
       pipelineValue: latest?.finalAmount?.toString() ?? "0",
       pipelineCurrency: latest?.currency ?? "",
       prepaymentDate: prepaymentDate ?? null,

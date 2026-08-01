@@ -6,6 +6,7 @@ import {
   countProjectReferences, createProject, deleteProject, getProject,
   listProjects, projectSummary, updateProject,
 } from "../services/projectService";
+import { DOCUMENT_FOLDERS, listProjectDocuments } from "../services/projectDocuments";
 
 /**
  * Projects REST API. Follows the customers pattern: paginated reads, a picked
@@ -81,6 +82,31 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
       res.json({ success: true, project });
     } catch (err) {
       sendError(res, err, "GET /api/projects/:id");
+    }
+  });
+
+  /**
+   * Every document attached to the project, grouped by folder. Fetched when the
+   * documents tab is opened, not with the project — it touches seven tables.
+   */
+  app.get("/api/projects/:id/documents", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      // Visibility is checked against the project itself, since the documents
+      // belong to it.
+      const project = await getProject(req.params.id, user);
+      if (!project) {
+        res.status(404).json({ success: false, error: "پروژه یافت نشد." });
+        return;
+      }
+      res.json({
+        success: true,
+        folders: DOCUMENT_FOLDERS,
+        documents: await listProjectDocuments(req.params.id),
+      });
+    } catch (err) {
+      sendError(res, err, "GET /api/projects/:id/documents");
     }
   });
 
