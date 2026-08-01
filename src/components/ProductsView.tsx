@@ -21,7 +21,8 @@ import {
   ArrowDown,
   ScanSearch,
   AlertTriangle,
-  CheckCircle2
+  CheckCircle2,
+  Loader2
 } from 'lucide-react';
 import { Product, ProductVariant, ERPSettings, InventoryTransaction, ProductFeature, ExchangeRate, ProductConfigRule } from '../types';
 import { toShamsiStr, toGregorianStr } from '../dateUtils';
@@ -36,14 +37,20 @@ import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/required
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
+import { ApiError } from '../api/client';
+import { productsApi, type InventoryMovementRow } from '../api/products';
+import { detailToProduct, productToWriteInput, rowToProduct } from '../api/productAdapter';
+import { useProductList } from '../api/useProductList';
+import { useList } from '../api/useList';
 
+/**
+ * Product catalogue and stock ledger.
+ *
+ * Reads through the API. The ledger is its own paginated query behind its own
+ * tab — it is append-only and grows without bound, so it is never loaded
+ * alongside the catalogue.
+ */
 interface ProductsViewProps {
-  products: Product[];
-  inventoryTransactions: InventoryTransaction[];
-  addProduct: (product: Omit<Product, 'id' | 'stockLevel'> & { stockLevel?: number, transactionDate?: string, customValues?: Record<string, any> }) => void;
-  updateProduct: (product: Product) => void;
-  deleteProduct: (id: string) => void;
-  adjustProductStock: (id: string, amount: number, variantId?: string, referenceId?: string, referenceType?: 'MANUAL' | 'PURCHASE_ORDER' | 'PROFORMA', notes?: string, transactionDate?: string) => void;
   batchImportProducts: (items: Array<{
     code?: string;
     name?: string;
@@ -61,20 +68,106 @@ interface ProductsViewProps {
 }
 
 export default function ProductsView({
-  products,
-  addProduct,
-  updateProduct,
-  deleteProduct,
-  adjustProductStock,
   batchImportProducts,
   categories,
   settings,
-  inventoryTransactions,
   exchangeRates = []
 }: ProductsViewProps) {
-  const [search, setSearch] = useState('');
+  const list = useProductList();
+  const search = list.search;
+  const setSearch = list.setSearch;
+
+  /** The page of products, in the shape this screen's markup expects. */
+  const products = React.useMemo(() => list.rows.map(rowToProduct), [list.rows]);
+
   const [activeTab, setActiveTab] = useState<'PRODUCTS' | 'TRANSACTIONS'>('PRODUCTS');
-  const [selectedCategory, setSelectedCategory] = useState('all');
+
+  /**
+   * The stock ledger, its own paginated query.
+   *
+   * Only fetched while its tab is open: it is a long, append-only table and the
+   * catalogue tab has no use for it.
+   */
+  const ledger = useList<InventoryMovementRow>({
+    path: '/api/inventory-transactions',
+    pageSize: 50,
+    sort: 'occurredAt',
+    order: 'desc',
+    enabled: activeTab === 'TRANSACTIONS',
+  });
+
+  const inventoryTransactions = ledger.rows;
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  /**
+   * Writes, keeping the shapes the form already builds.
+   *
+   * Variants are reconciled by identity on the server, not rebuilt, so a SKU
+   * keeps its stock and the documents that reference it across a save.
+   */
+  const addProduct = async (product: Partial<Product>) => {
+    try {
+      await productsApi.create(productToWriteInput(product));
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت کالا با خطا مواجه شد.');
+    }
+  };
+
+  const updateProduct = async (product: Product) => {
+    try {
+      await productsApi.update(product.id, productToWriteInput(product));
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت تغییرات کالا با خطا مواجه شد.');
+    }
+  };
+
+  const deleteProduct = async (id: string) => {
+    try {
+      await productsApi.remove(id);
+      list.refresh();
+    } catch (err) {
+      // The server refuses while a proforma, order or project line points at it.
+      reportError(err, 'حذف کالا با خطا مواجه شد.');
+    }
+  };
+
+  /**
+   * Adjusts stock by a signed amount.
+   *
+   * A delta rather than a new level, so two people adjusting at once add up
+   * instead of overwriting each other — and the movement is recorded with it.
+   */
+  const adjustProductStock = async (
+    id: string,
+    amount: number,
+    variantId?: string,
+    _referenceId?: string,
+    _referenceType?: string,
+    notes?: string,
+    transactionDate?: string,
+  ) => {
+    try {
+      await productsApi.adjustStock(id, {
+        delta: amount,
+        variantId: variantId ?? null,
+        notes: notes ?? null,
+        occurredAt: transactionDate,
+      });
+      list.refresh();
+      if (activeTab === 'TRANSACTIONS') ledger.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت تغییر موجودی با خطا مواجه شد.');
+    }
+  };
+
+  const selectedCategory = list.filters.category;
+  const setSelectedCategory = (value: string) => list.setFilter('category', value);
   const [showModal, setShowModal] = useState(false);
   const [isProductModalFullscreen, setIsProductModalFullscreen] = useState(false);
   const [isStockModalFullscreen, setIsStockModalFullscreen] = useState(false);
@@ -854,7 +947,27 @@ export default function ProductsView({
                 );
               })}
 
-              {filteredProducts.length === 0 && (
+              {/* Nothing to report before the first response — "none found"
+                  while loading reads as an empty catalogue. */}
+              {list.initialLoading && (
+                <tr>
+                  <td colSpan={4} className="text-center p-12 text-slate-400 bg-white">
+                    <Loader2 className="mx-auto text-slate-300 mb-3 animate-spin" size={36} />
+                    در حال دریافت اطلاعات…
+                  </td>
+                </tr>
+              )}
+              {list.error && !list.initialLoading && (
+                <tr>
+                  <td colSpan={4} className="text-center p-12 bg-white">
+                    <p className="text-sm text-rose-600 font-medium">{list.error}</p>
+                    <button onClick={() => list.refresh()} className="mt-3 text-xs text-sky-600 hover:underline font-bold">
+                      تلاش دوباره
+                    </button>
+                  </td>
+                </tr>
+              )}
+              {filteredProducts.length === 0 && !list.initialLoading && !list.error && (
                 <tr>
                   <td colSpan={4} className="text-center p-12 text-slate-400 bg-white">
                     <Package className="mx-auto text-slate-300 mb-3" size={40} />
@@ -864,6 +977,33 @@ export default function ProductsView({
               )}
             </tbody>
           </table>
+
+          {list.totalPages > 1 && (
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-slate-100 bg-slate-50/60 flex-wrap">
+              <span className="text-[11px] text-slate-500 font-medium">
+                نمایش {list.rows.length.toLocaleString('fa-IR')} از {list.total.toLocaleString('fa-IR')} کالا
+                {' — '}صفحه {list.page.toLocaleString('fa-IR')} از {list.totalPages.toLocaleString('fa-IR')}
+              </span>
+              <div className="flex items-center gap-1.5">
+                {[
+                  { label: 'اول', to: 1, disabled: list.page === 1 },
+                  { label: 'قبلی', to: list.page - 1, disabled: list.page === 1 },
+                  { label: 'بعدی', to: list.page + 1, disabled: list.page >= list.totalPages },
+                  { label: 'آخر', to: list.totalPages, disabled: list.page >= list.totalPages },
+                ].map((btn) => (
+                  <button
+                    key={btn.label}
+                    type="button"
+                    onClick={() => list.setPage(btn.to)}
+                    disabled={btn.disabled || list.loading}
+                    className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  >
+                    {btn.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
       </>
@@ -881,22 +1021,30 @@ export default function ProductsView({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700 text-xs">
-              {inventoryTransactions.length === 0 && (
+              {ledger.initialLoading && (
+                 <tr>
+                    <td colSpan={5} className="text-center p-12 text-slate-400">
+                      <Loader2 className="mx-auto text-slate-300 mb-3 animate-spin" size={36} />
+                      در حال دریافت تاریخچه…
+                    </td>
+                 </tr>
+              )}
+              {inventoryTransactions.length === 0 && !ledger.initialLoading && (
                  <tr>
                     <td colSpan={5} className="text-center p-12 text-slate-400">هیچ تراکنشی یافت نشد.</td>
                  </tr>
               )}
-              {inventoryTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map(tr => {
-                const p = products.find(prod => prod.id === tr.productId);
-                const variant = tr.variantId && p?.variants?.find(v => v.id === tr.variantId);
+              {/* Already ordered by the query, and the product and SKU come
+                  joined with each movement rather than looked up. */}
+              {inventoryTransactions.map(tr => {
                 return (
                   <tr key={tr.id} className="hover:bg-slate-50/50 transition">
-                    <td className="p-4 font-mono">{toShamsiStr(tr.date)}</td>
+                    <td className="p-4 font-mono">{tr.occurredAtJalali || toShamsiStr(tr.occurredAt)}</td>
                     <td className="p-4 font-bold">
-                      {p ? p.displayName : 'کالای حذف شده'}
-                      {variant && (
+                      {tr.product ? tr.product.displayName : 'کالای حذف شده'}
+                      {tr.variant && (
                         <div className="text-[11px] font-normal text-slate-500 mt-0.5">
-                          SKU: {variant.sku || '—'} ({Object.values(variant.attributes).join(' / ')})
+                          SKU: {tr.variant.sku || '—'}
                         </div>
                       )}
                     </td>
@@ -915,6 +1063,34 @@ export default function ProductsView({
               })}
             </tbody>
           </table>
+
+          {/* The ledger is append-only and unbounded, so it always pages. */}
+          {ledger.totalPages > 1 && (
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-slate-100 bg-slate-50/60 flex-wrap">
+              <span className="text-[11px] text-slate-500 font-medium">
+                نمایش {ledger.rows.length.toLocaleString('fa-IR')} از {ledger.total.toLocaleString('fa-IR')} تراکنش
+                {' — '}صفحه {ledger.page.toLocaleString('fa-IR')} از {ledger.totalPages.toLocaleString('fa-IR')}
+              </span>
+              <div className="flex items-center gap-1.5">
+                {[
+                  { label: 'اول', to: 1, disabled: ledger.page === 1 },
+                  { label: 'قبلی', to: ledger.page - 1, disabled: ledger.page === 1 },
+                  { label: 'بعدی', to: ledger.page + 1, disabled: ledger.page >= ledger.totalPages },
+                  { label: 'آخر', to: ledger.totalPages, disabled: ledger.page >= ledger.totalPages },
+                ].map((btn) => (
+                  <button
+                    key={btn.label}
+                    type="button"
+                    onClick={() => ledger.setPage(btn.to)}
+                    disabled={btn.disabled || ledger.loading}
+                    className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  >
+                    {btn.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
       )}

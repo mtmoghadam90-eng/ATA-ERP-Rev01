@@ -345,13 +345,9 @@ export default function App() {
         );
       case 'products':
         return (
-          <ProductsView 
-            products={store.products}
-            inventoryTransactions={store.inventoryTransactions}
-            addProduct={store.addProduct}
-            updateProduct={store.updateProduct}
-            deleteProduct={store.deleteProduct}
-            adjustProductStock={store.adjustProductStock}
+          // Reads its own data from the API; the stock ledger is a separate
+          // paginated query behind its own tab.
+          <ProductsView
             batchImportProducts={store.batchImportProducts}
             categories={store.settings.dropdownItems.categories}
             units={store.settings.dropdownItems.units}
