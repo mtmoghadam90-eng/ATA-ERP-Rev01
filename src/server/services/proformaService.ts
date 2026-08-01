@@ -52,8 +52,19 @@ export function buildProformaWhere(
   const visibility = visibilityClause(user);
   if (visibility) and.push(visibility);
 
-  const search = searchClause(q.search, SEARCH_FIELDS);
-  if (search) and.push(search);
+  if (q.search) {
+    // The grid's one search box also matches the customer's and the project's
+    // name, neither of which is a column on the proforma.
+    const own = searchClause(q.search, SEARCH_FIELDS);
+    const byCustomer = searchClause(q.search, ["companyName"]);
+    const byProject = searchClause(q.search, ["name", "code"]);
+
+    const alternatives: Record<string, unknown>[] = [];
+    if (own) alternatives.push(...own.OR);
+    if (byCustomer) alternatives.push({ customer: byCustomer });
+    if (byProject) alternatives.push({ project: byProject });
+    if (alternatives.length > 0) and.push({ OR: alternatives });
+  }
 
   for (const [field, value] of Object.entries(q.filters)) {
     and.push({ [field]: value });
@@ -91,8 +102,10 @@ const LIST_SELECT = {
   finalAmount: true,
   creatorUserId: true,
   createdAt: true,
-  customer: { select: { id: true, companyName: true } },
-  project: { select: { id: true, code: true, name: true } },
+  customer: { select: { id: true, companyName: true, customerType: true } },
+  // The grid groups by project and its header shows the project's own status,
+  // so that comes down with the row rather than being looked up separately.
+  project: { select: { id: true, code: true, name: true, status: true } },
   creator: { select: { id: true, fullName: true } },
   items: { select: { status: true, supplyMethod: true } },
   _count: { select: { items: true } },
