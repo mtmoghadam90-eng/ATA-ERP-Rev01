@@ -107,7 +107,12 @@ const LIST_SELECT = {
   // so that comes down with the row rather than being looked up separately.
   project: { select: { id: true, code: true, name: true, status: true } },
   creator: { select: { id: true, fullName: true } },
-  items: { select: { status: true, supplyMethod: true } },
+  // The grid lists each line's name and quantity beside the customer, and
+  // colours it by status — four small columns, not the whole line.
+  items: {
+    orderBy: { lineNo: "asc" },
+    select: { id: true, productName: true, quantity: true, status: true, supplyMethod: true },
+  },
   _count: { select: { items: true } },
 } satisfies Prisma.ProformaSelect;
 

@@ -27,6 +27,7 @@ import {
   Maximize2,
   Minimize2,
   Calculator,
+  Loader2,
 } from "lucide-react";
 import {
   Proforma,
@@ -44,6 +45,11 @@ import ShamsiDatePicker from "./ShamsiDatePicker";
 import { getProformaOutcomeStatus } from "../useERPStore";
 import ConfirmModal from "./ConfirmModal";
 import { SearchableSelect } from "./SearchableSelect";
+import { ApiError } from "../api/client";
+import { proformasApi } from "../api/proformas";
+import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
+import { useProformaList } from "../api/useProformaList";
+import { useUserDirectory } from "../api/useUserDirectory";
 import QuickAddModal from "./QuickAddModal";
 import { toPersianDigits } from "../numUtils";
 import ModuleNotesSection from "./ModuleNotesSection";
@@ -183,30 +189,22 @@ const getDeliverySummary = (itemsList: any[]) => {
   return `${range} ${unit} ${type} (ردیف‌های دیگر متفاوت)`;
 };
 
+/**
+ * Proformas screen.
+ *
+ * Reads through the API. The projects and customers it needs are the ones the
+ * server joined onto the page's rows — the screen groups by project and labels
+ * rows by customer, neither of which requires the whole table.
+ */
 interface ProformasViewProps {
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
-  proformas: Proforma[];
-  customers: Customer[];
-  projects: Project[];
   products: Product[];
   settings: ERPSettings;
   exchangeRates: ExchangeRate[];
-  addProforma: (proforma: Omit<Proforma, "id" | "proformaNumber"> & { proformaNumber?: string }) => void;
-  updateProforma: (proforma: Proforma) => void;
-  updateProformaStatus: (
-    id: string,
-    status: Proforma["status"],
-    lossReason?: string,
-    sentMethod?: string,
-    sentRecipients?: string[],
-  ) => void;
-  batchUpdateProjectProformasStatus: (
-    projectId: string,
-    status: Proforma["status"],
-    lossReason?: string,
-  ) => void;
-  deleteProforma: (id: string) => void;
+  // The five proforma mutations are no longer props: the view calls the API
+  // directly, so the totals and the derived outcome come back from the server
+  // that computed them.
   addCustomer?: (
     customer: Omit<Customer, "id" | "createdAt">,
   ) => Customer | any;
@@ -228,27 +226,151 @@ interface ProformasViewProps {
 export default function ProformasView({
   initialPrintDocId,
   onClearInitialPrintDocId,
-  proformas,
-  customers,
-  projects,
   products,
   settings,
   exchangeRates,
-  addProforma,
-  updateProforma,
-  updateProformaStatus,
-  batchUpdateProjectProformasStatus,
-  deleteProforma,
   addCustomer,
   updateCustomer,
   addProject,
   addProduct,
   updateProduct,
-  users = [],
   currentUser = null,
 }: ProformasViewProps) {
-  const [search, setSearch] = useState("");
-  const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const list = useProformaList();
+  const search = list.search;
+  const setSearch = list.setSearch;
+
+  /** The page of proformas, in the shape this screen's markup expects. */
+  const proformas = React.useMemo(() => list.rows.map(rowToProforma), [list.rows]);
+
+  /**
+   * The projects and customers referenced by the page, assembled from what the
+   * server joined onto each row. The screen groups by project and labels rows by
+   * customer; neither needs the whole table for that.
+   */
+  const projects = React.useMemo(() => {
+    const seen = new Map<string, Project>();
+    for (const row of list.rows) {
+      if (row.project && !seen.has(row.project.id)) {
+        seen.set(row.project.id, {
+          id: row.project.id,
+          code: row.project.code,
+          name: row.project.name,
+          status: row.project.status,
+          customerId: row.customerId,
+        } as Project);
+      }
+    }
+    return [...seen.values()];
+  }, [list.rows]);
+
+  const customers = React.useMemo(() => {
+    const seen = new Map<string, Customer>();
+    for (const row of list.rows) {
+      if (row.customer && !seen.has(row.customer.id)) {
+        seen.set(row.customer.id, {
+          id: row.customer.id,
+          companyName: row.customer.companyName,
+          customerType: row.customer.customerType,
+        } as Customer);
+      }
+    }
+    return [...seen.values()];
+  }, [list.rows]);
+
+  const { users } = useUserDirectory();
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  /**
+   * Writes, keeping the shapes the form already builds.
+   *
+   * Totals are not sent: the server recomputes every one from the lines it
+   * stores, so the form's arithmetic is a preview rather than the record.
+   */
+  const addProforma = async (data: Partial<Proforma>) => {
+    try {
+      await proformasApi.create(proformaToWriteInput(data));
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت پیش‌فاکتور با خطا مواجه شد.');
+    }
+  };
+
+  const updateProforma = async (pf: Proforma) => {
+    try {
+      await proformasApi.update(pf.id, proformaToWriteInput(pf));
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت تغییرات پیش‌فاکتور با خطا مواجه شد.');
+    }
+  };
+
+  const updateProformaStatus = async (
+    id: string,
+    status: Proforma['status'],
+    lossReason?: string,
+    sentMethod?: string,
+    sentRecipients?: string[],
+  ) => {
+    try {
+      await proformasApi.update(id, {
+        status,
+        lossReason: lossReason ?? null,
+        sentMethod: sentMethod ?? null,
+        sentRecipients,
+        // "Cancelled" is a flag rather than a status on the server, because the
+        // outcome is otherwise derived from the lines.
+        isCancelled: status === 'لغو شده',
+      });
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'تغییر وضعیت پیش‌فاکتور با خطا مواجه شد.');
+    }
+  };
+
+  /**
+   * Moves every proforma of a project to one status.
+   *
+   * Fetched rather than filtered from the page in hand: a project can easily
+   * have proformas the current page does not show, and missing one would leave
+   * the project's derived status wrong.
+   */
+  const batchUpdateProjectProformasStatus = async (
+    projectId: string,
+    status: Proforma['status'],
+    lossReason?: string,
+  ) => {
+    try {
+      const all = await proformasApi.listAll({ projectId });
+      for (const row of all) {
+        await proformasApi.update(row.id, {
+          status,
+          lossReason: lossReason ?? null,
+          isCancelled: status === 'لغو شده',
+        });
+      }
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'تغییر وضعیت پیش‌فاکتورهای پروژه با خطا مواجه شد.');
+    }
+  };
+
+  const deleteProforma = async (id: string) => {
+    try {
+      await proformasApi.remove(id);
+      list.refresh();
+    } catch (err) {
+      // The server refuses while orders, transactions or deliveries point at it.
+      reportError(err, 'حذف پیش‌فاکتور با خطا مواجه شد.');
+    }
+  };
+
+  const selectedStatus = list.filters.status;
+  const setSelectedStatus = (value: string) => list.setFilter('status', value);
   const [quickAddType, setQuickAddType] = useState<
     "customer" | "project" | "supplier" | "product" | null
   >(null);
@@ -2661,10 +2783,59 @@ export default function ProformasView({
             </div>
           );
         })}
-        {filteredProformas.length === 0 && (
+        {/* Nothing to report before the first response — showing "none found"
+            while still loading reads as an empty database. */}
+        {list.initialLoading && (
+          <div className="bg-white rounded-2xl border border-slate-100 p-12 text-center text-slate-400">
+            <Loader2 className="mx-auto text-slate-300 mb-3 animate-spin" size={40} />
+            در حال دریافت اطلاعات…
+          </div>
+        )}
+
+        {list.error && !list.initialLoading && (
+          <div className="bg-white rounded-2xl border border-slate-100 p-12 text-center">
+            <p className="text-sm text-rose-600 font-medium">{list.error}</p>
+            <button
+              onClick={() => list.refresh()}
+              className="mt-3 text-xs text-sky-600 hover:underline font-bold"
+            >
+              تلاش دوباره
+            </button>
+          </div>
+        )}
+
+        {filteredProformas.length === 0 && !list.initialLoading && !list.error && (
           <div className="bg-white rounded-2xl border border-slate-100 p-12 text-center text-slate-400">
             <FileText className="mx-auto text-slate-300 mb-3" size={40} />
-            هیچ فاکتور یا پیش‌فاککوری با معیارهای مدنظر شما یافت نشد.
+            هیچ فاکتور یا پیش‌فاکتوری با معیارهای مدنظر شما یافت نشد.
+          </div>
+        )}
+
+        {/* Pagination. The screen groups one page by project; these move between pages. */}
+        {list.totalPages > 1 && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl border border-slate-100 bg-white flex-wrap">
+            <span className="text-[11px] text-slate-500 font-medium">
+              نمایش {list.rows.length.toLocaleString('fa-IR')} از {list.total.toLocaleString('fa-IR')} پیش‌فاکتور
+              {' — '}صفحه {list.page.toLocaleString('fa-IR')} از {list.totalPages.toLocaleString('fa-IR')}
+            </span>
+            <div className="flex items-center gap-1.5">
+              {[
+                { label: 'اول', to: 1, disabled: list.page === 1 },
+                { label: 'قبلی', to: list.page - 1, disabled: list.page === 1 },
+                { label: 'بعدی', to: list.page + 1, disabled: list.page >= list.totalPages },
+                { label: 'آخر', to: list.totalPages, disabled: list.page >= list.totalPages },
+              ].map((btn) => (
+                <button
+                  key={btn.label}
+                  type="button"
+                  onClick={() => list.setPage(btn.to)}
+                  disabled={btn.disabled || list.loading}
+                  className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>

@@ -53,7 +53,8 @@ export interface ProformaRow {
   customer: { id: string; companyName: string; customerType: string } | null;
   project: { id: string; code: string; name: string; status: string } | null;
   creator: { id: string; fullName: string } | null;
-  items: { status: string | null; supplyMethod: string | null }[];
+  /** Enough of each line for the grid: its name, quantity and status. */
+  items: { id: string; productName: string; quantity: string; status: string | null; supplyMethod: string | null }[];
   _count: { items: number };
   /** Derived from the line statuses; the grid shows this, not `status`. */
   outcomeStatus: string;

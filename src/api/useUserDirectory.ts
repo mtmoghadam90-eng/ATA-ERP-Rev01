@@ -18,6 +18,8 @@ export interface DirectoryUser {
   fullName: string;
   position?: string | null;
   isActive?: boolean;
+  /** Printed documents carry the creator's signature. */
+  signatureImage?: string | null;
 }
 
 let cache: DirectoryUser[] | null = null;

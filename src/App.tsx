@@ -364,25 +364,16 @@ export default function App() {
           <ProformasView 
             initialPrintDocId={printDocumentRequest?.module === 'proformas' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
-            proformas={store.proformas}
-            customers={store.customers}
-            projects={store.projects}
+            // Reads its own data from the API; the projects and customers it
+            // shows come joined onto the page's rows.
             products={store.products}
             settings={store.settings}
             exchangeRates={store.exchangeRates}
-            addProforma={store.addProforma}
-            updateProforma={store.updateProforma}
-            updateProformaStatus={store.updateProformaStatus}
-            batchUpdateProjectProformasStatus={store.batchUpdateProjectProformasStatus}
-            deleteProforma={store.deleteProforma}
             addCustomer={store.addCustomer}
             updateCustomer={store.updateCustomer}
             addProject={store.addProject}
             addProduct={store.addProduct}
             updateProduct={store.updateProduct}
-            users={store.users}
-            transactions={store.transactions}
-            packagingDeliveries={store.packagingDeliveries}
             currentUser={store.currentUser}
           />
         );

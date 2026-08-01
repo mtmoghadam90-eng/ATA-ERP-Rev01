@@ -34,7 +34,9 @@ const SAFE_SELECT = {
  * who holds which access.
  */
 const DIRECTORY_SELECT = {
-  id: true, fullName: true, position: true, isActive: true,
+  // signatureImage is here because printed documents carry the creator's
+  // signature; it is a document asset, not an account detail.
+  id: true, fullName: true, position: true, isActive: true, signatureImage: true,
 } satisfies Prisma.UserSelect;
 
 function canManage(user: AuthUser): boolean {
