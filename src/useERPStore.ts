@@ -198,6 +198,19 @@ export const onSessionExpired = (fn: () => void) => {
   return () => { sessionListeners.delete(fn); };
 };
 let sessionExpiredNotified = false;
+
+/**
+ * Clears the latch after a successful sign-in.
+ *
+ * Without this the flag stays set for the life of the page: one auth failure —
+ * including a mistyped password on the login screen — leaves the
+ * "session expired" modal up even once the user has signed in successfully,
+ * with no way to dismiss it short of reloading.
+ */
+export const resetSessionExpiredNotice = () => {
+  sessionExpiredNotified = false;
+};
+
 const notifySessionExpired = () => {
   if (sessionExpiredNotified) return; // only once per session loss
   sessionExpiredNotified = true;
@@ -3619,6 +3632,8 @@ export function useERPStore() {
         });
         const data = await res.json();
         if (res.ok && data.success && data.user) {
+          // A new session invalidates any earlier "session lost" notice.
+          resetSessionExpiredNotice();
           if (data.mustChangePassword) {
             return { success: true, mustChangePassword: true };
           }

@@ -270,7 +270,19 @@ export default function App() {
 
   // If there is no user logged in, intercept and show the LoginView
   if (!store.currentUser) {
-    return <LoginView onLogin={store.login} onLoginSuccess={store.loginWithUser} />;
+    // Reaching the login screen means any earlier "session lost" notice has
+    // served its purpose; leaving it set would show the modal again after a
+    // successful sign-in.
+    return (
+      <LoginView
+        onLogin={async (username, password) => {
+          const result = await store.login(username, password);
+          if (result.success) setSessionLost(false);
+          return result;
+        }}
+        onLoginSuccess={store.loginWithUser}
+      />
+    );
   }
 
   const renderActiveView = () => {

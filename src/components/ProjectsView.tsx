@@ -3138,7 +3138,29 @@ export default function ProjectsView({
           </table>
         </div>
 
-        {filteredProjects.length === 0 && (
+        {/* Before the first response there is nothing to report — showing
+            "no projects found" while loading reads as an empty database. */}
+        {list.initialLoading && (
+          <div className="text-center bg-white p-12 border-t border-slate-100 w-full">
+            <Loader2 className="mx-auto text-slate-300 mb-3 animate-spin" size={40} />
+            <p className="text-sm text-slate-500 font-medium">در حال دریافت اطلاعات…</p>
+          </div>
+        )}
+
+        {list.error && !list.initialLoading && (
+          <div className="text-center bg-white p-12 border-t border-slate-100 w-full">
+            <AlertCircle className="mx-auto text-rose-300 mb-3" size={40} />
+            <p className="text-sm text-rose-600 font-medium">{list.error}</p>
+            <button
+              onClick={() => list.refresh()}
+              className="mt-3 text-xs text-sky-600 hover:underline font-bold"
+            >
+              تلاش دوباره
+            </button>
+          </div>
+        )}
+
+        {filteredProjects.length === 0 && !list.initialLoading && !list.error && (
           <div className="text-center bg-white p-12 border-t border-slate-100 w-full">
             <Briefcase className="mx-auto text-slate-300 mb-3" size={48} />
             <p className="text-sm text-slate-500 font-medium">پروژه‌ای با این مشخصات یافت نشد.</p>
@@ -3150,6 +3172,34 @@ export default function ProjectsView({
                 پاک کردن فیلترهای ستونی
               </button>
             )}
+          </div>
+        )}
+
+        {/* Pagination. The grid holds one page; these move between them. */}
+        {list.totalPages > 1 && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-slate-100 bg-slate-50/60 flex-wrap">
+            <span className="text-[11px] text-slate-500 font-medium">
+              نمایش {list.rows.length.toLocaleString('fa-IR')} از {list.total.toLocaleString('fa-IR')} پروژه
+              {' — '}صفحه {list.page.toLocaleString('fa-IR')} از {list.totalPages.toLocaleString('fa-IR')}
+            </span>
+            <div className="flex items-center gap-1.5">
+              {[
+                { label: 'اول', to: 1, disabled: list.page === 1 },
+                { label: 'قبلی', to: list.page - 1, disabled: list.page === 1 },
+                { label: 'بعدی', to: list.page + 1, disabled: list.page >= list.totalPages },
+                { label: 'آخر', to: list.totalPages, disabled: list.page >= list.totalPages },
+              ].map((btn) => (
+                <button
+                  key={btn.label}
+                  type="button"
+                  onClick={() => list.setPage(btn.to)}
+                  disabled={btn.disabled || list.loading}
+                  className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
