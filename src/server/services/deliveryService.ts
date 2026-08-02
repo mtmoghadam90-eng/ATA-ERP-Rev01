@@ -5,6 +5,8 @@ import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { getWonItems } from "../proformaStatus";
+import { deriveServiceHeader } from "../afterSalesStatus";
+import { getTodayShamsi } from "../../dateUtils";
 
 /**
  * Packaging and delivery (packing lists) plus after-sales service.
@@ -444,18 +446,61 @@ function serviceScalarData(input: ServiceInput): Record<string, unknown> {
   return { ...out, ...expandDateFields(input as Record<string, unknown>, SERVICE_DATE_FIELDS) };
 }
 
+/**
+ * Rewrites the record's own name, dates and status from the rows just written.
+ *
+ * Read back from the database rather than from the request, so the roll-up
+ * describes what was actually stored.
+ */
+async function applyServiceHeader(tx: Prisma.TransactionClient, serviceId: string): Promise<void> {
+  const rows = await tx.afterSalesServiceItem.findMany({
+    where: { serviceId },
+    orderBy: { lineNo: "asc" },
+    select: {
+      productName: true, status: true, issueDescription: true, actionsTaken: true,
+      startDateJalali: true, endDateJalali: true, returnDateJalali: true,
+    },
+  });
+
+  const header = deriveServiceHeader(rows);
+  if (!header) return;
+
+  await tx.afterSalesService.update({
+    where: { id: serviceId },
+    data: {
+      itemName: header.itemName,
+      issueDescription: header.issueDescription,
+      actionsTaken: header.actionsTaken,
+      status: header.status,
+      ...expandDateFields(
+        { startDate: header.startDate, endDate: header.endDate, returnDate: header.returnDate },
+        SERVICE_DATE_FIELDS,
+      ),
+    } as Prisma.AfterSalesServiceUncheckedUpdateInput,
+  });
+}
+
 export async function createService(input: ServiceInput, user: AuthUser) {
   if (!allowed(user)) return null;
   const db = getDb();
 
   return db.$transaction(async (tx) => {
     const service = await tx.afterSalesService.create({
-      data: serviceScalarData(input) as Prisma.AfterSalesServiceUncheckedCreateInput,
+      data: {
+        // Placeholders for the NOT NULL columns. Every one of them is rolled up
+        // from the rows a moment later, but the row has to exist first.
+        itemName: "—",
+        status: "در حال بررسی",
+        ...expandDateFields({ startDate: getTodayShamsi() }, ["startDate"]),
+        ...serviceScalarData(input),
+      } as Prisma.AfterSalesServiceUncheckedCreateInput,
     });
     await syncChildren({
       delegate: tx.afterSalesServiceItem, parentWhere: { serviceId: service.id },
       rows: input.items ?? [], map: mapServiceItem,
     });
+    await applyServiceHeader(tx, service.id);
+
     return tx.afterSalesService.findUnique({
       where: { id: service.id },
       include: { items: { orderBy: { lineNo: "asc" } } },
@@ -482,6 +527,9 @@ export async function updateService(id: string, input: ServiceInput, user: AuthU
         rows: input.items, map: mapServiceItem,
       });
     }
+    // Also on a save that sent no rows: the header still has to agree with what
+    // is stored, and a caller may have edited only the record itself.
+    await applyServiceHeader(tx, id);
 
     return tx.afterSalesService.findUnique({
       where: { id },

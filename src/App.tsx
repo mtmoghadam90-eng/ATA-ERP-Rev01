@@ -486,13 +486,6 @@ export default function App() {
           <AfterSalesServicesView 
             initialPrintDocId={printDocumentRequest?.module === 'afterSalesServices' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
-            afterSalesServices={store.afterSalesServices}
-            projects={store.projects}
-            customers={store.customers}
-            proformas={store.proformas}
-            addAfterSalesService={store.addAfterSalesService}
-            updateAfterSalesService={store.updateAfterSalesService}
-            deleteAfterSalesService={store.deleteAfterSalesService}
             settings={store.settings}
             currentUser={store.currentUser}
           />

@@ -25,20 +25,34 @@ import { SearchableSelect } from './SearchableSelect';
 import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import ShamsiDatePicker from './ShamsiDatePicker';
-import { getProformaOutcomeStatus, getWonItemsOfProforma } from '../useERPStore';
 import ModuleNotesSection from './ModuleNotesSection';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
+import { ApiError } from '../api/client';
+import { afterSalesApi, detailToService, rowToService, serviceToWriteInput } from '../api/afterSales';
+import { useAfterSalesList } from '../api/useAfterSalesList';
+import { useEntitySearch } from '../api/useEntitySearch';
+import { useModuleNotes } from '../api/moduleNotes';
+import { customersApi } from '../api/customers';
+import { detailToCustomer } from '../api/customerAdapter';
+import { projectsApi } from '../api/projects';
+import { proformasApi } from '../api/proformas';
+import { detailToProforma } from '../api/proformaAdapter';
+import type { ProjectRow } from '../api/projects';
+import type { ProformaRow } from '../api/proformas';
 
+/**
+ * After-sales service.
+ *
+ * Reads through the API. A record's name, dates and status are rolled up from
+ * its rows by the server, so the form no longer computes them — the grid
+ * filters and sorts on those columns, and two clients disagreeing about them
+ * would file rows under a status they are not in.
+ */
 interface AfterSalesServicesViewProps {
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
-  afterSalesServices: AfterSalesService[];
-  projects: Project[];
-  customers: Customer[];
-  proformas: Proforma[];
-  addAfterSalesService: (service: Omit<AfterSalesService, 'id' | 'createdAt'>) => void;
-  updateAfterSalesService: (service: AfterSalesService) => void;
-  deleteAfterSalesService: (id: string, deleteLogs?: boolean) => void;
+  // Services, projects, customers and proformas are no longer props, and
+  // neither are the three mutations.
   settings: ERPSettings;
   currentUser: User | null;
 }
@@ -46,19 +60,15 @@ interface AfterSalesServicesViewProps {
 export default function AfterSalesServicesView({
   initialPrintDocId,
   onClearInitialPrintDocId,
-  afterSalesServices,
-  projects,
-  customers,
-  proformas,
-  addAfterSalesService,
-  updateAfterSalesService,
-  deleteAfterSalesService,
   settings,
   currentUser
 }: AfterSalesServicesViewProps) {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  
+  const list = useAfterSalesList();
+  const searchTerm = list.search;
+  const setSearchTerm = list.setSearch;
+  const statusFilter = list.filters.status;
+  const setStatusFilter = (v: string) => list.setFilter('status', v);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isModalFullscreen, setIsModalFullscreen] = useState(false);
   const [editingService, setEditingService] = useState<AfterSalesService | null>(null);
@@ -67,15 +77,18 @@ export default function AfterSalesServicesView({
   const [printTargetService, setPrintTargetService] = useState<AfterSalesService | null>(null);
 
   useEffect(() => {
-    if (initialPrintDocId) {
-      const service = afterSalesServices.find(s => s.id === initialPrintDocId);
-      if (service) {
-        setPrintTargetService(service);
+    if (!initialPrintDocId) return;
+    let cancelled = false;
+    afterSalesApi.get(initialPrintDocId)
+      .then((detail) => {
+        if (cancelled) return;
+        setPrintTargetService(detailToService(detail));
         setShowPrintModal(true);
-      }
-    }
-  }, [initialPrintDocId, afterSalesServices]);
-  
+      })
+      .catch(() => { /* a record that is gone simply does not open */ });
+    return () => { cancelled = true; };
+  }, [initialPrintDocId]);
+
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [selectedProformaNumber, setSelectedProformaNumber] = useState('');
   
@@ -97,29 +110,84 @@ export default function AfterSalesServicesView({
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [serviceToDelete, setServiceToDelete] = useState<string | null>(null);
-  const [deleteActivitiesWithService, setDeleteActivitiesWithService] = useState(true);
 
-  // Filter proformas of the selected project to won/approved ones
-  const selectedProjectProformas = useMemo(() => {
-    if (!selectedProjectId) return [];
-    return proformas.filter(p => {
-      if (p.projectId !== selectedProjectId) return false;
-      const outcome = getProformaOutcomeStatus(p);
-      return outcome === 'تأیید شده (برنده)' || outcome === 'نیمه برنده';
-    });
-  }, [selectedProjectId, proformas]);
+  // Notes are their own records, not a field on the service.
+  const serviceNotes = useModuleNotes('afterSalesService', editingService?.id, (m) => alert(m));
 
-  // Selected proforma object
-  const selectedProfObj = useMemo(() => {
-    if (!selectedProformaNumber || !selectedProjectId) return null;
-    return proformas.find(p => p.proformaNumber === selectedProformaNumber && p.projectId === selectedProjectId);
-  }, [selectedProformaNumber, selectedProjectId, proformas]);
+  /* Pickers. The project one also drives the grid's filter, so it stays on. */
+  const projectPicker = useEntitySearch<ProjectRow>({
+    path: '/api/projects', limit: 25,
+    params: { withSummary: 'false' },
+    getLabel: (row) => row.name,
+  });
+  const projects = projectPicker.matches as unknown as Project[];
 
-  // Won items of the selected proforma
-  const proformaItems = useMemo(() => {
-    if (!selectedProfObj) return [];
-    return getWonItemsOfProforma(selectedProfObj, true);
+  const proformaPicker = useEntitySearch<ProformaRow>({
+    path: '/api/proformas', limit: 50, enabled: isModalOpen,
+    params: { projectId: selectedProjectId || undefined },
+    getLabel: (row) => row.proformaNumber,
+  });
+
+  /**
+   * Won or partly-won proformas of the selected project.
+   *
+   * The outcome is derived on the server and arrives on the row, so this no
+   * longer re-derives it from the raw line statuses.
+   */
+  const selectedProjectProformas = useMemo(
+    () => proformaPicker.matches.filter(
+      p => p.outcomeStatus === 'تأیید شده (برنده)' || p.outcomeStatus === 'نیمه برنده',
+    ) as unknown as Proforma[],
+    [proformaPicker.matches],
+  );
+
+  const selectedProfObj = useMemo(
+    () => selectedProjectProformas.find(p => p.proformaNumber === selectedProformaNumber) ?? null,
+    [selectedProjectProformas, selectedProformaNumber],
+  );
+
+  /**
+   * The chosen proforma's won lines, which populate the item dropdown.
+   *
+   * A list row carries only enough to name and rank the proforma, so its lines
+   * are fetched when one is picked.
+   */
+  const [proformaItems, setProformaItems] = useState<Proforma['items']>([]);
+  useEffect(() => {
+    if (!selectedProfObj) {
+      setProformaItems([]);
+      return;
+    }
+    let cancelled = false;
+    proformasApi.get(selectedProfObj.id)
+      .then((detail) => {
+        if (cancelled) return;
+        const full = detailToProforma(detail);
+        setProformaItems((full.items ?? []).filter(i => i.status === 'برنده'));
+      })
+      .catch(() => { if (!cancelled) setProformaItems([]); });
+    return () => { cancelled = true; };
   }, [selectedProfObj]);
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  /* The selected project's customer, for the standing-agreement reminder. */
+  const [projectCustomer, setProjectCustomer] = useState<Customer | undefined>();
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setProjectCustomer(undefined);
+      return;
+    }
+    let cancelled = false;
+    projectsApi.get(selectedProjectId)
+      .then((project) => customersApi.get(project.customerId))
+      .then((customer) => { if (!cancelled) setProjectCustomer(detailToCustomer(customer)); })
+      .catch(() => { if (!cancelled) setProjectCustomer(undefined); });
+    return () => { cancelled = true; };
+  }, [selectedProjectId]);
 
   const resetItemForm = () => {
     setItemProductDropdownVal('');
@@ -141,12 +209,26 @@ export default function AfterSalesServicesView({
     resetItemForm();
   };
 
-  const handleOpenModal = (service?: AfterSalesService) => {
+  /**
+   * Opens the form. A grid row is a roll-up, so the record is fetched: its rows
+   * are what the form edits.
+   */
+  const handleOpenModal = async (row?: AfterSalesService) => {
+    let service: AfterSalesService | undefined;
+    if (row) {
+      try {
+        service = detailToService(await afterSalesApi.get(row.id));
+      } catch (err) {
+        reportError(err, 'دریافت سابقه خدمات با خطا مواجه شد.');
+        return;
+      }
+    }
+
     if (service) {
       setEditingService(service);
       setSelectedProjectId(service.projectId);
       setSelectedProformaNumber(service.proformaNumber || '');
-      
+
       // Load items or fall back to legacy top-level fields
       if (service.items && service.items.length > 0) {
         setServiceItems(service.items);
@@ -182,7 +264,11 @@ export default function AfterSalesServicesView({
       }
       finalProductName = itemCustomName.trim();
     } else if (itemProductDropdownVal) {
-      const selectedItem = proformaItems.find(item => item.productId === itemProductDropdownVal);
+      // Matched on the proforma line's own id, not its productId: a line typed
+      // straight onto the proforma has no product behind it, so keying by
+      // productId gave every such option the same empty value and none of them
+      // could be selected at all.
+      const selectedItem = proformaItems.find(item => item.id === itemProductDropdownVal);
       if (selectedItem) {
         finalProductName = selectedItem.brand ? `${selectedItem.productName} (${selectedItem.brand})` : selectedItem.productName;
         finalProductId = selectedItem.productId;
@@ -245,11 +331,16 @@ export default function AfterSalesServicesView({
   const handleEditRow = (row: AfterSalesServiceItem) => {
     setEditingRowId(row.id);
     
-    // Attempt to match with proforma won items
+    // Attempt to match with proforma won items. By product id when the row has
+    // one, else by name — the dropdown is keyed by the proforma line's id, so
+    // that is what has to be handed back to it.
     if (proformaItems.length > 0) {
-      const matched = proformaItems.find(pi => pi.productId === row.productId);
+      const matched = proformaItems.find(pi =>
+        (row.productId && pi.productId === row.productId) ||
+        pi.productName === row.productName,
+      );
       if (matched) {
-        setItemProductDropdownVal(row.productId || '');
+        setItemProductDropdownVal(matched.id);
       } else {
         setItemProductDropdownVal('custom');
         setItemCustomName(row.productName);
@@ -273,7 +364,7 @@ export default function AfterSalesServicesView({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (isFieldRequired(settings, 'afterSalesServices', 'projectId') && !selectedProjectId) {
@@ -281,7 +372,6 @@ export default function AfterSalesServicesView({
       return;
     }
 
-    
     if (!selectedProjectId) {
       alert('لطفاً پروژه را مشخص کنید.');
       return;
@@ -292,81 +382,22 @@ export default function AfterSalesServicesView({
       return;
     }
 
-    const project = projects.find(p => p.id === selectedProjectId);
-    if (!project) return;
-
-    // Calculate overall statistics from the items list
-    // Name summary: First product + other items count
-    const firstItem = serviceItems[0];
-    const itemNameSummary = serviceItems.length > 1 
-      ? `${firstItem.productName} و ${serviceItems.length - 1} کالای دیگر`
-      : firstItem.productName;
-
-    // Issue summary: First item issue
-    const issueSummary = firstItem.issueDescription;
-
-    // Combined actions summary
-    const actionsSummary = serviceItems
-      .map(item => item.actionsTaken)
-      .filter(Boolean)
-      .join(' | ') || '';
-
-    // Earliest start date
-    const startDates = serviceItems.map(item => item.startDate).sort();
-    const startDateSummary = startDates[0] || getTodayShamsi();
-
-    // Latest end dates and return dates
-    const completedItems = serviceItems.filter(item => item.endDate);
-    const endDates = completedItems.map(item => item.endDate as string).sort();
-    const endDateSummary = completedItems.length === serviceItems.length && endDates.length > 0 
-      ? endDates[endDates.length - 1] 
-      : undefined;
-
-    const deliveredItems = serviceItems.filter(item => item.returnDate);
-    const returnDates = deliveredItems.map(item => item.returnDate as string).sort();
-    const returnDateSummary = deliveredItems.length === serviceItems.length && returnDates.length > 0 
-      ? returnDates[returnDates.length - 1] 
-      : undefined;
-
-    // Calculate status:
-    // If all delivered -> تحویل داده شده
-    // Else if all completed or delivered -> تکمیل شده
-    // Else if any in progress/repair -> در حال تعمیر/خدمات
-    // Else -> در حال بررسی
-    let overallStatus: AfterSalesService['status'] = 'در حال بررسی';
-    const statuses = serviceItems.map(item => item.status);
-    if (statuses.every(s => s === 'تحویل داده شده')) {
-      overallStatus = 'تحویل داده شده';
-    } else if (statuses.every(s => s === 'تکمیل شده' || s === 'تحویل داده شده')) {
-      overallStatus = 'تکمیل شده';
-    } else if (statuses.some(s => s === 'در حال تعمیر/خدمات')) {
-      overallStatus = 'در حال تعمیر/خدمات';
-    } else {
-      overallStatus = 'در حال بررسی';
-    }
-
-    const serviceData = {
+    // The record's own name, dates and status are not sent: the server rolls
+    // them up from these rows, which is what the grid then filters on.
+    const payload = serviceToWriteInput({
       projectId: selectedProjectId,
-      projectName: project.name,
       proformaNumber: selectedProformaNumber || undefined,
-      itemName: itemNameSummary,
-      issueDescription: issueSummary,
-      actionsTaken: actionsSummary,
-      startDate: startDateSummary,
-      endDate: endDateSummary,
-      returnDate: returnDateSummary,
-      status: overallStatus,
       items: serviceItems,
-      createdBy: currentUser?.fullName || 'سیستم'
-    };
+      createdBy: currentUser?.fullName || 'سیستم',
+    });
 
-    if (editingService) {
-      updateAfterSalesService({
-        ...editingService,
-        ...serviceData
-      });
-    } else {
-      addAfterSalesService(serviceData);
+    try {
+      if (editingService) await afterSalesApi.update(editingService.id, payload);
+      else await afterSalesApi.create(payload);
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت سابقه خدمات با خطا مواجه شد.');
+      return;
     }
 
     setIsModalOpen(false);
@@ -374,19 +405,8 @@ export default function AfterSalesServicesView({
     resetForm();
   };
 
-  const filteredServices = useMemo(() => {
-    return afterSalesServices.filter(s => {
-      const matchesSearch = 
-        s.projectName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        s.itemName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        s.issueDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (s.proformaNumber && s.proformaNumber.toLowerCase().includes(searchTerm.toLowerCase()));
-      
-      const matchesStatus = statusFilter === 'all' || s.status === statusFilter;
-      
-      return matchesSearch && matchesStatus;
-    });
-  }, [afterSalesServices, searchTerm, statusFilter]);
+  // Search and status are query parameters now, so what arrives is filtered.
+  const filteredServices = useMemo(() => list.rows.map(rowToService), [list.rows]);
 
   const getStatusColor = (s: string) => {
     switch (s) {
@@ -447,6 +467,28 @@ export default function AfterSalesServicesView({
         </select>
       </div>
 
+      {list.error && (
+        <div className="bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold rounded-2xl p-4 flex items-center justify-between gap-3" id="after-sales-error">
+          <span className="flex items-center gap-1.5">
+            <AlertCircle size={14} />
+            {list.error}
+          </span>
+          <button
+            type="button"
+            onClick={list.refresh}
+            className="px-3 py-1.5 bg-white border border-rose-200 hover:bg-rose-50 rounded-lg text-[11px] font-bold transition"
+          >
+            تلاش دوباره
+          </button>
+        </div>
+      )}
+
+      {list.initialLoading && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-xs text-slate-400 shadow-sm" id="after-sales-loading">
+          در حال دریافت سوابق خدمات…
+        </div>
+      )}
+
       {/* List */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredServices.map(service => (
@@ -470,7 +512,6 @@ export default function AfterSalesServicesView({
                   <button
                     onClick={() => {
                       setServiceToDelete(service.id);
-                      setDeleteActivitiesWithService(true);
                       setIsDeleteModalOpen(true);
                     }}
                     className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -551,7 +592,7 @@ export default function AfterSalesServicesView({
             </div>
           </div>
         ))}
-        {filteredServices.length === 0 && (
+        {filteredServices.length === 0 && !list.initialLoading && (
           <div className="col-span-full py-12 text-center bg-white rounded-2xl border border-slate-200 border-dashed">
             <Wrench className="mx-auto text-slate-300 mb-4" size={48} />
             <h3 className="text-lg font-bold text-slate-600 mb-2">هیچ رکورد خدمات پس از فروش یافت نشد</h3>
@@ -559,6 +600,33 @@ export default function AfterSalesServicesView({
           </div>
         )}
       </div>
+
+      {list.totalPages > 1 && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-3 flex items-center justify-between gap-3" id="after-sales-pager">
+          <span className="text-[11px] font-bold text-slate-500">
+            {list.total.toLocaleString('fa-IR')} مورد — صفحه {list.page.toLocaleString('fa-IR')} از {list.totalPages.toLocaleString('fa-IR')}
+            {list.loading && <span className="text-sky-500 mr-2">در حال بارگذاری…</span>}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={list.page <= 1 || list.loading}
+              onClick={() => list.setPage(list.page - 1)}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 rounded-lg text-[11px] font-bold transition"
+            >
+              قبلی
+            </button>
+            <button
+              type="button"
+              disabled={list.page >= list.totalPages || list.loading}
+              onClick={() => list.setPage(list.page + 1)}
+              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 rounded-lg text-[11px] font-bold transition"
+            >
+              بعدی
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Modal Form */}
       {isModalOpen && (
@@ -606,8 +674,15 @@ export default function AfterSalesServicesView({
                       setServiceItems([]);
                     }}
                     required={isFieldRequired(settings, 'afterSalesServices', 'projectId')}
+                    onSearchChange={projectPicker.setTerm}
+                    loading={projectPicker.loading}
                     options={[
                       { value: '', label: 'انتخاب پروژه...' },
+                      // The record being edited keeps its project selectable
+                      // even once the suggestions move to another term.
+                      ...(editingService && !projects.some(p => p.id === editingService.projectId)
+                        ? [{ value: editingService.projectId, label: editingService.projectName || 'پروژه انتخاب‌شده' }]
+                        : []),
                       ...projects.map(p => ({
                         value: p.id,
                         label: p.code ? `${p.code} - ${p.name}` : p.name
@@ -617,10 +692,7 @@ export default function AfterSalesServicesView({
                   />
                   {selectedProjectId && (
                     <div className="mt-2">
-                      <CustomerAgreementAlert 
-                        customer={customers?.find(c => c.id === projects?.find(p => p.id === selectedProjectId)?.customerId)} 
-                        moduleName="after_sales" 
-                      />
+                      <CustomerAgreementAlert customer={projectCustomer} moduleName="after_sales" />
                     </div>
                   )}
                 </div>
@@ -672,9 +744,12 @@ export default function AfterSalesServicesView({
                           }}
                           options={[
                             { value: '', label: 'انتخاب کالا از پیش‌فاکتور...' },
-                            ...proformaItems.map(pi => ({
-                              value: pi.productId,
-                              label: `${pi.productName}${pi.brand ? ` (${pi.brand})` : ''} - ${pi.quantity} ${pi.unit}`
+                            // Keyed by the line's own id — see handleAddOrUpdateItem.
+                            // No unit either: a proforma line has never carried
+                            // one, so the old label read "… - 5 undefined".
+                            ...(proformaItems ?? []).map(pi => ({
+                              value: pi.id,
+                              label: `${pi.productName}${pi.brand ? ` (${pi.brand})` : ''} - تعداد ${pi.quantity}`
                             })),
                             { value: 'custom', label: 'ورود دستی نام کالا...' }
                           ]}
@@ -884,33 +959,12 @@ export default function AfterSalesServicesView({
               {editingService && (
                 <div className="pt-4 text-right">
                   <ModuleNotesSection
-                    notes={editingService.moduleNotes || []}
+                    notes={serviceNotes.notes}
                     currentUser={currentUser}
                     title="توافقات و یادداشت‌های پرونده خدمات پس از فروش"
                     placeholder="مثال: توافق با مشتری درباره نحوه عودت، هزینه تعمیرات، یا کامنت تیکت پشتیبانی..."
-                    onAddNote={(text) => {
-                      const newNote = {
-                        id: `note-${Date.now()}`,
-                        text,
-                        createdAt: getTodayShamsi(),
-                        author: currentUser?.fullName || currentUser?.username || 'کاربر سیستم'
-                      };
-                      const updated = {
-                        ...editingService,
-                        moduleNotes: [...(editingService.moduleNotes || []), newNote]
-                      };
-                      updateAfterSalesService(updated);
-                      setEditingService(updated);
-                    }}
-                    onDeleteNote={(id) => {
-                      const updatedNotes = (editingService.moduleNotes || []).filter(n => n.id !== id);
-                      const updated = {
-                        ...editingService,
-                        moduleNotes: updatedNotes
-                      };
-                      updateAfterSalesService(updated);
-                      setEditingService(updated);
-                    }}
+                    onAddNote={serviceNotes.addNote}
+                    onDeleteNote={serviceNotes.deleteNote}
                   />
                 </div>
               )}
@@ -940,28 +994,21 @@ export default function AfterSalesServicesView({
       <ConfirmModal
         isOpen={isDeleteModalOpen}
         onClose={() => setIsDeleteModalOpen(false)}
-        onConfirm={() => {
-          if (serviceToDelete) {
-            deleteAfterSalesService(serviceToDelete, deleteActivitiesWithService);
-            setIsDeleteModalOpen(false);
+        onConfirm={async () => {
+          if (!serviceToDelete) return;
+          const id = serviceToDelete;
+          setIsDeleteModalOpen(false);
+          setServiceToDelete(null);
+          try {
+            await afterSalesApi.remove(id);
+            list.refresh();
+          } catch (err) {
+            reportError(err, 'حذف سابقه خدمات با خطا مواجه شد.');
           }
         }}
         title="حذف رکورد خدمات پس از فروش"
         message="آیا از حذف این رکورد خدمات پس از فروش اطمینان دارید؟ این عملیات غیرقابل بازگشت است."
-      >
-        <div className="mt-4 pt-4 border-t border-slate-100 flex items-start gap-2">
-          <input
-            type="checkbox"
-            id="deleteActivitiesWithService"
-            checked={deleteActivitiesWithService}
-            onChange={(e) => setDeleteActivitiesWithService(e.target.checked)}
-            className="mt-1"
-          />
-          <label htmlFor="deleteActivitiesWithService" className="text-xs text-slate-600 font-medium leading-relaxed cursor-pointer select-none">
-            حذف لاگ‌های فعالیت پروژه مرتبط با این رکورد خدمات پس از فروش (در دسته‌بندی خدمات پس از فروش)
-          </label>
-        </div>
-      </ConfirmModal>
+      />
 
       {showPrintModal && printTargetService && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xs overflow-y-auto p-4 md:p-8 z-50 flex justify-center">
@@ -1007,7 +1054,10 @@ export default function AfterSalesServicesView({
                 <div>
                   <span className="text-slate-400 font-bold">پروژه مرتبط:</span>
                   <span className="text-slate-900 font-bold mr-1">
-                    {projects.find(p => p.id === printTargetService.projectId)?.name || 'بدون پروژه'}
+                    {/* The record carries its own project name; looking it up in
+                        the picker's matches would leave the printed sheet blank
+                        whenever that project was not among the suggestions. */}
+                    {printTargetService.projectName || 'بدون پروژه'}
                   </span>
                 </div>
                 <div>

@@ -200,15 +200,12 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
         res.status(400).json({ success: false, error: "انتخاب پروژه الزامی است." });
         return;
       }
-      if (!input.itemName || !String(input.itemName).trim()) {
-        res.status(400).json({ success: false, error: "نام کالا الزامی است." });
+      // The record's name, dates and status are rolled up from its rows, so the
+      // rows are what has to be there.
+      if (!Array.isArray(input.items) || input.items.length === 0) {
+        res.status(400).json({ success: false, error: "ثبت حداقل یک قلم کالا الزامی است." });
         return;
       }
-      if (!input.startDate) {
-        res.status(400).json({ success: false, error: "تاریخ شروع الزامی است." });
-        return;
-      }
-      if (!input.status) input.status = "در حال بررسی";
 
       const service = await createService(input, user);
       if (!service) return denied(res);

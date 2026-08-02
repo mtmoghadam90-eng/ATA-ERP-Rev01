@@ -28,8 +28,7 @@ export default function ModuleNotesSection({
 }: ModuleNotesSectionProps) {
   const [newNoteText, setNewNoteText] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = () => {
     if (!newNoteText.trim()) return;
     onAddNote(newNoteText.trim());
     setNewNoteText("");
@@ -49,8 +48,13 @@ export default function ModuleNotesSection({
         </h4>
       </div>
 
-      {/* Add Note Form */}
-      <form onSubmit={handleSubmit} className="space-y-2">
+      {/*
+        Deliberately not a <form>. This section is dropped inside the document's
+        own edit form on several screens, and a nested form is invalid HTML: the
+        browser closes the outer one early, so the note's submit button was
+        submitting — and saving — the whole record instead.
+      */}
+      <div className="space-y-2">
         <div className="relative">
           <textarea
             value={newNoteText}
@@ -62,7 +66,8 @@ export default function ModuleNotesSection({
         </div>
         <div className="flex justify-end">
           <button
-            type="submit"
+            type="button"
+            onClick={handleSubmit}
             disabled={!newNoteText.trim()}
             className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold py-1.5 px-4 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm shadow-indigo-600/10 font-sans"
           >
@@ -70,7 +75,7 @@ export default function ModuleNotesSection({
             ثبت یادداشت / توافق
           </button>
         </div>
-      </form>
+      </div>
 
       {/* Notes List Timeline */}
       {notes.length === 0 ? (
