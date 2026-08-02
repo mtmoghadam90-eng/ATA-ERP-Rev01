@@ -30,6 +30,14 @@ export interface ProjectFinanceRow {
   paidAmount: number;
   remainingAmount: number | null;
   settlementPercent: number;
+  /**
+   * The full structured breakdown, per proforma and per receipt.
+   *
+   * The screen drills into it — which proforma is settled, which receipt paid
+   * what — so returning only the top-line figures would just push those
+   * questions back to the client and the records it would need to answer them.
+   */
+  summary: ReturnType<typeof calculateProjectFinance>;
 }
 
 /** DB rows carry Decimal and Date; the finance rules expect the client shapes. */
@@ -157,6 +165,7 @@ export async function summarizeProjectFinance(
       paidAmount: summary.totalReceivedRiyal,
       remainingAmount: summary.totalRemainingCurrentRiyal,
       settlementPercent: summary.settlementPercent,
+      summary,
     });
   }
 

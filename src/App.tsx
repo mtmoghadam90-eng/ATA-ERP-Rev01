@@ -458,15 +458,9 @@ export default function App() {
           <TransactionsView 
             initialPrintDocId={printDocumentRequest?.module === 'transactions' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
-            transactions={store.transactions}
-            customers={store.customers}
-            suppliers={store.suppliers}
-            projects={store.projects}
-            proformas={store.proformas}
+            // Reads its own data from the API; the per-project financial
+            // position is its own paginated query.
             exchangeRates={store.exchangeRates}
-            addTransaction={store.addTransaction}
-            updateTransaction={store.updateTransaction}
-            deleteTransaction={store.deleteTransaction}
             settings={store.settings}
             addCustomer={store.addCustomer}
             addSupplier={store.addSupplier}

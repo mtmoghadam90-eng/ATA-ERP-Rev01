@@ -22,7 +22,8 @@ import {
   Maximize2,
   Minimize2,
   Printer,
-  Eye
+  Eye,
+  Loader2
 } from 'lucide-react';
 import { Transaction, Customer, Supplier, Project, ERPSettings, Proforma, ExchangeRate } from '../types';
 import { getTodayShamsi } from '../dateUtils';
@@ -40,19 +41,48 @@ import { getContactInfoError } from '../utils/customerValidation';
 import { getCodeError } from '../utils/documentCodes';
 import { findCustomerDuplicates, DuplicateMatch } from '../utils/customerDuplicates';
 import DuplicateCustomerModal from './DuplicateCustomerModal';
+import { ApiError } from '../api/client';
+import { rowToTransaction, transactionsApi, transactionToWriteInput } from '../api/transactions';
+import { useTransactionList } from '../api/useTransactionList';
+import { useList } from '../api/useList';
+import { useEntitySearch } from '../api/useEntitySearch';
+import type { CustomerRow } from '../api/customers';
+import type { SupplierRow } from '../api/suppliers';
+import type { ProjectRow } from '../api/projects';
+import type { ProformaRow } from '../api/proformas';
 
+/** One row of the per-project financial position, as the endpoint returns it. */
+interface ProjectFinanceRow {
+  id: string;
+  code: string;
+  name: string;
+  status: string;
+  customerName: string;
+  /** Null when a foreign sale has no stored rate to value it at. */
+  salesAmount: number | null;
+  paidAmount: number;
+  remainingAmount: number | null;
+  settlementPercent: number;
+  /**
+   * The full per-proforma, per-receipt breakdown the screen drills into.
+   *
+   * Shaped by `calculateProjectFinance`, which this view still imports for its
+   * types — the same function the server ran to produce this.
+   */
+  summary: ReturnType<typeof calculateProjectFinance>;
+}
+
+/**
+ * Transactions ledger and the per-project financial position.
+ *
+ * Reads through the API. Totals come from the server under the same filters as
+ * the rows — a balance summed over one page of a ledger is simply wrong — and
+ * the per-project financial figures are their own paginated query.
+ */
 interface TransactionsViewProps {
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
-  transactions: Transaction[];
-  customers: Customer[];
-  suppliers: Supplier[];
-  projects: Project[];
-  proformas: Proforma[];
   exchangeRates: ExchangeRate[];
-  addTransaction: (tr: Omit<Transaction, 'id'> & { customValues?: Record<string, any> }) => void;
-  updateTransaction: (tr: Transaction) => void;
-  deleteTransaction: (id: string) => void;
   settings: ERPSettings;
   addCustomer?: (customer: Omit<Customer, 'id' | 'createdAt'>) => Customer;
   addSupplier?: (supplier: Omit<Supplier, 'id' | 'createdAt'>) => Supplier;
@@ -63,24 +93,100 @@ interface TransactionsViewProps {
 export default function TransactionsView({
   initialPrintDocId,
   onClearInitialPrintDocId,
-  transactions,
-  customers,
-  suppliers,
-  projects,
-  proformas,
   exchangeRates,
-  addTransaction,
-  updateTransaction,
-  deleteTransaction,
   settings,
   addCustomer,
   addSupplier,
   addProject,
   updateProforma
 }: TransactionsViewProps) {
-  const [search, setSearch] = useState('');
-  const [selectedType, setSelectedType] = useState<string>('all');
+  // Declared before the pickers below, which are disabled while it is closed.
   const [showModal, setShowModal] = useState(false);
+
+  const list = useTransactionList();
+  const search = list.search;
+  const setSearch = list.setSearch;
+
+  /** The page of entries, in the shape this screen's markup expects. */
+  const transactions = React.useMemo(() => list.rows.map(rowToTransaction), [list.rows]);
+
+  /**
+   * The financial position per project — sold, received, remaining, settled.
+   *
+   * Its own paginated query: the rules behind it are intricate and the client
+   * used to run them over every proforma and transaction it had loaded, once per
+   * project.
+   */
+  const finance = useList<ProjectFinanceRow>({
+    path: '/api/projects/finance',
+    pageSize: 50,
+    sort: 'code',
+    order: 'desc',
+  });
+
+  /** Pickers, searched on the server and idle while the form is closed. */
+  const customerPicker = useEntitySearch<CustomerRow>({
+    path: '/api/customers', limit: 25, enabled: showModal,
+    getLabel: (row) => row.companyName,
+  });
+  const supplierPicker = useEntitySearch<SupplierRow>({
+    path: '/api/suppliers', limit: 25, enabled: showModal,
+    getLabel: (row) => row.name,
+  });
+  const projectPicker = useEntitySearch<ProjectRow>({
+    path: '/api/projects', limit: 25, enabled: showModal,
+    params: { withSummary: 'false' },
+    getLabel: (row) => row.name,
+  });
+  const proformaPicker = useEntitySearch<ProformaRow>({
+    path: '/api/proformas', limit: 25, enabled: showModal,
+    getLabel: (row) => row.proformaNumber,
+  });
+
+  const customers = customerPicker.matches as unknown as Customer[];
+  const suppliers = supplierPicker.matches as unknown as Supplier[];
+  const projects = projectPicker.matches as unknown as Project[];
+  const proformas = proformaPicker.matches as unknown as Proforma[];
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  const addTransaction = async (tx: Partial<Transaction>) => {
+    try {
+      await transactionsApi.create(transactionToWriteInput(tx));
+      list.refresh();
+      finance.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت تراکنش با خطا مواجه شد.');
+    }
+  };
+
+  const updateTransaction = async (tx: Transaction) => {
+    try {
+      await transactionsApi.update(tx.id, transactionToWriteInput(tx));
+      list.refresh();
+      finance.refresh();
+    } catch (err) {
+      // A reversed entry and its reversal are frozen; the server says so.
+      reportError(err, 'ثبت تغییرات تراکنش با خطا مواجه شد.');
+    }
+  };
+
+  const deleteTransaction = async (id: string) => {
+    try {
+      await transactionsApi.remove(id);
+      list.refresh();
+      finance.refresh();
+    } catch (err) {
+      // A confirmed entry is corrected by a reversal, never deleted.
+      reportError(err, 'حذف تراکنش با خطا مواجه شد.');
+    }
+  };
+
+  const selectedType = list.filters.type;
+  const setSelectedType = (value: string) => list.setFilter('type', value);
   const [isTransactionModalFullscreen, setIsTransactionModalFullscreen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [quickAddType, setQuickAddType] = useState<'customer' | 'project' | 'supplier' | 'product' | null>(null);
@@ -192,44 +298,30 @@ export default function TransactionsView({
   const [projectStatusFilter, setProjectStatusFilter] = useState<string>('all');
 
   // Helper mapping and calculations for projects using centralized finance utils
-  const computedProjectSummaries = projects.map(proj => {
-    const summary = calculateProjectFinance(proj, proformas, transactions, exchangeRates);
-    return {
-      ...proj,
-      salesAmount: summary.totalSalesHistoricalRiyal,
-      paidAmount: summary.totalReceivedRiyal, // Includes both allocated and unallocated project receipts
-      remainingAmount: summary.totalRemainingCurrentRiyal, // Remaining balance at today's day rate
-      settlementPercent: summary.settlementPercent,
-      summary // Pass full structured data
-    };
-  });
+  // The financial position per project, computed server-side over that
+  // project's own proformas and receipts — see summarizeProjectFinance. The
+  // client used to run those rules over every record it had loaded, per project.
+  const computedProjectSummaries = finance.rows;
 
-  // Filter projects for the summary list
-  const filteredProjectSummaries = computedProjectSummaries.filter(p => {
-    const matchesSearch = 
-      p.name.toLowerCase().includes(projectSearch.toLowerCase()) ||
-      p.code.toLowerCase().includes(projectSearch.toLowerCase()) ||
-      p.customerName.toLowerCase().includes(projectSearch.toLowerCase());
-      
-    const matchesStatus = projectStatusFilter === 'all' || p.status === projectStatusFilter;
+  // Searched and filtered by the same query that produced them.
+  const filteredProjectSummaries = computedProjectSummaries;
 
-    return matchesSearch && matchesStatus;
-  });
-
-  // Total summary for all projects combined
+  // Totals across the page in hand. A null anywhere makes the total unknowable
+  // rather than merely smaller: a foreign sale with no stored rate cannot be
+  // valued at all, and adding zero for it would understate the figure.
   let totalProjSales: number | null = 0;
   let totalProjReceived = 0;
   let totalProjRemaining: number | null = 0;
-  
+
   for (const p of computedProjectSummaries) {
     if (p.salesAmount === null) {
       totalProjSales = null;
     } else if (totalProjSales !== null) {
       totalProjSales += p.salesAmount;
     }
-    
+
     totalProjReceived += p.paidAmount;
-    
+
     if (p.remainingAmount === null) {
       totalProjRemaining = null;
     } else if (totalProjRemaining !== null) {
@@ -592,17 +684,8 @@ export default function TransactionsView({
     setShowModal(false);
   };
 
-  const filteredTransactions = transactions.filter(t => {
-    const pName = t.customerName || t.supplierName || 'متفرقه';
-    const matchesSearch = 
-      (t.documentNumber || '').toLowerCase().includes(search.toLowerCase()) ||
-      pName.toLowerCase().includes(search.toLowerCase()) ||
-      (t.referenceNumber || '').toLowerCase().includes(search.toLowerCase());
-    
-    const matchesType = selectedType === 'all' || t.type === selectedType;
-
-    return matchesSearch && matchesType;
-  });
+  // The server searched, filtered by type, sorted and paged this already.
+  const filteredTransactions = transactions;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -832,7 +915,27 @@ export default function TransactionsView({
                     );
                   })}
 
-                  {filteredTransactions.length === 0 && (
+                  {/* Nothing to report before the first response — "none found"
+                      while loading reads as an empty ledger. */}
+                  {list.initialLoading && (
+                    <tr>
+                      <td colSpan={7} className="text-center p-12 text-slate-400 bg-white">
+                        <Loader2 className="mx-auto text-slate-300 mb-3 animate-spin" size={36} />
+                        در حال دریافت اطلاعات…
+                      </td>
+                    </tr>
+                  )}
+                  {list.error && !list.initialLoading && (
+                    <tr>
+                      <td colSpan={7} className="text-center p-12 bg-white">
+                        <p className="text-sm text-rose-600 font-medium">{list.error}</p>
+                        <button onClick={() => list.refresh()} className="mt-3 text-xs text-sky-600 hover:underline font-bold">
+                          تلاش دوباره
+                        </button>
+                      </td>
+                    </tr>
+                  )}
+                  {filteredTransactions.length === 0 && !list.initialLoading && !list.error && (
                     <tr>
                       <td colSpan={7} className="text-center p-12 text-slate-400 bg-white">
                         <FileSpreadsheet className="mx-auto text-slate-300 mb-3" size={40} />
@@ -842,6 +945,34 @@ export default function TransactionsView({
                   )}
                 </tbody>
               </table>
+
+              {/* Pagination. The ledger holds one page; these move between them. */}
+              {list.totalPages > 1 && (
+                <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-slate-100 bg-slate-50/60 flex-wrap">
+                  <span className="text-[11px] text-slate-500 font-medium">
+                    نمایش {list.rows.length.toLocaleString('fa-IR')} از {list.total.toLocaleString('fa-IR')} تراکنش
+                    {' — '}صفحه {list.page.toLocaleString('fa-IR')} از {list.totalPages.toLocaleString('fa-IR')}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {[
+                      { label: 'اول', to: 1, disabled: list.page === 1 },
+                      { label: 'قبلی', to: list.page - 1, disabled: list.page === 1 },
+                      { label: 'بعدی', to: list.page + 1, disabled: list.page >= list.totalPages },
+                      { label: 'آخر', to: list.totalPages, disabled: list.page >= list.totalPages },
+                    ].map((btn) => (
+                      <button
+                        key={btn.label}
+                        type="button"
+                        onClick={() => list.setPage(btn.to)}
+                        disabled={btn.disabled || list.loading}
+                        className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </>
