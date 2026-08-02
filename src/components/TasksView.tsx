@@ -23,16 +23,24 @@ import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import QuickAddModal from './QuickAddModal';
-import { Bell, BellOff } from 'lucide-react';
+import { Bell, BellOff, Loader2 } from 'lucide-react';
+import { ApiError } from '../api/client';
+import { rowToTask, tasksApi, taskToWriteInput } from '../api/tasks';
+import { useTaskList } from '../api/useTaskList';
+import { useUserDirectory } from '../api/useUserDirectory';
+import { useEntitySearch } from '../api/useEntitySearch';
+import type { CustomerRow } from '../api/customers';
+import type { ProjectRow } from '../api/projects';
 
+/**
+ * Tasks board.
+ *
+ * Reads through the API, scoped by assignment: a user without the tasks
+ * permission sees the tasks assigned to them. "Overdue" is resolved in the
+ * query against today's Shamsi date, so the count describes the result rather
+ * than the page.
+ */
 interface TasksViewProps {
-  tasks: Task[];
-  customers: Customer[];
-  projects: Project[];
-  users: ERPUser[];
-  addTask: (task: Omit<Task, 'id'> & { customValues?: Record<string, any> }) => void;
-  updateTask: (task: Task) => void;
-  deleteTask: (id: string) => void;
   settings: ERPSettings;
   currentUser?: { fullName: string; role?: string } | null;
   addCustomer?: (customer: Omit<Customer, 'id' | 'createdAt'>) => Customer;
@@ -40,21 +48,73 @@ interface TasksViewProps {
 }
 
 export default function TasksView({
-  tasks,
-  customers,
-  projects,
-  users,
-  addTask,
-  updateTask,
-  deleteTask,
   settings,
   currentUser,
   addCustomer,
   addProject
 }: TasksViewProps) {
-  const [search, setSearch] = useState('');
-  const [selectedPriority, setSelectedPriority] = useState<string>('all');
+  // Declared before the pickers below, which are disabled while it is closed.
   const [showModal, setShowModal] = useState(false);
+  const list = useTaskList();
+  const search = list.search;
+  const setSearch = list.setSearch;
+
+  /** The page of tasks, in the shape this screen's markup expects. */
+  const tasks = React.useMemo(() => list.rows.map(rowToTask), [list.rows]);
+
+  const { users } = useUserDirectory();
+
+  /**
+   * Customers and projects for the "related to" picker, searched on the server.
+   * Only while the form is open, so a closed modal does not query behind it.
+   */
+  const customerPicker = useEntitySearch<CustomerRow>({
+    path: '/api/customers', limit: 25, enabled: showModal,
+    getLabel: (row) => row.companyName,
+  });
+  const projectPicker = useEntitySearch<ProjectRow>({
+    path: '/api/projects', limit: 25, enabled: showModal,
+    params: { withSummary: 'false' },
+    getLabel: (row) => row.name,
+  });
+
+  const customers = customerPicker.matches as unknown as Customer[];
+  const projects = projectPicker.matches as unknown as Project[];
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  const addTask = async (task: Partial<Task>) => {
+    try {
+      await tasksApi.create(taskToWriteInput(task));
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت وظیفه با خطا مواجه شد.');
+    }
+  };
+
+  const updateTask = async (task: Task) => {
+    try {
+      await tasksApi.update(task.id, taskToWriteInput(task));
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت تغییرات وظیفه با خطا مواجه شد.');
+    }
+  };
+
+  const deleteTask = async (id: string) => {
+    try {
+      await tasksApi.remove(id);
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'حذف وظیفه با خطا مواجه شد.');
+    }
+  };
+
+  const selectedPriority = list.filters.priority;
+  const setSelectedPriority = (value: string) => list.setFilter('priority', value);
   const [isTaskModalFullscreen, setIsTaskModalFullscreen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [quickAddType, setQuickAddType] = useState<'customer' | 'project' | 'supplier' | 'product' | null>(null);
@@ -206,16 +266,8 @@ export default function TasksView({
     }
   };
 
-  const filteredTasks = tasks.filter(t => {
-    const matchesSearch = 
-      t.title.toLowerCase().includes(search.toLowerCase()) ||
-      t.description.toLowerCase().includes(search.toLowerCase()) ||
-      (t.relatedToName && t.relatedToName.toLowerCase().includes(search.toLowerCase()));
-    
-    const matchesPriority = selectedPriority === 'all' || t.priority === selectedPriority;
-
-    return matchesSearch && matchesPriority;
-  });
+  // The server searched, filtered by priority, sorted and paged this already.
+  const filteredTasks = tasks;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -355,10 +407,56 @@ export default function TasksView({
           </div>
         ))}
 
-        {filteredTasks.length === 0 && (
+        {/* Nothing to report before the first response — "none found" while
+            loading reads as an empty board. */}
+        {list.initialLoading && (
+          <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200">
+            <Loader2 className="mx-auto text-slate-300 mb-2 animate-spin" size={36} />
+            در حال دریافت اطلاعات…
+          </div>
+        )}
+
+        {list.error && !list.initialLoading && (
+          <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-rose-200">
+            <p className="text-sm text-rose-600 font-medium">{list.error}</p>
+            <button onClick={() => list.refresh()} className="mt-3 text-xs text-sky-600 hover:underline font-bold">
+              تلاش دوباره
+            </button>
+          </div>
+        )}
+
+        {filteredTasks.length === 0 && !list.initialLoading && !list.error && (
           <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200">
             <ListTodo className="mx-auto text-slate-300 mb-2" size={40} />
             وظیفه فعالی یافت نشد.
+          </div>
+        )}
+
+        {/* Pagination. The board holds one page; these move between them. */}
+        {list.totalPages > 1 && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl border border-slate-100 bg-white flex-wrap">
+            <span className="text-[11px] text-slate-500 font-medium">
+              نمایش {list.rows.length.toLocaleString('fa-IR')} از {list.total.toLocaleString('fa-IR')} وظیفه
+              {' — '}صفحه {list.page.toLocaleString('fa-IR')} از {list.totalPages.toLocaleString('fa-IR')}
+            </span>
+            <div className="flex items-center gap-1.5">
+              {[
+                { label: 'اول', to: 1, disabled: list.page === 1 },
+                { label: 'قبلی', to: list.page - 1, disabled: list.page === 1 },
+                { label: 'بعدی', to: list.page + 1, disabled: list.page >= list.totalPages },
+                { label: 'آخر', to: list.totalPages, disabled: list.page >= list.totalPages },
+              ].map((btn) => (
+                <button
+                  key={btn.label}
+                  type="button"
+                  onClick={() => list.setPage(btn.to)}
+                  disabled={btn.disabled || list.loading}
+                  className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -533,8 +631,12 @@ export default function TasksView({
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white font-medium"
                   >
                     <option value="">-- بدون ارجاع (شخصی / خود من) --</option>
+                    {/* The directory carries names and positions, not roles —
+                        a picker has no business knowing anyone's access level. */}
                     {users.map((u) => (
-                      <option key={u.id} value={u.fullName}>{u.fullName} ({u.role === 'admin' ? 'مدیر سیستم' : 'کاربر'})</option>
+                      <option key={u.id} value={u.fullName}>
+                        {u.fullName}{u.position ? ` (${u.position})` : ''}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -654,4 +756,4 @@ export default function TasksView({
 
     </div>
   );
-}
+}

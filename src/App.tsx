@@ -476,14 +476,8 @@ export default function App() {
         );
             case 'tasks':
         return (
-          <TasksView 
-            tasks={store.tasks}
-            customers={store.customers}
-            projects={store.projects}
-            users={store.users}
-            addTask={store.addTask}
-            updateTask={store.updateTask}
-            deleteTask={store.deleteTask}
+          // Reads its own data from the API, scoped by assignment.
+          <TasksView
             settings={store.settings}
             currentUser={store.currentUser}
             addCustomer={store.addCustomer}
