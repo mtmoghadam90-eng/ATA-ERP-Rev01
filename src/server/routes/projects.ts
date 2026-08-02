@@ -1,6 +1,8 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
+import { getDb } from "../db";
+import { nextDocumentNumber } from "../documentNumbers";
 import {
   PROJECT_FILTERABLE, PROJECT_SORTABLE, ProjectInput,
   countProjectReferences, createProject, deleteProject, getProject,
@@ -174,10 +176,6 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
         res.status(400).json({ success: false, error: "نام پروژه الزامی است." });
         return;
       }
-      if (!input.code || !String(input.code).trim()) {
-        res.status(400).json({ success: false, error: "کد پروژه الزامی است." });
-        return;
-      }
       if (!input.customerId) {
         res.status(400).json({ success: false, error: "انتخاب مشتری الزامی است." });
         return;
@@ -187,6 +185,21 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
         return;
       }
       if (!input.status) input.status = "جدید";
+
+      // Blank means "make one up" — see documentNumbers.ts.
+      if (!input.code || !String(input.code).trim()) {
+        const db = getDb();
+        const customer = await db.customer.findUnique({
+          where: { id: input.customerId }, select: { companyName: true },
+        });
+        input.code = await nextDocumentNumber({
+          formatKey: "projectFormat", startSeqKey: "projectStartSeq",
+          fallbackFormat: "ATA-{YYYY}-{SEQ:3}",
+          count: () => db.project.count(),
+          taken: async (v) => !!(await db.project.findUnique({ where: { code: v }, select: { id: true } })),
+          context: { customerName: customer?.companyName },
+        });
+      }
 
       const project = await createProject(input, user);
       res.status(201).json({ success: true, project });

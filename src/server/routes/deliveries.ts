@@ -1,11 +1,13 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
+import { getDb } from "../db";
+import { nextDocumentNumber } from "../documentNumbers";
 import {
   DELIVERY_FILTERABLE, DELIVERY_SORTABLE, DeliveryInput,
   SERVICE_FILTERABLE, SERVICE_SORTABLE, ServiceInput,
   createDelivery, createService, deleteDelivery, deleteService,
-  getDelivery, getService, listDeliveries, listServices,
+  getDelivery, getDeliveryRemaining, getService, listDeliveries, listServices,
   updateDelivery, updateService,
 } from "../services/deliveryService";
 
@@ -53,6 +55,28 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
     }
   });
 
+  /* Declared before `/:id` so "remaining" is not read as a delivery id. */
+  app.get("/api/deliveries/remaining", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "read");
+    if (!user) return;
+    try {
+      const projectId = typeof req.query.projectId === "string" ? req.query.projectId : "";
+      if (!projectId) {
+        res.status(400).json({ success: false, error: "انتخاب پروژه الزامی است." });
+        return;
+      }
+      const lines = await getDeliveryRemaining({
+        projectId,
+        proformaId: typeof req.query.proformaId === "string" ? req.query.proformaId : null,
+        excludeDeliveryId: typeof req.query.excludeDeliveryId === "string" ? req.query.excludeDeliveryId : null,
+      }, user);
+      if (!lines) return denied(res);
+      res.json({ success: true, lines });
+    } catch (err) {
+      sendError(res, err, "GET /api/deliveries/remaining");
+    }
+  });
+
   app.get("/api/deliveries/:id", async (req, res) => {
     const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "read");
     if (!user) return;
@@ -73,10 +97,6 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
     if (!user) return;
     try {
       const input = pick<DeliveryInput>(req.body, DELIVERY_WRITABLE);
-      if (!input.packingListNumber || !String(input.packingListNumber).trim()) {
-        res.status(400).json({ success: false, error: "شماره لیست بسته‌بندی الزامی است." });
-        return;
-      }
       if (!input.projectId) {
         res.status(400).json({ success: false, error: "انتخاب پروژه الزامی است." });
         return;
@@ -84,6 +104,23 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
       if (!input.deliveryDate) {
         res.status(400).json({ success: false, error: "تاریخ تحویل الزامی است." });
         return;
+      }
+      // Blank means "make one up", which the form says and only the server can
+      // honour — the browser sees one page of existing numbers, not all of them.
+      if (!input.packingListNumber || !String(input.packingListNumber).trim()) {
+        const db = getDb();
+        const project = await db.project.findUnique({
+          where: { id: input.projectId }, select: { code: true },
+        });
+        input.packingListNumber = await nextDocumentNumber({
+          formatKey: "packingListFormat", startSeqKey: "packingListStartSeq",
+          fallbackFormat: "PL-{PROJECT}-{SEQ:3}",
+          count: () => db.packagingDelivery.count(),
+          taken: async (v) => !!(await db.packagingDelivery.findUnique({
+            where: { packingListNumber: v }, select: { id: true },
+          })),
+          context: { projectCode: project?.code ?? "GEN" },
+        });
       }
       const delivery = await createDelivery(input, user);
       if (!delivery) return denied(res);

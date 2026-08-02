@@ -4,6 +4,7 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
+import { getWonItems } from "../proformaStatus";
 
 /**
  * Packaging and delivery (packing lists) plus after-sales service.
@@ -33,8 +34,17 @@ export function buildDeliveryWhere(
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
 
-  const search = searchClause(q.search, DELIVERY_SEARCH);
-  if (search) and.push(search);
+  // The grid's box has always matched the project's name too, which is a join
+  // rather than a column on the packing list.
+  if (q.search) {
+    const own = searchClause(q.search, DELIVERY_SEARCH);
+    const byProject = searchClause(q.search, ["name", "code"]);
+
+    const alternatives: Record<string, unknown>[] = [];
+    if (own) alternatives.push(...own.OR);
+    if (byProject) alternatives.push({ project: byProject });
+    if (alternatives.length > 0) and.push({ OR: alternatives });
+  }
 
   for (const [field, value] of Object.entries(q.filters)) {
     and.push({ [field]: value });
@@ -60,19 +70,23 @@ export async function listDeliveries(
   q: ListQuery,
   user: AuthUser,
   extra: { dateFrom?: unknown; dateTo?: unknown } = {},
-): Promise<ListResult<Record<string, unknown>> | null> {
+): Promise<(ListResult<Record<string, unknown>> & { totalItems: number }) | null> {
   if (!allowed(user)) return null;
 
   const db = getDb();
   const where = buildDeliveryWhere(q, extra);
   const orderBy = q.sort ? { [q.sort]: q.order } : { createdAt: "desc" as const };
 
-  const [rows, total] = await Promise.all([
+  // The screen shows how many packages exist across every matching list, not
+  // just the page on screen — so it is counted in SQL rather than summed from
+  // the rows that happen to have been sent.
+  const [rows, total, totalItems] = await Promise.all([
     db.packagingDelivery.findMany({ where, orderBy, select: DELIVERY_LIST_SELECT, ...paginationArgs(q) }),
     db.packagingDelivery.count({ where }),
+    db.packingItem.count({ where: { delivery: where } }),
   ]);
 
-  return buildResult(rows as unknown as Record<string, unknown>[], total, q);
+  return { ...buildResult(rows as unknown as Record<string, unknown>[], total, q), totalItems };
 }
 
 export async function getDelivery(id: string, user: AuthUser) {
@@ -189,6 +203,112 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
       include: { items: { orderBy: { lineNo: "asc" } } },
     });
   });
+}
+
+/**
+ * What the project still owes the customer, per item.
+ *
+ * The screen needs two numbers before it can build a packing list: how much of
+ * each item the won proformas promised, and how much has already gone out on
+ * other packing lists. It used to derive both in the browser by scanning every
+ * proforma and every delivery it held — which is exactly what a paged list
+ * stops being able to do, and getting it wrong means either over-shipping or
+ * refusing a legitimate shipment.
+ *
+ * Items are matched the way the screen matches them: by product id when there
+ * is one, otherwise by trimmed name. A line typed by hand and a catalogued
+ * product with the same name are therefore the same item here, which is what
+ * makes a hand-typed line count against the promise it fulfils.
+ */
+export interface RemainingLine {
+  key: string;
+  productId: string | null;
+  productName: string;
+  tagNumber: string | null;
+  promised: number;
+  shipped: number;
+  remaining: number;
+}
+
+export async function getDeliveryRemaining(
+  params: { projectId: string; proformaId?: string | null; excludeDeliveryId?: string | null },
+  user: AuthUser,
+): Promise<RemainingLine[] | null> {
+  if (!allowed(user)) return null;
+  const db = getDb();
+
+  const proformas = await db.proforma.findMany({
+    where: {
+      projectId: params.projectId,
+      ...(params.proformaId ? { id: params.proformaId } : {}),
+    },
+    select: {
+      status: true, isCancelled: true,
+      items: {
+        orderBy: { lineNo: "asc" },
+        select: {
+          productId: true, productName: true, tagNumber: true,
+          quantity: true, supplyMethod: true, status: true,
+        },
+      },
+    },
+  });
+
+  const lines = new Map<string, RemainingLine>();
+  const keyOf = (productId: string | null, name: string) => productId || name.trim();
+
+  for (const pf of proformas) {
+    // `true` keeps lines that will be purchased as well as those from stock:
+    // both are delivered to the customer, and both belong on a packing list.
+    for (const item of getWonItems(pf, true)) {
+      const key = keyOf(item.productId, item.productName);
+      const existing = lines.get(key);
+      if (existing) {
+        existing.promised += Number(item.quantity);
+        existing.tagNumber ??= item.tagNumber;
+      } else {
+        lines.set(key, {
+          key,
+          productId: item.productId,
+          productName: item.productName,
+          tagNumber: item.tagNumber,
+          promised: Number(item.quantity),
+          shipped: 0,
+          remaining: 0,
+        });
+      }
+    }
+  }
+
+  const shippedRows = await db.packingItem.findMany({
+    where: {
+      delivery: {
+        projectId: params.projectId,
+        ...(params.excludeDeliveryId ? { id: { not: params.excludeDeliveryId } } : {}),
+      },
+    },
+    select: { productId: true, itemOrDocName: true, quantity: true },
+  });
+
+  for (const row of shippedRows) {
+    const key = keyOf(row.productId, row.itemOrDocName);
+    const line = lines.get(key);
+    // Something shipped that no won line promised is still shipped, so it is
+    // reported rather than dropped — otherwise it silently frees up quota.
+    if (line) line.shipped += Number(row.quantity);
+    else {
+      lines.set(key, {
+        key, productId: row.productId, productName: row.itemOrDocName,
+        tagNumber: null, promised: 0, shipped: Number(row.quantity), remaining: 0,
+      });
+    }
+  }
+
+  for (const line of lines.values()) {
+    line.remaining = Math.max(0, line.promised - line.shipped);
+  }
+
+  return [...lines.values()];
 }
 
 export async function deleteDelivery(

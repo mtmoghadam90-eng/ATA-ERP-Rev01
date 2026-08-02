@@ -476,14 +476,6 @@ export default function App() {
           <PackagingDeliveryView 
             initialPrintDocId={printDocumentRequest?.module === 'packagingDelivery' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
-            projects={store.projects}
-            customers={store.customers}
-            proformas={store.proformas}
-            products={store.products}
-            packagingDeliveries={store.packagingDeliveries}
-            addPackagingDelivery={store.addPackagingDelivery}
-            updatePackagingDelivery={store.updatePackagingDelivery}
-            deletePackagingDelivery={store.deletePackagingDelivery}
             settings={store.settings}
             currentUser={store.currentUser}
           />

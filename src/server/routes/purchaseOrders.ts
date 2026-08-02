@@ -1,6 +1,8 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
+import { getDb } from "../db";
+import { nextDocumentNumber } from "../documentNumbers";
 import { getTodayShamsi } from "../../dateUtils";
 import {
   PO_FILTERABLE, PO_SORTABLE, PurchaseOrderInput,
@@ -86,10 +88,6 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
     if (!user) return;
     try {
       const input = pickInput(req.body);
-      if (!input.poNumber || !String(input.poNumber).trim()) {
-        res.status(400).json({ success: false, error: "شماره سفارش خرید الزامی است." });
-        return;
-      }
       if (!input.supplierId) {
         res.status(400).json({ success: false, error: "انتخاب تأمین‌کننده الزامی است." });
         return;
@@ -97,6 +95,25 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
       if (!input.orderDate) {
         res.status(400).json({ success: false, error: "تاریخ سفارش الزامی است." });
         return;
+      }
+      // Blank means "make one up" — see documentNumbers.ts.
+      if (!input.poNumber || !String(input.poNumber).trim()) {
+        const db = getDb();
+        const [supplier, project] = await Promise.all([
+          db.supplier.findUnique({ where: { id: input.supplierId }, select: { name: true } }),
+          input.projectId
+            ? db.project.findUnique({ where: { id: input.projectId }, select: { code: true } })
+            : Promise.resolve(null),
+        ]);
+        input.poNumber = await nextDocumentNumber({
+          formatKey: "poFormat", startSeqKey: "poStartSeq",
+          fallbackFormat: "PO-{YYYY}-{SEQ:4}",
+          count: () => db.purchaseOrder.count(),
+          taken: async (v) => !!(await db.purchaseOrder.findUnique({
+            where: { poNumber: v }, select: { id: true },
+          })),
+          context: { supplierName: supplier?.name, projectCode: project?.code },
+        });
       }
       if (!input.status) input.status = "پیش‌نویس";
 

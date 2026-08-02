@@ -50,6 +50,7 @@ import { proformasApi } from "../api/proformas";
 import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
 import { useProformaList } from "../api/useProformaList";
 import { useUserDirectory } from "../api/useUserDirectory";
+import { useModuleNotes } from "../api/moduleNotes";
 import QuickAddModal from "./QuickAddModal";
 import { toPersianDigits } from "../numUtils";
 import ModuleNotesSection from "./ModuleNotesSection";
@@ -390,6 +391,10 @@ export default function ProformasView({
   const [selectedProforma, setSelectedProforma] = useState<Proforma | null>(
     null,
   );
+  // Notes are their own records keyed by document, not a field on the proforma,
+  // so they are never part of its write body — folding one into the record and
+  // saving it discarded the note.
+  const proformaNotes = useModuleNotes("proforma", selectedProforma?.id, (m) => alert(m));
   const [overrideShowBrand, setOverrideShowBrand] = useState(false);
   // Status change helper state
   const [showStatusModal, setShowStatusModal] = useState(false);
@@ -2352,33 +2357,12 @@ export default function ProformasView({
             {/* Proforma Global Module Notes & Agreements (Hidden on Print) */}
             <div className="print:hidden mt-8 text-right border-t border-slate-200 pt-8">
               <ModuleNotesSection
-                notes={selectedProforma.moduleNotes || []}
+                notes={proformaNotes.notes}
                 currentUser={currentUser}
                 title="توافقات خاص و کامنت‌های این پیش‌فاکتور"
                 placeholder="یادداشت یا کامنت جدید درباره شرایط پرداخت، تخفیفات، یا توافقات خاص مشتری بنویسید..."
-                onAddNote={(text) => {
-                  const newNote = {
-                    id: `note-${Date.now()}`,
-                    text,
-                    createdAt: getTodayShamsi(),
-                    author: currentUser?.fullName || currentUser?.username || "کاربر سیستم",
-                  };
-                  const updated = {
-                    ...selectedProforma,
-                    moduleNotes: [...(selectedProforma.moduleNotes || []), newNote],
-                  };
-                  updateProforma(updated);
-                  setSelectedProforma(updated);
-                }}
-                onDeleteNote={(id) => {
-                  const updatedNotes = (selectedProforma.moduleNotes || []).filter((n) => n.id !== id);
-                  const updated = {
-                    ...selectedProforma,
-                    moduleNotes: updatedNotes,
-                  };
-                  updateProforma(updated);
-                  setSelectedProforma(updated);
-                }}
+                onAddNote={proformaNotes.addNote}
+                onDeleteNote={proformaNotes.deleteNote}
               />
             </div>
           </div>

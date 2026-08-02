@@ -1,6 +1,8 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
+import { getDb } from "../db";
+import { nextDocumentNumber } from "../documentNumbers";
 import { getTodayShamsi } from "../../dateUtils";
 import {
   PROFORMA_FILTERABLE, PROFORMA_SORTABLE, ProformaInput,
@@ -83,10 +85,6 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
     if (!user) return;
     try {
       const input = pickInput(req.body);
-      if (!input.proformaNumber || !String(input.proformaNumber).trim()) {
-        res.status(400).json({ success: false, error: "شماره پیش‌فاکتور الزامی است." });
-        return;
-      }
       if (!input.customerId) {
         res.status(400).json({ success: false, error: "انتخاب مشتری الزامی است." });
         return;
@@ -96,6 +94,26 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
         return;
       }
       if (!input.status) input.status = "پیش‌نویس";
+
+      // Blank means "make one up" — see documentNumbers.ts.
+      if (!input.proformaNumber || !String(input.proformaNumber).trim()) {
+        const db = getDb();
+        const [project, customer] = await Promise.all([
+          input.projectId
+            ? db.project.findUnique({ where: { id: input.projectId }, select: { code: true } })
+            : Promise.resolve(null),
+          db.customer.findUnique({ where: { id: input.customerId }, select: { companyName: true } }),
+        ]);
+        input.proformaNumber = await nextDocumentNumber({
+          formatKey: "proformaFormat", startSeqKey: "proformaStartSeq",
+          fallbackFormat: "QT-{PROJECT}-{SEQ:2}",
+          count: () => db.proforma.count(),
+          taken: async (v) => !!(await db.proforma.findUnique({
+            where: { proformaNumber: v }, select: { id: true },
+          })),
+          context: { projectCode: project?.code, customerName: customer?.companyName },
+        });
+      }
 
       // "Today" is resolved here, where a request exists, rather than inside the
       // service — so the stamped winning/closing dates use the same clock the

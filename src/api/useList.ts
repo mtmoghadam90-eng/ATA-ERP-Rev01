@@ -55,6 +55,14 @@ export interface UseListResult<T> {
   refresh: () => void;
   /** True before the first response, so a view can tell empty from not-yet-loaded. */
   initialLoading: boolean;
+  /**
+   * Anything the endpoint returned beyond the page itself.
+   *
+   * Some lists carry a figure that spans every match rather than the page —
+   * a total the page cannot be summed to. It rides along with the response it
+   * was computed for, so it can never disagree with the rows on screen.
+   */
+  meta: Record<string, unknown>;
 }
 
 export function useList<T>(options: UseListOptions): UseListResult<T> {
@@ -81,6 +89,7 @@ export function useList<T>(options: UseListOptions): UseListResult<T> {
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const [meta, setMeta] = useState<Record<string, unknown>>({});
 
   // Serialized so a caller passing a fresh object literal every render does not
   // re-trigger the effect on every render.
@@ -136,6 +145,10 @@ export function useList<T>(options: UseListOptions): UseListResult<T> {
         setLoading(false);
         setInitialLoading(false);
 
+        const { rows: _r, total: _t, totalPages: _tp, page: _p, pageSize: _ps, ...rest } =
+          data as unknown as Record<string, unknown>;
+        setMeta(rest);
+
         // Past the end — step back rather than showing an empty grid.
         if (data.rows.length === 0 && data.total > 0 && page > data.totalPages) {
           setPage(data.totalPages);
@@ -178,11 +191,11 @@ export function useList<T>(options: UseListOptions): UseListResult<T> {
   return useMemo(
     () => ({
       rows, total, page, pageSize, totalPages,
-      loading, initialLoading, error,
+      loading, initialLoading, error, meta,
       search, setSearch, setPage, setPageSize,
       sort, order, toggleSort, refresh,
     }),
-    [rows, total, page, pageSize, totalPages, loading, initialLoading, error,
+    [rows, total, page, pageSize, totalPages, loading, initialLoading, error, meta,
       search, setSearch, setPage, setPageSize, sort, order, toggleSort, refresh],
   );
 }

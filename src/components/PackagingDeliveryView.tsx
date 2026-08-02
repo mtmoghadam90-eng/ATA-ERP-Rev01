@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Package, 
   Plus, 
@@ -34,25 +34,40 @@ import {
 } from '../types';
 import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
-import { getCodeError, cleanCode } from '../utils/documentCodes';
-import { getProformaOutcomeStatus, getWonItemsOfProforma } from '../useERPStore';
+import { cleanCode } from '../utils/documentCodes';
 import ConfirmModal from './ConfirmModal';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { uploadFile } from '../imageUtils';
 import ModuleNotesSection from './ModuleNotesSection';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
+import { SearchableSelect } from './SearchableSelect';
+import { ApiError } from '../api/client';
+import {
+  RemainingLine, deliveriesApi, deliveryToWriteInput, detailToDelivery, rowToDelivery,
+} from '../api/deliveries';
+import { useDeliveryList } from '../api/useDeliveryList';
+import { useModuleNotes } from '../api/moduleNotes';
+import { useEntitySearch } from '../api/useEntitySearch';
+import { productsApi } from '../api/products';
+import { customersApi } from '../api/customers';
+import { detailToCustomer } from '../api/customerAdapter';
+import { projectsApi } from '../api/projects';
+import type { ProjectRow } from '../api/projects';
+import type { ProformaRow } from '../api/proformas';
 
+/**
+ * Packing lists.
+ *
+ * Reads through the API. The number this screen is really about — how much of
+ * each won item is still owed — is the server's: it used to be derived here by
+ * scanning every proforma and every delivery the browser held, which a paged
+ * list cannot do.
+ */
 interface PackagingDeliveryViewProps {
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
-  projects: Project[];
-  customers: Customer[];
-  proformas: Proforma[];
-  products: Product[];
-  packagingDeliveries: PackagingDelivery[];
-  addPackagingDelivery: (delivery: Omit<PackagingDelivery, 'id' | 'createdAt' | 'packingListNumber'> & { packingListNumber?: string }) => any;
-  updatePackagingDelivery: (delivery: PackagingDelivery) => void;
-  deletePackagingDelivery: (id: string, deleteLogs?: boolean) => void;
+  // Deliveries, projects, proformas, products and customers are no longer
+  // props, and neither are the three mutations.
   settings: ERPSettings;
   currentUser: any;
 }
@@ -60,14 +75,6 @@ interface PackagingDeliveryViewProps {
 export default function PackagingDeliveryView({
   initialPrintDocId,
   onClearInitialPrintDocId,
-  projects,
-  customers,
-  proformas,
-  products,
-  packagingDeliveries,
-  addPackagingDelivery,
-  updatePackagingDelivery,
-  deletePackagingDelivery,
   settings,
   currentUser
 }: PackagingDeliveryViewProps) {
@@ -75,18 +82,56 @@ export default function PackagingDeliveryView({
   const [activeTab, setActiveTab] = useState<'list' | 'new'>('list');
   const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>({});
 
-  React.useEffect(() => {
-    if (initialPrintDocId) {
-      const pd = packagingDeliveries.find(p => p.id === initialPrintDocId);
-      if (pd) {
-        setSelectedDelivery(pd);
-      }
+  const list = useDeliveryList();
+
+  /* The project picker drives the grid's filter as well as the form, so it stays
+     enabled. The other two are declared below, where the form state they depend
+     on exists. */
+  const projectPicker = useEntitySearch<ProjectRow>({
+    path: '/api/projects', limit: 25,
+    params: { withSummary: 'false' },
+    getLabel: (row) => row.name,
+  });
+  const projects = projectPicker.matches as unknown as Project[];
+
+  /** Keeps the first label for an id, so a pinned current value wins over a match. */
+  const dedupeOptions = (options: { value: string; label: string }[]) => {
+    const seen = new Set<string>();
+    return options.filter((opt) => {
+      if (!opt.value || seen.has(opt.value)) return false;
+      seen.add(opt.value);
+      return true;
+    });
+  };
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  /** Opens the printable document. A grid row is a header, so it is fetched. */
+  const openDelivery = async (id: string) => {
+    try {
+      setSelectedDelivery(detailToDelivery(await deliveriesApi.get(id)));
+    } catch (err) {
+      reportError(err, 'دریافت پکینگ لیست با خطا مواجه شد.');
     }
-  }, [initialPrintDocId, packagingDeliveries]);
+  };
+
+  React.useEffect(() => {
+    if (!initialPrintDocId) return;
+    let cancelled = false;
+    deliveriesApi.get(initialPrintDocId)
+      .then((detail) => { if (!cancelled) setSelectedDelivery(detailToDelivery(detail)); })
+      .catch(() => { /* a document that is gone simply does not open */ });
+    return () => { cancelled = true; };
+  }, [initialPrintDocId]);
 
   // Filter States
-  const [filterProject, setFilterProject] = useState<string>('');
-  const [searchTerm, setSearchTerm] = useState<string>('');
+  const filterProject = list.filters.projectId === 'all' ? '' : list.filters.projectId;
+  const setFilterProject = (id: string) => list.setFilter('projectId', id || 'all');
+  const searchTerm = list.search;
+  const setSearchTerm = list.setSearch;
 
   // Form States (New Delivery)
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
@@ -103,6 +148,79 @@ export default function PackagingDeliveryView({
   const [checklist, setChecklist] = useState<DeliveryChecklistItem[]>([]);
   const [photos, setPhotos] = useState<string[]>([]);
 
+  const proformaPicker = useEntitySearch<ProformaRow>({
+    path: '/api/proformas', limit: 50, enabled: activeTab === 'new',
+    params: { projectId: selectedProjectId || undefined },
+    getLabel: (row) => row.proformaNumber,
+  });
+  /**
+   * What this project still owes, per item.
+   *
+   * The one number the form is built around, and the only place it comes from.
+   * `excludeDeliveryId` is what makes editing work: without it the list being
+   * edited counts its own quantities against itself and every line reads as
+   * already shipped.
+   */
+  /* The selected project's customer, for the standing-agreement reminder. Only
+     the customer's own record carries those agreements, so it is fetched. */
+  const [projectCustomer, setProjectCustomer] = useState<Customer | undefined>();
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setProjectCustomer(undefined);
+      return;
+    }
+    let cancelled = false;
+    projectsApi.get(selectedProjectId)
+      .then((project) => customersApi.get(project.customerId))
+      .then((customer) => { if (!cancelled) setProjectCustomer(detailToCustomer(customer)); })
+      .catch(() => { if (!cancelled) setProjectCustomer(undefined); });
+    return () => { cancelled = true; };
+  }, [selectedProjectId]);
+
+  /** The selected project's own label, so a locked-in value never renders blank. */
+  const [editingProjectLabel, setEditingProjectLabel] = useState('');
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setEditingProjectLabel('');
+      return;
+    }
+    const known = projects.find(p => p.id === selectedProjectId);
+    if (known) {
+      setEditingProjectLabel(`${known.name} (${known.code})`);
+      return;
+    }
+    let cancelled = false;
+    projectsApi.get(selectedProjectId)
+      .then((p) => { if (!cancelled) setEditingProjectLabel(`${p.name} (${p.code})`); })
+      .catch(() => { if (!cancelled) setEditingProjectLabel(''); });
+    return () => { cancelled = true; };
+  }, [selectedProjectId, projects]);
+
+  /* Carries the selection it was fetched for. Without that the form cannot tell
+     "this project owes nothing" from "the answer has not arrived yet", and the
+     row-seeding below fires against the previous project's figures. */
+  const [remaining, setRemaining] = useState<{ token: string; lines: RemainingLine[] }>(
+    { token: '', lines: [] },
+  );
+  const remainingToken = `${selectedProjectId}|${selectedProformaId}|${editingDeliveryId ?? ''}`;
+  const remainingLines = remaining.token === remainingToken ? remaining.lines : [];
+
+  useEffect(() => {
+    if (!selectedProjectId) {
+      setRemaining({ token: remainingToken, lines: [] });
+      return;
+    }
+    let cancelled = false;
+    deliveriesApi.remaining({
+      projectId: selectedProjectId,
+      proformaId: selectedProformaId || undefined,
+      excludeDeliveryId: editingDeliveryId || undefined,
+    })
+      .then((lines) => { if (!cancelled) setRemaining({ token: remainingToken, lines }); })
+      .catch(() => { if (!cancelled) setRemaining({ token: remainingToken, lines: [] }); });
+    return () => { cancelled = true; };
+  }, [selectedProjectId, selectedProformaId, editingDeliveryId, remainingToken]);
+
   // Temporary item inputs
   const [tempItemName, setTempItemName] = useState<string>('');
   const [tempItemQty, setTempItemQty] = useState<number>(1);
@@ -117,6 +235,35 @@ export default function PackagingDeliveryView({
   const [selectedDelivery, setSelectedDelivery] = useState<PackagingDelivery | null>(null);
   const [isDetailModalFullscreen, setIsDetailModalFullscreen] = useState(false);
   const [overrideShowBrand, setOverrideShowBrand] = useState(false);
+
+  // Notes are their own records, not a field on the packing list.
+  const deliveryNotes = useModuleNotes('packagingDelivery', selectedDelivery?.id, (m) => alert(m));
+
+  /**
+   * The catalogued products this document's lines refer to, by id.
+   *
+   * Only used to print a brand beside a name. Reading it from the product
+   * picker's matches would mean the brand appeared or vanished depending on what
+   * had last been typed into an unrelated search box, so the open document's own
+   * products are fetched — a handful of ids, once, when it opens.
+   */
+  const [documentProducts, setDocumentProducts] = useState<Record<string, Product>>({});
+  useEffect(() => {
+    const ids = [...new Set((selectedDelivery?.items ?? []).map(i => i.productId).filter(Boolean))] as string[];
+    if (ids.length === 0) {
+      setDocumentProducts({});
+      return;
+    }
+    let cancelled = false;
+    Promise.all(ids.map(id => productsApi.get(id).catch(() => null)))
+      .then((rows) => {
+        if (cancelled) return;
+        const map: Record<string, Product> = {};
+        for (const row of rows) if (row) map[row.id] = row as unknown as Product;
+        setDocumentProducts(map);
+      });
+    return () => { cancelled = true; };
+  }, [selectedDelivery]);
 
   React.useEffect(() => {
     if (selectedDelivery) {
@@ -133,114 +280,61 @@ export default function PackagingDeliveryView({
     return 'تفکیکی (تاریخ‌های متفاوت)';
   };
 
-  const getRemainingPackingItems = (projId: string, profId: string, wonItems: any[]): PackingItem[] => {
-    const previousDeliveries = packagingDeliveries.filter(
-      d => d.projectId === projId && d.id !== editingDeliveryId
-    );
+  /** The lines still owed, pre-filled as packing rows ready to be adjusted. */
+  const getRemainingPackingItems = (): PackingItem[] =>
+    remainingLines
+      .filter(line => line.remaining > 0)
+      .map((line, idx) => ({
+        id: `pack-item-auto-${idx}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        itemOrDocName: line.productName,
+        productId: line.productId ?? undefined,
+        quantity: line.remaining,
+        packageType: 'کارتن',
+        dimensions: '50x40x30 سانتی‌متر',
+        weight: 1,
+        tagNumber: line.tagNumber ?? undefined,
+      }));
 
-    const shippedQtyMap: Record<string, number> = {};
-    previousDeliveries.forEach(d => {
-      d.items.forEach(item => {
-        const key = item.productId || item.itemOrDocName.trim();
-        shippedQtyMap[key] = (shippedQtyMap[key] || 0) + item.quantity;
-      });
-    });
-
-    const items: PackingItem[] = [];
-    
-    wonItems.forEach((item, idx) => {
-      const key = item.productId || item.productName.trim();
-      const totalQty = item.quantity;
-      let alreadyShipped = 0;
-
-      if (shippedQtyMap[key] !== undefined) {
-        const remainingShipped = shippedQtyMap[key];
-        if (remainingShipped >= totalQty) {
-          alreadyShipped = totalQty;
-          shippedQtyMap[key] = remainingShipped - totalQty;
-        } else {
-          alreadyShipped = remainingShipped;
-          shippedQtyMap[key] = 0;
-        }
-      }
-
-      const remainingQty = totalQty - alreadyShipped;
-      if (remainingQty > 0) {
-        items.push({
-          id: `pack-item-auto-${idx}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-          itemOrDocName: item.productName,
-          productId: item.productId,
-          quantity: remainingQty,
-          packageType: 'کارتن',
-          dimensions: '50x40x30 سانتی‌متر',
-          weight: 1,
-          tagNumber: item.tagNumber
-        });
-      }
-    });
-
-    return items;
-  };
-
+  /**
+   * The most of this item the packing list may still carry.
+   *
+   * Infinity means "no won line promised this", which is not an error — a
+   * packing list legitimately carries documents and packaging that no proforma
+   * lists — so those rows are simply not capped.
+   */
   const getMaxAllowedQty = (item: PackingItem) => {
     if (!selectedProjectId) return Infinity;
-    
     const key = item.productId || item.itemOrDocName.trim();
-    
-    let totalProformaQty = 0;
-    
-    const targetProformas = selectedProformaId 
-      ? proformas.filter(p => p.id === selectedProformaId)
-      : proformas.filter(p => {
-          if (p.projectId !== selectedProjectId) return false;
-          const status = getProformaOutcomeStatus(p);
-          return status === 'تأیید شده (برنده)' || status === 'نیمه برنده';
-        });
-
-    targetProformas.forEach(p => {
-      const wonItems = getWonItemsOfProforma(p, true);
-      wonItems.forEach(wi => {
-        const wiKey = wi.productId || wi.productName.trim();
-        if (wiKey === key) {
-          totalProformaQty += wi.quantity;
-        }
-      });
-    });
-
-    if (totalProformaQty === 0) return Infinity;
-
-    const otherDeliveries = packagingDeliveries.filter(
-      d => d.projectId === selectedProjectId && d.id !== editingDeliveryId
-    );
-    
-    let alreadyShipped = 0;
-    otherDeliveries.forEach(d => {
-      d.items.forEach(di => {
-        const diKey = di.productId || di.itemOrDocName.trim();
-        if (diKey === key) {
-          alreadyShipped += di.quantity;
-        }
-      });
-    });
-
-    return Math.max(0, totalProformaQty - alreadyShipped);
+    const line = remainingLines.find(l => l.key === key);
+    if (!line || line.promised === 0) return Infinity;
+    return line.remaining;
   };
 
   // Delete Modal State
   const [deleteDeliveryId, setDeleteDeliveryId] = useState<string | null>(null);
-  const [deleteActivitiesWithDelivery, setDeleteActivitiesWithDelivery] = useState(false);
 
-  // Filter won/approved proformas for the selected project
-  const availableProformas = proformas.filter(p => {
-    if (p.projectId !== selectedProjectId) return false;
-    const outcome = getProformaOutcomeStatus(p);
-    return outcome === 'تأیید شده (برنده)' || outcome === 'نیمه برنده';
-  });
+  /**
+   * Won or partly-won proformas of the selected project.
+   *
+   * The outcome is derived on the server and arrives on the row, so this no
+   * longer re-implements the rules from the raw line statuses.
+   */
+  const availableProformas = proformaPicker.matches.filter(
+    p => p.outcomeStatus === 'تأیید شده (برنده)' || p.outcomeStatus === 'نیمه برنده',
+  ) as unknown as Proforma[];
 
-  // When project changes, auto-select first won proforma & auto-fill checklist & packing items
+  /**
+   * Picking a project resets the form's derived parts.
+   *
+   * The packing rows are not filled in here: what is still owed comes from the
+   * server, and the effect that fetches it fills them once it lands. Filling
+   * them here as well would mean guessing from data this screen no longer has.
+   */
   const handleProjectChange = (projectId: string) => {
     setSelectedProjectId(projectId);
-    
+    setSelectedProformaId('');
+    setPackingItems([]);
+
     // Initialize checklist with template from settings
     const template = settings.deliveryChecklistTemplate || [];
     setChecklist(
@@ -249,41 +343,28 @@ export default function PackagingDeliveryView({
         completed: false
       }))
     );
-
-    // Find first won/semi-won proforma of this project
-    const projProformas = proformas.filter(p => {
-      if (p.projectId !== projectId) return false;
-      const outcome = getProformaOutcomeStatus(p);
-      return outcome === 'تأیید شده (برنده)' || outcome === 'نیمه برنده';
-    });
-
-    const firstProf = projProformas[0];
-    if (firstProf) {
-      setSelectedProformaId(firstProf.id);
-      const wonItems = getWonItemsOfProforma(firstProf, true);
-      const defaultPackingItems = getRemainingPackingItems(projectId, firstProf.id, wonItems);
-      setPackingItems(defaultPackingItems);
-    } else {
-      setSelectedProformaId('');
-      setPackingItems([]);
-    }
   };
 
-  // When proforma changes, populate default packing items from its items
   const handleProformaChange = (proformaId: string) => {
     setSelectedProformaId(proformaId);
-    if (!proformaId) {
-      setPackingItems([]);
-      return;
-    }
-
-    const prof = proformas.find(p => p.id === proformaId);
-    if (prof) {
-      const wonItems = getWonItemsOfProforma(prof, true);
-      const defaultPackingItems = getRemainingPackingItems(selectedProjectId, proformaId, wonItems);
-      setPackingItems(defaultPackingItems);
-    }
+    setPackingItems([]);
   };
+
+  /* Fills the packing rows from what is still owed, once that has arrived for
+     the current selection — keyed on the answer's own token, not on the
+     selection, so it cannot seed from figures that are still in flight.
+
+     Only for a list being built: editing starts from what was actually packed,
+     and overwriting that with the remainder would rewrite the document the user
+     opened. */
+  const seededFor = React.useRef<string | null>(null);
+  useEffect(() => {
+    if (activeTab !== 'new' || editingDeliveryId || !selectedProjectId) return;
+    if (remaining.token !== remainingToken) return;
+    if (seededFor.current === remainingToken) return;
+    seededFor.current = remainingToken;
+    setPackingItems(getRemainingPackingItems());
+  }, [remaining, remainingToken, activeTab, editingDeliveryId, selectedProjectId]);
 
   // Upload Photo handler (Upload to Server)
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -398,7 +479,7 @@ export default function PackagingDeliveryView({
 
     const itemsTables = Object.entries(itemsByBox).map(([box, items], boxIdx) => {
       const itemsRows = items.map((item, index) => {
-        const prod = item.productId ? products.find(p => p.id === item.productId) : undefined;
+        const prod = item.productId ? documentProducts[item.productId] : undefined;
         const brandStr = overrideShowBrand && prod?.brand ? ` (${prod.brand})` : '';
         const tagStr = item.tagNumber ? ` <span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 2px 6px; border-radius: 4px; margin-right: 8px;">تگ: ${item.tagNumber}</span>` : '';
         const displayedName = `${item.itemOrDocName}${brandStr}${tagStr}`;
@@ -720,8 +801,21 @@ export default function PackagingDeliveryView({
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
-  // Load delivery into form for editing
-  const handleEditDelivery = (delivery: PackagingDelivery) => {
+  /**
+   * Loads a packing list into the form.
+   *
+   * A grid row carries the header only, so the record is fetched: its lines,
+   * checklist and photos are what the form is made of.
+   */
+  const handleEditDelivery = async (row: PackagingDelivery) => {
+    let delivery: PackagingDelivery;
+    try {
+      delivery = detailToDelivery(await deliveriesApi.get(row.id));
+    } catch (err) {
+      reportError(err, 'دریافت پکینگ لیست با خطا مواجه شد.');
+      return;
+    }
+
     setEditingDeliveryId(delivery.id);
     setPackingListNumber(delivery.packingListNumber || '');
     setSelectedProjectId(delivery.projectId);
@@ -743,7 +837,7 @@ export default function PackagingDeliveryView({
   };
 
   // Submit delivery info
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProjectId) {
       alert('لطفاً پروژه مرتبط را انتخاب کنید.');
@@ -768,9 +862,6 @@ export default function PackagingDeliveryView({
         }
       }
     }
-
-    const proj = projects.find(p => p.id === selectedProjectId);
-    const prof = proformas.find(p => p.id === selectedProformaId);
 
     const cleanItems = packingItems.map(item => ({
       ...item,
@@ -820,49 +911,29 @@ export default function PackagingDeliveryView({
       }
     }
 
-    const packingCodeError = getCodeError(
-      'packingList', packingListNumber, packagingDeliveries, 'packingListNumber', editingDeliveryId || undefined,
-    );
-    if (packingCodeError) {
-      alert(packingCodeError);
-      return;
-    }
+    // A duplicate packing-list number is refused by the database's unique index
+    // rather than by scanning the records this browser happens to hold, and the
+    // server's message is what the user sees.
+    const payload = deliveryToWriteInput({
+      packingListNumber: cleanCode(packingListNumber) || undefined,
+      projectId: selectedProjectId,
+      proformaId: selectedProformaId || undefined,
+      deliveryDate,
+      actualDeliveryDate: finalActualDeliveryDate,
+      shippingMethod,
+      preDeliveryTestNotes,
+      checklist,
+      items: cleanItems,
+      photos,
+    });
 
-    if (editingDeliveryId) {
-      const existingDelivery = packagingDeliveries.find(d => d.id === editingDeliveryId);
-      if (existingDelivery) {
-        updatePackagingDelivery({
-          ...existingDelivery,
-          packingListNumber: cleanCode(packingListNumber) || existingDelivery.packingListNumber,
-          projectId: selectedProjectId,
-          projectName: proj?.name || '',
-          proformaId: selectedProformaId || undefined,
-          proformaNumber: prof?.proformaNumber || undefined,
-          deliveryDate,
-          actualDeliveryDate: finalActualDeliveryDate,
-          shippingMethod,
-          preDeliveryTestNotes,
-          checklist,
-          items: cleanItems,
-          photos
-        });
-      }
-    } else {
-      const deliveryData = {
-        packingListNumber: cleanCode(packingListNumber),
-        projectId: selectedProjectId,
-        projectName: proj?.name || '',
-        proformaId: selectedProformaId || undefined,
-        proformaNumber: prof?.proformaNumber || undefined,
-        deliveryDate,
-        actualDeliveryDate: finalActualDeliveryDate,
-        shippingMethod,
-        preDeliveryTestNotes,
-        checklist,
-        items: cleanItems,
-        photos
-      };
-      addPackagingDelivery(deliveryData);
+    try {
+      if (editingDeliveryId) await deliveriesApi.update(editingDeliveryId, payload);
+      else await deliveriesApi.create(payload);
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت پکینگ لیست با خطا مواجه شد.');
+      return;
     }
 
     // Reset Form
@@ -882,20 +953,14 @@ export default function PackagingDeliveryView({
     setActiveTab('list');
   };
 
-  // Filter deliveries
-  const filteredDeliveries = packagingDeliveries.filter(d => {
-    const matchesProject = !filterProject || d.projectId === filterProject;
-    const matchesSearch = !searchTerm || 
-      d.projectName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      d.packingListNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      d.shippingMethod.toLowerCase().includes(searchTerm.toLowerCase());
+  // The project filter and the search term are query parameters now, so what
+  // arrives is already filtered.
+  const filteredDeliveries = React.useMemo(() => list.rows.map(rowToDelivery), [list.rows]);
 
-    return matchesProject && matchesSearch;
-  });
-
-  // Calculate stats
-  const totalLists = packagingDeliveries.length;
-  const totalPackages = packagingDeliveries.reduce((acc, d) => acc + d.items.length, 0);
+  // Both counts span every matching list, not the page on screen — the packages
+  // one is counted in SQL alongside the page.
+  const totalLists = list.total;
+  const totalPackages = list.totalItems;
 
   return (
     <div className="space-y-6 text-right" dir="rtl">
@@ -956,16 +1021,18 @@ export default function PackagingDeliveryView({
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-1.5">فیلتر پروژه</label>
-              <select
+              <SearchableSelect
                 value={filterProject}
-                onChange={e => setFilterProject(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium focus:ring-1 focus:ring-emerald-500 outline-none"
-              >
-                <option value="">همه پروژه‌ها</option>
-                {projects.map(p => (
-                  <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
-                ))}
-              </select>
+                onChange={setFilterProject}
+                onSearchChange={projectPicker.setTerm}
+                loading={projectPicker.loading}
+                placeholder="همه پروژه‌ها"
+                className="text-xs"
+                options={[
+                  { value: '', label: 'همه پروژه‌ها' },
+                  ...projects.map(p => ({ value: p.id, label: `${p.name} (${p.code})` })),
+                ]}
+              />
             </div>
 
             <div className="relative md:col-span-2">
@@ -983,8 +1050,28 @@ export default function PackagingDeliveryView({
             </div>
           </div>
 
+          {list.error && (
+            <div className="bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold rounded-2xl p-4 flex items-center justify-between gap-3" id="deliveries-error">
+              <span className="flex items-center gap-1.5">
+                <AlertCircle size={14} />
+                {list.error}
+              </span>
+              <button
+                type="button"
+                onClick={list.refresh}
+                className="px-3 py-1.5 bg-white border border-rose-200 hover:bg-rose-50 rounded-lg text-[11px] font-bold transition"
+              >
+                تلاش دوباره
+              </button>
+            </div>
+          )}
+
           {/* List items */}
-          {filteredDeliveries.length === 0 ? (
+          {list.initialLoading ? (
+            <div className="bg-white p-12 text-center rounded-2xl border border-slate-100 shadow-sm text-xs text-slate-400" id="deliveries-loading">
+              در حال دریافت پکینگ لیست‌ها…
+            </div>
+          ) : filteredDeliveries.length === 0 ? (
             <div className="bg-white p-12 text-center rounded-2xl border border-slate-100 shadow-sm space-y-3">
               <div className="w-16 h-16 bg-slate-50 text-slate-300 rounded-full flex items-center justify-center mx-auto">
                 <Package size={32} />
@@ -1133,7 +1220,7 @@ export default function PackagingDeliveryView({
                                   {/* Actions for this specific delivery */}
                                   <div className="flex justify-between items-center pt-2 border-t border-slate-100/60 mt-auto">
                                     <button
-                                      onClick={() => setSelectedDelivery(delivery)}
+                                      onClick={() => openDelivery(delivery.id)}
                                       className="bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-bold text-[10px] px-2.5 py-1 rounded-lg transition flex items-center gap-1"
                                     >
                                       <Info size={12} />
@@ -1176,6 +1263,33 @@ export default function PackagingDeliveryView({
               </div>
             );
           })()}
+
+          {list.totalPages > 1 && (
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm px-5 py-3 flex items-center justify-between gap-3" id="deliveries-pager">
+              <span className="text-[11px] font-bold text-slate-500">
+                صفحه {list.page.toLocaleString('fa-IR')} از {list.totalPages.toLocaleString('fa-IR')}
+                {list.loading && <span className="text-emerald-500 mr-2">در حال بارگذاری…</span>}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={list.page <= 1 || list.loading}
+                  onClick={() => list.setPage(list.page - 1)}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 rounded-lg text-[11px] font-bold transition"
+                >
+                  قبلی
+                </button>
+                <button
+                  type="button"
+                  disabled={list.page >= list.totalPages || list.loading}
+                  onClick={() => list.setPage(list.page + 1)}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 rounded-lg text-[11px] font-bold transition"
+                >
+                  بعدی
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1191,23 +1305,26 @@ export default function PackagingDeliveryView({
             {/* Project dropdown */}
             <div className="space-y-1">
               <label className="block text-xs font-bold text-slate-700">{renderFieldLabelWithAsterisk(settings, 'packagingDelivery', 'projectId', 'انتخاب پروژه')}</label>
-              <select
+              <SearchableSelect
                 value={selectedProjectId}
-                onChange={e => handleProjectChange(e.target.value)}
+                onChange={handleProjectChange}
+                onSearchChange={projectPicker.setTerm}
+                loading={projectPicker.loading}
+                placeholder="-- انتخاب پروژه --"
                 required={isFieldRequired(settings, 'packagingDelivery', 'projectId')}
-                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
-              >
-                <option value="">-- انتخاب پروژه --</option>
-                {projects.map(p => (
-                  <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
-                ))}
-              </select>
+                className="text-xs"
+                // The project of the list being edited has to stay selectable
+                // even once the suggestions have moved on to another term.
+                options={dedupeOptions([
+                  ...(editingProjectLabel
+                    ? [{ value: selectedProjectId, label: editingProjectLabel }]
+                    : []),
+                  ...projects.map(p => ({ value: p.id, label: `${p.name} (${p.code})` })),
+                ])}
+              />
               {selectedProjectId && (
                 <div className="mt-2">
-                  <CustomerAgreementAlert 
-                    customer={customers?.find(c => c.id === projects?.find(p => p.id === selectedProjectId)?.customerId)} 
-                    moduleName="packaging" 
-                  />
+                  <CustomerAgreementAlert customer={projectCustomer} moduleName="packaging" />
                 </div>
               )}
             </div>
@@ -1820,7 +1937,7 @@ export default function PackagingDeliveryView({
                                 <span>{item.itemOrDocName}</span>
                                 <div className="flex items-center gap-1.5 flex-wrap mt-1 font-normal">
                                   {overrideShowBrand && (() => {
-                                    const prod = item.productId ? products.find(p => p.id === item.productId) : undefined;
+                                    const prod = item.productId ? documentProducts[item.productId] : undefined;
                                     return prod?.brand ? (
                                       <span className="text-[10px] text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded font-semibold">برند: {prod.brand}</span>
                                     ) : null;
@@ -1887,33 +2004,12 @@ export default function PackagingDeliveryView({
               {/* Module Notes & Comments (Not printed) */}
               <div className="no-print pt-6 border-t border-slate-200 mt-6 text-right">
                 <ModuleNotesSection
-                  notes={selectedDelivery.moduleNotes || []}
+                  notes={deliveryNotes.notes}
                   currentUser={currentUser}
                   title="نکات، کامنت‌ها و توافقات مرحله بسته‌بندی/ارسال"
                   placeholder="مثال: کامنت مشتری در مرحله بسته‌بندی یا شرایط لجستیک خاص این ارسال..."
-                  onAddNote={(text) => {
-                    const newNote = {
-                      id: `note-${Date.now()}`,
-                      text,
-                      createdAt: getTodayShamsi(),
-                      author: currentUser?.fullName || currentUser?.username || 'کاربر سیستم'
-                    };
-                    const updated = {
-                      ...selectedDelivery,
-                      moduleNotes: [...(selectedDelivery.moduleNotes || []), newNote]
-                    };
-                    updatePackagingDelivery(updated);
-                    setSelectedDelivery(updated);
-                  }}
-                  onDeleteNote={(id) => {
-                    const updatedNotes = (selectedDelivery.moduleNotes || []).filter(n => n.id !== id);
-                    const updated = {
-                      ...selectedDelivery,
-                      moduleNotes: updatedNotes
-                    };
-                    updatePackagingDelivery(updated);
-                    setSelectedDelivery(updated);
-                  }}
+                  onAddNote={deliveryNotes.addNote}
+                  onDeleteNote={deliveryNotes.deleteNote}
                 />
               </div>
 
@@ -1973,31 +2069,21 @@ export default function PackagingDeliveryView({
       {/* Delete Confirmation Modal */}
       <ConfirmModal
         isOpen={!!deleteDeliveryId}
-        onClose={() => {
+        onClose={() => setDeleteDeliveryId(null)}
+        onConfirm={async () => {
+          if (!deleteDeliveryId) return;
+          const id = deleteDeliveryId;
           setDeleteDeliveryId(null);
-          setDeleteActivitiesWithDelivery(false);
-        }}
-        onConfirm={() => {
-          if (deleteDeliveryId) {
-            deletePackagingDelivery(deleteDeliveryId, deleteActivitiesWithDelivery);
+          try {
+            await deliveriesApi.remove(id);
+            list.refresh();
+          } catch (err) {
+            reportError(err, 'حذف پکینگ لیست با خطا مواجه شد.');
           }
         }}
         title="حذف پکینگ لیست"
         message="آیا از حذف این پکینگ لیست و تحویل کالا اطمینان دارید؟ این عملیات غیرقابل بازگشت است."
-      >
-        <div className="mt-4 pt-4 border-t border-slate-100 flex items-start gap-2">
-          <input
-            type="checkbox"
-            id="deleteActivities"
-            checked={deleteActivitiesWithDelivery}
-            onChange={(e) => setDeleteActivitiesWithDelivery(e.target.checked)}
-            className="mt-1"
-          />
-          <label htmlFor="deleteActivities" className="text-xs text-slate-600">
-            حذف لاگ‌های فعالیت پروژه مرتبط با این پکینگ لیست (در دسته‌بندی بسته‌بندی و تحویل کالا)
-          </label>
-        </div>
-      </ConfirmModal>
+      />
 
       <style>{`
         @media print {

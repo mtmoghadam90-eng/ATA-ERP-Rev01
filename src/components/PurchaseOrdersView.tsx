@@ -41,6 +41,7 @@ import { getCodeError, cleanCode } from '../utils/documentCodes';
 import { ApiError } from '../api/client';
 import { purchaseOrdersApi, purchaseOrderToWriteInput, rowToPurchaseOrder } from '../api/purchaseOrders';
 import { usePurchaseOrderList } from '../api/usePurchaseOrderList';
+import { useModuleNotes } from '../api/moduleNotes';
 import { useEntitySearch } from '../api/useEntitySearch';
 import type { SupplierRow } from '../api/suppliers';
 import type { ProjectRow } from '../api/projects';
@@ -182,6 +183,10 @@ export default function PurchaseOrdersView({
   const [showLandedModal, setShowLandedModal] = useState(false);
   const [isLandedModalFullscreen, setIsLandedModalFullscreen] = useState(false);
   const [selectedPO, setSelectedPO] = useState<PurchaseOrder | null>(null);
+  // Notes are their own records keyed by document, not a field on the order, so
+  // they are never part of its write body — folding one into the record and
+  // saving it discarded the note.
+  const poNotes = useModuleNotes('purchaseOrder', selectedPO?.id, (m) => alert(m));
   const [isPOModalFullscreen, setIsPOModalFullscreen] = useState(false);
 
   // Editing state
@@ -1037,33 +1042,12 @@ export default function PurchaseOrdersView({
                 {/* Purchase Order Special Notes & Agreements */}
                 <div className="pt-4 border-t border-slate-100">
                   <ModuleNotesSection
-                    notes={selectedPO.moduleNotes || []}
+                    notes={poNotes.notes}
                     currentUser={currentUser}
                     title="توافقات و یادداشت‌های سفارش خارجی"
                     placeholder="توافق ارزی خاص، جزییات حمل یا کامنت جدید درباره تامین کالا..."
-                    onAddNote={(text) => {
-                      const newNote = {
-                        id: `note-${Date.now()}`,
-                        text,
-                        createdAt: getTodayShamsi(),
-                        author: currentUser?.fullName || currentUser?.username || 'کاربر سیستم'
-                      };
-                      const updated = {
-                        ...selectedPO,
-                        moduleNotes: [...(selectedPO.moduleNotes || []), newNote]
-                      };
-                      updatePurchaseOrder(updated);
-                      setSelectedPO(updated);
-                    }}
-                    onDeleteNote={(id) => {
-                      const updatedNotes = (selectedPO.moduleNotes || []).filter(n => n.id !== id);
-                      const updated = {
-                        ...selectedPO,
-                        moduleNotes: updatedNotes
-                      };
-                      updatePurchaseOrder(updated);
-                      setSelectedPO(updated);
-                    }}
+                    onAddNote={poNotes.addNote}
+                    onDeleteNote={poNotes.deleteNote}
                   />
                 </div>
               </div>
