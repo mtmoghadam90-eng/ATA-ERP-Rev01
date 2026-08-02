@@ -19,7 +19,7 @@ import {
 const WRITABLE: (keyof InquiryInput)[] = [
   "projectId", "supplierId", "isWinner", "offerConfirmed",
   "creationDate", "winnerDate", "offerConfirmedDate",
-  "technicalOfferUrl", "financialOfferUrl", "items",
+  "technicalOfferUrl", "financialOfferUrl", "items", "initialStep",
 ];
 
 function pickInput(body: unknown): InquiryInput {

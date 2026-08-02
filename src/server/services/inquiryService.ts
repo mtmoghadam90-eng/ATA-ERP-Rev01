@@ -35,11 +35,19 @@ export function buildInquiryWhere(
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
 
-  // Inquiries carry no text of their own worth searching; the useful term is the
-  // item name, so the search reaches into the lines.
+  // Inquiries carry no text of their own worth searching. What the user has in
+  // mind is either the supplier they asked or the part they asked about, so the
+  // term reaches the joined supplier and into the lines.
   if (q.search) {
+    const alternatives: Record<string, unknown>[] = [];
+
     const itemSearch = searchClause(q.search, ["name", "brand", "partNumber", "tagNumber"]);
-    if (itemSearch) and.push({ items: { some: itemSearch } });
+    if (itemSearch) alternatives.push({ items: { some: itemSearch } });
+
+    const supplierSearch = searchClause(q.search, ["name"]);
+    if (supplierSearch) alternatives.push({ supplier: supplierSearch });
+
+    if (alternatives.length > 0) and.push({ OR: alternatives });
   }
 
   for (const [field, value] of Object.entries(q.filters)) {
@@ -52,6 +60,14 @@ export function buildInquiryWhere(
   return and.length === 0 ? {} : { AND: and };
 }
 
+/**
+ * The list projection.
+ *
+ * Wider than a grid row would need, because this module has no grid: a row is
+ * rendered as a card that shows every line and the whole event timeline. Sending
+ * only totals and counts would leave the cards to fetch each inquiry separately,
+ * which is the request-per-row problem the pagination exists to avoid.
+ */
 const LIST_SELECT = {
   id: true, projectId: true, supplierId: true,
   isWinner: true, winnerDateJalali: true,
@@ -60,7 +76,21 @@ const LIST_SELECT = {
   technicalOfferUrl: true, financialOfferUrl: true, createdAt: true,
   supplier: { select: { id: true, name: true } },
   project: { select: { id: true, code: true, name: true } },
-  items: { select: { quantity: true, currency: true, priceForeign: true, priceRial: true } },
+  items: {
+    orderBy: { lineNo: "asc" },
+    select: {
+      id: true, name: true, brand: true, partNumber: true, tagNumber: true,
+      quantity: true, currency: true, priceForeign: true, priceRial: true,
+      deliveryTime: true, notes: true,
+    },
+  },
+  steps: {
+    orderBy: { stepNo: "asc" },
+    select: {
+      id: true, title: true, occurredAtJalali: true,
+      method: true, recipientName: true, notes: true, isAuto: true,
+    },
+  },
   _count: { select: { items: true, steps: true } },
 } satisfies Prisma.SupplierInquirySelect;
 
@@ -111,6 +141,20 @@ export interface InquiryItemInput {
   notes?: string | null;
 }
 
+/**
+ * How the inquiry was sent, for the step the creation records anyway.
+ *
+ * Sending it is not a separate event the user chooses to log — it is what
+ * creating the inquiry means — so this enriches the derived first step rather
+ * than adding a second one beside it. Create only.
+ */
+export interface InquiryInitialStepInput {
+  occurredAt?: string | null;
+  method?: string | null;
+  recipientName?: string | null;
+  notes?: string | null;
+}
+
 export interface InquiryInput {
   projectId?: string;
   supplierId?: string;
@@ -122,6 +166,7 @@ export interface InquiryInput {
   technicalOfferUrl?: string | null;
   financialOfferUrl?: string | null;
   items?: InquiryItemInput[];
+  initialStep?: InquiryInitialStepInput;
 }
 
 function mapItem(row: InquiryItemInput): Record<string, unknown> | null {
@@ -153,6 +198,27 @@ function scalarData(input: InquiryInput): Record<string, unknown> {
   if ("financialOfferUrl" in input) set("financialOfferUrl", toNullableString(input.financialOfferUrl, 500));
 
   return { ...out, ...expandDateFields(input as Record<string, unknown>, INQUIRY_DATE_FIELDS) };
+}
+
+/**
+ * A project has at most one winning inquiry.
+ *
+ * The client used to enforce this by walking every inquiry it held and clearing
+ * the others, which only worked while the browser had them all. Paged, it would
+ * silently leave a winner on a page nobody had loaded — two winners for one
+ * project, and the proforma built from "the winner" then depends on which one is
+ * read first. Declaring a winner and demoting the previous one is one decision,
+ * so it happens in one transaction, here.
+ */
+async function enforceSingleWinner(
+  tx: Prisma.TransactionClient,
+  inquiryId: string,
+  projectId: string,
+): Promise<void> {
+  await tx.supplierInquiry.updateMany({
+    where: { projectId, isWinner: true, id: { not: inquiryId } },
+    data: { isWinner: false, winnerDate: null, winnerDateJalali: null },
+  });
 }
 
 /* ------------------------------- auto steps ------------------------------- */
@@ -298,21 +364,30 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
       rows: input.items ?? [], map: mapItem,
     });
 
-    // Sending the inquiry is the first thing that happened to it.
+    // Sending the inquiry is the first thing that happened to it. The form can
+    // say how it was sent and to whom; the event itself is not optional.
     const settings = await loadSettings();
+    const first = input.initialStep ?? {};
     await tx.supplierInquiryStep.create({
       data: {
         inquiryId: inquiry.id,
         stepNo: 1,
         title: resolveStepTitle(settings, INQUIRY_STEP_KEYS.SENT),
-        ...expandDateFields({ occurredAt: input.creationDate || todayJalali }, ["occurredAt"]),
-        notes: "ثبت خودکار: استعلام قیمت ایجاد شد.",
+        ...expandDateFields(
+          { occurredAt: first.occurredAt || input.creationDate || todayJalali },
+          ["occurredAt"],
+        ),
+        method: toNullableString(first.method, 50),
+        recipientName: toNullableString(first.recipientName, 200),
+        notes: toNullableString(first.notes) ?? "ثبت خودکار: استعلام قیمت ایجاد شد.",
         isAuto: true,
         autoKey: INQUIRY_STEP_KEYS.SENT,
       } as Prisma.SupplierInquiryStepUncheckedCreateInput,
     });
 
     await appendAutoSteps(tx, inquiry.id, null, todayJalali);
+
+    if (inquiry.isWinner) await enforceSingleWinner(tx, inquiry.id, inquiry.projectId);
 
     return tx.supplierInquiry.findUnique({
       where: { id: inquiry.id },
@@ -334,16 +409,18 @@ export async function updateInquiry(
     const before = await tx.supplierInquiry.findUnique({
       where: { id },
       select: {
-        offerConfirmed: true, isWinner: true,
+        offerConfirmed: true, isWinner: true, projectId: true,
         items: { select: { quantity: true, currency: true, priceForeign: true, priceRial: true } },
       },
     });
     if (!before) return null;
 
-    await tx.supplierInquiry.update({
+    const updated = await tx.supplierInquiry.update({
       where: { id },
       data: scalarData(input) as Prisma.SupplierInquiryUncheckedUpdateInput,
     });
+
+    if (updated.isWinner) await enforceSingleWinner(tx, id, updated.projectId);
 
     if (input.items !== undefined) {
       await syncChildren({

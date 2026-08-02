@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Plus, 
   Edit, 
@@ -30,32 +30,45 @@ import {
   Maximize2,
   Minimize2
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import { 
   Project, 
   Supplier, 
   SupplierInquiry, 
-  SupplierInquiryItem, 
-  InquiryStep, 
+  SupplierInquiryItem,
   ExchangeRate,
   ERPSettings
 } from '../types';
 import ConfirmModal from './ConfirmModal';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { getTodayShamsi } from '../dateUtils';
-import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
-import { withAutoSteps } from '../utils/inquirySteps';
+import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import { SearchableSelect } from './SearchableSelect';
 import { downloadFileFromServer } from '../imageUtils';
+import { ApiError } from '../api/client';
+import {
+  InquiryStepInput, InquiryWriteInput,
+  inquiryToWriteInput, rowToInquiry, supplierInquiriesApi,
+} from '../api/supplierInquiries';
+import { useSupplierInquiryList } from '../api/useSupplierInquiryList';
+import { useEntitySearch } from '../api/useEntitySearch';
+import { detailToProject } from '../api/projectAdapter';
+import { projectsApi } from '../api/projects';
+import type { ProjectRow } from '../api/projects';
+import type { SupplierRow } from '../api/suppliers';
 
+/**
+ * Supplier inquiries screen.
+ *
+ * Reads through the API. Two rules that used to live here now belong to the
+ * server, because neither survives a paged list: the event timeline is derived
+ * from what the user does, and a project has at most one winning inquiry.
+ */
 interface SupplierInquiriesViewProps {
-  projects: Project[];
-  suppliers: Supplier[];
   exchangeRates: ExchangeRate[];
-  supplierInquiries: SupplierInquiry[];
-  addSupplierInquiry: (inquiry: Omit<SupplierInquiry, 'id' | 'creationDate'>) => SupplierInquiry;
-  updateSupplierInquiry: (updatedInquiry: SupplierInquiry) => void;
-  deleteSupplierInquiry: (id: string, deleteLogs?: boolean) => void;
+  // Inquiries, projects and suppliers are no longer props, and neither are the
+  // three mutations: the view calls the API, so the derived steps and the
+  // winner rule come back from the server that applied them.
   settings: ERPSettings;
 }
 
@@ -82,41 +95,59 @@ async function uploadToSupplierInquiries(file: File): Promise<string> {
 }
 
 export default function SupplierInquiriesView({
-  projects,
-  suppliers,
   exchangeRates,
-  supplierInquiries,
-  addSupplierInquiry,
-  updateSupplierInquiry,
-  deleteSupplierInquiry,
   settings
 }: SupplierInquiriesViewProps) {
-  // Default to all projects so the module is immediately useful without a selection.
-  const [selectedProjectId, setSelectedProjectId] = useState<string>('all');
+  const list = useSupplierInquiryList();
+  const selectedProjectId = list.filters.projectId;
   const [activeTab, setActiveTab] = useState<'cards' | 'compare'>('cards');
-  
+
   // Modals state
   const [isInquiryModalOpen, setIsInquiryModalOpen] = useState(false);
   const [isInquiryModalFullscreen, setIsInquiryModalFullscreen] = useState(false);
   const [isStepModalOpen, setIsStepModalOpen] = useState(false);
   const [editingInquiry, setEditingInquiry] = useState<SupplierInquiry | null>(null);
   const [activeInquiryForStep, setActiveInquiryForStep] = useState<SupplierInquiry | null>(null);
-  
+
   // Confirm Delete state
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'inquiry' | 'step'; inquiryId: string; stepId?: string } | null>(null);
-  const [deleteActivitiesWithInquiry, setDeleteActivitiesWithInquiry] = useState(false);
 
-  // Selected Project Details
-  const selectedProject = useMemo(() => {
-    return projects.find(p => p.id === selectedProjectId);
-  }, [projects, selectedProjectId]);
+  /* The project selector doubles as the list's filter, so its options come from
+     the server rather than from every project the browser happens to hold. */
+  const projectPicker = useEntitySearch<ProjectRow>({
+    path: '/api/projects', limit: 25,
+    params: { withSummary: 'false' },
+    getLabel: (row) => row.name,
+  });
+  const supplierPicker = useEntitySearch<SupplierRow>({
+    path: '/api/suppliers', limit: 25, enabled: isInquiryModalOpen,
+    getLabel: (row) => row.name,
+  });
 
-  // Filtered inquiries for selected project
-  const filteredInquiries = useMemo(() => {
-    if (!selectedProjectId) return [];
-    if (selectedProjectId === 'all') return supplierInquiries;
-    return supplierInquiries.filter(inq => inq.projectId === selectedProjectId);
-  }, [supplierInquiries, selectedProjectId]);
+  const projects = projectPicker.matches as unknown as Project[];
+  const suppliers = supplierPicker.matches as unknown as Supplier[];
+
+  const filteredInquiries = useMemo(() => list.rows.map(rowToInquiry), [list.rows]);
+
+  /* The chosen project's own record, for the "items needed" brief and to seed a
+     new inquiry's lines. A list row carries neither, so this is a real fetch. */
+  const [selectedProject, setSelectedProject] = useState<Project | undefined>();
+  useEffect(() => {
+    if (selectedProjectId === 'all') {
+      setSelectedProject(undefined);
+      return;
+    }
+    let cancelled = false;
+    projectsApi.get(selectedProjectId)
+      .then((detail) => { if (!cancelled) setSelectedProject(detailToProject(detail)); })
+      .catch(() => { if (!cancelled) setSelectedProject(undefined); });
+    return () => { cancelled = true; };
+  }, [selectedProjectId]);
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
 
   // Currency Converter Utility
   const getCurrencyRate = (currency: string) => {
@@ -132,45 +163,44 @@ export default function SupplierInquiriesView({
     return rateObj ? rateObj.rateToRIYAL : 1;
   };
 
-  // Declares a winner for the project, and automatically sets all others as losers
-  const handleSetWinner = (inquiryId: string) => {
-    const targetInq = supplierInquiries.find(inq => inq.id === inquiryId);
-    if (!targetInq) return;
+  /**
+   * Declares — or withdraws — the winning offer.
+   *
+   * Only this inquiry is sent. Demoting the project's previous winner is the
+   * server's half of the same decision, so the refresh below is what shows it:
+   * the losing card may well be on a page this browser never loaded.
+   */
+  const handleSetWinner = async (inquiryId: string) => {
+    const target = filteredInquiries.find(inq => inq.id === inquiryId);
+    if (!target) return;
+    const isNowWinner = !target.isWinner;
 
-    // Toggle current winner status
-    const isNowWinner = !targetInq.isWinner;
-
-    supplierInquiries.forEach(inq => {
-      if (inq.id === inquiryId) {
-        const next = {
-          ...inq,
-          isWinner: isNowWinner,
-          winnerDate: isNowWinner ? getTodayShamsi() : undefined
-        };
-        // Declaring a winner is a workflow event — record it automatically.
-        updateSupplierInquiry(withAutoSteps(inq, next, settings, getTodayShamsi()));
-      } else if (isNowWinner && inq.projectId === targetInq.projectId) {
-        // If we set a new winner, all other inquiries for this same project become losers
-        updateSupplierInquiry({
-          ...inq,
-          isWinner: false,
-          winnerDate: undefined
-        });
-      }
-    });
+    try {
+      await supplierInquiriesApi.update(inquiryId, {
+        isWinner: isNowWinner,
+        winnerDate: isNowWinner ? getTodayShamsi() : null,
+      });
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت وضعیت برنده با خطا مواجه شد.');
+    }
   };
 
   // Confirms the offer's validity -> the inquiry moves to the "final offer" stage.
-  const handleToggleOfferConfirmed = (inquiryId: string) => {
-    const inq = supplierInquiries.find(i => i.id === inquiryId);
+  const handleToggleOfferConfirmed = async (inquiryId: string) => {
+    const inq = filteredInquiries.find(i => i.id === inquiryId);
     if (!inq) return;
     const isNowConfirmed = !inq.offerConfirmed;
-    const next: SupplierInquiry = {
-      ...inq,
-      offerConfirmed: isNowConfirmed,
-      offerConfirmedDate: isNowConfirmed ? getTodayShamsi() : undefined,
-    };
-    updateSupplierInquiry(withAutoSteps(inq, next, settings, getTodayShamsi()));
+
+    try {
+      await supplierInquiriesApi.update(inquiryId, {
+        offerConfirmed: isNowConfirmed,
+        offerConfirmedDate: isNowConfirmed ? getTodayShamsi() : null,
+      });
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت تأیید آفر با خطا مواجه شد.');
+    }
   };
 
   const handleOpenAddInquiry = () => {
@@ -198,22 +228,50 @@ export default function SupplierInquiriesView({
     setDeleteTarget({ type: 'step', inquiryId, stepId });
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!deleteTarget) return;
-
-    if (deleteTarget.type === 'inquiry') {
-      deleteSupplierInquiry(deleteTarget.inquiryId, deleteActivitiesWithInquiry);
-    } else if (deleteTarget.type === 'step' && deleteTarget.stepId) {
-      const inq = supplierInquiries.find(i => i.id === deleteTarget.inquiryId);
-      if (inq) {
-        updateSupplierInquiry({
-          ...inq,
-          steps: inq.steps.filter(s => s.id !== deleteTarget.stepId)
-        });
-      }
-    }
+    const target = deleteTarget;
     setDeleteTarget(null);
-    setDeleteActivitiesWithInquiry(false);
+
+    try {
+      if (target.type === 'inquiry') {
+        await supplierInquiriesApi.remove(target.inquiryId);
+      } else if (target.stepId) {
+        // Refused for a derived step, with the server's own explanation.
+        await supplierInquiriesApi.removeStep(target.inquiryId, target.stepId);
+      }
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'حذف با خطا مواجه شد.');
+    }
+  };
+
+  const handleSubmitInquiry = async (
+    data: Partial<SupplierInquiry>,
+    initialStep?: InquiryWriteInput['initialStep'],
+  ) => {
+    try {
+      if (editingInquiry) {
+        await supplierInquiriesApi.update(editingInquiry.id, inquiryToWriteInput({ ...editingInquiry, ...data }));
+      } else {
+        await supplierInquiriesApi.create({ ...inquiryToWriteInput(data), initialStep });
+      }
+      setIsInquiryModalOpen(false);
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت استعلام با خطا مواجه شد.');
+    }
+  };
+
+  const handleAddStep = async (step: InquiryStepInput) => {
+    if (!activeInquiryForStep) return;
+    try {
+      await supplierInquiriesApi.addStep(activeInquiryForStep.id, step);
+      setIsStepModalOpen(false);
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت رویداد با خطا مواجه شد.');
+    }
   };
 
   return (
@@ -225,18 +283,36 @@ export default function SupplierInquiriesView({
           <p className="text-xs text-slate-500 mt-1">مدیریت قیمت‌های پیشنهادی، آپلود اسناد فنی/مالی و مقایسه همه‌جانبه برای تعیین برنده</p>
         </div>
         
-        {/* Project Selector */}
+        {/* Project Selector + search */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto shrink-0" id="project-selector-wrapper">
+          <div className="relative w-full sm:w-56" id="inquiry-search">
+            <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={list.search}
+              onChange={(e) => list.setSearch(e.target.value)}
+              placeholder="جستجوی تأمین‌کننده یا کالا..."
+              className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+            />
+          </div>
+
           <label className="text-xs font-bold text-slate-600 whitespace-nowrap sm:text-right">پروژه مورد نظر:</label>
           <div id="project-selector" className="w-full sm:w-72">
             <SearchableSelect
               value={selectedProjectId}
-              onChange={(val) => setSelectedProjectId(val || 'all')}
+              onChange={(val) => list.setFilter('projectId', val || 'all')}
+              onSearchChange={projectPicker.setTerm}
+              loading={projectPicker.loading}
               placeholder="جستجو و انتخاب پروژه..."
               required
               className="text-xs"
               options={[
                 { value: 'all', label: 'همه پروژه‌ها' },
+                // The chosen project stays selectable even once the suggestions
+                // have moved on to a different search term.
+                ...(selectedProject && !projects.some(p => p.id === selectedProject.id)
+                  ? [{ value: selectedProject.id, label: `${selectedProject.name} (${selectedProject.code})` }]
+                  : []),
                 ...projects.map(p => ({ value: p.id, label: `${p.name} (${p.code})` })),
               ]}
             />
@@ -350,20 +426,51 @@ export default function SupplierInquiriesView({
             </div>
           </div>
 
-          {/* Tab Contents */}
-          <AnimatePresence mode="wait">
+          {list.error && (
+            <div className="bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold rounded-2xl p-4 flex items-center justify-between gap-3" id="inquiries-error">
+              <span className="flex items-center gap-1.5">
+                <AlertTriangle size={14} />
+                {list.error}
+              </span>
+              <button
+                type="button"
+                onClick={list.refresh}
+                className="px-3 py-1.5 bg-white border border-rose-200 hover:bg-rose-50 rounded-lg text-[11px] font-bold transition"
+              >
+                تلاش دوباره
+              </button>
+            </div>
+          )}
+
+          {list.initialLoading ? (
+            <div className="bg-white rounded-2xl border border-slate-100 p-12 text-center text-slate-400 text-xs shadow-sm" id="inquiries-loading">
+              در حال دریافت استعلام‌ها…
+            </div>
+          ) : (
+          /* Tab Contents.
+
+             Rendered directly rather than through `AnimatePresence`. The exit
+             animation on these two panels never reported completion, and with
+             `mode="wait"` — which is how this was written — the incoming panel
+             is held until it does: the comparison button highlighted and the
+             table never appeared. Removing the wrapper keeps the entrance
+             animation, which is the part that was doing any work. */
+          <>
             {activeTab === 'cards' ? (
               <motion.div
                 key="cards-view"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
                 className="space-y-6"
               >
                 {filteredInquiries.length > 0 ? (
                   <div className="space-y-2" id="inquiries-scroller-section">
-                    <div className="text-xs font-bold text-slate-400 mb-2">استعلام‌ها ({filteredInquiries.length} مورد) - امکان پیمایش افقی</div>
-                    
+                    <div className="text-xs font-bold text-slate-400 mb-2">
+                      استعلام‌ها ({list.total.toLocaleString('fa-IR')} مورد
+                      {list.totalPages > 1 && ` - نمایش ${filteredInquiries.length.toLocaleString('fa-IR')} مورد در صفحه ${list.page.toLocaleString('fa-IR')} از ${list.totalPages.toLocaleString('fa-IR')}`}
+                      ) - امکان پیمایش افقی
+                    </div>
+
                     {/* Horizontal scroll container */}
                     <div className="flex gap-6 overflow-x-auto pb-6 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
                       {filteredInquiries.map((inq) => {
@@ -613,7 +720,6 @@ export default function SupplierInquiriesView({
                 key="compare-view"
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
               >
                 {filteredInquiries.length > 0 ? (
                   <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-sm space-y-4 overflow-x-auto" id="comparison-container">
@@ -731,7 +837,35 @@ export default function SupplierInquiriesView({
                 )}
               </motion.div>
             )}
-          </AnimatePresence>
+          </>
+          )}
+
+          {list.totalPages > 1 && (
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm px-5 py-3 flex items-center justify-between gap-3" id="inquiries-pager">
+              <span className="text-[11px] font-bold text-slate-500">
+                صفحه {list.page.toLocaleString('fa-IR')} از {list.totalPages.toLocaleString('fa-IR')}
+                {list.loading && <span className="text-sky-500 mr-2">در حال بارگذاری…</span>}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={list.page <= 1 || list.loading}
+                  onClick={() => list.setPage(list.page - 1)}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 rounded-lg text-[11px] font-bold transition"
+                >
+                  قبلی
+                </button>
+                <button
+                  type="button"
+                  disabled={list.page >= list.totalPages || list.loading}
+                  onClick={() => list.setPage(list.page + 1)}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 rounded-lg text-[11px] font-bold transition"
+                >
+                  بعدی
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-slate-100 p-16 text-center text-slate-400 space-y-4 shadow-sm" id="intro-card">
@@ -746,8 +880,13 @@ export default function SupplierInquiriesView({
       {/* ---------------------------------------------------- */}
       {/* Inquiry Form Modal (Add / Edit) */}
       {/* ---------------------------------------------------- */}
-      <AnimatePresence>
-        {isInquiryModalOpen && (
+      {/* No `AnimatePresence` wrapper: its direct child here is a plain div, and
+          it can only track `motion` children — so on close it kept the whole
+          subtree mounted waiting for an exit that never arrived, leaving a
+          transparent full-screen layer that swallowed every click on the page
+          behind it. Rendering conditionally closes it for real; `initial` and
+          `animate` still play the way in. */}
+      {isInquiryModalOpen && (
           <div className={`fixed inset-0 z-[1000] flex items-center justify-center overflow-y-auto ${isInquiryModalFullscreen ? 'p-0' : 'p-4'}`}>
             {/* Overlay */}
             <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsInquiryModalOpen(false)} />
@@ -755,7 +894,6 @@ export default function SupplierInquiriesView({
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
               className={`relative bg-white shadow-2xl border border-slate-100 z-10 text-right overflow-hidden flex flex-col justify-between ${
                 isInquiryModalFullscreen 
                   ? 'w-screen h-screen rounded-none my-0 max-w-full' 
@@ -785,39 +923,29 @@ export default function SupplierInquiriesView({
 
               {/* Form implementation */}
               <div className={`p-6 overflow-y-auto ${isInquiryModalFullscreen ? 'max-h-[calc(100vh-80px)] flex-1' : 'max-h-[75vh]'}`}>
-                <InquiryFormInner 
+                <InquiryFormInner
                   editingInquiry={editingInquiry}
                   selectedProjectId={selectedProjectId}
                   suppliers={suppliers}
+                  supplierPicker={supplierPicker}
                   exchangeRates={exchangeRates}
                   selectedProject={selectedProject}
                   projects={projects}
+                  projectPicker={projectPicker}
                   getCurrencyRate={getCurrencyRate}
                   settings={settings}
                   onClose={() => setIsInquiryModalOpen(false)}
-                  onSubmit={(data) => {
-                    const today = getTodayShamsi();
-                    if (editingInquiry) {
-                      const merged = { ...editingInquiry, ...data } as SupplierInquiry;
-                      updateSupplierInquiry(withAutoSteps(editingInquiry, merged, settings, today));
-                    } else {
-                      // Auto-record the stage implied by the data entered at creation.
-                      addSupplierInquiry(withAutoSteps(undefined, data as SupplierInquiry, settings, today));
-                    }
-                    setIsInquiryModalOpen(false);
-                  }}
+                  onSubmit={handleSubmitInquiry}
                 />
               </div>
             </motion.div>
           </div>
-        )}
-      </AnimatePresence>
+      )}
 
       {/* ---------------------------------------------------- */}
       {/* Timeline Event Modal */}
       {/* ---------------------------------------------------- */}
-      <AnimatePresence>
-        {isStepModalOpen && activeInquiryForStep && (
+      {isStepModalOpen && activeInquiryForStep && (
           <div className="fixed inset-0 z-[1010] flex items-center justify-center p-4">
             {/* Overlay */}
             <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsStepModalOpen(false)} />
@@ -825,7 +953,6 @@ export default function SupplierInquiriesView({
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
               className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-100 p-6 z-10 text-right"
               id="step-modal-content"
             >
@@ -836,57 +963,31 @@ export default function SupplierInquiriesView({
                 </button>
               </div>
 
-              <StepFormInner 
+              <StepFormInner
                 settings={settings}
                 onClose={() => setIsStepModalOpen(false)}
-                onSubmit={(newStep) => {
-                  const updatedSteps = [...(activeInquiryForStep.steps || []), newStep];
-                  updateSupplierInquiry({
-                    ...activeInquiryForStep,
-                    steps: updatedSteps
-                  });
-                  setIsStepModalOpen(false);
-                }}
+                onSubmit={handleAddStep}
               />
             </motion.div>
           </div>
-        )}
-      </AnimatePresence>
+      )}
 
       {/* ---------------------------------------------------- */}
       {/* Confirmation Delete dialog */}
       {/* ---------------------------------------------------- */}
       <ConfirmModal
         isOpen={deleteTarget !== null}
-        onClose={() => {
-          setDeleteTarget(null);
-          setDeleteActivitiesWithInquiry(false);
-        }}
+        onClose={() => setDeleteTarget(null)}
         onConfirm={handleConfirmDelete}
         title="تایید حذف اطلاعات"
         message={
-          deleteTarget?.type === 'inquiry' 
+          deleteTarget?.type === 'inquiry'
             ? "آیا از حذف کامل این استعلام قیمت تأمین‌کننده اطمینان دارید؟ تمامی قیمت‌ها، اقلام و مراحل زمانی آن حذف خواهند شد."
-            : "آیا از حذف این رویداد زمانی استعلام اطمینان دارید؟"
+            : "آیا از حذف این رویداد زمانی استعلام اطمینان دارید؟ رویدادهای خودکار قابل حذف نیستند."
         }
         confirmText="بله، حذف شود"
         cancelText="انصراف"
-      >
-        {deleteTarget?.type === 'inquiry' && (
-          <div className="mt-4 pt-4 border-t border-slate-100 flex items-start gap-2">
-            <input
-              type="checkbox"
-              id="deleteActivitiesInquiry"
-              checked={deleteActivitiesWithInquiry}
-              onChange={(e) => setDeleteActivitiesWithInquiry(e.target.checked)}
-              className="mt-1"
-            />
-            <label htmlFor="deleteActivitiesInquiry" className="text-xs text-slate-600">
-              حذف لاگ‌های فعالیت پروژه مرتبط با این استعلام (در دسته‌بندی استعلام قیمت تأمین‌کنندگان)
-            </label>
-          </div>
-        )}
-      </ConfirmModal>
+      />
     </div>
   );
 }
@@ -894,26 +995,54 @@ export default function SupplierInquiriesView({
 // ----------------------------------------------------------------------
 // InquiryFormInner sub-component
 // ----------------------------------------------------------------------
+interface PickerHandle {
+  setTerm: (value: string) => void;
+  loading: boolean;
+}
+
+/**
+ * How the inquiry was sent.
+ *
+ * Not an `InquiryStepInput`: the sending is not a step the user chooses to
+ * record, so it carries no title — the server names that event itself.
+ */
+type InitialStepDetails = NonNullable<InquiryWriteInput['initialStep']>;
+
+/** Keeps the first label for an id, so a pinned current value wins over a match. */
+function dedupeOptions(options: { value: string; label: string }[]): { value: string; label: string }[] {
+  const seen = new Set<string>();
+  return options.filter((opt) => {
+    if (!opt.value || seen.has(opt.value)) return false;
+    seen.add(opt.value);
+    return true;
+  });
+}
+
 interface InquiryFormInnerProps {
   editingInquiry: SupplierInquiry | null;
   selectedProjectId: string;
   suppliers: Supplier[];
+  supplierPicker: PickerHandle;
   exchangeRates: ExchangeRate[];
   selectedProject?: Project;
   projects: Project[];
+  projectPicker: PickerHandle;
   getCurrencyRate: (currency: string) => number;
   settings: ERPSettings;
   onClose: () => void;
-  onSubmit: (data: Omit<SupplierInquiry, 'id' | 'creationDate'>) => void;
+  /** The second argument describes how the inquiry was sent; create only. */
+  onSubmit: (data: Partial<SupplierInquiry>, initialStep?: InitialStepDetails) => void;
 }
 
 function InquiryFormInner({
   editingInquiry,
   selectedProjectId,
   suppliers,
+  supplierPicker,
   exchangeRates,
   selectedProject,
   projects,
+  projectPicker,
   getCurrencyRate,
   settings,
   onClose,
@@ -933,14 +1062,13 @@ function InquiryFormInner({
   const [uploadingFinancial, setUploadingFinancial] = useState(false);
   const [uploadError, setUploadError] = useState('');
 
-  // Initial Step states (for creating a new inquiry)
-  const defaultStepTitle = settings.dropdownItems.supplierInquirySteps?.[0] || 'ارسال استعلام قیمت';
-  const [initialStepTitle, setInitialStepTitle] = useState(defaultStepTitle);
-  const [initialStepCustomTitle, setInitialStepCustomTitle] = useState('');
+  /* How the inquiry was sent. The server records the sending itself — it is what
+     creating an inquiry means — so these only fill in that step's detail; there
+     is no title to choose. */
   const [initialStepDate, setInitialStepDate] = useState(getTodayShamsi());
   const [initialStepMethod, setInitialStepMethod] = useState('ایمیل');
   const [initialStepRecipientName, setInitialStepRecipientName] = useState('');
-  const [initialStepNotes, setInitialStepNotes] = useState('استعلام با موفقیت ثبت شد.');
+  const [initialStepNotes, setInitialStepNotes] = useState('');
 
   // Pre-load items: either what inquiry has, or map from project's itemsNeeded
   const [items, setItems] = useState<SupplierInquiryItem[]>(() => {
@@ -961,6 +1089,37 @@ function InquiryFormInner({
     }
     return [];
   });
+
+  /**
+   * Pre-fills the offer's lines from what the project asked for.
+   *
+   * The project's needed items are a child table, so they only come with the
+   * project's own record — a list row does not carry them. Picking a project
+   * here therefore fetches it; the alternative is holding every project in the
+   * browser, which is what this migration is undoing.
+   */
+  const seedItemsFromProject = (id: string) => {
+    if (!id) {
+      setItems([]);
+      return;
+    }
+    projectsApi.get(id)
+      .then((detail) => {
+        const needed = detailToProject(detail).itemsNeeded ?? [];
+        setItems(needed.map((item, idx) => ({
+          id: `inq-item-${Date.now()}-${idx}`,
+          name: item.name,
+          quantity: item.quantity,
+          priceForeign: 0,
+          currency: 'دلار',
+          priceRiyal: 0,
+          notes: '',
+          tagNumber: item.tagNumber
+        })));
+      })
+      // A project whose items cannot be read still allows a hand-typed offer.
+      .catch(() => setItems([]));
+  };
 
   const handleAddItemRow = () => {
     setItems(prev => [
@@ -1047,34 +1206,27 @@ function InquiryFormInner({
       return;
     }
 
-    const selectedSupp = suppliers.find(s => s.id === supplierId);
-    if (!selectedSupp) return;
-
-    onSubmit({
-      projectId: projectId,
-      supplierId: supplierId,
-      supplierName: selectedSupp.name,
-      items: items.map(item => ({
-        ...item,
-        priceForeign: Number(item.priceForeign),
-        priceRiyal: Number(item.priceRiyal),
-        quantity: Number(item.quantity)
-      })),
-      technicalOfferUrl: technicalOfferUrl || undefined,
-      financialOfferUrl: financialOfferUrl || undefined,
-      steps: editingInquiry?.steps || [
-        {
-          id: `step-${Date.now()}`,
-          title: initialStepTitle === 'سایر' ? (initialStepCustomTitle || 'رویداد ثبت شده') : (initialStepTitle || 'ارسال استعلام قیمت'),
-          date: initialStepDate,
-          notes: initialStepNotes || undefined,
-          method: initialStepMethod || undefined,
-          recipientName: initialStepRecipientName || undefined
-        }
-      ],
-      isWinner: editingInquiry?.isWinner || false,
-      winnerDate: editingInquiry?.winnerDate
-    });
+    onSubmit(
+      {
+        projectId: projectId,
+        supplierId: supplierId,
+        items: items.map(item => ({
+          ...item,
+          priceForeign: Number(item.priceForeign),
+          priceRiyal: Number(item.priceRiyal),
+          quantity: Number(item.quantity)
+        })),
+        technicalOfferUrl: technicalOfferUrl || undefined,
+        financialOfferUrl: financialOfferUrl || undefined,
+        creationDate: editingInquiry?.creationDate || initialStepDate,
+      },
+      editingInquiry ? undefined : {
+        occurredAt: initialStepDate,
+        method: initialStepMethod || null,
+        recipientName: initialStepRecipientName || null,
+        notes: initialStepNotes || null,
+      },
+    );
   };
 
   return (
@@ -1084,55 +1236,55 @@ function InquiryFormInner({
         {/* Project Selector */}
         <div className="space-y-1">
           <label className="text-xs font-bold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'supplierInquiries', 'projectId', 'انتخاب پروژه')}</label>
-          <select
+          <SearchableSelect
             value={projectId}
-            onChange={(e) => {
-              const newProjId = e.target.value;
-              setProjectId(newProjId);
-              if (!editingInquiry) {
-                const targetProj = projects.find(p => p.id === newProjId);
-                if (targetProj && targetProj.itemsNeeded) {
-                  setItems(targetProj.itemsNeeded.map((item, idx) => ({
-                    id: `inq-item-${Date.now()}-${idx}`,
-                    name: item.name,
-                    quantity: item.quantity,
-                    priceForeign: 0,
-                    currency: 'دلار',
-                    priceRiyal: 0,
-                    notes: '',
-                    tagNumber: item.tagNumber
-                  })));
-                } else {
-                  setItems([]);
-                }
-              }
+            onChange={(val) => {
+              setProjectId(val);
+              if (!editingInquiry) seedItemsFromProject(val);
             }}
+            onSearchChange={projectPicker.setTerm}
+            loading={projectPicker.loading}
+            placeholder="-- انتخاب پروژه --"
             required
             disabled={editingInquiry !== null} // Lock project on edit
-            className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
-          >
-            <option value="">-- انتخاب پروژه --</option>
-            {projects.map(p => (
-              <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
-            ))}
-          </select>
+            className="text-xs"
+            // The current value has to be an option or the locked field renders
+            // blank — the picker's matches hold whatever was last searched for,
+            // not necessarily this record's project.
+            options={dedupeOptions([
+              ...(editingInquiry
+                ? [{ value: editingInquiry.projectId, label: editingInquiry.projectName || 'پروژه انتخاب‌شده' }]
+                : []),
+              ...(selectedProject
+                ? [{ value: selectedProject.id, label: `${selectedProject.name} (${selectedProject.code})` }]
+                : []),
+              ...projects.map(p => ({ value: p.id, label: `${p.name} (${p.code})` })),
+            ])}
+          />
         </div>
 
         {/* Supplier Selector */}
         <div className="space-y-1">
           <label className="text-xs font-bold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'supplierInquiries', 'supplierId', 'انتخاب تأمین‌کننده')}</label>
-          <select
+          <SearchableSelect
             value={supplierId}
-            onChange={(e) => setSupplierId(e.target.value)}
+            onChange={setSupplierId}
+            onSearchChange={supplierPicker.setTerm}
+            loading={supplierPicker.loading}
+            placeholder="-- انتخاب تأمین‌کننده --"
             required={isFieldRequired(settings, 'supplierInquiries', 'supplierId')}
             disabled={editingInquiry !== null} // Lock supplier on edit
-            className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500"
-          >
-            <option value="">-- انتخاب تأمین‌کننده --</option>
-            {suppliers.map(s => (
-              <option key={s.id} value={s.id}>{s.name} ({s.country || 'بدون کشور'})</option>
-            ))}
-          </select>
+            className="text-xs"
+            options={dedupeOptions([
+              ...(editingInquiry
+                ? [{ value: editingInquiry.supplierId, label: editingInquiry.supplierName }]
+                : []),
+              ...suppliers.map(s => ({
+                value: s.id,
+                label: `${s.name} (${s.country || 'بدون کشور'})`,
+              })),
+            ])}
+          />
         </div>
 
         {/* Currency brief display */}
@@ -1152,42 +1304,14 @@ function InquiryFormInner({
       {!editingInquiry && (
         <div className="border border-slate-150 p-5 rounded-2xl bg-slate-50/50 space-y-4">
           <div className="border-b border-slate-200 pb-2.5 mb-2">
-            <h4 className="text-xs font-bold text-slate-700">ثبت رویداد/مرحله اولیه استعلام</h4>
-            <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">مرحله فعلی استعلام را انتخاب کنید و جزئیات اولین اقدام را ثبت نمایید (فراخوانی شده از لیست‌های بازشوی تنظیمات)</p>
+            <h4 className="text-xs font-bold text-slate-700">جزئیات ارسال استعلام</h4>
+            <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+              ارسال استعلام به عنوان اولین رویداد به صورت خودکار ثبت می‌شود؛ در اینجا فقط مشخص کنید از چه راهی و برای چه کسی ارسال شده است.
+              رویدادهای بعدی (دریافت آفر، بازنگری، تأیید و برنده شدن) نیز خودکار ثبت می‌شوند.
+            </p>
           </div>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Step Title Dropdown */}
-            <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-500">انتخاب مرحله/رویداد <span className="text-rose-500">*</span></label>
-              <select
-                value={initialStepTitle}
-                onChange={(e) => setInitialStepTitle(e.target.value)}
-                required
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
-              >
-                {(settings.dropdownItems.supplierInquirySteps || []).map((step, idx) => (
-                  <option key={idx} value={step}>{step}</option>
-                ))}
-                <option value="سایر">سایر (تایپ دلخواه)</option>
-              </select>
-            </div>
-
-            {/* Custom Step Title */}
-            {initialStepTitle === 'سایر' && (
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-500">عنوان مرحله دلخواه <span className="text-rose-500">*</span></label>
-                <input
-                  type="text"
-                  required
-                  placeholder="مثال: پیگیری تلفنی آفر"
-                  value={initialStepCustomTitle}
-                  onChange={(e) => setInitialStepCustomTitle(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
-                />
-              </div>
-            )}
-
             {/* Step Date */}
             <div className="space-y-1">
               <label className="text-xs font-bold text-slate-500">تاریخ اقدام <span className="text-rose-500">*</span></label>
@@ -1228,7 +1352,7 @@ function InquiryFormInner({
 
           {/* Step Notes */}
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500">توضیحات رویداد اولیه</label>
+            <label className="text-xs font-bold text-slate-500">توضیحات ارسال</label>
             <textarea
               value={initialStepNotes}
               onChange={(e) => setInitialStepNotes(e.target.value)}
@@ -1472,7 +1596,7 @@ function InquiryFormInner({
 // ----------------------------------------------------------------------
 interface StepFormInnerProps {
   onClose: () => void;
-  onSubmit: (step: InquiryStep) => void;
+  onSubmit: (step: InquiryStepInput) => void;
   settings: ERPSettings;
 }
 
@@ -1494,12 +1618,11 @@ function StepFormInner({ onClose, onSubmit, settings }: StepFormInnerProps) {
     }
 
     onSubmit({
-      id: `step-${Date.now()}`,
       title: finalTitle,
-      date,
-      notes: notes || undefined,
+      occurredAt: date,
+      notes: notes || null,
       method,
-      recipientName: recipientName || undefined
+      recipientName: recipientName || null,
     });
   };
 

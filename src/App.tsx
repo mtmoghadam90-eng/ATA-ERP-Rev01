@@ -508,13 +508,7 @@ export default function App() {
       case 'supplierInquiries':
         return (
           <SupplierInquiriesView
-            projects={store.projects}
-            suppliers={store.suppliers}
             exchangeRates={store.exchangeRates}
-            supplierInquiries={store.supplierInquiries || []}
-            addSupplierInquiry={store.addSupplierInquiry}
-            updateSupplierInquiry={store.updateSupplierInquiry}
-            deleteSupplierInquiry={store.deleteSupplierInquiry}
             settings={store.settings}
           />
         );
