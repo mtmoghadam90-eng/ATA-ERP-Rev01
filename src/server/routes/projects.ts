@@ -7,6 +7,7 @@ import {
   listProjects, projectSummary, updateProject,
 } from "../services/projectService";
 import { DOCUMENT_FOLDERS, listProjectDocuments } from "../services/projectDocuments";
+import { findMissingExchangeRates, summarizeProjectFinance } from "../services/projectFinance";
 
 /**
  * Projects REST API. Follows the customers pattern: paginated reads, a picked
@@ -56,6 +57,50 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "GET /api/projects");
+    }
+  });
+
+  /**
+   * Financial position per project: sold, received, remaining, settled.
+   *
+   * Takes the same list query as /api/projects, so the financial view pages
+   * through the same result the grid does rather than pulling every project.
+   */
+  app.get("/api/projects/finance", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const q = parseListQuery(req.query as Record<string, unknown>, PROJECT_SORTABLE, PROJECT_FILTERABLE);
+      // The derived delivery figures are irrelevant here and cost three queries.
+      const page = await listProjects(q, user, {
+        dateFrom: req.query.dateFrom,
+        dateTo: req.query.dateTo,
+        customField: req.query.customField,
+        withSummary: false,
+      });
+
+      const finance = await summarizeProjectFinance(page.rows.map((row) => String(row.id)));
+      res.json({
+        success: true,
+        ...page,
+        rows: page.rows.map((row) => finance.get(String(row.id)) ?? row),
+      });
+    } catch (err) {
+      sendError(res, err, "GET /api/projects/finance");
+    }
+  });
+
+  /**
+   * Documents whose exchange rate is missing, which makes a rial total
+   * unknowable rather than merely smaller.
+   */
+  app.get("/api/projects/finance/missing-rates", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      res.json({ success: true, ...(await findMissingExchangeRates()) });
+    } catch (err) {
+      sendError(res, err, "GET /api/projects/finance/missing-rates");
     }
   });
 
