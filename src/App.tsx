@@ -378,22 +378,15 @@ export default function App() {
           <PurchaseOrdersView 
             initialPrintDocId={printDocumentRequest?.module === 'purchaseOrders' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
-            purchaseOrders={store.purchaseOrders}
-            suppliers={store.suppliers}
-            projects={store.projects}
+            // Reads its own data from the API; landed cost and the stock
+            // receipt are computed server-side.
             products={store.products}
             exchangeRates={store.exchangeRates}
-            proformas={store.proformas}
             supplierInquiries={store.supplierInquiries || []}
-            addPurchaseOrder={store.addPurchaseOrder}
-            updatePurchaseOrder={store.updatePurchaseOrder}
-            updatePurchaseOrderStatus={store.updatePurchaseOrderStatus}
-            deletePurchaseOrder={store.deletePurchaseOrder}
             settings={store.settings}
             addSupplier={store.addSupplier}
             addProject={store.addProject}
             addProduct={store.addProduct}
-            customers={store.customers}
             addCustomer={store.addCustomer}
             currentUser={store.currentUser}
           />

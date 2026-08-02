@@ -44,8 +44,19 @@ export function buildPurchaseOrderWhere(
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
 
-  const search = searchClause(q.search, SEARCH_FIELDS);
-  if (search) and.push(search);
+  if (q.search) {
+    // The grid's search box also matches the supplier's and the project's name,
+    // neither of which is a column on the order.
+    const own = searchClause(q.search, SEARCH_FIELDS);
+    const bySupplier = searchClause(q.search, ["name"]);
+    const byProject = searchClause(q.search, ["name", "code"]);
+
+    const alternatives: Record<string, unknown>[] = [];
+    if (own) alternatives.push(...own.OR);
+    if (bySupplier) alternatives.push({ supplier: bySupplier });
+    if (byProject) alternatives.push({ project: byProject });
+    if (alternatives.length > 0) and.push({ OR: alternatives });
+  }
 
   for (const [field, value] of Object.entries(q.filters)) {
     and.push({ [field]: value });

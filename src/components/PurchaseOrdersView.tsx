@@ -22,7 +22,8 @@ import {
   TrendingUp,
   Award,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Loader2
 } from 'lucide-react';
 import { PurchaseOrder, Supplier, Project, Product, PurchaseOrderItem, ExchangeRate, ERPSettings, Proforma, Customer, SupplierInquiry } from '../types';
 import { getTodayShamsi, addDaysToShamsi } from '../dateUtils';
@@ -37,21 +38,31 @@ import ModuleNotesSection from './ModuleNotesSection';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import { getCodeError, cleanCode } from '../utils/documentCodes';
+import { ApiError } from '../api/client';
+import { purchaseOrdersApi, purchaseOrderToWriteInput, rowToPurchaseOrder } from '../api/purchaseOrders';
+import { usePurchaseOrderList } from '../api/usePurchaseOrderList';
+import { useEntitySearch } from '../api/useEntitySearch';
+import type { SupplierRow } from '../api/suppliers';
+import type { ProjectRow } from '../api/projects';
+import type { ProformaRow } from '../api/proformas';
+import type { CustomerRow } from '../api/customers';
 
+/**
+ * Purchase orders screen.
+ *
+ * Reads through the API. Landed cost and the stock receipt are the server's
+ * work: the cost is recomputed from the lines and the order's own exchange
+ * rate, and reaching the received status reconciles stock against the ledger.
+ */
 interface PurchaseOrdersViewProps {
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
-  purchaseOrders: PurchaseOrder[];
-  suppliers: Supplier[];
-  projects: Project[];
   products: Product[];
   supplierInquiries?: SupplierInquiry[];
   exchangeRates: ExchangeRate[];
-  proformas: Proforma[];
-  addPurchaseOrder: (po: Omit<PurchaseOrder, 'id' | 'poNumber' | 'createdAt'> & { customValues?: Record<string, any>; poNumber?: string }) => void;
-  updatePurchaseOrder: (po: PurchaseOrder) => void;
-  updatePurchaseOrderStatus: (id: string, status: PurchaseOrder['status']) => void;
-  deletePurchaseOrder: (id: string) => void;
+  // The four order mutations are no longer props: the view calls the API, so
+  // the landed cost and the stock receipt come back from the server that
+  // computed them.
   settings: ERPSettings;
   addSupplier?: (supplier: Omit<Supplier, 'id' | 'createdAt'>) => Supplier | any;
   addProject?: (project: Omit<Project, 'id' | 'code' | 'creationDate'> & { customValues?: Record<string, any> }) => Project | any;
@@ -64,27 +75,104 @@ interface PurchaseOrdersViewProps {
 export default function PurchaseOrdersView({
   initialPrintDocId,
   onClearInitialPrintDocId,
-  purchaseOrders,
-  suppliers,
-  projects,
   products,
   exchangeRates,
-  proformas,
   supplierInquiries = [],
-  addPurchaseOrder,
-  updatePurchaseOrder,
-  updatePurchaseOrderStatus,
-  deletePurchaseOrder,
   settings,
   addSupplier,
   addProject,
   addProduct,
-  customers = [],
   addCustomer,
   currentUser
 }: PurchaseOrdersViewProps) {
-  const [search, setSearch] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  // Declared before the pickers below, which are disabled while it is closed.
+  const [showModal, setShowModal] = useState(false);
+
+  const list = usePurchaseOrderList();
+  const search = list.search;
+  const setSearch = list.setSearch;
+
+  /** The page of orders, in the shape this screen's markup expects. */
+  const purchaseOrders = React.useMemo(
+    () => list.rows.map(rowToPurchaseOrder), [list.rows],
+  );
+
+  /** Pickers, searched on the server and idle while the form is closed. */
+  const supplierPicker = useEntitySearch<SupplierRow>({
+    path: '/api/suppliers', limit: 25, enabled: showModal,
+    getLabel: (row) => row.name,
+  });
+  const projectPicker = useEntitySearch<ProjectRow>({
+    path: '/api/projects', limit: 25, enabled: showModal,
+    params: { withSummary: 'false' },
+    getLabel: (row) => row.name,
+  });
+  const proformaPicker = useEntitySearch<ProformaRow>({
+    path: '/api/proformas', limit: 25, enabled: showModal,
+    getLabel: (row) => row.proformaNumber,
+  });
+  const customerPicker = useEntitySearch<CustomerRow>({
+    path: '/api/customers', limit: 25, enabled: showModal,
+    getLabel: (row) => row.companyName,
+  });
+
+  const suppliers = supplierPicker.matches as unknown as Supplier[];
+  const projects = projectPicker.matches as unknown as Project[];
+  const proformas = proformaPicker.matches as unknown as Proforma[];
+  const customers = customerPicker.matches as unknown as Customer[];
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  const addPurchaseOrder = async (po: Partial<PurchaseOrder>) => {
+    try {
+      await purchaseOrdersApi.create(purchaseOrderToWriteInput(po));
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت سفارش خرید با خطا مواجه شد.');
+    }
+  };
+
+  const updatePurchaseOrder = async (po: PurchaseOrder) => {
+    try {
+      await purchaseOrdersApi.update(po.id, purchaseOrderToWriteInput(po));
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت تغییرات سفارش خرید با خطا مواجه شد.');
+    }
+  };
+
+  /**
+   * Changes the status alone.
+   *
+   * Reaching the received status is what puts the goods into stock, and leaving
+   * it is what takes them back out — the server reconciles that against the
+   * ledger, so this is only ever a status change from here.
+   */
+  const updatePurchaseOrderStatus = async (id: string, status: string) => {
+    try {
+      await purchaseOrdersApi.update(id, { status });
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'تغییر وضعیت سفارش خرید با خطا مواجه شد.');
+    }
+  };
+
+  const deletePurchaseOrder = async (id: string) => {
+    try {
+      await purchaseOrdersApi.remove(id);
+      list.refresh();
+    } catch (err) {
+      // The server refuses while a transaction points at the order.
+      reportError(err, 'حذف سفارش خرید با خطا مواجه شد.');
+    }
+  };
+  // Held by the list hook, so the status reaches the query rather than being
+  // applied to the page after it arrives.
+  const selectedStatus = list.filters.status;
+  const setSelectedStatus = (value: string) => list.setFilter('status', value);
   const [quickAddType, setQuickAddType] = useState<'customer' | 'project' | 'supplier' | 'product' | null>(null);
   const [quickAddProductIndex, setQuickAddProductIndex] = useState<number | null>(null);
   
@@ -518,17 +606,9 @@ export default function PurchaseOrdersView({
     setShowLandedModal(true);
   };
 
-  // Filter
-  const filteredPOs = purchaseOrders.filter(po => {
-    const matchesSearch = 
-      (po.poNumber || '').toLowerCase().includes(search.toLowerCase()) ||
-      (po.supplierName || '').toLowerCase().includes(search.toLowerCase()) ||
-      (po.projectName && po.projectName.toLowerCase().includes(search.toLowerCase()));
-    
-    const matchesStatus = selectedStatus === 'all' || po.status === selectedStatus;
-
-    return matchesSearch && matchesStatus;
-  });
+  // The server searched — including the supplier's and the project's name —
+  // filtered by status, sorted and paged this already.
+  const filteredPOs = purchaseOrders;
 
   const getStatusColor = (st: PurchaseOrder['status']) => {
     switch (st) {
@@ -801,10 +881,56 @@ export default function PurchaseOrdersView({
           );
         })}
 
-        {filteredPOs.length === 0 && (
+        {/* Nothing to report before the first response — "none found" while
+            loading reads as an empty database. */}
+        {list.initialLoading && (
+          <div className="text-center bg-white p-12 rounded-2xl border border-dashed border-slate-200">
+            <Loader2 className="mx-auto text-slate-300 mb-3 animate-spin" size={40} />
+            <p className="text-sm text-slate-500">در حال دریافت اطلاعات…</p>
+          </div>
+        )}
+
+        {list.error && !list.initialLoading && (
+          <div className="text-center bg-white p-12 rounded-2xl border border-dashed border-rose-200">
+            <p className="text-sm text-rose-600 font-medium">{list.error}</p>
+            <button onClick={() => list.refresh()} className="mt-3 text-xs text-sky-600 hover:underline font-bold">
+              تلاش دوباره
+            </button>
+          </div>
+        )}
+
+        {filteredPOs.length === 0 && !list.initialLoading && !list.error && (
           <div className="text-center bg-white p-12 rounded-2xl border border-dashed border-slate-200">
             <ShoppingCart className="mx-auto text-slate-300 mb-3" size={48} />
             <p className="text-sm text-slate-500">هیچ سفارش خریدی یافت نشد.</p>
+          </div>
+        )}
+
+        {/* Pagination. The grid holds one page; these move between them. */}
+        {list.totalPages > 1 && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl border border-slate-100 bg-white flex-wrap">
+            <span className="text-[11px] text-slate-500 font-medium">
+              نمایش {list.rows.length.toLocaleString('fa-IR')} از {list.total.toLocaleString('fa-IR')} سفارش
+              {' — '}صفحه {list.page.toLocaleString('fa-IR')} از {list.totalPages.toLocaleString('fa-IR')}
+            </span>
+            <div className="flex items-center gap-1.5">
+              {[
+                { label: 'اول', to: 1, disabled: list.page === 1 },
+                { label: 'قبلی', to: list.page - 1, disabled: list.page === 1 },
+                { label: 'بعدی', to: list.page + 1, disabled: list.page >= list.totalPages },
+                { label: 'آخر', to: list.totalPages, disabled: list.page >= list.totalPages },
+              ].map((btn) => (
+                <button
+                  key={btn.label}
+                  type="button"
+                  onClick={() => list.setPage(btn.to)}
+                  disabled={btn.disabled || list.loading}
+                  className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
