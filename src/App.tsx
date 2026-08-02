@@ -400,13 +400,8 @@ export default function App() {
         );
       case 'suppliers':
         return (
-          <SuppliersView 
-            suppliers={store.suppliers}
-            addSupplier={store.addSupplier}
-            updateSupplier={store.updateSupplier}
-            deleteSupplier={store.deleteSupplier}
-            settings={store.settings}
-          />
+          // Reads its own data from the API.
+          <SuppliersView settings={store.settings} />
         );
       case 'projects':
         return (

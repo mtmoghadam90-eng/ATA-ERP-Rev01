@@ -16,7 +16,11 @@ export const SUPPLIER_SORTABLE = ["name", "country", "status", "createdAt", "upd
 export const SUPPLIER_FILTERABLE = ["status", "country"] as const;
 
 const SEARCH_FIELDS = [
-  "name", "contactName", "phone", "email", "website", "description", "providedCategories",
+  // `country` is searchable as well as filterable: the grid's one search box has
+  // always matched it, and leaving it out made a search for a country return
+  // nothing at all.
+  "name", "country", "contactName", "phone", "email", "website",
+  "description", "providedCategories", "paymentTerms",
 ] as const;
 
 function allowed(user: AuthUser): boolean {

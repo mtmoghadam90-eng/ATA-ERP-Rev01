@@ -13,7 +13,8 @@ import {
   CreditCard,
   FileSpreadsheet,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Loader2
 } from 'lucide-react';
 import { Supplier, ERPSettings } from '../types';
 import CustomFieldsForm from './CustomFieldsForm';
@@ -21,23 +22,61 @@ import CustomFieldsDetailView from './CustomFieldsDetailView';
 import { exportToCSV } from '../excelUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import ConfirmModal from './ConfirmModal';
+import { ApiError } from '../api/client';
+import { rowToSupplier, suppliersApi, supplierToWriteInput } from '../api/suppliers';
+import { useSupplierList } from '../api/useSupplierList';
 
+/**
+ * Suppliers screen. Reads through the API — search, filters and paging are
+ * query parameters rather than work done over a prop holding every supplier.
+ */
 interface SuppliersViewProps {
-  suppliers: Supplier[];
-  addSupplier: (supplier: Omit<Supplier, 'id' | 'createdAt'> & { customValues?: Record<string, any> }) => void;
-  updateSupplier: (supplier: Supplier) => void;
-  deleteSupplier: (id: string) => void;
   settings: ERPSettings;
 }
 
 export default function SuppliersView({
-  suppliers,
-  addSupplier,
-  updateSupplier,
-  deleteSupplier,
   settings
 }: SuppliersViewProps) {
-  const [search, setSearch] = useState('');
+  const list = useSupplierList();
+  const search = list.search;
+  const setSearch = list.setSearch;
+
+  /** The page of suppliers, in the shape this screen's markup expects. */
+  const suppliers = React.useMemo(() => list.rows.map(rowToSupplier), [list.rows]);
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  const addSupplier = async (supplier: Partial<Supplier>) => {
+    try {
+      await suppliersApi.create(supplierToWriteInput(supplier));
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت تأمین‌کننده با خطا مواجه شد.');
+    }
+  };
+
+  const updateSupplier = async (supplier: Supplier) => {
+    try {
+      await suppliersApi.update(supplier.id, supplierToWriteInput(supplier));
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت تغییرات تأمین‌کننده با خطا مواجه شد.');
+    }
+  };
+
+  const deleteSupplier = async (id: string) => {
+    try {
+      await suppliersApi.remove(id);
+      list.refresh();
+    } catch (err) {
+      // The server refuses while an order, inquiry or transaction points at it.
+      reportError(err, 'حذف تأمین‌کننده با خطا مواجه شد.');
+    }
+  };
+
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
   const [showModal, setShowModal] = useState(false);
   const [isSupplierModalFullscreen, setIsSupplierModalFullscreen] = useState(false);
@@ -138,14 +177,9 @@ export default function SuppliersView({
     setIsSupplierModalFullscreen(false);
   };
 
+  // The server has already searched, sorted and paged this. What remains are
+  // the per-column filters, which narrow the page in hand.
   const filteredSuppliers = suppliers.filter(s => {
-    const matchesSearch = !search || 
-      (s.name || '').toLowerCase().includes(search.toLowerCase()) ||
-      (s.country || '').toLowerCase().includes(search.toLowerCase()) ||
-      (s.contactName || '').toLowerCase().includes(search.toLowerCase());
-
-    if (!matchesSearch) return false;
-
     // Column-specific filters
     return Object.entries(colFilters).every(([colId, filterValue]) => {
       if (!filterValue) return true;
@@ -438,7 +472,25 @@ export default function SuppliersView({
           </table>
         </div>
 
-        {filteredSuppliers.length === 0 && (
+        {/* Nothing to report before the first response — "none found" while
+            loading reads as an empty database. */}
+        {list.initialLoading && (
+          <div className="text-center bg-white p-12 border-t border-slate-100 w-full">
+            <Loader2 className="mx-auto text-slate-300 mb-3 animate-spin" size={40} />
+            <p className="text-sm text-slate-500 font-medium">در حال دریافت اطلاعات…</p>
+          </div>
+        )}
+
+        {list.error && !list.initialLoading && (
+          <div className="text-center bg-white p-12 border-t border-slate-100 w-full">
+            <p className="text-sm text-rose-600 font-medium">{list.error}</p>
+            <button onClick={() => list.refresh()} className="mt-3 text-xs text-sky-600 hover:underline font-bold">
+              تلاش دوباره
+            </button>
+          </div>
+        )}
+
+        {filteredSuppliers.length === 0 && !list.initialLoading && !list.error && (
           <div className="text-center bg-white p-12 border-t border-slate-100 w-full">
             <Truck className="mx-auto text-slate-300 mb-3" size={48} />
             <p className="text-sm text-slate-500 font-medium">تأمین‌کننده‌ای یافت نشد.</p>
@@ -450,6 +502,34 @@ export default function SuppliersView({
                 پاک کردن فیلترهای ستونی
               </button>
             )}
+          </div>
+        )}
+
+        {/* Pagination. The grid holds one page; these move between them. */}
+        {list.totalPages > 1 && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-slate-100 bg-slate-50/60 flex-wrap">
+            <span className="text-[11px] text-slate-500 font-medium">
+              نمایش {list.rows.length.toLocaleString('fa-IR')} از {list.total.toLocaleString('fa-IR')} تأمین‌کننده
+              {' — '}صفحه {list.page.toLocaleString('fa-IR')} از {list.totalPages.toLocaleString('fa-IR')}
+            </span>
+            <div className="flex items-center gap-1.5">
+              {[
+                { label: 'اول', to: 1, disabled: list.page === 1 },
+                { label: 'قبلی', to: list.page - 1, disabled: list.page === 1 },
+                { label: 'بعدی', to: list.page + 1, disabled: list.page >= list.totalPages },
+                { label: 'آخر', to: list.totalPages, disabled: list.page >= list.totalPages },
+              ].map((btn) => (
+                <button
+                  key={btn.label}
+                  type="button"
+                  onClick={() => list.setPage(btn.to)}
+                  disabled={btn.disabled || list.loading}
+                  className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
           </div>
         )}
       </div>
