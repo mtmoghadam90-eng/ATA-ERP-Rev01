@@ -174,7 +174,13 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
     const user = deps.requireAuth(req, res);
     if (!user) return;
     try {
-      const outcome = await purgeAuditLogs(user, req.query.before);
+      // The same filters the list takes, so clearing "what I am looking at"
+      // clears every match rather than one page of it.
+      const outcome = await purgeAuditLogs(user, req.query.before, {
+        module: typeof req.query.module === "string" ? req.query.module : undefined,
+        action: typeof req.query.action === "string" ? req.query.action : undefined,
+        search: typeof req.query.search === "string" ? req.query.search : undefined,
+      });
       if (outcome === "forbidden") {
         return denied(res, "پاک‌سازی سابقه اقدامات فقط توسط مدیر سیستم انجام می‌شود.");
       }

@@ -48,6 +48,12 @@ import {
 } from 'lucide-react';
 import { ERPSettings, CustomField, ProjectCategoryGroup, User, Project, AuditLog, WorkflowRule, ExchangeRate } from '../types';
 import { formatERPNumber } from '../numUtils';
+import { ApiError, api } from '../api/client';
+import { auditLogsApi } from '../api/auditLogs';
+import { useAuditLogList } from '../api/useAuditLogList';
+import { useUserDirectory } from '../api/useUserDirectory';
+import { useEntitySearch } from '../api/useEntitySearch';
+import type { ProjectRow } from '../api/projects';
 import RatesView from './RatesView';
 import { decompressLZW } from '../utils/compress';
 import ConfirmModal from './ConfirmModal';
@@ -59,16 +65,9 @@ interface SettingsViewProps {
   updateSettings: (newSettings: ERPSettings) => void;
   userRole?: 'admin' | 'user';
   changeRole?: (role: 'admin' | 'user') => void;
-  projectCategoryGroups?: ProjectCategoryGroup[];
-  users?: User[];
   currentUser?: User | null;
-  projects?: Project[];
-  auditLogs?: AuditLog[];
-  /** Removes audit-log entries (system administrator only). Omit ids to purge all. */
-  purgeAuditLogs?: (ids?: string[]) => { success: boolean; removed: number };
-  exchangeRates?: ExchangeRate[];
-  updateExchangeRate?: (id: string, newRate: number) => void;
-  fetchRatesFromAPI?: (silent?: boolean) => Promise<boolean>;
+  // The audit log, the colleague list and the exchange rates are read from the
+  // API by this screen and the panels inside it, not handed down.
 }
 
 export default function SettingsView({
@@ -76,16 +75,19 @@ export default function SettingsView({
   updateSettings,
   userRole = 'admin',
   changeRole,
-  projectCategoryGroups = [],
-  users = [],
   currentUser = null,
-  projects = [],
-  auditLogs = [],
-  purgeAuditLogs,
-  exchangeRates = [],
-  updateExchangeRate,
-  fetchRatesFromAPI
 }: SettingsViewProps) {
+  // The colleague directory, for the "responsible person" pickers.
+  const { users } = useUserDirectory();
+
+  /* Projects, for the "notify me about these" picker. A page of them rather
+     than all of them, searchable, since this is a chooser and not a report. */
+  const projectPicker = useEntitySearch<ProjectRow>({
+    path: '/api/projects', limit: 50,
+    params: { withSummary: 'false' },
+    getLabel: (row) => row.name,
+  });
+  const projects = projectPicker.matches as unknown as Project[];
   const template = settings?.proformaTemplates?.[0] || {
     name: 'قالب پیش‌فرض رسمی',
     companyName: 'ابزار تامین ارشیا (سهامی خاص)',
@@ -128,27 +130,29 @@ export default function SettingsView({
   const [isRuleFormOpen, setIsRuleFormOpen] = useState(false);
 
   // Audit log filters
-  const [logSearch, setLogSearch] = useState('');
-  const [logModuleFilter, setLogModuleFilter] = useState('all');
-  const [logActionFilter, setLogActionFilter] = useState('all');
+  /* The audit log is paged and filtered by the server. This panel used to
+     receive the whole log and filter it here, which is the same problem as the
+     grids but on the one collection that only ever grows. */
+  const auditList = useAuditLogList();
+  const logSearch = auditList.search;
+  const setLogSearch = auditList.setSearch;
+  const logModuleFilter = auditList.filters.module;
+  const setLogModuleFilter = (v: string) => auditList.setFilter('module', v);
+  const logActionFilter = auditList.filters.action;
+  const setLogActionFilter = (v: string) => auditList.setFilter('action', v);
 
   // Purging the audit log — system administrator only.
   const [purgeMode, setPurgeMode] = useState<'all' | 'filtered' | null>(null);
   const isSystemAdmin = !!currentUser?.isSystemAdmin;
 
-  const filteredAuditLogs = useMemo(() => {
-    return auditLogs.filter(log => {
-      const matchSearch = !logSearch ||
-        (log.description || '').toLowerCase().includes(logSearch.toLowerCase()) ||
-        (log.userFullName || '').toLowerCase().includes(logSearch.toLowerCase()) ||
-        (log.entityId || '').toLowerCase().includes(logSearch.toLowerCase());
-      const matchModule = logModuleFilter === 'all' || log.module === logModuleFilter;
-      const matchAction = logActionFilter === 'all' || log.action === logActionFilter;
-      return matchSearch && matchModule && matchAction;
-    });
-  }, [auditLogs, logSearch, logModuleFilter, logActionFilter]);
+  // Already filtered by the query; the rows that arrive are the answer.
+  const filteredAuditLogs = auditList.rows as unknown as AuditLog[];
 
-  const isFilterActive = !!logSearch || logModuleFilter !== 'all' || logActionFilter !== 'all';
+  const isFilterActive = auditList.hasActiveFilters;
+
+  /* The before/after snapshots are the bulk of an entry and are left out of a
+     list row on purpose, so the one being looked at is fetched on expand. */
+  const [expandedEntry, setExpandedEntry] = useState<AuditLog | null>(null);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
   // Loss reasons state
@@ -384,9 +388,18 @@ export default function SettingsView({
     setNewCategoryName('');
   };
 
-  const handleDeleteCategory = (catId: string, catName: string) => {
-    if (projectCategoryGroups.some((g) => g.categoryId === catId)) {
-      alert(`دسته‌بندی "${catName}" در پروژه‌ها فعال بوده و قابل حذف نیست.`);
+  const handleDeleteCategory = async (catId: string, catName: string) => {
+    // Asked of the server: whether a category is in use is a count across every
+    // project, which is not something this screen holds any more.
+    try {
+      const { projects } = await api.get<{ projects: number }>(
+        `/api/activity-categories/${catId}/usage`);
+      if (projects > 0) {
+        alert(`دسته‌بندی "${catName}" در ${projects.toLocaleString('fa-IR')} پروژه فعال بوده و قابل حذف نیست.`);
+        return;
+      }
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'بررسی استفاده از این دسته‌بندی با خطا مواجه شد.');
       return;
     }
     setDeleteType('activityCategory');
@@ -1791,7 +1804,8 @@ export default function SettingsView({
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {(settings.activityCategories || []).map((cat, idx) => {
-                      const isUsed = (projectCategoryGroups || []).some(g => g.categoryId === cat.id);
+                      // Usage is checked against the server when a delete is attempted.
+                      const isUsed = false;
                       return (
                         <tr key={cat.id} className="hover:bg-white transition bg-white/40">
                           <td className="py-3 px-4 font-mono text-slate-400">{idx + 1}</td>
@@ -1854,7 +1868,8 @@ export default function SettingsView({
               {/* Mobile View */}
               <div className="md:hidden space-y-4">
                 {(settings.activityCategories || []).map((cat, idx) => {
-                  const isUsed = (projectCategoryGroups || []).some(g => g.categoryId === cat.id);
+                  // Usage is checked against the server when a delete is attempted.
+                      const isUsed = false;
                   return (
                     <div key={`mob-${cat.id}`} className="bg-white rounded-xl border border-slate-200 p-4 space-y-4 shadow-sm relative">
                       <div className="flex items-start justify-between">
@@ -1982,7 +1997,7 @@ export default function SettingsView({
                               <option value="">بدون مسئول مشخص</option>
                               {users.map(u => (
                                 <option key={u.id} value={u.fullName}>
-                                  {u.fullName} ({u.role === 'admin' ? 'مدیر' : 'کاربر'})
+                                  {u.fullName}{u.position ? ` — ${u.position}` : ''}
                                 </option>
                               ))}
                             </select>
@@ -2040,7 +2055,7 @@ export default function SettingsView({
                             <option value="">بدون مسئول مشخص</option>
                             {users.map(u => (
                               <option key={u.id} value={u.fullName}>
-                                {u.fullName} ({u.role === 'admin' ? 'مدیر' : 'کاربر'})
+                                {u.fullName}{u.position ? ` — ${u.position}` : ''}
                               </option>
                             ))}
                           </select>
@@ -2308,6 +2323,16 @@ export default function SettingsView({
                     <span className="text-xs text-slate-500 block">در صورتی که دریافت همه اعلان‌ها غیرفعال باشد، فقط اعلان‌های مربوط به پروژه‌های انتخاب شده زیر را دریافت خواهید کرد.</span>
                   </div>
                   
+                  {/* Searchable, because only a page of projects is loaded —
+                      an already-ticked project outside it stays ticked. */}
+                  <input
+                    type="text"
+                    value={projectPicker.term}
+                    onChange={(e) => projectPicker.setTerm(e.target.value)}
+                    placeholder="جستجوی پروژه..."
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
+                  />
+
                   <div className="space-y-2 mt-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                     {projects.map(proj => {
                       const userPrefs = settings.adminNotificationPreferences?.[currentUser.id] || { receiveAll: false, importantProjectIds: [] };
@@ -2446,11 +2471,11 @@ export default function SettingsView({
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <div className="text-[10px] bg-slate-100 border border-slate-200/80 px-2.5 py-1 rounded font-bold text-slate-600">
-                  مجموع لاگ‌های ثبت شده: {auditLogs.length.toLocaleString('fa-IR')} مورد
+                  مجموع لاگ‌های ثبت شده: {auditList.total.toLocaleString('fa-IR')} مورد
                 </div>
 
                 {/* Purge controls — system administrator only */}
-                {isSystemAdmin && auditLogs.length > 0 && (
+                {isSystemAdmin && auditList.total > 0 && (
                   <>
                     {isFilterActive && filteredAuditLogs.length > 0 && (
                       <button
@@ -2722,7 +2747,20 @@ export default function SettingsView({
                         <div key={log.id} className="bg-white hover:bg-slate-50/50 transition duration-150">
                           {/* Log Main Bar */}
                           <div
-                            onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                            onClick={async () => {
+                              if (isExpanded) {
+                                setExpandedLogId(null);
+                                setExpandedEntry(null);
+                                return;
+                              }
+                              setExpandedLogId(log.id);
+                              setExpandedEntry(null);
+                              try {
+                                setExpandedEntry(await auditLogsApi.get(log.id) as unknown as AuditLog);
+                              } catch {
+                                // The row still expands; only the snapshots are missing.
+                              }
+                            }}
                             className="p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-3 cursor-pointer select-none"
                           >
                             <div className="flex items-center gap-3">
@@ -2764,7 +2802,9 @@ export default function SettingsView({
                           {/* Expanded Details Diff */}
                           {isExpanded && (
                             <div className="px-4 pb-4 pt-1 bg-slate-50/30 border-t border-slate-150 animate-fade-in space-y-3">
-                              {renderObjectDiff(log.beforeState, log.afterState, log.action)}
+                              {expandedEntry?.id === log.id
+                                ? renderObjectDiff(expandedEntry.beforeState, expandedEntry.afterState, log.action)
+                                : <div className="text-xs text-slate-400 py-4 text-center">در حال دریافت جزئیات…</div>}
                             </div>
                           )}
                         </div>
@@ -3628,13 +3668,22 @@ export default function SettingsView({
       <ConfirmModal
         isOpen={!!purgeMode}
         onClose={() => setPurgeMode(null)}
-        onConfirm={() => {
-          if (!purgeMode || !purgeAuditLogs) { setPurgeMode(null); return; }
-          const ids = purgeMode === 'filtered' ? filteredAuditLogs.map(l => l.id) : undefined;
-          const res = purgeAuditLogs(ids);
+        onConfirm={async () => {
+          const mode = purgeMode;
           setPurgeMode(null);
-          if (!res.success) {
-            alert('حذف سوابق اقدامات تنها در اختیار مدیر ارشد سیستم است.');
+          if (!mode) return;
+          try {
+            // "Filtered" sends the filters, not a list of ids — so it clears
+            // every match rather than the page that happens to be on screen.
+            const result = await auditLogsApi.purge(mode === 'filtered'
+              ? { module: logModuleFilter === 'all' ? undefined : logModuleFilter,
+                  action: logActionFilter === 'all' ? undefined : logActionFilter,
+                  search: logSearch || undefined }
+              : {});
+            auditList.refresh();
+            alert(`${result.deleted.toLocaleString('fa-IR')} مورد از سوابق اقدامات حذف شد.`);
+          } catch (err) {
+            alert(err instanceof ApiError ? err.message : 'حذف سوابق اقدامات با خطا مواجه شد.');
           }
         }}
         title={purgeMode === 'filtered' ? 'حذف سوابق فیلترشده' : 'پاک‌سازی کامل دفتر سوابق'}
@@ -3642,7 +3691,7 @@ export default function SettingsView({
         message={
           purgeMode === 'filtered'
             ? `آیا از حذف ${filteredAuditLogs.length.toLocaleString('fa-IR')} مورد از سوابق اقدامات (نتایج فیلتر فعلی) اطمینان دارید؟ این عملیات غیرقابل بازگشت است.`
-            : `آیا از پاک‌سازی کامل دفتر سوابق اقدامات شامل ${auditLogs.length.toLocaleString('fa-IR')} مورد اطمینان دارید؟ این عملیات غیرقابل بازگشت است و سابقه تغییرات گذشته قابل بازیابی نخواهد بود. (یک مورد جهت ثبت همین اقدام باقی می‌ماند.)`
+            : `آیا از پاک‌سازی کامل دفتر سوابق اقدامات شامل ${auditList.total.toLocaleString('fa-IR')} مورد اطمینان دارید؟ این عملیات غیرقابل بازگشت است و سابقه تغییرات گذشته قابل بازیابی نخواهد بود. (یک مورد جهت ثبت همین اقدام باقی می‌ماند.)`
         }
       />
 

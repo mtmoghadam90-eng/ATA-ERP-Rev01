@@ -197,15 +197,32 @@ export async function recordAudit(input: AuditInput, user: AuthUser, todayJalali
  * able to take. `before` keeps entries newer than a Shamsi date, so old history
  * can be trimmed without discarding the recent trail.
  */
+/**
+ * Clears history.
+ *
+ * Takes the same filters the list does, so "delete what I am looking at" means
+ * every entry that matches — not the page that happens to be on screen, which
+ * is what an id list would have meant once the log was paged.
+ */
 export async function purgeAuditLogs(
   user: AuthUser,
   before?: unknown,
+  filters: { module?: string; action?: string; search?: string } = {},
 ): Promise<"forbidden" | { deleted: number }> {
   if (!user.isSystemAdmin) return "forbidden";
 
+  const and: Record<string, unknown>[] = [];
+
   const cutoff = jalaliRangeFilter(undefined, before);
+  if (cutoff) and.push({ occurredAt: cutoff });
+  if (filters.module) and.push({ module: filters.module });
+  if (filters.action) and.push({ action: filters.action });
+
+  const search = searchClause(filters.search, AUDIT_SEARCH);
+  if (search) and.push(search);
+
   const result = await getDb().auditLog.deleteMany({
-    where: cutoff ? { occurredAt: cutoff } : {},
+    where: and.length === 0 ? {} : { AND: and },
   });
   return { deleted: result.count };
 }

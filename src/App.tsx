@@ -485,15 +485,7 @@ export default function App() {
             updateSettings={store.updateSettings}
             userRole={store.userRole}
             changeRole={store.changeRole}
-            projectCategoryGroups={store.projectCategoryGroups}
-            users={store.users}
             currentUser={store.currentUser}
-            projects={store.projects}
-            auditLogs={store.auditLogs}
-            purgeAuditLogs={store.purgeAuditLogs}
-            exchangeRates={store.exchangeRates}
-            updateExchangeRate={store.updateExchangeRate}
-            fetchRatesFromAPI={store.fetchRatesFromAPI}
           />
         );
       case 'users':

@@ -29,6 +29,8 @@ import {
   InquiryStep,
 } from "./types";
 import { compressLZW, decompressLZW } from "./utils/compress";
+import { ApiError } from "./api/client";
+import { settingsApi } from "./api/settings";
 
 import {
   SEED_PRODUCTS,
@@ -733,8 +735,8 @@ export function useERPStore() {
               if (data.erp_inventory_transactions !== null)
                 setInventoryTransactions(data.erp_inventory_transactions || []);
               if (data.erp_tasks !== null) setTasks(data.erp_tasks || []);
-              if (data.erp_settings !== null)
-                setSettings(data.erp_settings || DEFAULT_SETTINGS);
+              // Settings deliberately not taken from here: they are read from
+              // /api/settings below, which is where they are now kept.
               if (data.erp_project_category_groups !== null)
                 setProjectCategoryGroups(
                   data.erp_project_category_groups || [],
@@ -809,7 +811,6 @@ export function useERPStore() {
               [],
             ),
             fetchKey("erp_tasks", setTasks, []),
-            fetchKey("erp_settings", setSettings, DEFAULT_SETTINGS),
             fetchKey(
               "erp_project_category_groups",
               setProjectCategoryGroups,
@@ -821,6 +822,15 @@ export function useERPStore() {
             fetchKey("erp_users", setUsers, []),
             fetchKey("erp_audit_logs", setAuditLogs, []),
           ]);
+        }
+
+        // Settings come from SQL. Every screen reads them — required fields,
+        // dropdown lists, document templates, workflow rules — so a failure
+        // here leaves the defaults in place rather than an empty object.
+        try {
+          setSettings(await settingsApi.load());
+        } catch (err) {
+          console.error("Failed to load settings", err);
         }
 
         // The server session is authoritative — the cached user in localStorage is
@@ -3672,8 +3682,25 @@ export function useERPStore() {
       setCurrentUser(null);
     },
 
+    /**
+     * Settings live in SQL now, not in the document store.
+     *
+     * The signature is unchanged because roughly thirty places call this with a
+     * whole settings object, and every other screen reads `store.settings`. So
+     * the local copy is updated immediately — the screens stay responsive — and
+     * the write goes to the server, which is the authority. A failed write puts
+     * the previous settings back rather than leaving the app showing a change
+     * that was never saved.
+     */
     updateSettings: (newSettings: ERPSettings) => {
-      saveToStorage("erp_settings", newSettings, setSettings);
+      const previous = settings;
+      setSettings(newSettings);
+
+      settingsApi.save(newSettings).catch((err: unknown) => {
+        setSettings(previous);
+        alert(err instanceof ApiError ? err.message : "ذخیره تنظیمات با خطا مواجه شد.");
+      });
+
       logAction("UPDATE", "سیستم", "تنظیمات نرم‌افزار", "تنظیمات نرم‌افزار بروزرسانی شد.");
     },
   };

@@ -1,6 +1,7 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
+import { getDb } from "../db";
 import {
   ACTIVITY_SORTABLE, REFERRAL_FILTERABLE, REFERRAL_SORTABLE,
   addActivity, addModuleNote, addReferralMessage, deleteActivity, deleteModuleNote,
@@ -23,6 +24,26 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   const KEY = "erp_project_category_groups";
 
   /* --------------------------- category groups --------------------------- */
+
+  /**
+   * How many projects currently use an activity category.
+   *
+   * The settings screen refuses to delete a category that is in use, and used
+   * to answer that by scanning every category group it held — which is not
+   * something the browser has any more.
+   */
+  app.get("/api/activity-categories/:categoryId/usage", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const projects = await getDb().projectCategoryGroup.count({
+        where: { categoryId: req.params.categoryId },
+      });
+      res.json({ success: true, projects });
+    } catch (err) {
+      sendError(res, err, "GET /api/activity-categories/:categoryId/usage");
+    }
+  });
 
   app.get("/api/projects/:projectId/category-groups", async (req, res) => {
     const user = deps.requireKeyAccess(req, res, KEY, "read");

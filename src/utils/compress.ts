@@ -1,76 +1,124 @@
-// LZW-based string compression and decompression for compact log storage
+/**
+ * LZW string compression, used to keep audit-log snapshots compact.
+ *
+ * The output is `[alphabet, codes]`: the distinct characters of the input
+ * followed by codes that index into them, with learned sequences numbered from
+ * the end of the alphabet upward.
+ *
+ * The previous version seeded the dictionary with character codes 0–255, which
+ * only covers Latin-1. Every Persian character is above that range, so a single
+ * Persian character was never in the dictionary, `dictionary[word]` produced
+ * `undefined`, and `JSON.stringify` wrote it as `null` — leaving every snapshot
+ * of Persian data unrecoverable, which in this application is all of them.
+ *
+ * Carrying the alphabet is what keeps it compact as well as correct. Encoding
+ * each literal as its own code point would also round-trip, but a Persian
+ * character is a six-digit number, and the "compressed" form came out several
+ * times larger than the input it replaced.
+ */
+
+/** How many sequences to learn before starting over, to bound memory. */
+const MAX_SEQUENCES = 16384;
 export function compressLZW(uncompressed: string): string {
   if (!uncompressed) return '';
-  const dictionary: Record<string, number> = {};
-  for (let i = 0; i < 256; i++) {
-    dictionary[String.fromCharCode(i)] = i;
-  }
 
-  let word = "";
+  const chars = [...uncompressed];
+  const alphabet = [...new Set(chars)];
+  const literal = new Map<string, number>(alphabet.map((c, i) => [c, i]));
+  const firstSequence = alphabet.length;
+
+  const dictionary = new Map<string, number>();
+  let nextCode = firstSequence;
+
+  const codeFor = (s: string): number | undefined =>
+    literal.get(s) ?? dictionary.get(s);
+
   const result: number[] = [];
-  let dictSize = 256;
+  let word = '';
 
-  for (let i = 0; i < uncompressed.length; i++) {
-    const c = uncompressed[i];
+  // Iterated by code point rather than by UTF-16 unit, so a character outside
+  // the basic plane is not split into halves that mean nothing on their own.
+  for (const c of chars) {
     const wc = word + c;
-    if (wc in dictionary) {
+    if (word !== '' && codeFor(wc) !== undefined) {
       word = wc;
-    } else {
-      result.push(dictionary[word]);
-      if (dictSize < 16384) {
-        dictionary[wc] = dictSize++;
-      } else {
-        // Reset dictionary to prevent too high character codes
-        dictSize = 256;
-      }
-      word = String(c);
+      continue;
     }
+
+    if (word !== '') {
+      result.push(codeFor(word)!);
+      if (nextCode - firstSequence < MAX_SEQUENCES) {
+        dictionary.set(wc, nextCode++);
+      } else {
+        dictionary.clear();
+        nextCode = firstSequence;
+      }
+    }
+    word = c;
   }
 
-  if (word !== "") {
-    result.push(dictionary[word]);
-  }
-  
-  return JSON.stringify(result);
+  if (word !== '') result.push(codeFor(word)!);
+
+  return JSON.stringify([alphabet.join(''), result]);
 }
 
 export function decompressLZW(compressed: string): string {
   if (!compressed) return '';
-  let codes: number[];
+
+  let parsed: unknown;
   try {
-    codes = JSON.parse(compressed);
+    parsed = JSON.parse(compressed);
   } catch {
-    return compressed; // Fallback to raw string if it wasn't compressed
+    return compressed; // Not compressed at all — an older plain entry.
   }
 
-  const dictionary: Record<number, string> = {};
-  for (let i = 0; i < 256; i++) {
-    dictionary[i] = String.fromCharCode(i);
-  }
+  // Anything not shaped `[alphabet, codes]` predates this format. The old
+  // encoder wrote a bare array of numbers containing `null` wherever it met a
+  // character it could not encode, which is unrecoverable — saying so beats
+  // guessing.
+  if (!Array.isArray(parsed) || parsed.length !== 2) return '';
+  const [alphabetRaw, codesRaw] = parsed as [unknown, unknown];
+  if (typeof alphabetRaw !== 'string' || !Array.isArray(codesRaw)) return '';
+  if (codesRaw.some((c) => typeof c !== 'number')) return '';
 
-  if (codes.length === 0) return '';
-  
-  let oldWord = String.fromCharCode(codes[0]);
-  const result = [oldWord];
-  let dictSize = 256;
+  const list = codesRaw as number[];
+  if (list.length === 0) return '';
 
-  for (let i = 1; i < codes.length; i++) {
-    const code = codes[i];
-    let s = "";
-    if (code in dictionary) {
-      s = dictionary[code];
-    } else if (code === dictSize) {
-      s = oldWord + oldWord[0];
-    } else {
-      return ""; // Fallback / corruption safety
+  const alphabet = [...alphabetRaw];
+  const firstSequence = alphabet.length;
+
+  const dictionary = new Map<number, string>();
+  let nextCode = firstSequence;
+
+  const stringFor = (code: number): string | undefined =>
+    code < firstSequence ? alphabet[code] : dictionary.get(code);
+
+  let previous = stringFor(list[0]);
+  if (previous === undefined) return '';
+  const result: string[] = [previous];
+
+  for (let i = 1; i < list.length; i++) {
+    const code = list[i];
+    let current = stringFor(code);
+
+    // The encoder can emit a code the moment it learns it, one step before the
+    // decoder would; that case is always "the previous word plus its own first
+    // character".
+    if (current === undefined) {
+      if (code !== nextCode) return '';
+      current = previous + [...previous][0];
     }
-    result.push(s);
-    if (dictSize < 16384) {
-      dictionary[dictSize++] = oldWord + s[0];
+
+    result.push(current);
+
+    if (nextCode - firstSequence < MAX_SEQUENCES) {
+      dictionary.set(nextCode++, previous + [...current][0]);
     } else {
-      dictSize = 256;
+      dictionary.clear();
+      nextCode = firstSequence;
     }
-    oldWord = s;
+    previous = current;
   }
+
   return result.join('');
 }
