@@ -8,29 +8,24 @@ import {
   Clock,
   ChevronLeft
 } from 'lucide-react';
-import { ExchangeRate } from '../types';
+import { ApiError } from '../api/client';
+import { exchangeRatesApi, useExchangeRates } from '../api/exchangeRates';
 
-interface RatesViewProps {
-  exchangeRates: ExchangeRate[];
-  updateExchangeRate: (id: string, newRate: number) => void;
-  fetchRatesFromAPI: (silent?: boolean) => Promise<boolean>;
-}
+/**
+ * Currency rates.
+ *
+ * Reads through the API, and refreshing is one server call that scrapes and
+ * stores together — so every browser sees the same numbers rather than each
+ * writing its own copy of them.
+ */
+export default function RatesView() {
+  const { rates: exchangeRates, loading, error, reload } = useExchangeRates();
 
-export default function RatesView({
-  exchangeRates,
-  updateExchangeRate,
-  fetchRatesFromAPI
-}: RatesViewProps) {
-  const [rates, setRates] = useState<{ [key: string]: number }>(() => {
-    return exchangeRates.reduce((acc: { [key: string]: number }, r) => {
-      acc[r.id] = r.rateToRIYAL;
-      return acc;
-    }, {});
-  });
-
+  const [rates, setRates] = useState<{ [key: string]: number }>({});
   const [isLoadingTGJU, setIsLoadingTGJU] = useState(false);
+  const [savingId, setSavingId] = useState<string | null>(null);
 
-  // Sync state if exchangeRates changes in parent
+  // Follows what was fetched, and what a refresh brought back.
   React.useEffect(() => {
     setRates(exchangeRates.reduce((acc: { [key: string]: number }, r) => {
       acc[r.id] = r.rateToRIYAL;
@@ -50,9 +45,21 @@ export default function RatesView({
     });
   };
 
-  const handleSaveRate = (id: string) => {
-    updateExchangeRate(id, rates[id]);
-    alert('نرخ تسعیر ارز با موفقیت در سیستم بروزرسانی شد و در محاسبات لندد کاست جدید اعمال می‌گردد.');
+  const handleSaveRate = async (id: string) => {
+    // The endpoint is keyed on the currency code, not the row id.
+    const target = exchangeRates.find(r => r.id === id);
+    if (!target) return;
+
+    setSavingId(id);
+    try {
+      await exchangeRatesApi.update(target.currency, rates[id], target.name);
+      await reload();
+      alert('نرخ تسعیر ارز با موفقیت در سیستم بروزرسانی شد و در محاسبات لندد کاست جدید اعمال می‌گردد.');
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'ثبت نرخ ارز با خطا مواجه شد.');
+    } finally {
+      setSavingId(null);
+    }
   };
 
   // Calculator helper
@@ -72,12 +79,24 @@ export default function RatesView({
         <button
           onClick={async () => {
             setIsLoadingTGJU(true);
-            const success = await fetchRatesFromAPI();
-            setIsLoadingTGJU(false);
-            if (success) {
-              alert('نرخ‌های روزانه با موفقیت از سامانه tgju.com استخراج و بروزرسانی شدند.');
-            } else {
-              alert('خطا در استخراج خودکار اطلاعات؛ لطفاً اتصال اینترنت را بررسی نموده یا نرخ‌ها را به صورت دستی وارد نمایید.');
+            try {
+              const result = await exchangeRatesApi.refresh();
+              await reload();
+              // A currency that could not be read is named rather than passed
+              // over: the others updated, and that one is still yesterday's.
+              if (result.failedCurrencies.length > 0) {
+                alert(
+                  `${result.updated} نرخ بروزرسانی شد، اما دریافت این ارزها ناموفق بود و مقدار قبلی‌شان دست‌نخورده ماند: ` +
+                  `${result.failedCurrencies.join('، ')}. در صورت نیاز آنها را دستی وارد کنید.`
+                );
+              } else {
+                alert('نرخ‌های روزانه با موفقیت از سامانه tgju.com استخراج و بروزرسانی شدند.');
+              }
+            } catch (err) {
+              alert(err instanceof ApiError ? err.message
+                : 'خطا در استخراج خودکار اطلاعات؛ لطفاً اتصال اینترنت را بررسی نموده یا نرخ‌ها را به صورت دستی وارد نمایید.');
+            } finally {
+              setIsLoadingTGJU(false);
             }
           }}
           disabled={isLoadingTGJU}
@@ -88,8 +107,27 @@ export default function RatesView({
         </button>
       </div>
 
+      {error && (
+        <div className="bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold rounded-2xl p-4 flex items-center justify-between gap-3" id="rates-error">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={reload}
+            className="px-3 py-1.5 bg-white border border-rose-200 hover:bg-rose-50 rounded-lg text-[11px] font-bold transition"
+          >
+            تلاش دوباره
+          </button>
+        </div>
+      )}
+
+      {loading && exchangeRates.length === 0 && (
+        <div className="bg-white rounded-2xl border border-slate-100 p-12 text-center text-xs text-slate-400 shadow-sm" id="rates-loading">
+          در حال دریافت نرخ‌های ارز…
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+
         {/* Daily Rates Update Panel */}
         <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4 lg:col-span-2">
           <div>
@@ -125,10 +163,11 @@ export default function RatesView({
                   </div>
                   <button
                     onClick={() => handleSaveRate(rate.id)}
-                    className="px-3 py-1.5 bg-sky-500 hover:bg-sky-600 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1"
+                    disabled={savingId === rate.id}
+                    className="px-3 py-1.5 bg-sky-500 hover:bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-xs font-semibold transition flex items-center gap-1"
                   >
-                    <RefreshCw size={12} />
-                    بروزرسانی
+                    <RefreshCw size={12} className={savingId === rate.id ? 'animate-spin' : ''} />
+                    {savingId === rate.id ? 'در حال ثبت…' : 'بروزرسانی'}
                   </button>
                 </div>
               </div>

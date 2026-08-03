@@ -2,6 +2,7 @@ import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
 import { getTodayShamsi } from "../../dateUtils";
+import { RATE_NAMES, scrapeRates } from "../rateSource";
 import {
   AUDIT_FILTERABLE, AUDIT_SORTABLE,
   getAuditLog, getSettings, listAuditLogs, listExchangeRates,
@@ -51,6 +52,38 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
       res.json({ success: true, rates: await listExchangeRates() });
     } catch (err) {
       sendError(res, err, "GET /api/exchange-rates");
+    }
+  });
+
+  /**
+   * Scrapes today's rates and stores them, in one call.
+   *
+   * Declared before `/:currency` so "refresh" is not read as a currency code.
+   * The client used to scrape through one endpoint and write the answer back
+   * through another, which meant every browser wrote its own copy of the same
+   * numbers and two of them refreshing at once raced. A currency that could not
+   * be read is reported and left alone rather than overwritten with a guess.
+   */
+  app.post("/api/exchange-rates/refresh", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, "erp_exchange_rates", "write");
+    if (!user) return;
+    try {
+      const { rates, failedCurrencies } = await scrapeRates();
+
+      for (const [currency, rateToRial] of Object.entries(rates)) {
+        const outcome = await upsertExchangeRate(
+          { currency, name: RATE_NAMES[currency], rateToRial }, user);
+        if (outcome === "forbidden") return denied(res, "شما اجازه تغییر نرخ ارز را ندارید.");
+      }
+
+      res.json({
+        success: true,
+        updated: Object.keys(rates).length,
+        failedCurrencies,
+        rates: await listExchangeRates(),
+      });
+    } catch (err) {
+      sendError(res, err, "POST /api/exchange-rates/refresh");
     }
   });
 

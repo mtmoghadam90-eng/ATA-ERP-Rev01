@@ -45,6 +45,7 @@ import { registerUserRoutes } from "./src/server/routes/users";
 import { registerAdminRoutes } from "./src/server/routes/admin";
 import { registerActivityRoutes } from "./src/server/routes/activities";
 import { registerNotificationRoutes } from "./src/server/routes/notifications";
+import { scrapeRates } from "./src/server/rateSource";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 
 // Overridable so a second instance can be started against a scratch database
@@ -243,65 +244,16 @@ async function startServer() {
   });
 
   // Existing rates API
+  /**
+   * Today's rates, scraped and returned without being stored.
+   *
+   * Kept for callers that want to look without writing; the screen that
+   * refreshes the stored rates uses POST /api/exchange-rates/refresh, which
+   * scrapes and saves in the one call.
+   */
   app.get("/api/rates", async (req, res) => {
     if (!requireAuth(req, res)) return;
-    const fallbacks = {
-      USD: 625000,
-      EUR: 678000,
-      AED: 171000,
-      CNY: 86000
-    };
-    const urls = {
-      USD: 'https://www.tgju.org/profile/price_dollar_rl',
-      EUR: 'https://www.tgju.org/profile/price_eur',
-      AED: 'https://www.tgju.org/profile/price_aed',
-      CNY: 'https://www.tgju.org/profile/price_cny'
-    };
-
-    const rates: Record<string, number> = {};
-    const failedCurrencies: string[] = [];
-
-    await Promise.all(
-      Object.entries(urls).map(async ([key, url]) => {
-        try {
-          const response = await fetch(url, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            },
-            signal: AbortSignal.timeout(10000)
-          });
-          if (!response.ok) {
-            throw new Error(`HTTP error ${response.status}`);
-          }
-          const html = await response.text();
-          
-          const regex = /data-col="info\.last_trade\.PDrCotVal"[^>]*>([\d,]+)<\/span>/;
-          const match = html.match(regex);
-          if (match && match[1]) {
-            const val = parseInt(match[1].replace(/,/g, ''), 10);
-            if (!isNaN(val) && val > 0) {
-              rates[key] = val;
-              return;
-            }
-          }
-          
-          const altRegex = /class="price"[^>]*>([\d,]+)<\/span>/;
-          const altMatch = html.match(altRegex);
-          if (altMatch && altMatch[1]) {
-            const val = parseInt(altMatch[1].replace(/,/g, ''), 10);
-            if (!isNaN(val) && val > 0) {
-              rates[key] = val;
-              return;
-            }
-          }
-          throw new Error("Could not parse price from HTML");
-        } catch (err: any) {
-          console.warn(`Failed to fetch rate for ${key}:`, err.message || err);
-          failedCurrencies.push(key);
-        }
-      })
-    );
-
+    const { rates, failedCurrencies } = await scrapeRates();
     res.json({
       success: true,
       rates,

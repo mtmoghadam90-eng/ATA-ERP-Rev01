@@ -1013,13 +1013,9 @@ export default function SettingsView({
             <h3 className="text-lg font-bold text-slate-800">نرخ ارز روزانه</h3>
             <p className="text-slate-500 text-sm mt-1">مدیریت نرخ‌های تسعیر ارز در سیستم</p>
           </div>
-          {exchangeRates && updateExchangeRate && fetchRatesFromAPI && (
-            <RatesView 
-              exchangeRates={exchangeRates} 
-              updateExchangeRate={updateExchangeRate} 
-              fetchRatesFromAPI={fetchRatesFromAPI} 
-            />
-          )}
+          {/* Loads and refreshes the rates itself now, so it needs nothing
+              from this screen. */}
+          <RatesView />
         </div>
       ) : activeTab === 'general' ? (
         <form onSubmit={handleSaveGeneral} className="space-y-6">
