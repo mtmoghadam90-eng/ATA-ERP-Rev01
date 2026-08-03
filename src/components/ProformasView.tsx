@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useExchangeRates } from '../api/exchangeRates';
 import {
   Plus,
   Search,
@@ -202,7 +203,6 @@ interface ProformasViewProps {
   onClearInitialPrintDocId?: () => void;
   products: Product[];
   settings: ERPSettings;
-  exchangeRates: ExchangeRate[];
   // The five proforma mutations are no longer props: the view calls the API
   // directly, so the totals and the derived outcome come back from the server
   // that computed them.
@@ -229,7 +229,6 @@ export default function ProformasView({
   onClearInitialPrintDocId,
   products,
   settings,
-  exchangeRates,
   addCustomer,
   updateCustomer,
   addProject,
@@ -237,6 +236,10 @@ export default function ProformasView({
   updateProduct,
   currentUser = null,
 }: ProformasViewProps) {
+  // Rates are read here rather than handed down: they are a short shared list
+  // that changes during the day, and a stale one misprices a document.
+  const { rates: exchangeRates } = useExchangeRates();
+
   const list = useProformaList();
   const search = list.search;
   const setSearch = list.setSearch;

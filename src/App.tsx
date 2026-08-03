@@ -341,9 +341,7 @@ export default function App() {
             batchImportProducts={store.batchImportProducts}
             categories={store.settings.dropdownItems.categories}
             units={store.settings.dropdownItems.units}
-            settings={store.settings}
-            exchangeRates={store.exchangeRates}
-          />
+            settings={store.settings}          />
         );
       case 'proformas':
         return (
@@ -353,9 +351,7 @@ export default function App() {
             // Reads its own data from the API; the projects and customers it
             // shows come joined onto the page's rows.
             products={store.products}
-            settings={store.settings}
-            exchangeRates={store.exchangeRates}
-            addCustomer={store.addCustomer}
+            settings={store.settings}            addCustomer={store.addCustomer}
             updateCustomer={store.updateCustomer}
             addProject={store.addProject}
             addProduct={store.addProduct}
@@ -370,9 +366,7 @@ export default function App() {
             onClearInitialPrintDocId={handleClearPrintDoc}
             // Reads its own data from the API; landed cost and the stock
             // receipt are computed server-side.
-            products={store.products}
-            exchangeRates={store.exchangeRates}
-            supplierInquiries={store.supplierInquiries || []}
+            products={store.products}            supplierInquiries={store.supplierInquiries || []}
             settings={store.settings}
             addSupplier={store.addSupplier}
             addProject={store.addProject}
@@ -432,9 +426,7 @@ export default function App() {
             initialPrintDocId={printDocumentRequest?.module === 'transactions' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
             // Reads its own data from the API; the per-project financial
-            // position is its own paginated query.
-            exchangeRates={store.exchangeRates}
-            settings={store.settings}
+            // position is its own paginated query.            settings={store.settings}
             addCustomer={store.addCustomer}
             addSupplier={store.addSupplier}
             addProject={store.addProject}
@@ -472,9 +464,7 @@ export default function App() {
         );
       case 'supplierInquiries':
         return (
-          <SupplierInquiriesView
-            exchangeRates={store.exchangeRates}
-            settings={store.settings}
+          <SupplierInquiriesView            settings={store.settings}
           />
         );
       case 'settings':

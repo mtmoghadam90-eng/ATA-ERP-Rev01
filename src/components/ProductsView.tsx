@@ -1,4 +1,5 @@
 import { parsePersianDate } from '../dateUtils';
+import { useExchangeRates } from '../api/exchangeRates';
 import React, { useState } from 'react';
 import { 
   Plus, 
@@ -64,15 +65,17 @@ interface ProductsViewProps {
   categories: string[];
   units: string[];
   settings: ERPSettings;
-  exchangeRates?: ExchangeRate[];
 }
 
 export default function ProductsView({
   batchImportProducts,
   categories,
   settings,
-  exchangeRates = []
 }: ProductsViewProps) {
+  // Rates are read here rather than handed down: they are a short shared list
+  // that changes during the day, and a stale one misprices a document.
+  const { rates: exchangeRates } = useExchangeRates();
+
   const list = useProductList();
   const search = list.search;
   const setSearch = list.setSearch;

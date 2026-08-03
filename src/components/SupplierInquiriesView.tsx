@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { useExchangeRates } from '../api/exchangeRates';
 import { 
   Plus, 
   Edit, 
@@ -65,7 +66,6 @@ import type { SupplierRow } from '../api/suppliers';
  * from what the user does, and a project has at most one winning inquiry.
  */
 interface SupplierInquiriesViewProps {
-  exchangeRates: ExchangeRate[];
   // Inquiries, projects and suppliers are no longer props, and neither are the
   // three mutations: the view calls the API, so the derived steps and the
   // winner rule come back from the server that applied them.
@@ -95,9 +95,12 @@ async function uploadToSupplierInquiries(file: File): Promise<string> {
 }
 
 export default function SupplierInquiriesView({
-  exchangeRates,
   settings
 }: SupplierInquiriesViewProps) {
+  // Rates are read here rather than handed down: they are a short shared list
+  // that changes during the day, and a stale one misprices a document.
+  const { rates: exchangeRates } = useExchangeRates();
+
   const list = useSupplierInquiryList();
   const selectedProjectId = list.filters.projectId;
   const [activeTab, setActiveTab] = useState<'cards' | 'compare'>('cards');

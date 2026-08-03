@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useExchangeRates } from '../api/exchangeRates';
 import { 
   Plus, 
   Search, 
@@ -60,7 +61,6 @@ interface PurchaseOrdersViewProps {
   onClearInitialPrintDocId?: () => void;
   products: Product[];
   supplierInquiries?: SupplierInquiry[];
-  exchangeRates: ExchangeRate[];
   // The four order mutations are no longer props: the view calls the API, so
   // the landed cost and the stock receipt come back from the server that
   // computed them.
@@ -77,7 +77,6 @@ export default function PurchaseOrdersView({
   initialPrintDocId,
   onClearInitialPrintDocId,
   products,
-  exchangeRates,
   supplierInquiries = [],
   settings,
   addSupplier,
@@ -86,6 +85,10 @@ export default function PurchaseOrdersView({
   addCustomer,
   currentUser
 }: PurchaseOrdersViewProps) {
+  // Rates are read here rather than handed down: they are a short shared list
+  // that changes during the day, and a stale one misprices a document.
+  const { rates: exchangeRates } = useExchangeRates();
+
   // Declared before the pickers below, which are disabled while it is closed.
   const [showModal, setShowModal] = useState(false);
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useExchangeRates } from '../api/exchangeRates';
 import { 
   Plus, 
   Search, 
@@ -82,7 +83,6 @@ interface ProjectFinanceRow {
 interface TransactionsViewProps {
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
-  exchangeRates: ExchangeRate[];
   settings: ERPSettings;
   addCustomer?: (customer: Omit<Customer, 'id' | 'createdAt'>) => Customer;
   addSupplier?: (supplier: Omit<Supplier, 'id' | 'createdAt'>) => Supplier;
@@ -93,13 +93,16 @@ interface TransactionsViewProps {
 export default function TransactionsView({
   initialPrintDocId,
   onClearInitialPrintDocId,
-  exchangeRates,
   settings,
   addCustomer,
   addSupplier,
   addProject,
   updateProforma
 }: TransactionsViewProps) {
+  // Rates are read here rather than handed down: they are a short shared list
+  // that changes during the day, and a stale one misprices a document.
+  const { rates: exchangeRates } = useExchangeRates();
+
   // Declared before the pickers below, which are disabled while it is closed.
   const [showModal, setShowModal] = useState(false);
 
