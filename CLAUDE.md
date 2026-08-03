@@ -59,9 +59,26 @@ There are no committed tests and no ESLint. `npm run lint` (type-check) is the s
 - Types are centralized in `src/types.ts`; seed data in `src/seedData.ts` (but `SEED_USERS` and `SEED_PROJECT_CATEGORY_GROUPS` live in `useERPStore.ts` and are imported by `server.ts` for seeding).
 - Excel import/export via `exceljs`/`xlsx` in `src/excelUtils.ts`; financial math in `src/utils/finance.ts`.
 
-## SQL Server migration (server side complete)
+## SQL Server migration (server complete; client 16 of 18 screens)
 
-The app is being moved off `database.json` onto SQL Server. **All 18 modules now have a Prisma-backed service + REST API**, verified against the real `ata_erp`. The client has not been migrated yet, so it still reads and writes `database.json` through the legacy `/api/data/:key` routes — **both paths exist at once** until the frontend is converted (that is the remaining phase).
+The app is being moved off `database.json` onto SQL Server. **All 18 modules have a Prisma-backed service + REST API**, verified against the real `ata_erp`, and **16 of 18 screens now read and write through it**: customers, projects, proformas, products, suppliers, tasks, transactions, purchase orders, supplier inquiries, packing lists, after-sales, referrals, users, exchange rates, the dashboard, and settings + the audit log.
+
+**Both paths still exist at once.** The store (`useERPStore.ts`) continues to load `database.json` through `/api/data/:key`, because two things still depend on it:
+
+1. **The project activity/referral feed in `ProjectsView.tsx`** — `projectCategoryGroups` plus nine mutation callbacks. Every endpoint it needs already exists (`/api/projects/:id/category-groups`, `/api/activities`, the referral routes). Note the badge in the projects grid that flags rows with an active category: that is a per-project figure across the whole page, so it belongs on the project list row rather than being derived client-side.
+2. **The sidebar badges in `App.tsx`** — open tasks, low stock, pending referrals, all still counted from whole collections. The server already returns each (`/api/dashboard`, `/api/tasks/summary`, `/api/referrals`).
+
+Once those land, `/api/data/:key` and `database.json` can go. **Login is the exception to watch**: `/api/login` in `server.ts` still authenticates against `erp_users` in `database.json` while every API route resolves the user from SQL by the cookie's id — so a user must exist in *both*, with the *same id*, or they log in successfully and then see nothing.
+
+### What the client migration is for
+
+The recurring pattern, worth expecting in the two screens that remain: a screen holds every record so it can compute something across all of them, and that computation silently breaks once the list is paged. Each one moved to the server, where the whole set is still visible:
+
+- **the winning supplier inquiry** — one per project, enforced by walking every inquiry in memory
+- **how much of a won item is still unshipped** — promised minus already shipped, across every proforma and delivery
+- **document numbers** — `startSeq + collection.length`, which under paging is one page
+- **an after-sales record's status** — rolled up from its rows, and the column the grid filters on
+- **dashboard revenue** — eight collections reduced to a dozen numbers
 
 - **Schema** — `prisma/schema.prisma`, 32 models, deployed via `prisma/migrations/0_init`. Things Prisma can't express (the filtered unique index on `customers.economicCode`) live in `prisma/sql/extra-indexes.sql` and must be re-run after any migration that rebuilds those tables.
 - **Client** — `src/server/db.ts` exposes a single `getDb()`. **Prisma 7 has no built-in SQL Server connector**: it connects through `@prisma/adapter-mssql`, and without the adapter the first query throws "requires a driver adapter". One client per process — the adapter owns the connection pool (`mssql` default max 10), and a client per request would exhaust SQL Server.
@@ -103,3 +120,8 @@ Live on a **shared** Windows server (`192.168.1.104`) alongside IIS, SQL Server,
 - **A scratch instance isolates the JSON store but not SQL Server.** `PORT=3100 ERP_DB_PATH=<scratch>/test.json` still reads `DATABASE_URL` from `.env`, so any Prisma-backed endpoint you exercise writes to the **real** database. Point `DATABASE_URL` at a scratch database too, or clean up what the test created and assert the counts back to zero.
 - **Git Bash mangles Persian in `curl -d`** — the UTF-8 arrives as `?????`, which then looks like an application bug (e.g. `mobileNormalized` coming back `null`). Drive HTTP tests from a Node script using `fetch` instead of composing them in the shell.
 - npm blocks package install scripts by default here. That was harmless for `esbuild` (its binary arrives via optionalDependencies) but **not** for Prisma, whose engines come from its install script — approve with `npm approve-scripts` and `npm rebuild` if Prisma commands fail.
+- **`npx prisma migrate dev` cannot run here** — the SQL login has no `CREATE DATABASE` right, so the shadow database fails with `P3014`. Write the migration SQL by hand (see `prisma/migrations/20260803000000_*`) and apply it with `npm run db:deploy`. `migrate diff` is also unhelpful: it wants to re-create ~18 DEFAULT constraints that introspection does not report, burying the real change.
+- **A cast is not a check.** The client adapters end in `as unknown as Product` and friends, because the client types carry fields a list row does not. That means a wrong field name inside the object literal compiles cleanly and fails at runtime — three separate bugs reached the browser this way (`calculatedLandedCostRIYAL`, `calculatedLandedCostForeign`, and `useUserDirectory()` returning `{ users }` rather than an array). Open the screen; a green type-check proves less here than usual.
+- **Module notes are their own table** (`/api/notes/:entityType/:entityId`), never a column. Folding a note into the record and saving the record discards it silently — which is exactly what happened on two screens.
+- **`compressLZW` output format changed.** It now emits `[alphabet, codes]`. The old encoder seeded its dictionary with char codes 0–255, so every Persian character produced `undefined` → `null`, and every audit snapshot ever taken was unrecoverable. Old entries decode to empty rather than to garbage.
+- **A scratch browser login needs the user in both stores with the same id.** `/api/login` reads `database.json`; the API routes resolve the cookie's id against SQL. A stale duplicate in `erp_users` will log you in as an account that owns nothing — the symptom is an empty screen with a working session.
