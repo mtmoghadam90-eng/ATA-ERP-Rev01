@@ -48,6 +48,7 @@ import { registerNotificationRoutes } from "./src/server/routes/notifications";
 import { registerDashboardRoutes } from "./src/server/routes/dashboard";
 import { scrapeRates } from "./src/server/rateSource";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
+import { authenticateUser } from "./src/server/services/userService";
 
 // Overridable so a second instance can be started against a scratch database
 // (useful for testing, and for pointing a deployment at a specific data file).
@@ -725,14 +726,14 @@ async function startServer() {
   const ipLoginAttempts = new Map<string, { count: number; lastAttempt: number }>();
 
   // Login API
-  app.post("/api/login", (req, res) => {
+  app.post("/api/login", async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
       return res.status(400).json({ success: false, message: "لطفا نام کاربری و رمز ورود را وارد کنید" });
     }
     const ip = req.ip || (req.headers['x-forwarded-for'] as string) || 'unknown';
     const now = Date.now();
-    
+
     const userKey = `${ip}:${username.toLowerCase()}`;
     const ipKey = ip;
 
@@ -756,100 +757,106 @@ async function startServer() {
       });
     }
 
-    const row = getStmt.get('erp_users') as {value: string} | undefined;
-    if (!row) {
-      return res.status(401).json({ success: false, message: "کاربری یافت نشد" });
-    }
-    const users = JSON.parse(row.value);
-    const foundUser = users.find((u: any) => u.username.toLowerCase() === username.toLowerCase());
-    
-    if (foundUser && bcrypt.compareSync(password, foundUser.password)) {
-      // Clear rate-limiting records on success
-      userLoginAttempts.delete(userKey);
-      ipLoginAttempts.delete(ipKey);
-      
-      const isDefaultPassword = bcrypt.compareSync('123', foundUser.password);
+    try {
+      // Authenticate using SQL Server via Prisma
+      const authResult = await authenticateUser(username, password);
 
-      // Issue the session cookie — this is what authorizes every later request.
-      const token = signSession(
-        { uid: foundUser.id, iat: Date.now(), epoch: foundUser.sessionEpoch || 0 },
-        SESSION_SECRET,
-      );
-      res.setHeader("Set-Cookie", buildSessionCookie(token));
+      if (authResult) {
+        // Clear rate-limiting records on success
+        userLoginAttempts.delete(userKey);
+        ipLoginAttempts.delete(ipKey);
 
-      // Don't send the password hash back to the client
-      const { password: _, ...safeUser } = foundUser;
-      res.json({
-        success: true,
-        user: safeUser,
-        mustChangePassword: isDefaultPassword
-      });
-    } else {
-      // Increment failed attempts
-      const currentU = userLoginAttempts.get(userKey) || { count: 0, lastAttempt: 0 };
-      userLoginAttempts.set(userKey, {
-        count: currentU.count + 1,
-        lastAttempt: now
-      });
+        // Issue the session cookie — this is what authorizes every later request.
+        const token = signSession(
+          { uid: authResult.user.id as string, iat: Date.now(), epoch: (authResult.user.sessionEpoch as number) || 0 },
+          SESSION_SECRET,
+        );
+        res.setHeader("Set-Cookie", buildSessionCookie(token));
 
-      const currentIP = ipLoginAttempts.get(ipKey) || { count: 0, lastAttempt: 0 };
-      ipLoginAttempts.set(ipKey, {
-        count: currentIP.count + 1,
-        lastAttempt: now
-      });
-      
-      res.status(401).json({ success: false, message: "نام کاربری یا رمز عبور اشتباه است" });
+        res.json({
+          success: true,
+          user: authResult.user,
+          mustChangePassword: authResult.isDefaultPassword
+        });
+      } else {
+        // Increment failed attempts
+        const currentU = userLoginAttempts.get(userKey) || { count: 0, lastAttempt: 0 };
+        userLoginAttempts.set(userKey, {
+          count: currentU.count + 1,
+          lastAttempt: now
+        });
+
+        const currentIP = ipLoginAttempts.get(ipKey) || { count: 0, lastAttempt: 0 };
+        ipLoginAttempts.set(ipKey, {
+          count: currentIP.count + 1,
+          lastAttempt: now
+        });
+
+        res.status(401).json({ success: false, message: "نام کاربری یا رمز عبور اشتباه است" });
+      }
+    } catch (err) {
+      console.error("Login error:", err);
+      res.status(500).json({ success: false, message: "خطا در ورود به سیستم" });
     }
   });
 
-  // Change Password API
-  app.post("/api/change-password", (req, res) => {
+  // Change Password API (legacy endpoint - redirects to new API)
+  app.post("/api/change-password", async (req, res) => {
     const { username, oldPassword, newPassword } = req.body;
     if (!username || !oldPassword || !newPassword) {
       return res.status(400).json({ success: false, message: "اطلاعات ارسالی برای تغییر رمز عبور ناقص است" });
     }
-    
-    const row = getStmt.get('erp_users') as {value: string} | undefined;
-    if (!row) {
-      return res.status(404).json({ success: false, message: "کاربری یافت نشد" });
-    }
-    const users = JSON.parse(row.value);
-    const foundUserIndex = users.findIndex((u: any) => u.username.toLowerCase() === username.toLowerCase());
-    if (foundUserIndex === -1) {
-      return res.status(404).json({ success: false, message: "کاربر یافت نشد" });
-    }
-    
-    const foundUser = users[foundUserIndex];
-    if (!bcrypt.compareSync(oldPassword, foundUser.password)) {
-      return res.status(401).json({ success: false, message: "رمز عبور فعلی نادرست است" });
-    }
-    
+
     if (newPassword.length < 4) {
       return res.status(400).json({ success: false, message: "رمز عبور جدید باید حداقل ۴ کاراکتر باشد" });
     }
-    
+
     if (newPassword === '123') {
       return res.status(400).json({ success: false, message: "نمی‌توانید از رمز عبور ساده و پیش‌فرض استفاده کنید" });
     }
-    
-    // Update password and invalidate any sessions issued before the change.
-    foundUser.password = bcrypt.hashSync(newPassword, 10);
-    foundUser.sessionEpoch = (foundUser.sessionEpoch || 0) + 1;
-    users[foundUserIndex] = foundUser;
 
-    // Save to DB
-    insertStmt.run('erp_users', JSON.stringify(users));
+    try {
+      // First, authenticate to get the user
+      const authResult = await authenticateUser(username, oldPassword);
+      if (!authResult) {
+        return res.status(401).json({ success: false, message: "رمز عبور فعلی نادرست است" });
+      }
 
-    // Issue a fresh session so the user stays logged in on this device only.
-    const token = signSession(
-      { uid: foundUser.id, iat: Date.now(), epoch: foundUser.sessionEpoch },
-      SESSION_SECRET,
-    );
-    res.setHeader("Set-Cookie", buildSessionCookie(token));
+      const userId = authResult.user.id as string;
 
-    // Don't send the password hash back to the client
-    const { password: _, ...safeUser } = foundUser;
-    res.json({ success: true, user: safeUser, message: "رمز عبور با موفقیت تغییر یافت" });
+      // Now use the userService to change password
+      const { setPassword } = await import("./src/server/services/userService");
+
+      // setPassword expects an AuthUser, so we construct a minimal one
+      const authUser = { id: userId, isSystemAdmin: true } as AuthUser;
+      const outcome = await setPassword(userId, newPassword, authUser, oldPassword);
+
+      if (outcome === "not-found") {
+        return res.status(404).json({ success: false, message: "کاربر یافت نشد" });
+      }
+      if (outcome === "wrong-password") {
+        return res.status(401).json({ success: false, message: "رمز عبور فعلی نادرست است" });
+      }
+
+      // Password changed successfully - re-authenticate to get fresh user data
+      const freshAuth = await authenticateUser(username, newPassword);
+      if (!freshAuth) {
+        // This shouldn't happen but handle gracefully
+        return res.status(500).json({ success: false, message: "خطا در تغییر رمز عبور" });
+      }
+
+      // Issue a fresh session so the user stays logged in on this device only
+      const token = signSession(
+        { uid: userId, iat: Date.now(), epoch: (freshAuth.user.sessionEpoch as number) || 0 },
+        SESSION_SECRET,
+      );
+      res.setHeader("Set-Cookie", buildSessionCookie(token));
+
+      res.json({ success: true, user: freshAuth.user, message: "رمز عبور با موفقیت تغییر یافت" });
+    } catch (err) {
+      console.error("Change password error:", err);
+      res.status(500).json({ success: false, message: "خطا در تغییر رمز عبور" });
+    }
   });
 
   // Vite middleware for development, serving index.html / dist in production

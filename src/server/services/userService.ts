@@ -267,3 +267,46 @@ export async function removeUser(
   await db.user.delete({ where: { id } });
   return "deleted";
 }
+
+/**
+ * Authenticates a user by username and password.
+ *
+ * Returns the user record (without password hash) if credentials are valid,
+ * or null if authentication fails.
+ */
+export async function authenticateUser(
+  username: string,
+  password: string,
+): Promise<{ user: Record<string, unknown>; isDefaultPassword: boolean } | null> {
+  const db = getDb();
+
+  // Find user by username
+  // Note: SQL Server collation is case-insensitive by default
+  const user = await db.user.findFirst({
+    where: {
+      username: username,
+    },
+    select: {
+      ...SAFE_SELECT,
+      passwordHash: true, // Need this to verify, but won't return it
+    },
+  });
+
+  if (!user) return null;
+  if (!user.isActive) return null;
+
+  // Double-check username match (case-insensitive)
+  if (user.username.toLowerCase() !== username.toLowerCase()) return null;
+
+  // Verify password
+  const passwordMatch = bcrypt.compareSync(password, user.passwordHash);
+  if (!passwordMatch) return null;
+
+  // Check if using default password
+  const isDefaultPassword = bcrypt.compareSync("123", user.passwordHash);
+
+  // Remove passwordHash before returning
+  const { passwordHash: _, ...safeUser } = user;
+
+  return { user: safeUser, isDefaultPassword };
+}
