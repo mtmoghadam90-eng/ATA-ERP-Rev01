@@ -117,4 +117,34 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
       sendError(res, err, "DELETE /api/tasks/:id");
     }
   });
+
+  /**
+   * Returns tasks with reminders enabled that match the current date and time.
+   * Used by App.tsx for real-time reminder notifications.
+   */
+  app.get("/api/tasks/reminders", async (req, res) => {
+    const user = deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { date, time } = req.query as { date?: string; time?: string };
+      if (!date || !time) {
+        res.status(400).json({ success: false, error: "date و time الزامی هستند." });
+        return;
+      }
+      const result = await listTasks(
+        {
+          page: 1,
+          pageSize: 100,
+          search: "",
+          order: "asc",
+          filters: {}
+        },
+        user,
+        { reminderDate: date, reminderTime: time }
+      );
+      res.json({ success: true, tasks: result.rows });
+    } catch (err) {
+      sendError(res, err, "GET /api/tasks/reminders");
+    }
+  });
 }

@@ -28,7 +28,14 @@ export function visibilityClause(user: AuthUser): Record<string, unknown> | unde
 export function buildTaskWhere(
   q: ListQuery,
   user: AuthUser,
-  extra: { dateFrom?: unknown; dateTo?: unknown; overdue?: unknown; relatedToId?: unknown } = {},
+  extra: {
+    dateFrom?: unknown;
+    dateTo?: unknown;
+    overdue?: unknown;
+    relatedToId?: unknown;
+    reminderDate?: unknown;
+    reminderTime?: unknown;
+  } = {},
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
 
@@ -56,6 +63,14 @@ export function buildTaskWhere(
     if (today) and.push({ dueDate: { lt: today }, status: { not: "انجام شده" } });
   }
 
+  // Filter for reminder notifications — exact date and time match
+  if (typeof extra.reminderDate === "string" && extra.reminderDate) {
+    and.push({ reminderEnabled: true, reminderDateJalali: extra.reminderDate });
+  }
+  if (typeof extra.reminderTime === "string" && extra.reminderTime) {
+    and.push({ reminderTime: extra.reminderTime });
+  }
+
   return and.length === 0 ? {} : { AND: and };
 }
 
@@ -71,7 +86,14 @@ const LIST_SELECT = {
 export async function listTasks(
   q: ListQuery,
   user: AuthUser,
-  extra: { dateFrom?: unknown; dateTo?: unknown; overdue?: unknown; relatedToId?: unknown } = {},
+  extra: {
+    dateFrom?: unknown;
+    dateTo?: unknown;
+    overdue?: unknown;
+    relatedToId?: unknown;
+    reminderDate?: unknown;
+    reminderTime?: unknown;
+  } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
   const where = buildTaskWhere(q, user, extra);

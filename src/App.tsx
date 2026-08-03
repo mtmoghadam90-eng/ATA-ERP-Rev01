@@ -25,6 +25,7 @@ import ConfirmModal from './components/ConfirmModal';
 import ProjectConfirmationUploadModal from './components/ProjectConfirmationUploadModal';
 import { Project } from './types';
 import { useSidebarBadges } from './api/useSidebarBadges';
+import { tasksApi, taskToWriteInput } from './api/tasks';
 
 export default function App() {
   const store = useERPStore();
@@ -190,11 +191,13 @@ export default function App() {
     const shamsiDate = toShamsiStr(now);
     const shamsiTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-    store.updateTask({
-      ...activeReminderTask,
+    tasksApi.update(activeReminderTask.id, {
+      ...taskToWriteInput(activeReminderTask),
       reminderEnabled: true,
       reminderDate: shamsiDate,
       reminderTime: shamsiTime,
+    }).catch(err => {
+      console.error('Failed to snooze task:', err);
     });
 
     setTriggeredReminders(prev => prev.filter(id => id !== activeReminderTask.id));
@@ -205,11 +208,13 @@ export default function App() {
   const handleSaveCustomSnooze = () => {
     if (!activeReminderTask || !customSnoozeDate || !customSnoozeTime) return;
 
-    store.updateTask({
-      ...activeReminderTask,
+    tasksApi.update(activeReminderTask.id, {
+      ...taskToWriteInput(activeReminderTask),
       reminderEnabled: true,
       reminderDate: customSnoozeDate,
       reminderTime: customSnoozeTime,
+    }).catch(err => {
+      console.error('Failed to snooze task:', err);
     });
 
     setTriggeredReminders(prev => prev.filter(id => id !== activeReminderTask.id));
@@ -219,49 +224,59 @@ export default function App() {
 
   // Real-time reminders checker effect
   useEffect(() => {
-    if (!store.isInitialized || !store.tasks) return;
+    if (!store.isInitialized || !store.currentUser) return;
 
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       const today = getTodayShamsi();
       const now = new Date();
       const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-      // Find any task with matching reminder date and time
-      const matchingTask = store.tasks.find(t => 
-        t.reminderEnabled && 
-        t.reminderDate === today && 
-        t.reminderTime === currentTime && 
-        t.status !== 'انجام شده' &&
-        !triggeredReminders.includes(t.id)
-      );
+      try {
+        // Fetch tasks with reminders matching current date and time from API
+        const response = await fetch(
+          `/api/tasks/reminders?date=${encodeURIComponent(today)}&time=${encodeURIComponent(currentTime)}`,
+          { credentials: 'same-origin' }
+        );
 
-      if (matchingTask) {
-        setTriggeredReminders(prev => [...prev, matchingTask.id]);
-        setActiveReminderTask(matchingTask);
-        
-        // Play clean notification sound using Web Audio API safely
-        try {
-          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-          if (AudioContextClass && typeof AudioContextClass === 'function' && AudioContextClass.prototype) {
-            const audioCtx = new (AudioContextClass as any)();
-            const osc = audioCtx.createOscillator();
-            const gain = audioCtx.createGain();
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(880, audioCtx.currentTime);
-            gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.35);
+        if (!response.ok) return;
+
+        const data = await response.json();
+        if (!data.success || !data.tasks || data.tasks.length === 0) return;
+
+        // Find first task not already triggered
+        const matchingTask = data.tasks.find((t: any) => !triggeredReminders.includes(t.id));
+
+        if (matchingTask) {
+          setTriggeredReminders(prev => [...prev, matchingTask.id]);
+          setActiveReminderTask(matchingTask);
+
+          // Play clean notification sound using Web Audio API safely
+          try {
+            const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+            if (AudioContextClass && typeof AudioContextClass === 'function' && AudioContextClass.prototype) {
+              const audioCtx = new (AudioContextClass as any)();
+              const osc = audioCtx.createOscillator();
+              const gain = audioCtx.createGain();
+              osc.connect(gain);
+              gain.connect(audioCtx.destination);
+              osc.type = 'sine';
+              osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+              gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+              osc.start();
+              osc.stop(audioCtx.currentTime + 0.35);
+            }
+          } catch (e) {
+            console.log("Audio notify blocked or failed:", e);
           }
-        } catch (e) {
-          console.log("Audio notify blocked or failed:", e);
         }
+      } catch (err) {
+        // Silently fail — reminders are a convenience, not critical
+        console.error('Failed to check reminders:', err);
       }
     }, 10000);
 
     return () => clearInterval(interval);
-  }, [store.isInitialized, store.tasks, triggeredReminders]);
+  }, [store.isInitialized, store.currentUser, triggeredReminders]);
 
   if (!store.isInitialized) {
     return (
@@ -686,9 +701,11 @@ export default function App() {
                   <div className="flex gap-2 pt-2">
                     <button
                       onClick={() => {
-                        store.updateTask({
-                          ...activeReminderTask,
+                        tasksApi.update(activeReminderTask.id, {
+                          ...taskToWriteInput(activeReminderTask),
                           status: 'انجام شده'
+                        }).catch(err => {
+                          console.error('Failed to update task:', err);
                         });
                         setActiveReminderTask(null);
                         setShowSnoozeOptions(false);
