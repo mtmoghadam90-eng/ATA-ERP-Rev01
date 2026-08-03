@@ -508,13 +508,9 @@ export default function App() {
         );
       case 'users':
         return (
-          <UsersView 
-            users={store.users}
+          <UsersView
             settings={store.settings}
             currentUser={store.currentUser}
-            addUser={store.addUser}
-            updateUser={store.updateUser}
-            deleteUser={store.deleteUser}
           />
         );
       default:

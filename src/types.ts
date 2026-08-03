@@ -558,12 +558,18 @@ export interface ProjectCategoryGroup {
 export interface User {
   id: string;
   username: string;
+  /** Never returned by the server; present only while a form is filling one in. */
   password?: string;
   fullName: string;
   role: 'admin' | 'user';
   isSystemAdmin?: boolean;
   position?: string;
   signatureImage?: string;
+  /**
+   * An account that owns records is deactivated rather than deleted, so this is
+   * how a former colleague's history stays readable while their access is gone.
+   */
+  isActive?: boolean;
   permissions: {
     dashboard: boolean;
     customers: boolean;

@@ -2,6 +2,10 @@ import React, { useState } from 'react';
 import { User, ERPSettings } from '../types';
 import ConfirmModal from './ConfirmModal';
 import { compressAndResizeImage, uploadFile } from '../imageUtils';
+import { ApiError } from '../api/client';
+import { rowToUser, userToWriteInput, usersApi } from '../api/users';
+import { useUserList } from '../api/useUserList';
+import { invalidateUserDirectory } from '../api/useUserDirectory';
 import { 
   UserPlus, 
   ShieldCheck, 
@@ -20,17 +24,28 @@ import {
   Minimize2
 } from 'lucide-react';
 
+/**
+ * User accounts.
+ *
+ * Reads through the API. Passwords never come back from the server, so the edit
+ * form no longer pre-fills one: it is left blank and only sent when something
+ * is typed, which is also the only way to change it.
+ */
 interface UsersViewProps {
-  users: User[];
   settings: ERPSettings;
   currentUser: User | null;
-  addUser: (user: Omit<User, 'id'>) => User;
-  updateUser: (updatedUser: User) => void;
-  deleteUser: (id: string) => void;
 }
 
-export default function UsersView({ users, settings, currentUser, addUser, updateUser, deleteUser }: UsersViewProps) {
-  const [searchTerm, setSearchTerm] = useState('');
+export default function UsersView({ settings, currentUser }: UsersViewProps) {
+  const list = useUserList();
+  const users = React.useMemo(() => list.rows.map(rowToUser), [list.rows]);
+  const searchTerm = list.search;
+  const setSearchTerm = list.setSearch;
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
   const [showAddModal, setShowAddModal] = useState(false);
   const [isAddModalFullscreen, setIsAddModalFullscreen] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
@@ -138,37 +153,43 @@ export default function UsersView({ users, settings, currentUser, addUser, updat
     setShowAddModal(true);
   };
 
-  const handleCreateUser = (e: React.FormEvent) => {
+  const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!username || !password || !fullName) {
       alert('لطفاً تمامی فیلدهای اجباری را تکمیل کنید.');
       return;
     }
 
-    // Check if username already exists
-    if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
-      alert('این نام کاربری قبلاً در سیستم ثبت شده است.');
-      return;
+    // A duplicate username is refused by the unique index rather than by
+    // scanning the page this browser happens to be showing.
+    try {
+      await usersApi.create({
+        ...userToWriteInput({
+          username: username.trim(),
+          fullName: fullName.trim(),
+          role,
+          position,
+          signatureImage,
+          permissions,
+          isActive: true,
+        }),
+        password,
+      });
+      invalidateUserDirectory();
+      list.refresh();
+      setShowAddModal(false);
+      setIsAddModalFullscreen(false);
+    } catch (err) {
+      reportError(err, 'ایجاد کاربر با خطا مواجه شد.');
     }
-
-    addUser({
-      username: username.trim(),
-      password: password,
-      fullName: fullName.trim(),
-      role: role,
-      position: position,
-      signatureImage: signatureImage,
-      permissions: permissions
-    });
-
-    setShowAddModal(false);
-    setIsAddModalFullscreen(false);
   };
 
   const openEditModal = (user: User) => {
     setSelectedUser(user);
     setUsername(user.username);
-    setPassword(user.password || '');
+    // Left blank on purpose: the server never returns a password, and an empty
+    // field here means "keep the current one".
+    setPassword('');
     setFullName(user.fullName);
     setRole(user.role);
     setPosition(user.position || '');
@@ -180,7 +201,7 @@ export default function UsersView({ users, settings, currentUser, addUser, updat
     setShowEditModal(true);
   };
 
-  const handleUpdateUser = (e: React.FormEvent) => {
+  const handleUpdateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedUser) return;
 
@@ -189,25 +210,30 @@ export default function UsersView({ users, settings, currentUser, addUser, updat
       return;
     }
 
-    // Check if username is taken by another user
-    if (users.some(u => u.username.toLowerCase() === username.toLowerCase() && u.id !== selectedUser.id)) {
-      alert('این نام کاربری قبلاً توسط کاربر دیگری انتخاب شده است.');
-      return;
+    try {
+      await usersApi.update(selectedUser.id, userToWriteInput({
+        username: username.trim(),
+        fullName: fullName.trim(),
+        role,
+        position,
+        signatureImage,
+        permissions,
+        isActive: selectedUser.isActive,
+      }));
+
+      // The password is its own call, and only when one was typed. Setting it
+      // signs that account out everywhere.
+      if (password.trim()) {
+        await usersApi.setPassword(selectedUser.id, password);
+      }
+
+      invalidateUserDirectory();
+      list.refresh();
+      setShowEditModal(false);
+      setIsEditModalFullscreen(false);
+    } catch (err) {
+      reportError(err, 'ذخیره تغییرات کاربر با خطا مواجه شد.');
     }
-
-    updateUser({
-      ...selectedUser,
-      username: username.trim(),
-      password: password,
-      fullName: fullName.trim(),
-      role: role,
-      position: position,
-      signatureImage: signatureImage,
-      permissions: permissions
-    });
-
-    setShowEditModal(false);
-    setIsEditModalFullscreen(false);
   };
 
   const handleDeleteUser = (user: User) => {
@@ -224,10 +250,8 @@ export default function UsersView({ users, settings, currentUser, addUser, updat
     setDeleteConfirmOpen(true);
   };
 
-  const filteredUsers = users.filter(u => 
-    u.fullName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    u.username.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Search is a query parameter now, so what arrives is already filtered.
+  const filteredUsers = users;
 
   return (
     <div className="space-y-6">
@@ -276,9 +300,29 @@ export default function UsersView({ users, settings, currentUser, addUser, updat
           <Search className="absolute right-3 top-2.5 text-slate-400" size={16} />
         </div>
         <div className="text-xs text-slate-400 mr-auto font-mono">
-          تعداد کاربران ثبت شده: {users.length} نفر
+          {/* The server's total, so it counts every match rather than the page. */}
+          تعداد کاربران ثبت شده: {list.total.toLocaleString('fa-IR')} نفر
         </div>
       </div>
+
+      {list.error && (
+        <div className="bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold rounded-xl p-4 flex items-center justify-between gap-3" id="users-error">
+          <span>{list.error}</span>
+          <button
+            type="button"
+            onClick={list.refresh}
+            className="px-3 py-1.5 bg-white border border-rose-200 hover:bg-rose-50 rounded-lg text-[11px] font-bold transition"
+          >
+            تلاش دوباره
+          </button>
+        </div>
+      )}
+
+      {list.initialLoading && (
+        <div className="bg-white rounded-xl border border-slate-100 p-12 text-center text-xs text-slate-400 shadow-sm" id="users-loading">
+          در حال دریافت کاربران…
+        </div>
+      )}
 
       {/* Users Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -309,6 +353,14 @@ export default function UsersView({ users, settings, currentUser, addUser, updat
                       ) : (
                         <span className="bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-0.5">
                           کارشناس فنی/بازرگانی
+                        </span>
+                      )}
+                      {/* An account that owned records was disabled rather than
+                          removed, and would otherwise look entirely normal. */}
+                      {user.isActive === false && (
+                        <span className="bg-rose-100 text-rose-700 text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-0.5">
+                          <ShieldAlert size={10} />
+                          غیرفعال
                         </span>
                       )}
                     </div>
@@ -435,6 +487,12 @@ export default function UsersView({ users, settings, currentUser, addUser, updat
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                   >
                     <option value="">-- انتخاب سمت --</option>
+                    {/* A position the settings list no longer offers is still
+                        this person's position; without it the field renders
+                        blank while holding a value, which reads as "not set". */}
+                    {position && !(settings.dropdownItems.positions || []).includes(position) && (
+                      <option value={position}>{position}</option>
+                    )}
                     {(settings.dropdownItems.positions || []).map((pos, idx) => (
                       <option key={idx} value={pos}>{pos}</option>
                     ))}
@@ -650,6 +708,12 @@ export default function UsersView({ users, settings, currentUser, addUser, updat
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                   >
                     <option value="">-- انتخاب سمت --</option>
+                    {/* A position the settings list no longer offers is still
+                        this person's position; without it the field renders
+                        blank while holding a value, which reads as "not set". */}
+                    {position && !(settings.dropdownItems.positions || []).includes(position) && (
+                      <option value={position}>{position}</option>
+                    )}
                     {(settings.dropdownItems.positions || []).map((pos, idx) => (
                       <option key={idx} value={pos}>{pos}</option>
                     ))}
@@ -684,13 +748,17 @@ export default function UsersView({ users, settings, currentUser, addUser, updat
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-500">رمز عبور ورود *</label>
+                  {/* Not required, and not pre-filled: the server never returns
+                      a password, so blank means "leave it as it is". */}
+                  <label className="text-xs font-semibold text-slate-500">
+                    رمز عبور جدید <span className="font-normal text-slate-400">(خالی = بدون تغییر)</span>
+                  </label>
                   <div className="relative">
                     <input
                       type={showPassword ? "text" : "password"}
-                      required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
+                      placeholder="برای تغییر رمز، رمز جدید را وارد کنید"
                       className="w-full border border-slate-200 rounded-lg pl-10 pr-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-left font-mono"
                       dir="ltr"
                     />
@@ -819,13 +887,25 @@ export default function UsersView({ users, settings, currentUser, addUser, updat
           setUserToDeleteId(null);
           setUserToDeleteName('');
         }}
-        onConfirm={() => {
-          if (userToDeleteId) {
-            deleteUser(userToDeleteId);
+        onConfirm={async () => {
+          if (!userToDeleteId) return;
+          const id = userToDeleteId;
+          setDeleteConfirmOpen(false);
+          setUserToDeleteId(null);
+          setUserToDeleteName('');
+          try {
+            // An account that owns records is deactivated rather than deleted,
+            // and the server says which happened.
+            const result = await usersApi.remove(id);
+            invalidateUserDirectory();
+            list.refresh();
+            if (result.deactivated) alert(result.message);
+          } catch (err) {
+            reportError(err, 'حذف کاربر با خطا مواجه شد.');
           }
         }}
         title="حذف دسترسی پرسنل"
-        message={`آیا از حذف دسترسی پرسنل "${userToDeleteName}" اطمینان دارید؟ تمامی دسترسی‌های این همکار متوقف خواهد شد.`}
+        message={`آیا از حذف دسترسی پرسنل "${userToDeleteName}" اطمینان دارید؟ تمامی دسترسی‌های این همکار متوقف خواهد شد. اگر این کاربر سابقه ثبت‌شده داشته باشد، به‌جای حذف غیرفعال می‌شود تا تاریخچه دست‌نخورده بماند.`}
       />
 
     </div>
