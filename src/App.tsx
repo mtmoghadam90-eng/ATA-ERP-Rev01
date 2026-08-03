@@ -24,9 +24,13 @@ import ShamsiDatePicker from './components/ShamsiDatePicker';
 import ConfirmModal from './components/ConfirmModal';
 import ProjectConfirmationUploadModal from './components/ProjectConfirmationUploadModal';
 import { Project } from './types';
+import { useSidebarBadges } from './api/useSidebarBadges';
 
 export default function App() {
   const store = useERPStore();
+  // Counts the sidebar and header show. Server-side, and the last reason this
+  // component needed whole collections.
+  const badges = useSidebarBadges(!!store.currentUser);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     return (localStorage.getItem('erp-theme') as 'light' | 'dark') || 'light';
   });
@@ -493,38 +497,6 @@ export default function App() {
   const currentUserName = store.currentUser?.fullName || 'محمد توکل مقدم';
   const isManagerOrAdmin = store.currentUser?.role === 'admin' || store.currentUser?.isSystemAdmin;
 
-  const readItems = new Set(store.readItems || []);
-
-  let groupedNotifsUnread = 0;
-  (store.projectCategoryGroups || []).forEach(group => {
-    const cat = store.settings?.activityCategories?.find(c => c.id === group.categoryId);
-    const isResponsible = isManagerOrAdmin || cat?.responsibleUserId === currentUserName;
-    
-    (group.activities || []).forEach((act) => {
-      if (isResponsible && act.createdBy !== currentUserName) {
-        if (!readItems.has(act.id)) groupedNotifsUnread++;
-      }
-      if (act.referral) {
-        let messages = act.referral.messages ? [...act.referral.messages] : [];
-        if (messages.length === 0 && act.referral.response) {
-          messages = [act.referral.response];
-        }
-        messages.forEach((msg: any, idx: number) => {
-           if ((isResponsible || act.referral?.assignedBy === currentUserName) && msg.responder !== currentUserName) {
-             const id = msg.id || `${act.id}-msg-${msg.timestamp || parseInt((act.id || '').split('-').pop() || '0', 10) + idx + 1}`;
-             if (!readItems.has(id)) groupedNotifsUnread++;
-           }
-        });
-      }
-    });
-  });
-
-  const unreadNotifsCount = (store.moduleNotifications || []).filter(n => !n.read && n.responsibleName === currentUserName).length;
-  const totalUnreadCount = unreadNotifsCount + groupedNotifsUnread;
-
-  const pendingReferrals = (store.projectCategoryGroups || []).flatMap(g => g.activities || [])
-    .filter(a => a.referral && (a.referral.status || 'در انتظار اقدام') === 'در انتظار اقدام' && a.referral.assignedTo === currentUserName);
-
   const activeTemplate = store.settings?.proformaTemplates?.find(t => t.name === store.settings?.activeTemplateId) || store.settings?.proformaTemplates?.[0];
   const logoUrl = activeTemplate?.logoUrl;
   const isStandalone = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('standalone') === 'true';
@@ -537,11 +509,11 @@ export default function App() {
         <Sidebar 
           activeTab={activeView} 
           setActiveTab={setActiveView} 
-          taskCount={store.tasks.filter(t => t.status !== 'انجام شده' && t.status !== 'کنسل شده').length}
-          lowStockCount={store.products.filter(p => p.stockLevel <= p.minStockLevel).length}
+          taskCount={badges.openTasks}
+          lowStockCount={badges.lowStock}
           userRole={store.userRole}
           changeRole={store.changeRole}
-          referralsCount={pendingReferrals.length}
+          referralsCount={badges.pendingReferrals}
           currentUser={store.currentUser}
           onLogout={store.logout}
           sidebarModuleOrder={store.settings.sidebarModuleOrder}
@@ -579,9 +551,9 @@ export default function App() {
                  title="ارجاعات کار (نیاز به اقدام)"
                >
                  <Inbox size={22} />
-                 {pendingReferrals.length > 0 && (
+                 {badges.pendingReferrals > 0 && (
                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-amber-500 text-[10px] font-bold flex justify-center items-center rounded-full text-white shadow-sm border-2 border-white">
-                     {pendingReferrals.length}
+                     {badges.pendingReferrals}
                    </span>
                  )}
                </button>
@@ -591,9 +563,9 @@ export default function App() {
                  title="تقویم پیگیری و وظایف روزانه"
                >
                  <Calendar size={22} />
-                 {store.tasks.filter(t => (!t.assignedTo || t.assignedTo === store.currentUser?.fullName) && t.status !== 'انجام شده' && t.status !== 'کنسل شده').length > 0 && (
+                 {badges.openTasks > 0 && (
                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-sky-500 text-[10px] font-bold flex justify-center items-center rounded-full text-white shadow-sm border-2 border-white">
-                     {store.tasks.filter(t => (!t.assignedTo || t.assignedTo === store.currentUser?.fullName) && t.status !== 'انجام شده' && t.status !== 'کنسل شده').length}
+                     {badges.openTasks}
                    </span>
                  )}
                </button>
@@ -603,9 +575,9 @@ export default function App() {
                  title="اعلان‌های سیستم"
                >
                  <Bell size={22} />
-                 {totalUnreadCount > 0 && (
+                 {badges.unreadNotifications > 0 && (
                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-rose-500 text-[10px] font-bold flex justify-center items-center rounded-full text-white shadow-sm border-2 border-white">
-                     {totalUnreadCount}
+                     {badges.unreadNotifications}
                    </span>
                  )}
                </button>
