@@ -386,21 +386,12 @@ export default function App() {
         );
       case 'projects':
         return (
-          // Reads its own data from the API. The nine collections it used to be
-          // handed were mostly there to derive per-row figures the server now
-          // computes for the whole page.
+          // Reads its own data from the API, including the activity/referral feed
+          // — which it now loads per open project instead of being handed every
+          // project's category groups to filter.
           <ProjectsView
             onOpenDocument={handleOpenDocument}
             settings={store.settings}
-            projectCategoryGroups={store.projectCategoryGroups}
-            addProjectCategoryGroup={store.addProjectCategoryGroup}
-            updateProjectCategoryGroup={store.updateProjectCategoryGroup}
-            addProjectActivity={store.addProjectActivity}
-            completeProjectCategoryGroup={store.completeProjectCategoryGroup}
-            resumeProjectCategoryGroup={store.resumeProjectCategoryGroup}
-            deleteProjectCategoryGroup={store.deleteProjectCategoryGroup}
-            updateProjectActivity={store.updateProjectActivity}
-            deleteProjectActivity={store.deleteProjectActivity}
             currentUser={store.currentUser}
             addCustomer={store.addCustomer}
             addProduct={store.addProduct}

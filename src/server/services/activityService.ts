@@ -90,6 +90,29 @@ export async function upsertCategoryGroup(
   return { group };
 }
 
+/**
+ * Removes a category group and everything under it.
+ *
+ * The group -> activity -> referral -> message chain is a single cascade path,
+ * so one delete takes the whole subtree with it. A user restricted to their own
+ * projects may only delete a group on a project they own.
+ */
+export async function deleteCategoryGroup(
+  id: string,
+  user: AuthUser,
+): Promise<"ok" | "forbidden" | "not-found"> {
+  const db = getDb();
+  const group = await db.projectCategoryGroup.findUnique({
+    where: { id },
+    select: { id: true, project: { select: { ownerUserId: true } } },
+  });
+  if (!group) return "not-found";
+  if (!canSeeProjects(user) && group.project.ownerUserId !== user.id) return "forbidden";
+
+  await db.projectCategoryGroup.delete({ where: { id } });
+  return "ok";
+}
+
 /* =============================== activities ============================== */
 
 export const ACTIVITY_SORTABLE = ["createdAt"] as const;
@@ -206,6 +229,38 @@ export async function addActivity(
       }),
     };
   });
+}
+
+/**
+ * Edits an activity's text.
+ *
+ * Only its author may — an activity is a record of what someone said, so putting
+ * words in it must stay their own act. The referral and any replies are left
+ * untouched; only the note itself changes.
+ */
+export async function updateActivity(
+  id: string,
+  text: string,
+  user: AuthUser,
+): Promise<"forbidden" | "not-found" | "invalid" | { activity: unknown }> {
+  const db = getDb();
+  const trimmed = toNullableString(text);
+  if (!trimmed) return "invalid";
+
+  const activity = await db.projectActivity.findUnique({
+    where: { id },
+    select: { id: true, authorUserId: true },
+  });
+  if (!activity) return "not-found";
+  if (activity.authorUserId !== user.id && !user.isSystemAdmin) return "forbidden";
+
+  await db.projectActivity.update({ where: { id }, data: { text: trimmed } });
+  return {
+    activity: await db.projectActivity.findUnique({
+      where: { id },
+      include: { referral: { include: { messages: { orderBy: { createdAt: "asc" } } } } },
+    }),
+  };
 }
 
 /**

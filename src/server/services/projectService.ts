@@ -116,7 +116,16 @@ const LIST_SELECT = {
   createdAt: true,
   customer: { select: { id: true, companyName: true } },
   owner: { select: { id: true, fullName: true } },
-  _count: { select: { items: true, proformas: true } },
+  // `categoryGroups` is a filtered relation count: how many activity categories
+  // are currently in progress on the project, which the grid shows as a pulse on
+  // the row. The browser used to derive it by holding every category group.
+  _count: {
+    select: {
+      items: true,
+      proformas: true,
+      categoryGroups: { where: { status: "جاری" } },
+    },
+  },
 } satisfies Prisma.ProjectSelect;
 
 export async function listProjects(

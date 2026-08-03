@@ -12,7 +12,7 @@ import { getTodayShamsi, addDaysToShamsi, addWorkingDaysToShamsi, formatDateTime
 import { getProformaOutcomeStatus } from '../useERPStore';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
-import { uploadFile, compressImage, downloadFileFromServer } from '../imageUtils';
+import { uploadFile, downloadFileFromServer } from '../imageUtils';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import { exportToCSV } from '../excelUtils';
 import * as XLSX from 'xlsx';
@@ -25,9 +25,10 @@ import ConfirmModal from './ConfirmModal';
 import QuickAddModal from './QuickAddModal';
 import { SearchableSelect } from './SearchableSelect';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
-import { Project, Customer, Product, ERPSettings, ProjectCategoryGroup, User as UserType } from '../types';
+import { Project, Customer, Product, ERPSettings, User as UserType } from '../types';
 import { ApiError } from '../api/client';
 import { projectsApi, type ProjectRow, type ProjectSummary } from '../api/projects';
+import { useProjectActivities } from '../api/useProjectActivities';
 import { detailToProject, projectToWriteInput, rowToProject } from '../api/projectAdapter';
 import { useProjectList } from '../api/useProjectList';
 import { useUserDirectory } from '../api/useUserDirectory';
@@ -37,26 +38,18 @@ import type { CustomerRow } from '../api/customers';
 /**
  * Projects screen.
  *
- * Reads through the API rather than props holding whole collections. The nine it
- * used to receive were mostly there so the grid could derive, per row, figures
- * that are not stored anywhere — pipeline value, prepayment date, the
- * agreed-versus-actual delivery schedule. Those now arrive with each row as
- * `summary`, computed for the page in three queries.
+ * Reads through the API rather than props holding whole collections. Per-row
+ * figures that are not stored anywhere — pipeline value, prepayment date, the
+ * agreed-versus-actual delivery schedule — arrive with each row as `summary`,
+ * computed for the page in three queries. The activity/referral feed is loaded
+ * per open project through `useProjectActivities`, not from a prop holding every
+ * project's category groups.
  */
 export interface ProjectsViewProps {
   onOpenDocument?: any;
   settings: ERPSettings;
   addCustomer: (c: any) => any;
   addProduct: (p: any) => any;
-  projectCategoryGroups?: ProjectCategoryGroup[];
-  addProjectCategoryGroup: any;
-  updateProjectCategoryGroup?: any;
-  addProjectActivity: any;
-  completeProjectCategoryGroup: any;
-  resumeProjectCategoryGroup: any;
-  deleteProjectCategoryGroup: any;
-  updateProjectActivity: any;
-  deleteProjectActivity: any;
   currentUser: UserType | null;
   users?: UserType[];
   initialSelectedProjectId?: string | null;
@@ -66,9 +59,7 @@ export interface ProjectsViewProps {
 export default function ProjectsView({
   onOpenDocument,
   settings, addCustomer, addProduct,
-  projectCategoryGroups = [], addProjectCategoryGroup, updateProjectCategoryGroup, addProjectActivity,
-  completeProjectCategoryGroup, resumeProjectCategoryGroup, deleteProjectCategoryGroup,
-  updateProjectActivity, deleteProjectActivity, currentUser,
+  currentUser,
   initialSelectedProjectId, onClearInitialSelectedProject
 }: ProjectsViewProps) {
   const list = useProjectList();
@@ -82,6 +73,17 @@ export default function ProjectsView({
   const summaries = React.useMemo(() => {
     const map = new Map<string, NonNullable<ProjectRow["summary"]>>();
     for (const row of list.rows) if (row.summary) map.set(row.id, row.summary);
+    return map;
+  }, [list.rows]);
+
+  /**
+   * How many activity categories are in progress per project — the pulse on the
+   * "project details" button. Counted server-side; the client no longer holds
+   * every category group to derive it.
+   */
+  const activeCategoryCounts = React.useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of list.rows) map.set(row.id, row._count?.categoryGroups ?? 0);
     return map;
   }, [list.rows]);
 
@@ -109,6 +111,20 @@ export default function ProjectsView({
   const [quickAddCustomerTarget, setQuickAddCustomerTarget] = useState<any>(null);
   const [quickAddProductIndex, setQuickAddProductIndex] = useState<any>(null);
   const [selectedProjectForActivities, setSelectedProjectForActivities] = useState<any>(null);
+
+  /**
+   * The open project's activity/referral feed, read and written through the API.
+   * `groups` are already scoped to this project, so the markup no longer filters
+   * a whole collection by `projectId`.
+   */
+  const activityFeed = useProjectActivities(selectedProjectForActivities?.id ?? null);
+  const projectCategoryGroups = activityFeed.groups;
+
+  /** Surfaces a failed feed mutation using the server's own Persian sentence. */
+  const reportActivityError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
+
   const [isActivitiesModalFullscreen, setIsActivitiesModalFullscreen] = useState(false);
   const [modalTab, setModalTab] = useState("activities");
   const [isProjectDetailsExpanded, setIsProjectDetailsExpanded] = useState(false);
@@ -3108,7 +3124,7 @@ export default function ProjectsView({
                       >
                         <Clock size={13} className="text-sky-500" />
                         <span>جزئیات پروژه</span>
-                        {(projectCategoryGroups || []).filter(g => g.projectId === p.id && g.status === 'جاری').length > 0 && (
+                        {(activeCategoryCounts.get(p.id) ?? 0) > 0 && (
                           <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
                         )}
                       </button>
@@ -4465,23 +4481,21 @@ export default function ProjectsView({
 
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={async () => {
                           if (!selectedCategoryToCreate) {
                             alert('لطفاً ابتدا یک دسته‌بندی انتخاب کنید.');
                             return;
                           }
                           const cat = (settings.activityCategories || []).find(c => c.id === selectedCategoryToCreate);
                           if (!cat) return;
-                          
-                          if (addProjectCategoryGroup) {
-                            const res = addProjectCategoryGroup(selectedProjectForActivities.id, cat.id, cat.name, categoryStartDate);
-                            if (!res.success) {
-                              alert(res.error);
-                            } else {
-                              alert(`دسته‌بندی «${cat.name}» با موفقیت برای این پروژه فعال شد.`);
-                              setSelectedCategoryToCreate('');
-                              setCategoryStartDate(getTodayShamsi());
-                            }
+
+                          try {
+                            await activityFeed.addGroup(cat.id, cat.name, categoryStartDate);
+                            alert(`دسته‌بندی «${cat.name}» با موفقیت برای این پروژه فعال شد.`);
+                            setSelectedCategoryToCreate('');
+                            setCategoryStartDate(getTodayShamsi());
+                          } catch (err) {
+                            reportActivityError(err, 'فعال‌سازی دسته‌بندی با خطا مواجه شد.');
                           }
                         }}
                         className="w-full py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-sky-500/10"
@@ -4594,9 +4608,8 @@ export default function ProjectsView({
                                         <ShamsiDatePicker
                                           value={group.startDate || getTodayShamsi()}
                                           onChange={(val) => {
-                                            if (updateProjectCategoryGroup) {
-                                              updateProjectCategoryGroup({ ...group, startDate: val });
-                                            }
+                                            activityFeed.updateGroupDates(group, { startDate: val })
+                                              .catch((err) => reportActivityError(err, 'ویرایش تاریخ با خطا مواجه شد.'));
                                             setEditingGroupIdForStartDate(null);
                                           }}
                                         />
@@ -4622,9 +4635,8 @@ export default function ProjectsView({
                                           <ShamsiDatePicker
                                             value={group.endDate}
                                             onChange={(val) => {
-                                              if (updateProjectCategoryGroup) {
-                                                updateProjectCategoryGroup({ ...group, endDate: val });
-                                              }
+                                              activityFeed.updateGroupDates(group, { endDate: val })
+                                                .catch((err) => reportActivityError(err, 'ویرایش تاریخ با خطا مواجه شد.'));
                                               setEditingGroupIdForEndDate(null);
                                             }}
                                           />
@@ -4666,7 +4678,8 @@ export default function ProjectsView({
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        if (resumeProjectCategoryGroup) resumeProjectCategoryGroup(group.id, currentUser?.fullName || 'کاربر سیستم');
+                                        activityFeed.resumeGroup(group)
+                                          .catch((err) => reportActivityError(err, 'به جریان انداختن مجدد با خطا مواجه شد.'));
                                       }}
                                       className="px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded text-[10px] font-bold transition border border-sky-150 flex items-center gap-1"
                                     >
@@ -4774,7 +4787,8 @@ export default function ProjectsView({
                                                 type="button"
                                                 onClick={() => {
                                                   if (editingActivityText.trim() && selectedProjectForActivities) {
-                                                    updateProjectActivity?.(selectedProjectForActivities.id, group.id, act.id, editingActivityText.trim());
+                                                    activityFeed.updateActivity(act.id, editingActivityText.trim())
+                                                      .catch((err) => reportActivityError(err, 'ویرایش فعالیت با خطا مواجه شد.'));
                                                     setEditingActivityId(null);
                                                     setEditingActivityText('');
                                                   }
@@ -4893,27 +4907,26 @@ export default function ProjectsView({
                                             <input
                                               type="file"
                                               className="hidden"
-                                              onChange={(e) => {
+                                              onChange={async (e) => {
                                                 const file = e.target.files?.[0];
-                                                if (file) {
-                                                  if (file.size > 2 * 1024 * 1024 && !file.type.startsWith('image/')) {
-                                                    alert('حداکثر حجم مجاز برای فایل‌های غیرتصویری ۲ مگابایت می‌باشد.');
-                                                    if (e.target) e.target.value = '';
-                                                    return;
-                                                  }
-                                                  
-                                                  compressImage(file, (dataUrl, sizeStr) => {
-                                                    setNewActivityAttachment(prev => ({
-                                                      ...prev,
-                                                      [group.id]: {
-                                                        name: file.name,
-                                                        size: sizeStr,
-                                                        content: dataUrl
-                                                      }
-                                                    }));
-                                                  });
-                                                }
                                                 if (e.target) e.target.value = '';
+                                                if (!file) return;
+                                                if (file.size > 2 * 1024 * 1024 && !file.type.startsWith('image/')) {
+                                                  alert('حداکثر حجم مجاز برای فایل‌های غیرتصویری ۲ مگابایت می‌باشد.');
+                                                  return;
+                                                }
+                                                try {
+                                                  // Attachments are hosted files now, not inline data URLs — the
+                                                  // server stores the URL, not the bytes.
+                                                  const url = await uploadFile(file);
+                                                  const sizeStr = `${Math.max(1, Math.round(file.size / 1024))} KB`;
+                                                  setNewActivityAttachment(prev => ({
+                                                    ...prev,
+                                                    [group.id]: { name: file.name, size: sizeStr, url }
+                                                  }));
+                                                } catch {
+                                                  alert('بارگذاری فایل با خطا مواجه شد.');
+                                                }
                                               }}
                                             />
                                           </label>
@@ -4962,7 +4975,7 @@ export default function ProjectsView({
                                               >
                                                 <option value="">-- انتخاب همکار --</option>
                                                 {(users || []).map((u) => (
-                                                  <option key={u.id} value={u.fullName}>
+                                                  <option key={u.id} value={u.id}>
                                                     {u.fullName}
                                                   </option>
                                                 ))}
@@ -4990,7 +5003,7 @@ export default function ProjectsView({
                                       <div className="flex justify-end pt-1">
                                         <button
                                           type="button"
-                                          onClick={() => {
+                                          onClick={async () => {
                                             const text = newActivityText[group.id] || '';
                                             const attachmentData = newActivityAttachment[group.id] || null;
 
@@ -4999,11 +5012,11 @@ export default function ProjectsView({
                                               return;
                                             }
 
-                                            let referralData = null;
+                                            let referralInput = undefined;
                                             if (referralEnabled[group.id]) {
-                                              const assignedTo = referralAssignedTo[group.id];
+                                              const assignedToUserId = referralAssignedTo[group.id];
                                               const action = referralAction[group.id];
-                                              if (!assignedTo) {
+                                              if (!assignedToUserId) {
                                                 alert('لطفاً همکار ارجاع‌شونده را انتخاب کنید.');
                                                 return;
                                               }
@@ -5011,28 +5024,25 @@ export default function ProjectsView({
                                                 alert('لطفاً شرح اقدام ارجاع را وارد کنید.');
                                                 return;
                                               }
-                                              referralData = {
-                                                id: 'ref-' + Date.now(),
-                                                assignedTo,
+                                              // Send the id, not the name, so the referral reaches the
+                                              // assignee's inbox (which filters by user id).
+                                              const assignee = (users || []).find(u => u.id === assignedToUserId);
+                                              referralInput = {
+                                                assignedToUserId,
+                                                assignedToName: assignee?.fullName ?? null,
                                                 actionRequired: action.trim(),
-                                                assignedBy: currentUser?.fullName || 'محمد توکل مقدم',
-                                                createdAt: new Date().toISOString(),
-                                                status: 'در انتظار اقدام',
-                                                response: null,
-                                                messages: []
                                               };
                                             }
 
-                                            if (addProjectActivity) {
-                                              addProjectActivity(
-                                                selectedProjectForActivities.id,
-                                                group.id,
-                                                text.trim(),
-                                                attachmentData,
-                                                referralData,
-                                                currentUser?.fullName || 'کاربر سیستم'
-                                              );
-                                              
+                                            try {
+                                              await activityFeed.addActivity(group.id, {
+                                                text: text.trim(),
+                                                attachmentName: attachmentData?.name ?? null,
+                                                attachmentSize: attachmentData?.size ?? null,
+                                                attachmentUrl: attachmentData?.url ?? null,
+                                                referral: referralInput,
+                                              });
+
                                               // Reset forms
                                               setNewActivityText(prev => ({ ...prev, [group.id]: '' }));
                                               setNewActivityAttachment(prev => ({ ...prev, [group.id]: null }));
@@ -5040,6 +5050,8 @@ export default function ProjectsView({
                                               setReferralAssignedTo(prev => ({ ...prev, [group.id]: '' }));
                                               setReferralAction(prev => ({ ...prev, [group.id]: '' }));
                                               alert('فعالیت جدید با موفقیت ثبت گردید.');
+                                            } catch (err) {
+                                              reportActivityError(err, 'ثبت فعالیت با خطا مواجه شد.');
                                             }
                                           }}
                                           className="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-xs font-bold transition flex items-center gap-1 shadow-md shadow-emerald-500/15"
@@ -5124,8 +5136,9 @@ export default function ProjectsView({
           setActivityToDeleteId(null);
         }}
         onConfirm={() => {
-          if (selectedProjectForActivities && activityToDeleteGroupId && activityToDeleteId) {
-            deleteProjectActivity?.(selectedProjectForActivities.id, activityToDeleteGroupId, activityToDeleteId);
+          if (selectedProjectForActivities && activityToDeleteId) {
+            activityFeed.deleteActivity(activityToDeleteId)
+              .catch((err) => reportActivityError(err, 'حذف فعالیت با خطا مواجه شد.'));
           }
         }}
         title="حذف فعالیت پروژه"
@@ -5141,8 +5154,10 @@ export default function ProjectsView({
           setGroupToCompleteName('');
         }}
         onConfirm={() => {
-          if (completeProjectCategoryGroup && groupToCompleteId) {
-            completeProjectCategoryGroup(groupToCompleteId, currentUser?.fullName || 'کاربر سیستم');
+          const group = projectCategoryGroups.find(g => g.id === groupToCompleteId);
+          if (group) {
+            activityFeed.completeGroup(group)
+              .catch((err) => reportActivityError(err, 'اتمام کار دسته‌بندی با خطا مواجه شد.'));
           }
         }}
         title="اتمام کار دسته‌بندی"
@@ -5227,8 +5242,9 @@ export default function ProjectsView({
               <button
                 type="button"
                 onClick={() => {
-                  if (deleteProjectCategoryGroup && groupToDelete) {
-                    deleteProjectCategoryGroup(groupToDelete);
+                  if (groupToDelete) {
+                    activityFeed.deleteGroup(groupToDelete)
+                      .catch((err) => reportActivityError(err, 'حذف دسته فعالیت با خطا مواجه شد.'));
                   }
                   setGroupToDelete(null);
                 }}

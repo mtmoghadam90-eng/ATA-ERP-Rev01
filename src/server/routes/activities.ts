@@ -4,10 +4,11 @@ import { RouteDeps, sendError } from "./types";
 import { getDb } from "../db";
 import {
   ACTIVITY_SORTABLE, REFERRAL_FILTERABLE, REFERRAL_SORTABLE,
-  addActivity, addModuleNote, addReferralMessage, deleteActivity, deleteModuleNote,
+  addActivity, addModuleNote, addReferralMessage, deleteActivity, deleteCategoryGroup,
+  deleteModuleNote,
   listActivities, listCategoryGroups, listModuleNotes, listReferrals,
   reassignReferral,
-  setReferralStatus, upsertCategoryGroup,
+  setReferralStatus, updateActivity, upsertCategoryGroup,
 } from "../services/activityService";
 
 /**
@@ -82,6 +83,22 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
     }
   });
 
+  app.delete("/api/category-groups/:id", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const outcome = await deleteCategoryGroup(req.params.id, user);
+      if (outcome === "forbidden") return denied(res);
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "دسته‌بندی پروژه یافت نشد." });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      sendError(res, err, "DELETE /api/category-groups/:id");
+    }
+  });
+
   /* ------------------------------ activities ----------------------------- */
 
   app.get("/api/activities", async (req, res) => {
@@ -133,6 +150,27 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
       res.status(201).json({ success: true, activity: outcome.activity });
     } catch (err) {
       sendError(res, err, "POST /api/activities");
+    }
+  });
+
+  app.put("/api/activities/:id", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const text = (req.body as { text?: unknown })?.text;
+      const outcome = await updateActivity(req.params.id, typeof text === "string" ? text : "", user);
+      if (outcome === "forbidden") return denied(res, "فقط نویسنده می‌تواند این فعالیت را ویرایش کند.");
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "فعالیت یافت نشد." });
+        return;
+      }
+      if (outcome === "invalid") {
+        res.status(400).json({ success: false, error: "متن فعالیت الزامی است." });
+        return;
+      }
+      res.json({ success: true, activity: outcome.activity });
+    } catch (err) {
+      sendError(res, err, "PUT /api/activities/:id");
     }
   });
 

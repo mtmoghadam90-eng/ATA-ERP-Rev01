@@ -1,0 +1,165 @@
+import { useCallback, useEffect, useState } from "react";
+import type { ProjectCategoryGroup } from "../types";
+import { getTodayShamsi } from "../dateUtils";
+import { projectsApi } from "./projects";
+import { groupToView } from "./activityAdapter";
+
+/**
+ * The activity/referral feed for one project.
+ *
+ * Loads that project's category groups — with their activities and referrals —
+ * from the API and exposes the mutations the feed needs, each of which writes
+ * through a REST endpoint and then refetches. The browser used to hold every
+ * project's groups at once so this one screen could filter to the open project;
+ * scoping the fetch to `projectId` is what removes that.
+ *
+ * Every mutation rejects with an `ApiError` on failure, so the caller can show
+ * the server's own Persian message.
+ */
+
+export interface ActivityAttachmentInput {
+  attachmentName?: string | null;
+  attachmentSize?: string | null;
+  attachmentUrl?: string | null;
+}
+
+export interface ActivityReferralInput {
+  assignedToUserId?: string | null;
+  assignedToName?: string | null;
+  actionRequired: string;
+}
+
+export interface AddActivityInput extends ActivityAttachmentInput {
+  text: string;
+  referral?: ActivityReferralInput;
+}
+
+export interface ProjectActivitiesApi {
+  groups: ProjectCategoryGroup[];
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+  addGroup: (categoryId: string, categoryName: string, startDate: string) => Promise<void>;
+  updateGroupDates: (group: ProjectCategoryGroup, patch: { startDate?: string; endDate?: string }) => Promise<void>;
+  deleteGroup: (id: string) => Promise<void>;
+  completeGroup: (group: ProjectCategoryGroup) => Promise<void>;
+  resumeGroup: (group: ProjectCategoryGroup) => Promise<void>;
+  addActivity: (groupId: string, input: AddActivityInput) => Promise<void>;
+  updateActivity: (id: string, text: string) => Promise<void>;
+  deleteActivity: (id: string) => Promise<void>;
+}
+
+export function useProjectActivities(projectId: string | null | undefined): ProjectActivitiesApi {
+  const [groups, setGroups] = useState<ProjectCategoryGroup[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  useEffect(() => {
+    if (!projectId) {
+      setGroups([]);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    projectsApi
+      .categoryGroups(projectId)
+      .then((rows) => {
+        if (cancelled) return;
+        setGroups(rows.map(groupToView));
+        setError(null);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setError("دریافت فعالیت‌های پروژه با خطا مواجه شد.");
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [projectId, reloadKey]);
+
+  const addGroup = useCallback(async (categoryId: string, categoryName: string, startDate: string) => {
+    if (!projectId) return;
+    await projectsApi.upsertCategoryGroup(projectId, {
+      categoryId, categoryName, status: "جاری", startDate: startDate || getTodayShamsi(),
+    });
+    refresh();
+  }, [projectId, refresh]);
+
+  // Status is always resent, because the server defaults a group with no status
+  // to "جاری" — editing a completed group's dates would otherwise reopen it.
+  const upsertFromGroup = useCallback(async (
+    group: ProjectCategoryGroup,
+    overrides: { status?: string; startDate?: string; endDate?: string },
+  ) => {
+    if (!projectId) return;
+    await projectsApi.upsertCategoryGroup(projectId, {
+      categoryId: group.categoryId,
+      categoryName: group.categoryName,
+      status: overrides.status ?? group.status,
+      startDate: "startDate" in overrides ? overrides.startDate : (group.startDate || undefined),
+      endDate: "endDate" in overrides ? overrides.endDate : (group.endDate ?? undefined),
+    });
+  }, [projectId]);
+
+  const updateGroupDates = useCallback(async (
+    group: ProjectCategoryGroup, patch: { startDate?: string; endDate?: string },
+  ) => {
+    await upsertFromGroup(group, patch);
+    refresh();
+  }, [upsertFromGroup, refresh]);
+
+  const deleteGroup = useCallback(async (id: string) => {
+    await projectsApi.deleteCategoryGroup(id);
+    refresh();
+  }, [refresh]);
+
+  const completeGroup = useCallback(async (group: ProjectCategoryGroup) => {
+    await upsertFromGroup(group, { status: "اتمام کار", endDate: getTodayShamsi() });
+    await projectsApi.addActivity({ groupId: group.id, text: `اتمام کار دسته‌بندی «${group.categoryName}»` });
+    refresh();
+  }, [upsertFromGroup, refresh]);
+
+  const resumeGroup = useCallback(async (group: ProjectCategoryGroup) => {
+    await upsertFromGroup(group, { status: "جاری", endDate: "" });
+    await projectsApi.addActivity({ groupId: group.id, text: `بازگشایی مجدد دسته‌بندی «${group.categoryName}»` });
+    refresh();
+  }, [upsertFromGroup, refresh]);
+
+  const addActivity = useCallback(async (groupId: string, input: AddActivityInput) => {
+    await projectsApi.addActivity({
+      groupId,
+      text: input.text,
+      attachmentName: input.attachmentName ?? null,
+      attachmentSize: input.attachmentSize ?? null,
+      attachmentUrl: input.attachmentUrl ?? null,
+      referral: input.referral
+        ? {
+            assignedToUserId: input.referral.assignedToUserId ?? null,
+            assignedToName: input.referral.assignedToName ?? null,
+            actionRequired: input.referral.actionRequired,
+          }
+        : undefined,
+    });
+    refresh();
+  }, [refresh]);
+
+  const updateActivity = useCallback(async (id: string, text: string) => {
+    await projectsApi.updateActivity(id, text);
+    refresh();
+  }, [refresh]);
+
+  const deleteActivity = useCallback(async (id: string) => {
+    await projectsApi.deleteActivity(id);
+    refresh();
+  }, [refresh]);
+
+  return {
+    groups, loading, error, refresh,
+    addGroup, updateGroupDates, deleteGroup, completeGroup, resumeGroup,
+    addActivity, updateActivity, deleteActivity,
+  };
+}

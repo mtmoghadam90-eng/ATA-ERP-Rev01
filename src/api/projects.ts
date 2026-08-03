@@ -81,7 +81,8 @@ export interface ProjectRow {
   createdAt: string;
   customer: { id: string; companyName: string } | null;
   owner: { id: string; fullName: string } | null;
-  _count: { items: number; proformas: number };
+  // `categoryGroups` counts only the in-progress ones (the grid's activity pulse).
+  _count: { items: number; proformas: number; categoryGroups: number };
   summary: ProjectSummary | null;
 }
 
@@ -176,6 +177,63 @@ export interface ProjectWriteInput {
   milestones?: Record<string, unknown>[];
 }
 
+/* ---------------------- category groups & activities --------------------- */
+
+/** One reply in a referral thread, as the server stores it. */
+export interface ActivityReferralMessageRow {
+  id: string;
+  text: string;
+  responderUserId: string | null;
+  responderName: string | null;
+  attachmentName: string | null;
+  attachmentSize: string | null;
+  attachmentUrl: string | null;
+  createdAt: string;
+}
+
+/** The referral raised alongside an activity, addressed to one colleague. */
+export interface ActivityReferralRow {
+  id: string;
+  activityId: string;
+  status: string;
+  actionRequired: string | null;
+  assignedToUserId: string | null;
+  assignedToName: string | null;
+  assignedByUserId: string | null;
+  assignedByName: string | null;
+  createdAt: string;
+  messages: ActivityReferralMessageRow[];
+}
+
+/** One activity in a category's feed. */
+export interface ActivityRow {
+  id: string;
+  groupId: string;
+  text: string;
+  authorUserId: string | null;
+  authorName: string | null;
+  attachmentName: string | null;
+  attachmentSize: string | null;
+  attachmentUrl: string | null;
+  createdAt: string;
+  referral: ActivityReferralRow | null;
+}
+
+/** An activity category activated on a project, with its feed. */
+export interface CategoryGroupRow {
+  id: string;
+  projectId: string;
+  categoryId: string;
+  categoryName: string;
+  status: string;
+  startDate: string | null;
+  startDateJalali: string | null;
+  endDate: string | null;
+  endDateJalali: string | null;
+  createdAt: string;
+  activities: ActivityRow[];
+}
+
 export const projectsApi = {
   list: (query: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     api.get<ListResponse<ProjectRow>>("/api/projects", query, signal),
@@ -240,13 +298,16 @@ export const projectsApi = {
   /* ------------------------ activity & referrals ------------------------ */
 
   categoryGroups: (projectId: string) =>
-    api.get<{ groups: unknown[] }>(`/api/projects/${projectId}/category-groups`)
+    api.get<{ groups: CategoryGroupRow[] }>(`/api/projects/${projectId}/category-groups`)
       .then((r) => r.groups),
 
   upsertCategoryGroup: (
     projectId: string,
     body: { categoryId: string; categoryName: string; status?: string; startDate?: string; endDate?: string },
-  ) => api.put<{ group: unknown }>(`/api/projects/${projectId}/category-groups`, body).then((r) => r.group),
+  ) => api.put<{ group: CategoryGroupRow }>(`/api/projects/${projectId}/category-groups`, body).then((r) => r.group),
+
+  deleteCategoryGroup: (id: string) =>
+    api.delete<Record<string, never>>(`/api/category-groups/${id}`),
 
   addActivity: (body: {
     groupId: string;
@@ -255,7 +316,10 @@ export const projectsApi = {
     attachmentSize?: string | null;
     attachmentUrl?: string | null;
     referral?: { assignedToUserId?: string | null; assignedToName?: string | null; actionRequired?: string };
-  }) => api.post<{ activity: unknown }>("/api/activities", body).then((r) => r.activity),
+  }) => api.post<{ activity: ActivityRow }>("/api/activities", body).then((r) => r.activity),
+
+  updateActivity: (id: string, text: string) =>
+    api.put<{ activity: ActivityRow }>(`/api/activities/${id}`, { text }).then((r) => r.activity),
 
   deleteActivity: (id: string) => api.delete<Record<string, never>>(`/api/activities/${id}`),
 };
