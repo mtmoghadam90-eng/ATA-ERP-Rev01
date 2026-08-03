@@ -45,6 +45,7 @@ import { registerUserRoutes } from "./src/server/routes/users";
 import { registerAdminRoutes } from "./src/server/routes/admin";
 import { registerActivityRoutes } from "./src/server/routes/activities";
 import { registerNotificationRoutes } from "./src/server/routes/notifications";
+import { registerDashboardRoutes } from "./src/server/routes/dashboard";
 import { scrapeRates } from "./src/server/rateSource";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 
@@ -493,6 +494,7 @@ async function startServer() {
   registerAdminRoutes(app, routeDeps);
   registerActivityRoutes(app, routeDeps);
   registerNotificationRoutes(app, routeDeps);
+  registerDashboardRoutes(app, routeDeps);
 
   /** Who am I? Lets the client restore its session on reload. */
   app.get("/api/me", (req, res) => {

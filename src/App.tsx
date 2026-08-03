@@ -315,21 +315,11 @@ export default function App() {
     switch (activeView) {
       case 'dashboard':
         return (
-          <DashboardView 
-            products={store.products}
-            customers={store.customers}
-            projects={store.projects}
-            proformas={store.proformas}
-            packagingDeliveries={store.packagingDeliveries}
-            transactions={store.transactions}
-            purchaseOrders={store.purchaseOrders}
-            exchangeRates={store.exchangeRates}
-            tasks={store.tasks}
+          // Every figure it shows is one server request now, so the eight
+          // collections it used to be handed are gone.
+          <DashboardView
             setActiveTab={setActiveView}
-            lowStockProducts={store.products.filter(p => p.stockLevel <= p.minStockLevel)}
             currentUser={store.currentUser}
-            projectCategoryGroups={store.projectCategoryGroups}
-            onUpdateTask={store.updateTask}
           />
         );
       case 'customers':

@@ -31,167 +31,119 @@ import {
   YAxis, 
   CartesianGrid 
 } from 'recharts';
-import { 
-  Customer, 
-  Product, 
-  Project, 
-  Proforma, 
-  PurchaseOrder, 
-  Task, 
-  ExchangeRate, 
-  User, 
-  ProjectCategoryGroup 
-} from '../types';
-import { getTodayShamsi } from '../dateUtils';
-import { getProformaOutcomeStatus } from '../useERPStore';
+import { Task, User } from '../types';
+import { getTodayShamsi, toShamsiStr } from '../dateUtils';
+import { ApiError } from '../api/client';
+import { useDashboard } from '../api/dashboard';
+import { useExchangeRates } from '../api/exchangeRates';
+import { inboxApi, ReferralRow } from '../api/inbox';
+import { rowToTask, tasksApi } from '../api/tasks';
+import type { TaskRow } from '../api/tasks';
 
+/**
+ * The front page.
+ *
+ * Every figure here is counted by the server in one request. This screen used
+ * to receive eight whole collections as props — every customer, product,
+ * project, proforma, order, transaction, task and category group — purely so it
+ * could reduce them to about a dozen numbers.
+ */
 interface DashboardViewProps {
-  customers: Customer[];
-  products: Product[];
-  projects: Project[];
-  proformas: Proforma[];
-  purchaseOrders: PurchaseOrder[];
-  tasks: Task[];
-  exchangeRates: ExchangeRate[];
   setActiveTab: (tab: string) => void;
-  lowStockProducts: Product[];
   currentUser: User | null;
-  projectCategoryGroups: ProjectCategoryGroup[];
-  onUpdateTask?: (task: Task) => void;
-  packagingDeliveries?: any;
-  transactions?: any;
 }
 
 const COLORS = ['#2563eb', '#3b82f6', '#60a5fa', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b'];
 
 export default function DashboardView({
-  customers,
-  products,
-  projects,
-  proformas,
-  purchaseOrders,
-  tasks,
-  exchangeRates,
   setActiveTab,
-  lowStockProducts,
-  currentUser,
-  projectCategoryGroups = [],
-  onUpdateTask
+  currentUser
 }: DashboardViewProps) {
 
   // State to filter tasks list between "My Tasks" and "All Tasks"
   const [taskFilter, setTaskFilter] = useState<'my' | 'all'>('my');
 
-  // Helper to convert foreign currency to Rial
-  const getProformaRiyalValue = (amount: number, currencyName?: string) => {
-    if (!currencyName || currencyName === 'ریال') return amount;
-    let engCode: 'USD' | 'EUR' | 'AED' | 'CNY' | 'IRR' = 'IRR';
-    if (currencyName === 'دلار') engCode = 'USD';
-    else if (currencyName === 'یورو') engCode = 'EUR';
-    else if (currencyName === 'درهم') engCode = 'AED';
-    else if (currencyName === 'یوان') engCode = 'CNY';
-    
-    if (engCode === 'IRR') return amount;
-    
-    const rateObj = exchangeRates?.find(r => r.currency === engCode);
-    const rate = rateObj ? rateObj.rateToRIYAL : 1;
-    return amount * rate;
-  };
+  const { summary, loading, error, reload } = useDashboard();
+  const { rates: exchangeRates } = useExchangeRates();
 
-  // 1. Calculate stats
-  // Total Won Revenue (Proformas with status 'تأیید شده (برنده)' or 'نیمه برنده')
-  const wonProformas = proformas.filter(p => {
-    const outcome = getProformaOutcomeStatus(p);
-    return outcome === 'تأیید شده (برنده)' || outcome === 'نیمه برنده';
-  });
-  const totalRevenue = wonProformas.reduce((sum, p) => {
-    const outcome = getProformaOutcomeStatus(p);
-    let wonAmountForeign = 0;
-    
-    if (outcome === 'تأیید شده (برنده)') {
-      wonAmountForeign = p.finalAmount;
-    } else if (outcome === 'نیمه برنده') {
-      const wonItemsTotal = p.items?.filter(item => item.status === 'برنده').reduce((s, item) => s + (item.totalPriceRIYAL || 0), 0) || 0;
-      const ratio = p.totalAmount > 0 ? wonItemsTotal / p.totalAmount : 0;
-      wonAmountForeign = Math.round(p.finalAmount * ratio);
-    } else {
-      // Fallback for custom or old data
-      const wonItemsTotal = p.items?.filter(item => item.status === 'برنده').reduce((s, item) => s + (item.totalPriceRIYAL || 0), 0) || 0;
-      if (wonItemsTotal > 0) {
-        const ratio = p.totalAmount > 0 ? wonItemsTotal / p.totalAmount : 0;
-        wonAmountForeign = Math.round(p.finalAmount * ratio);
-      } else {
-        wonAmountForeign = p.finalAmount;
-      }
-    }
-    
-    const riyalValue = getProformaRiyalValue(wonAmountForeign, p.currency);
-    return sum + riyalValue;
-  }, 0);
+  /** Timestamps arrive as datetimes, not the Shamsi strings the store kept. */
+  const shamsi = (iso: string | undefined | null) => (iso ? toShamsiStr(new Date(iso)) : '');
 
-  // Active Proformas (not won, draft, lost or cancelled - e.g., 'ارسال شده', 'پیش‌نویس')
-  const activeProformas = proformas.filter(p => {
-    const outcome = getProformaOutcomeStatus(p);
-    return outcome === 'جاری' || outcome === 'پیش‌نویس';
-  });
-  const activeProformasValue = activeProformas.reduce((sum, p) => sum + getProformaRiyalValue(p.finalAmount, p.currency), 0);
+  /* The two lists the page shows, each a small query rather than a whole
+     collection filtered in the browser: the tasks still open, and the referrals
+     waiting on this user. */
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [referrals, setReferrals] = useState<ReferralRow[]>([]);
 
-  // Active Purchase Orders (under tracking)
-  const activePOs = purchaseOrders.filter(po => po.status !== 'تحویل شده (رسید انبار)');
+  const loadLists = React.useCallback(async (signal?: AbortSignal) => {
+    const [taskPage, referralPage] = await Promise.all([
+      tasksApi.list({
+        status: 'در حال انجام', pageSize: 50,
+        sort: 'dueDate', order: 'asc',
+      }, signal),
+      inboxApi.referrals({ scope: 'toMe', pageSize: 20, sort: 'createdAt', order: 'desc' }, signal),
+    ]);
+    setTasks(taskPage.rows.map((row: TaskRow) => rowToTask(row)));
+    setReferrals(referralPage.rows);
+  }, []);
 
-  // 2. Extract Active Referrals assigned to Current User
-  const myReferrals = projectCategoryGroups.flatMap(group => 
-    (group.activities || []).filter(act => 
-      act.referral && 
-      (act.referral.status !== 'انجام شده') && 
-      (!currentUser || act.referral.assignedTo === currentUser.fullName)
-    ).map(act => ({
-      activityId: act.id,
-      text: act.text,
-      createdAt: act.createdAt,
-      referral: act.referral!,
-      groupName: group.categoryName,
-      projectId: group.projectId,
-      projectName: projects.find(p => p.id === group.projectId)?.name || 'پروژه نامشخص'
-    }))
-  ).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  React.useEffect(() => {
+    const controller = new AbortController();
+    loadLists(controller.signal).catch((err: unknown) => {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      // The headline figures still render; the lists simply stay empty.
+      console.warn('dashboard lists failed to load', err);
+    });
+    return () => controller.abort();
+  }, [loadLists]);
 
-  // 3. User Specific Active Tasks Count
-  const myActiveTasks = tasks.filter(t => 
-    (!t.assignedTo || t.assignedTo === currentUser?.fullName) && 
+  /* The headline figures, all computed by the server. Currency conversion and
+     the won-proportion rule went with them — they were duplicated here from the
+     proforma module, and a copy of a rule drifts. */
+  const totalRevenue = Number(summary.revenue.wonRial);
+  const activeProformasValue = Number(summary.revenue.activeRial);
+  const activeProformas = { length: summary.revenue.activeCount };
+  const activePOs = { length: summary.counts.activePurchaseOrders };
+  const customers = { length: summary.counts.customers };
+  const lowStockProducts = { length: summary.counts.lowStock };
+  const projects = { length: summary.counts.projects };
+
+  // Referrals still waiting on this user, already scoped by the server.
+  const myReferrals = referrals
+    .filter(r => r.status !== 'انجام شده')
+    .map(r => ({
+      activityId: r.activity?.id ?? r.activityId,
+      text: r.activity?.text ?? '',
+      createdAt: r.createdAt,
+      referral: {
+        actionRequired: r.actionRequired ?? '',
+        status: r.status,
+        assignedBy: r.assignedByName ?? '',
+        assignedTo: r.assignedToName ?? '',
+      },
+      groupName: r.activity?.group?.categoryName ?? 'بدون دسته‌بندی',
+      projectId: r.activity?.group?.project?.id ?? '',
+      projectName: r.activity?.group?.project?.name ?? 'پروژه نامشخص',
+    }));
+
+  const myActiveTasks = tasks.filter(t =>
+    (!t.assignedTo || t.assignedTo === currentUser?.fullName) &&
     t.status === 'در حال انجام'
   );
 
-  // 4. Prepare Project Pie Chart Data
-  const projectStatusCounts = projects.reduce((acc: { [key: string]: number }, p) => {
-    acc[p.status] = (acc[p.status] || 0) + 1;
-    return acc;
-  }, {});
-
-  const projectChartData = Object.keys(projectStatusCounts).map(status => ({
-    name: status,
-    value: projectStatusCounts[status]
+  const projectChartData = summary.projectsByStatus.map(s => ({
+    name: s.status,
+    value: s.count
   }));
 
-  // 5. Prepare Revenue by Category data for a Bar Chart (dynamic and valid)
-  const categorySales = wonProformas.reduce((acc: { [key: string]: number }, p) => {
-    p.items.forEach(item => {
-      const prod = products.find(pr => pr.id === item.productId);
-      const cat = prod ? prod.category : 'سایر تجهیزات';
-      const riyalValue = getProformaRiyalValue(item.totalPriceRIYAL, p.currency);
-      acc[cat] = (acc[cat] || 0) + riyalValue;
-    });
-    return acc;
-  }, {});
-
-  const categoryChartData = Object.keys(categorySales).map(cat => {
+  const categoryChartData = summary.revenueByCategory.map(c => {
     // Get clean name without the code prefix if present
-    const cleanName = cat.includes(' - ') ? cat.split(' - ')[1] : cat;
+    const cleanName = c.category.includes(' - ') ? c.category.split(' - ')[1] : c.category;
     return {
       name: cleanName,
-      فروش: Math.round(categorySales[cat] / 10000000) // in Millions of Tomans
+      فروش: Math.round(Number(c.rial) / 10000000) // in Millions of Tomans
     };
-  }).sort((a, b) => b.فروش - a.فروش);
+  });
 
   // Format IRR Currency helper
   const formatToman = (num: number) => {
@@ -207,13 +159,14 @@ export default function DashboardView({
     }
   };
 
-  const handleToggleTaskStatus = (task: Task) => {
-    if (onUpdateTask) {
-      const updatedTask: Task = {
-        ...task,
-        status: task.status === 'انجام شده' ? 'در حال انجام' : 'انجام شده'
-      };
-      onUpdateTask(updatedTask);
+  const handleToggleTaskStatus = async (task: Task) => {
+    const nextStatus = task.status === 'انجام شده' ? 'در حال انجام' : 'انجام شده';
+    try {
+      await tasksApi.update(task.id, { status: nextStatus });
+      await loadLists();
+      await reload();
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'تغییر وضعیت وظیفه با خطا مواجه شد.');
     }
   };
 
@@ -230,7 +183,29 @@ export default function DashboardView({
 
   return (
     <div className="space-y-6 animate-fade-in bg-slate-50/50 p-2 md:p-4 rounded-3xl" dir="rtl">
-      
+
+      {error && (
+        <div className="bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold rounded-2xl p-4 flex items-center justify-between gap-3" id="dashboard-error">
+          <span className="flex items-center gap-1.5">
+            <AlertCircle size={14} />
+            {error}
+          </span>
+          <button
+            type="button"
+            onClick={reload}
+            className="px-3 py-1.5 bg-white border border-rose-200 hover:bg-rose-50 rounded-lg text-[11px] font-bold transition"
+          >
+            تلاش دوباره
+          </button>
+        </div>
+      )}
+
+      {loading && summary.revenue.totalCount === 0 && (
+        <div className="bg-white rounded-2xl border border-slate-100 p-4 text-center text-xs text-slate-400 shadow-sm" id="dashboard-loading">
+          در حال دریافت اطلاعات پیشخوان…
+        </div>
+      )}
+
       {/* 1. Header Banner */}
       <div className="relative overflow-hidden bg-gradient-to-l from-slate-900 via-slate-800 to-indigo-950 p-6 md:p-8 rounded-3xl text-white shadow-xl border border-slate-800">
         <div className="absolute right-0 top-0 -mt-12 -mr-12 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
@@ -275,10 +250,10 @@ export default function DashboardView({
           <div className="space-y-1">
             <span className="text-[11px] text-slate-400 font-bold block">مجموع قراردادهای برنده</span>
             <span className="text-lg font-black text-slate-800 block">
-              {wonProformas.length > 0 ? formatToman(totalRevenue) : '۰ ریال'}
+              {totalRevenue > 0 ? formatToman(totalRevenue) : "۰ ریال"}
             </span>
             <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
-              <ArrowUpRight size={12} /> {wonProformas.length} پیش‌فاکتور نهایی‌شده
+              <ArrowUpRight size={12} /> {summary.revenue.activeCount === 0 && totalRevenue === 0 ? "بدون پیش‌فاکتور برنده" : "ارزش قراردادهای برنده"}
             </span>
           </div>
           <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center text-lg font-black shadow-sm">
@@ -478,7 +453,7 @@ export default function DashboardView({
                 <p className="text-xs text-slate-700 font-medium line-clamp-2">{ref.referral.actionRequired}</p>
                 <div className="flex justify-between items-center border-t border-indigo-100/20 pt-1.5 mt-1 text-[9px] text-slate-400">
                   <span className="truncate max-w-[150px]">پروژه: {ref.projectName}</span>
-                  <span className="font-mono">{(ref.referral.createdAt || '').split(' - ')[0] || ref.referral.createdAt || ''}</span>
+                  <span className="font-mono">{shamsi(ref.createdAt)}</span>
                 </div>
               </div>
             ))}
@@ -655,26 +630,26 @@ export default function DashboardView({
               <div className="flex-1 relative h-4 bg-slate-100 rounded-full overflow-hidden">
                 <div 
                   className="absolute top-0 right-0 h-full bg-emerald-500 rounded-full transition-all duration-1000 ease-out"
-                  style={{ width: `${proformas.length > 0 ? Math.round((proformas.filter(p => { const outcome = getProformaOutcomeStatus(p); return outcome === 'تأیید شده (برنده)' || outcome === 'نیمه برنده'; }).length / proformas.length) * 100) : 0}%` }}
+                  style={{ width: `${summary.revenue.winRatePercent}%` }}
                 ></div>
               </div>
               <div className="text-4xl font-black text-slate-800 font-mono tracking-tighter">
-                {proformas.length > 0 ? Math.round((proformas.filter(p => { const outcome = getProformaOutcomeStatus(p); return outcome === 'تأیید شده (برنده)' || outcome === 'نیمه برنده'; }).length / proformas.length) * 100) : 0}<span className="text-xl text-slate-400 font-sans">٪</span>
+                {summary.revenue.winRatePercent}<span className="text-xl text-slate-400 font-sans">٪</span>
               </div>
             </div>
             
             <div className="flex justify-between items-center mt-6 pt-4 border-t border-slate-100 text-xs font-bold">
               <div className="flex items-center gap-1.5 text-emerald-600">
                 <CheckCircle2 size={14} />
-                <span>برنده: {proformas.filter(p => { const outcome = getProformaOutcomeStatus(p); return outcome === 'تأیید شده (برنده)' || outcome === 'نیمه برنده'; }).length}</span>
+                <span>برنده: {summary.revenue.wonCount}</span>
               </div>
               <div className="flex items-center gap-1.5 text-rose-500">
                 <AlertCircle size={14} />
-                <span>باخته: {proformas.filter(p => getProformaOutcomeStatus(p) === 'باخته').length}</span>
+                <span>باخته: {Math.max(0, summary.revenue.totalCount - summary.revenue.wonCount - summary.revenue.activeCount)}</span>
               </div>
               <div className="flex items-center gap-1.5 text-slate-400">
                 <FileText size={14} />
-                <span>کل صادر شده: {proformas.length}</span>
+                <span>کل صادر شده: {summary.revenue.totalCount}</span>
               </div>
             </div>
           </div>
@@ -693,45 +668,13 @@ export default function DashboardView({
             
             <div className="flex-1 overflow-auto max-h-[220px] pr-2 space-y-4">
               {(() => {
-                const activeProformas = proformas.filter(p => !p.isCancelled && p.status !== 'لغو شده');
-                
-                const categoryStats: Record<string, { won: number, total: number }> = {};
-                
-                activeProformas.forEach(p => {
-                  const outcome = getProformaOutcomeStatus(p);
-                  const isWon = outcome === 'تأیید شده (برنده)' || outcome === 'نیمه برنده';
-                  
-                  const hasExplicitWon = p.items?.some(item => item.status === 'برنده');
-                  
-                  p.items?.forEach(item => {
-                    let itemWon = false;
-                    if (isWon) {
-                       if (hasExplicitWon) {
-                         itemWon = item.status === 'برنده';
-                       } else {
-                         itemWon = true;
-                       }
-                    }
-                    
-                    const product = products.find(prod => prod.id === item.productId);
-                    const catName = product?.category || 'سایر تجهیزات';
-                    
-                    if (!categoryStats[catName]) {
-                      categoryStats[catName] = { won: 0, total: 0 };
-                    }
-                    categoryStats[catName].total += item.quantity;
-                    if (itemWon) {
-                      categoryStats[catName].won += item.quantity;
-                    }
-                  });
-                });
-                
-                const categoryConversionData = Object.entries(categoryStats).map(([name, stats]) => ({
-                  name,
-                  conversion: stats.total > 0 ? Math.round((stats.won / stats.total) * 100) : 0,
-                  total: stats.total,
-                  won: stats.won
-                })).sort((a, b) => b.total - a.total).slice(0, 5);
+                // Grouped in SQL: the category lives on the product, not on the
+                // line, so this used to need every proforma and every product
+                // in the browser to work out.
+                const categoryConversionData = summary.conversionByCategory
+                  .map(c => ({ name: c.category, conversion: c.percent, total: c.total, won: c.won }))
+                  .sort((a, b) => b.total - a.total)
+                  .slice(0, 5);
 
                 if (categoryConversionData.length === 0) {
                   return (
