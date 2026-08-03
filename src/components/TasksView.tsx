@@ -43,8 +43,8 @@ import type { ProjectRow } from '../api/projects';
 interface TasksViewProps {
   settings: ERPSettings;
   currentUser?: { fullName: string; role?: string } | null;
-  addCustomer?: (customer: Omit<Customer, 'id' | 'createdAt'>) => Customer;
-  addProject?: (project: Omit<Project, 'id' | 'code' | 'creationDate'>) => Project;
+  addCustomer?: (customer: Omit<Customer, 'id' | 'createdAt'>) => Promise<Customer | null>;
+  addProject?: (project: Omit<Project, 'id' | 'code' | 'creationDate'>) => Promise<Project | null>;
 }
 
 export default function TasksView({

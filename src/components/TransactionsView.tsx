@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useExchangeRates } from '../api/exchangeRates';
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  ArrowDownLeft, 
-  ArrowUpRight, 
-  Coins, 
-  Edit, 
-  Trash2, 
-  FileSpreadsheet, 
+import {
+  Plus,
+  Search,
+  Filter,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Coins,
+  Edit,
+  Trash2,
+  FileSpreadsheet,
   X,
   CreditCard,
   Building,
@@ -51,6 +51,13 @@ import type { CustomerRow } from '../api/customers';
 import type { SupplierRow } from '../api/suppliers';
 import type { ProjectRow } from '../api/projects';
 import type { ProformaRow } from '../api/proformas';
+import { customersApi } from '../api/customers';
+import { suppliersApi, detailToSupplier, supplierToWriteInput } from '../api/suppliers';
+import { projectsApi } from '../api/projects';
+import { proformasApi } from '../api/proformas';
+import { customerToWriteInput, detailToCustomer } from '../api/customerAdapter';
+import { projectToWriteInput, detailToProject } from '../api/projectAdapter';
+import { proformaToWriteInput } from '../api/proformaAdapter';
 
 /** One row of the per-project financial position, as the endpoint returns it. */
 interface ProjectFinanceRow {
@@ -84,20 +91,12 @@ interface TransactionsViewProps {
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
   settings: ERPSettings;
-  addCustomer?: (customer: Omit<Customer, 'id' | 'createdAt'>) => Customer;
-  addSupplier?: (supplier: Omit<Supplier, 'id' | 'createdAt'>) => Supplier;
-  addProject?: (project: Omit<Project, 'id' | 'code' | 'creationDate'>) => Project;
-  updateProforma?: (proforma: Proforma) => void;
 }
 
 export default function TransactionsView({
   initialPrintDocId,
   onClearInitialPrintDocId,
   settings,
-  addCustomer,
-  addSupplier,
-  addProject,
-  updateProforma
 }: TransactionsViewProps) {
   // Rates are read here rather than handed down: they are a short shared list
   // that changes during the day, and a stale one misprices a document.
@@ -154,6 +153,48 @@ export default function TransactionsView({
   /** Reports a failed call using the server's own Persian sentence. */
   const reportError = (err: unknown, fallback: string) => {
     alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  /**
+   * Quick-add helpers for inline forms — call the API directly rather than
+   * relying on store methods passed as props.
+   */
+  const addCustomer = async (customer: Omit<Customer, 'id' | 'createdAt'>) => {
+    try {
+      const created = await customersApi.create(customerToWriteInput(customer as any));
+      return detailToCustomer(created);
+    } catch (err) {
+      reportError(err, 'ثبت مشتری با خطا مواجه شد.');
+      return null;
+    }
+  };
+
+  const addSupplier = async (supplier: Omit<Supplier, 'id' | 'createdAt'>) => {
+    try {
+      const created = await suppliersApi.create(supplierToWriteInput(supplier as any));
+      return detailToSupplier(created);
+    } catch (err) {
+      reportError(err, 'ثبت تأمین‌کننده با خطا مواجه شد.');
+      return null;
+    }
+  };
+
+  const addProject = async (project: Omit<Project, 'id' | 'code' | 'creationDate'>) => {
+    try {
+      const created = await projectsApi.create(projectToWriteInput(project as any));
+      return detailToProject(created);
+    } catch (err) {
+      reportError(err, 'ثبت پروژه با خطا مواجه شد.');
+      return null;
+    }
+  };
+
+  const updateProforma = async (proforma: Proforma) => {
+    try {
+      await proformasApi.update(proforma.id, proformaToWriteInput(proforma));
+    } catch (err) {
+      reportError(err, 'ثبت تغییرات پیش‌فاکتور با خطا مواجه شد.');
+    }
   };
 
   const addTransaction = async (tx: Partial<Transaction>) => {
@@ -245,9 +286,9 @@ export default function TransactionsView({
   const [dupMatches, setDupMatches] = useState<DuplicateMatch[]>([]);
   const [dupPayload, setDupPayload] = useState<any>(null);
 
-  const commitQuickCustomer = (custData: any) => {
+  const commitQuickCustomer = async (custData: any) => {
     if (!addCustomer) return;
-    const created = addCustomer(custData);
+    const created = await addCustomer(custData);
     setDupMatches([]);
     setDupPayload(null);
     if (created && created.id) {
@@ -2237,7 +2278,7 @@ export default function TransactionsView({
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   if (!quickSupName.trim()) {
                     alert('لطفاً نام تامین‌کننده را وارد کنید.');
                     return;
@@ -2261,7 +2302,7 @@ export default function TransactionsView({
                   };
 
                   if (addSupplier) {
-                    const created = addSupplier(supData);
+                    const created = await addSupplier(supData);
                     if (created && created.id) {
                       setSupplierId(created.id);
                       setShowQuickSupplierModal(false);
@@ -2360,7 +2401,7 @@ export default function TransactionsView({
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   if (!quickProjName.trim()) {
                     alert('لطفاً نام پروژه را وارد کنید.');
                     return;
@@ -2389,7 +2430,7 @@ export default function TransactionsView({
                   };
 
                   if (addProject) {
-                    const created = addProject(projData);
+                    const created = await addProject(projData);
                     if (created && created.id) {
                       setProjectId(created.id);
                       setPartyType('customer');

@@ -34,6 +34,10 @@ import { useProjectList } from '../api/useProjectList';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { useEntitySearch } from '../api/useEntitySearch';
 import type { CustomerRow } from '../api/customers';
+import { customersApi } from '../api/customers';
+import { productsApi } from '../api/products';
+import { customerToWriteInput, detailToCustomer } from '../api/customerAdapter';
+import { productToWriteInput, detailToProduct } from '../api/productAdapter';
 
 /**
  * Projects screen.
@@ -48,8 +52,6 @@ import type { CustomerRow } from '../api/customers';
 export interface ProjectsViewProps {
   onOpenDocument?: any;
   settings: ERPSettings;
-  addCustomer: (c: any) => any;
-  addProduct: (p: any) => any;
   currentUser: UserType | null;
   users?: UserType[];
   initialSelectedProjectId?: string | null;
@@ -58,7 +60,7 @@ export interface ProjectsViewProps {
 
 export default function ProjectsView({
   onOpenDocument,
-  settings, addCustomer, addProduct,
+  settings,
   currentUser,
   initialSelectedProjectId, onClearInitialSelectedProject
 }: ProjectsViewProps) {
@@ -92,6 +94,30 @@ export default function ProjectsView({
   /** Reports a failed call using the server's own Persian sentence. */
   const reportError = (err: unknown, fallback: string) => {
     alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  /**
+   * Quick-add helpers for inline forms — call the API directly rather than
+   * relying on store methods passed as props.
+   */
+  const addCustomer = async (c: any) => {
+    try {
+      const created = await customersApi.create(customerToWriteInput(c));
+      return detailToCustomer(created);
+    } catch (err) {
+      reportError(err, 'ثبت مشتری با خطا مواجه شد.');
+      return null;
+    }
+  };
+
+  const addProduct = async (p: any) => {
+    try {
+      const created = await productsApi.create(productToWriteInput(p));
+      return detailToProduct(created);
+    } catch (err) {
+      reportError(err, 'ثبت کالا با خطا مواجه شد.');
+      return null;
+    }
   };
 
   const [colFilters, setColFilters] = useState<any>({});

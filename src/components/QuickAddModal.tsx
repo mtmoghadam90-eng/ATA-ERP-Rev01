@@ -19,10 +19,10 @@ interface QuickAddModalProps {
   customers?: Customer[];
   products?: Product[];
   settings: ERPSettings;
-  addCustomer?: (customer: Omit<Customer, 'id' | 'createdAt'>) => Customer;
-  addProject?: (project: Omit<Project, 'id' | 'code' | 'creationDate'>) => Project;
-  addSupplier?: (supplier: Omit<Supplier, 'id' | 'createdAt'>) => Supplier;
-  addProduct?: (product: Omit<Product, 'id' | 'stockLevel'> & { stockLevel?: number }) => Product;
+  addCustomer?: (customer: Omit<Customer, 'id' | 'createdAt'>) => Promise<Customer | null>;
+  addProject?: (project: Omit<Project, 'id' | 'code' | 'creationDate'>) => Promise<Project | null>;
+  addSupplier?: (supplier: Omit<Supplier, 'id' | 'createdAt'>) => Promise<Supplier | null>;
+  addProduct?: (product: Omit<Product, 'id' | 'stockLevel'> & { stockLevel?: number }) => Promise<Product | null>;
   users?: ERPUser[];
   initialCustType?: 'حقوقی' | 'حقیقی';
   initialLinkedCustomerIds?: string[];
@@ -206,16 +206,16 @@ export default function QuickAddModal({
   // SUBMIT HANDLER
   // ---------------------------------------------------------------------------
   /** Actually creates the customer and closes the modal. */
-  const commitCustomer = (payload: Omit<Customer, 'id' | 'createdAt'>) => {
+  const commitCustomer = async (payload: Omit<Customer, 'id' | 'createdAt'>) => {
     if (!addCustomer) return;
-    const newCust = addCustomer(payload);
+    const newCust = await addCustomer(payload);
     setDupMatches([]);
     setDupPayload(null);
     onSuccess(newCust);
     onClose();
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // Custom Fields Validation
@@ -321,7 +321,7 @@ export default function QuickAddModal({
         return;
       }
 
-      commitCustomer(payload);
+      await commitCustomer(payload);
     } else if (type === 'project') {
       if (!addProject) return;
       if (isFieldRequired(settings, 'projects', 'name') && !projName.trim()) {
@@ -370,7 +370,7 @@ export default function QuickAddModal({
       }
 
       const selectedCust = customers.find(c => c.id === projCustomerId);
-      const newProj = addProject({
+      const newProj = await addProject({
         name: projName.trim(),
         customerId: projCustomerId,
         customerName: selectedCust ? selectedCust.companyName : 'مشتری نامشخص',
@@ -423,7 +423,7 @@ export default function QuickAddModal({
         return;
       }
 
-      const newSupp = addSupplier({
+      const newSupp = await addSupplier({
         name: suppName.trim(),
         country: suppCountry.trim(),
         contactName: suppContact.trim(),
@@ -455,7 +455,7 @@ export default function QuickAddModal({
         return;
       }
 
-      const newProd = addProduct({
+      const newProd = await addProduct({
         displayName: prodDisplayName.trim(),
         name: prodDisplayName.trim(),
         category: prodCategory,
@@ -1619,8 +1619,8 @@ export default function QuickAddModal({
           onSuccess(existing);
           onClose();
         }}
-        onCreateAnyway={() => {
-          if (dupPayload) commitCustomer(dupPayload);
+        onCreateAnyway={async () => {
+          if (dupPayload) await commitCustomer(dupPayload);
         }}
         onCancel={() => {
           setDupMatches([]);

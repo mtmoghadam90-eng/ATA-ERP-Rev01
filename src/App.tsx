@@ -364,17 +364,13 @@ export default function App() {
         );
       case 'proformas':
         return (
-          <ProformasView 
+          <ProformasView
             initialPrintDocId={printDocumentRequest?.module === 'proformas' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
             // Reads its own data from the API; the projects and customers it
             // shows come joined onto the page's rows.
             products={store.products}
-            settings={store.settings}            addCustomer={store.addCustomer}
-            updateCustomer={store.updateCustomer}
-            addProject={store.addProject}
-            addProduct={store.addProduct}
-            updateProduct={store.updateProduct}
+            settings={store.settings}
             currentUser={store.currentUser}
           />
         );
@@ -387,10 +383,6 @@ export default function App() {
             // receipt are computed server-side.
             products={store.products}            supplierInquiries={store.supplierInquiries || []}
             settings={store.settings}
-            addSupplier={store.addSupplier}
-            addProject={store.addProject}
-            addProduct={store.addProduct}
-            addCustomer={store.addCustomer}
             currentUser={store.currentUser}
           />
         );
@@ -408,8 +400,6 @@ export default function App() {
             onOpenDocument={handleOpenDocument}
             settings={store.settings}
             currentUser={store.currentUser}
-            addCustomer={store.addCustomer}
-            addProduct={store.addProduct}
             initialSelectedProjectId={selectedProjectIdForActivities}
             onClearInitialSelectedProject={() => setSelectedProjectIdForActivities(null)}
           />
@@ -437,10 +427,6 @@ export default function App() {
             onClearInitialPrintDocId={handleClearPrintDoc}
             // Reads its own data from the API; the per-project financial
             // position is its own paginated query.            settings={store.settings}
-            addCustomer={store.addCustomer}
-            addSupplier={store.addSupplier}
-            addProject={store.addProject}
-            updateProforma={store.updateProforma}
           />
         );
             case 'tasks':
@@ -449,8 +435,6 @@ export default function App() {
           <TasksView
             settings={store.settings}
             currentUser={store.currentUser}
-            addCustomer={store.addCustomer}
-            addProject={store.addProject}
           />
         );
       case 'packagingDelivery':

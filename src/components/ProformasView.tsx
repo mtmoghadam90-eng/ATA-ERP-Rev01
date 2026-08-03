@@ -48,6 +48,12 @@ import ConfirmModal from "./ConfirmModal";
 import { SearchableSelect } from "./SearchableSelect";
 import { ApiError } from "../api/client";
 import { proformasApi } from "../api/proformas";
+import { customersApi } from "../api/customers";
+import { productsApi } from "../api/products";
+import { projectsApi } from "../api/projects";
+import { customerToWriteInput, detailToCustomer } from "../api/customerAdapter";
+import { productToWriteInput, detailToProduct } from "../api/productAdapter";
+import { projectToWriteInput, detailToProject } from "../api/projectAdapter";
 import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
 import { useProformaList } from "../api/useProformaList";
 import { useUserDirectory } from "../api/useUserDirectory";
@@ -205,20 +211,8 @@ interface ProformasViewProps {
   settings: ERPSettings;
   // The five proforma mutations are no longer props: the view calls the API
   // directly, so the totals and the derived outcome come back from the server
-  // that computed them.
-  addCustomer?: (
-    customer: Omit<Customer, "id" | "createdAt">,
-  ) => Customer | any;
-  updateCustomer?: (customer: Customer) => void;
-  addProject?: (
-    project: Omit<Project, "id" | "code" | "creationDate"> & {
-      customValues?: Record<string, any>;
-    },
-  ) => Project | any;
-  addProduct?: (
-    product: Omit<Product, "id" | "stockLevel"> & { stockLevel?: number },
-  ) => Product;
-  updateProduct?: (product: Product) => void;
+  // that computed them. Quick-add helpers (addCustomer, addProduct, updateCustomer)
+  // are now defined locally and call the API directly.
   users?: User[];
   currentUser?: User | null;
   transactions?: any;
@@ -229,11 +223,6 @@ export default function ProformasView({
   onClearInitialPrintDocId,
   products,
   settings,
-  addCustomer,
-  updateCustomer,
-  addProject,
-  addProduct,
-  updateProduct,
   currentUser = null,
 }: ProformasViewProps) {
   // Rates are read here rather than handed down: they are a short shared list
@@ -287,6 +276,56 @@ export default function ProformasView({
   /** Reports a failed call using the server's own Persian sentence. */
   const reportError = (err: unknown, fallback: string) => {
     alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  /**
+   * Quick-add helpers for inline forms — call the API directly rather than
+   * relying on store methods passed as props.
+   */
+  const addCustomer = async (customer: Omit<Customer, "id" | "createdAt">) => {
+    try {
+      const created = await customersApi.create(customerToWriteInput(customer as any));
+      return detailToCustomer(created);
+    } catch (err) {
+      reportError(err, 'ثبت مشتری با خطا مواجه شد.');
+      return null;
+    }
+  };
+
+  const updateCustomer = async (customer: Customer) => {
+    try {
+      await customersApi.update(customer.id, customerToWriteInput(customer));
+    } catch (err) {
+      reportError(err, 'ثبت تغییرات مشتری با خطا مواجه شد.');
+    }
+  };
+
+  const addProduct = async (product: Omit<Product, "id" | "stockLevel"> & { stockLevel?: number }) => {
+    try {
+      const created = await productsApi.create(productToWriteInput(product as any));
+      return detailToProduct(created);
+    } catch (err) {
+      reportError(err, 'ثبت کالا با خطا مواجه شد.');
+      return null;
+    }
+  };
+
+  const updateProduct = async (product: Product) => {
+    try {
+      await productsApi.update(product.id, productToWriteInput(product));
+    } catch (err) {
+      reportError(err, 'ثبت تغییرات کالا با خطا مواجه شد.');
+    }
+  };
+
+  const addProject = async (project: Omit<Project, "id" | "code" | "creationDate"> & { customValues?: Record<string, any> }) => {
+    try {
+      const created = await projectsApi.create(projectToWriteInput(project as any));
+      return detailToProject(created);
+    } catch (err) {
+      reportError(err, 'ثبت پروژه با خطا مواجه شد.');
+      return null;
+    }
   };
 
   /**
@@ -562,9 +601,9 @@ export default function ProformasView({
   const [dupMatches, setDupMatches] = useState<DuplicateMatch[]>([]);
   const [dupPayload, setDupPayload] = useState<any>(null);
 
-  const commitQuickCustomer = (custData: any) => {
+  const commitQuickCustomer = async (custData: any) => {
     if (!addCustomer) return;
-    const created = addCustomer(custData);
+    const created = await addCustomer(custData);
     setDupMatches([]);
     setDupPayload(null);
     if (created && created.id) {
@@ -5568,7 +5607,7 @@ export default function ProformasView({
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   if (!quickProjName.trim()) {
                     alert("لطفاً نام پروژه را وارد کنید.");
                     return;
@@ -5601,7 +5640,7 @@ export default function ProformasView({
                     customValues: {},
                   };
                   if (addProject) {
-                    const created = addProject(projData);
+                    const created = await addProject(projData);
                     if (created && created.id) {
                       setProjectId(created.id);
                       setCustomerId(quickProjCustomerId);
