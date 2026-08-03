@@ -241,21 +241,29 @@ export const REFERRAL_SORTABLE = ["createdAt", "status"] as const;
 export const REFERRAL_FILTERABLE = ["status", "assignedToUserId"] as const;
 
 /**
- * Referrals addressed to the caller, or all of them for a projects holder.
+ * Referrals addressed to the caller, raised by the caller, or all of them for a
+ * projects holder.
  *
  * Unlike the other modules the default here is *always* self-scoped, because
  * "my referrals" is what the screen is for; passing an explicit assignee filter
  * is what widens it, and only a permitted user may do that.
+ *
+ * `scope` is what the two tabs select: what I have been asked to do, versus what
+ * I have asked of others. Both are the caller's own either way, so neither
+ * needs a permission — and neither can be pointed at somebody else, because the
+ * caller's id is what goes into the query.
  */
 export async function listReferrals(
   q: ListQuery,
   user: AuthUser,
-  filters: { mine?: boolean } = {},
+  filters: { mine?: boolean; scope?: "toMe" | "fromMe" } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
   const and: Record<string, unknown>[] = [];
 
-  if (filters.mine || !canSeeProjects(user)) {
+  if (filters.scope === "fromMe") {
+    and.push({ assignedByUserId: user.id });
+  } else if (filters.scope === "toMe" || filters.mine || !canSeeProjects(user)) {
     and.push({ assignedToUserId: user.id });
   }
   for (const [field, value] of Object.entries(q.filters)) {
@@ -273,7 +281,19 @@ export async function listReferrals(
         activity: {
           select: {
             id: true, text: true, createdAt: true,
-            group: { select: { id: true, categoryName: true, project: { select: { id: true, code: true, name: true } } } },
+            group: {
+              select: {
+                id: true, categoryName: true,
+                // The customer's name comes along because the inbox shows it
+                // beside the project and links through to them.
+                project: {
+                  select: {
+                    id: true, code: true, name: true,
+                    customer: { select: { id: true, companyName: true } },
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -309,6 +329,46 @@ export async function setReferralStatus(
   await db.projectReferral.update({
     where: { id },
     data: { status: toNullableString(status, 40) ?? "در انتظار اقدام" },
+  });
+  return "ok";
+}
+
+/**
+ * Hands a referral to someone else.
+ *
+ * Forwarding is not a new referral — the thread and everything said in it stay
+ * put, the assignee changes and the clock restarts, which is what "در انتظار
+ * اقدام" means. Either party may do it: the assignee passes it on, the person
+ * who raised it redirects.
+ */
+export async function reassignReferral(
+  id: string,
+  assignedToUserId: string,
+  user: AuthUser,
+): Promise<"ok" | "forbidden" | "not-found" | "no-such-user"> {
+  const db = getDb();
+  const referral = await db.projectReferral.findUnique({
+    where: { id },
+    select: { id: true, assignedToUserId: true, assignedByUserId: true },
+  });
+  if (!referral) return "not-found";
+
+  const involved = referral.assignedToUserId === user.id || referral.assignedByUserId === user.id;
+  if (!involved && !canSeeProjects(user)) return "forbidden";
+
+  const target = await db.user.findUnique({
+    where: { id: assignedToUserId },
+    select: { id: true, fullName: true, isActive: true },
+  });
+  if (!target || !target.isActive) return "no-such-user";
+
+  await db.projectReferral.update({
+    where: { id },
+    data: {
+      assignedToUserId: target.id,
+      assignedToName: target.fullName,
+      status: "در انتظار اقدام",
+    },
   });
   return "ok";
 }

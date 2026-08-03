@@ -62,6 +62,8 @@ model User {
   assignedReferrals ProjectReferral[] @relation("ReferralAssignee")
   raisedReferrals   ProjectReferral[] @relation("ReferralAuthor")
   referralMessages  ReferralMessage[]
+  notifications     ModuleNotification[]
+  readReceipts      ReadReceipt[]
 
   @@index([isActive])
   @@map("users")
@@ -982,6 +984,53 @@ model ModuleNote {
 
   @@index([entityType, entityId])
   @@map("module_notes")
+}
+
+/// A notice addressed to one user — "a proforma you own was approved".
+///
+/// Addressed by user id rather than by name, which is what the document store
+/// used: two people who share a full name shared an inbox, and renaming someone
+/// silently orphaned everything already sent to them.
+model ModuleNotification {
+  id String @id @default(uuid()) @db.NVarChar(36)
+
+  userId String @db.NVarChar(36)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  module      String @db.NVarChar(100)
+  title       String @db.NVarChar(300)
+  description String @db.NVarChar(Max)
+
+  /// Where it points, so the notice can open the thing it is about.
+  projectId String? @db.NVarChar(36)
+
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@map("module_notifications")
+}
+
+/// One user having seen one item in their inbox.
+///
+/// Per user, which the document store's flat `erp_read_items` array was not:
+/// it was a single shared list, so the first person to open a referral reply
+/// marked it read for everybody else too.
+model ReadReceipt {
+  id String @id @default(uuid()) @db.NVarChar(36)
+
+  userId String @db.NVarChar(36)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The activity or referral-message id that was seen.
+  itemId String @db.NVarChar(36)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, itemId])
+  @@index([userId])
+  @@map("read_receipts")
 }
 
 model AuditLog {

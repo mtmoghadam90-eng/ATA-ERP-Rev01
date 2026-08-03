@@ -5,6 +5,7 @@ import {
   ACTIVITY_SORTABLE, REFERRAL_FILTERABLE, REFERRAL_SORTABLE,
   addActivity, addModuleNote, addReferralMessage, deleteActivity, deleteModuleNote,
   listActivities, listCategoryGroups, listModuleNotes, listReferrals,
+  reassignReferral,
   setReferralStatus, upsertCategoryGroup,
 } from "../services/activityService";
 
@@ -146,8 +147,11 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, REFERRAL_SORTABLE, REFERRAL_FILTERABLE);
       // Default is "mine"; only an explicit all=true widens it, and the service
-      // still refuses that for a user without the projects permission.
-      const result = await listReferrals(q, user, { mine: req.query.all !== "true" });
+      // still refuses that for a user without the projects permission. `scope`
+      // picks between the two inbox tabs and always stays self-scoped.
+      const scope = req.query.scope === "fromMe" ? "fromMe"
+        : req.query.scope === "toMe" ? "toMe" : undefined;
+      const result = await listReferrals(q, user, { mine: req.query.all !== "true", scope });
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "GET /api/referrals");
@@ -172,6 +176,31 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
       res.json({ success: true });
     } catch (err) {
       sendError(res, err, "PUT /api/referrals/:id/status");
+    }
+  });
+
+  app.put("/api/referrals/:id/assignee", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const assignedToUserId = (req.body as { assignedToUserId?: unknown })?.assignedToUserId;
+      if (typeof assignedToUserId !== "string" || !assignedToUserId.trim()) {
+        res.status(400).json({ success: false, error: "انتخاب همکار الزامی است." });
+        return;
+      }
+      const outcome = await reassignReferral(req.params.id, assignedToUserId, user);
+      if (outcome === "forbidden") return denied(res, "شما در این ارجاع نقشی ندارید.");
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "ارجاع یافت نشد." });
+        return;
+      }
+      if (outcome === "no-such-user") {
+        res.status(400).json({ success: false, error: "همکار انتخاب‌شده یافت نشد یا غیرفعال است." });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      sendError(res, err, "PUT /api/referrals/:id/assignee");
     }
   });
 

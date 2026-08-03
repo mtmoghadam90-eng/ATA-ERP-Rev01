@@ -424,18 +424,8 @@ export default function App() {
         return (
           <ReferralsView 
             initialTab={referralsTab}
-            readItems={store.readItems}
-            markItemsAsRead={store.markItemsAsRead}
-            users={store.users}
-            projectCategoryGroups={store.projectCategoryGroups}
-            projects={store.projects}
-            respondToReferral={store.respondToReferral}
-            toggleReferralStatus={store.toggleReferralStatus}
             currentUser={store.currentUser}
             settings={store.settings}
-            moduleNotifications={store.moduleNotifications}
-            markModuleNotificationAsRead={store.markModuleNotificationAsRead}
-            markAllModuleNotificationsAsRead={store.markAllModuleNotificationsAsRead}
             onViewProjectActivities={(projId) => {
               setSelectedProjectIdForActivities(projId);
               setActiveView('projects');

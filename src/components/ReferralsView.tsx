@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Inbox, 
   CheckCircle2, 
@@ -16,56 +16,39 @@ import {
   RefreshCcw,
   Bell
 } from 'lucide-react';
-import { ProjectCategoryGroup, Project, ERPSettings, ModuleNotification } from '../types';
+import { ERPSettings } from '../types';
 import type { User } from '../types';
 import { compressImage } from '../imageUtils';
+import { toShamsiStr } from '../dateUtils';
+import { ApiError } from '../api/client';
+import { NotificationRow, ReferralRow, inboxApi } from '../api/inbox';
+import { useUserDirectory } from '../api/useUserDirectory';
 
+/**
+ * The inbox: referrals to and from the signed-in user, plus their notices.
+ *
+ * Everything here is scoped to the caller by the server, so nothing is filtered
+ * by name in the browser any more — which also fixes two things the document
+ * store got wrong: notices were addressed by display name, so people sharing a
+ * name shared an inbox, and "read" was one shared array for the whole company.
+ */
 interface ReferralsViewProps {
   initialTab?: 'toMe' | 'fromMe' | 'notifications';
-  projectCategoryGroups: ProjectCategoryGroup[];
-  projects: Project[];
   settings: ERPSettings;
-  moduleNotifications: ModuleNotification[];
-  markModuleNotificationAsRead: (id: string) => void;
-  markAllModuleNotificationsAsRead: () => void;
-  respondToReferral: (
-    categoryGroupId: string,
-    activityId: string,
-    responseText: string,
-    responderName: string,
-    attachment?: { name: string; size: string; content?: string } | null,
-    markAsDone?: boolean,
-    forwardTo?: string
-  ) => void;
-  toggleReferralStatus: (categoryGroupId: string, activityId: string) => void;
   currentUser: User | null;
-  users: User[];
-  readItems: string[];
-  markItemsAsRead: (items: string[]) => void;
   onViewProjectActivities?: (projectId: string) => void;
   onViewCustomerDetails?: (customerName: string) => void;
 }
 
 export default function ReferralsView({
-  projectCategoryGroups,
-  projects,
   settings,
-  moduleNotifications,
-  markModuleNotificationAsRead,
-  markAllModuleNotificationsAsRead,
-  respondToReferral,
-  toggleReferralStatus,
   initialTab,
   currentUser,
-  users,
-  readItems,
-  markItemsAsRead,
   onViewProjectActivities,
   onViewCustomerDetails
 }: ReferralsViewProps) {
-  const readItemsSet = new Set(readItems);
-  const currentUserName = currentUser?.fullName || 'محمد توکل مقدم';
-  const isManagerOrAdmin = currentUser?.role === 'admin' || currentUser?.isSystemAdmin;
+  const currentUserName = currentUser?.fullName || '';
+  const { users } = useUserDirectory();
 
   const [activeTab, setActiveTab] = useState<'toMe' | 'fromMe' | 'notifications'>(initialTab || 'toMe');
   React.useEffect(() => {
@@ -80,12 +63,80 @@ export default function ReferralsView({
   const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
   const [expandedNotificationGroups, setExpandedNotificationGroups] = useState<Record<string, boolean>>({});
 
+  /* ------------------------------- data ------------------------------- */
 
+  const [referrals, setReferrals] = useState<ReferralRow[]>([]);
+  const [notifications, setNotifications] = useState<NotificationRow[]>([]);
+  const [notificationsUnread, setNotificationsUnread] = useState(0);
+  const [readItemsSet, setReadItemsSet] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const refresh = () => setReloadToken(n => n + 1);
+
+  /** Reports a failed call using the server's own Persian sentence. */
+  const reportError = (err: unknown, fallback: string) => {
+    alert(err instanceof ApiError ? err.message : fallback);
+  };
+
+  /**
+   * Timestamps arrive as real datetimes now, not the Shamsi strings the
+   * document store kept, so they are converted for display — otherwise the
+   * cards read "2026-08-03T03:23:08.158Z".
+   */
+  const shamsi = (iso: string | undefined | null) => (iso ? toShamsiStr(new Date(iso)) : '');
+
+  /* The two referral tabs are one query with a different scope. The server
+     decides what "mine" means from the session, so no name is compared here. */
+  useEffect(() => {
+    if (activeTab === 'notifications') return;
+    let cancelled = false;
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+
+    inboxApi.referrals({
+      scope: activeTab, pageSize: 200, sort: 'createdAt', order: 'desc',
+    }, controller.signal)
+      .then((data) => {
+        if (cancelled) return;
+        setReferrals(data.rows);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setError(err instanceof ApiError ? err.message : 'دریافت ارجاعات با خطا مواجه شد.');
+        setReferrals([]);
+        setLoading(false);
+      });
+
+    return () => { cancelled = true; controller.abort(); };
+  }, [activeTab, reloadToken]);
+
+  /* Notices, and which inbox items this user has already seen. */
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+
+    inboxApi.notifications({ pageSize: 200 }, controller.signal)
+      .then((data) => {
+        if (cancelled) return;
+        setNotifications(data.rows);
+        setNotificationsUnread(data.unread);
+      })
+      .catch(() => { /* the badge simply stays as it was */ });
+
+    return () => { cancelled = true; controller.abort(); };
+  }, [reloadToken]);
 
   const toggleCard = (groupId: string) => {
+    // Cards render collapsed, so an untouched one has to open on the first
+    // click. This set it to `false` instead — already its state — so the first
+    // click on any card did nothing at all and it took two to open.
     setExpandedCards(prev => ({
       ...prev,
-      [groupId]: prev[groupId] === undefined ? false : !prev[groupId]
+      [groupId]: !(prev[groupId] ?? false)
     }));
   };
 
@@ -105,149 +156,245 @@ export default function ReferralsView({
     }));
   };
 
-  // Group referrals by category group
-  const groupedReferrals = projectCategoryGroups.map(group => {
-    const groupReferrals = (group.activities || [])
-      .filter(act => act.referral !== null && act.referral !== undefined)
-      .map(act => ({
-        activity: act,
-        referral: act.referral!
-      }))
-      .filter(item => {
-        const matchesTab = activeTab === 'toMe' 
-          ? item.referral.assignedTo === currentUserName
-          : item.referral.assignedBy === currentUserName;
+  /**
+   * The rows, grouped by the category they belong to.
+   *
+   * Rebuilt from the flat list the server returns rather than walked out of a
+   * nested tree, and ordered by `createdAt`. The old code ordered by digits
+   * pulled out of the record id — which was a timestamp once, and is now an
+   * arbitrary run of digits inside a UUID.
+   */
+  const groupedReferrals = React.useMemo(() => {
+    const visible = referrals.filter(
+      r => filterProject === 'all' || r.activity?.group?.project?.id === filterProject,
+    );
 
-        const matchesProject = filterProject === 'all' || group.projectId === filterProject;
-
-        return matchesTab && matchesProject;
-      })
-      // Sort referrals inside the group chronologically (older first, newer below)
-      .sort((a, b) => {
-        const timeA = parseInt((a.referral.id || '').split('-')[1] || '0', 10);
-        const timeB = parseInt((b.referral.id || '').split('-')[1] || '0', 10);
-        return timeA - timeB;
+    const byGroup = new Map<string, { group: any; referrals: { activity: any; referral: any }[] }>();
+    for (const row of visible) {
+      const g = row.activity?.group;
+      const key = g?.id ?? 'بدون دسته';
+      if (!byGroup.has(key)) {
+        byGroup.set(key, {
+          group: {
+            id: key,
+            categoryName: g?.categoryName ?? 'بدون دسته‌بندی',
+            projectId: g?.project?.id ?? '',
+            projectName: g?.project?.name ?? '',
+            projectCode: g?.project?.code ?? '',
+            customerName: g?.project?.customer?.companyName ?? '',
+          },
+          referrals: [],
+        });
+      }
+      byGroup.get(key)!.referrals.push({
+        activity: {
+          id: row.activity?.id ?? row.activityId,
+          text: row.activity?.text ?? '',
+          createdAt: row.activity?.createdAt ?? row.createdAt,
+        },
+        referral: {
+          id: row.id,
+          status: row.status,
+          actionRequired: row.actionRequired ?? '',
+          assignedTo: row.assignedToName ?? '',
+          assignedBy: row.assignedByName ?? '',
+          createdAt: row.createdAt,
+          messages: row.messages.map(m => ({
+            id: m.id,
+            text: m.text,
+            responder: m.responderName ?? '',
+            createdAt: m.createdAt,
+            attachment: m.attachmentUrl
+              ? { name: m.attachmentName ?? '', size: m.attachmentSize ?? '', url: m.attachmentUrl }
+              : null,
+          })),
+        },
       });
+    }
 
-    return {
-      group,
-      referrals: groupReferrals
-    };
-  }).filter(g => g.referrals.length > 0)
-  .sort((a, b) => {
-    // Sort groups: groups with pending actions first, then by most recent activity
-    const hasPendingA = a.referrals.some(r => (r.referral.status || 'در انتظار اقدام') === 'در انتظار اقدام');
-    const hasPendingB = b.referrals.some(r => (r.referral.status || 'در انتظار اقدام') === 'در انتظار اقدام');
-    
-    if (hasPendingA && !hasPendingB) return -1;
-    if (!hasPendingA && hasPendingB) return 1;
+    const time = (v: string | undefined) => (v ? new Date(v).getTime() : 0);
 
-    const latestTimeA = Math.max(...a.referrals.map(r => parseInt((r.referral.id || '').split('-')[1] || '0', 10)));
-    const latestTimeB = Math.max(...b.referrals.map(r => parseInt((r.referral.id || '').split('-')[1] || '0', 10)));
+    return [...byGroup.values()]
+      .map(g => ({
+        ...g,
+        // Oldest first inside a group, so a thread reads downwards.
+        referrals: [...g.referrals].sort((a, b) => time(a.referral.createdAt) - time(b.referral.createdAt)),
+      }))
+      .sort((a, b) => {
+        const pendingA = a.referrals.some(r => (r.referral.status || 'در انتظار اقدام') === 'در انتظار اقدام');
+        const pendingB = b.referrals.some(r => (r.referral.status || 'در انتظار اقدام') === 'در انتظار اقدام');
+        if (pendingA && !pendingB) return -1;
+        if (!pendingA && pendingB) return 1;
 
-    return latestTimeB - latestTimeA;
-  });
+        const latestA = Math.max(...a.referrals.map(r => time(r.referral.createdAt)));
+        const latestB = Math.max(...b.referrals.map(r => time(r.referral.createdAt)));
+        return latestB - latestA;
+      });
+  }, [referrals, filterProject]);
 
-  // Calculate pending count for badge
-  const pendingToMeCount = projectCategoryGroups.flatMap(g => 
-    (g.activities || []).filter(a => a.referral?.assignedTo === currentUserName && (a.referral?.status || 'در انتظار اقدام') === 'در انتظار اقدام')
-  ).length;
-
-  // Extract unique projects for filter dropdown
-  const uniqueProjects = Array.from(
-    new Set(projectCategoryGroups.filter(g => g.activities?.some(a => a.referral)).map(g => g.projectId))
+  /** Waiting on me. Only meaningful on the toMe tab, which is where it shows. */
+  const pendingToMeCount = React.useMemo(
+    () => (activeTab === 'toMe'
+      ? referrals.filter(r => (r.status || 'در انتظار اقدام') === 'در انتظار اقدام').length
+      : 0),
+    [referrals, activeTab],
   );
 
-  // Notifications for category groups where current user is responsible
-  const groupedNotifications = projectCategoryGroups
-    .filter(group => filterProject === 'all' || group.projectId === filterProject)
-    .map(group => {
-      const cat = settings?.activityCategories?.find(c => c.id === group.categoryId);
-      const isResponsible = isManagerOrAdmin || cat?.responsibleUserId === currentUserName;
-      
-      const project = projects.find(p => p.id === group.projectId);
-      const items: any[] = [];
-      
-      (group.activities || []).forEach(act => {
-        // Base Activity - only visible if responsible
-        if (isResponsible && act.createdBy !== currentUserName) {
-          items.push({
-            type: 'activity',
-            activity: act,
-            timestamp: parseInt((act.id || '').split('-').pop() || '0', 10)
-          });
-        }
+  /** Projects present in the current result, for the filter dropdown. */
+  const projectOptions = React.useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const r of referrals) {
+      const p = r.activity?.group?.project;
+      if (p && !seen.has(p.id)) seen.set(p.id, p.name);
+    }
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+  }, [referrals]);
 
-        // Referral responses (if any)
-        if (act.referral) {
-          let messages = act.referral.messages ? [...act.referral.messages] : [];
-          if (messages.length === 0 && act.referral.response) {
-            messages = [act.referral.response];
-          }
-          
-          messages.forEach((msg, idx) => {
-             // Visible if responsible, OR if the current user is the one who assigned the referral
-             if ((isResponsible || act.referral?.assignedBy === currentUserName) && msg.responder !== currentUserName) {
-               items.push({
-                 type: 'message',
-                 activity: act,
-                 message: msg,
-                 timestamp: msg.id ? parseInt((msg.id || '').split('-').pop() || '0', 10) : parseInt((act.id || '').split('-').pop() || '0', 10) + idx + 1
-               });
-             }
-          });
-        }
+  /** Replies from other people, grouped by the referral they belong to. */
+  const groupedNotifications = React.useMemo(() => {
+    const groups = referrals
+      .filter(r => filterProject === 'all' || r.activity?.group?.project?.id === filterProject)
+      .map(r => ({
+        group: {
+          id: r.id,
+          categoryName: r.activity?.group?.categoryName ?? 'بدون دسته‌بندی',
+          projectId: r.activity?.group?.project?.id ?? '',
+        },
+        project: r.activity?.group?.project ?? null,
+        items: r.messages
+          // Your own reply is not news to you.
+          .filter(m => m.responderUserId !== currentUser?.id)
+          .map(m => ({
+            type: 'message' as const,
+            activity: { id: r.activity?.id ?? r.activityId, text: r.activity?.text ?? '' },
+            message: { id: m.id, text: m.text, responder: m.responderName ?? '', createdAt: m.createdAt },
+            timestamp: new Date(m.createdAt).getTime(),
+          })),
+      }))
+      .filter(g => g.items.length > 0);
+
+    return groups.sort((a, b) =>
+      (b.items[b.items.length - 1]?.timestamp || 0) - (a.items[a.items.length - 1]?.timestamp || 0));
+  }, [referrals, filterProject, currentUser?.id]);
+
+  const myModuleNotifications = React.useMemo(
+    () => notifications.map(n => ({
+      id: n.id, module: n.module, title: n.title, description: n.description,
+      timestamp: new Date(n.createdAt).getTime(), read: n.isRead, responsibleName: currentUserName,
+    })),
+    [notifications, currentUserName],
+  );
+
+  const unreadCount =
+    groupedNotifications.reduce(
+      (acc, g) => acc + g.items.filter(item => !readItemsSet.has(item.message.id)).length, 0,
+    ) + notificationsUnread;
+
+  /* Which of the visible inbox items this user has already seen. Asked for by
+     id, so it reflects this user only — the store's read list was shared. */
+  useEffect(() => {
+    const ids = groupedNotifications.flatMap(g => g.items.map(i => i.message.id));
+    if (ids.length === 0) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    inboxApi.readReceipts(ids, controller.signal)
+      .then((read) => { if (!cancelled) setReadItemsSet(new Set(read)); })
+      .catch(() => { /* unread is the safe default */ });
+    return () => { cancelled = true; controller.abort(); };
+  }, [groupedNotifications]);
+
+  const markItemsAsRead = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    setReadItemsSet(prev => new Set([...prev, ...ids]));
+    try {
+      await inboxApi.markItemsRead(ids);
+    } catch {
+      // Put them back rather than showing them as read when they are not.
+      setReadItemsSet(prev => {
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        return next;
       });
-      items.sort((a, b) => a.timestamp - b.timestamp);
-      return { group, project, items };
-    })
-    .filter(g => g.items.length > 0)
-    .sort((a, b) => {
-      const latestA = a.items[a.items.length - 1]?.timestamp || 0;
-      const latestB = b.items[b.items.length - 1]?.timestamp || 0;
-      return latestB - latestA;
-    });
+    }
+  };
 
-  const myModuleNotifications = moduleNotifications.filter(n => n.responsibleName === currentUserName);
-  
-  const unreadCount = groupedNotifications.reduce((acc, g) => {
-    return acc + g.items.filter((item: any) => {
-      const id = item.type === 'message' ? (item.message.id || `${item.activity.id}-msg-${item.timestamp}`) : item.activity.id;
-      return !readItemsSet.has(id);
-    }).length;
-  }, 0) + myModuleNotifications.filter(n => !n.read).length;
+  const markModuleNotificationAsRead = async (id: string) => {
+    try {
+      await inboxApi.markNotificationRead(id);
+      refresh();
+    } catch (err) {
+      reportError(err, 'ثبت خوانده‌شدن اعلان با خطا مواجه شد.');
+    }
+  };
 
-  const handleReplySubmit = (groupId: string, activityId: string, markAsDone: boolean) => {
-    const text = replyText[`${groupId}-${activityId}`] || '';
-    const attachment = replyAttachments[`${groupId}-${activityId}`] || null;
-    const forwardTo = forwardToMap[`${groupId}-${activityId}`] || undefined;
+  const markAllModuleNotificationsAsRead = async () => {
+    try {
+      await inboxApi.markAllNotificationsRead();
+      refresh();
+    } catch (err) {
+      reportError(err, 'ثبت خوانده‌شدن اعلان‌ها با خطا مواجه شد.');
+    }
+  };
+
+  /**
+   * Records the response to a referral.
+   *
+   * What was one store call is three distinct operations on the server — a
+   * reply, a status change, a reassignment — because each has its own rule
+   * about who may do it. They are applied in that order so that forwarding
+   * leaves the thread reading correctly: the reply is already there when the
+   * next person opens it.
+   */
+  const handleReplySubmit = async (referralId: string, markAsDone: boolean) => {
+    const text = replyText[referralId] || '';
+    const attachment = replyAttachments[referralId] || null;
+    const forwardTo = forwardToMap[referralId] || undefined;
 
     let textToSave = text.trim();
     if (!textToSave && !attachment && !forwardTo) {
       if (markAsDone) {
-        toggleReferralStatus(groupId, activityId);
-        alert('وضعیت اقدام با موفقیت به انجام شده تغییر یافت.');
+        try {
+          await inboxApi.setReferralStatus(referralId, 'انجام شده');
+          refresh();
+          alert('وضعیت اقدام با موفقیت به انجام شده تغییر یافت.');
+        } catch (err) {
+          reportError(err, 'تغییر وضعیت ارجاع با خطا مواجه شد.');
+        }
         return;
       }
       alert('لطفاً پیام، پیوست یا شخص ارجاع شونده را مشخص کنید.');
       return;
     }
-    
+
     if (forwardTo && !textToSave) {
       textToSave = 'ارجاع به همکار';
     }
 
-    respondToReferral(groupId, activityId, textToSave, currentUserName, attachment, markAsDone, forwardTo);
-    setReplyText(prev => ({
-      ...prev,
-      [`${groupId}-${activityId}`]: ''
-    }));
-    setReplyAttachments(prev => ({
-      ...prev,
-      [`${groupId}-${activityId}`]: null
-    }));
-    if (markAsDone) {
-      alert('نتیجه اقدام با موفقیت ثبت شد.');
+    try {
+      await inboxApi.replyToReferral(referralId, {
+        text: textToSave,
+        attachmentName: attachment?.name ?? null,
+        attachmentSize: attachment?.size ?? null,
+        attachmentUrl: attachment?.content ?? null,
+      });
+
+      // Forwarding sets its own status, so only apply "done" when not forwarding.
+      if (markAsDone && !forwardTo) {
+        await inboxApi.setReferralStatus(referralId, 'انجام شده');
+      }
+      if (forwardTo) {
+        await inboxApi.reassignReferral(referralId, forwardTo);
+      }
+
+      setReplyText(prev => ({ ...prev, [referralId]: '' }));
+      setReplyAttachments(prev => ({ ...prev, [referralId]: null }));
+      setForwardToMap(prev => ({ ...prev, [referralId]: '' }));
+      refresh();
+
+      if (forwardTo) alert('ارجاع به همکار انتخاب‌شده منتقل شد.');
+      else if (markAsDone) alert('نتیجه اقدام با موفقیت ثبت شد.');
+    } catch (err) {
+      reportError(err, 'ثبت پاسخ ارجاع با خطا مواجه شد.');
     }
   };
 
@@ -321,11 +468,12 @@ export default function ReferralsView({
             className="border border-slate-200 rounded-lg text-xs py-2 px-3 bg-white text-right outline-none focus:ring-2 focus:ring-sky-500/20"
           >
             <option value="all">همه پروژه‌ها</option>
-            {uniqueProjects.map(projId => {
-              const proj = projects.find(p => p.id === projId);
+            {/* Only the projects actually present in this inbox — the whole
+                project list is neither loaded here nor useful as a filter. */}
+            {projectOptions.map(proj => {
               return (
-                <option key={projId} value={projId}>
-                  {proj ? `${proj.name} (${proj.code})` : (projId === 'proj-1' ? 'مخازن اهواز ۳' : `کد ${projId}`)}
+                <option key={proj.id} value={proj.id}>
+                  {proj.name}
                 </option>
               );
             })}
@@ -456,7 +604,7 @@ export default function ReferralsView({
                           </div>
                           <span className="text-slate-400 font-mono flex items-center gap-1 bg-slate-50 px-2 py-1 rounded border border-slate-100 text-[10px]">
                             <Calendar size={12} />
-                            {item.type === 'message' ? item.message.createdAt : item.activity.createdAt}
+                            {shamsi(item.type === "message" ? item.message.createdAt : item.activity.createdAt)}
                           </span>
                         </div>
 
@@ -505,6 +653,21 @@ export default function ReferralsView({
             })}
             </>
           )
+        ) : error ? (
+          <div className="bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold rounded-2xl p-4 flex items-center justify-between gap-3" id="referrals-error">
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={refresh}
+              className="px-3 py-1.5 bg-white border border-rose-200 hover:bg-rose-50 rounded-lg text-[11px] font-bold transition"
+            >
+              تلاش دوباره
+            </button>
+          </div>
+        ) : loading ? (
+          <div className="bg-white rounded-2xl p-12 text-center border border-slate-100 shadow-sm text-xs text-slate-400" id="referrals-loading">
+            در حال دریافت کارتابل…
+          </div>
         ) : groupedReferrals.length === 0 ? (
           <div className="bg-white rounded-2xl p-12 text-center border border-slate-100 shadow-sm space-y-3">
             <Inbox className="mx-auto text-slate-300" size={48} />
@@ -513,7 +676,13 @@ export default function ReferralsView({
         ) : (
           groupedReferrals.map(({ group, referrals }, idx) => {
             const isPending = referrals.some(r => (r.referral.status || 'در انتظار اقدام') === 'در انتظار اقدام');
-            const proj = projects.find(p => p.id === group.projectId);
+            // The project rides along with the row, joined by the server.
+            const proj = group.projectId
+              ? {
+                  id: group.projectId, name: group.projectName,
+                  code: group.projectCode, customerName: group.customerName,
+                }
+              : undefined;
             const isExpanded = expandedCards[group.id] ?? false; // Collapsed by default
 
             return (
@@ -583,7 +752,7 @@ export default function ReferralsView({
                       </span>
                       <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
                         <Calendar size={12} />
-                        {referrals[referrals.length - 1]?.referral?.createdAt || ''}
+                        {shamsi(referrals[referrals.length - 1]?.referral?.createdAt)}
                       </span>
                     </div>
                     <div className="text-slate-400 bg-white p-1 rounded-full shadow-sm border border-slate-100">
@@ -657,7 +826,7 @@ export default function ReferralsView({
                                   <FileCheck2 size={16} className="text-emerald-600" />
                                   <span>{msg.responder} ({msg.responder === referral.assignedTo ? 'ارجاع شونده' : 'ارجاع دهنده'}):</span>
                                 </div>
-                                <span className="font-mono text-[10px] text-emerald-600">{msg.createdAt}</span>
+                                <span className="font-mono text-[10px] text-emerald-600">{shamsi(msg.createdAt)}</span>
                               </div>
                               <p className="text-sm text-slate-800 leading-relaxed font-medium bg-white/70 p-3 rounded-lg border border-emerald-100">
                                 {msg.text}
@@ -696,12 +865,12 @@ export default function ReferralsView({
                               <textarea
                                 rows={2}
                                 placeholder="لطفاً پیام یا نتیجه بررسی خود را به صورت متنی بنویسید..."
-                                value={replyText[`${group.id}-${activity.id}`] || ''}
+                                value={replyText[referral.id] || ''}
                                 onChange={(e) => {
                                   const val = e.target.value;
                                   setReplyText(prev => ({
                                     ...prev,
-                                    [`${group.id}-${activity.id}`]: val
+                                    [referral.id]: val
                                   }));
                                 }}
                                 className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right placeholder-slate-400"
@@ -709,13 +878,13 @@ export default function ReferralsView({
 
                               <div className="flex flex-wrap items-center justify-between gap-3">
                                 <select
-                                  value={forwardToMap[`${group.id}-${activity.id}`] || ''}
-                                  onChange={(e) => setForwardToMap(prev => ({...prev, [`${group.id}-${activity.id}`]: e.target.value}))}
+                                  value={forwardToMap[referral.id] || ''}
+                                  onChange={(e) => setForwardToMap(prev => ({...prev, [referral.id]: e.target.value}))}
                                   className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-600 focus:border-sky-500 outline-none"
                                 >
                                   <option value="">-- ارجاع به همکار (اختیاری) --</option>
                                   {users.filter(u => u.fullName !== currentUserName).map(u => (
-                                    <option key={u.id} value={u.fullName}>{u.fullName} - {u.position || u.role}</option>
+                                    <option key={u.id} value={u.id}>{u.fullName}{u.position ? ` - ${u.position}` : ""}</option>
                                   ))}
                                 </select>
                                 {/* File upload section */}
@@ -737,7 +906,7 @@ export default function ReferralsView({
                                           compressImage(file, (dataUrl, sizeStr) => {
                                             setReplyAttachments(prev => ({
                                               ...prev,
-                                              [`${group.id}-${activity.id}`]: {
+                                              [referral.id]: {
                                                 name: file.name,
                                                 size: sizeStr,
                                                 content: dataUrl
@@ -750,15 +919,15 @@ export default function ReferralsView({
                                     />
                                   </label>
 
-                                  {replyAttachments[`${group.id}-${activity.id}`] && (
+                                  {replyAttachments[referral.id] && (
                                     <div className="flex items-center gap-2 bg-sky-50 text-sky-700 text-xs px-2.5 py-1 rounded-lg border border-sky-100 font-medium">
-                                      <span>{replyAttachments[`${group.id}-${activity.id}`]?.name} ({replyAttachments[`${group.id}-${activity.id}`]?.size})</span>
+                                      <span>{replyAttachments[referral.id]?.name} ({replyAttachments[referral.id]?.size})</span>
                                       <button
                                         type="button"
                                         onClick={() => {
                                           setReplyAttachments(prev => ({
                                             ...prev,
-                                            [`${group.id}-${activity.id}`]: null
+                                            [referral.id]: null
                                           }));
                                         }}
                                         className="text-rose-500 hover:text-rose-700 font-bold px-1"
@@ -773,7 +942,7 @@ export default function ReferralsView({
                                 <div className="flex items-center gap-2">
                                   <button
                                     type="button"
-                                    onClick={() => handleReplySubmit(group.id, activity.id, false)}
+                                    onClick={() => handleReplySubmit(referral.id, false)}
                                     className="px-6 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-sky-500/15 flex items-center justify-center gap-1.5 min-h-[42px]"
                                   >
                                     <MessageSquare size={15} />
@@ -782,7 +951,7 @@ export default function ReferralsView({
                                   {isItemPending && currentUserName === referral.assignedTo && (
                                     <button
                                       type="button"
-                                      onClick={() => handleReplySubmit(group.id, activity.id, true)}
+                                      onClick={() => handleReplySubmit(referral.id, true)}
                                       className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-emerald-500/15 flex items-center justify-center gap-1.5 min-h-[42px]"
                                     >
                                       <CheckCircle2 size={15} />
@@ -792,9 +961,14 @@ export default function ReferralsView({
                                   {!isItemPending && currentUserName === referral.assignedBy && (
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        toggleReferralStatus(group.id, activity.id);
-                                        alert('ارجاع مجدداً در وضعیت در انتظار اقدام قرار گرفت.');
+                                      onClick={async () => {
+                                        try {
+                                          await inboxApi.setReferralStatus(referral.id, 'در انتظار اقدام');
+                                          refresh();
+                                          alert('ارجاع مجدداً در وضعیت در انتظار اقدام قرار گرفت.');
+                                        } catch (err) {
+                                          reportError(err, 'بازگشایی ارجاع با خطا مواجه شد.');
+                                        }
                                       }}
                                       className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-amber-500/15 flex items-center justify-center gap-1.5 min-h-[42px]"
                                     >

@@ -44,6 +44,7 @@ import { registerDeliveryRoutes } from "./src/server/routes/deliveries";
 import { registerUserRoutes } from "./src/server/routes/users";
 import { registerAdminRoutes } from "./src/server/routes/admin";
 import { registerActivityRoutes } from "./src/server/routes/activities";
+import { registerNotificationRoutes } from "./src/server/routes/notifications";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 
 // Overridable so a second instance can be started against a scratch database
@@ -539,6 +540,7 @@ async function startServer() {
   registerUserRoutes(app, routeDeps);
   registerAdminRoutes(app, routeDeps);
   registerActivityRoutes(app, routeDeps);
+  registerNotificationRoutes(app, routeDeps);
 
   /** Who am I? Lets the client restore its session on reload. */
   app.get("/api/me", (req, res) => {
