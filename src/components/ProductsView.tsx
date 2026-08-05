@@ -177,6 +177,7 @@ export default function ProductsView({
   const [isBatchModalFullscreen, setIsBatchModalFullscreen] = useState(false);
   const [isCalculatorFullscreen, setIsCalculatorFullscreen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [isLoadingEdit, setIsLoadingEdit] = useState(false);
 
   // Dynamic Custom Fields State
   const [customValues, setCustomValues] = useState<Record<string, any>>({});
@@ -319,39 +320,52 @@ export default function ProductsView({
     setShowModal(true);
   };
 
-  // Trigger modal for editing
-  const handleOpenEdit = (prod: Product) => {
-    setEditingProduct(prod);
-    setProductCode(prod.code || '');
-    setDisplayName(prod.displayName);
-    setCategory(prod.category);
-    setBrand(prod.brand || '');
-    setDescription(prod.description);
-    setImages(prod.images || []);
-    setSupplyType(prod.supplyType === 'ORDER' ? 'ORDER' : 'INVENTORY');
-    setCustomValues(prod.customValues || {});
-    setFeatures(prod.features || []);
-    setHasVariants(prod.hasVariants || false);
-    // Clone variants so form edits never mutate the objects held in the store.
-    // Sharing references made updateProduct see identical before/after stock,
-    // so manual SKU stock changes were never logged as inventory transactions.
-    setVariants((prod.variants || []).map(v => ({ ...v, attributes: { ...v.attributes } })));
-    setConfigRules(prod.configRules || []);
-    setSimplePriceForeign(prod.priceForeign !== undefined ? String(prod.priceForeign) : '');
-    setSimpleCurrencyForeign(prod.currencyForeign || 'یورو');
-    setSimplePriceRIYAL(prod.basePriceRIYAL !== undefined ? String(prod.basePriceRIYAL) : '');
+  // Trigger modal for editing.
+  // The list supplies rowToProduct objects that omit images, variants, features,
+  // and configRules. We must fetch the full detail first — otherwise opening the
+  // editor clears those fields, and saving overwrites the real data with [].
+  const handleOpenEdit = async (prod: Product) => {
+    setIsLoadingEdit(true);
+    let full: Product;
+    try {
+      full = detailToProduct(await productsApi.get(prod.id));
+    } catch {
+      // Fall back to whatever the list row has so the modal still opens.
+      full = prod;
+    } finally {
+      setIsLoadingEdit(false);
+    }
+    setEditingProduct(full);
+    setProductCode(full.code || '');
+    setDisplayName(full.displayName);
+    setCategory(full.category);
+    setBrand(full.brand || '');
+    setDescription(full.description);
+    setImages(full.images || []);
+    setSupplyType(full.supplyType === 'ORDER' ? 'ORDER' : 'INVENTORY');
+    setCustomValues(full.customValues || {});
+    setFeatures(full.features || []);
+    setHasVariants(full.hasVariants || false);
+    // Clone variants so form edits never mutate the objects held by the server
+    // response — sharing references made before/after comparisons identical,
+    // which silently stopped SKU stock changes from being logged.
+    setVariants((full.variants || []).map(v => ({ ...v, attributes: { ...v.attributes } })));
+    setConfigRules(full.configRules || []);
+    setSimplePriceForeign(full.priceForeign !== undefined ? String(full.priceForeign) : '');
+    setSimpleCurrencyForeign(full.currencyForeign || 'یورو');
+    setSimplePriceRIYAL(full.basePriceRIYAL !== undefined ? String(full.basePriceRIYAL) : '');
     setSimpleCalcDetails({
-      calcPriceForeign: prod.calcPriceForeign,
-      calcExchangeRate: prod.calcExchangeRate,
-      calcRemittanceFee: prod.calcRemittanceFee,
-      calcRemittancePct: prod.calcRemittancePct,
-      calcShippingCost: prod.calcShippingCost,
-      calcCustomsDutyRIYAL: prod.calcCustomsDutyRIYAL,
-      calcOtherCostsForeign: prod.calcOtherCostsForeign,
-      calcOtherCostsRIYAL: prod.calcOtherCostsRIYAL,
-      calcProfitPct: prod.calcProfitPct,
-      calcProfitRIYAL: prod.calcProfitRIYAL,
-      calcMarginType: prod.calcMarginType
+      calcPriceForeign: full.calcPriceForeign,
+      calcExchangeRate: full.calcExchangeRate,
+      calcRemittanceFee: full.calcRemittanceFee,
+      calcRemittancePct: full.calcRemittancePct,
+      calcShippingCost: full.calcShippingCost,
+      calcCustomsDutyRIYAL: full.calcCustomsDutyRIYAL,
+      calcOtherCostsForeign: full.calcOtherCostsForeign,
+      calcOtherCostsRIYAL: full.calcOtherCostsRIYAL,
+      calcProfitPct: full.calcProfitPct,
+      calcProfitRIYAL: full.calcProfitRIYAL,
+      calcMarginType: full.calcMarginType
     });
     setNewSkuSelections({});
     setNewSkuError('');
@@ -917,10 +931,11 @@ export default function ProductsView({
                         {/* Edit */}
                         <button
                           onClick={() => handleOpenEdit(p)}
-                          className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-slate-50 rounded-lg transition"
+                          disabled={isLoadingEdit}
+                          className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-slate-50 rounded-lg transition disabled:opacity-50 disabled:cursor-wait"
                           title="ویرایش تجهیز"
                         >
-                          <Edit size={14} />
+                          {isLoadingEdit ? <Loader2 size={14} className="animate-spin" /> : <Edit size={14} />}
                         </button>
 
                         {/* Copy / Duplicate */}
