@@ -12,6 +12,7 @@ import DuplicateCustomerModal from './DuplicateCustomerModal';
 import { SearchableSelect } from './SearchableSelect';
 import { customersApi } from '../api/customers';
 import { detailToCustomer } from '../api/customerAdapter';
+import { getTodayShamsi } from '../dateUtils';
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -96,7 +97,7 @@ export default function QuickAddModal({
   const [projCommunicationMethod, setProjCommunicationMethod] = useState(() => (settings.dropdownItems?.communicationMethods || ['تلفن', 'ایمیل', 'جلسه حضوری', 'مکاتبه رسمی', 'شبکه‌های اجتماعی'])[0] || 'تلفن');
   const [projFinancialContact, setProjFinancialContact] = useState('');
   const [projTechnicalContact, setProjTechnicalContact] = useState('');
-  const [projOpportunityDate, setProjOpportunityDate] = useState(() => new Date().toLocaleDateString('fa-IR'));
+  const [projOpportunityDate, setProjOpportunityDate] = useState(() => getTodayShamsi());
   const [projExpectedCloseDate, setProjExpectedCloseDate] = useState('');
   const [projStatus, setProjStatus] = useState<Project['status']>('جدید');
   const [projLossReason, setProjLossReason] = useState('');
@@ -137,7 +138,7 @@ export default function QuickAddModal({
 
   const handleProjStatusChange = (newStatus: Project['status']) => {
     setProjStatus(newStatus);
-    const today = new Date().toLocaleDateString('fa-IR');
+    const today = getTodayShamsi();
     if (newStatus === 'باخته') {
       if (!projLossReason && settings.lossReasons?.length) {
         setProjLossReason(settings.lossReasons[0]);
