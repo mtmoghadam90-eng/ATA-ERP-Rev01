@@ -87,7 +87,10 @@ const LIST_SELECT = {
   basePriceRial: true,
   priceForeign: true,
   currencyForeign: true,
+  images: true,
+  features: true,
   createdAt: true,
+  variants: { select: { id: true, sku: true, attributes: true, stockLevel: true } },
   _count: { select: { variants: true } },
 } satisfies Prisma.ProductSelect;
 
