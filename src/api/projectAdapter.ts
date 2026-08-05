@@ -122,7 +122,8 @@ export function projectToWriteInput(
     endUserCustomerId: project.endUserCustomerId ?? null,
     financialContactId: project.financialContactId ?? null,
     technicalContactId: project.technicalContactId ?? null,
-    creationDate: project.creationDate ?? null,
+    // Default creationDate to opportunityDate if not set (for new projects)
+    creationDate: project.creationDate ?? project.opportunityDate ?? null,
     opportunityDate: project.opportunityDate ?? null,
     expectedCloseDate: project.expectedCloseDate ?? null,
     winningDate: project.winningDate ?? null,
