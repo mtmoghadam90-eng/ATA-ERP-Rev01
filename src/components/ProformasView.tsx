@@ -50,7 +50,7 @@ import { ApiError } from "../api/client";
 import { proformasApi } from "../api/proformas";
 import { customersApi, type CustomerRow } from "../api/customers";
 import { useEntitySearch } from "../api/useEntitySearch";
-import { productsApi } from "../api/products";
+import { productsApi, type ProductRow } from "../api/products";
 import { projectsApi } from "../api/projects";
 import { customerToWriteInput, detailToCustomer } from "../api/customerAdapter";
 import { productToWriteInput, detailToProduct } from "../api/productAdapter";
@@ -208,7 +208,6 @@ const getDeliverySummary = (itemsList: any[]) => {
 interface ProformasViewProps {
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
-  products: Product[];
   settings: ERPSettings;
   // The five proforma mutations are no longer props: the view calls the API
   // directly, so the totals and the derived outcome come back from the server
@@ -222,7 +221,6 @@ interface ProformasViewProps {
 export default function ProformasView({
   initialPrintDocId,
   onClearInitialPrintDocId,
-  products,
   settings,
   currentUser = null,
 }: ProformasViewProps) {
@@ -646,6 +644,30 @@ export default function ProformasView({
     getLabel: (row) => row.companyName,
   });
   const modalCustomers = customerPicker.matches as unknown as Customer[];
+
+  /**
+   * Product picker for the create/edit modal.
+   *
+   * Products were passed as a prop from store.products (database.json), which
+   * could be stale or incomplete after migration. This picker queries the API
+   * so every product is available and up-to-date.
+   */
+  const productPicker = useEntitySearch<ProductRow>({
+    path: '/api/products',
+    limit: 100,
+    enabled: modalOpen,
+    selectedId: null,
+    getLabel: (row) => row.displayName,
+  });
+  const products = productPicker.matches.map(row => ({
+    ...row,
+    // Map ProductRow fields to Product fields that the UI expects
+    name: row.displayName,
+    variants: [], // Variants are loaded separately when needed
+    features: [],
+    configRules: [],
+    images: [],
+  })) as unknown as Product[];
 
   // Open Create Modal
   const handleOpenCreate = () => {

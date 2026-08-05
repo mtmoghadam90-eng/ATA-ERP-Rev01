@@ -369,8 +369,8 @@ export default function App() {
             initialPrintDocId={printDocumentRequest?.module === 'proformas' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
             // Reads its own data from the API; the projects and customers it
-            // shows come joined onto the page's rows.
-            products={store.products}
+            // shows come joined onto the page's rows. Products are now loaded
+            // via useEntitySearch inside the component.
             settings={store.settings}
             currentUser={store.currentUser}
           />
