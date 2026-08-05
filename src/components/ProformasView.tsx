@@ -1137,7 +1137,10 @@ export default function ProformasView({
   // Handle Save (Add / Update)
   const handleSaveProforma = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customerId) return;
+    if (!customerId) {
+      alert('لطفاً خریدار پیش‌فاکتور را انتخاب کنید.');
+      return;
+    }
 
     // Project-Proforma Customer Mismatch Check on Save
     if (projectId) {

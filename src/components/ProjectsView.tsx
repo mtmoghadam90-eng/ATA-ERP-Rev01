@@ -651,7 +651,10 @@ export default function ProjectsView({
   };
   const handleSave = (e) => {
     e.preventDefault();
-    if (!customerId) return;
+    if (!customerId) {
+      alert('لطفاً مشتری پروژه را انتخاب کنید.');
+      return;
+    }
     const moduleFields = (settings?.customFields || []).filter((f) => f.module === "projects");
     for (const field of moduleFields) {
       if (field.required) {
