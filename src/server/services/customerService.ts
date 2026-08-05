@@ -79,7 +79,7 @@ export function customFieldClause(spec: unknown): Record<string, unknown> | unde
 export function buildCustomerWhere(
   q: ListQuery,
   user: AuthUser,
-  extra: { customField?: unknown } = {},
+  extra: { customField?: unknown; linkedTo?: unknown } = {},
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
 
@@ -91,6 +91,11 @@ export function buildCustomerWhere(
 
   for (const [field, value] of Object.entries(q.filters)) {
     and.push({ [field]: value });
+  }
+
+  // Filter by linked-to customer: show only contacts linked to this company
+  if (typeof extra.linkedTo === "string" && extra.linkedTo) {
+    and.push({ linksFrom: { some: { toId: extra.linkedTo } } });
   }
 
   // Several custom fields can be filtered at once. Express gives an array when
@@ -137,7 +142,7 @@ const LIST_SELECT = {
 export async function listCustomers(
   q: ListQuery,
   user: AuthUser,
-  extra: { customField?: unknown } = {},
+  extra: { customField?: unknown; linkedTo?: unknown } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
   const where = buildCustomerWhere(q, user, extra);

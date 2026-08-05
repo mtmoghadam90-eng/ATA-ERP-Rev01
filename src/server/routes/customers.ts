@@ -65,7 +65,11 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
       );
       // `customField=<id>:<value>`, repeatable. Kept out of parseListQuery's
       // allowlist because the field ids are defined by users at runtime.
-      const result = await listCustomers(q, user, { customField: req.query.customField });
+      // `linkedTo=<customerId>` filters to contacts linked to that company.
+      const result = await listCustomers(q, user, {
+        customField: req.query.customField,
+        linkedTo: req.query.linkedTo,
+      });
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "GET /api/customers");

@@ -272,6 +272,18 @@ export default function ProjectsView({
     enabled: showModal,
   });
 
+  // Separate picker for contacts linked to the selected customer
+  const linkedContactsPicker = useEntitySearch<CustomerRow>({
+    path: '/api/customers',
+    limit: 100,
+    params: {
+      customerType: 'حقیقی',
+      linkedTo: customerId || undefined,
+    },
+    getLabel: (row) => `${row.firstName || ''} ${row.lastName || ''}`.trim(),
+    enabled: showModal && !!customerId,
+  });
+
   const productPicker = useEntitySearch<{ id: string; displayName: string; hasVariants: boolean }>({
     path: '/api/products',
     limit: 25,
@@ -282,6 +294,7 @@ export default function ProjectsView({
   /** Products currently offered by the picker, for resolving a chosen id. */
   const products = productPicker.matches as unknown as Product[];
   const customers = customerPicker.matches as unknown as Customer[];
+  const linkedContacts = linkedContactsPicker.matches as unknown as Customer[];
 
   /**
    * The three contact fields are foreign keys on the server. The form holds the
@@ -3494,23 +3507,12 @@ export default function ProjectsView({
                         className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                       >
                         <option value="">-- انتخاب فرد مالی (مشتری) --</option>
-                        {(() => {
-                          const selectedCustObj = customers.find(c => c.id === customerId);
-                          let filtered = customers.filter(c => c.customerType === 'حقیقی');
-                          if (selectedCustObj) {
-                            if (selectedCustObj.customerType === 'حقوقی') {
-                              filtered = filtered.filter(c => selectedCustObj.linkedCustomerIds?.includes(c.id));
-                            } else {
-                              filtered = filtered.filter(c => c.id === selectedCustObj.id || selectedCustObj.linkedCustomerIds?.includes(c.id));
-                            }
-                          }
-                          return filtered.map(c => {
-                            const name = `${c.firstName || ''} ${c.lastName || ''}`.trim();
-                            return (
-                              <option key={c.id} value={c.id}>{name}</option>
-                            );
-                          });
-                        })()}
+                        {linkedContacts.map(c => {
+                          const name = `${c.firstName || ''} ${c.lastName || ''}`.trim();
+                          return (
+                            <option key={c.id} value={c.id}>{name}</option>
+                          );
+                        })}
                       </select>
                       {addCustomer && (
                         <button
@@ -3538,23 +3540,12 @@ export default function ProjectsView({
                         className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                       >
                         <option value="">-- انتخاب فرد فنی (مشتری) --</option>
-                        {(() => {
-                          const selectedCustObj = customers.find(c => c.id === customerId);
-                          let filtered = customers.filter(c => c.customerType === 'حقیقی');
-                          if (selectedCustObj) {
-                            if (selectedCustObj.customerType === 'حقوقی') {
-                              filtered = filtered.filter(c => selectedCustObj.linkedCustomerIds?.includes(c.id));
-                            } else {
-                              filtered = filtered.filter(c => c.id === selectedCustObj.id || selectedCustObj.linkedCustomerIds?.includes(c.id));
-                            }
-                          }
-                          return filtered.map(c => {
-                            const name = `${c.firstName || ''} ${c.lastName || ''}`.trim();
-                            return (
-                              <option key={c.id} value={c.id}>{name}</option>
-                            );
-                          });
-                        })()}
+                        {linkedContacts.map(c => {
+                          const name = `${c.firstName || ''} ${c.lastName || ''}`.trim();
+                          return (
+                            <option key={c.id} value={c.id}>{name}</option>
+                          );
+                        })}
                       </select>
                       {addCustomer && (
                         <button
