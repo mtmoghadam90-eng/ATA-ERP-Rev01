@@ -54,6 +54,7 @@ import { detailToCustomer } from '../api/customerAdapter';
 import { projectsApi } from '../api/projects';
 import type { ProjectRow } from '../api/projects';
 import type { ProformaRow } from '../api/proformas';
+import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 
 /**
  * Packing lists.
@@ -70,13 +71,15 @@ interface PackagingDeliveryViewProps {
   // props, and neither are the three mutations.
   settings: ERPSettings;
   currentUser: any;
+  categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
 
 export default function PackagingDeliveryView({
   initialPrintDocId,
   onClearInitialPrintDocId,
   settings,
-  currentUser
+  currentUser,
+  categoryCompletion,
 }: PackagingDeliveryViewProps) {
   const activeTemplate = settings.proformaTemplates?.find(t => t.name === settings.activeTemplateId) || settings.proformaTemplates?.[0];
   const [activeTab, setActiveTab] = useState<'list' | 'new'>('list');
@@ -928,9 +931,22 @@ export default function PackagingDeliveryView({
     });
 
     try {
+      const oldDelivery = editingDeliveryId ? list.rows.find(r => r.id === editingDeliveryId) : null;
+      const hadDeliveryDate = oldDelivery?.actualDeliveryDateJalali;
+
       if (editingDeliveryId) await deliveriesApi.update(editingDeliveryId, payload);
       else await deliveriesApi.create(payload);
       list.refresh();
+
+      // Prompt for category completion when actualDeliveryDate is newly set
+      if (categoryCompletion && selectedProjectId && finalActualDeliveryDate &&
+          (!editingDeliveryId || !hadDeliveryDate)) {
+        categoryCompletion.promptCompletion({
+          projectId: selectedProjectId,
+          categoryName: 'بسته‌بندی و تحویل کالا',
+          message: `تاریخ تحویل کالا به مشتری (${finalActualDeliveryDate}) ثبت ${editingDeliveryId ? 'گردید' : 'شد'}. آیا می‌خواهید وضعیت دسته فعالیت بسته‌بندی را به «اتمام کار» تغییر دهید؟`
+        });
+      }
     } catch (err) {
       reportError(err, 'ثبت پکینگ لیست با خطا مواجه شد.');
       return;

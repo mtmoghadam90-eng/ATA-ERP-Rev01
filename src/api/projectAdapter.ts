@@ -42,7 +42,7 @@ export function rowToProject(row: ProjectRow): Project {
     probabilityPercent: row.probabilityPercent ?? undefined,
     marketingChannel: row.marketingChannel ?? undefined,
     leadQuality: row.leadQuality ?? undefined,
-    salesExpert: row.owner?.fullName ?? undefined,
+    salesExpert: row.salesExpert ?? undefined,
     description: "",
   } as Project;
 }
@@ -57,10 +57,11 @@ export function detailToProject(detail: ProjectDetail): Project {
     communicationMethod: detail.communicationMethod ?? undefined,
     customerInquiryNumber: detail.customerInquiryNumber ?? undefined,
     referrerName: detail.referrerName ?? undefined,
-    // The view shows names; the record stores ids, so both are carried.
-    endUser: detail.endUser?.companyName ?? undefined,
-    financialContact: detail.financialContact?.companyName ?? undefined,
-    technicalContact: detail.technicalContact?.companyName ?? undefined,
+    salesExpert: detail.salesExpert ?? undefined,
+    // The view shows names; the record stores both string fields and FK ids
+    endUser: detail.endUser ?? detail.endUserCustomer?.companyName ?? undefined,
+    financialContact: detail.financialContact ?? detail.financialContactCustomer?.companyName ?? undefined,
+    technicalContact: detail.technicalContact ?? detail.technicalContactCustomer?.companyName ?? undefined,
     itemsNeeded: detail.items.map((item) => ({
       productId: item.productId ?? "",
       variantId: item.variantId ?? undefined,
@@ -118,6 +119,10 @@ export function projectToWriteInput(
     referrerName: project.referrerName ?? null,
     communicationMethod: project.communicationMethod ?? null,
     customerInquiryNumber: project.customerInquiryNumber ?? null,
+    salesExpert: project.salesExpert ?? null,
+    financialContact: project.financialContact ?? null,
+    technicalContact: project.technicalContact ?? null,
+    endUser: project.endUser ?? null,
     ownerUserId: project.ownerUserId ?? null,
     endUserCustomerId: project.endUserCustomerId ?? null,
     financialContactId: project.financialContactId ?? null,

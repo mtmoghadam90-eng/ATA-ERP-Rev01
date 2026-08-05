@@ -115,6 +115,7 @@ const LIST_SELECT = {
   probabilityPercent: true,
   marketingChannel: true,
   leadQuality: true,
+  salesExpert: true,
   ownerUserId: true,
   createdAt: true,
   customer: { select: { id: true, companyName: true } },
@@ -183,9 +184,9 @@ async function getProjectRecord(id: string, user: AuthUser) {
     include: {
       customer: { select: { id: true, companyName: true, customerType: true } },
       owner: { select: { id: true, fullName: true } },
-      endUser: { select: { id: true, companyName: true } },
-      financialContact: { select: { id: true, companyName: true } },
-      technicalContact: { select: { id: true, companyName: true } },
+      endUserCustomer: { select: { id: true, companyName: true } },
+      financialContactCustomer: { select: { id: true, companyName: true } },
+      technicalContactCustomer: { select: { id: true, companyName: true } },
       items: { orderBy: { lineNo: "asc" } },
       milestones: { orderBy: { lineNo: "asc" } },
       categoryGroups: {
@@ -267,6 +268,10 @@ export interface ProjectScalarInput {
   referrerName?: string | null;
   communicationMethod?: string | null;
   customerInquiryNumber?: string | null;
+  salesExpert?: string | null;
+  financialContact?: string | null;
+  technicalContact?: string | null;
+  endUser?: string | null;
   ownerUserId?: string | null;
   endUserCustomerId?: string | null;
   financialContactId?: string | null;
@@ -315,6 +320,10 @@ function scalarData(input: ProjectInput): Record<string, unknown> {
   if ("referrerName" in input) set("referrerName", toNullableString(input.referrerName, 200));
   if ("communicationMethod" in input) set("communicationMethod", toNullableString(input.communicationMethod, 100));
   if ("customerInquiryNumber" in input) set("customerInquiryNumber", toNullableString(input.customerInquiryNumber, 100));
+  if ("salesExpert" in input) set("salesExpert", toNullableString(input.salesExpert, 200));
+  if ("financialContact" in input) set("financialContact", toNullableString(input.financialContact, 200));
+  if ("technicalContact" in input) set("technicalContact", toNullableString(input.technicalContact, 200));
+  if ("endUser" in input) set("endUser", toNullableString(input.endUser, 200));
   if ("ownerUserId" in input) set("ownerUserId", toNullableString(input.ownerUserId, 36));
   if ("endUserCustomerId" in input) set("endUserCustomerId", toNullableString(input.endUserCustomerId, 36));
   if ("financialContactId" in input) set("financialContactId", toNullableString(input.financialContactId, 36));

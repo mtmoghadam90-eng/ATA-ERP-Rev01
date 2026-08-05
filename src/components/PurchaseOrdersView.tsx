@@ -48,6 +48,7 @@ import type { SupplierRow } from '../api/suppliers';
 import type { ProjectRow } from '../api/projects';
 import type { ProformaRow } from '../api/proformas';
 import type { CustomerRow } from '../api/customers';
+import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 
 /**
  * Purchase orders screen.
@@ -70,6 +71,7 @@ interface PurchaseOrdersViewProps {
   customers?: Customer[];
   addCustomer?: (customer: any) => any;
   currentUser?: any;
+  categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
 
 export default function PurchaseOrdersView({
@@ -81,7 +83,8 @@ export default function PurchaseOrdersView({
   addProject,
   addProduct,
   addCustomer,
-  currentUser
+  currentUser,
+  categoryCompletion,
 }: PurchaseOrdersViewProps) {
   // Rates are read here rather than handed down: they are a short shared list
   // that changes during the day, and a stale one misprices a document.
@@ -151,8 +154,22 @@ export default function PurchaseOrdersView({
 
   const updatePurchaseOrder = async (po: PurchaseOrder) => {
     try {
+      const oldPO = list.rows.find(r => r.id === po.id);
+      const oldStatus = oldPO?.status;
+
       await purchaseOrdersApi.update(po.id, purchaseOrderToWriteInput(po));
       list.refresh();
+
+      // Prompt for category completion when status changes to delivered
+      if (categoryCompletion && po.projectId &&
+          oldStatus !== 'تحویل شده (رسید انبار)' &&
+          po.status === 'تحویل شده (رسید انبار)') {
+        categoryCompletion.promptCompletion({
+          projectId: po.projectId,
+          categoryName: 'سفارشات خرید تامین‌کنندگان',
+          message: `سفارش خرید ${po.poNumber} به انبار تحویل شد. آیا می‌خواهید وضعیت فعالیت‌های سفارش خرید این پروژه را به «اتمام کار» تغییر دهید؟`
+        });
+      }
     } catch (err) {
       reportError(err, 'ثبت تغییرات سفارش خرید با خطا مواجه شد.');
     }

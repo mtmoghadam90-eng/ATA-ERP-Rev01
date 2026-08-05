@@ -26,12 +26,15 @@ import ProjectConfirmationUploadModal from './components/ProjectConfirmationUplo
 import { Project } from './types';
 import { useSidebarBadges } from './api/useSidebarBadges';
 import { tasksApi, taskToWriteInput } from './api/tasks';
+import { useCategoryCompletion } from './api/useCategoryCompletion';
 
 export default function App() {
   const store = useERPStore();
   // Counts the sidebar and header show. Server-side, and the last reason this
   // component needed whole collections.
   const badges = useSidebarBadges(!!store.currentUser);
+  // Category completion prompt for migrated modules
+  const categoryCompletion = useCategoryCompletion();
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     return (localStorage.getItem('erp-theme') as 'light' | 'dark') || 'light';
   });
@@ -372,17 +375,19 @@ export default function App() {
             // via useEntitySearch inside the component.
             settings={store.settings}
             currentUser={store.currentUser}
+            categoryCompletion={categoryCompletion}
           />
         );
       case 'purchaseOrders':
         return (
-          <PurchaseOrdersView 
+          <PurchaseOrdersView
             initialPrintDocId={printDocumentRequest?.module === 'purchaseOrders' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
             // Reads its own data from the API; landed cost and the stock
             // receipt are computed server-side.
             settings={store.settings}
             currentUser={store.currentUser}
+            categoryCompletion={categoryCompletion}
           />
         );
       case 'suppliers':
@@ -438,21 +443,23 @@ export default function App() {
         );
       case 'packagingDelivery':
         return (
-          <PackagingDeliveryView 
+          <PackagingDeliveryView
             initialPrintDocId={printDocumentRequest?.module === 'packagingDelivery' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
             settings={store.settings}
             currentUser={store.currentUser}
+            categoryCompletion={categoryCompletion}
           />
         );
-      
+
       case 'afterSalesServices':
         return (
-          <AfterSalesServicesView 
+          <AfterSalesServicesView
             initialPrintDocId={printDocumentRequest?.module === 'afterSalesServices' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
             settings={store.settings}
             currentUser={store.currentUser}
+            categoryCompletion={categoryCompletion}
           />
         );
       case 'supplierInquiries':
@@ -796,18 +803,26 @@ export default function App() {
       )}
 
 
-      {/* Category Completion Prompt Modal */}
+      {/* Category Completion Prompt Modal - supports both store and API-based modules */}
       <ConfirmModal
-        isOpen={!!store.completionPrompt}
-        onClose={() => store.setCompletionPrompt(null)}
-        onConfirm={() => {
+        isOpen={!!store.completionPrompt || !!categoryCompletion.prompt}
+        onClose={() => {
+          store.setCompletionPrompt(null);
+          categoryCompletion.dismissPrompt();
+        }}
+        onConfirm={async () => {
+          // Store-based modules (old)
           if (store.completionPrompt) {
             store.completeCategoryGroup(store.completionPrompt.projectId, store.completionPrompt.categoryName);
             store.setCompletionPrompt(null);
           }
+          // API-based modules (new)
+          if (categoryCompletion.prompt) {
+            await categoryCompletion.confirmCompletion();
+          }
         }}
         title="اتمام کار فعالیت"
-        message={store.completionPrompt?.message || ''}
+        message={store.completionPrompt?.message || categoryCompletion.prompt?.message || ''}
         confirmText="بله، تغییر یابد"
         cancelText="انصراف"
       />

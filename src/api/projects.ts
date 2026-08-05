@@ -77,6 +77,7 @@ export interface ProjectRow {
   probabilityPercent: number | null;
   marketingChannel: string | null;
   leadQuality: string | null;
+  salesExpert: string | null;
   ownerUserId: string | null;
   createdAt: string;
   customer: { id: string; companyName: string } | null;
@@ -119,6 +120,10 @@ export interface ProjectDetail extends ProjectRow {
   customerInquiryNumber: string | null;
   referrerName: string | null;
   closingDateJalali: string | null;
+  salesExpert: string | null;
+  financialContact: string | null;
+  technicalContact: string | null;
+  endUser: string | null;
   endUserCustomerId: string | null;
   financialContactId: string | null;
   technicalContactId: string | null;
@@ -126,9 +131,9 @@ export interface ProjectDetail extends ProjectRow {
   manualDocuments: string | null;
   milestoneRules: string | null;
   customValues: string | null;
-  endUser: { id: string; companyName: string } | null;
-  financialContact: { id: string; companyName: string } | null;
-  technicalContact: { id: string; companyName: string } | null;
+  endUserCustomer: { id: string; companyName: string } | null;
+  financialContactCustomer: { id: string; companyName: string } | null;
+  technicalContactCustomer: { id: string; companyName: string } | null;
   items: ProjectItemRow[];
   milestones: ProjectMilestoneRow[];
   categoryGroups: unknown[];
@@ -159,6 +164,10 @@ export interface ProjectWriteInput {
   referrerName?: string | null;
   communicationMethod?: string | null;
   customerInquiryNumber?: string | null;
+  salesExpert?: string | null;
+  financialContact?: string | null;
+  technicalContact?: string | null;
+  endUser?: string | null;
   ownerUserId?: string | null;
   endUserCustomerId?: string | null;
   financialContactId?: string | null;

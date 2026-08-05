@@ -323,15 +323,21 @@ model Project {
   communicationMethod String? @db.NVarChar(100)
   customerInquiryNumber String? @db.NVarChar(100)
 
+  /// String fields for simple text values (not FK references)
+  salesExpert         String? @db.NVarChar(200)
+  financialContact    String? @db.NVarChar(200)
+  technicalContact    String? @db.NVarChar(200)
+  endUser             String? @db.NVarChar(200)
+
   /// Real references, so "only my projects" can be enforced in the database.
   ownerUserId         String? @db.NVarChar(36)
   owner               User?   @relation("ProjectOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   endUserCustomerId   String? @db.NVarChar(36)
-  endUser             Customer? @relation("ProjectEndUser", fields: [endUserCustomerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  endUserCustomer     Customer? @relation("ProjectEndUser", fields: [endUserCustomerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   financialContactId  String? @db.NVarChar(36)
-  financialContact    Customer? @relation("ProjectFinancialContact", fields: [financialContactId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  financialContactCustomer Customer? @relation("ProjectFinancialContact", fields: [financialContactId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   technicalContactId  String? @db.NVarChar(36)
-  technicalContact    Customer? @relation("ProjectTechnicalContact", fields: [technicalContactId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  technicalContactCustomer Customer? @relation("ProjectTechnicalContact", fields: [technicalContactId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   /// Uploaded document metadata (paths only, never file bytes).
   attachments      String? @db.NVarChar(Max)

@@ -40,6 +40,18 @@ export function getCustomerName(customer: Customer | undefined): string {
 
 /** Names of the legal entities this (individual) customer is linked to. */
 function linkedCompanyName(customer: Customer, all: Customer[]): string {
+  // New format: linksFrom array with nested 'to' object
+  const linksFrom = (customer as any).linksFrom;
+  if (Array.isArray(linksFrom) && linksFrom.length > 0) {
+    for (const link of linksFrom) {
+      const linked = link.to;
+      if (linked && linked.customerType === 'حقوقی' && linked.companyName) {
+        return linked.companyName;
+      }
+    }
+  }
+
+  // Old format: linkedCustomerIds array
   const ids = customer.linkedCustomerIds || [];
   for (const id of ids) {
     const linked = all.find((c) => c.id === id);

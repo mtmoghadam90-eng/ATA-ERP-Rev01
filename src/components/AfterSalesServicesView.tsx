@@ -30,6 +30,7 @@ import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { ApiError } from '../api/client';
 import { afterSalesApi, detailToService, rowToService, serviceToWriteInput } from '../api/afterSales';
 import { useAfterSalesList } from '../api/useAfterSalesList';
+import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import { useEntitySearch } from '../api/useEntitySearch';
 import { useModuleNotes } from '../api/moduleNotes';
 import { customersApi } from '../api/customers';
@@ -55,13 +56,15 @@ interface AfterSalesServicesViewProps {
   // neither are the three mutations.
   settings: ERPSettings;
   currentUser: User | null;
+  categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
 
 export default function AfterSalesServicesView({
   initialPrintDocId,
   onClearInitialPrintDocId,
   settings,
-  currentUser
+  currentUser,
+  categoryCompletion,
 }: AfterSalesServicesViewProps) {
   const list = useAfterSalesList();
   const searchTerm = list.search;
@@ -392,9 +395,33 @@ export default function AfterSalesServicesView({
     });
 
     try {
+      const oldService = editingService;
+      const oldStatus = oldService?.status;
+      const newStatus = serviceItems.every(it => it.status === 'تحویل داده شده')
+        ? 'تحویل داده شده'
+        : serviceItems.some(it => it.status === 'تحویل داده شده' || it.status === 'تکمیل شده')
+        ? 'تکمیل شده'
+        : serviceItems.some(it => it.status === 'در حال تعمیر/خدمات')
+        ? 'در حال تعمیر/خدمات'
+        : 'در حال بررسی';
+
       if (editingService) await afterSalesApi.update(editingService.id, payload);
       else await afterSalesApi.create(payload);
       list.refresh();
+
+      // Prompt for category completion when status changes to "تحویل داده شده"
+      if (categoryCompletion && selectedProjectId &&
+          oldStatus !== 'تحویل داده شده' && newStatus === 'تحویل داده شده') {
+        // Get the item description for the message
+        const itemDesc = serviceItems.length > 1
+          ? `${serviceItems.length} قلم کالا`
+          : (serviceItems[0]?.productName || serviceItems[0]?.issueDescription || 'کالا');
+        categoryCompletion.promptCompletion({
+          projectId: selectedProjectId,
+          categoryName: 'خدمات پس از فروش',
+          message: `${itemDesc} تحویل مشتری داده شد. آیا می‌خواهید وضعیت دسته فعالیت مربوط به خدمات پس از فروش را به «اتمام کار» تغییر دهید؟`
+        });
+      }
     } catch (err) {
       reportError(err, 'ثبت سابقه خدمات با خطا مواجه شد.');
       return;

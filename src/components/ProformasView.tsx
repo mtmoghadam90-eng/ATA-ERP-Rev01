@@ -71,6 +71,7 @@ import { findCustomerDuplicates, DuplicateMatch } from "../utils/customerDuplica
 import DuplicateCustomerModal from "./DuplicateCustomerModal";
 import PriceCalculatorModal from "./PriceCalculatorModal";
 import { generateSku, getCombinedFeaturePrice, findVariantByAttributes } from "../utils/skuUtils";
+import type { useCategoryCompletion } from "../api/useCategoryCompletion";
 
 // Helper functions for dynamic delivery time notes generation
 const generateDeliveryNotes = (
@@ -217,12 +218,14 @@ interface ProformasViewProps {
   currentUser?: User | null;
   transactions?: any;
   packagingDeliveries?: any;
+  categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
 export default function ProformasView({
   initialPrintDocId,
   onClearInitialPrintDocId,
   settings,
   currentUser = null,
+  categoryCompletion,
 }: ProformasViewProps) {
   // Rates are read here rather than handed down: they are a short shared list
   // that changes during the day, and a stale one misprices a document.
@@ -359,6 +362,10 @@ export default function ProformasView({
     sentRecipients?: string[],
   ) => {
     try {
+      // Get the old proforma before update
+      const oldProforma = list.rows.find(r => r.id === id);
+      const oldOutcome = oldProforma?.outcomeStatus;
+
       await proformasApi.update(id, {
         status,
         lossReason: lossReason ?? null,
@@ -369,6 +376,23 @@ export default function ProformasView({
         isCancelled: status === 'لغو شده',
       });
       list.refresh();
+
+      // Check if we should prompt for category completion
+      if (categoryCompletion && oldProforma?.projectId) {
+        // Fetch the updated proforma to get the new outcome
+        const updated = await proformasApi.get(id);
+        const newOutcome = updated.outcomeStatus;
+
+        // If outcome changed to winner or semi-winner, prompt
+        if (oldOutcome !== newOutcome &&
+            (newOutcome === 'تأیید شده (برنده)' || newOutcome === 'نیمه برنده')) {
+          categoryCompletion.promptCompletion({
+            projectId: oldProforma.projectId,
+            categoryName: 'پیش‌فاکتورها و مهندسی فروش',
+            message: `پیش‌فاکتور ${oldProforma.proformaNumber} تایید شد (${newOutcome === 'تأیید شده (برنده)' ? 'برنده' : 'نیمه برنده'}). آیا می‌خواهید وضعیت فعالیت‌های پیش‌فاکتور این پروژه را به «اتمام کار» تغییر دهید؟`
+          });
+        }
+      }
     } catch (err) {
       reportError(err, 'تغییر وضعیت پیش‌فاکتور با خطا مواجه شد.');
     }
@@ -396,6 +420,16 @@ export default function ProformasView({
         });
       }
       list.refresh();
+
+      // Prompt for category completion when all proformas are lost or cancelled
+      if (categoryCompletion && all.length > 0 && (status === 'باخته' || status === 'لغو شده')) {
+        const actionMessage = status === 'لغو شده' ? 'لغو شدند' : 'باخت شدند';
+        categoryCompletion.promptCompletion({
+          projectId,
+          categoryName: 'پیش‌فاکتورها و مهندسی فروش',
+          message: `تمامی نسخه‌های پیش‌فاکتور پروژه با موفقیت ${actionMessage}. آیا می‌خواهید وضعیت فعالیت‌های پیش‌فاکتور این پروژه را به «اتمام کار» تغییر دهید؟`
+        });
+      }
     } catch (err) {
       reportError(err, 'تغییر وضعیت پیش‌فاکتورهای پروژه با خطا مواجه شد.');
     }

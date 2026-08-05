@@ -24,6 +24,7 @@ export interface CustomerRow {
   province: string | null;
   city: string | null;
   tags: string | null;
+  position: string | null;
   ownerUserId: string | null;
   createdAt: string;
   /** Serialized custom-field values, or null. */

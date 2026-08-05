@@ -129,6 +129,7 @@ const LIST_SELECT = {
   province: true,
   city: true,
   tags: true,
+  position: true, // Needed for customer disambiguation in dropdowns
   ownerUserId: true,
   createdAt: true,
   customValues: true,
