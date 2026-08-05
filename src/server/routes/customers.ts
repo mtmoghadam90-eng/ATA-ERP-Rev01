@@ -22,6 +22,7 @@ import {
   CustomerCandidate, findCustomerDuplicates, hasHardDuplicate,
 } from "../../utils/customerDuplicates";
 import type { Customer } from "../../types";
+import { getTodayShamsi } from "../../dateUtils";
 
 /**
  * Customers REST API — the reference shape for every other module.
@@ -167,6 +168,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
       const customer = await createCustomer(
         { customerType: "حقوقی", ...input } as CustomerInput,
         user,
+        getTodayShamsi(),
       );
       res.status(201).json({ success: true, customer });
     } catch (err) {
@@ -178,7 +180,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
     const user = deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const customer = await updateCustomer(req.params.id, pickInput(req.body), user);
+      const customer = await updateCustomer(req.params.id, pickInput(req.body), user, getTodayShamsi());
       if (!customer) {
         res.status(403).json({ success: false, error: "شما اجازه تغییر این مشتری را ندارید." });
         return;
@@ -283,7 +285,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
         return;
       }
 
-      const ok = await deleteCustomer(id, user);
+      const ok = await deleteCustomer(id, user, getTodayShamsi());
       if (!ok) {
         res.status(403).json({ success: false, error: "شما اجازه حذف این مشتری را ندارید." });
         return;

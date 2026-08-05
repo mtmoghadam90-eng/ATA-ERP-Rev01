@@ -10,6 +10,7 @@ import {
 } from "../services/projectService";
 import { DOCUMENT_FOLDERS, listProjectDocuments } from "../services/projectDocuments";
 import { findMissingExchangeRates, summarizeProjectFinance } from "../services/projectFinance";
+import { getTodayShamsi } from "../../dateUtils";
 
 /**
  * Projects REST API. Follows the customers pattern: paginated reads, a picked
@@ -201,7 +202,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
         });
       }
 
-      const project = await createProject(input, user);
+      const project = await createProject(input, user, getTodayShamsi());
       res.status(201).json({ success: true, project });
     } catch (err) {
       sendError(res, err, "POST /api/projects");
@@ -212,7 +213,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
     const user = deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const project = await updateProject(req.params.id, pickInput(req.body), user);
+      const project = await updateProject(req.params.id, pickInput(req.body), user, getTodayShamsi());
       if (!project) {
         res.status(403).json({ success: false, error: "شما اجازه تغییر این پروژه را ندارید." });
         return;
@@ -227,7 +228,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
     const user = deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const outcome = await deleteProject(req.params.id, user);
+      const outcome = await deleteProject(req.params.id, user, getTodayShamsi());
       if (outcome === "forbidden") {
         res.status(403).json({ success: false, error: "شما اجازه حذف این پروژه را ندارید." });
         return;

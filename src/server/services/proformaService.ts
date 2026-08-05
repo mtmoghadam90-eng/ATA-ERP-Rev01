@@ -8,6 +8,9 @@ import {
   ProformaOutcome, deriveProjectStatus, getProformaOutcome, getWonItems, isWonStatus,
   statusWithoutProformas,
 } from "../proformaStatus";
+import { logAction } from "./auditService";
+import { notifyModuleResponsible } from "./notificationService";
+import { processWorkflowRules } from "./workflowService";
 
 /**
  * Proforma data access.
@@ -375,7 +378,7 @@ async function syncProjectStatus(
 export async function createProforma(input: ProformaInput, user: AuthUser, todayJalali: string) {
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
+  const proforma = await db.$transaction(async (tx) => {
     const proforma = await tx.proforma.create({
       data: {
         ...scalarData(input),
@@ -392,6 +395,44 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
     await syncProjectStatus(tx, proforma.projectId, todayJalali);
     return proforma;
   });
+
+  // Audit log
+  await logAction(
+    {
+      action: "CREATE",
+      module: "پیش‌فاکتورها",
+      entityId: proforma.id,
+      description: `ایجاد پیش‌فاکتور جدید شماره ${proforma.proformaNumber} به مبلغ کل ${(proforma.finalAmount || 0).toLocaleString('fa-IR')} ${proforma.currency || 'ریال'}`,
+      afterState: proforma,
+    },
+    user,
+    todayJalali,
+  );
+
+  // Notification
+  await notifyModuleResponsible(
+    "proformas",
+    "صدور پیش‌فاکتور جدید",
+    `پیش‌فاکتور جدید شماره ${proforma.proformaNumber} ثبت شد`,
+    user,
+    proforma.projectId,
+  );
+
+  // Workflow rules
+  await processWorkflowRules(
+    "proforma_created",
+    {
+      proformaId: proforma.id,
+      proformaNumber: proforma.proformaNumber,
+      projectId: proforma.projectId,
+      customerId: proforma.customerId,
+      finalAmount: proforma.finalAmount,
+      currency: proforma.currency,
+    },
+    user,
+  );
+
+  return proforma;
 }
 
 export async function updateProforma(
@@ -403,12 +444,15 @@ export async function updateProforma(
   const db = getDb();
   const visibility = visibilityClause(user);
 
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     const existing = await tx.proforma.findFirst({
       where: visibility ? { AND: [{ id }, visibility] } : { id },
-      select: { id: true, projectId: true },
+      select: { id: true, projectId: true, proformaNumber: true },
     });
     if (!existing) return null;
+
+    // Get before state for audit
+    const before = await tx.proforma.findUnique({ where: { id } });
 
     const data: Record<string, unknown> = scalarData(input);
 
@@ -438,8 +482,49 @@ export async function updateProforma(
       await syncProjectStatus(tx, existing.projectId, todayJalali);
     }
 
-    return proforma;
+    return { proforma, before };
   });
+
+  if (result) {
+    // Check if outcome changed for workflow trigger
+    const oldOutcome = result.before ? getProformaOutcome(result.before as any) : null;
+    const newOutcome = getProformaOutcome(result.proforma as any);
+
+    // Audit log
+    await logAction(
+      {
+        action: "UPDATE",
+        module: "پیش‌فاکتورها",
+        entityId: id,
+        description: `ویرایش پیش‌فاکتور (شماره: ${result.proforma.proformaNumber})`,
+        beforeState: result.before,
+        afterState: result.proforma,
+      },
+      user,
+      todayJalali,
+    );
+
+    // Workflow rules for outcome change
+    if (oldOutcome !== newOutcome) {
+      await processWorkflowRules(
+        "proforma_outcome_change",
+        {
+          proformaId: result.proforma.id,
+          proformaNumber: result.proforma.proformaNumber,
+          projectId: result.proforma.projectId,
+          customerId: result.proforma.customerId,
+          oldOutcome,
+          newOutcome,
+          outcome: newOutcome,
+        },
+        user,
+      );
+    }
+
+    return result.proforma;
+  }
+
+  return null;
 }
 
 export async function countProformaReferences(id: string) {
@@ -462,18 +547,37 @@ export async function deleteProforma(
 
   const existing = await db.proforma.findFirst({
     where: visibility ? { AND: [{ id }, visibility] } : { id },
-    select: { id: true, projectId: true },
+    select: { id: true, projectId: true, proformaNumber: true },
   });
   if (!existing) return "forbidden";
 
   const refs = await countProformaReferences(id);
   if (refs.total > 0) return "in-use";
 
+  // Get full data for audit before deletion
+  const proforma = await db.proforma.findUnique({ where: { id } });
+
   await db.$transaction(async (tx) => {
     await tx.proforma.delete({ where: { id } });
     // The project's status was derived partly from this proforma.
     await syncProjectStatus(tx, existing.projectId, todayJalali);
   });
+
+  // Audit log
+  if (proforma) {
+    await logAction(
+      {
+        action: "DELETE",
+        module: "پیش‌فاکتورها",
+        entityId: id,
+        description: `حذف پیش‌فاکتور (شماره: ${existing.proformaNumber})`,
+        beforeState: proforma,
+      },
+      user,
+      todayJalali,
+    );
+  }
+
   return "ok";
 }
 

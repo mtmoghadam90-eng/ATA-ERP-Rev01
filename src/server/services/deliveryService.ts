@@ -7,6 +7,9 @@ import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../child
 import { getWonItems } from "../proformaStatus";
 import { deriveServiceHeader } from "../afterSalesStatus";
 import { getTodayShamsi } from "../../dateUtils";
+import { notifyModuleResponsible } from "./notificationService";
+import { logAction } from "./auditService";
+import { processWorkflowRules } from "./workflowService";
 
 /**
  * Packaging and delivery (packing lists) plus after-sales service.
@@ -161,11 +164,11 @@ function deliveryScalarData(input: DeliveryInput): Record<string, unknown> {
   return { ...out, ...expandDateFields(input as Record<string, unknown>, DELIVERY_DATE_FIELDS) };
 }
 
-export async function createDelivery(input: DeliveryInput, user: AuthUser) {
+export async function createDelivery(input: DeliveryInput, user: AuthUser, todayJalali: string) {
   if (!allowed(user)) return null;
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
+  const delivery = await db.$transaction(async (tx) => {
     const delivery = await tx.packagingDelivery.create({
       data: deliveryScalarData(input) as Prisma.PackagingDeliveryUncheckedCreateInput,
     });
@@ -178,13 +181,55 @@ export async function createDelivery(input: DeliveryInput, user: AuthUser) {
       include: { items: { orderBy: { lineNo: "asc" } } },
     });
   });
+
+  if (delivery) {
+    // Notification
+    await notifyModuleResponsible(
+      "deliveries",
+      "ثبت بسته جدید",
+      `بسته جدید ثبت شد: ${delivery.packingListNumber || delivery.id}`,
+      user,
+      delivery.projectId,
+    );
+
+    // Audit log
+    await logAction(
+      {
+        action: "CREATE",
+        module: "بسته‌بندی و ارسال",
+        entityId: delivery.id,
+        description: `ایجاد بسته‌بندی جدید: ${delivery.packingListNumber || delivery.id}`,
+        afterState: delivery,
+      },
+      user,
+      todayJalali,
+    );
+
+    // Workflow rules
+    await processWorkflowRules(
+      "packaging_delivery_created",
+      {
+        deliveryId: delivery.id,
+        packingListNumber: delivery.packingListNumber,
+        projectId: delivery.projectId,
+        proformaId: delivery.proformaId,
+      },
+      user,
+    );
+  }
+
+  return delivery;
 }
 
-export async function updateDelivery(id: string, input: DeliveryInput, user: AuthUser) {
+export async function updateDelivery(id: string, input: DeliveryInput, user: AuthUser, todayJalali: string) {
   if (!allowed(user)) return null;
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
+  // Get before state for audit log
+  const before = await db.packagingDelivery.findUnique({ where: { id } });
+  if (!before) return null;
+
+  const delivery = await db.$transaction(async (tx) => {
     const existing = await tx.packagingDelivery.findUnique({ where: { id }, select: { id: true } });
     if (!existing) return null;
 
@@ -205,6 +250,45 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
       include: { items: { orderBy: { lineNo: "asc" } } },
     });
   });
+
+  // Audit log
+  if (delivery) {
+    await logAction(
+      {
+        action: "UPDATE",
+        module: "بسته‌بندی و ارسال",
+        entityId: id,
+        description: `ویرایش بسته‌بندی: ${delivery.packingListNumber || id}`,
+        beforeState: before,
+        afterState: delivery,
+      },
+      user,
+      todayJalali,
+    );
+
+    // Workflow rules for status change
+    const getDeliveryStatus = (d: any) => (d?.actualDeliveryDate ? 'تحویل شده' : 'در حال آماده‌سازی');
+    const oldStatus = getDeliveryStatus(before);
+    const newStatus = getDeliveryStatus(delivery);
+
+    if (oldStatus !== newStatus) {
+      await processWorkflowRules(
+        "packaging_delivery_status_change",
+        {
+          deliveryId: delivery.id,
+          packingListNumber: delivery.packingListNumber,
+          projectId: delivery.projectId,
+          proformaId: delivery.proformaId,
+          oldStatus,
+          newStatus,
+          status: newStatus,
+        },
+        user,
+      );
+    }
+  }
+
+  return delivery;
 }
 
 /**
@@ -316,12 +400,28 @@ export async function getDeliveryRemaining(
 export async function deleteDelivery(
   id: string,
   user: AuthUser,
+  todayJalali: string,
 ): Promise<"ok" | "forbidden" | "not-found"> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
-  const existing = await db.packagingDelivery.findUnique({ where: { id }, select: { id: true } });
+  const existing = await db.packagingDelivery.findUnique({ where: { id } });
   if (!existing) return "not-found";
+
   await db.packagingDelivery.delete({ where: { id } });
+
+  // Audit log
+  await logAction(
+    {
+      action: "DELETE",
+      module: "بسته‌بندی و ارسال",
+      entityId: id,
+      description: `حذف بسته‌بندی: ${existing.packingListNumber || id}`,
+      beforeState: existing,
+    },
+    user,
+    todayJalali,
+  );
+
   return "ok";
 }
 
@@ -480,11 +580,11 @@ async function applyServiceHeader(tx: Prisma.TransactionClient, serviceId: strin
   });
 }
 
-export async function createService(input: ServiceInput, user: AuthUser) {
+export async function createService(input: ServiceInput, user: AuthUser, todayJalali: string) {
   if (!allowed(user)) return null;
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
+  const service = await db.$transaction(async (tx) => {
     const service = await tx.afterSalesService.create({
       data: {
         // Placeholders for the NOT NULL columns. Every one of them is rolled up
@@ -506,13 +606,46 @@ export async function createService(input: ServiceInput, user: AuthUser) {
       include: { items: { orderBy: { lineNo: "asc" } } },
     });
   });
+
+  // Audit log
+  if (service) {
+    await logAction(
+      {
+        action: "CREATE",
+        module: "خدمات پس از فروش",
+        entityId: service.id,
+        description: `ایجاد خدمات پس از فروش جدید: ${service.itemName || service.id}`,
+        afterState: service,
+      },
+      user,
+      todayJalali,
+    );
+
+    // Workflow rules
+    await processWorkflowRules(
+      "after_sales_service_created",
+      {
+        serviceId: service.id,
+        itemName: service.itemName,
+        projectId: service.projectId,
+        status: service.status,
+      },
+      user,
+    );
+  }
+
+  return service;
 }
 
-export async function updateService(id: string, input: ServiceInput, user: AuthUser) {
+export async function updateService(id: string, input: ServiceInput, user: AuthUser, todayJalali: string) {
   if (!allowed(user)) return null;
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
+  // Get before state for audit log
+  const before = await db.afterSalesService.findUnique({ where: { id } });
+  if (!before) return null;
+
+  const service = await db.$transaction(async (tx) => {
     const existing = await tx.afterSalesService.findUnique({ where: { id }, select: { id: true } });
     if (!existing) return null;
 
@@ -536,16 +669,66 @@ export async function updateService(id: string, input: ServiceInput, user: AuthU
       include: { items: { orderBy: { lineNo: "asc" } } },
     });
   });
+
+  // Audit log
+  if (service) {
+    await logAction(
+      {
+        action: "UPDATE",
+        module: "خدمات پس از فروش",
+        entityId: id,
+        description: `ویرایش خدمات پس از فروش: ${service.itemName || id}`,
+        beforeState: before,
+        afterState: service,
+      },
+      user,
+      todayJalali,
+    );
+
+    // Workflow rules for status change
+    if (before.status !== service.status) {
+      await processWorkflowRules(
+        "after_sales_service_status_change",
+        {
+          serviceId: service.id,
+          itemName: service.itemName,
+          projectId: service.projectId,
+          oldStatus: before.status,
+          newStatus: service.status,
+          status: service.status,
+        },
+        user,
+      );
+    }
+  }
+
+  return service;
 }
 
 export async function deleteService(
   id: string,
   user: AuthUser,
+  todayJalali: string,
 ): Promise<"ok" | "forbidden" | "not-found"> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
-  const existing = await db.afterSalesService.findUnique({ where: { id }, select: { id: true } });
+  const existing = await db.afterSalesService.findUnique({ where: { id } });
   if (!existing) return "not-found";
+
   await db.afterSalesService.delete({ where: { id } });
+
+  // Audit log
+  await logAction(
+    {
+      action: "DELETE",
+      module: "خدمات پس از فروش",
+      entityId: id,
+      description: `حذف خدمات پس از فروش: ${existing.itemName || id}`,
+      beforeState: existing,
+    },
+    user,
+    todayJalali,
+  );
+
   return "ok";
 }

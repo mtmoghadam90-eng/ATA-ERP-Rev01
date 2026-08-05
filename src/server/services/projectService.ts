@@ -7,6 +7,9 @@ import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../child
 import { summarizeProject, summarizeProjects } from "./projectSummary";
 // The custom-field clause is identical for every module; defined once with customers.
 import { customFieldClause } from "./customerService";
+import { logAction } from "./auditService";
+import { notifyModuleResponsible } from "./notificationService";
+import { processWorkflowRules } from "./workflowService";
 
 /**
  * Project data access.
@@ -354,10 +357,10 @@ function mapMilestone(row: ProjectMilestoneInput): Record<string, unknown> | nul
   };
 }
 
-export async function createProject(input: ProjectInput, user: AuthUser) {
+export async function createProject(input: ProjectInput, user: AuthUser, todayJalali: string) {
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
+  const project = await db.$transaction(async (tx) => {
     const project = await tx.project.create({
       data: {
         ...(scalarData(input) as Prisma.ProjectUncheckedCreateInput),
@@ -377,13 +380,55 @@ export async function createProject(input: ProjectInput, user: AuthUser) {
 
     return project;
   });
+
+  // Audit log
+  await logAction(
+    {
+      action: "CREATE",
+      module: "پروژه‌ها",
+      entityId: project.id,
+      description: `ایجاد پروژه جدید: ${project.name || project.code || project.id}`,
+      afterState: project,
+    },
+    user,
+    todayJalali,
+  );
+
+  // Notification
+  await notifyModuleResponsible(
+    "projects",
+    "ثبت پروژه جدید",
+    `پروژه جدید ثبت شد: ${project.name || project.code || project.id}`,
+    user,
+    project.id,
+  );
+
+  // Workflow trigger
+  await processWorkflowRules(
+    "project_created",
+    {
+      projectId: project.id,
+      projectName: project.name,
+      projectCode: project.code,
+      customerId: project.customerId,
+      salesExpert: project.ownerUserId,
+      status: project.status,
+    },
+    user,
+  );
+
+  return project;
 }
 
-export async function updateProject(id: string, input: ProjectInput, user: AuthUser) {
+export async function updateProject(id: string, input: ProjectInput, user: AuthUser, todayJalali: string) {
   const db = getDb();
   const visibility = visibilityClause(user);
 
-  return db.$transaction(async (tx) => {
+  // Get before state for audit log
+  const before = await db.project.findUnique({ where: { id } });
+  if (!before) return null;
+
+  const project = await db.$transaction(async (tx) => {
     // Re-check visibility inside the transaction, before anything is written.
     const existing = await tx.project.findFirst({
       where: visibility ? { AND: [{ id }, visibility] } : { id },
@@ -412,6 +457,41 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
 
     return project;
   });
+
+  if (!project) return null;
+
+  // Audit log
+  await logAction(
+    {
+      action: "UPDATE",
+      module: "پروژه‌ها",
+      entityId: id,
+      description: `ویرایش پروژه: ${project.name || project.code || id}`,
+      beforeState: before,
+      afterState: project,
+    },
+    user,
+    todayJalali,
+  );
+
+  // Workflow trigger for status change
+  if (before.status !== project.status) {
+    await processWorkflowRules(
+      "project_status_change",
+      {
+        projectId: project.id,
+        projectName: project.name,
+        projectCode: project.code,
+        customerId: project.customerId,
+        oldStatus: before.status,
+        newStatus: project.status,
+        status: project.status,
+      },
+      user,
+    );
+  }
+
+  return project;
 }
 
 /** Records that would block deleting a project, for the confirmation dialog. */
@@ -436,7 +516,7 @@ export async function countProjectReferences(id: string) {
  * delete instead — losing a proforma because its project was removed would be
  * silent data loss.
  */
-export async function deleteProject(id: string, user: AuthUser): Promise<"ok" | "forbidden" | "in-use"> {
+export async function deleteProject(id: string, user: AuthUser, todayJalali: string): Promise<"ok" | "forbidden" | "in-use"> {
   const db = getDb();
   const visibility = visibilityClause(user);
   if (visibility) {
@@ -449,6 +529,24 @@ export async function deleteProject(id: string, user: AuthUser): Promise<"ok" | 
   const refs = await countProjectReferences(id);
   if (refs.total > 0) return "in-use";
 
+  // Get project info for audit log before deletion
+  const project = await db.project.findUnique({ where: { id } });
+  if (!project) return "ok";
+
   await db.project.delete({ where: { id } });
+
+  // Audit log
+  await logAction(
+    {
+      action: "DELETE",
+      module: "پروژه‌ها",
+      entityId: id,
+      description: `حذف پروژه: ${project.name || project.code || id}`,
+      beforeState: project,
+    },
+    user,
+    todayJalali,
+  );
+
   return "ok";
 }

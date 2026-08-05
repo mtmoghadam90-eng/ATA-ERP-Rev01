@@ -10,6 +10,7 @@ import {
   getDelivery, getDeliveryRemaining, getService, listDeliveries, listServices,
   updateDelivery, updateService,
 } from "../services/deliveryService";
+import { getTodayShamsi } from "../../dateUtils";
 
 /** Packing lists and after-sales service records. Both gated by `packagingDelivery`. */
 
@@ -122,7 +123,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
           context: { projectCode: project?.code ?? "GEN" },
         });
       }
-      const delivery = await createDelivery(input, user);
+      const delivery = await createDelivery(input, user, getTodayShamsi());
       if (!delivery) return denied(res);
       res.status(201).json({ success: true, delivery });
     } catch (err) {
@@ -134,7 +135,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
     const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "write");
     if (!user) return;
     try {
-      const delivery = await updateDelivery(req.params.id, pick<DeliveryInput>(req.body, DELIVERY_WRITABLE), user);
+      const delivery = await updateDelivery(req.params.id, pick<DeliveryInput>(req.body, DELIVERY_WRITABLE), user, getTodayShamsi());
       if (!delivery) {
         res.status(404).json({ success: false, error: "لیست بسته‌بندی یافت نشد." });
         return;
@@ -149,7 +150,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
     const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "write");
     if (!user) return;
     try {
-      const outcome = await deleteDelivery(req.params.id, user);
+      const outcome = await deleteDelivery(req.params.id, user, getTodayShamsi());
       if (outcome === "forbidden") return denied(res);
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "لیست بسته‌بندی یافت نشد." });
@@ -207,7 +208,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
         return;
       }
 
-      const service = await createService(input, user);
+      const service = await createService(input, user, getTodayShamsi());
       if (!service) return denied(res);
       res.status(201).json({ success: true, service });
     } catch (err) {
@@ -219,7 +220,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
     const user = deps.requireKeyAccess(req, res, SERVICE_KEY, "write");
     if (!user) return;
     try {
-      const service = await updateService(req.params.id, pick<ServiceInput>(req.body, SERVICE_WRITABLE), user);
+      const service = await updateService(req.params.id, pick<ServiceInput>(req.body, SERVICE_WRITABLE), user, getTodayShamsi());
       if (!service) {
         res.status(404).json({ success: false, error: "خدمات پس از فروش یافت نشد." });
         return;
@@ -234,7 +235,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
     const user = deps.requireKeyAccess(req, res, SERVICE_KEY, "write");
     if (!user) return;
     try {
-      const outcome = await deleteService(req.params.id, user);
+      const outcome = await deleteService(req.params.id, user, getTodayShamsi());
       if (outcome === "forbidden") return denied(res);
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "خدمات پس از فروش یافت نشد." });

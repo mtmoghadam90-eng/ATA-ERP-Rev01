@@ -213,7 +213,7 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
     const user = deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const outcome = await deleteProduct(req.params.id, user);
+      const outcome = await deleteProduct(req.params.id, user, getTodayShamsi());
       if (outcome === "forbidden") return denied(res);
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "کالا یافت نشد." });

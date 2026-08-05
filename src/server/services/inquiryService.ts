@@ -6,6 +6,9 @@ import { expandDateFields } from "../dates";
 import { syncChildren, toNullableString, toNumber } from "../childSync";
 import { loadSettings } from "../settings";
 import { INQUIRY_STEP_KEYS, InquiryStepKey, resolveStepTitle } from "../../utils/inquirySteps";
+import { notifyModuleResponsible } from "./notificationService";
+import { logAction } from "./auditService";
+import { processWorkflowRules } from "./workflowService";
 
 /**
  * Supplier inquiry data access.
@@ -354,7 +357,7 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
   if (!allowed(user)) return null;
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
+  const inquiry = await db.$transaction(async (tx) => {
     const inquiry = await tx.supplierInquiry.create({
       data: scalarData(input) as Prisma.SupplierInquiryUncheckedCreateInput,
     });
@@ -394,6 +397,43 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
       include: { items: { orderBy: { lineNo: "asc" } }, steps: { orderBy: { stepNo: "asc" } } },
     });
   });
+
+  if (inquiry) {
+    // Notification
+    await notifyModuleResponsible(
+      "inquiries",
+      "ثبت استعلام جدید",
+      `استعلام جدید ثبت شد برای پروژه`,
+      user,
+      inquiry.projectId,
+    );
+
+    // Audit log
+    await logAction(
+      {
+        action: "CREATE",
+        module: "استعلام از تامین‌کنندگان",
+        entityId: inquiry.id,
+        description: `ایجاد استعلام جدید برای پروژه: ${inquiry.projectId}`,
+        afterState: inquiry,
+      },
+      user,
+      todayJalali,
+    );
+
+    // Workflow rules
+    await processWorkflowRules(
+      "supplier_inquiry_created",
+      {
+        inquiryId: inquiry.id,
+        projectId: inquiry.projectId,
+        supplierId: inquiry.supplierId,
+      },
+      user,
+    );
+  }
+
+  return inquiry;
 }
 
 export async function updateInquiry(
@@ -405,7 +445,10 @@ export async function updateInquiry(
   if (!allowed(user)) return null;
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
+  // Get before state for audit log
+  const beforeAudit = await db.supplierInquiry.findUnique({ where: { id } });
+
+  const inquiry = await db.$transaction(async (tx) => {
     const before = await tx.supplierInquiry.findUnique({
       where: { id },
       select: {
@@ -440,6 +483,51 @@ export async function updateInquiry(
       include: { items: { orderBy: { lineNo: "asc" } }, steps: { orderBy: { stepNo: "asc" } } },
     });
   });
+
+  // Audit log
+  if (inquiry && beforeAudit) {
+    await logAction(
+      {
+        action: "UPDATE",
+        module: "استعلام از تامین‌کنندگان",
+        entityId: id,
+        description: `ویرایش استعلام برای پروژه: ${inquiry.projectId}`,
+        beforeState: beforeAudit,
+        afterState: inquiry,
+      },
+      user,
+      todayJalali,
+    );
+
+    // Workflow rules for status change
+    // Determine status from inquiry state
+    const getInquiryStatus = (inq: any) => {
+      if (inq.isWinner) return "برنده";
+      if (inq.offerConfirmed) return "پیشنهاد نهایی";
+      const hasPrice = inq.items?.some((item: any) => item.priceForeign || item.priceRial);
+      return hasPrice ? "پیشنهاد اولیه" : "ارسال شده";
+    };
+
+    const oldStatus = getInquiryStatus(beforeAudit);
+    const newStatus = getInquiryStatus(inquiry);
+
+    if (oldStatus !== newStatus) {
+      await processWorkflowRules(
+        "supplier_inquiry_status_change",
+        {
+          inquiryId: inquiry.id,
+          projectId: inquiry.projectId,
+          supplierId: inquiry.supplierId,
+          oldStatus,
+          newStatus,
+          status: newStatus,
+        },
+        user,
+      );
+    }
+  }
+
+  return inquiry;
 }
 
 /** Records a step the user typed, alongside the derived ones. */
@@ -503,14 +591,29 @@ export async function deleteInquiryStep(
 export async function deleteInquiry(
   id: string,
   user: AuthUser,
+  todayJalali: string,
 ): Promise<"ok" | "forbidden" | "not-found"> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
 
-  const existing = await db.supplierInquiry.findUnique({ where: { id }, select: { id: true } });
+  const existing = await db.supplierInquiry.findUnique({ where: { id } });
   if (!existing) return "not-found";
 
   // Items and steps cascade; an inquiry is not referenced by anything else.
   await db.supplierInquiry.delete({ where: { id } });
+
+  // Audit log
+  await logAction(
+    {
+      action: "DELETE",
+      module: "استعلام از تامین‌کنندگان",
+      entityId: id,
+      description: `حذف استعلام برای پروژه: ${existing.projectId}`,
+      beforeState: existing,
+    },
+    user,
+    todayJalali,
+  );
+
   return "ok";
 }

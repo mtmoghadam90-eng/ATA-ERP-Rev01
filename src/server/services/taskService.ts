@@ -4,6 +4,9 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate } from "../dates";
 import { toJsonColumn, toNullableString } from "../childSync";
+import { notifyModuleResponsible } from "./notificationService";
+import { logAction } from "./auditService";
+import { processWorkflowRules } from "./workflowService";
 
 /**
  * Task data access.
@@ -177,9 +180,9 @@ function scalarData(input: TaskInput): Record<string, unknown> {
   return { ...out, ...expandDateFields(input as Record<string, unknown>, TASK_DATE_FIELDS) };
 }
 
-export async function createTask(input: TaskInput, user: AuthUser) {
+export async function createTask(input: TaskInput, user: AuthUser, todayJalali: string) {
   const db = getDb();
-  return db.task.create({
+  const task = await db.task.create({
     data: {
       ...scalarData(input),
       // An unassigned task belongs to whoever raised it, so it appears in
@@ -187,28 +190,99 @@ export async function createTask(input: TaskInput, user: AuthUser) {
       assignedToUserId: input.assignedToUserId ?? user.id,
     } as Prisma.TaskUncheckedCreateInput,
   });
+
+  // Notification
+  await notifyModuleResponsible(
+    "tasks",
+    "ثبت وظیفه جدید",
+    `وظیفه جدید ثبت شد: ${task.title}`,
+    user,
+    task.relatedToType === "project" ? task.relatedToId : null,
+  );
+
+  // Audit log
+  await logAction(
+    {
+      action: "CREATE",
+      module: "وظایف",
+      entityId: task.id,
+      description: `ایجاد وظیفه جدید: ${task.title || task.id}`,
+      afterState: task,
+    },
+    user,
+    todayJalali,
+  );
+
+  // Workflow trigger
+  await processWorkflowRules(
+    "task_created",
+    {
+      taskId: task.id,
+      title: task.title,
+      assignedTo: task.assignedToUserId,
+      priority: task.priority,
+      dueDate: task.dueDateJalali,
+      projectId: task.relatedToType === "project" ? task.relatedToId : undefined,
+    },
+    user,
+  );
+
+  return task;
 }
 
-export async function updateTask(id: string, input: TaskInput, user: AuthUser) {
+export async function updateTask(id: string, input: TaskInput, user: AuthUser, todayJalali: string) {
   const db = getDb();
   const visibility = visibilityClause(user);
   if (visibility) {
     const allowed = await db.task.findFirst({ where: { AND: [{ id }, visibility] }, select: { id: true } });
     if (!allowed) return null;
   }
-  const existing = await db.task.findUnique({ where: { id }, select: { id: true } });
-  if (!existing) return null;
 
-  return db.task.update({ where: { id }, data: scalarData(input) as Prisma.TaskUncheckedUpdateInput });
+  // Get before state for audit log
+  const before = await db.task.findUnique({ where: { id } });
+  if (!before) return null;
+
+  const task = await db.task.update({ where: { id }, data: scalarData(input) as Prisma.TaskUncheckedUpdateInput });
+
+  // Audit log
+  await logAction(
+    {
+      action: "UPDATE",
+      module: "وظایف",
+      entityId: id,
+      description: `ویرایش وظیفه: ${task.title || id}`,
+      beforeState: before,
+      afterState: task,
+    },
+    user,
+    todayJalali,
+  );
+
+  // Workflow trigger for task completion
+  if (before.status !== task.status && task.status === "انجام شده") {
+    await processWorkflowRules(
+      "task_completed",
+      {
+        taskId: task.id,
+        title: task.title,
+        assignedTo: task.assignedToUserId,
+        oldStatus: before.status,
+        newStatus: task.status,
+        projectId: task.relatedToType === "project" ? task.relatedToId : undefined,
+      },
+      user,
+    );
+  }
+
+  return task;
 }
 
-export async function deleteTask(id: string, user: AuthUser): Promise<"ok" | "forbidden" | "not-found"> {
+export async function deleteTask(id: string, user: AuthUser, todayJalali: string): Promise<"ok" | "forbidden" | "not-found"> {
   const db = getDb();
   const visibility = visibilityClause(user);
 
   const existing = await db.task.findFirst({
     where: visibility ? { AND: [{ id }, visibility] } : { id },
-    select: { id: true },
   });
   if (!existing) {
     // Distinguish "not yours" from "does not exist" only when it is safe to:
@@ -218,5 +292,19 @@ export async function deleteTask(id: string, user: AuthUser): Promise<"ok" | "fo
   }
 
   await db.task.delete({ where: { id } });
+
+  // Audit log
+  await logAction(
+    {
+      action: "DELETE",
+      module: "وظایف",
+      entityId: id,
+      description: `حذف وظیفه: ${existing.title || id}`,
+      beforeState: existing,
+    },
+    user,
+    todayJalali,
+  );
+
   return "ok";
 }

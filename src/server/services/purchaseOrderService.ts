@@ -5,6 +5,9 @@ import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { applyStockDelta } from "./productService";
+import { logAction } from "./auditService";
+import { notifyModuleResponsible } from "./notificationService";
+import { processWorkflowRules } from "./workflowService";
 
 /**
  * Purchase order data access.
@@ -320,7 +323,7 @@ export async function createPurchaseOrder(
   if (!allowed(user)) return null;
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
+  const po = await db.$transaction(async (tx) => {
     const po = await tx.purchaseOrder.create({
       data: {
         ...scalarData(input),
@@ -338,6 +341,45 @@ export async function createPurchaseOrder(
 
     return tx.purchaseOrder.findUnique({ where: { id: po.id }, include: { items: { orderBy: { lineNo: "asc" } } } });
   });
+
+  // Audit log
+  if (po) {
+    await logAction(
+      {
+        action: "CREATE",
+        module: "سفارش خرید",
+        entityId: po.id,
+        description: `ایجاد سفارش خرید جدید: ${po.poNumber || po.id}`,
+        afterState: po,
+      },
+      user,
+      todayJalali,
+    );
+
+    // Notification
+    await notifyModuleResponsible(
+      "purchaseOrders",
+      "ثبت سفارش خرید جدید",
+      `سفارش خرید جدید ثبت شد: ${po.poNumber || po.id}`,
+      user,
+      po.projectId,
+    );
+
+    // Workflow trigger
+    await processWorkflowRules(
+      "purchase_order_created",
+      {
+        purchaseOrderId: po.id,
+        poNumber: po.poNumber,
+        supplierId: po.supplierId,
+        projectId: po.projectId,
+        totalAmount: po.landedCostRial?.toString(),
+      },
+      user,
+    );
+  }
+
+  return po;
 }
 
 export async function updatePurchaseOrder(
@@ -349,7 +391,11 @@ export async function updatePurchaseOrder(
   if (!allowed(user)) return null;
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
+  // Get before state for audit log
+  const before = await db.purchaseOrder.findUnique({ where: { id } });
+  if (!before) return null;
+
+  const po = await db.$transaction(async (tx) => {
     const existing = await tx.purchaseOrder.findUnique({ where: { id }, select: { id: true } });
     if (!existing) return null;
 
@@ -391,6 +437,41 @@ export async function updatePurchaseOrder(
 
     return tx.purchaseOrder.findUnique({ where: { id }, include: { items: { orderBy: { lineNo: "asc" } } } });
   });
+
+  // Audit log
+  if (po) {
+    await logAction(
+      {
+        action: "UPDATE",
+        module: "سفارش خرید",
+        entityId: id,
+        description: `ویرایش سفارش خرید: ${po.poNumber || id}`,
+        beforeState: before,
+        afterState: po,
+      },
+      user,
+      todayJalali,
+    );
+
+    // Workflow rules for status change
+    if (before.status !== po.status) {
+      await processWorkflowRules(
+        "purchase_order_status_change",
+        {
+          purchaseOrderId: po.id,
+          poNumber: po.poNumber,
+          supplierId: po.supplierId,
+          projectId: po.projectId,
+          oldStatus: before.status,
+          newStatus: po.status,
+          status: po.status,
+        },
+        user,
+      );
+    }
+  }
+
+  return po;
 }
 
 export async function countPurchaseOrderReferences(id: string) {
@@ -414,11 +495,14 @@ export async function deletePurchaseOrder(
   if (!allowed(user)) return "forbidden";
   const db = getDb();
 
-  const existing = await db.purchaseOrder.findUnique({ where: { id }, select: { id: true } });
+  const existing = await db.purchaseOrder.findUnique({ where: { id }, select: { id: true, poNumber: true } });
   if (!existing) return "not-found";
 
   const refs = await countPurchaseOrderReferences(id);
   if (refs.total > 0) return "in-use";
+
+  // Get purchase order info for audit log before deletion
+  const po = await db.purchaseOrder.findUnique({ where: { id } });
 
   await db.$transaction(async (tx) => {
     // Target zero by clearing the status, then reverse whatever was credited.
@@ -434,6 +518,21 @@ export async function deletePurchaseOrder(
 
     await tx.purchaseOrder.delete({ where: { id } });
   });
+
+  // Audit log
+  if (po) {
+    await logAction(
+      {
+        action: "DELETE",
+        module: "سفارش خرید",
+        entityId: id,
+        description: `حذف سفارش خرید: ${po.poNumber || id}`,
+        beforeState: po,
+      },
+      user,
+      todayJalali,
+    );
+  }
 
   return "ok";
 }

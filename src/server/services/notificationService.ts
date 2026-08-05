@@ -3,6 +3,7 @@ import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs } from "../listing";
 import { AuthUser } from "../auth";
 import { toNullableString } from "../childSync";
+import { loadSettings } from "../settings";
 
 /**
  * The inbox: notices addressed to one user, and what that user has already
@@ -93,6 +94,81 @@ export async function notifyUser(input: {
       projectId: toNullableString(input.projectId, 36),
     },
   });
+}
+
+/**
+ * Notifies the module responsible and relevant admins about an event.
+ *
+ * This replicates the old `notifyModuleResponsible` logic:
+ * 1. Notify the module responsible (if set in settings)
+ * 2. Notify admins based on their notification preferences
+ */
+export async function notifyModuleResponsible(
+  module: string,
+  title: string,
+  description: string,
+  actorUser: AuthUser,
+  projectId?: string | null,
+): Promise<void> {
+  const db = getDb();
+  const settings = await loadSettings() as any;
+
+  const targetUserIds = new Set<string>();
+
+  // 1. Find the responsible user for this module
+  const responsibleName = settings?.moduleResponsibles?.[module];
+  if (responsibleName) {
+    // Find user by fullName
+    const responsible = await db.user.findFirst({
+      where: { fullName: responsibleName },
+      select: { id: true },
+    });
+    if (responsible && responsible.id !== actorUser.id) {
+      targetUserIds.add(responsible.id);
+    }
+  }
+
+  // 2. Find admin users
+  const admins = await db.user.findMany({
+    where: {
+      OR: [
+        { role: "admin" },
+        { isSystemAdmin: true },
+      ],
+    },
+    select: { id: true, fullName: true },
+  });
+
+  for (const admin of admins) {
+    if (admin.id === actorUser.id) continue; // Don't notify the actor
+
+    const pref = settings?.adminNotificationPreferences?.[admin.id];
+    const receiveAll = pref ? pref.receiveAll : true;
+    const importantProjects = pref ? pref.importantProjectIds : [];
+
+    let shouldReceive = false;
+    if (receiveAll) {
+      shouldReceive = true;
+    } else if (projectId && importantProjects && importantProjects.includes(projectId)) {
+      shouldReceive = true;
+    }
+
+    if (shouldReceive) {
+      targetUserIds.add(admin.id);
+    }
+  }
+
+  // Send notifications to all targets
+  for (const userId of targetUserIds) {
+    await notifyUser({
+      userId,
+      module,
+      title,
+      description,
+      projectId,
+      actorUserId: actorUser.id,
+    });
+  }
 }
 
 /* ----------------------------- read receipts ----------------------------- */

@@ -78,7 +78,7 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
         res.status(400).json({ success: false, error: "عنوان وظیفه الزامی است." });
         return;
       }
-      res.status(201).json({ success: true, task: await createTask(input, user) });
+      res.status(201).json({ success: true, task: await createTask(input, user, getTodayShamsi()) });
     } catch (err) {
       sendError(res, err, "POST /api/tasks");
     }
@@ -88,7 +88,7 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
     const user = deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const task = await updateTask(req.params.id, pickInput(req.body), user);
+      const task = await updateTask(req.params.id, pickInput(req.body), user, getTodayShamsi());
       if (!task) {
         res.status(404).json({ success: false, error: "وظیفه یافت نشد یا اجازه تغییر آن را ندارید." });
         return;
@@ -103,7 +103,7 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
     const user = deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const outcome = await deleteTask(req.params.id, user);
+      const outcome = await deleteTask(req.params.id, user, getTodayShamsi());
       if (outcome === "forbidden") {
         res.status(403).json({ success: false, error: "شما اجازه حذف این وظیفه را ندارید." });
         return;

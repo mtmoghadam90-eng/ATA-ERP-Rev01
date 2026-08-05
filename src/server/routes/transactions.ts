@@ -98,7 +98,7 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
         return;
       }
 
-      const transaction = await createTransaction(input, user);
+      const transaction = await createTransaction(input, user, getTodayShamsi());
       if (!transaction) return denied(res);
       res.status(201).json({ success: true, transaction });
     } catch (err) {
@@ -110,7 +110,7 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
     const user = deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const outcome = await updateTransaction(req.params.id, pickInput(req.body), user);
+      const outcome = await updateTransaction(req.params.id, pickInput(req.body), user, getTodayShamsi());
       if (outcome === "forbidden") return denied(res);
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "تراکنش یافت نشد." });
@@ -162,7 +162,7 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
     const user = deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const outcome = await deleteTransaction(req.params.id, user);
+      const outcome = await deleteTransaction(req.params.id, user, getTodayShamsi());
       if (outcome === "forbidden") return denied(res);
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "تراکنش یافت نشد." });

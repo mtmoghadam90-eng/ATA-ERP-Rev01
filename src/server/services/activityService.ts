@@ -4,6 +4,7 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields } from "../dates";
 import { toNullableString } from "../childSync";
+import { processWorkflowRules } from "./workflowService";
 
 /**
  * Project category groups, activities, referrals and module notes.
@@ -195,7 +196,7 @@ export async function addActivity(
 
   const author = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
 
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     const activity = await tx.projectActivity.create({
       data: {
         groupId: input.groupId!,
@@ -210,7 +211,7 @@ export async function addActivity(
     });
 
     if (input.referral?.actionRequired) {
-      await tx.projectReferral.create({
+      const referral = await tx.projectReferral.create({
         data: {
           activityId: activity.id,
           assignedToUserId: toNullableString(input.referral.assignedToUserId, 36),
@@ -220,6 +221,23 @@ export async function addActivity(
           actionRequired: toNullableString(input.referral.actionRequired)!,
         } as Prisma.ProjectReferralUncheckedCreateInput,
       });
+
+      // Get project info for workflow trigger
+      const group = await tx.projectCategoryGroup.findUnique({
+        where: { id: input.groupId! },
+        select: { project: { select: { id: true } } },
+      });
+
+      // Workflow trigger for referral created (outside transaction)
+      if (group?.project?.id) {
+        // Store for later execution
+        (referral as any).__triggerWorkflow = {
+          projectId: group.project.id,
+          assignedToUserId: referral.assignedToUserId,
+          assignedToName: referral.assignedToName,
+          actionRequired: referral.actionRequired,
+        };
+      }
     }
 
     return {
@@ -229,6 +247,24 @@ export async function addActivity(
       }),
     };
   });
+
+  // Workflow trigger for referral (after transaction)
+  if (result.activity?.referral && (result.activity.referral as any).__triggerWorkflow) {
+    const trigger = (result.activity.referral as any).__triggerWorkflow;
+    await processWorkflowRules(
+      "referral_created",
+      {
+        referralId: result.activity.referral.id,
+        projectId: trigger.projectId,
+        assignedToUserId: trigger.assignedToUserId,
+        assignedToName: trigger.assignedToName,
+        actionRequired: trigger.actionRequired,
+      },
+      user,
+    );
+  }
+
+  return result;
 }
 
 /**
@@ -374,17 +410,45 @@ export async function setReferralStatus(
   const db = getDb();
   const referral = await db.projectReferral.findUnique({
     where: { id },
-    select: { id: true, assignedToUserId: true, assignedByUserId: true },
+    select: { id: true, assignedToUserId: true, assignedByUserId: true, status: true, activityId: true },
   });
   if (!referral) return "not-found";
 
   const involved = referral.assignedToUserId === user.id || referral.assignedByUserId === user.id;
   if (!involved && !canSeeProjects(user)) return "forbidden";
 
+  const oldStatus = referral.status;
+  const newStatus = toNullableString(status, 40) ?? "در انتظار اقدام";
+
   await db.projectReferral.update({
     where: { id },
-    data: { status: toNullableString(status, 40) ?? "در انتظار اقدام" },
+    data: { status: newStatus },
   });
+
+  // Workflow trigger for status change
+  if (oldStatus !== newStatus) {
+    // Get project info
+    const activity = await db.projectActivity.findUnique({
+      where: { id: referral.activityId },
+      select: { group: { select: { project: { select: { id: true } } } } },
+    });
+
+    if (activity?.group?.project?.id) {
+      await processWorkflowRules(
+        "referral_status_change",
+        {
+          referralId: id,
+          projectId: activity.group.project.id,
+          assignedToUserId: referral.assignedToUserId,
+          oldStatus,
+          newStatus,
+          status: newStatus,
+        },
+        user,
+      );
+    }
+  }
+
   return "ok";
 }
 

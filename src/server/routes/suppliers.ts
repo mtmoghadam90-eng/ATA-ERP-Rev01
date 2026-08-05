@@ -6,6 +6,7 @@ import {
   countSupplierReferences, createSupplier, deleteSupplier, getSupplier,
   listSuppliers, updateSupplier,
 } from "../services/supplierService";
+import { getTodayShamsi } from "../../dateUtils";
 
 const WRITABLE: (keyof SupplierInput)[] = [
   "name", "country", "contactName", "phone", "email", "website",
@@ -74,7 +75,7 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
         res.status(400).json({ success: false, error: "نام تأمین‌کننده الزامی است." });
         return;
       }
-      const supplier = await createSupplier(input, user);
+      const supplier = await createSupplier(input, user, getTodayShamsi());
       if (!supplier) return denied(res);
       res.status(201).json({ success: true, supplier });
     } catch (err) {
@@ -86,7 +87,7 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
     const user = deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const supplier = await updateSupplier(req.params.id, pickInput(req.body), user);
+      const supplier = await updateSupplier(req.params.id, pickInput(req.body), user, getTodayShamsi());
       if (!supplier) {
         res.status(404).json({ success: false, error: "تأمین‌کننده یافت نشد." });
         return;
@@ -101,7 +102,7 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
     const user = deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const outcome = await deleteSupplier(req.params.id, user);
+      const outcome = await deleteSupplier(req.params.id, user, getTodayShamsi());
       if (outcome === "forbidden") return denied(res);
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "تأمین‌کننده یافت نشد." });

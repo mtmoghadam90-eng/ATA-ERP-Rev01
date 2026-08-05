@@ -4,6 +4,9 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { toJsonColumn, toNullableString, toNumber } from "../childSync";
+import { logAction } from "./auditService";
+import { notifyModuleResponsible } from "./notificationService";
+import { processWorkflowRules } from "./workflowService";
 
 /**
  * Transaction (receipts and payments) data access.
@@ -218,11 +221,50 @@ function resolveAmount(input: TransactionInput, data: Record<string, unknown>): 
   }
 }
 
-export async function createTransaction(input: TransactionInput, user: AuthUser) {
+export async function createTransaction(input: TransactionInput, user: AuthUser, todayJalali: string) {
   if (!allowed(user)) return null;
   const data = scalarData(input);
   resolveAmount(input, data);
-  return getDb().transaction.create({ data: data as Prisma.TransactionUncheckedCreateInput });
+  const transaction = await getDb().transaction.create({ data: data as Prisma.TransactionUncheckedCreateInput });
+
+  // Audit log
+  await logAction(
+    {
+      action: "CREATE",
+      module: "تراکنش‌های مالی",
+      entityId: transaction.id,
+      description: `ایجاد تراکنش ${transaction.type}: ${transaction.documentNumber || transaction.id}`,
+      afterState: transaction,
+    },
+    user,
+    todayJalali,
+  );
+
+  // Notification
+  await notifyModuleResponsible(
+    "transactions",
+    "ثبت تراکنش مالی جدید",
+    `تراکنش ${transaction.type} جدید ثبت شد: ${transaction.documentNumber || transaction.id}`,
+    user,
+    transaction.projectId,
+  );
+
+  // Workflow trigger
+  await processWorkflowRules(
+    "transaction_created",
+    {
+      transactionId: transaction.id,
+      transactionNumber: transaction.documentNumber,
+      type: transaction.type,
+      amount: transaction.amountRial?.toString(),
+      currency: transaction.amountForeign != null ? "foreign" : "rial",
+      projectId: transaction.projectId,
+      customerId: transaction.customerId,
+    },
+    user,
+  );
+
+  return transaction;
 }
 
 /**
@@ -236,6 +278,7 @@ export async function updateTransaction(
   id: string,
   input: TransactionInput,
   user: AuthUser,
+  todayJalali: string,
 ): Promise<"forbidden" | "not-found" | "frozen" | { transaction: unknown }> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
@@ -247,6 +290,9 @@ export async function updateTransaction(
   if (!existing) return "not-found";
   if (existing.status === REVERSED || existing.reversalOfTransactionId) return "frozen";
 
+  // Get before state for audit log
+  const before = await db.transaction.findUnique({ where: { id } });
+
   const data = scalarData(input);
   resolveAmount(input, data);
 
@@ -254,6 +300,21 @@ export async function updateTransaction(
     where: { id },
     data: data as Prisma.TransactionUncheckedUpdateInput,
   });
+
+  // Audit log
+  await logAction(
+    {
+      action: "UPDATE",
+      module: "تراکنش‌های مالی",
+      entityId: id,
+      description: `ویرایش تراکنش: ${transaction.documentNumber || id}`,
+      beforeState: before,
+      afterState: transaction,
+    },
+    user,
+    todayJalali,
+  );
+
   return { transaction };
 }
 
@@ -320,19 +381,39 @@ export async function reverseTransaction(
 export async function deleteTransaction(
   id: string,
   user: AuthUser,
+  todayJalali: string,
 ): Promise<"ok" | "forbidden" | "not-found" | "confirmed"> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
 
   const existing = await db.transaction.findUnique({
     where: { id },
-    select: { id: true, status: true, reversalOfTransactionId: true },
+    select: { id: true, status: true, reversalOfTransactionId: true, documentNumber: true },
   });
   if (!existing) return "not-found";
   if (existing.status === CONFIRMED || existing.status === REVERSED || existing.reversalOfTransactionId) {
     return "confirmed";
   }
 
+  // Get transaction info for audit log before deletion
+  const transaction = await db.transaction.findUnique({ where: { id } });
+
   await db.transaction.delete({ where: { id } });
+
+  // Audit log
+  if (transaction) {
+    await logAction(
+      {
+        action: "DELETE",
+        module: "تراکنش‌های مالی",
+        entityId: id,
+        description: `حذف تراکنش: ${transaction.documentNumber || id}`,
+        beforeState: transaction,
+      },
+      user,
+      todayJalali,
+    );
+  }
+
   return "ok";
 }

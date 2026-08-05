@@ -3,6 +3,9 @@ import {
   ListQuery, ListResult, buildResult, paginationArgs, searchClause,
 } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
+import { logAction } from "./auditService";
+import { notifyModuleResponsible } from "./notificationService";
+import { processWorkflowRules } from "./workflowService";
 
 /**
  * Customer data access.
@@ -313,9 +316,9 @@ export async function findDuplicateCandidates(
   });
 }
 
-export async function createCustomer(input: CustomerInput, user: AuthUser) {
+export async function createCustomer(input: CustomerInput, user: AuthUser, todayJalali: string) {
   const db = getDb();
-  return db.customer.create({
+  const customer = await db.customer.create({
     data: {
       ...input,
       status: input.status || "فعال",
@@ -325,9 +328,47 @@ export async function createCustomer(input: CustomerInput, user: AuthUser) {
       ownerUserId: input.ownerUserId ?? user.id,
     },
   });
+
+  // Audit log
+  const label = customer.companyName || `${customer.firstName || ""} ${customer.lastName || ""}`.trim();
+  await logAction(
+    {
+      action: "CREATE",
+      module: "مشتریان",
+      entityId: customer.id,
+      description: `ایجاد مشتری جدید: ${label}`,
+      afterState: customer,
+    },
+    user,
+    todayJalali,
+  );
+
+  // Notification
+  await notifyModuleResponsible(
+    "customers",
+    "ثبت مشتری جدید",
+    `مشتری جدید ثبت شد: ${label}`,
+    user,
+    null,
+  );
+
+  // Workflow rules
+  await processWorkflowRules(
+    "customer_created",
+    {
+      customerId: customer.id,
+      customerName: label,
+      customerType: customer.customerType,
+      province: customer.province,
+      industry: customer.industry,
+    },
+    user,
+  );
+
+  return customer;
 }
 
-export async function updateCustomer(id: string, input: Partial<CustomerInput>, user: AuthUser) {
+export async function updateCustomer(id: string, input: Partial<CustomerInput>, user: AuthUser, todayJalali: string) {
   const db = getDb();
   const visibility = visibilityClause(user);
   if (visibility) {
@@ -335,10 +376,46 @@ export async function updateCustomer(id: string, input: Partial<CustomerInput>, 
     if (!allowed) return null;
   }
 
+  // Get before state for audit log
+  const before = await db.customer.findUnique({ where: { id } });
+  if (!before) return null;
+
   const data: Record<string, unknown> = { ...input };
   if ("mobile" in input) data.mobileNormalized = normalizeMobile(input.mobile);
 
-  return db.customer.update({ where: { id }, data });
+  const customer = await db.customer.update({ where: { id }, data });
+
+  // Audit log
+  const label = customer.companyName || `${customer.firstName || ""} ${customer.lastName || ""}`.trim();
+  await logAction(
+    {
+      action: "UPDATE",
+      module: "مشتریان",
+      entityId: customer.id,
+      description: `ویرایش اطلاعات مشتری: ${label}`,
+      beforeState: before,
+      afterState: customer,
+    },
+    user,
+    todayJalali,
+  );
+
+  // Workflow rules
+  await processWorkflowRules(
+    "customer_updated",
+    {
+      customerId: customer.id,
+      customerName: label,
+      customerType: customer.customerType,
+      province: customer.province,
+      industry: customer.industry,
+      oldProvince: before.province,
+      oldIndustry: before.industry,
+    },
+    user,
+  );
+
+  return customer;
 }
 
 /**
@@ -431,13 +508,17 @@ export async function setCustomerAgreements(
   });
 }
 
-export async function deleteCustomer(id: string, user: AuthUser): Promise<boolean> {
+export async function deleteCustomer(id: string, user: AuthUser, todayJalali: string): Promise<boolean> {
   const db = getDb();
   const visibility = visibilityClause(user);
   if (visibility) {
     const allowed = await db.customer.findFirst({ where: { AND: [{ id }, visibility] }, select: { id: true } });
     if (!allowed) return false;
   }
+
+  // Get customer info for audit log before deletion
+  const customer = await db.customer.findUnique({ where: { id } });
+  if (!customer) return false;
 
   await db.$transaction(async (tx) => {
     // Links pointing *at* this customer are onDelete: NoAction, so they would
@@ -446,6 +527,21 @@ export async function deleteCustomer(id: string, user: AuthUser): Promise<boolea
     await tx.customerLink.deleteMany({ where: { OR: [{ fromId: id }, { toId: id }] } });
     await tx.customer.delete({ where: { id } });
   });
+
+  // Audit log
+  const label = customer.companyName || `${customer.firstName || ""} ${customer.lastName || ""}`.trim();
+  await logAction(
+    {
+      action: "DELETE",
+      module: "مشتریان",
+      entityId: id,
+      description: `حذف مشتری: ${label}`,
+      beforeState: customer,
+    },
+    user,
+    todayJalali,
+  );
+
   return true;
 }
 

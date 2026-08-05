@@ -3,6 +3,9 @@ import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
 import { toJsonColumn, toNullableString } from "../childSync";
+import { notifyModuleResponsible } from "./notificationService";
+import { logAction } from "./auditService";
+import { processWorkflowRules } from "./workflowService";
 
 /**
  * Supplier data access.
@@ -102,22 +105,76 @@ function scalarData(input: SupplierInput): Record<string, unknown> {
   return out;
 }
 
-export async function createSupplier(input: SupplierInput, user: AuthUser) {
+export async function createSupplier(input: SupplierInput, user: AuthUser, todayJalali: string) {
   if (!allowed(user)) return null;
-  return getDb().supplier.create({
+  const supplier = await getDb().supplier.create({
     data: scalarData(input) as Prisma.SupplierUncheckedCreateInput,
   });
+
+  // Audit log
+  await logAction(
+    {
+      action: "CREATE",
+      module: "تامین‌کنندگان",
+      entityId: supplier.id,
+      description: `ایجاد تامین‌کننده جدید: ${supplier.name || supplier.id}`,
+      afterState: supplier,
+    },
+    user,
+    todayJalali,
+  );
+
+  // Notification
+  await notifyModuleResponsible(
+    "suppliers",
+    "ثبت تامین‌کننده جدید",
+    `تامین‌کننده جدید ثبت شد: ${supplier.name || supplier.id}`,
+    user,
+    null,
+  );
+
+  // Workflow trigger
+  await processWorkflowRules(
+    "supplier_created",
+    {
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      companyName: supplier.name,
+    },
+    user,
+  );
+
+  return supplier;
 }
 
-export async function updateSupplier(id: string, input: SupplierInput, user: AuthUser) {
+export async function updateSupplier(id: string, input: SupplierInput, user: AuthUser, todayJalali: string) {
   if (!allowed(user)) return null;
   const db = getDb();
-  const existing = await db.supplier.findUnique({ where: { id }, select: { id: true } });
-  if (!existing) return null;
-  return db.supplier.update({
+
+  // Get before state for audit log
+  const before = await db.supplier.findUnique({ where: { id } });
+  if (!before) return null;
+
+  const supplier = await db.supplier.update({
     where: { id },
     data: scalarData(input) as Prisma.SupplierUncheckedUpdateInput,
   });
+
+  // Audit log
+  await logAction(
+    {
+      action: "UPDATE",
+      module: "تامین‌کنندگان",
+      entityId: id,
+      description: `ویرایش تامین‌کننده: ${supplier.name || id}`,
+      beforeState: before,
+      afterState: supplier,
+    },
+    user,
+    todayJalali,
+  );
+
+  return supplier;
 }
 
 export async function countSupplierReferences(id: string) {
@@ -133,16 +190,31 @@ export async function countSupplierReferences(id: string) {
 export async function deleteSupplier(
   id: string,
   user: AuthUser,
+  todayJalali: string,
 ): Promise<"ok" | "forbidden" | "in-use" | "not-found"> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
 
-  const existing = await db.supplier.findUnique({ where: { id }, select: { id: true } });
+  const existing = await db.supplier.findUnique({ where: { id } });
   if (!existing) return "not-found";
 
   const refs = await countSupplierReferences(id);
   if (refs.total > 0) return "in-use";
 
   await db.supplier.delete({ where: { id } });
+
+  // Audit log
+  await logAction(
+    {
+      action: "DELETE",
+      module: "تامین‌کنندگان",
+      entityId: id,
+      description: `حذف تامین‌کننده: ${existing.name || id}`,
+      beforeState: existing,
+    },
+    user,
+    todayJalali,
+  );
+
   return "ok";
 }

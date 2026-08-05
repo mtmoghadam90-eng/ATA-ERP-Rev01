@@ -4,6 +4,9 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, hasPermission } from "../auth";
 import { jalaliToDate, normalizeJalali } from "../dates";
 import { toJsonColumn, toNullableString, toNumber } from "../childSync";
+import { logAction } from "./auditService";
+import { notifyModuleResponsible } from "./notificationService";
+import { processWorkflowRules } from "./workflowService";
 
 /**
  * Product and inventory data access.
@@ -470,7 +473,7 @@ export async function createProduct(
   if (!requireProductPermission(user)) return null;
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
+  const product = await db.$transaction(async (tx) => {
     const product = await tx.product.create({
       data: {
         ...scalarData(input),
@@ -494,6 +497,46 @@ export async function createProduct(
 
     return tx.product.findUnique({ where: { id: product.id }, include: { variants: true } });
   });
+
+  if (product) {
+    // Audit log
+    await logAction(
+      {
+        action: "CREATE",
+        module: "کالاها",
+        entityId: product.id,
+        description: `ایجاد کالای جدید: ${product.name} (کد: ${product.code})`,
+        afterState: product,
+      },
+      user,
+      todayJalali,
+    );
+
+    // Notification
+    await notifyModuleResponsible(
+      "products",
+      "ثبت کالای جدید",
+      `کالای جدید ثبت شد: ${product.name} (کد: ${product.code})`,
+      user,
+      null,
+    );
+
+    // Workflow rules
+    await processWorkflowRules(
+      "product_created",
+      {
+        productId: product.id,
+        productName: product.name,
+        productCode: product.code,
+        category: product.category,
+        brand: product.brand,
+        stockLevel: product.stockLevel,
+      },
+      user,
+    );
+  }
+
+  return product;
 }
 
 export async function updateProduct(
@@ -505,10 +548,10 @@ export async function updateProduct(
   if (!requireProductPermission(user)) return null;
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     const before = await tx.product.findUnique({
       where: { id },
-      select: { id: true, hasVariants: true, stockLevel: true },
+      select: { id: true, hasVariants: true, stockLevel: true, name: true, code: true },
     });
     if (!before) return null;
 
@@ -532,6 +575,38 @@ export async function updateProduct(
 
     return tx.product.findUnique({ where: { id }, include: { variants: true } });
   });
+
+  if (result) {
+    // Audit log
+    await logAction(
+      {
+        action: "UPDATE",
+        module: "کالاها",
+        entityId: id,
+        description: `ویرایش اطلاعات کالا: ${result.name} (کد: ${result.code})`,
+        afterState: result,
+      },
+      user,
+      todayJalali,
+    );
+
+    // Workflow rules for low stock
+    if (result.stockLevel <= result.minStockLevel) {
+      await processWorkflowRules(
+        "product_low_stock",
+        {
+          productId: result.id,
+          productName: result.name,
+          productCode: result.code,
+          stockLevel: result.stockLevel,
+          minStockLevel: result.minStockLevel,
+        },
+        user,
+      );
+    }
+  }
+
+  return result;
 }
 
 export async function countProductReferences(id: string) {
@@ -553,17 +628,35 @@ export async function countProductReferences(id: string) {
 export async function deleteProduct(
   id: string,
   user: AuthUser,
+  todayJalali: string,
 ): Promise<"ok" | "forbidden" | "in-use" | "not-found"> {
   if (!requireProductPermission(user)) return "forbidden";
   const db = getDb();
 
-  const existing = await db.product.findUnique({ where: { id }, select: { id: true } });
+  const existing = await db.product.findUnique({
+    where: { id },
+    select: { id: true, name: true, code: true }
+  });
   if (!existing) return "not-found";
 
   const refs = await countProductReferences(id);
   if (refs.total > 0) return "in-use";
 
   await db.product.delete({ where: { id } });
+
+  // Audit log
+  await logAction(
+    {
+      action: "DELETE",
+      module: "کالاها",
+      entityId: id,
+      description: `حذف کالا: ${existing.name} (کد: ${existing.code})`,
+      beforeState: existing,
+    },
+    user,
+    todayJalali,
+  );
+
   return "ok";
 }
 
