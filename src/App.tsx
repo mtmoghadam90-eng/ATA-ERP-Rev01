@@ -382,7 +382,6 @@ export default function App() {
             onClearInitialPrintDocId={handleClearPrintDoc}
             // Reads its own data from the API; landed cost and the stock
             // receipt are computed server-side.
-            products={store.products}            supplierInquiries={store.supplierInquiries || []}
             settings={store.settings}
             currentUser={store.currentUser}
           />

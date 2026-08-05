@@ -59,7 +59,6 @@ import type { CustomerRow } from '../api/customers';
 interface PurchaseOrdersViewProps {
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
-  products: Product[];
   supplierInquiries?: SupplierInquiry[];
   // The four order mutations are no longer props: the view calls the API, so
   // the landed cost and the stock receipt come back from the server that
@@ -76,7 +75,6 @@ interface PurchaseOrdersViewProps {
 export default function PurchaseOrdersView({
   initialPrintDocId,
   onClearInitialPrintDocId,
-  products,
   supplierInquiries = [],
   settings,
   addSupplier,
@@ -119,11 +117,23 @@ export default function PurchaseOrdersView({
     path: '/api/customers', limit: 25, enabled: showModal,
     getLabel: (row) => row.companyName,
   });
+  const productPicker = useEntitySearch<import('../api/products').ProductRow>({
+    path: '/api/products', limit: 100, enabled: showModal,
+    getLabel: (row) => row.displayName,
+  });
 
   const suppliers = supplierPicker.matches as unknown as Supplier[];
   const projects = projectPicker.matches as unknown as Project[];
   const proformas = proformaPicker.matches as unknown as Proforma[];
   const customers = customerPicker.matches as unknown as Customer[];
+  const products = productPicker.matches.map(row => ({
+    ...row,
+    name: row.displayName,
+    variants: [],
+    features: [],
+    configRules: [],
+    images: [],
+  })) as unknown as Product[];
 
   /** Reports a failed call using the server's own Persian sentence. */
   const reportError = (err: unknown, fallback: string) => {
