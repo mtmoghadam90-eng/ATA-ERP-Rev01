@@ -130,7 +130,7 @@ export default function PriceCalculatorModal({
         : "0",
     );
     setCalcMarginType(initialValues?.calcMarginType || "PERCENT");
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, currency, initialPriceForeign, initialValues, exchangeRates]);
 
   if (!open) return null;
 
