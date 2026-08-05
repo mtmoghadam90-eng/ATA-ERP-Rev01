@@ -97,21 +97,32 @@ Step 4 "Installing dependencies"
 if ($LASTEXITCODE -ne 0) { Fail "npm install failed"; Restore-Dist; exit 4 }
 Ok "dependencies ready"
 
-# ------------------------------------------------------------- 5. type-check
-Step 5 "Type-checking"
+# ------------------------------------------------------------ 5. database migration
+Step 5 "Applying database migrations"
+$npx = Join-Path $NodeDir "npx.cmd"
+& $npx prisma migrate deploy
+if ($LASTEXITCODE -ne 0) {
+    Fail "database migration failed - NOT deploying"
+    Restore-Dist
+    exit 5
+}
+Ok "database schema is up to date"
+
+# ------------------------------------------------------------- 6. type-check
+Step 6 "Type-checking"
 & $npm run lint
-if ($LASTEXITCODE -ne 0) { Fail "type-check failed - NOT deploying"; Restore-Dist; exit 5 }
+if ($LASTEXITCODE -ne 0) { Fail "type-check failed - NOT deploying"; Restore-Dist; exit 6 }
 Ok "no type errors"
 
-# ------------------------------------------------------------------ 6. build
-Step 6 "Building production bundle"
+# ------------------------------------------------------------------ 7. build
+Step 7 "Building production bundle"
 & $npm run build
-if ($LASTEXITCODE -ne 0) { Fail "build failed - NOT deploying"; Restore-Dist; exit 6 }
-if (-not (Test-Path "dist\server.cjs")) { Fail "dist\server.cjs missing"; Restore-Dist; exit 6 }
+if ($LASTEXITCODE -ne 0) { Fail "build failed - NOT deploying"; Restore-Dist; exit 7 }
+if (-not (Test-Path "dist\server.cjs")) { Fail "dist\server.cjs missing"; Restore-Dist; exit 7 }
 Ok "build produced dist\server.cjs"
 
-# ---------------------------------------------------------------- 7. restart
-Step 7 "Restarting the application"
+# ---------------------------------------------------------------- 8. restart
+Step 8 "Restarting the application"
 # The task is registered with -MultipleInstances IgnoreNew: if the old process is
 # still alive, Start-ScheduledTask is silently ignored and the deploy has NO
 # effect while appearing to succeed. So confirm the port is actually free before
@@ -158,11 +169,11 @@ try {
     Ok "task '$TaskName' restarted on a free port"
 } catch {
     Fail "could not restart task: $($_.Exception.Message)"
-    exit 7
+    exit 8
 }
 
-# ------------------------------------------------------------ 8. health check
-Step 8 "Health check"
+# ------------------------------------------------------------ 9. health check
+Step 9 "Health check"
 $healthy = $false
 foreach ($i in 1..20) {
     Start-Sleep -Seconds 2
@@ -192,5 +203,5 @@ if ($healthy) {
     Fail "application did not respond on port $Port after 40s"
     Write-Host "Check the task history in Task Scheduler, then run:" -ForegroundColor Yellow
     Write-Host "  cd $AppDir; `$env:NODE_ENV='production'; & '$node' dist\server.cjs" -ForegroundColor Yellow
-    exit 8
+    exit 9
 }
