@@ -44,7 +44,7 @@ export function rowToProduct(row: ProductRow): Product {
     images: parseJson(row.images, [] as string[]),
     features: parseJson(row.features, [] as Product["features"]),
     description: "",
-    variants: row.variants.map((v) => ({
+    variants: (row.variants || []).map((v) => ({
       id: v.id,
       sku: v.sku,
       attributes: parseJson<Record<string, string>>(v.attributes, {}),
