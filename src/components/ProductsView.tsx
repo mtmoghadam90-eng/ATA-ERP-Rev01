@@ -52,23 +52,12 @@ import { useList } from '../api/useList';
  * alongside the catalogue.
  */
 interface ProductsViewProps {
-  batchImportProducts: (items: Array<{
-    code?: string;
-    name?: string;
-    category?: string;
-    supplyType?: 'INVENTORY' | 'ORDER';
-    notes?: string;
-    amt?: number;
-    type?: string;
-    dateVal?: string;
-  }>) => { successCount: number; createCount: number };
   categories: string[];
   units: string[];
   settings: ERPSettings;
 }
 
 export default function ProductsView({
-  batchImportProducts,
   categories,
   settings,
 }: ProductsViewProps) {
@@ -529,7 +518,7 @@ export default function ProductsView({
   const handleProcessBatch = async () => {
     if (!batchFile) return;
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array' });
@@ -590,8 +579,84 @@ export default function ProductsView({
           };
         });
 
-        const { successCount, createCount } = batchImportProducts(itemsToImport);
-        
+        // Process batch import via API
+        let successCount = 0;
+        let createCount = 0;
+
+        for (const item of itemsToImport) {
+          try {
+            // Find existing product by code or variant SKU
+            let existingProduct = list.rows.find(r => r.code === item.code);
+            let variantId: string | undefined;
+
+            if (!existingProduct && item.code) {
+              // Check if code matches a variant SKU
+              for (const row of list.rows) {
+                const prod = rowToProduct(row);
+                const variant = prod.variants?.find(v => v.sku === item.code);
+                if (variant) {
+                  existingProduct = row;
+                  variantId = variant.id;
+                  break;
+                }
+              }
+            }
+
+            if (existingProduct) {
+              // UPDATE: Adjust stock if amt is provided
+              if (item.amt && item.amt !== 0) {
+                const delta = item.type === 'خروج' ? -Math.abs(item.amt) : Math.abs(item.amt);
+                await productsApi.adjustStock(existingProduct.id, {
+                  variantId: variantId || null,
+                  delta: delta,
+                  notes: item.notes || '',
+                  occurredAt: item.dateVal || new Date().toISOString(),
+                });
+              }
+              successCount++;
+            } else if (item.name && item.category) {
+              // CREATE: New product
+              const newProduct = await productsApi.create({
+                code: item.code || `PROD-${Date.now()}`,
+                name: item.name,
+                displayName: item.name,
+                category: item.category,
+                brand: item.brand || null,
+                modelNumber: null,
+                unit: null,
+                supplyType: item.supplyType || 'INVENTORY',
+                description: null,
+                features: null,
+                configRules: null,
+                images: null,
+                priceCalc: null,
+                basePriceRial: item.priceRIYAL ? String(item.priceRIYAL) : null,
+                priceForeign: item.priceForeign ? String(item.priceForeign) : null,
+                currencyForeign: item.currencyForeign || null,
+                minStockLevel: '0',
+                customValues: null,
+                variants: [],
+              });
+
+              // Adjust stock if initial amt is provided
+              if (item.amt && item.amt > 0 && item.supplyType === 'INVENTORY') {
+                await productsApi.adjustStock(newProduct.id, {
+                  variantId: null,
+                  delta: item.amt,
+                  notes: item.notes || 'موجودی اولیه',
+                  occurredAt: item.dateVal || new Date().toISOString(),
+                });
+              }
+
+              createCount++;
+              successCount++;
+            }
+          } catch (err) {
+            console.error('Error processing item:', item, err);
+          }
+        }
+
+        await list.refresh();
         alert(`عملیات موفقیت آمیز بود. ${successCount} کالا بروزرسانی شد و ${createCount} کالای جدید تعریف شد.`);
         setBatchModalOpen(false);
         setIsBatchModalFullscreen(false);

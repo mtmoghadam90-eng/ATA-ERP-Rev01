@@ -358,7 +358,6 @@ export default function App() {
           // Reads its own data from the API; the stock ledger is a separate
           // paginated query behind its own tab.
           <ProductsView
-            batchImportProducts={store.batchImportProducts}
             categories={store.settings.dropdownItems.categories}
             units={store.settings.dropdownItems.units}
             settings={store.settings}          />
