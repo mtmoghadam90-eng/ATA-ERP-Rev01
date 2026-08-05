@@ -48,7 +48,8 @@ import ConfirmModal from "./ConfirmModal";
 import { SearchableSelect } from "./SearchableSelect";
 import { ApiError } from "../api/client";
 import { proformasApi } from "../api/proformas";
-import { customersApi } from "../api/customers";
+import { customersApi, type CustomerRow } from "../api/customers";
+import { useEntitySearch } from "../api/useEntitySearch";
 import { productsApi } from "../api/products";
 import { projectsApi } from "../api/projects";
 import { customerToWriteInput, detailToCustomer } from "../api/customerAdapter";
@@ -628,6 +629,24 @@ export default function ProformasView({
   const [quickProjCustomerId, setQuickProjCustomerId] = useState("");
   const [quickProjStage, setQuickProjStage] = useState("استعلام اولیه");
   const [quickProjSalesExpert, setQuickProjSalesExpert] = useState("");
+
+  /**
+   * Customer picker for the create/edit modal.
+   *
+   * `customers` (above) only contains customers that appear on the current
+   * page's rows — on a fresh form the dropdown was empty. This picker queries
+   * the API directly so every customer is searchable regardless of paging.
+   */
+  const modalOpen = showCreateModal || editingProforma !== null;
+  const customerPicker = useEntitySearch<CustomerRow>({
+    path: '/api/customers',
+    limit: 50,
+    enabled: modalOpen,
+    selectedId: customerId || null,
+    getLabel: (row) => row.companyName,
+  });
+  const modalCustomers = customerPicker.matches as unknown as Customer[];
+
   // Open Create Modal
   const handleOpenCreate = () => {
     setEditingProforma(null);
@@ -635,21 +654,9 @@ export default function ProformasView({
     setCustomSentMethod("");
     setSelectedSentRecipients([]);
     setRecipientSearchTerm("");
-    const firstCust = customers[0];
-    setCustomerId(firstCust?.id || "");
+    setCustomerId("");
     setContactCustomerId("");
-    // Initialize default prefix based on first customer gender if they are a real person
-    if (firstCust && firstCust.customerType === "حقیقی") {
-      if (firstCust.gender === "مرد") {
-        setContactPrefix("جناب آقای مهندس");
-      } else if (firstCust.gender === "زن") {
-        setContactPrefix("سرکار خانم مهندس");
-      } else {
-        setContactPrefix("");
-      }
-    } else {
-      setContactPrefix("");
-    }
+    setContactPrefix("");
     setProjectId("");
     setProformaType("FINANCIAL");
     setProformaNumber("");
@@ -3527,7 +3534,7 @@ export default function ProformasView({
                         // Reset contact choice on customer change
                         setContactCustomerId("");
                         // Auto set prefix for Real Customer
-                        const selectedCust = customers.find(
+                        const selectedCust = modalCustomers.find(
                           (c) => c.id === newCustId,
                         );
                         if (
@@ -3548,7 +3555,7 @@ export default function ProformasView({
                       required={isFieldRequired(settings, 'proformas', 'customerId')}
                       options={[
                         { value: "", label: "-- انتخاب مشتری --" },
-                        ...buildCustomerOptions(customers),
+                        ...buildCustomerOptions(modalCustomers),
                       ]}
                       placeholder="-- انتخاب مشتری --"
                     />
@@ -3564,9 +3571,9 @@ export default function ProformasView({
                     )}
                   </div>
                   <div className="mt-2">
-                    <CustomerAgreementAlert 
-                      customer={customers.find(c => c.id === customerId)} 
-                      moduleName="proformas" 
+                    <CustomerAgreementAlert
+                      customer={modalCustomers.find(c => c.id === customerId)}
+                      moduleName="proformas"
                     />
                   </div>
                   {(() => {
@@ -3589,7 +3596,7 @@ export default function ProformasView({
                 </div>
                 {/* Prefix for Individual (حقیقی) Customer (rendered after Customer Name) */}
                 {(() => {
-                  const selectedCustObj = customers.find(
+                  const selectedCustObj = modalCustomers.find(
                     (c) => c.id === customerId,
                   );
                   const isRealCustomer =
@@ -3613,13 +3620,13 @@ export default function ProformasView({
                 })()}
                 {/* Contact Select (مخاطب) when Customer is Legal (حقوقی) */}
                 {(() => {
-                  const selectedCustObj = customers.find(
+                  const selectedCustObj = modalCustomers.find(
                     (c) => c.id === customerId,
                   );
                   const isLegalCustomer =
                     selectedCustObj?.customerType === "حقوقی";
                   const filteredContacts = isLegalCustomer
-                    ? customers.filter(
+                    ? modalCustomers.filter(
                         (c) =>
                           c.customerType === "حقیقی" &&
                           (selectedCustObj.linkedCustomerIds?.includes(c.id) ||
@@ -3641,7 +3648,7 @@ export default function ProformasView({
                               const newContactId = val;
                               setContactCustomerId(newContactId);
                               // Auto set prefix for Contact Customer
-                              const selectedContact = customers.find(
+                              const selectedContact = modalCustomers.find(
                                 (c) => c.id === newContactId,
                               );
                               if (selectedContact) {
@@ -3659,7 +3666,7 @@ export default function ProformasView({
                             required={isFieldRequired(settings, 'proformas', 'contactCustomerId')}
                             options={[
                               { value: "", label: "-- انتخاب مخاطب --" },
-                              ...buildCustomerOptionsFromSubset(filteredContacts, customers),
+                              ...buildCustomerOptionsFromSubset(filteredContacts, modalCustomers),
                             ]}
                             placeholder="-- انتخاب مخاطب --"
                           />
@@ -3828,8 +3835,8 @@ export default function ProformasView({
                           
                           <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
                             {(() => {
-                              const pfCustomerObj = customers.find((c) => c.id === customerId);
-                              const filtered = customers
+                              const pfCustomerObj = modalCustomers.find((c) => c.id === customerId);
+                              const filtered = modalCustomers
                                 .filter(c => c.customerType === "حقیقی")
                                 .filter(c => {
                                   if (!pfCustomerObj) return false;
@@ -5766,7 +5773,7 @@ export default function ProformasView({
                   });
                   const currentProformaCustomerId = customerId || proformas.find(p => p.id === statusTargetId)?.customerId;
                   if (currentProformaCustomerId) {
-                    const selectedCustObj = customers.find(c => c.id === currentProformaCustomerId);
+                    const selectedCustObj = modalCustomers.find(c => c.id === currentProformaCustomerId);
                     if (updateCustomer && selectedCustObj) {
                       const updatedLinks = Array.from(
                         new Set([
