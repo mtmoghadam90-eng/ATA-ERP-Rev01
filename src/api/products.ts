@@ -39,6 +39,7 @@ export interface ProductRow {
   currencyForeign: string | null;
   images: string | null;
   features: string | null;
+  description: string | null;
   createdAt: string;
   variants: Array<{ id: string; sku: string; attributes: string; stockLevel: string }>;
   _count: { variants: number };

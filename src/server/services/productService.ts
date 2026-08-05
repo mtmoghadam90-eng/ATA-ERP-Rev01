@@ -89,6 +89,7 @@ const LIST_SELECT = {
   currencyForeign: true,
   images: true,
   features: true,
+  description: true,
   createdAt: true,
   variants: { select: { id: true, sku: true, attributes: true, stockLevel: true } },
   _count: { select: { variants: true } },

@@ -43,7 +43,7 @@ export function rowToProduct(row: ProductRow): Product {
     currencyForeign: row.currencyForeign ?? undefined,
     images: parseJson(row.images, [] as string[]),
     features: parseJson(row.features, [] as Product["features"]),
-    description: "",
+    description: row.description ?? "",
     variants: (row.variants || []).map((v) => ({
       id: v.id,
       sku: v.sku,
