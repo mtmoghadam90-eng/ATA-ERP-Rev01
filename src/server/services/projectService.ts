@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
-import { expandDateFields, jalaliRangeFilter } from "../dates";
+import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { summarizeProject, summarizeProjects } from "./projectSummary";
 // The custom-field clause is identical for every module; defined once with customers.
@@ -361,9 +361,18 @@ export async function createProject(input: ProjectInput, user: AuthUser, todayJa
   const db = getDb();
 
   const project = await db.$transaction(async (tx) => {
+    const data = scalarData(input) as Prisma.ProjectUncheckedCreateInput;
+
+    // Default creationDate to today if not provided
+    if (!data.creationDate) {
+      const today = jalaliToDate(todayJalali) ?? new Date();
+      data.creationDate = today;
+      data.creationDateJalali = normalizeJalali(todayJalali);
+    }
+
     const project = await tx.project.create({
       data: {
-        ...(scalarData(input) as Prisma.ProjectUncheckedCreateInput),
+        ...data,
         // Ownership defaults to the creator so record-level rules have a subject.
         ownerUserId: input.ownerUserId ?? user.id,
       } as Prisma.ProjectUncheckedCreateInput,
