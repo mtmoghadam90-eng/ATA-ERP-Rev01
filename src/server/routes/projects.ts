@@ -24,6 +24,7 @@ const WRITABLE: (keyof ProjectInput)[] = [
   "code", "name", "customerId", "status", "lossReason", "description",
   "estimatedValueRial", "probabilityPercent", "marketingChannel", "leadQuality",
   "referrerName", "communicationMethod", "customerInquiryNumber",
+  "salesExpert", "financialContact", "technicalContact", "endUser",
   "ownerUserId", "endUserCustomerId", "financialContactId", "technicalContactId",
   "attachments", "manualDocuments", "milestoneRules", "customValues",
   "creationDate", "opportunityDate", "expectedCloseDate",
