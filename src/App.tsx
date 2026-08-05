@@ -129,11 +129,16 @@ export default function App() {
 
   // Monitor project status changes (to won/semi-won)
   useEffect(() => {
-    if (!store.isInitialized || !store.projects) return;
+    // Wait until projects are actually loaded — an empty array on first render
+    // would set isInitialLoadRef=false before prevStatuses is seeded, making
+    // every won project appear as "new & won" on the next render and opening
+    // the upload modal for all of them at login.
+    if (!store.isInitialized || !store.projects || store.projects.length === 0) return;
 
     const prevStatuses = prevProjectStatusesRef.current;
-    
+
     if (isInitialLoadRef.current) {
+      // Seed known statuses so subsequent renders only fire on real transitions.
       store.projects.forEach(project => {
         prevStatuses[project.id] = project.status;
       });
@@ -145,26 +150,22 @@ export default function App() {
       const prevStatus = prevStatuses[project.id];
       const currentStatus = project.status;
 
-      const isNewProject = prevStatus === undefined;
-      const isWon = currentStatus === 'برنده (موفق)' || currentStatus === 'نیمه برنده';
-      
-      let triggered = false;
-      if (isNewProject) {
-        if (isWon) {
-          triggered = true;
-        }
-      } else if (prevStatus !== currentStatus) {
-        const wasWonBefore = prevStatus === 'برنده (موفق)' || prevStatus === 'نیمه برنده';
-        if (isWon && !wasWonBefore) {
-          triggered = true;
-        }
+      if (prevStatus === undefined) {
+        // Project not seen before (e.g. added by another user via polling).
+        // Seed it without triggering — the user didn't make this transition.
+        prevStatuses[project.id] = currentStatus;
+        return;
       }
 
-      if (triggered) {
-        // Trigger modal with short delay to allow background updates to complete
-        setTimeout(() => {
-          setProjectToUploadDoc(project);
-        }, 100);
+      if (prevStatus !== currentStatus) {
+        const wasWonBefore = prevStatus === 'برنده (موفق)' || prevStatus === 'نیمه برنده';
+        const isWon = currentStatus === 'برنده (موفق)' || currentStatus === 'نیمه برنده';
+        if (isWon && !wasWonBefore) {
+          // Trigger modal with short delay to allow background updates to complete
+          setTimeout(() => {
+            setProjectToUploadDoc(project);
+          }, 100);
+        }
       }
 
       // Keep record updated
