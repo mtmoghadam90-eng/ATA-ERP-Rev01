@@ -31,6 +31,8 @@ import {
 import { compressLZW, decompressLZW } from "./utils/compress";
 import { ApiError } from "./api/client";
 import { settingsApi } from "./api/settings";
+import { customersApi } from "./api/customers";
+import { customerToWriteInput, detailToCustomer } from "./api/customerAdapter";
 
 import {
   SEED_PRODUCTS,
@@ -1118,40 +1120,35 @@ export function useERPStore() {
   };
 
   // --- Customers CRUD ---
-  const addCustomer = (customer: Omit<Customer, "id">) => {
-    const newId = `cust-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const newCustomer: Customer = { createdAt: new Date().toISOString(),
-      ...customer,
-      id: newId,
-      
-    };
-    setCustomers((prev) => {
-      let updated = prev.map((c) => {
-        if (newCustomer.linkedCustomerIds?.includes(c.id)) {
-          const currentLinks = c.linkedCustomerIds || [];
-          if (!currentLinks.includes(newId)) {
-            return {
-              ...c,
-              linkedCustomerIds: [...currentLinks, newId],
-            };
+  const addCustomer = async (customer: Omit<Customer, "id" | "createdAt">): Promise<Customer | null> => {
+    try {
+      const created = await customersApi.create(customerToWriteInput(customer as any));
+      const newCustomer = detailToCustomer(created);
+
+      // Update local state for immediate UI feedback
+      setCustomers((prev) => {
+        let updated = prev.map((c) => {
+          if (newCustomer.linkedCustomerIds?.includes(c.id)) {
+            const currentLinks = c.linkedCustomerIds || [];
+            if (!currentLinks.includes(newCustomer.id)) {
+              return {
+                ...c,
+                linkedCustomerIds: [...currentLinks, newCustomer.id],
+              };
+            }
           }
-        }
-        return c;
+          return c;
+        });
+        updated = [newCustomer, ...updated];
+        return updated;
       });
-      updated = [newCustomer, ...updated];
-      saveToServerMerged("erp_customers", updated);
-      logAction(
-        "CREATE",
-        "مشتریان",
-        newCustomer.id,
-        `ایجاد مشتری جدید: ${newCustomer.companyName || `${newCustomer.firstName || ""} ${newCustomer.lastName || ""}`.trim()}`,
-        undefined,
-        newCustomer,
-      );
-      return updated;
-    });
-    processWorkflowRules('customer_created', newCustomer);
-    return newCustomer;
+
+      processWorkflowRules('customer_created', newCustomer);
+      return newCustomer;
+    } catch (err) {
+      console.error('Failed to create customer:', err);
+      return null;
+    }
   };
 
   const updateCustomer = (updatedCust: Customer) => {
