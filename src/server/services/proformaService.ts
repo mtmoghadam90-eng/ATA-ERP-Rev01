@@ -11,6 +11,7 @@ import {
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
+import { applyStockDelta } from "./productService";
 
 /**
  * Proforma data access.
@@ -375,6 +376,57 @@ async function syncProjectStatus(
   await tx.project.update({ where: { id: projectId }, data });
 }
 
+/**
+ * Reconcile inventory for proforma changes.
+ *
+ * Compares won items before and after, and adjusts stock accordingly:
+ * - Old won items get added back (positive delta)
+ * - New won items get deducted (negative delta)
+ *
+ * This is idempotent: calling it multiple times with the same before/after
+ * produces the same net stock change.
+ */
+async function reconcileProformaStock(
+  tx: Prisma.TransactionClient,
+  before: { id: string; proformaNumber: string; items?: any[] } | null,
+  after: { id: string; proformaNumber: string; items?: any[] },
+  todayJalali: string,
+) {
+  // Cast to include the fields we need for stock adjustment
+  type ItemWithStock = { productId?: string | null; variantId?: string | null; quantity?: number; status?: string | null; supplyMethod?: string | null };
+
+  const oldWon = before ? getWonItems(before as any, false) as ItemWithStock[] : [];
+  const newWon = getWonItems(after as any, false) as ItemWithStock[];
+
+  // Revert old won items (add back to stock)
+  for (const item of oldWon) {
+    if (!item.productId) continue;
+    await applyStockDelta(tx, {
+      productId: item.productId,
+      variantId: item.variantId ?? undefined,
+      delta: item.quantity || 1,
+      referenceType: "PROFORMA",
+      referenceId: before!.id,
+      notes: `بازگشت موجودی پیش‌فاکتور ${before!.proformaNumber}`,
+      occurredAtJalali: todayJalali,
+    });
+  }
+
+  // Deduct new won items (remove from stock)
+  for (const item of newWon) {
+    if (!item.productId) continue;
+    await applyStockDelta(tx, {
+      productId: item.productId,
+      variantId: item.variantId ?? undefined,
+      delta: -(item.quantity || 1),
+      referenceType: "PROFORMA",
+      referenceId: after.id,
+      notes: `خروج به دلیل پیش‌فاکتور ${after.proformaNumber}`,
+      occurredAtJalali: todayJalali,
+    });
+  }
+}
+
 export async function createProforma(input: ProformaInput, user: AuthUser, todayJalali: string) {
   const db = getDb();
 
@@ -391,6 +443,16 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
       delegate: tx.proformaItem, parentWhere: { proformaId: proforma.id },
       rows: input.items ?? [], map: mapItem,
     });
+
+    // Load full proforma with items to reconcile stock
+    const fullProforma = await tx.proforma.findUnique({
+      where: { id: proforma.id },
+      include: { items: true },
+    });
+
+    if (fullProforma) {
+      await reconcileProformaStock(tx, null, fullProforma, todayJalali);
+    }
 
     await syncProjectStatus(tx, proforma.projectId, todayJalali);
     return proforma;
@@ -451,8 +513,11 @@ export async function updateProforma(
     });
     if (!existing) return null;
 
-    // Get before state for audit
-    const before = await tx.proforma.findUnique({ where: { id } });
+    // Get before state for audit and stock reconciliation
+    const before = await tx.proforma.findUnique({
+      where: { id },
+      include: { items: true },
+    });
 
     const data: Record<string, unknown> = scalarData(input);
 
@@ -473,6 +538,16 @@ export async function updateProforma(
         delegate: tx.proformaItem, parentWhere: { proformaId: id },
         rows: input.items, map: mapItem,
       });
+    }
+
+    // Load full updated proforma with items for stock reconciliation
+    const after = await tx.proforma.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+
+    if (after) {
+      await reconcileProformaStock(tx, before, after, todayJalali);
     }
 
     // Re-derive both projects when the proforma was moved between them, or the
@@ -554,10 +629,31 @@ export async function deleteProforma(
   const refs = await countProformaReferences(id);
   if (refs.total > 0) return "in-use";
 
-  // Get full data for audit before deletion
-  const proforma = await db.proforma.findUnique({ where: { id } });
+  // Get full data for audit and stock reconciliation before deletion
+  const proforma = await db.proforma.findUnique({
+    where: { id },
+    include: { items: true },
+  });
 
   await db.$transaction(async (tx) => {
+    // Revert stock for any won items before deleting
+    if (proforma) {
+      type ItemWithStock = { productId?: string | null; variantId?: string | null; quantity?: number; status?: string | null; supplyMethod?: string | null };
+      const wonItems = getWonItems(proforma as any, false) as ItemWithStock[];
+      for (const item of wonItems) {
+        if (!item.productId) continue;
+        await applyStockDelta(tx, {
+          productId: item.productId,
+          variantId: item.variantId ?? undefined,
+          delta: item.quantity || 1,
+          referenceType: "PROFORMA",
+          referenceId: proforma.id,
+          notes: `بازگشت موجودی به دلیل حذف پیش‌فاکتور ${proforma.proformaNumber}`,
+          occurredAtJalali: todayJalali,
+        });
+      }
+    }
+
     await tx.proforma.delete({ where: { id } });
     // The project's status was derived partly from this proforma.
     await syncProjectStatus(tx, existing.projectId, todayJalali);
