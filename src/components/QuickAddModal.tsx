@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Plus, Users, Briefcase, Truck, Package, Building, User, Trash2 } from 'lucide-react';
 import { Customer, Project, Supplier, Product, ERPSettings, User as ERPUser } from '../types';
 import ShamsiDatePicker from './ShamsiDatePicker';
@@ -10,6 +10,8 @@ import { getContactInfoError } from '../utils/customerValidation';
 import { findCustomerDuplicates, DuplicateMatch } from '../utils/customerDuplicates';
 import DuplicateCustomerModal from './DuplicateCustomerModal';
 import { SearchableSelect } from './SearchableSelect';
+import { customersApi } from '../api/customers';
+import { detailToCustomer } from '../api/customerAdapter';
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -102,6 +104,36 @@ export default function QuickAddModal({
   const [projAgreedDeliveryDate, setProjAgreedDeliveryDate] = useState('');
   const [projClosingDate, setProjClosingDate] = useState('');
   const [projItemsNeeded, setProjItemsNeeded] = useState<{ productId: string; name: string; quantity: number }[]>([]);
+
+  // Fetch linked contacts when customer is selected in project form
+  const [linkedContacts, setLinkedContacts] = useState<Customer[]>([]);
+  useEffect(() => {
+    if (type !== 'project' || !projCustomerId) {
+      setLinkedContacts([]);
+      return;
+    }
+    let cancelled = false;
+    customersApi.get(projCustomerId)
+      .then(detail => {
+        if (cancelled) return;
+        const customer = detailToCustomer(detail);
+        const linkedIds = customer.linkedCustomerIds || [];
+        if (linkedIds.length === 0) {
+          setLinkedContacts([]);
+          return;
+        }
+        // Fetch all linked contacts
+        return Promise.all(linkedIds.map(id => customersApi.get(id).then(detailToCustomer)));
+      })
+      .then(contacts => {
+        if (cancelled || !contacts) return;
+        setLinkedContacts(contacts.filter(c => c.customerType === 'حقیقی'));
+      })
+      .catch(() => {
+        if (!cancelled) setLinkedContacts([]);
+      });
+    return () => { cancelled = true; };
+  }, [type, projCustomerId]);
 
   const handleProjStatusChange = (newStatus: Project['status']) => {
     setProjStatus(newStatus);
@@ -985,23 +1017,12 @@ export default function QuickAddModal({
                         className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                       >
                         <option value="">-- انتخاب فرد مالی (مشتری) --</option>
-                        {(() => {
-                          const selectedCustObj = customers.find(c => c.id === projCustomerId);
-                          let filtered = customers.filter(c => c.customerType === 'حقیقی');
-                          if (selectedCustObj) {
-                            if (selectedCustObj.customerType === 'حقوقی') {
-                              filtered = filtered.filter(c => selectedCustObj.linkedCustomerIds?.includes(c.id));
-                            } else {
-                              filtered = filtered.filter(c => c.id === selectedCustObj.id || selectedCustObj.linkedCustomerIds?.includes(c.id));
-                            }
-                          }
-                          return filtered.map(c => {
-                            const name = `${c.firstName || ''} ${c.lastName || ''}`.trim();
-                            return (
-                              <option key={c.id} value={c.id}>{name}</option>
-                            );
-                          });
-                        })()}
+                        {linkedContacts.map(c => {
+                          const name = `${c.firstName || ''} ${c.lastName || ''}`.trim();
+                          return (
+                            <option key={c.id} value={c.id}>{name}</option>
+                          );
+                        })}
                       </select>
                       {addCustomer && (
                         <button
@@ -1029,23 +1050,12 @@ export default function QuickAddModal({
                         className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                       >
                         <option value="">-- انتخاب فرد فنی (مشتری) --</option>
-                        {(() => {
-                          const selectedCustObj = customers.find(c => c.id === projCustomerId);
-                          let filtered = customers.filter(c => c.customerType === 'حقیقی');
-                          if (selectedCustObj) {
-                            if (selectedCustObj.customerType === 'حقوقی') {
-                              filtered = filtered.filter(c => selectedCustObj.linkedCustomerIds?.includes(c.id));
-                            } else {
-                              filtered = filtered.filter(c => c.id === selectedCustObj.id || selectedCustObj.linkedCustomerIds?.includes(c.id));
-                            }
-                          }
-                          return filtered.map(c => {
-                            const name = `${c.firstName || ''} ${c.lastName || ''}`.trim();
-                            return (
-                              <option key={c.id} value={c.id}>{name}</option>
-                            );
-                          });
-                        })()}
+                        {linkedContacts.map(c => {
+                          const name = `${c.firstName || ''} ${c.lastName || ''}`.trim();
+                          return (
+                            <option key={c.id} value={c.id}>{name}</option>
+                          );
+                        })}
                       </select>
                       {addCustomer && (
                         <button
