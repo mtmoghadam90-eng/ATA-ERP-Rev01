@@ -1,5 +1,6 @@
 import type { Product, ProductVariant } from "../types";
 import type { ProductDetail, ProductRow, ProductWriteInput, ProductVariantRow } from "./products";
+import { assertComplete, markComplete, markPartial } from "./partial";
 
 /**
  * Translation between the products API and the `Product` shape the view was
@@ -25,7 +26,7 @@ const num = (value: string | null | undefined): number => Number(value ?? 0);
 
 /** A catalogue row, in the shape the existing table markup expects. */
 export function rowToProduct(row: ProductRow): Product {
-  return {
+  return markPartial({
     id: row.id,
     code: row.code,
     name: row.name,
@@ -50,7 +51,7 @@ export function rowToProduct(row: ProductRow): Product {
       attributes: parseJson<Record<string, string>>(v.attributes, {}),
       stockLevel: num(v.stockLevel),
     } as ProductVariant)),
-  } as Product;
+  } as Product);
 }
 
 function variantToClient(v: ProductVariantRow): ProductVariant {
@@ -69,7 +70,7 @@ function variantToClient(v: ProductVariantRow): ProductVariant {
 
 /** The full record, for the detail and edit views. */
 export function detailToProduct(detail: ProductDetail): Product {
-  return {
+  return markComplete({
     ...rowToProduct(detail),
     description: detail.description ?? "",
     features: parseJson(detail.features, [] as Product["features"]),
@@ -80,15 +81,42 @@ export function detailToProduct(detail: ProductDetail): Product {
     // The price calculator's inputs are stored together as one blob and spread
     // back onto the record, which is where the form reads them from.
     ...parseJson<Record<string, unknown>>(detail.priceCalc, {}),
-  } as Product;
+  } as Product);
 }
 
-/** The price-calculator fields, which travel together as one JSON column. */
+/**
+ * The price-calculator fields, which travel together as one JSON column.
+ *
+ * This list is the whole contract: a field missing from it is dropped on save
+ * and comes back undefined. `calcProfitRIYAL` and `calcMarginType` were missing,
+ * which is worse than losing two inputs — the modal defaults an absent
+ * `calcMarginType` to "PERCENT", so a product priced on a fixed profit amount
+ * silently became a percentage-margin product the next time it was opened, and
+ * the proforma lines built from it quoted a different price.
+ *
+ * Keep it in step with the `calc…` fields on `Product` and `ProductVariant` in
+ * types.ts; nothing type-checks the two against each other.
+ */
 const PRICE_CALC_KEYS = [
   "calcPriceForeign", "calcExchangeRate", "calcRemittanceFee", "calcRemittancePct",
   "calcShippingCost", "calcCustomsDutyRIYAL", "calcOtherCostsForeign",
-  "calcOtherCostsRIYAL", "calcProfitPct",
+  "calcOtherCostsRIYAL", "calcProfitPct", "calcProfitRIYAL", "calcMarginType",
 ] as const;
+
+/**
+ * Fails the build if a `calc…` field is added to `Product` and not listed above.
+ *
+ * The list is the only thing that decides what gets persisted, and nothing else
+ * relates it to the type — which is how two fields stayed declared but unsaved.
+ * `AssertNever` resolves only when nothing is unlisted, so the drift now shows
+ * up as a type error naming the missing field.
+ */
+type UnlistedCalcKey = Exclude<
+  Extract<keyof Product, `calc${string}`>,
+  (typeof PRICE_CALC_KEYS)[number]
+>;
+type AssertNever<T extends never> = T;
+export type _EveryCalcFieldIsPersisted = AssertNever<UnlistedCalcKey>;
 
 function priceCalcOf(product: Partial<Product>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -108,6 +136,7 @@ function priceCalcOf(product: Partial<Product>): Record<string, unknown> {
  * assigned.
  */
 export function productToWriteInput(product: Partial<Product>): ProductWriteInput {
+  assertComplete(product, "کالا");
   return {
     code: product.code,
     name: product.name,

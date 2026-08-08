@@ -53,7 +53,7 @@ import { useEntitySearch } from "../api/useEntitySearch";
 import { productsApi, type ProductRow } from "../api/products";
 import { projectsApi } from "../api/projects";
 import { customerToWriteInput, detailToCustomer } from "../api/customerAdapter";
-import { productToWriteInput, detailToProduct } from "../api/productAdapter";
+import { productToWriteInput, detailToProduct, rowToProduct } from "../api/productAdapter";
 import { projectToWriteInput, detailToProject } from "../api/projectAdapter";
 import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
 import { useProformaList } from "../api/useProformaList";
@@ -323,9 +323,27 @@ export default function ProformasView({
     }
   };
 
-  const updateProduct = async (product: Product) => {
+  /**
+   * Writes a change back to a catalogue product, on top of the whole record.
+   *
+   * Pricing a line here updates the product or variant it came from — that is
+   * the pre-migration behaviour, and it was safe while the store held complete
+   * products. It is not safe now: `products` on this screen is the picker's
+   * search projection, which hardcodes empty `variants`, `features`,
+   * `configRules` and `images` and carries no price-calculator inputs. Writing
+   * one of those back erased all of it, and replaced the product's variants
+   * with whichever single one was being edited.
+   *
+   * So the caller says what to change and this loads the real record to change
+   * it on.
+   */
+  const updateProductById = async (
+    productId: string,
+    mutate: (full: Product) => Product,
+  ) => {
     try {
-      await productsApi.update(product.id, productToWriteInput(product));
+      const full = detailToProduct(await productsApi.get(productId));
+      await productsApi.update(productId, productToWriteInput(mutate(full)));
     } catch (err) {
       reportError(err, 'ثبت تغییرات کالا با خطا مواجه شد.');
     }
@@ -719,15 +737,14 @@ export default function ProformasView({
     selectedId: null,
     getLabel: (row) => row.displayName,
   });
-  const products = productPicker.matches.map(row => ({
-    ...row,
-    // Map ProductRow fields to Product fields that the UI expects
-    name: row.displayName,
-    variants: [], // Variants are loaded separately when needed
-    features: [],
-    configRules: [],
-    images: [],
-  })) as unknown as Product[];
+  // The list row already carries features, images and variants — `rowToProduct`
+  // is what parses them. Blanking all three here is what hid the "کانفیگ کالا"
+  // button (it renders only when the product has features), made SKU generation
+  // build codes from no features, and made variant matching find nothing and
+  // create a duplicate SKU every time. Config rules and the price-calculator
+  // inputs are genuinely detail-only, which is why writes go through
+  // `updateProductById` rather than sending one of these rows back.
+  const products = productPicker.matches.map(rowToProduct);
 
   // Open Create Modal
   const handleOpenCreate = () => {
@@ -5054,10 +5071,13 @@ export default function ProformasView({
               };
               setItems(newItems);
 
-              // Persist to the variant (or product if no variant)
-              if (updateProduct) {
-                if (variant) {
-                  const updatedVariants = (prod.variants || []).map(v =>
+              // Persist to the variant (or product if no variant). The
+              // mutation runs against the loaded record, not the picker
+              // projection this screen holds.
+              if (variant) {
+                void updateProductById(prod.id, (full) => ({
+                  ...full,
+                  variants: (full.variants || []).map((v) =>
                     v.id === variant.id
                       ? {
                           ...v,
@@ -5067,17 +5087,16 @@ export default function ProformasView({
                           ...details,
                         }
                       : v,
-                  );
-                  updateProduct({ ...prod, variants: updatedVariants });
-                } else {
-                  updateProduct({
-                    ...prod,
-                    priceForeign: sellingForeign,
-                    basePriceRIYAL: Math.round(sellingRial),
-                    currencyForeign: appliedCurrency,
-                    ...details,
-                  });
-                }
+                  ),
+                }));
+              } else {
+                void updateProductById(prod.id, (full) => ({
+                  ...full,
+                  priceForeign: sellingForeign,
+                  basePriceRIYAL: Math.round(sellingRial),
+                  currencyForeign: appliedCurrency,
+                  ...details,
+                }));
               }
 
               setCalcModalItemIdx(null);
@@ -5124,7 +5143,7 @@ export default function ProformasView({
 
             // Auto-create SKU when combination is identifiable but not in inventory
             let productForItem = prod;
-            if (attributesForVariant && !matchedVariantId && updateProduct) {
+            if (attributesForVariant && !matchedVariantId) {
               const targetCurrency = prod.currencyForeign || "یورو";
               const calculatedFob = getCombinedFeaturePrice(prod.features || [], attributesForVariant);
               const newVariantId = `var-${Date.now()}`;
@@ -5142,7 +5161,14 @@ export default function ProformasView({
                 hasVariants: true,
                 variants: [...(prod.variants || []), newVariant],
               };
-              updateProduct(updatedProduct);
+              // Append to the stored variants, not to this screen's copy — the
+              // row carries variants but not config rules or the price
+              // calculator, so the record has to be reloaded to add to it.
+              void updateProductById(prod.id, (full) => ({
+                ...full,
+                hasVariants: true,
+                variants: [...(full.variants || []), newVariant],
+              }));
               productForItem = updatedProduct;
               matchedVariantId = newVariantId;
             }
