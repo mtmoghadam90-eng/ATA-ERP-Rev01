@@ -326,7 +326,11 @@ export async function findAuthUser(
 export async function authenticateUser(
   username: string,
   password: string,
-): Promise<{ user: Record<string, unknown>; isDefaultPassword: boolean } | null> {
+): Promise<{
+  user: Record<string, unknown>;
+  isDefaultPassword: boolean;
+  sessionEpoch: number;
+} | null> {
   const db = getDb();
 
   // Find user by username
@@ -338,6 +342,9 @@ export async function authenticateUser(
     select: {
       ...SAFE_SELECT,
       passwordHash: true, // Need this to verify, but won't return it
+      // The session token has to carry the current epoch, and SAFE_SELECT is
+      // the client-facing projection, which has no reason to include it.
+      sessionEpoch: true,
     },
   });
 
@@ -354,8 +361,9 @@ export async function authenticateUser(
   // Check if using default password
   const isDefaultPassword = bcrypt.compareSync("123", user.passwordHash);
 
-  // Remove passwordHash before returning
-  const { passwordHash: _, ...safeUser } = user;
+  // Neither the hash nor the epoch belongs in the response body; the epoch is
+  // returned alongside, for signing.
+  const { passwordHash: _hash, sessionEpoch, ...safeUser } = user;
 
-  return { user: safeUser, isDefaultPassword };
+  return { user: safeUser, isDefaultPassword, sessionEpoch };
 }

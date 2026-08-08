@@ -426,7 +426,12 @@ async function startServer() {
 
         // Issue the session cookie — this is what authorizes every later request.
         const token = signSession(
-          { uid: authResult.user.id as string, iat: Date.now(), epoch: (authResult.user.sessionEpoch as number) || 0 },
+          // The epoch comes from authenticateUser, not from the user body: it
+          // is deliberately absent there, and reading it off that object signed
+          // every token with 0 while the database held the real value — so any
+          // account whose epoch had ever been bumped was refused by the very
+          // next request and bounced straight back to the login screen.
+          { uid: authResult.user.id as string, iat: Date.now(), epoch: authResult.sessionEpoch || 0 },
           SESSION_SECRET,
         );
         res.setHeader("Set-Cookie", buildSessionCookie(token));
@@ -505,7 +510,9 @@ async function startServer() {
 
       // Issue a fresh session so the user stays logged in on this device only
       const token = signSession(
-        { uid: userId, iat: Date.now(), epoch: (freshAuth.user.sessionEpoch as number) || 0 },
+        // Setting a password bumps the epoch, so this one matters most: signed
+        // with 0, the fresh session was invalid the moment it was issued.
+        { uid: userId, iat: Date.now(), epoch: freshAuth.sessionEpoch || 0 },
         SESSION_SECRET,
       );
       res.setHeader("Set-Cookie", buildSessionCookie(token));
