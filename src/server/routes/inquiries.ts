@@ -38,7 +38,7 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
   const KEY = "erp_supplier_inquiries";
 
   app.get("/api/supplier-inquiries", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, INQUIRY_SORTABLE, INQUIRY_FILTERABLE);
@@ -51,7 +51,7 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.get("/api/supplier-inquiries/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const inquiry = await getInquiry(req.params.id, user);
@@ -66,7 +66,7 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.post("/api/supplier-inquiries", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const input = pickInput(req.body);
@@ -89,7 +89,7 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.put("/api/supplier-inquiries/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const inquiry = await updateInquiry(req.params.id, pickInput(req.body), user, getTodayShamsi());
@@ -104,7 +104,7 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.post("/api/supplier-inquiries/:id/steps", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -134,7 +134,7 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.delete("/api/supplier-inquiries/:id/steps/:stepId", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await deleteInquiryStep(req.params.id, req.params.stepId, user);
@@ -158,7 +158,7 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.delete("/api/supplier-inquiries/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await deleteInquiry(req.params.id, user, getTodayShamsi());

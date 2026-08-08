@@ -48,7 +48,7 @@ import { registerNotificationRoutes } from "./src/server/routes/notifications";
 import { registerDashboardRoutes } from "./src/server/routes/dashboard";
 import { scrapeRates } from "./src/server/rateSource";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
-import { authenticateUser } from "./src/server/services/userService";
+import { authenticateUser, findAuthUser } from "./src/server/services/userService";
 
 // Overridable so a second instance can be started against a scratch database
 // (useful for testing, and for pointing a deployment at a specific data file).
@@ -100,9 +100,6 @@ const versions: Record<string, number> = {};
 function bumpVersion(key: string): number {
   versions[key] = (versions[key] || 0) + 1;
   return versions[key];
-}
-function getVersion(key: string): number {
-  return versions[key] || 0;
 }
 
 const insertStmt = {
@@ -178,7 +175,7 @@ async function startServer() {
   });
 
   app.post("/api/upload", upload.single("file"), async (req, res) => {
-    if (!requireAuth(req, res)) return;
+    if (!await requireAuth(req, res)) return;
     try {
       if (!req.file) {
         return res.status(400).json({ success: false, error: "فایلی بارگذاری نشده است." });
@@ -254,7 +251,7 @@ async function startServer() {
    * scrapes and saves in the one call.
    */
   app.get("/api/rates", async (req, res) => {
-    if (!requireAuth(req, res)) return;
+    if (!await requireAuth(req, res)) return;
     const { rates, failedCurrencies } = await scrapeRates();
     res.json({
       success: true,
@@ -299,39 +296,36 @@ async function startServer() {
     },
   );
 
-  const readUsers = (): any[] => {
-    const row = getStmt.get("erp_users") as { value: string } | undefined;
-    if (!row) return [];
-    try {
-      const parsed = JSON.parse(row.value);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  };
-
   /**
    * Resolves the caller from their session cookie. The user record is re-read on
    * every request so permission changes, deletions and `sessionEpoch` bumps take
    * effect immediately rather than at next login.
    */
-  const getAuthUser = (req: express.Request): AuthUser | null => {
+  const getAuthUser = async (req: express.Request): Promise<AuthUser | null> => {
     const cookies = parseCookies(req.headers.cookie);
     const payload = verifySession(cookies[SESSION_COOKIE], SESSION_SECRET);
     if (!payload) return null;
-    const user = readUsers().find((u) => u && u.id === payload.uid);
+
+    // From SQL, which is where accounts, permissions and sessionEpoch live.
+    // This read erp_users out of the document store while login authenticated
+    // against SQL: the two agreed only because both were seeded from the same
+    // constants, so an account created in the users screen could sign in and
+    // then be refused by every request, and a permission change or a
+    // deactivation made in the UI had no effect on what anyone could reach.
+    const user = await findAuthUser(payload.uid);
     if (!user) return null;
     if ((user.sessionEpoch || 0) !== (payload.epoch || 0)) return null;
-    const { password: _pw, ...safe } = user;
+
+    const { sessionEpoch: _epoch, ...safe } = user;
     return safe as AuthUser;
   };
 
   /** Rejects unauthenticated callers. */
-  const requireAuth = (
+  const requireAuth = async (
     req: express.Request,
     res: express.Response,
-  ): AuthUser | null => {
-    const user = getAuthUser(req);
+  ): Promise<AuthUser | null> => {
+    const user = await getAuthUser(req);
     if (!user) {
       res.status(401).json({
         success: false,
@@ -344,13 +338,13 @@ async function startServer() {
   };
 
   /** Rejects callers without permission on a collection. */
-  const requireKeyAccess = (
+  const requireKeyAccess = async (
     req: express.Request,
     res: express.Response,
     key: string,
     mode: AccessMode,
-  ): AuthUser | null => {
-    const user = requireAuth(req, res);
+  ): Promise<AuthUser | null> => {
+    const user = await requireAuth(req, res);
     if (!user) return null;
     const denial = checkKeyAccess(user, key, mode);
     if (denial) {
@@ -360,101 +354,8 @@ async function startServer() {
     return user;
   };
 
-  // Batch GET API for initial data to optimize performance and prevent connection limits/drops
-  app.get("/api/init-data", (req, res) => {
-    try {
-      const user = requireAuth(req, res);
-      if (!user) return;
 
-      const responseData: Record<string, any> = {};
-      const versionData: Record<string, number> = {};
-      for (const key of ALLOWED_KEYS) {
-        // Only ship collections this user is allowed to see.
-        if (checkKeyAccess(user, key, "read")) {
-          responseData[key] = null;
-          versionData[key] = getVersion(key);
-          continue;
-        }
-        const row = getStmt.get(key) as {value: string} | undefined;
-        let value = row ? JSON.parse(row.value) : null;
-        // Credentials never leave the server; users without the `users` permission
-        // get only a name directory, not other accounts' permission maps.
-        if (key === "erp_users" && Array.isArray(value)) {
-          value = canSeeFullUsers(user) ? sanitizeUsers(value) : toUserDirectory(value);
-        }
-        responseData[key] = value;
-        versionData[key] = getVersion(key);
-      }
-      // `__versions` is the baseline for change polling; it is not a stored key.
-      responseData.__versions = versionData;
-      res.json(responseData);
-    } catch (err: any) {
-      console.error("Error in GET /api/init-data:", err);
-      res.status(500).json({ error: err.message || String(err) });
-    }
-  });
 
-  // KV Store APIs
-  app.get("/api/data/:key", (req, res) => {
-    const key = req.params.key;
-    if (!ALLOWED_KEYS.has(key)) {
-      return res.status(403).json({ error: "Access denied: Unauthorized key" });
-    }
-    const reader = requireKeyAccess(req, res, key, "read");
-    if (!reader) return;
-
-    try {
-      const row = getStmt.get(key) as {value: string} | undefined;
-      if (row) {
-        const parsed = JSON.parse(row.value);
-        if (key === "erp_users" && Array.isArray(parsed)) {
-          res.json(canSeeFullUsers(reader) ? sanitizeUsers(parsed) : toUserDirectory(parsed));
-        } else {
-          res.json(parsed);
-        }
-      } else {
-        res.json(null);
-      }
-    } catch (err: any) {
-      console.error(`Error in GET /api/data/${key}:`, err);
-      res.status(500).json({ error: err.message || String(err) });
-    }
-  });
-
-  app.post("/api/data/:key", (req, res) => {
-    const key = req.params.key;
-    if (!ALLOWED_KEYS.has(key)) {
-      return res.status(403).json({ error: "Access denied: Unauthorized key" });
-    }
-    if (!requireKeyAccess(req, res, key, "write")) return;
-
-    try {
-      let data = req.body;
-      
-      // If saving users, ensure passwords are hashed if they changed
-      if (key === 'erp_users') {
-        const existingRow = getStmt.get(key) as {value: string} | undefined;
-        const existingUsers = existingRow ? JSON.parse(existingRow.value) : [];
-        
-        data = data.map((user: any) => {
-          const existingUser = existingUsers.find((u: any) => u.id === user.id);
-          // Hash only genuinely new/changed passwords; never re-hash a stored hash.
-          if (user.password && !isBcryptHash(user.password)) {
-            user.password = bcrypt.hashSync(user.password, 10);
-          } else if (!user.password && existingUser) {
-            user.password = existingUser.password;
-          }
-          return user;
-        });
-      }
-
-      insertStmt.run(key, JSON.stringify(data));
-      res.json({ success: true, version: getVersion(key) });
-    } catch (err: any) {
-      console.error(`Error in POST /api/data/${key}:`, err);
-      res.status(500).json({ success: false, error: err.message || String(err) });
-    }
-  });
 
   /**
    * Liveness probe for deployment scripts and monitoring.
@@ -470,7 +371,7 @@ async function startServer() {
    * Gated: the error text names the server and database.
    */
   app.get("/api/db-health", async (req, res) => {
-    if (!requireAuth(req, res)) return;
+    if (!await requireAuth(req, res)) return;
     if (!isDbConfigured()) {
       return res.json({ ok: false, configured: false, error: "DATABASE_URL تنظیم نشده است." });
     }
@@ -533,7 +434,7 @@ async function startServer() {
 
   /** Verifies the SQL Server connection without writing anything. */
   app.get("/api/report/sql-test", async (req, res) => {
-    const u = requireAuth(req, res);
+    const u = await requireAuth(req, res);
     if (!u) return;
     if (!hasPermission(u, "settings")) {
       return res.status(403).json({ ok: false, error: "دسترسی به تنظیمات گزارش‌گیری مجاز نیست." });
@@ -551,7 +452,7 @@ async function startServer() {
 
   /** Runs the one-way sync into the SQL Server reporting schema. */
   app.post("/api/report/sql-sync", async (req, res) => {
-    const u = requireAuth(req, res);
+    const u = await requireAuth(req, res);
     if (!u) return;
     if (!hasPermission(u, "settings")) {
       return res.status(403).json({ ok: false, error: "اجرای همگام‌سازی گزارش‌گیری مجاز نیست." });
@@ -576,8 +477,8 @@ async function startServer() {
    * Preview of what the sync produces — table names and row counts.
    * Handy for checking the model without a database round-trip.
    */
-  app.get("/api/report/preview", (req, res) => {
-    const u = requireAuth(req, res);
+  app.get("/api/report/preview", async (req, res) => {
+    const u = await requireAuth(req, res);
     if (!u) return;
     if (!hasPermission(u, "settings")) {
       return res.status(403).json({ ok: false, error: "دسترسی به پیش‌نمایش گزارش‌گیری مجاز نیست." });
@@ -598,128 +499,7 @@ async function startServer() {
     }
   });
 
-  /** Current version of every collection — clients poll this to detect changes. */
-  app.get("/api/versions", (req, res) => {
-    if (!requireAuth(req, res)) return;
-    const out: Record<string, number> = {};
-    for (const key of ALLOWED_KEYS) out[key] = getVersion(key);
-    res.json({ versions: out });
-  });
 
-  /**
-   * Record-level merge. The client sends only what it changed, so two users editing
-   * different records no longer overwrite each other (the whole-array POST above
-   * loses the other user's concurrent edits).
-   *
-   * Body: { ops: [{ op: 'upsert'|'delete', id, record? }], baseVersion?: number }
-   *
-   * IMPORTANT: this handler is intentionally fully synchronous. Node will not
-   * interleave another request inside it, which makes the read-modify-write atomic.
-   * Do not introduce `await` here without adding an explicit write lock.
-   */
-  app.post("/api/data/:key/merge", (req, res) => {
-    const key = req.params.key;
-    if (!ALLOWED_KEYS.has(key)) {
-      return res.status(403).json({ error: "Access denied: Unauthorized key" });
-    }
-    if (!requireKeyAccess(req, res, key, "write")) return;
-
-    try {
-      const { ops, baseVersion } = req.body || {};
-      if (!Array.isArray(ops)) {
-        return res.status(400).json({ success: false, error: "ops must be an array" });
-      }
-
-      const row = getStmt.get(key) as { value: string } | undefined;
-      const current = row ? JSON.parse(row.value) : [];
-      if (!Array.isArray(current)) {
-        // Object-shaped keys (e.g. erp_settings) cannot be merged by record id.
-        return res.status(409).json({
-          success: false,
-          error: "Merge is only supported for array collections",
-        });
-      }
-
-      // Index by id for O(1) upserts while preserving order.
-      const list: any[] = [...current];
-      const indexById = new Map<string, number>();
-      list.forEach((item, i) => {
-        if (item && item.id !== undefined) indexById.set(String(item.id), i);
-      });
-
-      let applied = 0;
-      const conflicts: string[] = [];
-      const removedIds: string[] = [];
-
-      for (const op of ops) {
-        if (!op || op.id === undefined) continue;
-        const id = String(op.id);
-
-        if (op.op === "delete") {
-          const idx = indexById.get(id);
-          if (idx !== undefined) {
-            list[idx] = undefined;
-            indexById.delete(id);
-            removedIds.push(id);
-            applied++;
-          }
-          continue;
-        }
-
-        if (op.op === "upsert" && op.record) {
-          let record = op.record;
-
-          // Never persist a plaintext password.
-          if (key === "erp_users") {
-            const idx = indexById.get(id);
-            const existing = idx !== undefined ? list[idx] : undefined;
-            if (record.password && !isBcryptHash(record.password)) {
-              record = { ...record, password: bcrypt.hashSync(record.password, 10) };
-            } else if (!record.password && existing) {
-              record = { ...record, password: existing.password };
-            }
-          }
-
-          const idx = indexById.get(id);
-          if (idx !== undefined) {
-            // Concurrent-edit detection: if the server's copy no longer matches
-            // what the client based its edit on, someone else changed it first.
-            if (op.baseRecord !== undefined) {
-              const serverCopy = JSON.stringify(list[idx]);
-              const clientBase = JSON.stringify(op.baseRecord);
-              if (serverCopy !== clientBase) conflicts.push(id);
-            }
-            list[idx] = record;
-          } else {
-            // Match the app's newest-first convention for new records.
-            list.unshift(record);
-            // Rebuild indices after the shift.
-            indexById.clear();
-            list.forEach((item, i) => {
-              if (item && item.id !== undefined) indexById.set(String(item.id), i);
-            });
-          }
-          applied++;
-        }
-      }
-
-      const merged = list.filter((x) => x !== undefined);
-      insertStmt.run(key, JSON.stringify(merged));
-
-      res.json({
-        success: true,
-        applied,
-        removedIds,
-        conflicts,
-        version: getVersion(key),
-        // Tells the client whether it was working from stale data, so it can refresh.
-        staleBase: baseVersion !== undefined && baseVersion !== getVersion(key) - 1,
-      });
-    } catch (err: any) {
-      console.error(`Error in POST /api/data/${key}/merge:`, err);
-      res.status(500).json({ success: false, error: err.message || String(err) });
-    }
-  });
 
   // Login attempt trackers for rate-limiting
   const userLoginAttempts = new Map<string, { count: number; lastAttempt: number }>();

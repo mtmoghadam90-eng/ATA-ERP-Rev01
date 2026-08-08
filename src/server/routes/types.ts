@@ -9,13 +9,13 @@ import type { AuthUser, AccessMode } from "../auth";
  * definition of "who is this and may they" for the whole API.
  */
 export interface RouteDeps {
-  requireAuth(req: express.Request, res: express.Response): AuthUser | null;
+  requireAuth(req: express.Request, res: express.Response): Promise<AuthUser | null>;
   requireKeyAccess(
     req: express.Request,
     res: express.Response,
     key: string,
     mode: AccessMode,
-  ): AuthUser | null;
+  ): Promise<AuthUser | null>;
 }
 
 /**

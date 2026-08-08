@@ -45,7 +45,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
   const KEY = "erp_projects";
 
   app.get("/api/projects", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, PROJECT_SORTABLE, PROJECT_FILTERABLE);
@@ -71,7 +71,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
    * through the same result the grid does rather than pulling every project.
    */
   app.get("/api/projects/finance", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, PROJECT_SORTABLE, PROJECT_FILTERABLE);
@@ -99,7 +99,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
    * unknowable rather than merely smaller.
    */
   app.get("/api/projects/finance/missing-rates", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       res.json({ success: true, ...(await findMissingExchangeRates()) });
@@ -110,7 +110,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
 
   /** Status counts and value totals, aggregated in SQL for the dashboard. */
   app.get("/api/projects/summary", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       res.json({ success: true, summary: await projectSummary(user) });
@@ -124,7 +124,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
    * Registered before /:id so the literal path is not read as an id.
    */
   app.get("/api/projects/statuses", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       res.json({ success: true, projects: await listProjectStatuses(user) });
@@ -134,7 +134,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.get("/api/projects/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const project = await getProject(req.params.id, user);
@@ -153,7 +153,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
    * documents tab is opened, not with the project — it touches seven tables.
    */
   app.get("/api/projects/:id/documents", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       // Visibility is checked against the project itself, since the documents
@@ -174,7 +174,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.get("/api/projects/:id/references", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       res.json({ success: true, references: await countProjectReferences(req.params.id) });
@@ -184,7 +184,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.post("/api/projects", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const input = pickInput(req.body);
@@ -225,7 +225,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.put("/api/projects/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const project = await updateProject(req.params.id, pickInput(req.body), user, getTodayShamsi());
@@ -240,7 +240,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.delete("/api/projects/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await deleteProject(req.params.id, user, getTodayShamsi());

@@ -40,7 +40,7 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
   const KEY = "erp_proformas";
 
   app.get("/api/proformas", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, PROFORMA_SORTABLE, PROFORMA_FILTERABLE);
@@ -56,7 +56,7 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.get("/api/proformas/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const proforma = await getProforma(req.params.id, user);
@@ -71,7 +71,7 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.get("/api/proformas/:id/references", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       res.json({ success: true, references: await countProformaReferences(req.params.id) });
@@ -81,7 +81,7 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.post("/api/proformas", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const input = pickInput(req.body);
@@ -126,7 +126,7 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.put("/api/proformas/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const proforma = await updateProforma(req.params.id, pickInput(req.body), user, getTodayShamsi());
@@ -145,7 +145,7 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
    * and it re-derives the parent project's status in the same transaction.
    */
   app.post("/api/proformas/:id/item-outcomes", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const raw = (req.body as { outcomes?: unknown })?.outcomes;
@@ -187,7 +187,7 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.delete("/api/proformas/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await deleteProforma(req.params.id, user, getTodayShamsi());

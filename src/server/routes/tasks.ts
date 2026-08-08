@@ -26,7 +26,7 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
   const KEY = "erp_tasks";
 
   app.get("/api/tasks", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, TASK_SORTABLE, TASK_FILTERABLE);
@@ -45,7 +45,7 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
   });
 
   app.get("/api/tasks/summary", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       res.json({ success: true, summary: await taskSummary(user, getTodayShamsi()) });
@@ -55,7 +55,7 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
   });
 
   app.get("/api/tasks/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const task = await getTask(req.params.id, user);
@@ -70,7 +70,7 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
   });
 
   app.post("/api/tasks", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const input = pickInput(req.body);
@@ -85,7 +85,7 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
   });
 
   app.put("/api/tasks/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const task = await updateTask(req.params.id, pickInput(req.body), user, getTodayShamsi());
@@ -100,7 +100,7 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
   });
 
   app.delete("/api/tasks/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await deleteTask(req.params.id, user, getTodayShamsi());
@@ -123,7 +123,7 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
    * Used by App.tsx for real-time reminder notifications.
    */
   app.get("/api/tasks/reminders", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       const { date, time } = req.query as { date?: string; time?: string };

@@ -17,7 +17,7 @@ import {
  */
 export function registerNotificationRoutes(app: express.Express, deps: RouteDeps): void {
   app.get("/api/notifications", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, NOTIFICATION_SORTABLE);
@@ -29,7 +29,7 @@ export function registerNotificationRoutes(app: express.Express, deps: RouteDeps
   });
 
   app.put("/api/notifications/:id/read", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       const outcome = await markNotificationRead(req.params.id, user);
@@ -46,7 +46,7 @@ export function registerNotificationRoutes(app: express.Express, deps: RouteDeps
   });
 
   app.post("/api/notifications/read-all", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       res.json({ success: true, marked: await markAllNotificationsRead(user) });
@@ -59,7 +59,7 @@ export function registerNotificationRoutes(app: express.Express, deps: RouteDeps
 
   /** Which of the given ids the caller has already seen. `ids` is comma-separated. */
   app.get("/api/read-receipts", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       const raw = typeof req.query.ids === "string" ? req.query.ids : "";
@@ -71,7 +71,7 @@ export function registerNotificationRoutes(app: express.Express, deps: RouteDeps
   });
 
   app.post("/api/read-receipts", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       const body = (req.body ?? {}) as { itemIds?: unknown };
