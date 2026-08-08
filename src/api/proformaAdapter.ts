@@ -1,5 +1,6 @@
 import type { Proforma, ProformaItem } from "../types";
 import type { ProformaDetail, ProformaRow, ProformaWriteInput } from "./proformas";
+import { assertComplete, markComplete, markPartial } from "./partial";
 
 /**
  * Translation between the proformas API and the `Proforma` shape the view was
@@ -31,7 +32,7 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 const money = (value: string | null | undefined): number => Number(value ?? 0);
 
 export function rowToProforma(row: ProformaRow): Proforma {
-  return {
+  return markPartial({
     id: row.id,
     proformaNumber: row.proformaNumber,
     proformaType: row.proformaType as Proforma["proformaType"],
@@ -64,11 +65,11 @@ export function rowToProforma(row: ProformaRow): Proforma {
     taxPercent: 0,
     taxAmount: 0,
     notes: "",
-  } as Proforma;
+  } as Proforma);
 }
 
 export function detailToProforma(detail: ProformaDetail): Proforma {
-  return {
+  return markComplete({
     ...rowToProforma({ ...detail, items: [] } as unknown as ProformaRow),
     contactCustomerId: detail.contactCustomerId ?? undefined,
     contactName: detail.contact?.companyName ?? undefined,
@@ -108,7 +109,7 @@ export function detailToProforma(detail: ProformaDetail): Proforma {
       selectedFeatures: parseJson<Record<string, string>>(item.selectedFeatures, {}),
       selectedImage: item.selectedImage ?? undefined,
     })),
-  } as Proforma;
+  } as Proforma);
 }
 
 /**
@@ -119,6 +120,7 @@ export function detailToProforma(detail: ProformaDetail): Proforma {
  * and extra costs *are* sent, because they are inputs rather than results.
  */
 export function proformaToWriteInput(proforma: Partial<Proforma>): ProformaWriteInput {
+  assertComplete(proforma, "پیش‌فاکتور");
   return {
     proformaNumber: proforma.proformaNumber,
     proformaType: proforma.proformaType,

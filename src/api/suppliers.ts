@@ -1,4 +1,5 @@
 import { ListResponse, api } from "./client";
+import { assertComplete, markComplete, markPartial } from "./partial";
 
 /** Supplier endpoints. Shared reference data — no per-record scope. */
 
@@ -102,7 +103,7 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 
 /** A row, in the shape the existing table markup expects. */
 export function rowToSupplier(row: SupplierRow): Supplier {
-  return {
+  return markPartial({
     id: row.id,
     name: row.name,
     country: row.country ?? "",
@@ -115,18 +116,19 @@ export function rowToSupplier(row: SupplierRow): Supplier {
     providedCategories: parseJson<string[]>(row.providedCategories, []),
     createdAt: row.createdAt,
     description: "",
-  } as Supplier;
+  } as Supplier);
 }
 
 export function detailToSupplier(detail: SupplierDetail): Supplier {
-  return {
+  return markComplete({
     ...rowToSupplier({ ...detail, _count: { purchaseOrders: 0, inquiries: 0 } }),
     description: detail.description ?? "",
     customValues: parseJson<Record<string, unknown>>(detail.customValues, {}),
-  } as Supplier;
+  } as Supplier);
 }
 
 export function supplierToWriteInput(supplier: Partial<Supplier>): SupplierWriteInput {
+  assertComplete(supplier, "تأمین‌کننده");
   return {
     name: supplier.name,
     country: supplier.country ?? null,

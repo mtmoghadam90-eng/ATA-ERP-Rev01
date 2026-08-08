@@ -151,6 +151,21 @@ export default function ProjectsView({
     alert(err instanceof ApiError ? err.message : fallback);
   };
 
+  /**
+   * Opens the details panel on the whole project.
+   *
+   * The panel edits documents, attachments and milestones and writes the record
+   * straight back, so it cannot be handed a grid row — a row has no description
+   * and no milestones, and saving one erased both.
+   */
+  const openProjectDetails = async (row: { id: string }) => {
+    try {
+      setSelectedProjectForActivities(detailToProject(await projectsApi.get(row.id)));
+    } catch (err) {
+      reportError(err, 'بارگذاری اطلاعات پروژه با خطا مواجه شد.');
+    }
+  };
+
   const [isActivitiesModalFullscreen, setIsActivitiesModalFullscreen] = useState(false);
   const [modalTab, setModalTab] = useState("activities");
   const [isProjectDetailsExpanded, setIsProjectDetailsExpanded] = useState(false);
@@ -158,14 +173,12 @@ export default function ProjectsView({
   const [supplyFilter, setSupplyFilter] = useState("ALL");
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [activePreviewDoc, setActivePreviewDoc] = useState<any>(null);
-  React.useEffect(() => {
-    if (selectedProjectForActivities) {
-      const updatedProject = projects.find((p) => p.id === selectedProjectForActivities.id);
-      if (updatedProject && updatedProject !== selectedProjectForActivities) {
-        setSelectedProjectForActivities(updatedProject);
-      }
-    }
-  }, [projects, selectedProjectForActivities]);
+  // The details panel deliberately does NOT re-sync itself from the grid.
+  // It used to: on every list refresh it replaced the loaded project with the
+  // matching row, which silently swapped a full record for a projection that
+  // has no description, items or milestones — and the panel's own saves then
+  // wrote that projection back. The panel is refreshed by whoever changes it,
+  // through the detail record `persistProject` returns.
   React.useEffect(() => {
     if (!selectedProjectForActivities) {
       setModalTab("activities");
@@ -175,15 +188,12 @@ export default function ProjectsView({
   }, [selectedProjectForActivities]);
   React.useEffect(() => {
     if (initialSelectedProjectId) {
-      const proj = projects.find((p) => p.id === initialSelectedProjectId);
-      if (proj) {
-        setSelectedProjectForActivities(proj);
-      }
+      void openProjectDetails({ id: initialSelectedProjectId });
       if (onClearInitialSelectedProject) {
         onClearInitialSelectedProject();
       }
     }
-  }, [initialSelectedProjectId, projects, onClearInitialSelectedProject]);
+  }, [initialSelectedProjectId, onClearInitialSelectedProject]);
   const [newActivityText, setNewActivityText] = useState<any>({});
   const [newActivityAttachment, setNewActivityAttachment] = useState<any>({});
   const [referralEnabled, setReferralEnabled] = useState<any>({});
@@ -637,8 +647,28 @@ export default function ProjectsView({
     setAttachments([]);
     setShowModal(true);
   };
-  const handleOpenEdit = (proj) => {
+  /**
+   * Loads the whole project before filling the form.
+   *
+   * A grid row carries no description, no requested items, no milestones and
+   * no custom values, so populating the form from one and saving wrote them
+   * back empty.
+   */
+  const handleOpenEdit = async (row) => {
+    let proj;
+    try {
+      proj = detailToProject(await projectsApi.get(row.id));
+    } catch (err) {
+      reportError(err, 'بارگذاری اطلاعات پروژه با خطا مواجه شد.');
+      return;
+    }
+
     setEditingProject(proj);
+    // The three contact pickers are ids. They were never restored here, so
+    // every save of an existing project cleared all three links.
+    setEndUserId(proj.endUserCustomerId || "");
+    setFinancialContactId(proj.financialContactId || "");
+    setTechnicalContactId(proj.technicalContactId || "");
     setName(proj.name);
     setCode(proj.code || "");
     setCustomerId(proj.customerId);
@@ -3160,7 +3190,7 @@ export default function ProjectsView({
                   <td className="p-3 text-center">
                     <div className="flex flex-wrap items-center justify-center gap-1.5">
                       <button
-                        onClick={() => setSelectedProjectForActivities(p)}
+                        onClick={() => { void openProjectDetails(p); }}
                         className="p-1.5 bg-sky-50 text-sky-700 hover:bg-sky-100 rounded transition flex items-center gap-1 text-[10px] font-bold border border-sky-100 shadow-sm"
                         title="جزئیات پروژه"
                       >
@@ -3171,7 +3201,7 @@ export default function ProjectsView({
                         )}
                       </button>
                       <button
-                        onClick={() => handleOpenEdit(p)}
+                        onClick={() => { void handleOpenEdit(p); }}
                         className="p-1.5 hover:bg-slate-100 text-slate-600 hover:text-sky-600 rounded transition"
                         title="ویرایش پروژه"
                       >

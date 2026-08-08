@@ -1,4 +1,5 @@
 import { ListResponse, api } from "./client";
+import { assertComplete, markComplete, markPartial } from "./partial";
 import type { Transaction } from "../types";
 
 /**
@@ -146,7 +147,7 @@ const money = (value: string | null | undefined): number => Number(value ?? 0);
 
 /** A row, in the shape the existing markup expects. */
 export function rowToTransaction(row: TransactionRow): Transaction {
-  return {
+  return markPartial({
     id: row.id,
     documentNumber: row.documentNumber,
     type: row.type as Transaction["type"],
@@ -172,17 +173,17 @@ export function rowToTransaction(row: TransactionRow): Transaction {
     referenceNumber: row.referenceNumber ?? undefined,
     reversalOfTransactionId: row.reversalOfTransactionId ?? undefined,
     notes: "",
-  } as unknown as Transaction;
+  } as unknown as Transaction);
 }
 
 export function detailToTransaction(detail: TransactionDetail): Transaction {
-  return {
+  return markComplete({
     ...rowToTransaction(detail),
     notes: detail.notes ?? "",
     customValues: parseJson<Record<string, unknown>>(detail.customValues, {}),
     proformaNumber: detail.proforma?.proformaNumber,
     poNumber: detail.purchaseOrder?.poNumber,
-  } as unknown as Transaction;
+  } as unknown as Transaction);
 }
 
 /**
@@ -193,6 +194,7 @@ export function detailToTransaction(detail: TransactionDetail): Transaction {
  * rial figure inconsistent with its own currency.
  */
 export function transactionToWriteInput(tx: Partial<Transaction>): TransactionWriteInput {
+  assertComplete(tx, "تراکنش");
   const t = tx as unknown as Record<string, unknown>;
   return {
     documentNumber: tx.documentNumber,

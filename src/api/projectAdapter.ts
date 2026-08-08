@@ -1,5 +1,6 @@
 import type { Project } from "../types";
 import type { ProjectDetail, ProjectRow, ProjectWriteInput } from "./projects";
+import { assertComplete, markComplete, markPartial } from "./partial";
 
 /**
  * Translation between the projects API and the `Project` shape the view was
@@ -25,7 +26,7 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 
 /** A grid row, in the shape the existing table markup expects. */
 export function rowToProject(row: ProjectRow): Project {
-  return {
+  return markPartial({
     id: row.id,
     code: row.code,
     name: row.name,
@@ -44,12 +45,12 @@ export function rowToProject(row: ProjectRow): Project {
     leadQuality: row.leadQuality ?? undefined,
     salesExpert: row.salesExpert ?? undefined,
     description: "",
-  } as Project;
+  } as Project);
 }
 
 /** The full record, for the detail and edit views. */
 export function detailToProject(detail: ProjectDetail): Project {
-  return {
+  return markComplete({
     ...rowToProject(detail),
     description: detail.description ?? "",
     lossReason: detail.lossReason ?? undefined,
@@ -62,6 +63,12 @@ export function detailToProject(detail: ProjectDetail): Project {
     endUser: detail.endUser ?? detail.endUserCustomer?.companyName ?? undefined,
     financialContact: detail.financialContact ?? detail.financialContactCustomer?.companyName ?? undefined,
     technicalContact: detail.technicalContact ?? detail.technicalContactCustomer?.companyName ?? undefined,
+    // The ids travel with the record too. Without them the edit form had
+    // nothing to restore its three contact pickers from, so saving an existing
+    // project cleared all three links.
+    endUserCustomerId: detail.endUserCustomerId ?? undefined,
+    financialContactId: detail.financialContactId ?? undefined,
+    technicalContactId: detail.technicalContactId ?? undefined,
     itemsNeeded: detail.items.map((item) => ({
       productId: item.productId ?? "",
       variantId: item.variantId ?? undefined,
@@ -87,7 +94,7 @@ export function detailToProject(detail: ProjectDetail): Project {
     manualDocuments: parseJson(detail.manualDocuments, [] as Project["manualDocuments"]),
     milestoneRules: parseJson(detail.milestoneRules, [] as Project["milestoneRules"]),
     customValues: parseJson(detail.customValues, {} as Record<string, unknown>),
-  } as Project;
+  } as Project);
 }
 
 /**
@@ -105,6 +112,7 @@ export function projectToWriteInput(
     ownerUserId?: string | null;
   },
 ): ProjectWriteInput {
+  assertComplete(project, "پروژه");
   return {
     code: project.code,
     name: project.name,

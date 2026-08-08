@@ -294,11 +294,22 @@ export default function ProformasView({
     }
   };
 
-  const updateCustomer = async (customer: Customer) => {
+  /**
+   * Links a just-quick-added contact to the proforma's customer.
+   *
+   * A link is a relationship the server keeps on both sides, so it has its own
+   * endpoint. This used to save the entire customer record instead, which never
+   * persisted the link at all — `customerToWriteInput` deliberately omits it —
+   * and, being fed from a picker row, blanked the customer's address and notes
+   * on the way past.
+   */
+  const linkCustomerTo = async (customer: Customer | undefined, newId: string) => {
+    if (!customer) return;
+    const linked = Array.from(new Set([...(customer.linkedCustomerIds || []), newId]));
     try {
-      await customersApi.update(customer.id, customerToWriteInput(customer));
+      await customersApi.setLinks(customer.id, linked);
     } catch (err) {
-      reportError(err, 'ثبت تغییرات مشتری با خطا مواجه شد.');
+      reportError(err, 'ثبت ارتباط مشتری با خطا مواجه شد.');
     }
   };
 
@@ -528,7 +539,22 @@ export default function ProformasView({
     }));
   };
   // Item status modal helpers
-  const handleOpenItemsModal = (pf: Proforma) => {
+  /**
+   * Opens the per-line status modal on the whole proforma.
+   *
+   * The modal writes the lines back, so it cannot start from a grid row: a row
+   * carries each line's name, quantity and status but no price, so saving a
+   * status change would have rewritten every line at zero.
+   */
+  const handleOpenItemsModal = async (row: Proforma) => {
+    let pf: Proforma;
+    try {
+      pf = detailToProforma(await proformasApi.get(row.id));
+    } catch (err) {
+      reportError(err, 'بارگذاری اطلاعات پیش‌فاکتور با خطا مواجه شد.');
+      return;
+    }
+
     setSelectedProformaForItems(pf);
     setEditingItemsList(
       (pf.items || []).map((item) => ({
@@ -752,10 +778,29 @@ export default function ProformasView({
     setShowCreateModal(true);
   };
   // Open Edit Modal
-  const handleOpenEdit = (pf: Proforma) => {
+  /**
+   * Loads the whole proforma before filling the form.
+   *
+   * A grid row carries each line's name, quantity and status and nothing else —
+   * no unit price, no product id, no discount, tax or notes. Populating the form
+   * from one and saving rewrote every line at zero and wiped the document's
+   * pricing, because the lines are replaced wholesale on write.
+   *
+   * The lock is checked first: the row already knows the status, so a locked
+   * proforma never costs a request.
+   */
+  const handleOpenEdit = async (row: Proforma) => {
     const isAdmin = currentUser?.role === 'admin' || currentUser?.isSystemAdmin;
-    if (pf.status === "ارسال شده" && !isAdmin) {
+    if (row.status === "ارسال شده" && !isAdmin) {
       alert("این پیش‌فاکتور ارسال شده است و امکان ویرایش آن وجود ندارد.");
+      return;
+    }
+
+    let pf: Proforma;
+    try {
+      pf = detailToProforma(await proformasApi.get(row.id));
+    } catch (err) {
+      reportError(err, 'بارگذاری اطلاعات پیش‌فاکتور با خطا مواجه شد.');
       return;
     }
 
@@ -2808,7 +2853,7 @@ export default function ProformasView({
                                       <Eye size={15} />
                                     </button>
                                     <button
-                                      onClick={() => { if (!isLocked) handleOpenEdit(pf); }}
+                                      onClick={() => { if (!isLocked) void handleOpenEdit(pf); }}
                                       disabled={isLocked}
                                       className={`p-1.5 rounded-md transition ${
                                         isLocked
@@ -2855,7 +2900,7 @@ export default function ProformasView({
                                       وضعیت
                                     </button>
                                     <button
-                                      onClick={() => handleOpenItemsModal(pf)}
+                                      onClick={() => { void handleOpenItemsModal(pf); }}
                                       className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-md text-[10px] font-bold transition"
                                       title="مدیریت ردیف‌ها"
                                     >
@@ -5832,19 +5877,10 @@ export default function ProformasView({
                   });
                   const currentProformaCustomerId = customerId || proformas.find(p => p.id === statusTargetId)?.customerId;
                   if (currentProformaCustomerId) {
-                    const selectedCustObj = modalCustomers.find(c => c.id === currentProformaCustomerId);
-                    if (updateCustomer && selectedCustObj) {
-                      const updatedLinks = Array.from(
-                        new Set([
-                          ...(selectedCustObj.linkedCustomerIds || []),
-                          newEntity.id,
-                        ]),
-                      );
-                      updateCustomer({
-                        ...selectedCustObj,
-                        linkedCustomerIds: updatedLinks,
-                      });
-                    }
+                    void linkCustomerTo(
+                      modalCustomers.find(c => c.id === currentProformaCustomerId),
+                      newEntity.id,
+                    );
                   }
                 } else if (isQuickAddingContact) {
                   setContactCustomerId(newEntity.id);
@@ -5855,21 +5891,10 @@ export default function ProformasView({
                   } else {
                     setContactPrefix("");
                   }
-                  const selectedCustObj = customers.find(
-                    (c) => c.id === customerId,
+                  void linkCustomerTo(
+                    customers.find((c) => c.id === customerId),
+                    newEntity.id,
                   );
-                  if (updateCustomer && selectedCustObj) {
-                    const updatedLinks = Array.from(
-                      new Set([
-                        ...(selectedCustObj.linkedCustomerIds || []),
-                        newEntity.id,
-                      ]),
-                    );
-                    updateCustomer({
-                      ...selectedCustObj,
-                      linkedCustomerIds: updatedLinks,
-                    });
-                  }
                 } else {
                   setCustomerId(newEntity.id);
                 }

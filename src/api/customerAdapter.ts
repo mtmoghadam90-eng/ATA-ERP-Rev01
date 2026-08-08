@@ -1,5 +1,6 @@
 import type { Customer } from "../types";
 import type { CustomerDetail, CustomerRow, CustomerWriteInput } from "./customers";
+import { assertComplete, markComplete, markPartial } from "./partial";
 
 /**
  * Translation between the API's shapes and the `Customer` shape the views were
@@ -28,7 +29,7 @@ function parseCustomValues(raw: string | null | undefined): Record<string, unkno
 
 /** A grid row, in the shape the existing table markup expects. */
 export function rowToCustomer(row: CustomerRow): Customer {
-  return {
+  return markPartial({
     id: row.id,
     createdAt: row.createdAt,
     customerType: row.customerType as Customer["customerType"],
@@ -49,12 +50,12 @@ export function rowToCustomer(row: CustomerRow): Customer {
     // Present on the detail record only; the grid does not show them.
     contactName: "",
     contactLastName: "",
-  } as Customer;
+  } as Customer);
 }
 
 /** The full record, for the edit form. */
 export function detailToCustomer(detail: CustomerDetail): Customer {
-  return {
+  return markComplete({
     ...rowToCustomer(detail),
     gender: (detail.gender ?? undefined) as Customer["gender"],
     position: detail.position ?? undefined,
@@ -69,7 +70,7 @@ export function detailToCustomer(detail: CustomerDetail): Customer {
     })),
     contactName: detail.customerType === "حقوقی" ? (detail.keyPerson ?? "") : (detail.firstName ?? ""),
     contactLastName: detail.customerType === "حقوقی" ? "" : (detail.lastName ?? ""),
-  } as Customer;
+  } as Customer);
 }
 
 /**
@@ -80,6 +81,7 @@ export function detailToCustomer(detail: CustomerDetail): Customer {
  * both sides rather than a column on this record.
  */
 export function customerToWriteInput(customer: Partial<Customer>): CustomerWriteInput {
+  assertComplete(customer, "مشتری");
   const isLegal = customer.customerType === "حقوقی";
 
   return {

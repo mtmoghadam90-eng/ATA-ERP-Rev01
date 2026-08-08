@@ -43,7 +43,7 @@ import { getCodeError } from '../utils/documentCodes';
 import { findCustomerDuplicates, DuplicateMatch } from '../utils/customerDuplicates';
 import DuplicateCustomerModal from './DuplicateCustomerModal';
 import { ApiError } from '../api/client';
-import { rowToTransaction, transactionsApi, transactionToWriteInput } from '../api/transactions';
+import { detailToTransaction, rowToTransaction, transactionsApi, transactionToWriteInput } from '../api/transactions';
 import { useTransactionList } from '../api/useTransactionList';
 import { useList } from '../api/useList';
 import { useEntitySearch } from '../api/useEntitySearch';
@@ -57,7 +57,7 @@ import { projectsApi } from '../api/projects';
 import { proformasApi } from '../api/proformas';
 import { customerToWriteInput, detailToCustomer } from '../api/customerAdapter';
 import { projectToWriteInput, detailToProject } from '../api/projectAdapter';
-import { proformaToWriteInput } from '../api/proformaAdapter';
+import { detailToProforma, proformaToWriteInput } from '../api/proformaAdapter';
 
 /** One row of the per-project financial position, as the endpoint returns it. */
 interface ProjectFinanceRow {
@@ -189,9 +189,20 @@ export default function TransactionsView({
     }
   };
 
-  const updateProforma = async (proforma: Proforma) => {
+  /**
+   * Sets one proforma's historical exchange rate.
+   *
+   * The whole record has to be loaded first. This screen only ever holds
+   * proforma list rows, and a row has no line prices — writing one back to set
+   * a single rate rewrote every line at zero and erased the document's pricing.
+   */
+  const saveProformaRate = async (proformaId: string, rate: number) => {
     try {
-      await proformasApi.update(proforma.id, proformaToWriteInput(proforma));
+      const full = detailToProforma(await proformasApi.get(proformaId));
+      await proformasApi.update(
+        proformaId,
+        proformaToWriteInput({ ...full, historicalExchangeRate: rate }),
+      );
     } catch (err) {
       reportError(err, 'ثبت تغییرات پیش‌فاکتور با خطا مواجه شد.');
     }
@@ -420,23 +431,29 @@ export default function TransactionsView({
   };
 
   const handleSaveHistoricalRate = (pfId: string, rate: number) => {
-    const pf = proformas.find(p => p.id === pfId);
-    if (pf && updateProforma) {
-      updateProforma({
-        ...pf,
-        historicalExchangeRate: rate
-      });
-    }
+    void saveProformaRate(pfId, rate);
   };
 
+  /**
+   * Sets one transaction's settlement rate.
+   *
+   * Loads the record first: this screen holds list rows, and a row has no notes
+   * and no custom values, so writing one back to change a rate erased both.
+   */
   const handleSaveSettlementRate = (tId: string, rate: number) => {
-    const t = transactions.find(tr => tr.id === tId);
-    if (t) {
-      updateTransaction({
-        ...t,
-        exchangeRate: rate
-      });
-    }
+    void (async () => {
+      try {
+        const full = detailToTransaction(await transactionsApi.get(tId));
+        await transactionsApi.update(
+          tId,
+          transactionToWriteInput({ ...full, exchangeRate: rate }),
+        );
+        list.refresh();
+        finance.refresh();
+      } catch (err) {
+        reportError(err, 'ثبت تغییرات تراکنش با خطا مواجه شد.');
+      }
+    })();
   };
 
   const handleOpenAdd = () => {
@@ -470,12 +487,27 @@ export default function TransactionsView({
     setShowModal(true);
   };
 
-  const handleOpenEdit = (tr: Transaction) => {
+  /**
+   * Loads the whole transaction before filling the form.
+   *
+   * A grid row carries no notes and no custom values, so populating the form
+   * from one and saving wrote both back empty. The detail record is the only
+   * shape this form may be filled from.
+   */
+  const handleOpenEdit = async (row: Transaction) => {
+    let tr: Transaction;
+    try {
+      tr = detailToTransaction(await transactionsApi.get(row.id));
+    } catch (err) {
+      reportError(err, 'بارگذاری اطلاعات تراکنش با خطا مواجه شد.');
+      return;
+    }
+
     setEditingTransaction(tr);
     setType(tr.type);
     setReceiptType(tr.receiptType || '');
     setDocumentNumber(tr.documentNumber);
-    
+
     if (tr.customerId) {
       setPartyType('customer');
       setCustomerId(tr.customerId);
@@ -483,10 +515,12 @@ export default function TransactionsView({
       setPartyType('supplier');
       setSupplierId(tr.supplierId);
     } else {
+      // A party with no customer or supplier behind it is stored as a plain
+      // name, which is what the manual field edits.
       setPartyType('other');
-      setPartyNameManual(tr.customerName || tr.supplierName || '');
+      setPartyNameManual((tr as unknown as { partyName?: string }).partyName || '');
     }
-    
+
     setProjectId(tr.projectId || '');
     setAmountRIYAL(tr.amountRIYAL);
     setDate(tr.date);
@@ -494,7 +528,7 @@ export default function TransactionsView({
     setReferenceNumber(tr.referenceNumber || '');
     setNotes(tr.notes || '');
     setCustomValues(tr.customValues || {});
-    
+
     // Connected Financial fields loading
     setProformaId(tr.proformaId || '');
     setExchangeRate(tr.exchangeRate || 0);
@@ -502,7 +536,7 @@ export default function TransactionsView({
     setIsDirectForeign(tr.isDirectForeign || false);
     setStatus(tr.status || 'تأیید شده');
     setReversalOfTransactionId(tr.reversalOfTransactionId || '');
-    
+
     setShowModal(true);
   };
 
@@ -935,7 +969,7 @@ export default function TransactionsView({
                         <td className="p-4 text-center">
                           <div className="flex items-center justify-center gap-1.5">
                             <button
-                              onClick={() => handleOpenEdit(t)}
+                              onClick={() => { void handleOpenEdit(t); }}
                               className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition"
                               title="ویرایش سند"
                             >

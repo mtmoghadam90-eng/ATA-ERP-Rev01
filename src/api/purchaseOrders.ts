@@ -1,5 +1,6 @@
 import { ListResponse, api } from "./client";
 import type { PurchaseOrder } from "../types";
+import { assertComplete, markComplete, markPartial } from "./partial";
 
 /**
  * Purchase order endpoints.
@@ -155,7 +156,7 @@ const money = (value: string | null | undefined): number => Number(value ?? 0);
 
 /** A row, in the shape the existing markup expects. */
 export function rowToPurchaseOrder(row: PurchaseOrderRow): PurchaseOrder {
-  return {
+  return markPartial({
     id: row.id,
     poNumber: row.poNumber,
     status: row.status,
@@ -178,11 +179,11 @@ export function rowToPurchaseOrder(row: PurchaseOrderRow): PurchaseOrder {
     calculatedLandedCostForeign: money(row.landedCostForeign),
     createdAt: row.createdAt,
     items: [],
-  } as unknown as PurchaseOrder;
+  } as unknown as PurchaseOrder);
 }
 
 export function detailToPurchaseOrder(detail: PurchaseOrderDetail): PurchaseOrder {
-  return {
+  return markComplete({
     ...rowToPurchaseOrder({ ...detail, _count: { items: detail.items.length } }),
     paymentDate: detail.paymentDateJalali ?? undefined,
     goodsReadyDate: detail.goodsReadyDateJalali ?? undefined,
@@ -211,7 +212,7 @@ export function detailToPurchaseOrder(detail: PurchaseOrderDetail): PurchaseOrde
       proformaItemName: item.proformaItemName ?? undefined,
       supplierNotes: item.supplierNotes ?? undefined,
     })),
-  } as unknown as PurchaseOrder;
+  } as unknown as PurchaseOrder);
 }
 
 /**
@@ -221,6 +222,7 @@ export function detailToPurchaseOrder(detail: PurchaseOrderDetail): PurchaseOrde
  * and the cost inputs, so sending it would only invite the two to disagree.
  */
 export function purchaseOrderToWriteInput(po: Partial<PurchaseOrder>): PurchaseOrderWriteInput {
+  assertComplete(po, "سفارش خرید");
   const p = po as unknown as Record<string, unknown>;
   return {
     poNumber: po.poNumber,

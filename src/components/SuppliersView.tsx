@@ -23,7 +23,7 @@ import { exportToCSV } from '../excelUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import ConfirmModal from './ConfirmModal';
 import { ApiError } from '../api/client';
-import { rowToSupplier, suppliersApi, supplierToWriteInput } from '../api/suppliers';
+import { detailToSupplier, rowToSupplier, suppliersApi, supplierToWriteInput } from '../api/suppliers';
 import { useSupplierList } from '../api/useSupplierList';
 
 /**
@@ -120,7 +120,21 @@ export default function SuppliersView({
   };
 
   // Open edit
-  const handleOpenEdit = (supp: Supplier) => {
+  /**
+   * Loads the whole supplier before filling the form.
+   *
+   * A grid row carries no description and no custom values, so populating the
+   * form from one and saving wrote both back empty.
+   */
+  const handleOpenEdit = async (row: Supplier) => {
+    let supp: Supplier;
+    try {
+      supp = detailToSupplier(await suppliersApi.get(row.id));
+    } catch (err) {
+      reportError(err, 'بارگذاری اطلاعات تأمین‌کننده با خطا مواجه شد.');
+      return;
+    }
+
     setEditingSupplier(supp);
     setName(supp.name);
     setCountry(supp.country);
@@ -447,7 +461,7 @@ export default function SuppliersView({
                   <td className="p-3 text-center">
                     <div className="flex items-center justify-center gap-1">
                       <button
-                        onClick={() => handleOpenEdit(supp)}
+                        onClick={() => { void handleOpenEdit(supp); }}
                         className="p-1.5 hover:bg-slate-100 text-slate-600 hover:text-sky-600 rounded transition"
                         title="ویرایش تأمین‌کننده"
                       >
