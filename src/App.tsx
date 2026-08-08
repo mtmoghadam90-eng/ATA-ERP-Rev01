@@ -23,6 +23,8 @@ import { getTodayShamsi, toShamsiStr } from './dateUtils';
 import ShamsiDatePicker from './components/ShamsiDatePicker';
 import ConfirmModal from './components/ConfirmModal';
 import ProjectConfirmationUploadModal from './components/ProjectConfirmationUploadModal';
+import { projectsApi } from './api/projects';
+import { detailToProject, projectToWriteInput } from './api/projectAdapter';
 import { Project } from './types';
 import { useSidebarBadges } from './api/useSidebarBadges';
 import { tasksApi, taskToWriteInput } from './api/tasks';
@@ -176,9 +178,40 @@ export default function App() {
     });
   }, [store.isInitialized, store.projects]);
 
-  const handleSaveConfirmationDoc = (updatedProject: Project, url: string, fileName: string, folderName: string) => {
-    store.updateProject(updatedProject);
-    alert(`مدرک "${fileName}" با موفقیت در پوشه "${folderName}" پروژه ذخیره گردید.`);
+  /**
+   * Files the uploaded confirmation document on the project.
+   *
+   * This went through the store, which writes to database.json — a store the
+   * project screens stopped reading or writing when they moved to the API. The
+   * document was therefore uploaded, reported as saved, and then never seen
+   * again.
+   *
+   * The record is re-read here rather than taking the modal's copy: that copy
+   * descends from a list projection, and writing it back would blank the
+   * project's description, items and milestones. Only the newly added documents
+   * are carried over.
+   */
+  const handleSaveConfirmationDoc = async (
+    updatedProject: Project,
+    url: string,
+    fileName: string,
+    folderName: string,
+  ) => {
+    try {
+      const full = detailToProject(await projectsApi.get(updatedProject.id));
+      const existing = full.manualDocuments || [];
+      const known = new Set(existing.map((doc) => doc.id));
+      const added = (updatedProject.manualDocuments || []).filter((doc) => !known.has(doc.id));
+
+      await projectsApi.update(
+        updatedProject.id,
+        projectToWriteInput({ ...full, manualDocuments: [...existing, ...added] }),
+      );
+      alert(`مدرک "${fileName}" با موفقیت در پوشه "${folderName}" پروژه ذخیره گردید.`);
+    } catch (err) {
+      alert('ذخیره مدرک پروژه با خطا مواجه شد.');
+      console.error('Failed to save the project confirmation document:', err);
+    }
   };
   
   // Snooze options state
@@ -363,7 +396,8 @@ export default function App() {
           <ProductsView
             categories={store.settings.dropdownItems.categories}
             units={store.settings.dropdownItems.units}
-            settings={store.settings}          />
+            settings={store.settings}
+          />
         );
       case 'proformas':
         return (
@@ -430,7 +464,8 @@ export default function App() {
             initialPrintDocId={printDocumentRequest?.module === 'transactions' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
             // Reads its own data from the API; the per-project financial
-            // position is its own paginated query.            settings={store.settings}
+            // position is its own paginated query.
+            settings={store.settings}
           />
         );
             case 'tasks':
@@ -464,7 +499,8 @@ export default function App() {
         );
       case 'supplierInquiries':
         return (
-          <SupplierInquiriesView            settings={store.settings}
+          <SupplierInquiriesView
+            settings={store.settings}
           />
         );
       case 'settings':
