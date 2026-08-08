@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
+import { logAction } from "./auditService";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { toNullableString, toNumber } from "../childSync";
 import { invalidateSettingsCache, loadSettings } from "../settings";
@@ -23,6 +24,7 @@ export async function getSettings(): Promise<unknown> {
 export async function saveSettings(
   data: unknown,
   user: AuthUser,
+  todayJalali: string,
 ): Promise<"forbidden" | "invalid" | "ok"> {
   if (!hasPermission(user, "settings")) return "forbidden";
   if (!data || typeof data !== "object" || Array.isArray(data)) return "invalid";
@@ -36,6 +38,21 @@ export async function saveSettings(
 
   // Services cache the parsed document; drop it so the change is visible at once.
   invalidateSettingsCache();
+
+  // The client used to record this, into an audit log that lived in the
+  // document store. Nothing read that log any more, so a settings change went
+  // unrecorded; it belongs with the write.
+  await logAction(
+    {
+      action: "UPDATE",
+      module: "سیستم",
+      entityId: "settings",
+      description: "تنظیمات نرم‌افزار بروزرسانی شد.",
+    },
+    user,
+    todayJalali,
+  );
+
   return "ok";
 }
 
@@ -204,6 +221,65 @@ export async function recordAudit(input: AuditInput, user: AuthUser, todayJalali
  * every entry that matches — not the page that happens to be on screen, which
  * is what an id list would have meant once the log was paged.
  */
+/**
+ * Erases every business record, keeping the accounts and the configuration.
+ *
+ * This is what the "clear all data" button in settings was always meant to do.
+ * It used to POST empty arrays to /api/data/:key, which emptied collections in
+ * database.json — a store nothing reads any more — so it reported success and
+ * cleared nothing.
+ *
+ * Kept: users, settings, exchange rates and the audit log. The audit log
+ * survives on purpose; it is the record that this happened, and the audit
+ * screen has its own purge for when that is wanted too.
+ *
+ * The order matters and is not arbitrary. Cascades take the children of
+ * customers, products, projects, proformas and purchase orders, but the
+ * references *between* those roots are NoAction and will refuse the delete:
+ * transactions point at five of them, purchase orders point at proformas, and
+ * the per-project records point at proformas as well. So the pointers are
+ * removed before the things they point at, ending with the three catalogues.
+ */
+export async function purgeBusinessData(
+  user: AuthUser,
+): Promise<"forbidden" | { deleted: Record<string, number> }> {
+  if (!user.isSystemAdmin) return "forbidden";
+
+  const db = getDb();
+  const deleted: Record<string, number> = {};
+
+  await db.$transaction(async (tx) => {
+    const drop = async (name: string, run: () => Promise<{ count: number }>) => {
+      deleted[name] = (await run()).count;
+    };
+
+    // Things that point at the roots.
+    await drop("transactions", () => tx.transaction.deleteMany({}));
+    await drop("purchaseOrders", () => tx.purchaseOrder.deleteMany({}));
+    await drop("deliveries", () => tx.packagingDelivery.deleteMany({}));
+    await drop("afterSalesServices", () => tx.afterSalesService.deleteMany({}));
+    await drop("supplierInquiries", () => tx.supplierInquiry.deleteMany({}));
+    await drop("categoryGroups", () => tx.projectCategoryGroup.deleteMany({}));
+    await drop("proformas", () => tx.proforma.deleteMany({}));
+
+    // Free-standing records with no dependants.
+    await drop("tasks", () => tx.task.deleteMany({}));
+    await drop("moduleNotes", () => tx.moduleNote.deleteMany({}));
+    await drop("notifications", () => tx.moduleNotification.deleteMany({}));
+    // Read marks refer to activities that have just gone.
+    await drop("readReceipts", () => tx.readReceipt.deleteMany({}));
+    await drop("stockLedger", () => tx.inventoryTransaction.deleteMany({}));
+
+    // The roots themselves, each taking its own children with it.
+    await drop("projects", () => tx.project.deleteMany({}));
+    await drop("products", () => tx.product.deleteMany({}));
+    await drop("suppliers", () => tx.supplier.deleteMany({}));
+    await drop("customers", () => tx.customer.deleteMany({}));
+  });
+
+  return { deleted };
+}
+
 export async function purgeAuditLogs(
   user: AuthUser,
   before?: unknown,

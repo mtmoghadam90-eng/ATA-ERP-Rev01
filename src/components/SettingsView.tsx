@@ -689,20 +689,21 @@ export default function SettingsView({
         workflows: updated
       });
     } else if (deleteType === "clearData") {
-      const keysToClear = [
-        "erp_customers", "erp_products", "erp_suppliers", "erp_projects", 
-        "erp_proformas", "erp_purchase_orders", "erp_transactions", "erp_tasks", 
-        "erp_project_category_groups", "erp_supplier_inquiries", "erp_packaging_deliveries",
-        "erp_after_sales_services", "erp_module_notifications"
-      ];
-      
-      Promise.all(keysToClear.map(key => 
-        fetch(`/api/data/${key}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify([])
-        })
-      )).then(() => {
+      // One server-side purge, in an order the foreign keys allow. This used to
+      // POST empty arrays to /api/data/:key, which emptied collections in
+      // database.json — a store nothing reads any more — so it reported success
+      // and cleared nothing at all.
+      fetch('/api/admin/purge-business-data', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: 'DELETE-ALL-BUSINESS-DATA' })
+      }).then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.success) {
+          throw new Error(body.message || 'پاک‌سازی داده‌ها با خطا مواجه شد.');
+        }
+      }).then(() => {
         const keysToRemove = [];
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i);

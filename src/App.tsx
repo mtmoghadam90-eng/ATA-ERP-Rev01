@@ -16,7 +16,7 @@ import AfterSalesServicesView from './components/AfterSalesServicesView';
 import PackagingDeliveryView from './components/PackagingDeliveryView';
 import SupplierInquiriesView from './components/SupplierInquiriesView';
 import LoginView from './components/LoginView';
-import { useERPStore, onEditConflict, onSessionExpired } from './useERPStore';
+import { useERPStore, onSessionExpired } from './useERPStore';
 import { ShieldAlert, Bell, Inbox, Menu, Calendar, CheckCircle2, Clock, User, Sun, Moon, RefreshCw } from 'lucide-react';
 import TaskCalendarModal from './components/TaskCalendarModal';
 import { getTodayShamsi, toShamsiStr } from './dateUtils';
@@ -96,37 +96,18 @@ export default function App() {
     }
   };
 
-  // Multi-user: notices about data refreshed from, or contended with, other users
-  const [syncNotice, setSyncNotice] = useState<{ text: string; kind: 'info' | 'warn' } | null>(null);
-  const lastRemoteCountRef = React.useRef(0);
+  // The two notices that used to live here — "another user changed this record
+  // while you were editing it" and "data refreshed from other users" — were
+  // both produced by the document store's delta-merge and version polling.
+  // Neither exists any more: each screen reads its own data from the server,
+  // and a concurrent edit is resolved there rather than reconciled in the
+  // browser. With no producers left, the banner had nothing to show.
 
   // Session lost or expired: a write may not have been saved, so say so plainly.
   const [sessionLost, setSessionLost] = useState(false);
   useEffect(() => {
     return onSessionExpired(() => setSessionLost(true));
   }, []);
-
-  useEffect(() => {
-    return onEditConflict((n) => {
-      setSyncNotice({
-        kind: 'warn',
-        text: `«${n.label}»: ${n.ids.length} مورد که ویرایش کردید، هم‌زمان توسط کاربر دیگری نیز تغییر کرده بود. تغییر شما ثبت شد؛ لطفاً صحت اطلاعات را بازبینی کنید.`,
-      });
-    });
-  }, []);
-
-  useEffect(() => {
-    if (store.remoteChangeCount > lastRemoteCountRef.current) {
-      lastRemoteCountRef.current = store.remoteChangeCount;
-      setSyncNotice({ kind: 'info', text: 'اطلاعات با تغییرات سایر کاربران به‌روزرسانی شد.' });
-    }
-  }, [store.remoteChangeCount]);
-
-  useEffect(() => {
-    if (!syncNotice) return;
-    const t = setTimeout(() => setSyncNotice(null), syncNotice.kind === 'warn' ? 12000 : 4000);
-    return () => clearTimeout(t);
-  }, [syncNotice]);
 
   // Project confirmation upload state
   const [projectToUploadDoc, setProjectToUploadDoc] = useState<Project | null>(null);
@@ -627,29 +608,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Multi-user sync notice */}
-      {syncNotice && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[1300] max-w-md w-[calc(100%-2rem)] animate-fade-in" dir="rtl">
-          <div className={`flex items-start gap-2.5 rounded-xl shadow-lg border px-4 py-3 ${
-            syncNotice.kind === 'warn'
-              ? 'bg-amber-50 border-amber-200 text-amber-800'
-              : 'bg-sky-50 border-sky-200 text-sky-800'
-          }`}>
-            {syncNotice.kind === 'warn'
-              ? <ShieldAlert size={16} className="shrink-0 mt-0.5" />
-              : <RefreshCw size={16} className="shrink-0 mt-0.5" />}
-            <p className="text-[11px] font-bold leading-relaxed flex-1">{syncNotice.text}</p>
-            <button
-              onClick={() => setSyncNotice(null)}
-              className="shrink-0 opacity-60 hover:opacity-100 transition text-xs font-bold"
-              title="بستن"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Task Calendar Modal */}
       <TaskCalendarModal
         isOpen={calendarOpen} 
@@ -815,26 +773,17 @@ export default function App() {
       )}
 
 
-      {/* Category Completion Prompt Modal - supports both store and API-based modules */}
+      {/* Category completion prompt. There were two of these: this one, and a
+          twin driven by store.completionPrompt, which only the store's own dead
+          mutations could ever set — so it could not fire. */}
       <ConfirmModal
-        isOpen={!!store.completionPrompt || !!categoryCompletion.prompt}
-        onClose={() => {
-          store.setCompletionPrompt(null);
-          categoryCompletion.dismissPrompt();
-        }}
+        isOpen={!!categoryCompletion.prompt}
+        onClose={() => categoryCompletion.dismissPrompt()}
         onConfirm={async () => {
-          // Store-based modules (old)
-          if (store.completionPrompt) {
-            store.completeCategoryGroup(store.completionPrompt.projectId, store.completionPrompt.categoryName);
-            store.setCompletionPrompt(null);
-          }
-          // API-based modules (new)
-          if (categoryCompletion.prompt) {
-            await categoryCompletion.confirmCompletion();
-          }
+          await categoryCompletion.confirmCompletion();
         }}
         title="اتمام کار فعالیت"
-        message={store.completionPrompt?.message || categoryCompletion.prompt?.message || ''}
+        message={categoryCompletion.prompt?.message || ''}
         confirmText="بله، تغییر یابد"
         cancelText="انصراف"
       />

@@ -6,7 +6,7 @@ import { RATE_NAMES, scrapeRates } from "../rateSource";
 import {
   AUDIT_FILTERABLE, AUDIT_SORTABLE,
   getAuditLog, getSettings, listAuditLogs, listExchangeRates,
-  purgeAuditLogs, recordAudit, saveSettings, trimAuditLogs, upsertExchangeRate,
+  purgeAuditLogs, purgeBusinessData, recordAudit, saveSettings, trimAuditLogs, upsertExchangeRate,
 } from "../services/adminService";
 
 /** Settings, exchange rates and the audit log. */
@@ -31,7 +31,11 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
     const user = deps.requireKeyAccess(req, res, "erp_settings", "write");
     if (!user) return;
     try {
-      const outcome = await saveSettings((req.body as { settings?: unknown })?.settings ?? req.body, user);
+      const outcome = await saveSettings(
+        (req.body as { settings?: unknown })?.settings ?? req.body,
+        user,
+        getTodayShamsi(),
+      );
       if (outcome === "forbidden") return denied(res, "شما اجازه تغییر تنظیمات سامانه را ندارید.");
       if (outcome === "invalid") {
         res.status(400).json({ success: false, error: "ساختار تنظیمات نامعتبر است." });
@@ -170,6 +174,30 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
   });
 
   /** Clearing history is a system-administrator action, not merely a settings one. */
+  /**
+   * Erases every business record. System admins only, and the caller has to say
+   * so explicitly — this is not something to reach by accident.
+   */
+  app.post("/api/admin/purge-business-data", async (req, res) => {
+    const user = deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      if ((req.body ?? {}).confirm !== "DELETE-ALL-BUSINESS-DATA") {
+        return res.status(400).json({
+          success: false,
+          message: "درخواست پاک‌سازی تأیید نشده است.",
+        });
+      }
+      const outcome = await purgeBusinessData(user);
+      if (outcome === "forbidden") {
+        return denied(res, "پاک‌سازی داده‌ها فقط توسط مدیر سیستم انجام می‌شود.");
+      }
+      res.json({ success: true, deleted: outcome.deleted });
+    } catch (err) {
+      sendError(res, err, "POST /api/admin/purge-business-data");
+    }
+  });
+
   app.delete("/api/audit-logs", async (req, res) => {
     const user = deps.requireAuth(req, res);
     if (!user) return;
