@@ -24,6 +24,7 @@ import ShamsiDatePicker from './components/ShamsiDatePicker';
 import ConfirmModal from './components/ConfirmModal';
 import ProjectConfirmationUploadModal from './components/ProjectConfirmationUploadModal';
 import { projectsApi } from './api/projects';
+import { useWonProjectWatch } from './api/useWonProjectWatch';
 import { detailToProject, projectToWriteInput } from './api/projectAdapter';
 import { Project } from './types';
 import { useSidebarBadges } from './api/useSidebarBadges';
@@ -129,54 +130,31 @@ export default function App() {
 
   // Project confirmation upload state
   const [projectToUploadDoc, setProjectToUploadDoc] = useState<Project | null>(null);
-  const prevProjectStatusesRef = React.useRef<Record<string, string>>({});
-  const isInitialLoadRef = React.useRef(true);
 
-  // Monitor project status changes (to won/semi-won)
+  // Watches for a project becoming won. This compared successive renders of
+  // store.projects, which comes from database.json — a store the project
+  // screens no longer write to, so the statuses never moved and this could not
+  // fire. The statuses come from the server now; the transition rules, and the
+  // reason for them, live in the hook.
+  const wonProject = useWonProjectWatch(!!store.currentUser);
+
   useEffect(() => {
-    // Wait until projects are actually loaded — an empty array on first render
-    // would set isInitialLoadRef=false before prevStatuses is seeded, making
-    // every won project appear as "new & won" on the next render and opening
-    // the upload modal for all of them at login.
-    if (!store.isInitialized || !store.projects || store.projects.length === 0) return;
+    if (!wonProject.wonProjectId) return;
+    let cancelled = false;
 
-    const prevStatuses = prevProjectStatusesRef.current;
-
-    if (isInitialLoadRef.current) {
-      // Seed known statuses so subsequent renders only fire on real transitions.
-      store.projects.forEach(project => {
-        prevStatuses[project.id] = project.status;
-      });
-      isInitialLoadRef.current = false;
-      return;
-    }
-
-    store.projects.forEach(project => {
-      const prevStatus = prevStatuses[project.id];
-      const currentStatus = project.status;
-
-      if (prevStatus === undefined) {
-        // Project not seen before (e.g. added by another user via polling).
-        // Seed it without triggering — the user didn't make this transition.
-        prevStatuses[project.id] = currentStatus;
-        return;
+    // The modal edits the record, so it needs the whole thing, not the id.
+    void (async () => {
+      try {
+        const project = detailToProject(await projectsApi.get(wonProject.wonProjectId!));
+        if (!cancelled) setProjectToUploadDoc(project);
+      } catch (err) {
+        console.error('Failed to load the project that was just won:', err);
+        if (!cancelled) wonProject.clear();
       }
+    })();
 
-      if (prevStatus !== currentStatus) {
-        const wasWonBefore = prevStatus === 'برنده (موفق)' || prevStatus === 'نیمه برنده';
-        const isWon = currentStatus === 'برنده (موفق)' || currentStatus === 'نیمه برنده';
-        if (isWon && !wasWonBefore) {
-          // Trigger modal with short delay to allow background updates to complete
-          setTimeout(() => {
-            setProjectToUploadDoc(project);
-          }, 100);
-        }
-      }
-
-      // Keep record updated
-      prevStatuses[project.id] = currentStatus;
-    });
-  }, [store.isInitialized, store.projects]);
+    return () => { cancelled = true; };
+  }, [wonProject.wonProjectId]);
 
   /**
    * Files the uploaded confirmation document on the project.
@@ -867,7 +845,7 @@ export default function App() {
       <ProjectConfirmationUploadModal
         isOpen={!!projectToUploadDoc}
         project={projectToUploadDoc}
-        onClose={() => setProjectToUploadDoc(null)}
+        onClose={() => { setProjectToUploadDoc(null); wonProject.clear(); }}
         onSave={handleSaveConfirmationDoc}
       />
     </div>

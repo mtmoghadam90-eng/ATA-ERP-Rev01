@@ -247,6 +247,11 @@ export const projectsApi = {
   list: (query: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     api.get<ListResponse<ProjectRow>>("/api/projects", query, signal),
 
+  /** Ids and statuses only — what the won-project watcher needs. */
+  statuses: () =>
+    api.get<{ projects: { id: string; status: string }[] }>("/api/projects/statuses")
+      .then((r) => r.projects),
+
   get: (id: string) =>
     api.get<{ project: ProjectDetail }>(`/api/projects/${id}`).then((r) => r.project),
 

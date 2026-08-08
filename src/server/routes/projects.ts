@@ -6,7 +6,7 @@ import { nextDocumentNumber } from "../documentNumbers";
 import {
   PROJECT_FILTERABLE, PROJECT_SORTABLE, ProjectInput,
   countProjectReferences, createProject, deleteProject, getProject,
-  listProjects, projectSummary, updateProject,
+  listProjects, listProjectStatuses, projectSummary, updateProject,
 } from "../services/projectService";
 import { DOCUMENT_FOLDERS, listProjectDocuments } from "../services/projectDocuments";
 import { findMissingExchangeRates, summarizeProjectFinance } from "../services/projectFinance";
@@ -116,6 +116,20 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
       res.json({ success: true, summary: await projectSummary(user) });
     } catch (err) {
       sendError(res, err, "GET /api/projects/summary");
+    }
+  });
+
+  /**
+   * Ids and statuses only, for the client that watches a project being won.
+   * Registered before /:id so the literal path is not read as an id.
+   */
+  app.get("/api/projects/statuses", async (req, res) => {
+    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      res.json({ success: true, projects: await listProjectStatuses(user) });
+    } catch (err) {
+      sendError(res, err, "GET /api/projects/statuses");
     }
   });
 
