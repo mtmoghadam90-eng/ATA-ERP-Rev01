@@ -80,8 +80,8 @@ const LIST_SELECT = {
   isWinner: true, winnerDateJalali: true,
   offerConfirmed: true, offerConfirmedDateJalali: true,
   creationDate: true, creationDateJalali: true,
-  technicalOfferUrl: true, financialOfferUrl: true, discountPercent: true,
-  createdAt: true,
+  technicalOfferUrl: true, financialOfferUrl: true,
+  discountPercent: true, discountAmount: true, createdAt: true,
   supplier: { select: { id: true, name: true } },
   project: { select: { id: true, code: true, name: true } },
   items: {
@@ -173,6 +173,7 @@ export interface InquiryInput {
   offerConfirmedDate?: string | null;
   technicalOfferUrl?: string | null;
   discountPercent?: unknown;
+  discountAmount?: unknown;
   financialOfferUrl?: string | null;
   items?: InquiryItemInput[];
   initialStep?: InquiryInitialStepInput;
@@ -209,6 +210,10 @@ function scalarData(input: InquiryInput): Record<string, unknown> {
   if ("discountPercent" in input) {
     const pct = Number(input.discountPercent) || 0;
     set("discountPercent", Math.min(Math.max(pct, 0), 100));
+  }
+  // A negative amount would add to the offer rather than take off it.
+  if ("discountAmount" in input) {
+    set("discountAmount", Math.max(Number(input.discountAmount) || 0, 0));
   }
   if ("financialOfferUrl" in input) set("financialOfferUrl", toNullableString(input.financialOfferUrl, 500));
 
@@ -458,6 +463,7 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
             quantity: Number(i.quantity ?? 0),
           })) as never,
           Number(inquiry.discountPercent ?? 0),
+          Number(inquiry.discountAmount ?? 0),
         ),
       },
       user,
@@ -594,10 +600,15 @@ export async function updateInquiry(
  * is what makes them safe to hand Prisma's `Decimal` columns.
  */
 function describeInquiry(inquiry: unknown) {
-  const inq = inquiry as { items?: unknown[]; discountPercent?: unknown };
-  const discount = Number(inq.discountPercent ?? 0);
+  const inq = inquiry as {
+    items?: unknown[]; discountPercent?: unknown; discountAmount?: unknown;
+  };
   return {
-    amount: describeInquiryAmount(inq.items as never, discount),
+    amount: describeInquiryAmount(
+      inq.items as never,
+      Number(inq.discountPercent ?? 0),
+      Number(inq.discountAmount ?? 0),
+    ),
     status: describeInquiryStatus(inq as never),
   };
 }

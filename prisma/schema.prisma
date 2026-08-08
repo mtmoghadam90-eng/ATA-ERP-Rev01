@@ -679,13 +679,15 @@ model SupplierInquiry {
   technicalOfferUrl String? @db.NVarChar(500)
   financialOfferUrl String? @db.NVarChar(500)
 
-  /// A discount on the whole offer, as a percentage.
+  /// A discount on the whole offer: a percentage, then a fixed amount off what
+  /// is left.
   ///
-  /// A percentage rather than an amount because an inquiry's lines each carry
-  /// their own currency, so one fixed figure could not say which currency it
-  /// was in. This matches how a proforma's discount is entered too: the user
-  /// gives a percentage and the money is derived from it.
+  /// The amount is in the offer's own currency. That is well defined because a
+  /// supplier prices a whole inquiry in one currency; for a Rial-only offer it
+  /// is Rial. The Rial and foreign totals are reduced by the same proportion,
+  /// so they cannot drift apart when the rate moves.
   discountPercent Decimal @default(0) @db.Decimal(5, 2)
+  discountAmount  Decimal @default(0) @db.Decimal(19, 4)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -360,22 +360,44 @@ export const flattenSupplierInquiries = (inquiries: any[]): Row[] =>
     // the offer as a whole, and splitting it across lines would invent a
     // per-line figure the app never stored.
     discount_percent: n(q.discountPercent) || 0,
-    gross_riyal: inquiryGross(q),
-    discount_riyal: inquiryGross(q) * discountShare(q),
-    total_riyal: inquiryGross(q) * (1 - discountShare(q)),
+    discount_amount: n(q.discountAmount) || 0,
+    gross_riyal: inquiryGrossRiyal(q),
+    discount_riyal: inquiryGrossRiyal(q) * (1 - inquiryKeep(q)),
+    total_riyal: inquiryGrossRiyal(q) * inquiryKeep(q),
   }));
 
-/** The offer's Rial value before any discount. */
-const inquiryGross = (q: any): number =>
+const inquiryGrossRiyal = (q: any): number =>
   arr(q.items).reduce(
     (sum: number, it: any) => sum + (n(it.priceRiyal) || 0) * (n(it.quantity) || 0),
     0,
   );
 
-/** The discount as a fraction, clamped the same way the app clamps it. */
-const discountShare = (q: any): number => {
+const inquiryGrossForeign = (q: any): number =>
+  arr(q.items).reduce(
+    (sum: number, it: any) => sum + (n(it.priceForeign) || 0) * (n(it.quantity) || 0),
+    0,
+  );
+
+/**
+ * The share of an offer that survives both discounts.
+ *
+ * Mirrors the application's rule: the percentage comes off first, then the
+ * fixed amount comes off what is left. The amount is in the offer's own
+ * currency, so it is measured against the foreign total when there is one and
+ * against Rial otherwise, and the resulting proportion is what reduces every
+ * figure — which is what keeps the Rial and foreign totals agreeing.
+ */
+const inquiryKeep = (q: any): number => {
   const pct = n(q.discountPercent) || 0;
-  return pct > 0 ? Math.min(pct, 100) / 100 : 0;
+  const keepPct = pct > 0 ? 1 - Math.min(pct, 100) / 100 : 1;
+
+  const amount = Math.max(n(q.discountAmount) || 0, 0);
+  const foreign = inquiryGrossForeign(q);
+  const base = foreign > 0 ? foreign : inquiryGrossRiyal(q);
+  const afterPct = base * keepPct;
+
+  if (afterPct <= 0) return amount > 0 ? 0 : keepPct;
+  return keepPct * Math.max(1 - amount / afterPct, 0);
 };
 
 export const flattenSupplierInquiryItems = (inquiries: any[]): Row[] => {

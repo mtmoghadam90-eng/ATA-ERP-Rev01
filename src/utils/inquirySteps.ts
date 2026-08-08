@@ -95,7 +95,7 @@ const fmt = (n: number): string => Math.round(n).toLocaleString('fa-IR');
 /**
  * The discount as a fraction, clamped.
  *
- * A percentage outside 0–100 would either inflate the offer or turn it
+ * A percentage outside 0-100 would either inflate the offer or turn it
  * negative, so it is treated as no discount rather than trusted.
  */
 export function discountFraction(discountPercent: number | undefined): number {
@@ -104,7 +104,7 @@ export function discountFraction(discountPercent: number | undefined): number {
   return Math.min(pct, 100) / 100;
 }
 
-/** Sums the Rial value of an offer (unit Rial price × quantity), before discount. */
+/** Sums the Rial value of an offer (unit Rial price x quantity), before discount. */
 export function inquiryGrossRiyal(items: SupplierInquiryItem[] | undefined): number {
   return (items || []).reduce(
     (sum, it) => sum + (Number(it.priceRiyal) || 0) * (Number(it.quantity) || 0),
@@ -112,12 +112,102 @@ export function inquiryGrossRiyal(items: SupplierInquiryItem[] | undefined): num
   );
 }
 
+/**
+ * The single currency an offer is quoted in, when it has one.
+ *
+ * A supplier prices a whole inquiry in one currency, so this is normally
+ * unambiguous. Null when the lines carry no foreign price at all — a Rial-only
+ * offer — or, defensively, when they disagree, in which case the callers below
+ * fall back to Rial rather than picking a winner.
+ */
+export function inquiryCurrency(items: SupplierInquiryItem[] | undefined): string | null {
+  const seen = new Set<string>();
+  for (const it of items || []) {
+    const amount = (Number(it.priceForeign) || 0) * (Number(it.quantity) || 0);
+    if (amount > 0 && it.currency) seen.add(it.currency);
+  }
+  return seen.size === 1 ? [...seen][0] : null;
+}
+
+/** Gross foreign value of an offer, in its own currency. */
+export function inquiryGrossForeign(items: SupplierInquiryItem[] | undefined): number {
+  return (items || []).reduce(
+    (sum, it) => sum + (Number(it.priceForeign) || 0) * (Number(it.quantity) || 0),
+    0,
+  );
+}
+
+export interface InquiryTotals {
+  /** The currency the offer is quoted in, or null for a Rial-only offer. */
+  currency: string | null;
+  grossForeign: number;
+  grossRiyal: number;
+  discountForeign: number;
+  discountRiyal: number;
+  netForeign: number;
+  netRiyal: number;
+}
+
+/**
+ * Everything an offer is worth, with both discounts applied.
+ *
+ * The two discounts compose in the order a supplier would quote them: the
+ * percentage comes off first, then the fixed amount comes off what is left.
+ *
+ * The fixed amount is in the offer's own currency, which is well defined
+ * because a supplier prices an inquiry in one currency. The Rial side is then
+ * reduced by the *same proportion* rather than by its own subtraction, so the
+ * two totals cannot drift apart — a Rial figure computed independently would
+ * disagree with the foreign one as soon as the rate moved.
+ *
+ * For a Rial-only offer the amount is simply Rial. An offer cannot go below
+ * zero: a discount larger than the offer makes it free, not negative.
+ */
+export function computeInquiryTotals(
+  items: SupplierInquiryItem[] | undefined,
+  discountPercent?: number,
+  discountAmount?: number,
+): InquiryTotals {
+  const grossForeign = inquiryGrossForeign(items);
+  const grossRiyal = inquiryGrossRiyal(items);
+  const currency = inquiryCurrency(items);
+
+  const keepPct = 1 - discountFraction(discountPercent);
+  const amount = Math.max(Number(discountAmount) || 0, 0);
+
+  // What the fixed amount is measured against: the offer's own currency when it
+  // has one, Rial otherwise.
+  const base = currency ? grossForeign : grossRiyal;
+  const afterPct = base * keepPct;
+
+  let keep = keepPct;
+  if (afterPct > 0) {
+    keep = keepPct * Math.max(1 - amount / afterPct, 0);
+  } else if (amount > 0) {
+    keep = 0;
+  }
+
+  const netForeign = grossForeign * keep;
+  const netRiyal = grossRiyal * keep;
+
+  return {
+    currency,
+    grossForeign,
+    grossRiyal,
+    discountForeign: grossForeign - netForeign,
+    discountRiyal: grossRiyal - netRiyal,
+    netForeign,
+    netRiyal,
+  };
+}
+
 /** What the discount takes off the Rial total. */
 export function inquiryDiscountRiyal(
   items: SupplierInquiryItem[] | undefined,
   discountPercent?: number,
+  discountAmount?: number,
 ): number {
-  return inquiryGrossRiyal(items) * discountFraction(discountPercent);
+  return computeInquiryTotals(items, discountPercent, discountAmount).discountRiyal;
 }
 
 /**
@@ -129,8 +219,9 @@ export function inquiryDiscountRiyal(
 export function inquiryTotalRiyal(
   items: SupplierInquiryItem[] | undefined,
   discountPercent?: number,
+  discountAmount?: number,
 ): number {
-  return inquiryGrossRiyal(items) * (1 - discountFraction(discountPercent));
+  return computeInquiryTotals(items, discountPercent, discountAmount).netRiyal;
 }
 
 /**
@@ -140,12 +231,13 @@ export function inquiryTotalRiyal(
 export function inquiryTotalsByCurrency(
   items: SupplierInquiryItem[] | undefined,
   discountPercent?: number,
+  discountAmount?: number,
 ): Record<string, number> {
   const totals: Record<string, number> = {};
-  // A percentage applies to every currency alike, which is the reason the
-  // discount is expressed as one: a fixed amount could not be shared out
-  // across a mixed-currency offer.
-  const keep = 1 - discountFraction(discountPercent);
+  // The same proportion the Rial total was reduced by, so the two agree.
+  const gross = inquiryGrossForeign(items);
+  const net = computeInquiryTotals(items, discountPercent, discountAmount).netForeign;
+  const keep = gross > 0 ? net / gross : 1;
   (items || []).forEach((it) => {
     const amount = (Number(it.priceForeign) || 0) * (Number(it.quantity) || 0);
     if (amount <= 0) return;
@@ -159,9 +251,10 @@ export function inquiryTotalsByCurrency(
 export function describeInquiryAmount(
   items: SupplierInquiryItem[] | undefined,
   discountPercent?: number,
+  discountAmount?: number,
 ): string {
-  const byCurrency = inquiryTotalsByCurrency(items, discountPercent);
-  const riyal = inquiryTotalRiyal(items, discountPercent);
+  const byCurrency = inquiryTotalsByCurrency(items, discountPercent, discountAmount);
+  const riyal = inquiryTotalRiyal(items, discountPercent, discountAmount);
   const parts = Object.entries(byCurrency)
     .filter(([cur]) => cur !== 'ریال')
     .map(([cur, amount]) => `${fmt(amount)} ${cur}`);

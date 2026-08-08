@@ -411,6 +411,7 @@ export async function readSqlCollections(): Promise<StoreCollections> {
       technicalOfferUrl: q.technicalOfferUrl,
       financialOfferUrl: q.financialOfferUrl,
       discountPercent: num(q.discountPercent),
+      discountAmount: num(q.discountAmount),
       items: q.items.map((i) => ({
         id: i.id,
         name: i.name,
