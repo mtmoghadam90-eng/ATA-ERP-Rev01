@@ -29,7 +29,7 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
   const KEY = "erp_suppliers";
 
   app.get("/api/suppliers", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, SUPPLIER_SORTABLE, SUPPLIER_FILTERABLE);
@@ -42,7 +42,7 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.get("/api/suppliers/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const supplier = await getSupplier(req.params.id, user);
@@ -57,7 +57,7 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.get("/api/suppliers/:id/references", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       res.json({ success: true, references: await countSupplierReferences(req.params.id) });
@@ -67,7 +67,7 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.post("/api/suppliers", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const input = pickInput(req.body);
@@ -84,7 +84,7 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.put("/api/suppliers/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const supplier = await updateSupplier(req.params.id, pickInput(req.body), user, getTodayShamsi());
@@ -99,7 +99,7 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.delete("/api/suppliers/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await deleteSupplier(req.params.id, user, getTodayShamsi());

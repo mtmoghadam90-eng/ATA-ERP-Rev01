@@ -43,7 +43,7 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
   const KEY = "erp_purchase_orders";
 
   app.get("/api/purchase-orders", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, PO_SORTABLE, PO_FILTERABLE);
@@ -59,7 +59,7 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
   });
 
   app.get("/api/purchase-orders/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const purchaseOrder = await getPurchaseOrder(req.params.id, user);
@@ -74,7 +74,7 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
   });
 
   app.get("/api/purchase-orders/:id/references", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       res.json({ success: true, references: await countPurchaseOrderReferences(req.params.id) });
@@ -84,7 +84,7 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
   });
 
   app.post("/api/purchase-orders", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const input = pickInput(req.body);
@@ -126,7 +126,7 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
   });
 
   app.put("/api/purchase-orders/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const purchaseOrder = await updatePurchaseOrder(
@@ -142,7 +142,7 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
   });
 
   app.delete("/api/purchase-orders/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await deletePurchaseOrder(req.params.id, user, getTodayShamsi());

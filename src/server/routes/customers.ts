@@ -55,7 +55,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
   const KEY = "erp_customers";
 
   app.get("/api/customers", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(
@@ -77,7 +77,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.get("/api/customers/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const customer = await getCustomer(req.params.id, user);
@@ -93,7 +93,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
 
   /** What would be affected by deleting this customer — drives the migrate-or-cancel prompt. */
   app.get("/api/customers/:id/references", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       res.json({ success: true, references: await countCustomerReferences(req.params.id) });
@@ -113,7 +113,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
    * POST rather than GET because the candidate is a record, not a lookup key.
    */
   app.post("/api/customers/check-duplicates", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -161,7 +161,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.post("/api/customers", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const input = pickInput(req.body);
@@ -181,7 +181,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.put("/api/customers/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const customer = await updateCustomer(req.params.id, pickInput(req.body), user, getTodayShamsi());
@@ -200,7 +200,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
    * the link shows from either side.
    */
   app.put("/api/customers/:id/links", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const raw = (req.body as { linkedIds?: unknown })?.linkedIds;
@@ -227,7 +227,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
 
   /** Replaces this customer's per-module agreement texts. */
   app.put("/api/customers/:id/agreements", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const raw = (req.body as { agreements?: unknown })?.agreements;
@@ -266,7 +266,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
    * silently orphaning (or cascading away) that history.
    */
   app.delete("/api/customers/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const id = req.params.id;

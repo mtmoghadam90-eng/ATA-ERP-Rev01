@@ -41,7 +41,7 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
   const KEY = "erp_products";
 
   app.get("/api/products", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, PRODUCT_SORTABLE, PRODUCT_FILTERABLE);
@@ -56,7 +56,7 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
   /** Products at or below their reorder point. A column-to-column comparison,
    *  so it is its own endpoint rather than a filter on the list. */
   app.get("/api/products/low-stock", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const rows = await lowStockProducts(user, toNumber(req.query.limit, 100));
@@ -69,7 +69,7 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
 
   /** Stock ledger, optionally for one product or SKU. */
   app.get("/api/inventory-transactions", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, INVENTORY_SORTABLE);
@@ -85,7 +85,7 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.get("/api/products/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const product = await getProduct(req.params.id, user);
@@ -100,7 +100,7 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.get("/api/products/:id/references", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       res.json({ success: true, references: await countProductReferences(req.params.id) });
@@ -110,7 +110,7 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.post("/api/products", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const input = pickInput(req.body);
@@ -133,7 +133,7 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.put("/api/products/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const product = await updateProduct(req.params.id, pickInput(req.body), user, getTodayShamsi());
@@ -149,7 +149,7 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
 
   /** Copies a product definition. Stock is not copied — it belongs to the item. */
   app.post("/api/products/:id/copy", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -176,7 +176,7 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
    * users adjusting at once add up instead of overwriting each other.
    */
   app.post("/api/products/:id/stock", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -210,7 +210,7 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   app.delete("/api/products/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await deleteProduct(req.params.id, user, getTodayShamsi());

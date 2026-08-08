@@ -16,13 +16,16 @@ import AfterSalesServicesView from './components/AfterSalesServicesView';
 import PackagingDeliveryView from './components/PackagingDeliveryView';
 import SupplierInquiriesView from './components/SupplierInquiriesView';
 import LoginView from './components/LoginView';
-import { useERPStore, onEditConflict, onSessionExpired } from './useERPStore';
+import { useERPStore, onSessionExpired } from './useERPStore';
 import { ShieldAlert, Bell, Inbox, Menu, Calendar, CheckCircle2, Clock, User, Sun, Moon, RefreshCw } from 'lucide-react';
 import TaskCalendarModal from './components/TaskCalendarModal';
 import { getTodayShamsi, toShamsiStr } from './dateUtils';
 import ShamsiDatePicker from './components/ShamsiDatePicker';
 import ConfirmModal from './components/ConfirmModal';
 import ProjectConfirmationUploadModal from './components/ProjectConfirmationUploadModal';
+import { projectsApi } from './api/projects';
+import { useWonProjectWatch } from './api/useWonProjectWatch';
+import { detailToProject, projectToWriteInput } from './api/projectAdapter';
 import { Project } from './types';
 import { useSidebarBadges } from './api/useSidebarBadges';
 import { tasksApi, taskToWriteInput } from './api/tasks';
@@ -93,9 +96,12 @@ export default function App() {
     }
   };
 
-  // Multi-user: notices about data refreshed from, or contended with, other users
-  const [syncNotice, setSyncNotice] = useState<{ text: string; kind: 'info' | 'warn' } | null>(null);
-  const lastRemoteCountRef = React.useRef(0);
+  // The two notices that used to live here — "another user changed this record
+  // while you were editing it" and "data refreshed from other users" — were
+  // both produced by the document store's delta-merge and version polling.
+  // Neither exists any more: each screen reads its own data from the server,
+  // and a concurrent edit is resolved there rather than reconciled in the
+  // browser. With no producers left, the banner had nothing to show.
 
   // Session lost or expired: a write may not have been saved, so say so plainly.
   const [sessionLost, setSessionLost] = useState(false);
@@ -103,82 +109,68 @@ export default function App() {
     return onSessionExpired(() => setSessionLost(true));
   }, []);
 
-  useEffect(() => {
-    return onEditConflict((n) => {
-      setSyncNotice({
-        kind: 'warn',
-        text: `«${n.label}»: ${n.ids.length} مورد که ویرایش کردید، هم‌زمان توسط کاربر دیگری نیز تغییر کرده بود. تغییر شما ثبت شد؛ لطفاً صحت اطلاعات را بازبینی کنید.`,
-      });
-    });
-  }, []);
-
-  useEffect(() => {
-    if (store.remoteChangeCount > lastRemoteCountRef.current) {
-      lastRemoteCountRef.current = store.remoteChangeCount;
-      setSyncNotice({ kind: 'info', text: 'اطلاعات با تغییرات سایر کاربران به‌روزرسانی شد.' });
-    }
-  }, [store.remoteChangeCount]);
-
-  useEffect(() => {
-    if (!syncNotice) return;
-    const t = setTimeout(() => setSyncNotice(null), syncNotice.kind === 'warn' ? 12000 : 4000);
-    return () => clearTimeout(t);
-  }, [syncNotice]);
-
   // Project confirmation upload state
   const [projectToUploadDoc, setProjectToUploadDoc] = useState<Project | null>(null);
-  const prevProjectStatusesRef = React.useRef<Record<string, string>>({});
-  const isInitialLoadRef = React.useRef(true);
 
-  // Monitor project status changes (to won/semi-won)
+  // Watches for a project becoming won. This compared successive renders of
+  // store.projects, which comes from database.json — a store the project
+  // screens no longer write to, so the statuses never moved and this could not
+  // fire. The statuses come from the server now; the transition rules, and the
+  // reason for them, live in the hook.
+  const wonProject = useWonProjectWatch(!!store.currentUser);
+
   useEffect(() => {
-    // Wait until projects are actually loaded — an empty array on first render
-    // would set isInitialLoadRef=false before prevStatuses is seeded, making
-    // every won project appear as "new & won" on the next render and opening
-    // the upload modal for all of them at login.
-    if (!store.isInitialized || !store.projects || store.projects.length === 0) return;
+    if (!wonProject.wonProjectId) return;
+    let cancelled = false;
 
-    const prevStatuses = prevProjectStatusesRef.current;
+    // The modal edits the record, so it needs the whole thing, not the id.
+    void (async () => {
+      try {
+        const project = detailToProject(await projectsApi.get(wonProject.wonProjectId!));
+        if (!cancelled) setProjectToUploadDoc(project);
+      } catch (err) {
+        console.error('Failed to load the project that was just won:', err);
+        if (!cancelled) wonProject.clear();
+      }
+    })();
 
-    if (isInitialLoadRef.current) {
-      // Seed known statuses so subsequent renders only fire on real transitions.
-      store.projects.forEach(project => {
-        prevStatuses[project.id] = project.status;
-      });
-      isInitialLoadRef.current = false;
-      return;
+    return () => { cancelled = true; };
+  }, [wonProject.wonProjectId]);
+
+  /**
+   * Files the uploaded confirmation document on the project.
+   *
+   * This went through the store, which writes to database.json — a store the
+   * project screens stopped reading or writing when they moved to the API. The
+   * document was therefore uploaded, reported as saved, and then never seen
+   * again.
+   *
+   * The record is re-read here rather than taking the modal's copy: that copy
+   * descends from a list projection, and writing it back would blank the
+   * project's description, items and milestones. Only the newly added documents
+   * are carried over.
+   */
+  const handleSaveConfirmationDoc = async (
+    updatedProject: Project,
+    url: string,
+    fileName: string,
+    folderName: string,
+  ) => {
+    try {
+      const full = detailToProject(await projectsApi.get(updatedProject.id));
+      const existing = full.manualDocuments || [];
+      const known = new Set(existing.map((doc) => doc.id));
+      const added = (updatedProject.manualDocuments || []).filter((doc) => !known.has(doc.id));
+
+      await projectsApi.update(
+        updatedProject.id,
+        projectToWriteInput({ ...full, manualDocuments: [...existing, ...added] }),
+      );
+      alert(`مدرک "${fileName}" با موفقیت در پوشه "${folderName}" پروژه ذخیره گردید.`);
+    } catch (err) {
+      alert('ذخیره مدرک پروژه با خطا مواجه شد.');
+      console.error('Failed to save the project confirmation document:', err);
     }
-
-    store.projects.forEach(project => {
-      const prevStatus = prevStatuses[project.id];
-      const currentStatus = project.status;
-
-      if (prevStatus === undefined) {
-        // Project not seen before (e.g. added by another user via polling).
-        // Seed it without triggering — the user didn't make this transition.
-        prevStatuses[project.id] = currentStatus;
-        return;
-      }
-
-      if (prevStatus !== currentStatus) {
-        const wasWonBefore = prevStatus === 'برنده (موفق)' || prevStatus === 'نیمه برنده';
-        const isWon = currentStatus === 'برنده (موفق)' || currentStatus === 'نیمه برنده';
-        if (isWon && !wasWonBefore) {
-          // Trigger modal with short delay to allow background updates to complete
-          setTimeout(() => {
-            setProjectToUploadDoc(project);
-          }, 100);
-        }
-      }
-
-      // Keep record updated
-      prevStatuses[project.id] = currentStatus;
-    });
-  }, [store.isInitialized, store.projects]);
-
-  const handleSaveConfirmationDoc = (updatedProject: Project, url: string, fileName: string, folderName: string) => {
-    store.updateProject(updatedProject);
-    alert(`مدرک "${fileName}" با موفقیت در پوشه "${folderName}" پروژه ذخیره گردید.`);
   };
   
   // Snooze options state
@@ -363,7 +355,8 @@ export default function App() {
           <ProductsView
             categories={store.settings.dropdownItems.categories}
             units={store.settings.dropdownItems.units}
-            settings={store.settings}          />
+            settings={store.settings}
+          />
         );
       case 'proformas':
         return (
@@ -430,7 +423,8 @@ export default function App() {
             initialPrintDocId={printDocumentRequest?.module === 'transactions' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
             // Reads its own data from the API; the per-project financial
-            // position is its own paginated query.            settings={store.settings}
+            // position is its own paginated query.
+            settings={store.settings}
           />
         );
             case 'tasks':
@@ -464,7 +458,8 @@ export default function App() {
         );
       case 'supplierInquiries':
         return (
-          <SupplierInquiriesView            settings={store.settings}
+          <SupplierInquiriesView
+            settings={store.settings}
           />
         );
       case 'settings':
@@ -613,35 +608,10 @@ export default function App() {
         </div>
       )}
 
-      {/* Multi-user sync notice */}
-      {syncNotice && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[1300] max-w-md w-[calc(100%-2rem)] animate-fade-in" dir="rtl">
-          <div className={`flex items-start gap-2.5 rounded-xl shadow-lg border px-4 py-3 ${
-            syncNotice.kind === 'warn'
-              ? 'bg-amber-50 border-amber-200 text-amber-800'
-              : 'bg-sky-50 border-sky-200 text-sky-800'
-          }`}>
-            {syncNotice.kind === 'warn'
-              ? <ShieldAlert size={16} className="shrink-0 mt-0.5" />
-              : <RefreshCw size={16} className="shrink-0 mt-0.5" />}
-            <p className="text-[11px] font-bold leading-relaxed flex-1">{syncNotice.text}</p>
-            <button
-              onClick={() => setSyncNotice(null)}
-              className="shrink-0 opacity-60 hover:opacity-100 transition text-xs font-bold"
-              title="بستن"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Task Calendar Modal */}
       <TaskCalendarModal
         isOpen={calendarOpen} 
         onClose={() => setCalendarOpen(false)} 
-        tasks={store.tasks} 
-        onUpdateTask={store.updateTask}
         currentUser={store.currentUser}
       />
 
@@ -803,26 +773,17 @@ export default function App() {
       )}
 
 
-      {/* Category Completion Prompt Modal - supports both store and API-based modules */}
+      {/* Category completion prompt. There were two of these: this one, and a
+          twin driven by store.completionPrompt, which only the store's own dead
+          mutations could ever set — so it could not fire. */}
       <ConfirmModal
-        isOpen={!!store.completionPrompt || !!categoryCompletion.prompt}
-        onClose={() => {
-          store.setCompletionPrompt(null);
-          categoryCompletion.dismissPrompt();
-        }}
+        isOpen={!!categoryCompletion.prompt}
+        onClose={() => categoryCompletion.dismissPrompt()}
         onConfirm={async () => {
-          // Store-based modules (old)
-          if (store.completionPrompt) {
-            store.completeCategoryGroup(store.completionPrompt.projectId, store.completionPrompt.categoryName);
-            store.setCompletionPrompt(null);
-          }
-          // API-based modules (new)
-          if (categoryCompletion.prompt) {
-            await categoryCompletion.confirmCompletion();
-          }
+          await categoryCompletion.confirmCompletion();
         }}
         title="اتمام کار فعالیت"
-        message={store.completionPrompt?.message || categoryCompletion.prompt?.message || ''}
+        message={categoryCompletion.prompt?.message || ''}
         confirmText="بله، تغییر یابد"
         cancelText="انصراف"
       />
@@ -831,7 +792,7 @@ export default function App() {
       <ProjectConfirmationUploadModal
         isOpen={!!projectToUploadDoc}
         project={projectToUploadDoc}
-        onClose={() => setProjectToUploadDoc(null)}
+        onClose={() => { setProjectToUploadDoc(null); wonProject.clear(); }}
         onSave={handleSaveConfirmationDoc}
       />
     </div>

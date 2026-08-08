@@ -406,7 +406,14 @@ export interface Task {
   relatedToName?: string;
   priority: 'پایین' | 'متوسط' | 'بالا' | 'فوری';
   dueDate: string;
+  /** The assignee's display name. */
   assignedTo: string;
+  /**
+   * The assignee's account, kept beside the name. Both are stored: the board
+   * and the "my tasks" filters key off the id, so a round trip that carries
+   * only the name silently detaches the task from whoever it belongs to.
+   */
+  assignedToUserId?: string;
   status: 'در حال انجام' | 'انجام شده' | 'کنسل شده';
   customValues?: Record<string, any>;
   reminderEnabled?: boolean;

@@ -34,7 +34,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
    * something the browser has any more.
    */
   app.get("/api/activity-categories/:categoryId/usage", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const projects = await getDb().projectCategoryGroup.count({
@@ -47,7 +47,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.get("/api/projects/:projectId/category-groups", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const groups = await listCategoryGroups(req.params.projectId, user);
@@ -59,7 +59,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.put("/api/projects/:projectId/category-groups", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -84,7 +84,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.delete("/api/category-groups/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await deleteCategoryGroup(req.params.id, user);
@@ -102,7 +102,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   /* ------------------------------ activities ----------------------------- */
 
   app.get("/api/activities", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, ACTIVITY_SORTABLE);
@@ -117,7 +117,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.post("/api/activities", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -154,7 +154,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.put("/api/activities/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const text = (req.body as { text?: unknown })?.text;
@@ -175,7 +175,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.delete("/api/activities/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await deleteActivity(req.params.id, user);
@@ -201,7 +201,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   /* ------------------------------ referrals ------------------------------ */
 
   app.get("/api/referrals", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, REFERRAL_SORTABLE, REFERRAL_FILTERABLE);
@@ -218,7 +218,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.put("/api/referrals/:id/status", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const status = (req.body as { status?: unknown })?.status;
@@ -239,7 +239,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.put("/api/referrals/:id/assignee", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const assignedToUserId = (req.body as { assignedToUserId?: unknown })?.assignedToUserId;
@@ -264,7 +264,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.post("/api/referrals/:id/messages", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -293,7 +293,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   /* ---------------------------- module notes ----------------------------- */
 
   app.get("/api/notes/:entityType/:entityId", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       res.json({ success: true, notes: await listModuleNotes(req.params.entityType, req.params.entityId) });
@@ -303,7 +303,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.post("/api/notes/:entityType/:entityId", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       const text = (req.body as { text?: unknown })?.text;
@@ -321,7 +321,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.delete("/api/notes/:id", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       const outcome = await deleteModuleNote(req.params.id, user);

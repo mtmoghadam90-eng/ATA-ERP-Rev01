@@ -6,7 +6,7 @@ import { RATE_NAMES, scrapeRates } from "../rateSource";
 import {
   AUDIT_FILTERABLE, AUDIT_SORTABLE,
   getAuditLog, getSettings, listAuditLogs, listExchangeRates,
-  purgeAuditLogs, recordAudit, saveSettings, trimAuditLogs, upsertExchangeRate,
+  purgeAuditLogs, purgeBusinessData, recordAudit, saveSettings, trimAuditLogs, upsertExchangeRate,
 } from "../services/adminService";
 
 /** Settings, exchange rates and the audit log. */
@@ -18,7 +18,7 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
   /* ------------------------------ settings ------------------------------ */
 
   app.get("/api/settings", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, "erp_settings", "read");
+    const user = await deps.requireKeyAccess(req, res, "erp_settings", "read");
     if (!user) return;
     try {
       res.json({ success: true, settings: await getSettings() });
@@ -28,10 +28,14 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
   });
 
   app.put("/api/settings", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, "erp_settings", "write");
+    const user = await deps.requireKeyAccess(req, res, "erp_settings", "write");
     if (!user) return;
     try {
-      const outcome = await saveSettings((req.body as { settings?: unknown })?.settings ?? req.body, user);
+      const outcome = await saveSettings(
+        (req.body as { settings?: unknown })?.settings ?? req.body,
+        user,
+        getTodayShamsi(),
+      );
       if (outcome === "forbidden") return denied(res, "شما اجازه تغییر تنظیمات سامانه را ندارید.");
       if (outcome === "invalid") {
         res.status(400).json({ success: false, error: "ساختار تنظیمات نامعتبر است." });
@@ -46,7 +50,7 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
   /* --------------------------- exchange rates --------------------------- */
 
   app.get("/api/exchange-rates", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, "erp_exchange_rates", "read");
+    const user = await deps.requireKeyAccess(req, res, "erp_exchange_rates", "read");
     if (!user) return;
     try {
       res.json({ success: true, rates: await listExchangeRates() });
@@ -65,7 +69,7 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
    * be read is reported and left alone rather than overwritten with a guess.
    */
   app.post("/api/exchange-rates/refresh", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, "erp_exchange_rates", "write");
+    const user = await deps.requireKeyAccess(req, res, "erp_exchange_rates", "write");
     if (!user) return;
     try {
       const { rates, failedCurrencies } = await scrapeRates();
@@ -88,7 +92,7 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
   });
 
   app.put("/api/exchange-rates/:currency", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, "erp_exchange_rates", "write");
+    const user = await deps.requireKeyAccess(req, res, "erp_exchange_rates", "write");
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -112,7 +116,7 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
   /* ------------------------------ audit log ----------------------------- */
 
   app.get("/api/audit-logs", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, "erp_audit_logs", "read");
+    const user = await deps.requireKeyAccess(req, res, "erp_audit_logs", "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, AUDIT_SORTABLE, AUDIT_FILTERABLE);
@@ -126,7 +130,7 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
 
   /** One entry, with its before/after snapshots — excluded from the list on purpose. */
   app.get("/api/audit-logs/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, "erp_audit_logs", "read");
+    const user = await deps.requireKeyAccess(req, res, "erp_audit_logs", "read");
     if (!user) return;
     try {
       const entry = await getAuditLog(req.params.id, user);
@@ -141,7 +145,7 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
   });
 
   app.post("/api/audit-logs", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -170,8 +174,32 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
   });
 
   /** Clearing history is a system-administrator action, not merely a settings one. */
+  /**
+   * Erases every business record. System admins only, and the caller has to say
+   * so explicitly — this is not something to reach by accident.
+   */
+  app.post("/api/admin/purge-business-data", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      if ((req.body ?? {}).confirm !== "DELETE-ALL-BUSINESS-DATA") {
+        return res.status(400).json({
+          success: false,
+          message: "درخواست پاک‌سازی تأیید نشده است.",
+        });
+      }
+      const outcome = await purgeBusinessData(user);
+      if (outcome === "forbidden") {
+        return denied(res, "پاک‌سازی داده‌ها فقط توسط مدیر سیستم انجام می‌شود.");
+      }
+      res.json({ success: true, deleted: outcome.deleted });
+    } catch (err) {
+      sendError(res, err, "POST /api/admin/purge-business-data");
+    }
+  });
+
   app.delete("/api/audit-logs", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       // The same filters the list takes, so clearing "what I am looking at"

@@ -85,6 +85,10 @@ export function rowToTask(row: TaskRow): Task {
     status: row.status as Task["status"],
     dueDate: row.dueDateJalali ?? "",
     assignedTo: row.assignedToName ?? "",
+    // Carried so a save from the board or the calendar writes the assignee
+    // back as it found them. Without it every edit sent a null id and detached
+    // the task from its owner, leaving only the name behind.
+    assignedToUserId: row.assignedToUserId ?? undefined,
     reminderEnabled: row.reminderEnabled,
     reminderDate: row.reminderDateJalali ?? undefined,
     reminderTime: row.reminderTime ?? undefined,

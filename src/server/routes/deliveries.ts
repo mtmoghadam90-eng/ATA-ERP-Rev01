@@ -44,7 +44,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
   /* ---------------------------- packing lists ---------------------------- */
 
   app.get("/api/deliveries", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, DELIVERY_KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, DELIVERY_SORTABLE, DELIVERY_FILTERABLE);
@@ -58,7 +58,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
 
   /* Declared before `/:id` so "remaining" is not read as a delivery id. */
   app.get("/api/deliveries/remaining", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, DELIVERY_KEY, "read");
     if (!user) return;
     try {
       const projectId = typeof req.query.projectId === "string" ? req.query.projectId : "";
@@ -79,7 +79,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.get("/api/deliveries/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, DELIVERY_KEY, "read");
     if (!user) return;
     try {
       const delivery = await getDelivery(req.params.id, user);
@@ -94,7 +94,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.post("/api/deliveries", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, DELIVERY_KEY, "write");
     if (!user) return;
     try {
       const input = pick<DeliveryInput>(req.body, DELIVERY_WRITABLE);
@@ -132,7 +132,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.put("/api/deliveries/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, DELIVERY_KEY, "write");
     if (!user) return;
     try {
       const delivery = await updateDelivery(req.params.id, pick<DeliveryInput>(req.body, DELIVERY_WRITABLE), user, getTodayShamsi());
@@ -147,7 +147,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.delete("/api/deliveries/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, DELIVERY_KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, DELIVERY_KEY, "write");
     if (!user) return;
     try {
       const outcome = await deleteDelivery(req.params.id, user, getTodayShamsi());
@@ -165,7 +165,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
   /* -------------------------- after-sales service ------------------------- */
 
   app.get("/api/after-sales", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, SERVICE_KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, SERVICE_KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, SERVICE_SORTABLE, SERVICE_FILTERABLE);
@@ -178,7 +178,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.get("/api/after-sales/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, SERVICE_KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, SERVICE_KEY, "read");
     if (!user) return;
     try {
       const service = await getService(req.params.id, user);
@@ -193,7 +193,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.post("/api/after-sales", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, SERVICE_KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, SERVICE_KEY, "write");
     if (!user) return;
     try {
       const input = pick<ServiceInput>(req.body, SERVICE_WRITABLE);
@@ -217,7 +217,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.put("/api/after-sales/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, SERVICE_KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, SERVICE_KEY, "write");
     if (!user) return;
     try {
       const service = await updateService(req.params.id, pick<ServiceInput>(req.body, SERVICE_WRITABLE), user, getTodayShamsi());
@@ -232,7 +232,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.delete("/api/after-sales/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, SERVICE_KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, SERVICE_KEY, "write");
     if (!user) return;
     try {
       const outcome = await deleteService(req.params.id, user, getTodayShamsi());

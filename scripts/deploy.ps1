@@ -7,7 +7,9 @@
     restarts the app. If any stage fails the running application is left alone
     and the previous build is restored, so a bad commit cannot take the app down.
 
-    Data (database.json), configuration (.env) and uploads are never touched.
+    Configuration (.env), the session secret and uploads are never touched.
+    Business data lives in SQL Server and is NOT backed up by this script —
+    back the ata_erp database up separately before a risky deploy.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File E:\Apps\ATA-ERP-Rev01\scripts\deploy.ps1
@@ -35,17 +37,21 @@ if (-not $SkipBackup) {
     Step 1 "Backing up application data"
     $backupDir = Join-Path $AppDir "backups"
     New-Item -ItemType Directory -Force $backupDir | Out-Null
+    # The application's data is in SQL Server; this script cannot back that up.
+    # What it can preserve is the leftover document store on a server upgraded
+    # from an older build, so an upgrade never destroys the last copy of it.
     if (Test-Path "database.json") {
         $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
         Copy-Item "database.json" (Join-Path $backupDir "database-$stamp.json")
-        Ok "database.json copied to backups\database-$stamp.json"
+        Ok "legacy database.json copied to backups\database-$stamp.json"
         # Keep the 30 most recent backups
         Get-ChildItem $backupDir -Filter "database-*.json" |
             Sort-Object LastWriteTime -Descending | Select-Object -Skip 30 |
             Remove-Item -Force -ErrorAction SilentlyContinue
     } else {
-        Write-Host "    (no database.json yet - nothing to back up)" -ForegroundColor DarkGray
+        Write-Host "    (no legacy database.json - business data is in SQL Server)" -ForegroundColor DarkGray
     }
+    Write-Host "    NOTE: SQL Server data is not backed up here - back up 'ata_erp' separately." -ForegroundColor Yellow
 } else {
     Step 1 "Backup skipped (-SkipBackup)"
 }

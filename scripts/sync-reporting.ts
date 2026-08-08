@@ -3,37 +3,18 @@
  *
  *   npm run sync:report
  *
- * Reads the app's data file directly (no HTTP), flattens it, and loads the
- * SQL Server reporting schema. Exits non-zero on failure so a scheduler can
- * detect a bad run.
+ * Reads the application database (no HTTP), flattens it, and loads the SQL
+ * Server reporting schema. Exits non-zero on failure so a scheduler can detect
+ * a bad run.
+ *
+ * This read the document store until the screens moved to SQL, after which that
+ * file stopped being written and every run copied the same frozen
+ * pre-migration data into the reporting database.
  */
 import "dotenv/config";
-import fs from "fs";
-import path from "path";
 import { syncToSqlServer, readConfigFromEnv } from "../src/reporting/sqlSync";
-import { StoreCollections } from "../src/reporting/flatten";
-
-const DB_PATH = process.env.ERP_DB_PATH
-  ? path.resolve(process.env.ERP_DB_PATH)
-  : path.join(process.cwd(), "database.json");
-
-function readStore(): StoreCollections {
-  if (!fs.existsSync(DB_PATH)) {
-    throw new Error(`Data file not found: ${DB_PATH}`);
-  }
-  const raw = JSON.parse(fs.readFileSync(DB_PATH, "utf-8")) as Record<string, string>;
-  const out: Record<string, any[]> = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (key === "erp_settings") continue; // not tabular
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) out[key] = parsed;
-    } catch {
-      /* skip unparsable */
-    }
-  }
-  return out as StoreCollections;
-}
+import { readSqlCollections } from "../src/reporting/loadFromSql";
+import { disconnectDb, isDbConfigured } from "../src/server/db";
 
 /**
  * Output is intentionally ASCII/English: this runs unattended under Windows Task
@@ -51,14 +32,24 @@ async function main() {
     process.exit(2);
   }
 
-  console.log(`Source : ${DB_PATH}`);
+  if (!isDbConfigured()) {
+    console.error(
+      "ERROR: the application database is not configured.\n" +
+        "Set DATABASE_URL in the .env file (see .env.example).",
+    );
+    process.exit(2);
+  }
+
+  console.log(`Source : application database (SQL Server)`);
   console.log(`Target : ${cfg.server}:${cfg.port || 1433}/${cfg.database}`);
 
-  const result = await syncToSqlServer(readStore(), cfg);
+  const result = await syncToSqlServer(await readSqlCollections(), cfg);
 
   if (!result.ok) {
+    // Not process.exit: the pool still has to be released in the finally below.
     console.error(`\n[FAILED] ${result.error}`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   console.log(`\n[OK] Sync completed at ${result.syncedAt}`);
@@ -68,7 +59,12 @@ async function main() {
   console.log(`   ${"TOTAL".padEnd(30)} ${String(result.totalRows).padStart(6)} rows`);
 }
 
-main().catch((err) => {
-  console.error("Unexpected error:", err?.message || err);
-  process.exit(1);
-});
+main()
+  .catch((err) => {
+    console.error("Unexpected error:", err?.message || err);
+    process.exitCode = 1;
+  })
+  // The application database is now a real connection pool, not a file read.
+  // Without this the scheduled task finishes its work and then hangs holding it
+  // open, which reads as a failed run.
+  .finally(() => disconnectDb().catch(() => {}));

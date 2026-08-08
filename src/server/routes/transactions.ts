@@ -31,7 +31,7 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
   const KEY = "erp_transactions";
 
   app.get("/api/transactions", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, TRANSACTION_SORTABLE, TRANSACTION_FILTERABLE);
@@ -47,7 +47,7 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
 
   /** Totals for the same filters as the list — confirmed entries only. */
   app.get("/api/transactions/summary", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, TRANSACTION_SORTABLE, TRANSACTION_FILTERABLE);
@@ -62,7 +62,7 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
   });
 
   app.get("/api/transactions/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const transaction = await getTransaction(req.params.id, user);
@@ -77,7 +77,7 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
   });
 
   app.post("/api/transactions", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const input = pickInput(req.body);
@@ -107,7 +107,7 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
   });
 
   app.put("/api/transactions/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await updateTransaction(req.params.id, pickInput(req.body), user, getTodayShamsi());
@@ -132,7 +132,7 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
 
   /** Corrects a confirmed entry with an opposite one, keeping both visible. */
   app.post("/api/transactions/:id/reverse", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -159,7 +159,7 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
   });
 
   app.delete("/api/transactions/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await deleteTransaction(req.params.id, user, getTodayShamsi());

@@ -8,11 +8,16 @@ coverage/
 !.env.example
 uploads/
 
-# Live application database — contains real business data and password hashes.
-# Each deployment keeps its own; never commit it.
+# The former document store. Business data lives in SQL Server now, but a
+# server upgraded from an older build still has this file on disk.
 database.json
 database.json.tmp
 database.sqlite
+
+# Signs the session cookies. Per-deployment, and committing it would let anyone
+# forge a session.
+.session-secret
+.session-secret.tmp
 
 # Machine-specific Claude Code permission grants (launch.json IS shared)
 .claude/settings.local.json

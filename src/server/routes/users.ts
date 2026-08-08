@@ -39,7 +39,7 @@ export function registerUserRoutes(app: express.Express, deps: RouteDeps): void 
   const KEY = "erp_users";
 
   app.get("/api/users", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, USER_SORTABLE, USER_FILTERABLE);
@@ -50,7 +50,7 @@ export function registerUserRoutes(app: express.Express, deps: RouteDeps): void 
   });
 
   app.get("/api/users/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
       const found = await getUser(req.params.id, user);
@@ -65,7 +65,7 @@ export function registerUserRoutes(app: express.Express, deps: RouteDeps): void 
   });
 
   app.get("/api/users/:id/references", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       res.json({ success: true, references: await countUserReferences(req.params.id) });
@@ -75,7 +75,7 @@ export function registerUserRoutes(app: express.Express, deps: RouteDeps): void 
   });
 
   app.post("/api/users", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -107,7 +107,7 @@ export function registerUserRoutes(app: express.Express, deps: RouteDeps): void 
   });
 
   app.put("/api/users/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await updateUser(req.params.id, pickInput(req.body), user);
@@ -136,7 +136,7 @@ export function registerUserRoutes(app: express.Express, deps: RouteDeps): void 
    * account is invalidated.
    */
   app.post("/api/users/:id/password", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -169,7 +169,7 @@ export function registerUserRoutes(app: express.Express, deps: RouteDeps): void 
 
   /** Deactivates an account that owns records; deletes one that does not. */
   app.delete("/api/users/:id", async (req, res) => {
-    const user = deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
       const outcome = await removeUser(req.params.id, user);

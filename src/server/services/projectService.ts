@@ -208,6 +208,28 @@ async function getProjectRecord(id: string, user: AuthUser) {
  * The client used to derive these by looping every project it had loaded, which
  * is both a full table read and wrong as soon as pagination hides rows.
  */
+/**
+ * Every visible project's id and status, and nothing else.
+ *
+ * Deliberately unpaginated, and deliberately not reusing `listProjects`: the
+ * caller watches for a project becoming won, so it has to see all of them at
+ * once — a page would make the prompt depend on which page happened to be
+ * loaded. Two short columns per project keeps that affordable where a page of
+ * full rows would not be.
+ *
+ * Visibility is applied in the query, so a restricted user is not told that
+ * projects they cannot see exist.
+ */
+export async function listProjectStatuses(
+  user: AuthUser,
+): Promise<{ id: string; status: string }[]> {
+  const visibility = visibilityClause(user);
+  return getDb().project.findMany({
+    where: visibility ?? {},
+    select: { id: true, status: true },
+  });
+}
+
 export async function projectSummary(user: AuthUser) {
   const db = getDb();
   const visibility = visibilityClause(user);

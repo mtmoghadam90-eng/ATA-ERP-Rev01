@@ -10,7 +10,7 @@ import { dashboardSummary } from "../services/dashboardService";
  */
 export function registerDashboardRoutes(app: express.Express, deps: RouteDeps): void {
   app.get("/api/dashboard", async (req, res) => {
-    const user = deps.requireAuth(req, res);
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       res.json({ success: true, summary: await dashboardSummary(user) });

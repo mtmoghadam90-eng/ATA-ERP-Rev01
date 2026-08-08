@@ -274,6 +274,51 @@ export async function removeUser(
  * Returns the user record (without password hash) if credentials are valid,
  * or null if authentication fails.
  */
+/**
+ * The caller behind a session cookie.
+ *
+ * Every authenticated request resolves its user through this, so it is read
+ * fresh each time: a permission change, a deactivation or a `sessionEpoch` bump
+ * has to take effect at once rather than at next login.
+ *
+ * This used to read `erp_users` out of database.json while login authenticated
+ * against SQL. The two only agreed because both were seeded from the same
+ * constants — so any account created through the users screen could sign in and
+ * then be refused by every request, and permissions edited in the UI were
+ * enforced from a file nothing had updated since the migration.
+ */
+export async function findAuthUser(
+  id: string,
+): Promise<(AuthUser & { sessionEpoch: number }) | null> {
+  const user = await getDb().user.findUnique({
+    where: { id },
+    select: {
+      id: true, username: true, role: true, isSystemAdmin: true,
+      isActive: true, permissions: true, sessionEpoch: true,
+    },
+  });
+  if (!user || !user.isActive) return null;
+
+  let permissions: Record<string, boolean> | undefined;
+  if (user.permissions) {
+    try {
+      const parsed = JSON.parse(user.permissions);
+      if (parsed && typeof parsed === "object") permissions = parsed;
+    } catch {
+      // A corrupt map must not grant access; treat it as "no overrides".
+    }
+  }
+
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    isSystemAdmin: user.isSystemAdmin,
+    permissions,
+    sessionEpoch: user.sessionEpoch,
+  };
+}
+
 export async function authenticateUser(
   username: string,
   password: string,
