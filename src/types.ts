@@ -360,6 +360,13 @@ export interface Transaction {
   customerName?: string;
   supplierId?: string;
   supplierName?: string;
+  /**
+   * The other side of the entry, as stored. The server resolves it from the
+   * linked customer or supplier, and holds it outright when the party was typed
+   * by hand — so this, not customerName/supplierName, is what the grid and the
+   * printed voucher read.
+   */
+  partyName?: string;
   projectId?: string;
   projectName?: string;
   purchaseOrderId?: string;

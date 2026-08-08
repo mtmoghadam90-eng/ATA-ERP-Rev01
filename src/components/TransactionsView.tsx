@@ -731,11 +731,13 @@ export default function TransactionsView({
       receiptType,
       documentNumber,
       customerId: resolvedCustomerId,
-      customerName: resolvedCustomerId ? resolvedPartyName : (partyType === 'other' ? resolvedPartyName : undefined),
       supplierId: resolvedSupplierId,
-      supplierName: resolvedSupplierId ? resolvedPartyName : undefined,
+      // The stored name of the other side. `customerName`/`supplierName` used
+      // to be sent instead, which the write mapper does not read — so a party
+      // typed by hand ("متفرقه") was never saved at all, and the grid had
+      // nothing to show for it.
+      partyName: resolvedPartyName,
       projectId: projectId || undefined,
-      projectName: projectId ? linkedProjName : undefined,
       amountRIYAL,
       date,
       paymentType,
@@ -910,7 +912,11 @@ export default function TransactionsView({
                 <tbody className="divide-y divide-slate-100 text-slate-700 text-xs">
                   {filteredTransactions.map((t) => {
                     const isReceipt = t.type === 'دریافت';
-                    const partyName = t.customerName || t.supplierName || 'متفرقه';
+                    // The row already carries the resolved name: the server
+                    // joins the customer or supplier, and a hand-typed party is
+                    // stored outright. Reading customerName/supplierName here
+                    // meant every single row showed "متفرقه".
+                    const partyName = t.partyName || 'متفرقه';
 
                     return (
                       <tr key={t.id} className="hover:bg-slate-50/50 transition">
@@ -2559,11 +2565,10 @@ export default function TransactionsView({
                   <div>
                     <span className="text-slate-400 font-bold">طرف حساب:</span>
                     <span className="text-slate-800 font-bold mr-1">
-                      {printTargetTx.partyType === 'customer' 
-                        ? customers.find(c => c.id === printTargetTx.customerId)?.companyName 
-                        : printTargetTx.partyType === 'supplier' 
-                          ? suppliers.find(s => s.id === printTargetTx.supplierId)?.name 
-                          : printTargetTx.partyNameManual || 'نامشخص'}
+                      {/* partyType and partyNameManual are form state and are
+                          not stored, so this always fell through to the last
+                          branch and printed "نامشخص". */}
+                      {printTargetTx.partyName || 'نامشخص'}
                     </span>
                   </div>
                 </div>
