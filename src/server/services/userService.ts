@@ -293,8 +293,8 @@ export async function findAuthUser(
   const user = await getDb().user.findUnique({
     where: { id },
     select: {
-      id: true, username: true, role: true, isSystemAdmin: true,
-      isActive: true, permissions: true, sessionEpoch: true,
+      id: true, username: true, fullName: true, position: true, role: true,
+      isSystemAdmin: true, isActive: true, permissions: true, sessionEpoch: true,
     },
   });
   if (!user || !user.isActive) return null;
@@ -312,6 +312,10 @@ export async function findAuthUser(
   return {
     id: user.id,
     username: user.username,
+    // /api/me answers with this, and the sidebar prints the name and the
+    // position; omitting them left the UI with a user it could not render.
+    fullName: user.fullName,
+    position: user.position ?? undefined,
     role: user.role,
     isSystemAdmin: user.isSystemAdmin,
     permissions,

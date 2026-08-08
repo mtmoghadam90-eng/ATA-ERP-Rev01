@@ -146,6 +146,9 @@ export function canSeeFullUsers(user: AuthUser | null | undefined): boolean {
 export interface AuthUser {
   id: string;
   username?: string;
+  /** Shown by the UI, which greets the user and prints their initials. */
+  fullName?: string;
+  position?: string;
   role?: string;
   isSystemAdmin?: boolean;
   permissions?: Record<string, boolean>;
