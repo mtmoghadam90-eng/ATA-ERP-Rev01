@@ -8,6 +8,7 @@ import { applyStockDelta } from "./productService";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
+import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
 
 /**
  * Purchase order data access.
@@ -315,6 +316,16 @@ async function reconcileStock(
   return { movements };
 }
 
+/** The supplier's name, for the timeline entries that quote it. */
+async function supplierNameOf(supplierId: string | null | undefined): Promise<string> {
+  if (!supplierId) return "نامشخص";
+  const supplier = await getDb().supplier.findUnique({
+    where: { id: supplierId },
+    select: { name: true },
+  });
+  return supplier?.name || "نامشخص";
+}
+
 export async function createPurchaseOrder(
   input: PurchaseOrderInput,
   user: AuthUser,
@@ -376,6 +387,18 @@ export async function createPurchaseOrder(
         totalAmount: po.landedCostRial?.toString(),
       },
       user,
+    );
+
+    await logProjectFact(
+      {
+        projectId: po.projectId,
+        categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
+        text:
+          `صدور سفارش خرید (شماره: ${po.poNumber}) برای تأمین‌کننده` +
+          ` «${await supplierNameOf(po.supplierId)}» جهت تأمین اقلام پروژه.`,
+      },
+      user,
+      todayJalali,
     );
   }
 
@@ -468,6 +491,21 @@ export async function updatePurchaseOrder(
         },
         user,
       );
+
+      // Only a status change reaches the timeline. A plain edit did not in the
+      // document store either — the feed tracks where an order got to, not
+      // every field touched along the way.
+      await logProjectFact(
+        {
+          projectId: po.projectId,
+          categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
+          text:
+            `تغییر وضعیت سفارش خرید (شماره: ${po.poNumber}) مرتبط با تأمین‌کننده` +
+            ` «${await supplierNameOf(po.supplierId)}» به «${po.status}».`,
+        },
+        user,
+        todayJalali,
+      );
     }
   }
 
@@ -528,6 +566,16 @@ export async function deletePurchaseOrder(
         entityId: id,
         description: `حذف سفارش خرید: ${po.poNumber || id}`,
         beforeState: po,
+      },
+      user,
+      todayJalali,
+    );
+
+    await logProjectFact(
+      {
+        projectId: po.projectId,
+        categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
+        text: `سفارش خرید شماره ${po.poNumber} از سیستم حذف شد.`,
       },
       user,
       todayJalali,

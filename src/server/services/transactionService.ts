@@ -7,6 +7,7 @@ import { toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
+import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
 
 /**
  * Transaction (receipts and payments) data access.
@@ -264,6 +265,20 @@ export async function createTransaction(input: TransactionInput, user: AuthUser,
     user,
   );
 
+  // The project's timeline records the money that moved on it.
+  await logProjectFact(
+    {
+      projectId: transaction.projectId,
+      categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
+      text:
+        `ثبت تراکنش ${transaction.type === "دریافت" ? "دریافت وجه از مشتری" : "پرداخت وجه به تامین‌کننده"}` +
+        ` بابت پروژه به مبلغ ${Number(transaction.amountRial ?? 0).toLocaleString()} ریال` +
+        ` (روش: ${transaction.paymentType || "-"}، تاریخ: ${transaction.occurredAtJalali || "-"})`,
+    },
+    user,
+    todayJalali,
+  );
+
   return transaction;
 }
 
@@ -315,6 +330,19 @@ export async function updateTransaction(
     todayJalali,
   );
 
+  await logProjectFact(
+    {
+      projectId: transaction.projectId,
+      categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
+      text:
+        `ویرایش تراکنش ${transaction.type === "دریافت" ? "دریافت وجه" : "پرداخت وجه"} بابت پروژه` +
+        ` (مبلغ جدید: ${Number(transaction.amountRial ?? 0).toLocaleString()} ریال،` +
+        ` تاریخ: ${transaction.occurredAtJalali || "-"})`,
+    },
+    user,
+    todayJalali,
+  );
+
   return { transaction };
 }
 
@@ -335,10 +363,22 @@ export async function reverseTransaction(
   if (!allowed(user)) return "forbidden";
   const db = getDb();
 
-  return db.$transaction(async (tx) => {
-    const original = await tx.transaction.findUnique({ where: { id } });
-    if (!original) return "not-found";
-    if (original.status === REVERSED || original.reversalOfTransactionId) return "already-reversed";
+  // Read once outside the transaction so the timeline entry below can describe
+  // what was reversed; the authoritative check is re-run inside it, because two
+  // concurrent reversals must not both get past it.
+  const original = await db.transaction.findUnique({ where: { id } });
+  if (!original) return "not-found";
+  if (original.status === REVERSED || original.reversalOfTransactionId) return "already-reversed";
+
+  const result = await db.$transaction(async (tx) => {
+    const current = await tx.transaction.findUnique({
+      where: { id },
+      select: { status: true, reversalOfTransactionId: true },
+    });
+    if (!current) return "not-found" as const;
+    if (current.status === REVERSED || current.reversalOfTransactionId) {
+      return "already-reversed" as const;
+    }
 
     const reversal = await tx.transaction.create({
       data: {
@@ -368,6 +408,26 @@ export async function reverseTransaction(
     await tx.transaction.update({ where: { id }, data: { status: REVERSED } });
     return { reversal };
   });
+
+  if (typeof result === "string") return result;
+
+  // A reversal is how a confirmed entry is corrected, so it is the thing the
+  // timeline should show — the original is never deleted and never logged as
+  // such.
+  await logProjectFact(
+    {
+      projectId: original.projectId,
+      categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
+      text:
+        `ابطال تراکنش ${original.type === RECEIPT ? "دریافت وجه" : "پرداخت وجه"} با سند ${documentNumber}` +
+        ` (سند ابطال‌شده: ${original.documentNumber || "-"}،` +
+        ` مبلغ: ${Number(original.amountRial ?? 0).toLocaleString()} ریال)`,
+    },
+    user,
+    todayJalali,
+  );
+
+  return result;
 }
 
 /**
@@ -409,6 +469,18 @@ export async function deleteTransaction(
         entityId: id,
         description: `حذف تراکنش: ${transaction.documentNumber || id}`,
         beforeState: transaction,
+      },
+      user,
+      todayJalali,
+    );
+
+    await logProjectFact(
+      {
+        projectId: transaction.projectId,
+        categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
+        text:
+          `حذف تراکنش ${transaction.type === "دریافت" ? "دریافت وجه" : "پرداخت وجه"} مربوط به پروژه` +
+          ` (مبلغ: ${Number(transaction.amountRial ?? 0).toLocaleString()} ریال)`,
       },
       user,
       todayJalali,

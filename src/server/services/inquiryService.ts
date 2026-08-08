@@ -5,10 +5,14 @@ import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields } from "../dates";
 import { syncChildren, toNullableString, toNumber } from "../childSync";
 import { loadSettings } from "../settings";
-import { INQUIRY_STEP_KEYS, InquiryStepKey, resolveStepTitle } from "../../utils/inquirySteps";
+import {
+  INQUIRY_STEP_KEYS, InquiryStepKey, resolveStepTitle,
+  describeInquiryAmount, describeInquiryStatus,
+} from "../../utils/inquirySteps";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
+import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
 
 /**
  * Supplier inquiry data access.
@@ -353,6 +357,16 @@ async function appendAutoSteps(
   return additions.length;
 }
 
+/** The supplier's name, for the timeline entries that quote it. */
+async function inquirySupplierName(supplierId: string | null | undefined): Promise<string> {
+  if (!supplierId) return "نامشخص";
+  const supplier = await getDb().supplier.findUnique({
+    where: { id: supplierId },
+    select: { name: true },
+  });
+  return supplier?.name || "نامشخص";
+}
+
 export async function createInquiry(input: InquiryInput, user: AuthUser, todayJalali: string) {
   if (!allowed(user)) return null;
   const db = getDb();
@@ -430,6 +444,20 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
         supplierId: inquiry.supplierId,
       },
       user,
+    );
+
+    const summary = describeInquiry(inquiry);
+    await logProjectFact(
+      {
+        projectId: inquiry.projectId,
+        categoryName: ACTIVITY_CATEGORY.INQUIRIES,
+        text:
+          `ثبت درخواست استعلام قیمت از تأمین‌کننده «${await inquirySupplierName(inquiry.supplierId)}»` +
+          ` برای ${(inquiry.items || []).length} قلم کالا` +
+          ` (مبلغ اعلامی: ${summary.amount}، وضعیت: ${summary.status}).`,
+      },
+      user,
+      todayJalali,
     );
   }
 
@@ -525,9 +553,35 @@ export async function updateInquiry(
         user,
       );
     }
+
+    const summary = describeInquiry(inquiry);
+    await logProjectFact(
+      {
+        projectId: inquiry.projectId,
+        categoryName: ACTIVITY_CATEGORY.INQUIRIES,
+        text:
+          `بروزرسانی استعلام قیمت تأمین‌کننده «${await inquirySupplierName(inquiry.supplierId)}»` +
+          ` — ${summary.status} (مبلغ اعلامی: ${summary.amount}).`,
+      },
+      user,
+      todayJalali,
+    );
   }
 
   return inquiry;
+}
+
+/**
+ * The amount and stage summaries reuse the client's own helpers so the timeline
+ * reads identically to the inquiry screen. Both coerce with `Number()`, which
+ * is what makes them safe to hand Prisma's `Decimal` columns.
+ */
+function describeInquiry(inquiry: unknown) {
+  const inq = inquiry as { items?: unknown[] };
+  return {
+    amount: describeInquiryAmount(inq.items as never),
+    status: describeInquiryStatus(inq as never),
+  };
 }
 
 /** Records a step the user typed, alongside the derived ones. */
@@ -610,6 +664,18 @@ export async function deleteInquiry(
       entityId: id,
       description: `حذف استعلام برای پروژه: ${existing.projectId}`,
       beforeState: existing,
+    },
+    user,
+    todayJalali,
+  );
+
+  await logProjectFact(
+    {
+      projectId: existing.projectId,
+      categoryName: ACTIVITY_CATEGORY.INQUIRIES,
+      text:
+        `استعلام قیمت مربوط به تأمین‌کننده` +
+        ` ${await inquirySupplierName(existing.supplierId)} حذف گردید.`,
     },
     user,
     todayJalali,

@@ -11,6 +11,7 @@ import {
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
+import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
 import { applyStockDelta } from "./productService";
 
 /**
@@ -494,6 +495,19 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
     user,
   );
 
+  await logProjectFact(
+    {
+      projectId: proforma.projectId,
+      categoryName: ACTIVITY_CATEGORY.PROFORMAS,
+      text:
+        `صدور پیش‌فاکتور جدید (شماره: ${proforma.proformaNumber}) با مبلغ کل` +
+        ` ${Number(proforma.finalAmount ?? 0).toLocaleString("fa-IR")} ${proforma.currency || "ریال"}` +
+        ` (کاربر ثبت‌کننده: {actor}، وضعیت: ${proforma.status}).`,
+    },
+    user,
+    todayJalali,
+  );
+
   return proforma;
 }
 
@@ -596,6 +610,23 @@ export async function updateProforma(
       );
     }
 
+    await logProjectFact(
+      {
+        projectId: result.proforma.projectId,
+        categoryName: ACTIVITY_CATEGORY.PROFORMAS,
+        // One sentence for the edit, with the outcome appended when it moved —
+        // the document store logged a status change as its own entry, but on
+        // this side both arrive through the same write.
+        text:
+          `ویرایش پیش‌فاکتور (شماره: ${result.proforma.proformaNumber}).` +
+          (oldOutcome !== newOutcome
+            ? ` وضعیت نهایی اقلام پیش‌فاکتور به «${newOutcome}» تغییر یافت.`
+            : ""),
+      },
+      user,
+      todayJalali,
+    );
+
     return result.proforma;
   }
 
@@ -668,6 +699,16 @@ export async function deleteProforma(
         entityId: id,
         description: `حذف پیش‌فاکتور (شماره: ${existing.proformaNumber})`,
         beforeState: proforma,
+      },
+      user,
+      todayJalali,
+    );
+
+    await logProjectFact(
+      {
+        projectId: existing.projectId,
+        categoryName: ACTIVITY_CATEGORY.PROFORMAS,
+        text: `پیش‌فاکتور شماره ${existing.proformaNumber} از سیستم حذف شد.`,
       },
       user,
       todayJalali,

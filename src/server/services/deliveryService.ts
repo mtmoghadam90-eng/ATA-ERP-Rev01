@@ -10,6 +10,7 @@ import { getTodayShamsi } from "../../dateUtils";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
+import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
 
 /**
  * Packaging and delivery (packing lists) plus after-sales service.
@@ -216,6 +217,22 @@ export async function createDelivery(input: DeliveryInput, user: AuthUser, today
       },
       user,
     );
+
+    // The packing list's own wording dropped the packaging/shipping split: the
+    // `type` column did not survive the move to SQL, so the entry names the
+    // operation generically and leans on the derived status instead.
+    await logProjectFact(
+      {
+        projectId: delivery.projectId,
+        categoryName: ACTIVITY_CATEGORY.DELIVERIES,
+        text:
+          `شروع عملیات «بسته‌بندی و ارسال» کالا برای خروج از انبار` +
+          ` (شماره پکینگ‌لیست: ${delivery.packingListNumber}،` +
+          ` وضعیت فعلی: ${delivery.actualDeliveryDate ? "تحویل شده" : "در حال آماده‌سازی"}).`,
+      },
+      user,
+      todayJalali,
+    );
   }
 
   return delivery;
@@ -286,6 +303,18 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
         user,
       );
     }
+
+    await logProjectFact(
+      {
+        projectId: delivery.projectId,
+        categoryName: ACTIVITY_CATEGORY.DELIVERIES,
+        text:
+          `تغییر وضعیت عملیات «بسته‌بندی و ارسال» کالا` +
+          ` (شماره پکینگ‌لیست: ${delivery.packingListNumber}) به «${newStatus}».`,
+      },
+      user,
+      todayJalali,
+    );
   }
 
   return delivery;
@@ -417,6 +446,16 @@ export async function deleteDelivery(
       entityId: id,
       description: `حذف بسته‌بندی: ${existing.packingListNumber || id}`,
       beforeState: existing,
+    },
+    user,
+    todayJalali,
+  );
+
+  await logProjectFact(
+    {
+      projectId: existing.projectId,
+      categoryName: ACTIVITY_CATEGORY.DELIVERIES,
+      text: `رکورد بسته‌بندی و ارسال شماره ${existing.packingListNumber} حذف گردید.`,
     },
     user,
     todayJalali,
@@ -632,6 +671,18 @@ export async function createService(input: ServiceInput, user: AuthUser, todayJa
       },
       user,
     );
+
+    await logProjectFact(
+      {
+        projectId: service.projectId,
+        categoryName: ACTIVITY_CATEGORY.AFTER_SALES,
+        text:
+          `ثبت درخواست خدمات پس از فروش برای کالای «${service.itemName || "نامشخص"}»` +
+          ` (شرح خرابی: ${service.issueDescription || "-"}، وضعیت: ${service.status}).`,
+      },
+      user,
+      todayJalali,
+    );
   }
 
   return service;
@@ -700,6 +751,18 @@ export async function updateService(id: string, input: ServiceInput, user: AuthU
         user,
       );
     }
+
+    await logProjectFact(
+      {
+        projectId: service.projectId,
+        categoryName: ACTIVITY_CATEGORY.AFTER_SALES,
+        text:
+          `تغییر وضعیت درخواست خدمات پس از فروش کالای «${service.itemName || "نامشخص"}»` +
+          ` به «${service.status}» (اقدامات انجام‌شده: ${service.actionsTaken || "-"}).`,
+      },
+      user,
+      todayJalali,
+    );
   }
 
   return service;
@@ -725,6 +788,16 @@ export async function deleteService(
       entityId: id,
       description: `حذف خدمات پس از فروش: ${existing.itemName || id}`,
       beforeState: existing,
+    },
+    user,
+    todayJalali,
+  );
+
+  await logProjectFact(
+    {
+      projectId: existing.projectId,
+      categoryName: ACTIVITY_CATEGORY.AFTER_SALES,
+      text: `درخواست خدمات پس از فروش مربوط به کالای ${existing.itemName} حذف گردید.`,
     },
     user,
     todayJalali,
