@@ -364,7 +364,13 @@ export async function createCustomer(input: CustomerInput, user: AuthUser, today
     {
       customerId: customer.id,
       customerName: label,
+      // `type` and `city` are the names the rule editor offers as condition
+      // fields; customerType and province are kept for rules written against
+      // them. A field the editor offers and the payload omits is a rule that
+      // silently never matches.
+      type: customer.customerType,
       customerType: customer.customerType,
+      city: customer.city,
       province: customer.province,
       industry: customer.industry,
     },
@@ -412,7 +418,10 @@ export async function updateCustomer(id: string, input: Partial<CustomerInput>, 
     {
       customerId: customer.id,
       customerName: label,
+      type: customer.customerType,
       customerType: customer.customerType,
+      oldType: before.customerType,
+      city: customer.city,
       province: customer.province,
       industry: customer.industry,
       oldProvince: before.province,

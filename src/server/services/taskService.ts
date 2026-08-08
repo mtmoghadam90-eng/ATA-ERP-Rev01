@@ -258,6 +258,26 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
     todayJalali,
   );
 
+  // Any status change. The rule editor offers `task_status_change`, and
+  // nothing fired it — only the narrower completion trigger below — so a rule
+  // built on it never ran.
+  if (before.status !== task.status) {
+    await processWorkflowRules(
+      "task_status_change",
+      {
+        taskId: task.id,
+        title: task.title,
+        assignedTo: task.assignedToUserId,
+        oldStatus: before.status,
+        newStatus: task.status,
+        status: task.status,
+        priority: task.priority,
+        projectId: task.relatedToType === "project" ? task.relatedToId : undefined,
+      },
+      user,
+    );
+  }
+
   // Workflow trigger for task completion
   if (before.status !== task.status && task.status === "انجام شده") {
     await processWorkflowRules(

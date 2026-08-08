@@ -3090,8 +3090,7 @@ export default function SettingsView({
                         } else if (editingRule.triggerType === 'customer_created') {
                           fieldOptions = [
                             { value: 'type', label: 'نوع مشتری' },
-                            { value: 'city', label: 'شهر' },
-                            { value: 'country', label: 'کشور' }
+                            { value: 'city', label: 'شهر' }
                           ];
                           valueOptions = ['حقوقی', 'حقیقی'];
                         } else if (editingRule.triggerType === 'customer_updated') {
@@ -3103,7 +3102,6 @@ export default function SettingsView({
                           valueOptions = ['حقوقی', 'حقیقی'];
                         } else if (editingRule.triggerType === 'supplier_created') {
                           fieldOptions = [
-                            { value: 'city', label: 'شهر' },
                             { value: 'country', label: 'کشور' }
                           ];
                           valueOptions = [];

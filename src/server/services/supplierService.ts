@@ -140,6 +140,7 @@ export async function createSupplier(input: SupplierInput, user: AuthUser, today
       supplierId: supplier.id,
       supplierName: supplier.name,
       companyName: supplier.name,
+      country: supplier.country,
     },
     user,
   );

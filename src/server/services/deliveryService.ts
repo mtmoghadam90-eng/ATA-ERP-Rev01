@@ -214,6 +214,10 @@ export async function createDelivery(input: DeliveryInput, user: AuthUser, today
         packingListNumber: delivery.packingListNumber,
         projectId: delivery.projectId,
         proformaId: delivery.proformaId,
+        // The editor offers `action` here with a single value, "ایجاد" — on a
+        // "created" trigger the condition is a formality, but it has to be
+        // satisfiable or the rule never matches.
+        action: "ایجاد",
       },
       user,
     );

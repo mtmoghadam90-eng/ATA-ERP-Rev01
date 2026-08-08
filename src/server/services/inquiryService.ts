@@ -442,6 +442,12 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
         inquiryId: inquiry.id,
         projectId: inquiry.projectId,
         supplierId: inquiry.supplierId,
+        // The editor offers `price` as a condition field: the quoted total in
+        // rial, which is what "price greater than X" is asking about.
+        price: (inquiry.items || []).reduce(
+          (sum, i) => sum + Number(i.priceRial ?? 0) * Number(i.quantity ?? 0),
+          0,
+        ),
       },
       user,
     );

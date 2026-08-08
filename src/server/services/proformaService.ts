@@ -490,6 +490,7 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
       projectId: proforma.projectId,
       customerId: proforma.customerId,
       finalAmount: proforma.finalAmount,
+      totalAmount: proforma.totalAmount,
       currency: proforma.currency,
     },
     user,
@@ -605,6 +606,7 @@ export async function updateProforma(
           oldOutcome,
           newOutcome,
           outcome: newOutcome,
+          proformaAmount: result.proforma.finalAmount,
         },
         user,
       );
