@@ -410,6 +410,7 @@ export async function readSqlCollections(): Promise<StoreCollections> {
       creationDate: q.creationDateJalali,
       technicalOfferUrl: q.technicalOfferUrl,
       financialOfferUrl: q.financialOfferUrl,
+      discountPercent: num(q.discountPercent),
       items: q.items.map((i) => ({
         id: i.id,
         name: i.name,

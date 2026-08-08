@@ -679,6 +679,14 @@ model SupplierInquiry {
   technicalOfferUrl String? @db.NVarChar(500)
   financialOfferUrl String? @db.NVarChar(500)
 
+  /// A discount on the whole offer, as a percentage.
+  ///
+  /// A percentage rather than an amount because an inquiry's lines each carry
+  /// their own currency, so one fixed figure could not say which currency it
+  /// was in. This matches how a proforma's discount is entered too: the user
+  /// gives a percentage and the money is derived from it.
+  discountPercent Decimal @default(0) @db.Decimal(5, 2)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

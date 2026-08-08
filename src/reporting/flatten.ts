@@ -355,7 +355,28 @@ export const flattenSupplierInquiries = (inquiries: any[]): Row[] =>
     item_count: arr(q.items).length,
     step_count: arr(q.steps).length,
     latest_step: s(arr(q.steps).slice(-1)[0]?.title),
+    // The offer's money, with the discount already applied, so a report does
+    // not have to know the rule. The item rows stay gross: the discount is on
+    // the offer as a whole, and splitting it across lines would invent a
+    // per-line figure the app never stored.
+    discount_percent: n(q.discountPercent) || 0,
+    gross_riyal: inquiryGross(q),
+    discount_riyal: inquiryGross(q) * discountShare(q),
+    total_riyal: inquiryGross(q) * (1 - discountShare(q)),
   }));
+
+/** The offer's Rial value before any discount. */
+const inquiryGross = (q: any): number =>
+  arr(q.items).reduce(
+    (sum: number, it: any) => sum + (n(it.priceRiyal) || 0) * (n(it.quantity) || 0),
+    0,
+  );
+
+/** The discount as a fraction, clamped the same way the app clamps it. */
+const discountShare = (q: any): number => {
+  const pct = n(q.discountPercent) || 0;
+  return pct > 0 ? Math.min(pct, 100) / 100 : 0;
+};
 
 export const flattenSupplierInquiryItems = (inquiries: any[]): Row[] => {
   const rows: Row[] = [];

@@ -781,6 +781,8 @@ export interface SupplierInquiry {
   creationDate: string;
   offerConfirmed?: boolean; // صحت آفر تأیید شده و آفر نهایی تلقی می‌شود
   offerConfirmedDate?: string;
+  /** تخفیف کل آفر، به درصد. مبلغ تخفیف از روی آن محاسبه می‌شود. */
+  discountPercent?: number;
 }
 
 

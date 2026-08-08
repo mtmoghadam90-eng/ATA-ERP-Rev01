@@ -50,6 +50,7 @@ export interface InquiryRow {
   creationDateJalali: string | null;
   technicalOfferUrl: string | null;
   financialOfferUrl: string | null;
+  discountPercent: string | null;
   createdAt: string;
   supplier: { id: string; name: string } | null;
   project: { id: string; code: string; name: string } | null;
@@ -69,6 +70,7 @@ export interface InquiryWriteInput {
   offerConfirmedDate?: string | null;
   technicalOfferUrl?: string | null;
   financialOfferUrl?: string | null;
+  discountPercent?: number;
   items?: Record<string, unknown>[];
   /** How the inquiry was sent. Enriches the derived first step; create only. */
   initialStep?: {
@@ -157,6 +159,7 @@ export function rowToInquiry(row: InquiryRow): SupplierInquiry {
     steps: row.steps.map(rowToStep),
     technicalOfferUrl: row.technicalOfferUrl ?? undefined,
     financialOfferUrl: row.financialOfferUrl ?? undefined,
+    discountPercent: Number(row.discountPercent ?? 0),
     isWinner: row.isWinner,
     winnerDate: row.winnerDateJalali ?? undefined,
     offerConfirmed: row.offerConfirmed,
@@ -181,6 +184,7 @@ export function inquiryToWriteInput(inquiry: Partial<SupplierInquiry>): InquiryW
     offerConfirmedDate: inquiry.offerConfirmedDate ?? null,
     technicalOfferUrl: inquiry.technicalOfferUrl ?? null,
     financialOfferUrl: inquiry.financialOfferUrl ?? null,
+    discountPercent: Number(inquiry.discountPercent) || 0,
     items: (inquiry.items ?? []).map((item) => ({
       name: item.name,
       brand: item.brand || null,

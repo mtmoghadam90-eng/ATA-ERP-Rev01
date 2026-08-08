@@ -92,12 +92,45 @@ function makeStep(
 
 const fmt = (n: number): string => Math.round(n).toLocaleString('fa-IR');
 
-/** Sums the Rial value of an offer (unit Rial price × quantity). */
-export function inquiryTotalRiyal(items: SupplierInquiryItem[] | undefined): number {
+/**
+ * The discount as a fraction, clamped.
+ *
+ * A percentage outside 0–100 would either inflate the offer or turn it
+ * negative, so it is treated as no discount rather than trusted.
+ */
+export function discountFraction(discountPercent: number | undefined): number {
+  const pct = Number(discountPercent) || 0;
+  if (!(pct > 0)) return 0;
+  return Math.min(pct, 100) / 100;
+}
+
+/** Sums the Rial value of an offer (unit Rial price × quantity), before discount. */
+export function inquiryGrossRiyal(items: SupplierInquiryItem[] | undefined): number {
   return (items || []).reduce(
     (sum, it) => sum + (Number(it.priceRiyal) || 0) * (Number(it.quantity) || 0),
     0,
   );
+}
+
+/** What the discount takes off the Rial total. */
+export function inquiryDiscountRiyal(
+  items: SupplierInquiryItem[] | undefined,
+  discountPercent?: number,
+): number {
+  return inquiryGrossRiyal(items) * discountFraction(discountPercent);
+}
+
+/**
+ * The Rial value of an offer, after any discount.
+ *
+ * Every caller wants the payable figure, so the discount is applied here rather
+ * than left for each of them to remember.
+ */
+export function inquiryTotalRiyal(
+  items: SupplierInquiryItem[] | undefined,
+  discountPercent?: number,
+): number {
+  return inquiryGrossRiyal(items) * (1 - discountFraction(discountPercent));
 }
 
 /**
@@ -106,21 +139,29 @@ export function inquiryTotalRiyal(items: SupplierInquiryItem[] | undefined): num
  */
 export function inquiryTotalsByCurrency(
   items: SupplierInquiryItem[] | undefined,
+  discountPercent?: number,
 ): Record<string, number> {
   const totals: Record<string, number> = {};
+  // A percentage applies to every currency alike, which is the reason the
+  // discount is expressed as one: a fixed amount could not be shared out
+  // across a mixed-currency offer.
+  const keep = 1 - discountFraction(discountPercent);
   (items || []).forEach((it) => {
     const amount = (Number(it.priceForeign) || 0) * (Number(it.quantity) || 0);
     if (amount <= 0) return;
     const cur = it.currency || 'نامشخص';
-    totals[cur] = (totals[cur] || 0) + amount;
+    totals[cur] = (totals[cur] || 0) + amount * keep;
   });
   return totals;
 }
 
 /** Human-readable amount summary, e.g. "۱۲٬۰۰۰ دلار ≈ ۷٬۲۰۰٬۰۰۰٬۰۰۰ ریال". */
-export function describeInquiryAmount(items: SupplierInquiryItem[] | undefined): string {
-  const byCurrency = inquiryTotalsByCurrency(items);
-  const riyal = inquiryTotalRiyal(items);
+export function describeInquiryAmount(
+  items: SupplierInquiryItem[] | undefined,
+  discountPercent?: number,
+): string {
+  const byCurrency = inquiryTotalsByCurrency(items, discountPercent);
+  const riyal = inquiryTotalRiyal(items, discountPercent);
   const parts = Object.entries(byCurrency)
     .filter(([cur]) => cur !== 'ریال')
     .map(([cur, amount]) => `${fmt(amount)} ${cur}`);

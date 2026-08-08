@@ -1,5 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useExchangeRates } from '../api/exchangeRates';
+import {
+  inquiryGrossRiyal, inquiryDiscountRiyal, inquiryTotalRiyal, inquiryTotalsByCurrency,
+} from '../utils/inquirySteps';
 import { 
   Plus, 
   Edit, 
@@ -478,7 +481,7 @@ export default function SupplierInquiriesView({
                     <div className="flex gap-6 overflow-x-auto pb-6 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
                       {filteredInquiries.map((inq) => {
                         // Calculate total offer amount in Riyal for brief display
-                        const totalRiyal = inq.items.reduce((sum, item) => sum + (item.priceRiyal * item.quantity), 0);
+                        const totalRiyal = inquiryTotalRiyal(inq.items, inq.discountPercent);
                         return (
                           <div 
                             key={inq.id}
@@ -747,7 +750,7 @@ export default function SupplierInquiriesView({
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {filteredInquiries.map((inq) => {
-                          const totalRiyal = inq.items.reduce((sum, item) => sum + (item.priceRiyal * item.quantity), 0);
+                          const totalRiyal = inquiryTotalRiyal(inq.items, inq.discountPercent);
                           return (
                             <tr key={inq.id} className={`hover:bg-slate-50/50 transition ${inq.isWinner ? 'bg-amber-50/20' : ''}`}>
                               <td className="p-3 font-bold text-slate-800">
@@ -1059,6 +1062,7 @@ function InquiryFormInner({
   const [technicalFile, setTechnicalFile] = useState<File | null>(null);
   const [financialFile, setFinancialFile] = useState<File | null>(null);
   const [technicalOfferUrl, setTechnicalOfferUrl] = useState<string>(editingInquiry?.technicalOfferUrl || '');
+  const [discountPercent, setDiscountPercent] = useState<number>(editingInquiry?.discountPercent || 0);
   const [financialOfferUrl, setFinancialOfferUrl] = useState<string>(editingInquiry?.financialOfferUrl || '');
   
   const [uploadingTechnical, setUploadingTechnical] = useState(false);
@@ -1221,6 +1225,7 @@ function InquiryFormInner({
         })),
         technicalOfferUrl: technicalOfferUrl || undefined,
         financialOfferUrl: financialOfferUrl || undefined,
+        discountPercent: Number(discountPercent) || 0,
         creationDate: editingInquiry?.creationDate || initialStepDate,
       },
       editingInquiry ? undefined : {
@@ -1498,6 +1503,69 @@ function InquiryFormInner({
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* Offer total, and the discount on it */}
+      <div className="border border-slate-150 p-4 rounded-xl bg-slate-50/50">
+        <div className="flex flex-col md:flex-row md:items-end gap-4">
+          <div className="md:w-56">
+            <label className="text-xs font-bold text-slate-700 block mb-1.5">
+              تخفیف کل آفر (٪)
+            </label>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step="0.01"
+              value={discountPercent}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setDiscountPercent(Number.isFinite(v) ? Math.min(Math.max(v, 0), 100) : 0);
+              }}
+              className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-sky-500 bg-white text-sm font-bold"
+              placeholder="۰"
+            />
+            <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+              درصدی روی کل آفر. چون هر ردیف ارز خودش را دارد، تخفیف به‌صورت درصد
+              اعمال می‌شود تا برای همه‌ی ارزها یکسان باشد.
+            </p>
+          </div>
+
+          <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div className="bg-white border border-slate-150 rounded-lg px-3 py-2">
+              <span className="block text-[10px] text-slate-400 font-bold mb-0.5">جمع آفر (پیش از تخفیف)</span>
+              <span className="font-bold text-slate-700">
+                {Math.round(inquiryGrossRiyal(items)).toLocaleString('fa-IR')}
+                <span className="text-[10px] font-normal text-slate-400"> ریال</span>
+              </span>
+            </div>
+            <div className="bg-white border border-slate-150 rounded-lg px-3 py-2">
+              <span className="block text-[10px] text-slate-400 font-bold mb-0.5">مبلغ تخفیف</span>
+              <span className="font-bold text-amber-600">
+                {Math.round(inquiryDiscountRiyal(items, discountPercent)).toLocaleString('fa-IR')}
+                <span className="text-[10px] font-normal text-slate-400"> ریال</span>
+              </span>
+            </div>
+            <div className="bg-white border border-sky-200 rounded-lg px-3 py-2">
+              <span className="block text-[10px] text-slate-400 font-bold mb-0.5">مبلغ نهایی</span>
+              <span className="font-bold text-sky-700">
+                {Math.round(inquiryTotalRiyal(items, discountPercent)).toLocaleString('fa-IR')}
+                <span className="text-[10px] font-normal text-slate-400"> ریال</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {Object.keys(inquiryTotalsByCurrency(items, discountPercent)).length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+            <span className="text-slate-400 font-bold">معادل ارزی پس از تخفیف:</span>
+            {Object.entries(inquiryTotalsByCurrency(items, discountPercent)).map(([cur, amount]) => (
+              <span key={cur} className="bg-white px-2 py-1 rounded border border-slate-150 font-bold text-slate-600">
+                {Math.round(amount).toLocaleString('fa-IR')} {cur}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Technical and Financial Upload fields */}

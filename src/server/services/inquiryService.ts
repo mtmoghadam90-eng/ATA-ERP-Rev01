@@ -7,7 +7,7 @@ import { syncChildren, toNullableString, toNumber } from "../childSync";
 import { loadSettings } from "../settings";
 import {
   INQUIRY_STEP_KEYS, InquiryStepKey, resolveStepTitle,
-  describeInquiryAmount, describeInquiryStatus,
+  describeInquiryAmount, describeInquiryStatus, inquiryTotalRiyal,
 } from "../../utils/inquirySteps";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
@@ -80,7 +80,8 @@ const LIST_SELECT = {
   isWinner: true, winnerDateJalali: true,
   offerConfirmed: true, offerConfirmedDateJalali: true,
   creationDate: true, creationDateJalali: true,
-  technicalOfferUrl: true, financialOfferUrl: true, createdAt: true,
+  technicalOfferUrl: true, financialOfferUrl: true, discountPercent: true,
+  createdAt: true,
   supplier: { select: { id: true, name: true } },
   project: { select: { id: true, code: true, name: true } },
   items: {
@@ -171,6 +172,7 @@ export interface InquiryInput {
   winnerDate?: string | null;
   offerConfirmedDate?: string | null;
   technicalOfferUrl?: string | null;
+  discountPercent?: unknown;
   financialOfferUrl?: string | null;
   items?: InquiryItemInput[];
   initialStep?: InquiryInitialStepInput;
@@ -202,6 +204,12 @@ function scalarData(input: InquiryInput): Record<string, unknown> {
   if ("isWinner" in input) set("isWinner", !!input.isWinner);
   if ("offerConfirmed" in input) set("offerConfirmed", !!input.offerConfirmed);
   if ("technicalOfferUrl" in input) set("technicalOfferUrl", toNullableString(input.technicalOfferUrl, 500));
+  // Clamped: a percentage outside 0-100 would inflate the offer or make it
+  // negative, and the figure is never taken from the client for money.
+  if ("discountPercent" in input) {
+    const pct = Number(input.discountPercent) || 0;
+    set("discountPercent", Math.min(Math.max(pct, 0), 100));
+  }
   if ("financialOfferUrl" in input) set("financialOfferUrl", toNullableString(input.financialOfferUrl, 500));
 
   return { ...out, ...expandDateFields(input as Record<string, unknown>, INQUIRY_DATE_FIELDS) };
@@ -444,9 +452,12 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
         supplierId: inquiry.supplierId,
         // The editor offers `price` as a condition field: the quoted total in
         // rial, which is what "price greater than X" is asking about.
-        price: (inquiry.items || []).reduce(
-          (sum, i) => sum + Number(i.priceRial ?? 0) * Number(i.quantity ?? 0),
-          0,
+        price: inquiryTotalRiyal(
+          (inquiry.items || []).map((i) => ({
+            priceRiyal: Number(i.priceRial ?? 0),
+            quantity: Number(i.quantity ?? 0),
+          })) as never,
+          Number(inquiry.discountPercent ?? 0),
         ),
       },
       user,
@@ -583,9 +594,10 @@ export async function updateInquiry(
  * is what makes them safe to hand Prisma's `Decimal` columns.
  */
 function describeInquiry(inquiry: unknown) {
-  const inq = inquiry as { items?: unknown[] };
+  const inq = inquiry as { items?: unknown[]; discountPercent?: unknown };
+  const discount = Number(inq.discountPercent ?? 0);
   return {
-    amount: describeInquiryAmount(inq.items as never),
+    amount: describeInquiryAmount(inq.items as never, discount),
     status: describeInquiryStatus(inq as never),
   };
 }
