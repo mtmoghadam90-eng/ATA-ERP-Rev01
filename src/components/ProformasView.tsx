@@ -51,7 +51,7 @@ import { proformasApi } from "../api/proformas";
 import { customersApi, type CustomerRow } from "../api/customers";
 import { useEntitySearch } from "../api/useEntitySearch";
 import { productsApi, type ProductRow } from "../api/products";
-import { projectsApi } from "../api/projects";
+import { projectsApi, type ProjectRow } from "../api/projects";
 import { customerToWriteInput, detailToCustomer } from "../api/customerAdapter";
 import { productToWriteInput, detailToProduct, rowToProduct } from "../api/productAdapter";
 import { projectToWriteInput, detailToProject } from "../api/projectAdapter";
@@ -243,7 +243,7 @@ export default function ProformasView({
    * server joined onto each row. The screen groups by project and labels rows by
    * customer; neither needs the whole table for that.
    */
-  const projects = React.useMemo(() => {
+  const rowProjects = React.useMemo(() => {
     const seen = new Map<string, Project>();
     for (const row of list.rows) {
       if (row.project && !seen.has(row.project.id)) {
@@ -258,6 +258,7 @@ export default function ProformasView({
     }
     return [...seen.values()];
   }, [list.rows]);
+
 
   const customers = React.useMemo(() => {
     const seen = new Map<string, Customer>();
@@ -722,6 +723,42 @@ export default function ProformasView({
     getLabel: (row) => row.companyName,
   });
   const modalCustomers = customerPicker.matches as unknown as Customer[];
+
+  /**
+   * The projects the form can choose from.
+   *
+   * The list below is assembled from the proformas on the page, which is right
+   * for grouping the grid but wrong for the form: a project with no proforma
+   * yet — exactly the one you are here to write the first proforma for — was
+   * never in it. This asks the server instead.
+   */
+  const projectPicker = useEntitySearch<ProjectRow>({
+    path: '/api/projects',
+    limit: 50,
+    enabled: modalOpen,
+    params: { withSummary: 'false' },
+    selectedId: projectId || null,
+    getLabel: (row) => row.name,
+  });
+  /**
+   * What the rest of the screen calls `projects`: the ones the form can pick,
+   * plus the ones the page's rows refer to. The form's lookups and the grid's
+   * grouping both read this, so it has to satisfy both.
+   */
+  const projects = React.useMemo(() => {
+    const merged = new Map<string, Project>();
+    for (const row of projectPicker.matches) {
+      merged.set(row.id, {
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        status: row.status,
+        customerId: row.customerId,
+      } as Project);
+    }
+    for (const p of rowProjects) if (!merged.has(p.id)) merged.set(p.id, p);
+    return [...merged.values()];
+  }, [projectPicker.matches, rowProjects]);
 
   /**
    * Product picker for the create/edit modal.

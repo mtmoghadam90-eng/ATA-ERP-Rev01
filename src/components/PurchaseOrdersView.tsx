@@ -91,7 +91,10 @@ export default function PurchaseOrdersView({
   const { rates: exchangeRates } = useExchangeRates();
 
   // Declared before the pickers below, which are disabled while it is closed.
-  const [showModal, setShowModal] = useState(false);
+  // This used to be a second, separate `showModal` that nothing ever set, so
+  // every picker on the form stayed switched off and the supplier, project,
+  // proforma, customer and product fields all came up empty.
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   const list = usePurchaseOrderList();
   const search = list.search;
@@ -104,24 +107,24 @@ export default function PurchaseOrdersView({
 
   /** Pickers, searched on the server and idle while the form is closed. */
   const supplierPicker = useEntitySearch<SupplierRow>({
-    path: '/api/suppliers', limit: 25, enabled: showModal,
+    path: '/api/suppliers', limit: 25, enabled: showCreateModal,
     getLabel: (row) => row.name,
   });
   const projectPicker = useEntitySearch<ProjectRow>({
-    path: '/api/projects', limit: 25, enabled: showModal,
+    path: '/api/projects', limit: 25, enabled: showCreateModal,
     params: { withSummary: 'false' },
     getLabel: (row) => row.name,
   });
   const proformaPicker = useEntitySearch<ProformaRow>({
-    path: '/api/proformas', limit: 25, enabled: showModal,
+    path: '/api/proformas', limit: 25, enabled: showCreateModal,
     getLabel: (row) => row.proformaNumber,
   });
   const customerPicker = useEntitySearch<CustomerRow>({
-    path: '/api/customers', limit: 25, enabled: showModal,
+    path: '/api/customers', limit: 25, enabled: showCreateModal,
     getLabel: (row) => row.companyName,
   });
   const productPicker = useEntitySearch<import('../api/products').ProductRow>({
-    path: '/api/products', limit: 100, enabled: showModal,
+    path: '/api/products', limit: 100, enabled: showCreateModal,
     getLabel: (row) => row.displayName,
   });
 
@@ -208,7 +211,6 @@ export default function PurchaseOrdersView({
   const [quickAddProductIndex, setQuickAddProductIndex] = useState<number | null>(null);
   
   // Modals state
-  const [showCreateModal, setShowCreateModal] = useState(false);
   const [isCreateModalFullscreen, setIsCreateModalFullscreen] = useState(false);
   const [showLandedModal, setShowLandedModal] = useState(false);
   const [isLandedModalFullscreen, setIsLandedModalFullscreen] = useState(false);
