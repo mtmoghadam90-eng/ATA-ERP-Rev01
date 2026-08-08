@@ -114,6 +114,20 @@ if ($LASTEXITCODE -ne 0) {
 }
 Ok "database schema is up to date"
 
+# The generated client is what gives TypeScript the model types, so it has to be
+# rebuilt whenever the schema changes or the type-check below fails on columns
+# that exist in the database but not yet in the types. npm cannot be relied on
+# to do it: Prisma regenerates from an install script, and install scripts are
+# blocked here.
+Step 5 "Regenerating the database client"
+& $npx prisma generate
+if ($LASTEXITCODE -ne 0) {
+    Fail "prisma generate failed - NOT deploying"
+    Restore-Dist
+    exit 5
+}
+Ok "database client matches the schema"
+
 # ------------------------------------------------------------- 6. type-check
 Step 6 "Type-checking"
 & $npm run lint
