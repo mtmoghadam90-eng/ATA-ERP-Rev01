@@ -293,8 +293,8 @@ async function startServer() {
   registerDashboardRoutes(app, routeDeps);
 
   /** Who am I? Lets the client restore its session on reload. */
-  app.get("/api/me", (req, res) => {
-    const user = getAuthUser(req);
+  app.get("/api/me", async (req, res) => {
+    const user = await getAuthUser(req);
     if (!user) {
       return res.status(401).json({ success: false, code: "UNAUTHENTICATED" });
     }
