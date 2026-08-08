@@ -2,6 +2,8 @@ import { getDb } from "../db";
 import { AuthUser } from "../auth";
 import { loadSettings } from "../settings";
 import { getTodayShamsi, addDaysToShamsi } from "../../dateUtils";
+import { notifyModuleResponsible } from "./notificationService";
+import { expandDateFields } from "../dates";
 
 /**
  * Workflow automation system.
@@ -35,6 +37,40 @@ interface WorkflowRule {
       descTemplate: string;
     };
   }>;
+}
+
+/**
+ * Turns whatever a rule names an assignee into the pair the task table stores.
+ *
+ * Every source here is a **display name**, not an id: the rule editor's user
+ * list is built with `value={u.fullName}`, `settings.moduleResponsibles` is
+ * filled from the same kind of picker, and `project.salesExpert` is a plain
+ * text column. The task table keeps `assignedToUserId` and `assignedToName`
+ * side by side, so the name is always recorded and the id is attached whenever
+ * the name matches a real account.
+ *
+ * Writing the name straight into `assignedToUserId` — which is what happened
+ * before — left the id column holding a Persian name, `assignedToName` empty,
+ * and the task therefore absent from the assignee's list.
+ *
+ * `admin` is matched on username as well, because it is the fallback the rules
+ * carry and it is an account name rather than a person's name.
+ */
+async function resolveAssignee(
+  name: string,
+): Promise<{ assignedToUserId: string | null; assignedToName: string }> {
+  const trimmed = (name || "").trim();
+  if (!trimmed) return { assignedToUserId: null, assignedToName: "" };
+
+  const match = await getDb().user.findFirst({
+    where: { OR: [{ fullName: trimmed }, { username: trimmed }] },
+    select: { id: true, fullName: true },
+  });
+
+  return {
+    assignedToUserId: match?.id ?? null,
+    assignedToName: match?.fullName || trimmed,
+  };
 }
 
 /**
@@ -101,17 +137,24 @@ export async function processWorkflowRules(
           finalAssignedTo = settings?.moduleResponsibles?.[mod] || "admin";
         } else if (finalAssignedTo === "SALES_EXPERT") {
           if (enrichedPayload.projectId) {
+            // The project's sales expert — a name held in its own column. This
+            // read `ownerUserId`, which is a different thing: the account that
+            // owns the record for visibility purposes, not the person selling.
             const proj = await db.project.findUnique({
               where: { id: enrichedPayload.projectId },
-              select: { ownerUserId: true },
+              select: { salesExpert: true },
             });
-            finalAssignedTo = proj?.ownerUserId || enrichedPayload.salesExpert || "admin";
+            finalAssignedTo = proj?.salesExpert || enrichedPayload.salesExpert || "admin";
           } else {
             finalAssignedTo = enrichedPayload.salesExpert || "admin";
           }
         }
 
-        const dueDateJalali = addDaysToShamsi(getTodayShamsi(), config.dueDaysOffset || 0);
+        // Both date columns, through the one place that maps between the two
+        // calendars. Only the Jalali half was written, so every automatic task
+        // had a NULL `dueDate` and fell out of every due-date sort and filter.
+        const dueDate = addDaysToShamsi(getTodayShamsi(), config.dueDaysOffset || 0);
+        const assignee = await resolveAssignee(finalAssignedTo);
 
         // Create task
         await db.task.create({
@@ -120,39 +163,31 @@ export async function processWorkflowRules(
               replaceTemplateVars(config.titleTemplate, enrichedPayload) ||
               `وظیفه خودکار: ${rule.name}`,
             description: replaceTemplateVars(config.descTemplate, enrichedPayload) || "",
-            dueDateJalali,
+            ...expandDateFields({ dueDate }, ["dueDate"]),
             priority: config.priority || "متوسط",
             status: "در انتظار",
-            assignedToUserId: finalAssignedTo,
+            assignedToUserId: assignee.assignedToUserId,
+            assignedToName: assignee.assignedToName,
             relatedToType: enrichedPayload.projectId ? "project" : null,
             relatedToId: enrichedPayload.projectId || null,
+            relatedToName: enrichedPayload.projectName || null,
           },
         });
-      } else if (action.type === "send_notification" && action.notificationConfig) {
+      } else if (action.type === "send_notification" && action.notificationConfig && user) {
         const config = action.notificationConfig;
 
-        let responsible = "سیستم";
-        if (settings?.moduleResponsibles?.[config.module]) {
-          responsible = settings.moduleResponsibles[config.module];
-        }
-
-        // Find user by fullName
-        const responsibleUser = await db.user.findFirst({
-          where: { fullName: responsible },
-          select: { id: true },
-        });
-
-        if (responsibleUser) {
-          await db.moduleNotification.create({
-            data: {
-              userId: responsibleUser.id,
-              module: config.module || "سیستم",
-              title: replaceTemplateVars(config.titleTemplate, enrichedPayload) || rule.name,
-              description: replaceTemplateVars(config.descTemplate, enrichedPayload) || "",
-              projectId: enrichedPayload.projectId || null,
-            },
-          });
-        }
+        // Routed through the same helper every other notice uses, which finds
+        // the module's responsible and falls back to the admins who asked to
+        // hear about it. Resolving the responsible here directly meant that
+        // when no account matched the configured name — including the default
+        // "سیستم", which is nobody — the notice was dropped without a trace.
+        await notifyModuleResponsible(
+          config.module || "سیستم",
+          replaceTemplateVars(config.titleTemplate, enrichedPayload) || rule.name,
+          replaceTemplateVars(config.descTemplate, enrichedPayload) || "",
+          user,
+          enrichedPayload.projectId || null,
+        );
       }
     }
   }

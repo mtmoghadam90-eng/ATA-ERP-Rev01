@@ -326,7 +326,22 @@ export default function CustomersView({
   };
 
   // Trigger modal for editing
-  const handleOpenEdit = (customer: Customer) => {
+  /**
+   * Loads the whole customer before filling the form.
+   *
+   * A grid row carries no address, notes, position, gender, key person or
+   * module agreements — populating the form from one and saving wrote every
+   * one of them back empty.
+   */
+  const handleOpenEdit = async (row: Customer) => {
+    let customer: Customer;
+    try {
+      customer = detailToCustomer(await customersApi.get(row.id));
+    } catch (err) {
+      reportError(err, 'بارگذاری اطلاعات مشتری با خطا مواجه شد.');
+      return;
+    }
+
     setEditingCustomer(customer);
     setCustomerType(customer.customerType);
     setStatus(customer.status);
@@ -926,7 +941,7 @@ export default function CustomersView({
                     <td className="p-3 text-center">
                       <div className="flex items-center justify-center gap-1">
                         <button
-                          onClick={() => handleOpenEdit(cust)}
+                          onClick={() => { void handleOpenEdit(cust); }}
                           className="p-1.5 hover:bg-slate-100 text-slate-600 hover:text-sky-600 rounded transition"
                           title="ویرایش پرونده"
                           id={`btn-edit-customer-${cust.id}`}
@@ -1562,7 +1577,7 @@ export default function CustomersView({
                                 {/* Name with Navigation Link */}
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenEdit(linkedCust)}
+                                  onClick={() => { void handleOpenEdit(linkedCust); }}
                                   className="text-xs font-bold text-slate-800 hover:text-sky-600 transition text-right flex items-center gap-1 group/btn hover:underline w-full"
                                   title="مشاهده پرونده و انتقال به این مشتری"
                                 >
@@ -1612,7 +1627,7 @@ export default function CustomersView({
                             <div className="flex justify-between items-center mt-2 pt-1.5 border-t border-slate-100">
                               <button
                                 type="button"
-                                onClick={() => handleOpenEdit(linkedCust)}
+                                onClick={() => { void handleOpenEdit(linkedCust); }}
                                 className="text-[10px] font-bold text-sky-600 hover:text-sky-700 flex items-center gap-1 transition"
                               >
                                 <span>انتقال به پرونده</span>

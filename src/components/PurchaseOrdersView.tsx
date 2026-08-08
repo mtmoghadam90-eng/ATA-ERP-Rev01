@@ -40,7 +40,7 @@ import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import { getCodeError, cleanCode } from '../utils/documentCodes';
 import { ApiError } from '../api/client';
-import { purchaseOrdersApi, purchaseOrderToWriteInput, rowToPurchaseOrder } from '../api/purchaseOrders';
+import { detailToPurchaseOrder, purchaseOrdersApi, purchaseOrderToWriteInput, rowToPurchaseOrder } from '../api/purchaseOrders';
 import { usePurchaseOrderList } from '../api/usePurchaseOrderList';
 import { useModuleNotes } from '../api/moduleNotes';
 import { useEntitySearch } from '../api/useEntitySearch';
@@ -351,7 +351,22 @@ export default function PurchaseOrdersView({
   };
 
   // Open edit
-  const handleOpenEdit = (po: PurchaseOrder) => {
+  /**
+   * Loads the whole purchase order before filling the form.
+   *
+   * A grid row carries no line items at all, and none of the cost inputs the
+   * landed cost is built from. Populating the form from one and saving deleted
+   * every line and zeroed shipping, customs and remittance.
+   */
+  const handleOpenEdit = async (row: PurchaseOrder) => {
+    let po: PurchaseOrder;
+    try {
+      po = detailToPurchaseOrder(await purchaseOrdersApi.get(row.id));
+    } catch (err) {
+      reportError(err, 'بارگذاری اطلاعات سفارش خرید با خطا مواجه شد.');
+      return;
+    }
+
     setEditingPO(po);
     setStatus(po.status);
     setSupplierId(po.supplierId);
@@ -573,10 +588,24 @@ export default function PurchaseOrdersView({
     setShowStatusModal(true);
   };
 
+  /**
+   * Moves one purchase order to a new status, filling in the milestone dates.
+   *
+   * The whole order is loaded first. This screen holds list rows, and a row has
+   * no line items and none of the cost inputs — writing one back to change a
+   * status alone deleted every line and zeroed the landed cost.
+   */
   const handleSaveStatusChange = (e: React.FormEvent) => {
     e.preventDefault();
-    const po = purchaseOrders.find(p => p.id === statusTargetId);
-    if (!po) return;
+    if (!statusTargetId) return;
+    void (async () => {
+    let po: PurchaseOrder;
+    try {
+      po = detailToPurchaseOrder(await purchaseOrdersApi.get(statusTargetId));
+    } catch (err) {
+      reportError(err, 'بارگذاری اطلاعات سفارش خرید با خطا مواجه شد.');
+      return;
+    }
 
     const updatedPO = { ...po, status: newStatusSelected };
     const eventDate = statusDateInput || getTodayShamsi();
@@ -633,6 +662,7 @@ export default function PurchaseOrdersView({
 
     updatePurchaseOrder(updatedPO);
     setShowStatusModal(false);
+    })();
   };
 
   // Landed Cost Modal
@@ -821,7 +851,7 @@ export default function PurchaseOrdersView({
 
                   {/* Edit PO Button */}
                   <button
-                    onClick={() => handleOpenEdit(po)}
+                    onClick={() => { void handleOpenEdit(po); }}
                     className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 justify-center flex-1 lg:flex-none"
                   >
                     <Edit size={13} />
