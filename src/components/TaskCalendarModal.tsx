@@ -1,12 +1,22 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Bell, Calendar, User, CheckCircle2, Clock } from 'lucide-react';
 import { Task } from '../types';
+import { rowToTask, taskToWriteInput, tasksApi } from '../api/tasks';
 
+/**
+ * The month's tasks are loaded here rather than handed in.
+ *
+ * They used to arrive as `store.tasks`, read from database.json — a store the
+ * tasks board stopped writing to when it moved to the API. The calendar was
+ * therefore showing whatever the tasks happened to be before the migration, and
+ * changing a status from here wrote back to the same dead file.
+ *
+ * Loading them here also keeps the request bounded: the calendar knows which
+ * month it is showing, so it asks for that month rather than for every task.
+ */
 interface TaskCalendarModalProps {
   isOpen: boolean;
   onClose: () => void;
-  tasks: Task[];
-  onUpdateTask: (task: Task) => void;
   currentUser?: { fullName: string; role?: string } | null;
 }
 
@@ -17,27 +27,60 @@ const MONTH_NAMES = [
   'دی', 'بهمن', 'اسفند'
 ];
 
-export default function TaskCalendarModal({ isOpen, onClose, tasks, onUpdateTask, currentUser }: TaskCalendarModalProps) {
+/** Days in a Shamsi month. Esfand is 29, or 30 in a leap year. */
+const getDaysInMonth = (monthIndex: number, year: number) => {
+  const monthNum = monthIndex + 1;
+  if (monthNum <= 6) return 31;
+  if (monthNum <= 11) return 30;
+  const isLeap = (year - 1309) % 4 === 0; // standard simple shamsi leap rule
+  return isLeap ? 30 : 29;
+};
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+export default function TaskCalendarModal({ isOpen, onClose, currentUser }: TaskCalendarModalProps) {
   // We can default to Tir 1405 (since current local time is 2026-07 which corresponds to mid-1405)
   // Let's dynamically detect current shamsi month if possible, otherwise default to Tir 1405 (Month index 3, which is month 4 'تیر')
   const [currentYear, setCurrentYear] = useState(1405);
   const [currentMonthIndex, setCurrentMonthIndex] = useState(3); // index 3 is 'تیر' (Month 4)
   const [selectedDay, setSelectedDay] = useState<number | null>(20); // default to 20
+  const [tasks, setTasks] = useState<Task[]>([]);
+
+  // Exactly the month on screen, so the page is bounded by the calendar itself.
+  const load = useCallback(async () => {
+    const days = getDaysInMonth(currentMonthIndex, currentYear);
+    const month = pad2(currentMonthIndex + 1);
+    try {
+      const result = await tasksApi.list({
+        dateFrom: `${currentYear}/${month}/01`,
+        dateTo: `${currentYear}/${month}/${pad2(days)}`,
+        pageSize: 200,
+      });
+      setTasks(result.rows.map(rowToTask));
+    } catch (err) {
+      console.error('Failed to load the calendar month:', err);
+    }
+  }, [currentYear, currentMonthIndex]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    void load();
+  }, [isOpen, load]);
+
+  const updateTaskStatus = async (task: Task, status: Task['status']) => {
+    try {
+      await tasksApi.update(task.id, taskToWriteInput({ ...task, status }));
+      await load();
+    } catch (err) {
+      alert('ثبت تغییر وضعیت وظیفه با خطا مواجه شد.');
+      console.error('Failed to update the task from the calendar:', err);
+    }
+  };
 
   if (!isOpen) return null;
 
   // Filter tasks to show only the ones assigned to the current user or unassigned (personal)
   const myTasks = tasks.filter(t => !t.assignedTo || t.assignedTo === currentUser?.fullName);
-
-  // Determine number of days in selected month
-  const getDaysInMonth = (monthIndex: number, year: number) => {
-    const monthNum = monthIndex + 1;
-    if (monthNum <= 6) return 31;
-    if (monthNum <= 11) return 30;
-    // Esfand is 29, but let's check leap year (simple 4-year cycle approximation for shamsi)
-    const isLeap = (year - 1309) % 4 === 0; // standard simple shamsi leap rule
-    return isLeap ? 30 : 29;
-  };
 
   const totalDays = getDaysInMonth(currentMonthIndex, currentYear);
   const monthName = MONTH_NAMES[currentMonthIndex];
@@ -269,7 +312,7 @@ export default function TaskCalendarModal({ isOpen, onClose, tasks, onUpdateTask
                       <label className="text-[9px] font-bold text-slate-500">تغییر وضعیت:</label>
                       <select
                         value={t.status}
-                        onChange={(e) => onUpdateTask({ ...t, status: e.target.value as Task['status'] })}
+                        onChange={(e) => { void updateTaskStatus(t, e.target.value as Task['status']); }}
                         className="text-[10px] bg-white hover:bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 font-medium text-slate-700 outline-none cursor-pointer"
                       >
                         <option value="در حال انجام">در حال انجام</option>

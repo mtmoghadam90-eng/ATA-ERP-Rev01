@@ -654,8 +654,6 @@ export default function App() {
       <TaskCalendarModal
         isOpen={calendarOpen} 
         onClose={() => setCalendarOpen(false)} 
-        tasks={store.tasks} 
-        onUpdateTask={store.updateTask}
         currentUser={store.currentUser}
       />
 
