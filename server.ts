@@ -1,30 +1,21 @@
-// Loads .env before anything reads process.env (PORT, ERP_DB_PATH, ERP_SQL_*).
+// Loads .env before anything reads process.env (PORT, DATABASE_URL, ERP_SQL_*).
 import "dotenv/config";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import bcrypt from "bcryptjs";
 import fs from "fs";
 import multer from "multer";
 import sharp from "sharp";
 
 // We need to import seed data. 
 // Since esbuild bundles server.ts, we can import from src/seedData.ts
-// Wait, we can't easily import from .ts dynamically without esbuild knowing. 
-// But esbuild will statically resolve it!
-import { 
-  SEED_CUSTOMERS, SEED_PRODUCTS, SEED_PROJECTS, SEED_PROFORMAS, 
-  SEED_SUPPLIERS, SEED_PURCHASE_ORDERS, SEED_TRANSACTIONS, 
-  SEED_TASKS, DEFAULT_SETTINGS, SEED_EXCHANGE_RATES 
-} from "./src/seedData";
-// We need SEED_USERS and SEED_PROJECT_CATEGORY_GROUPS from useERPStore
-import { SEED_USERS, SEED_PROJECT_CATEGORY_GROUPS } from "./src/useERPStore";
 // Power BI reporting sync (one-way export into SQL Server)
 import { syncToSqlServer, testConnection, readConfigFromEnv } from "./src/reporting/sqlSync";
-import { buildReportingTables, StoreCollections } from "./src/reporting/flatten";
+import { buildReportingTables } from "./src/reporting/flatten";
+import { readSqlCollections } from "./src/reporting/loadFromSql";
 // Server-side authentication and authorization
 import {
-  signSession, verifySession, sanitizeUsers, checkKeyAccess, hasPermission,
+  signSession, verifySession, checkKeyAccess, hasPermission,
   parseCookies, buildSessionCookie, buildClearCookie, resolveSessionSecret,
   canSeeFullUsers, toUserDirectory,
   SESSION_COOKIE, AuthUser, AccessMode,
@@ -50,104 +41,38 @@ import { scrapeRates } from "./src/server/rateSource";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 import { authenticateUser, findAuthUser } from "./src/server/services/userService";
 
-// Overridable so a second instance can be started against a scratch database
-// (useful for testing, and for pointing a deployment at a specific data file).
-const DB_PATH = process.env.ERP_DB_PATH
-  ? path.resolve(process.env.ERP_DB_PATH)
-  : path.join(process.cwd(), "database.json");
+/**
+ * Where the session-signing secret is kept.
+ *
+ * It used to live inside database.json, which was also the application's data
+ * store; that store is gone, but the secret still has to survive a restart or
+ * every open session would be invalidated on every deploy. So it gets a file of
+ * its own — a single opaque string, no business data.
+ *
+ * Setting ERP_SESSION_SECRET in the environment takes precedence and skips the
+ * file entirely, which is the better arrangement for a real deployment.
+ */
+const SECRET_PATH = process.env.ERP_SECRET_PATH
+  ? path.resolve(process.env.ERP_SECRET_PATH)
+  : path.join(process.cwd(), ".session-secret");
 
-function loadStore(): Record<string, string> {
+function readStoredSecret(): string | undefined {
   try {
-    if (fs.existsSync(DB_PATH)) {
-      const raw = fs.readFileSync(DB_PATH, "utf-8");
-      return JSON.parse(raw);
+    if (fs.existsSync(SECRET_PATH)) {
+      const raw = fs.readFileSync(SECRET_PATH, "utf-8").trim();
+      return raw || undefined;
     }
   } catch (err) {
-    console.error("Failed to load database.json, starting fresh:", err);
+    console.error("Failed to read the session secret:", err);
   }
-  return {};
+  return undefined;
 }
 
-/**
- * Atomic write: serialize to a temp file, then rename over the real one.
- * A crash mid-write can no longer leave a truncated/corrupt database.json.
- */
-function saveStore(data: Record<string, string>) {
-  const tmpPath = `${DB_PATH}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(data), "utf-8");
-  fs.renameSync(tmpPath, DB_PATH);
-}
-
-/**
- * True when a value is already a bcrypt hash.
- * bcryptjs emits the `$2a$` prefix (not `$2b$`), so checking only for `$2b$`
- * treated stored hashes as plaintext and re-hashed them on every save — which
- * silently broke the affected user's login.
- */
-const BCRYPT_HASH_RE = /^\$2[aby]\$\d{2}\$/;
-function isBcryptHash(value: unknown): boolean {
-  return typeof value === "string" && BCRYPT_HASH_RE.test(value);
-}
-
-const store: Record<string, string> = loadStore();
-
-/**
- * Monotonic version per key, bumped on every write. Clients poll these to learn
- * which collections changed (so they can refetch just those), and send the version
- * they based their edit on so stale writes can be detected.
- */
-const versions: Record<string, number> = {};
-function bumpVersion(key: string): number {
-  versions[key] = (versions[key] || 0) + 1;
-  return versions[key];
-}
-
-const insertStmt = {
-  run: (key: string, value: string) => {
-    store[key] = value;
-    bumpVersion(key);
-    saveStore(store);
-  }
-};
-const getStmt = {
-  get: (key: string) => {
-    const val = store[key];
-    return val !== undefined ? { value: val } : undefined;
-  }
-};
-
-// Seed data if empty
-if (Object.keys(store).length === 0) {
-  console.log("Database is empty, seeding data...");
-  
-  const seedUsers = SEED_USERS.map(u => ({
-    ...u,
-    password: bcrypt.hashSync(u.password || '123', 10)
-  }));
-
-  const initialData = {
-    'erp_settings': DEFAULT_SETTINGS,
-    'erp_exchange_rates': SEED_EXCHANGE_RATES,
-    'erp_customers': SEED_CUSTOMERS,
-    'erp_products': SEED_PRODUCTS,
-    'erp_suppliers': SEED_SUPPLIERS,
-    'erp_projects': SEED_PROJECTS,
-    'erp_proformas': SEED_PROFORMAS,
-    'erp_purchase_orders': SEED_PURCHASE_ORDERS,
-    'erp_transactions': SEED_TRANSACTIONS,
-    'erp_tasks': SEED_TASKS,
-    'erp_project_category_groups': SEED_PROJECT_CATEGORY_GROUPS,
-    'erp_users': seedUsers,
-    'erp_supplier_inquiries': [],
-    'erp_packaging_deliveries': [],
-    'erp_after_sales_services': []
-  };
-
-  for (const [key, value] of Object.entries(initialData)) {
-    store[key] = JSON.stringify(value);
-  }
-  saveStore(store);
-  console.log("Database seeded successfully.");
+/** Atomic write, so a crash mid-write cannot leave a truncated secret. */
+function writeStoredSecret(secret: string): void {
+  const tmpPath = `${SECRET_PATH}.tmp`;
+  fs.writeFileSync(tmpPath, secret, "utf-8");
+  fs.renameSync(tmpPath, SECRET_PATH);
 }
 
 async function startServer() {
@@ -261,40 +186,9 @@ async function startServer() {
     });
   });
 
-  // Whitelist of valid database keys to prevent access/tamper with unauthorized keys
-  const ALLOWED_KEYS = new Set([
-    'erp_settings',
-    'erp_exchange_rates',
-    'erp_customers',
-    'erp_products',
-    'erp_suppliers',
-    'erp_projects',
-    'erp_proformas',
-    'erp_purchase_orders',
-    'erp_transactions',
-    'erp_inventory_transactions',
-    'erp_tasks',
-    'erp_project_category_groups',
-    'erp_supplier_inquiries',
-    'erp_packaging_deliveries',
-    'erp_after_sales_services',
-    'erp_users',
-    'erp_audit_logs'
-  ]);
-
   /* ------------------------- authentication ------------------------- */
 
-  // Persisted outside ALLOWED_KEYS so it is never reachable through the data API.
-  const SESSION_SECRET = resolveSessionSecret(
-    () => {
-      const row = getStmt.get("__session_secret") as { value: string } | undefined;
-      return row?.value;
-    },
-    (secret) => {
-      store["__session_secret"] = secret;
-      saveStore(store);
-    },
-  );
+  const SESSION_SECRET = resolveSessionSecret(readStoredSecret, writeStoredSecret);
 
   /**
    * Resolves the caller from their session cookie. The user record is re-read on
@@ -415,22 +309,6 @@ async function startServer() {
 
   /* ------------------ Power BI reporting sync ------------------ */
 
-  /** Reads and parses every collection out of the store for reporting. */
-  const readStoreCollections = (): StoreCollections => {
-    const out: Record<string, any[]> = {};
-    for (const key of ALLOWED_KEYS) {
-      if (key === "erp_settings") continue; // not tabular
-      const row = getStmt.get(key) as { value: string } | undefined;
-      if (!row) continue;
-      try {
-        const parsed = JSON.parse(row.value);
-        if (Array.isArray(parsed)) out[key] = parsed;
-      } catch {
-        /* skip unparsable */
-      }
-    }
-    return out as StoreCollections;
-  };
 
   /** Verifies the SQL Server connection without writing anything. */
   app.get("/api/report/sql-test", async (req, res) => {
@@ -466,7 +344,7 @@ async function startServer() {
       });
     }
     try {
-      const result = await syncToSqlServer(readStoreCollections(), cfg);
+      const result = await syncToSqlServer(await readSqlCollections(), cfg);
       res.status(result.ok ? 200 : 500).json(result);
     } catch (err: any) {
       res.status(500).json({ ok: false, error: err?.message || String(err) });
@@ -484,7 +362,7 @@ async function startServer() {
       return res.status(403).json({ ok: false, error: "دسترسی به پیش‌نمایش گزارش‌گیری مجاز نیست." });
     }
     try {
-      const datasets = buildReportingTables(readStoreCollections());
+      const datasets = buildReportingTables(await readSqlCollections());
       res.json({
         ok: true,
         tables: datasets.map((d) => ({
