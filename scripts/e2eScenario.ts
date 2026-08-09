@@ -590,6 +590,14 @@ async function main(): Promise<void> {
     fatal = err as Error;
     failures.push(`${step} → the run stopped here: ${fatal.message}`);
     console.log(`   STOP ${fatal.message}`);
+    // A 500 is the server saying "something unexpected", deliberately without
+    // naming it — the real message is only in the server's log.
+    if ((fatal as { status?: number }).status === 500) {
+      console.log("   → 500 means the server hit something it did not expect. It answers");
+      console.log("     with a generic sentence on purpose; the real message is in the");
+      console.log("     application's log directory (logs/app-YYYY-MM-DD.log), on the line");
+      console.log("     beginning [api] followed by this request's method and path.");
+    }
   }
 
   // Nothing to clean up if the run never created anything — and trying would

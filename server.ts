@@ -1,5 +1,6 @@
 // Loads .env before anything reads process.env (PORT, DATABASE_URL, ERP_SQL_*).
 import "dotenv/config";
+import { startFileLogging } from "./src/server/logFile";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -76,6 +77,9 @@ function writeStoredSecret(secret: string): void {
 }
 
 async function startServer() {
+  // Before anything else, so a failure during startup is on record too.
+  const logFile = startFileLogging();
+
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
@@ -541,6 +545,7 @@ async function startServer() {
 
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    if (logFile) console.log(`Logging to ${logFile}`);
   });
 
   // Close the SQL Server pool on shutdown. A deploy restart kills this process

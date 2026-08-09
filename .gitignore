@@ -29,3 +29,6 @@ backups/
 # Prisma generated client
 generated/
 prisma/generated/
+
+# Server logs (see src/server/logFile.ts) — one file per day, local to each host.
+logs/
