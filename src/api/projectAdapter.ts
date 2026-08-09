@@ -70,7 +70,9 @@ export function detailToProject(detail: ProjectDetail): Project {
     financialContactId: detail.financialContactId ?? undefined,
     technicalContactId: detail.technicalContactId ?? undefined,
     itemsNeeded: detail.items.map((item) => ({
-      productId: item.productId ?? "",
+      // A line with no product is a generic requirement, and the forms say so
+      // with this word — the column cannot hold it, because it is a foreign key.
+      productId: item.productId ?? "generic",
       variantId: item.variantId ?? undefined,
       name: item.name,
       quantity: Number(item.quantity),

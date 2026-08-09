@@ -165,12 +165,27 @@ export async function getCustomer(id: string, user: AuthUser) {
 
   const customer = await db.customer.findFirst({
     where: visibility ? { AND: [{ id }, visibility] } : { id },
-    include: {
-      agreements: { orderBy: { createdAt: "desc" } },
-      linksFrom: { include: { to: { select: { id: true, companyName: true, customerType: true } } } },
-    },
+    include: DETAIL_INCLUDE,
   });
   return customer;
+}
+
+/**
+ * The relations a detail record carries.
+ *
+ * Shared with the write paths on purpose: the client's `detailToCustomer` reads
+ * `linksFrom` and `agreements` unguarded, so a create or an update that answered
+ * with the bare row threw in the browser *after* the record had been written —
+ * the customer existed, and the form reported a failure and dropped it.
+ */
+const DETAIL_INCLUDE = {
+  agreements: { orderBy: { createdAt: "desc" } },
+  linksFrom: { include: { to: { select: { id: true, companyName: true, customerType: true } } } },
+} as const;
+
+/** Re-reads a just-written record in the shape a detail response has. */
+async function readDetail(id: string) {
+  return getDb().customer.findUnique({ where: { id }, include: DETAIL_INCLUDE });
 }
 
 /**
@@ -377,7 +392,7 @@ export async function createCustomer(input: CustomerInput, user: AuthUser, today
     user,
   );
 
-  return customer;
+  return readDetail(customer.id);
 }
 
 export async function updateCustomer(id: string, input: Partial<CustomerInput>, user: AuthUser, todayJalali: string) {
@@ -430,7 +445,7 @@ export async function updateCustomer(id: string, input: Partial<CustomerInput>, 
     user,
   );
 
-  return customer;
+  return readDetail(customer.id);
 }
 
 /**
@@ -466,7 +481,7 @@ export async function setCustomerLinks(
     // Only link to customers that exist — a stale id from an open form would
     // otherwise fail the whole save on a foreign key.
     const real = await tx.customer.findMany({
-      where: { id: { in: wanted.length > 0 ? wanted : [" "] } },
+      where: { id: { in: wanted } },
       select: { id: true },
     });
     const valid = new Set(real.map((r) => r.id));

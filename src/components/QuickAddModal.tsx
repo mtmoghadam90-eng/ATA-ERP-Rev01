@@ -340,6 +340,7 @@ export default function QuickAddModal({
         status: custStatus,
         gender: custType === 'حقیقی' ? gender || undefined : undefined,
         position: custType === 'حقیقی' ? position || undefined : undefined,
+        economicCode: custType === 'حقوقی' ? economicCode.trim() || undefined : undefined,
         industry: custType === 'حقوقی' ? industry || undefined : undefined,
         keyPerson: custType === 'حقوقی' ? keyPerson.trim() || undefined : undefined,
         linkedCustomerIds: selectedLinks,

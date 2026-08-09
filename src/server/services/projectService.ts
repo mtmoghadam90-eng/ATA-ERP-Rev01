@@ -358,12 +358,24 @@ function scalarData(input: ProjectInput): Record<string, unknown> {
   return { ...out, ...expandDateFields(input as Record<string, unknown>, PROJECT_DATE_FIELDS) };
 }
 
+/**
+ * What the project form puts in `productId` for a line that describes a
+ * requirement rather than a stock item. The column stores NULL for these; the
+ * client adapter maps NULL back to this word.
+ */
+const GENERIC_PRODUCT = "generic";
+
 /** Drops the blank trailing row these grids always carry. */
 function mapItem(row: ProjectItemInput): Record<string, unknown> | null {
   const name = toNullableString(row?.name, 400);
   if (!name) return null;
+  const productId = toNullableString(row.productId, 36);
   return {
-    productId: toNullableString(row.productId, 36),
+    // "generic" is the form's word for "a requirement, not a catalogue item".
+    // `productId` is a real foreign key, so the sentinel has to become NULL —
+    // sent through as-is it failed the constraint and the whole save was
+    // refused, with a message about the record being referenced elsewhere.
+    productId: productId === GENERIC_PRODUCT ? null : productId,
     variantId: toNullableString(row.variantId, 36),
     name,
     quantity: toNumber(row.quantity, 1),
@@ -457,7 +469,10 @@ export async function createProject(input: ProjectInput, user: AuthUser, todayJa
     user,
   );
 
-  return project;
+  // The full record, not the bare row: the client's `detailToProject` reads
+  // `items` and `milestones` unguarded, so answering with the row threw in the
+  // browser after the project had already been written.
+  return getProjectRecord(project.id, user);
 }
 
 export async function updateProject(id: string, input: ProjectInput, user: AuthUser, todayJalali: string) {
@@ -531,7 +546,7 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
     );
   }
 
-  return project;
+  return getProjectRecord(project.id, user);
 }
 
 /** Records that would block deleting a project, for the confirmation dialog. */
