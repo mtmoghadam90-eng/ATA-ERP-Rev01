@@ -217,6 +217,30 @@ foreach ($i in 1..20) {
 }
 if ($healthy) {
     Ok "application is responding on port $Port"
+
+    # The application checks its own migrations at startup and writes the answer
+    # to the log. Surfaced here because a database missing a migration is
+    # invisible otherwise: the app starts, answers every health check, and one
+    # module 500s on everything it does.
+    $schemaLine = $null
+    try {
+        $schemaLine = Get-ChildItem "$AppDir\logs\app-*.log" -ErrorAction Stop |
+            Sort-Object LastWriteTime | Select-Object -Last 1 |
+            Get-Content -Tail 200 | Select-String -Pattern '\[schema\]' |
+            Select-Object -Last 1
+    } catch { }
+
+    if ($schemaLine) {
+        $text = ($schemaLine.Line -replace '^.*\[schema\]\s*', '')
+        if ($schemaLine.Line -match 'NOT applied') {
+            Fail "database schema: $text"
+            Write-Host "  The application is running, but the modules those migrations" -ForegroundColor Yellow
+            Write-Host "  change will fail on every read and write. Run: npm run db:deploy" -ForegroundColor Yellow
+        } else {
+            Ok "database schema: $text"
+        }
+    }
+
     Write-Host "`nDEPLOY SUCCEEDED" -ForegroundColor Green
     exit 0
 } else {
