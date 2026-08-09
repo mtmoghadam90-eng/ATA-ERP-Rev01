@@ -5253,6 +5253,15 @@ export default function ProjectsView({
           initialLinkedCustomerIds={((quickAddCustomerTarget === 'financialContact' || quickAddCustomerTarget === 'technicalContact') && customerId) ? [customerId] : undefined}
           onSuccess={(newEntity) => {
             if (newEntity && newEntity.id) {
+              // The pickers were filled before this record existed, so pin it —
+              // otherwise the field is set to an id the select has no option
+              // for, and renders its placeholder as though nothing was created.
+              if (quickAddType === 'customer') {
+                customerPicker.include(newEntity);
+                linkedContactsPicker.include(newEntity);
+              } else if (quickAddType === 'product') {
+                productPicker.include(newEntity);
+              }
               if (quickAddType === 'customer') {
                 if (quickAddCustomerTarget === 'customerId') {
                   setCustomerId(newEntity.id);

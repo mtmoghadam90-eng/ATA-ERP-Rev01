@@ -2312,6 +2312,13 @@ export default function PurchaseOrdersView({
           products={products}
           onSuccess={(newEntity) => {
             if (newEntity && newEntity.id) {
+              // The pickers were filled before this record existed, so pin it —
+              // otherwise the field is set to an id the select has no option
+              // for, and renders its placeholder as though nothing was created.
+              if (quickAddType === 'supplier') supplierPicker.include(newEntity);
+              else if (quickAddType === 'project') projectPicker.include(newEntity);
+              else if (quickAddType === 'customer') customerPicker.include(newEntity);
+              else if (quickAddType === 'product') productPicker.include(newEntity);
               if (quickAddType === 'supplier') {
                 setSupplierId(newEntity.id);
               } else if (quickAddType === 'project') {

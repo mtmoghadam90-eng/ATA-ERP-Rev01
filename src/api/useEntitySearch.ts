@@ -44,6 +44,17 @@ export interface EntitySearchResult<T> {
   /** The selected record, once resolved. Null while loading or if it is gone. */
   selected: T | null;
   selectedLabel: string;
+  /**
+   * Keeps a record among the suggestions whatever the search returns.
+   *
+   * For a record the user has just created from a quick-add form: the field is
+   * about to be set to its id, but the suggestions were fetched before it
+   * existed, so the option is not there and the select renders its placeholder
+   * — the field looks empty and the creation looks like it failed. Pinned
+   * records survive later searches, which a one-off splice into `matches`
+   * would not.
+   */
+  include: (row: T) => void;
 }
 
 export function useEntitySearch<T extends { id: string }>(
@@ -54,6 +65,7 @@ export function useEntitySearch<T extends { id: string }>(
   const [term, setTerm] = useState("");
   const [debounced, setDebounced] = useState("");
   const [matches, setMatches] = useState<T[]>([]);
+  const [pinned, setPinned] = useState<T[]>([]);
   const [selected, setSelected] = useState<T | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -130,14 +142,23 @@ export function useEntitySearch<T extends { id: string }>(
   }, [selectedId, matches, path, selected, enabled]);
 
   const setTermStable = useCallback((value: string) => setTerm(value), []);
+  const include = useCallback((row: T) => {
+    setPinned((prev) => (prev.some((r) => r.id === row.id) ? prev : [...prev, row]));
+  }, []);
+
+  // Pinned records lead, and never appear twice.
+  const visible = pinned.length === 0
+    ? matches
+    : [...pinned, ...matches.filter((row) => !pinned.some((p) => p.id === row.id))];
 
   return {
     term,
     setTerm: setTermStable,
-    matches,
+    matches: visible,
     loading,
     error,
     selected,
     selectedLabel: selected ? getLabel(selected) : "",
+    include,
   };
 }
