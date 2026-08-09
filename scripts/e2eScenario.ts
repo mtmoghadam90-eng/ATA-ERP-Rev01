@@ -112,7 +112,11 @@ class Session {
     }
 
     if (!response.ok || payload.success === false) {
-      throw new Error(`${method} ${path} → ${response.status}: ${String(payload.error ?? text.slice(0, 200))}`);
+      // `/api/login` answers with `message`; every other endpoint with `error`.
+      const said = payload.error ?? payload.message ?? text.slice(0, 200);
+      const err = new Error(`${method} ${path} → ${response.status}: ${String(said)}`) as Error & { status?: number };
+      err.status = response.status;
+      throw err;
     }
     return payload as T;
   }
@@ -185,10 +189,25 @@ async function run(options: Options): Promise<void> {
 
   /* ---------------------------------------------------------------- login */
   beginStep("Sign in");
-  const login = await api.post<{ user: { id: string; fullName: string } }>("/api/login", {
-    username: options.user,
-    password: options.password,
-  });
+  let login: { user: { id: string; fullName: string } };
+  try {
+    login = await api.post<{ user: { id: string; fullName: string } }>("/api/login", {
+      username: options.user,
+      password: options.password,
+    });
+  } catch (err) {
+    // The server's own sentence is Persian, and Persian in a Windows console is
+    // question marks — so say what to do about it in English instead.
+    if ((err as { status?: number }).status === 401) {
+      throw new Error(
+        `sign-in was refused for user "${options.user}". The server rejected the `
+        + "username or the password. Use exactly the credentials you sign into the "
+        + "browser with, and quote the password in single quotes if it contains "
+        + "any of $ ` \" ! or a space — PowerShell rewrites those otherwise.",
+      );
+    }
+    throw err;
+  }
   check("session established", !!login.user?.id, login.user?.id);
   const me = await api.get<{ user: { id: string } }>("/api/me");
   checkEqual("/api/me agrees who we are", me.user?.id, login.user.id);
@@ -573,7 +592,9 @@ async function main(): Promise<void> {
     console.log(`   STOP ${fatal.message}`);
   }
 
-  if (!options.keep) {
+  // Nothing to clean up if the run never created anything — and trying would
+  // only repeat whatever stopped it.
+  if (!options.keep && created.length > 0) {
     try {
       await cleanUp(options);
     } catch (err) {
@@ -587,7 +608,9 @@ async function main(): Promise<void> {
     console.log("\nFailures:");
     for (const line of failures) console.log(`  • ${line}`);
   }
-  process.exit(failures.length === 0 ? 0 : 1);
+  // Not `process.exit`: it tears the loop down while stdout is still flushing,
+  // and Node answers that with an assertion failure on top of the report.
+  process.exitCode = failures.length === 0 ? 0 : 1;
 }
 
 void main();
