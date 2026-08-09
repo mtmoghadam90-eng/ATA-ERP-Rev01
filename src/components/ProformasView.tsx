@@ -44,6 +44,7 @@ import {
 import { getTodayShamsi, addDaysToShamsi } from "../dateUtils";
 import ShamsiDatePicker from "./ShamsiDatePicker";
 import { getProformaOutcomeStatus } from "../useERPStore";
+import { uploadFile } from "../imageUtils";
 import ConfirmModal from "./ConfirmModal";
 import { SearchableSelect } from "./SearchableSelect";
 import { ApiError } from "../api/client";
@@ -507,6 +508,92 @@ export default function ProformasView({
   // so they are never part of its write body — folding one into the record and
   // saving it discarded the note.
   const proformaNotes = useModuleNotes("proforma", selectedProforma?.id, (m) => alert(m));
+
+  /** Which line is uploading, so its button can say so. */
+  const [uploadingImageIndex, setUploadingImageIndex] = useState<number | null>(null);
+
+  /**
+   * Attaches a picture to one proforma line.
+   *
+   * Offered on every line, not only on catalogue products with images: a line
+   * entered by hand is still a thing the customer is being quoted, and the
+   * printed document gives it the same picture column.
+   */
+  const renderItemImageUpload = (idx: number, item: { selectedImage?: string }) => (
+    <label
+      className={`px-2 py-1 text-[9px] rounded border font-medium transition shrink-0 cursor-pointer ${
+        uploadingImageIndex === idx
+          ? "border-slate-200 text-slate-400"
+          : "border-sky-200 bg-sky-50 text-sky-700 hover:border-sky-300"
+      }`}
+    >
+      {uploadingImageIndex === idx
+        ? "در حال بارگذاری..."
+        : item.selectedImage && item.selectedImage !== "none"
+          ? "تغییر تصویر"
+          : "بارگذاری تصویر"}
+      <input
+        type="file"
+        accept="image/*"
+        className="hidden"
+        disabled={uploadingImageIndex !== null}
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          if (e.target) e.target.value = "";
+          if (!file) return;
+          setUploadingImageIndex(idx);
+          try {
+            const url = await uploadFile(file);
+            handleItemFieldChange(idx, "selectedImage", url);
+          } catch (err) {
+            reportError(err, "بارگذاری تصویر کالا با خطا مواجه شد.");
+          } finally {
+            setUploadingImageIndex(null);
+          }
+        }}
+      />
+    </label>
+  );
+
+  /**
+   * Product images for the document being printed.
+   *
+   * A line stores the image chosen for it, but lines written before that choice
+   * existed carry none, and the fallback looked the product up in `products` —
+   * the picker's current page. On a printed document that page is whatever was
+   * last searched for, so the image was usually simply absent. The products this
+   * document actually refers to are a short, known list, so they are fetched.
+   */
+  const [printImages, setPrintImages] = useState<Record<string, string>>({});
+
+  React.useEffect(() => {
+    if (!selectedProforma) return;
+    const ids = [...new Set(
+      (selectedProforma.items ?? [])
+        .filter((item) => item.productId && (!item.selectedImage || item.selectedImage === ""))
+        .map((item) => item.productId as string),
+    )];
+    if (ids.length === 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      const found: Record<string, string> = {};
+      await Promise.all(ids.map(async (id) => {
+        try {
+          const product = detailToProduct(await productsApi.get(id));
+          const first = (product.images ?? [])[0];
+          if (first) found[id] = first;
+        } catch {
+          // A missing product just means no picture; the row prints without one.
+        }
+      }));
+      if (!cancelled && Object.keys(found).length > 0) {
+        setPrintImages((prev) => ({ ...prev, ...found }));
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [selectedProforma]);
   const [overrideShowBrand, setOverrideShowBrand] = useState(false);
   // Status change helper state
   const [showStatusModal, setShowStatusModal] = useState(false);
@@ -2330,8 +2417,11 @@ export default function ProformasView({
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
                       <th className="p-3 text-center w-12">ردیف</th>
-                      <th className="p-3">نوع کالا</th>
-                      <th className="p-3 text-left">توضیحات فنی</th>
+                      <th className="p-3 text-center w-36">تصویر کالا</th>
+                      {/* Name and specs share one column: the name reads as the
+                          heading of its own specification, and the space that
+                          freed goes to the image, which was a 40px thumbnail. */}
+                      <th className="p-3">نوع کالا و مشخصات فنی</th>
                       <th className="p-3 text-center">تعداد</th>
                       <th className="p-3 text-center">واحد</th>
                       {selectedProforma.proformaType !== "TECHNICAL" && (
@@ -2351,46 +2441,51 @@ export default function ProformasView({
                       const prod = products.find(
                         (p) => p.id === item.productId,
                       );
+                      // "none" is an explicit choice not to show one.
                       const imgToRender =
-                        item.selectedImage && item.selectedImage !== "none"
-                          ? item.selectedImage
-                          : item.selectedImage !== "none" &&
-                              prod?.images &&
-                              prod.images.length > 0
-                            ? prod.images[0]
-                            : undefined;
+                        item.selectedImage === "none"
+                          ? undefined
+                          : item.selectedImage
+                            || prod?.images?.[0]
+                            || (item.productId ? printImages[item.productId] : undefined);
                       return (
                         <tr key={index} className="hover:bg-slate-50/30">
                           <td className="p-3 text-center font-mono">
                             {index + 1}
                           </td>
-                          <td className="p-3">
-                            <div className="flex items-center gap-2">
-                              {imgToRender && (
-                                <img
-                                  src={imgToRender}
-                                  alt={item.productName}
-                                  className="w-10 h-10 object-cover rounded-lg border border-slate-200 bg-slate-50 flex-shrink-0"
-                                  referrerPolicy="no-referrer"
-                                />
-                              )}
-                              <div className="font-bold text-slate-800">
-                                {item.productName}
-                                {overrideShowBrand && item.brand && (
-                                  <span className="text-xs text-indigo-600 font-semibold mr-1">
-                                    ({item.brand})
-                                  </span>
-                                )}
-                                {item.tagNumber && (
-                                  <span className="text-[10px] text-rose-600 font-mono font-bold bg-rose-50 border border-rose-100 px-1 py-0.2 rounded mr-1.5">
-                                    تگ: {item.tagNumber}
-                                  </span>
-                                )}
+                          <td className="p-3 align-top">
+                            {imgToRender ? (
+                              <img
+                                src={imgToRender}
+                                alt={item.productName}
+                                // `contain`, not `cover`: a valve cropped to a
+                                // square is not a picture of the valve.
+                                className="w-32 h-32 object-contain rounded-lg border border-slate-200 bg-white mx-auto print:w-28 print:h-28"
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <div className="w-32 h-32 rounded-lg border border-dashed border-slate-200 bg-slate-50/60 flex items-center justify-center text-[10px] text-slate-400 mx-auto">
+                                بدون تصویر
                               </div>
-                            </div>
+                            )}
                           </td>
-                          <td className="p-3 text-slate-600 whitespace-pre-line leading-relaxed text-left [direction:ltr] text-[11px]">
-                            {item.techSpecs || "-"}
+                          <td className="p-3 align-top">
+                            <div className="font-bold text-slate-800 pb-1.5 mb-1.5 border-b border-slate-100">
+                              {item.productName}
+                              {overrideShowBrand && item.brand && (
+                                <span className="text-xs text-indigo-600 font-semibold mr-1">
+                                  ({item.brand})
+                                </span>
+                              )}
+                              {item.tagNumber && (
+                                <span className="text-[10px] text-rose-600 font-mono font-bold bg-rose-50 border border-rose-100 px-1 py-0.2 rounded mr-1.5">
+                                  تگ: {item.tagNumber}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-slate-600 whitespace-pre-line leading-relaxed text-left [direction:ltr] text-[11px]">
+                              {item.techSpecs || "-"}
+                            </div>
                           </td>
                           <td className="p-3 text-center font-mono">
                             {item.quantity}
@@ -4800,11 +4895,47 @@ export default function ProformasView({
                                 >
                                   عدم نمایش تصویر
                                 </button>
+                                {renderItemImageUpload(idx, item)}
                               </div>
                             </div>
                           );
                         }
-                        return null;
+
+                        /*
+                         * A line typed by hand, or one whose product has no
+                         * picture. It used to get nothing at all here — the
+                         * whole control appeared only for a catalogue product
+                         * with images — so a manual line could never be
+                         * illustrated, even though the printed document has a
+                         * column for it.
+                         */
+                        return (
+                          <div className="space-y-1 bg-white p-2 rounded-lg border border-slate-200 mt-2">
+                            <label className="text-[10px] font-bold text-slate-500 block">
+                              تصویر این ردیف در پیش‌فاکتور:
+                            </label>
+                            <div className="flex flex-wrap gap-2 items-center mt-1">
+                              {item.selectedImage && item.selectedImage !== "none" && (
+                                <img
+                                  src={item.selectedImage}
+                                  alt=""
+                                  className="w-10 h-10 rounded-md border-2 border-sky-500 object-cover shrink-0"
+                                  referrerPolicy="no-referrer"
+                                />
+                              )}
+                              {renderItemImageUpload(idx, item)}
+                              {item.selectedImage && item.selectedImage !== "none" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleItemFieldChange(idx, "selectedImage", "none")}
+                                  className="px-2 py-1 text-[9px] rounded border border-slate-200 hover:border-slate-300 text-slate-500 font-medium transition shrink-0"
+                                >
+                                  حذف تصویر
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
                       })()}
 
                       {/* Delivery Time Fields (4 inputs side-by-side) */}
