@@ -390,6 +390,9 @@ export default function ReferralsView({
         attachmentName: attachment?.name ?? null,
         attachmentSize: attachment?.size ?? null,
         attachmentUrl: attachment?.content ?? null,
+        // Forwarding puts the thread in the next person's referral inbox, so
+        // the reply must not also raise a notice about itself.
+        andForwarded: !!forwardTo,
       });
 
       // Forwarding sets its own status, so only apply "done" when not forwarding.

@@ -273,6 +273,8 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
         attachmentName: typeof body.attachmentName === "string" ? body.attachmentName : null,
         attachmentSize: typeof body.attachmentSize === "string" ? body.attachmentSize : null,
         attachmentUrl: typeof body.attachmentUrl === "string" ? body.attachmentUrl : null,
+        // The client sends this when the same action also hands the referral on.
+        andForwarded: body.andForwarded === true,
       }, user);
 
       if (outcome === "forbidden") return denied(res, "شما در این ارجاع نقشی ندارید.");

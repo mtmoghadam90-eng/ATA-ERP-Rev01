@@ -483,7 +483,10 @@ export default function SupplierInquiriesView({
                     </div>
 
                     {/* Horizontal scroll container */}
-                    <div className="flex gap-6 overflow-x-auto pb-6 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+                    {/* Rows, not a side-scrolling strip. Comparing offers means
+                        reading them against each other, and a horizontal scroll
+                        put all but two of them off the screen. */}
+                    <div className="flex flex-col gap-5 pb-6">
                       {filteredInquiries.map((inq) => {
                         // Calculate total offer amount in Riyal for brief display
                         const totals = computeInquiryTotals(inq.items, inq.discountPercent, inq.discountAmount);
@@ -491,7 +494,7 @@ export default function SupplierInquiriesView({
                         return (
                           <div 
                             key={inq.id}
-                            className={`w-96 shrink-0 bg-white border rounded-2xl shadow-sm transition-all duration-300 relative flex flex-col justify-between overflow-hidden ${
+                            className={`w-full bg-white border rounded-2xl shadow-sm transition-all duration-300 relative flex flex-col justify-between overflow-hidden ${
                               inq.isWinner 
                                 ? 'border-amber-400 ring-2 ring-amber-400/20 shadow-md shadow-amber-400/5' 
                                 : 'border-slate-150 hover:border-slate-300'
@@ -561,8 +564,10 @@ export default function SupplierInquiriesView({
                               </div>
                             </div>
 
-                            {/* Card Body */}
-                            <div className="p-4 space-y-4 flex-1">
+                            {/* Card Body — three columns across the row: what it
+                                costs, what was offered, and how it got here. */}
+                            <div className="p-4 grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 items-start">
+                              <div className="space-y-4">
                               {/* Total Price Brief */}
                               <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 space-y-1">
                                 <div className="flex items-center justify-between">
@@ -626,10 +631,12 @@ export default function SupplierInquiriesView({
                                 )}
                               </div>
 
+                              </div>
+
                               {/* Items List */}
                               <div className="space-y-1.5">
                                 <span className="text-[10px] font-bold text-slate-400 block border-b border-slate-100 pb-1">اقلام پیشنهاد شده</span>
-                                <div className="max-h-36 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
+                                <div className="max-h-56 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
                                   {inq.items.map((item, index) => (
                                     <div key={item.id || index} className="p-2 bg-slate-50/50 hover:bg-slate-50 border border-slate-100 rounded-xl space-y-1 text-[11px]">
                                       <div className="flex justify-between items-start">
@@ -654,7 +661,7 @@ export default function SupplierInquiriesView({
                               </div>
 
                               {/* Timeline Events / Steps */}
-                              <div className="space-y-2 pt-2 border-t border-slate-100">
+                              <div className="space-y-2 lg:pt-0 lg:border-t-0 lg:border-r lg:pr-4 pt-2 border-t border-slate-100">
                                 <div className="flex items-center justify-between">
                                   <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
                                     <Clock size={12} />

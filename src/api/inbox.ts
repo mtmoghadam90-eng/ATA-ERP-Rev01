@@ -75,7 +75,14 @@ export const inboxApi = {
 
   replyToReferral: (
     id: string,
-    body: { text: string; attachmentName?: string | null; attachmentSize?: string | null; attachmentUrl?: string | null },
+    body: {
+      text: string;
+      attachmentName?: string | null;
+      attachmentSize?: string | null;
+      attachmentUrl?: string | null;
+      /** True when the same action hands the referral on, so no notice is raised. */
+      andForwarded?: boolean;
+    },
   ) => api.post<{ message: ReferralMessageRow }>(`/api/referrals/${id}/messages`, body).then((r) => r.message),
 
   /** Notices, plus the unread total — which spans every notice, not the page. */

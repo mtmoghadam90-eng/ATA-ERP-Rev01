@@ -5,6 +5,7 @@ import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields } from "../dates";
 import { toNullableString } from "../childSync";
 import { processWorkflowRules } from "./workflowService";
+import { notifyUser } from "./notificationService";
 
 /**
  * Project category groups, activities, referrals and module notes.
@@ -410,7 +411,10 @@ export async function setReferralStatus(
   const db = getDb();
   const referral = await db.projectReferral.findUnique({
     where: { id },
-    select: { id: true, assignedToUserId: true, assignedByUserId: true, status: true, activityId: true },
+    select: {
+      id: true, assignedToUserId: true, assignedByUserId: true, status: true, activityId: true,
+      activity: { select: { group: { select: { project: { select: { id: true, name: true, code: true } } } } } },
+    },
   });
   if (!referral) return "not-found";
 
@@ -424,6 +428,37 @@ export async function setReferralStatus(
     where: { id },
     data: { status: newStatus },
   });
+
+  /*
+   * Tell the other party the referral moved.
+   *
+   * Marking a referral done with no accompanying message was completely silent:
+   * whoever raised it had to go and look. Reopening was silent the same way, and
+   * that one is a request for more work.
+   */
+  if (oldStatus !== newStatus) {
+    const counterpart = user.id === referral.assignedByUserId
+      ? referral.assignedToUserId
+      : referral.assignedByUserId;
+
+    if (counterpart) {
+      const actor = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
+      const project = referral.activity?.group?.project;
+      const where = project ? ` در پروژه ${project.name}${project.code ? ` (${project.code})` : ""}` : "";
+      const done = newStatus === "انجام شده";
+
+      await notifyUser({
+        userId: counterpart,
+        module: "ارجاعات",
+        title: done ? "اتمام کار ارجاع" : "بازگشایی ارجاع",
+        description: done
+          ? `${actor?.fullName ?? "یک همکار"} کار ارجاع${where} را انجام‌شده اعلام کرد.`
+          : `${actor?.fullName ?? "یک همکار"} ارجاع${where} را دوباره باز کرد و در انتظار اقدام قرار داد.`,
+        projectId: project?.id ?? null,
+        actorUserId: user.id,
+      });
+    }
+  }
 
   // Workflow trigger for status change
   if (oldStatus !== newStatus) {
@@ -495,7 +530,18 @@ export async function reassignReferral(
 /** Appends a reply to a referral thread. */
 export async function addReferralMessage(
   referralId: string,
-  input: { text?: string; attachmentName?: string | null; attachmentSize?: string | null; attachmentUrl?: string | null },
+  input: {
+    text?: string;
+    attachmentName?: string | null;
+    attachmentSize?: string | null;
+    attachmentUrl?: string | null;
+    /**
+     * Set when this reply is being handed on to someone else in the same
+     * action. The forwarding itself puts the thread in the new assignee's
+     * referral inbox, so a notice on top of it would say the same thing twice.
+     */
+    andForwarded?: boolean;
+  },
   user: AuthUser,
 ): Promise<"forbidden" | "not-found" | "invalid" | { message: unknown }> {
   const db = getDb();
@@ -504,7 +550,10 @@ export async function addReferralMessage(
 
   const referral = await db.projectReferral.findUnique({
     where: { id: referralId },
-    select: { id: true, assignedToUserId: true, assignedByUserId: true },
+    select: {
+      id: true, assignedToUserId: true, assignedByUserId: true, status: true,
+      activity: { select: { group: { select: { project: { select: { id: true, name: true, code: true } } } } } },
+    },
   });
   if (!referral) return "not-found";
 
@@ -524,6 +573,42 @@ export async function addReferralMessage(
       attachmentUrl: toNullableString(input.attachmentUrl, 500),
     } as Prisma.ReferralMessageUncheckedCreateInput,
   });
+
+  /*
+   * Tell the other party.
+   *
+   * A reply used to be silent: whoever raised the referral only found out that
+   * it had been answered by opening it and looking. The notice goes to the
+   * counterpart — the assignee when the person who raised it writes, the
+   * raiser when the assignee does — and never to the author, which `notifyUser`
+   * enforces anyway.
+   *
+   * Not when the reply is also being forwarded: that lands in the new
+   * assignee's referral inbox on its own, and the user asked for one or the
+   * other, not both.
+   */
+  if (!input.andForwarded) {
+    const counterpart = user.id === referral.assignedByUserId
+      ? referral.assignedToUserId
+      : referral.assignedByUserId;
+
+    const project = referral.activity?.group?.project;
+    const where = project ? ` در پروژه ${project.name}${project.code ? ` (${project.code})` : ""}` : "";
+
+    if (counterpart) {
+      await notifyUser({
+        userId: counterpart,
+        module: "ارجاعات",
+        title: "پاسخ جدید به ارجاع",
+        description:
+          `${author?.fullName ?? "یک همکار"} به ارجاع${where} پاسخ داد: ` +
+          (text.length > 160 ? `${text.slice(0, 160)}…` : text),
+        projectId: project?.id ?? null,
+        actorUserId: user.id,
+      });
+    }
+  }
+
   return { message };
 }
 
