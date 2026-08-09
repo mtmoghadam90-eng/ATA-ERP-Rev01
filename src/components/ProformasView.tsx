@@ -1527,8 +1527,12 @@ export default function ProformasView({
       (p.customerName || '').toLowerCase().includes(search.toLowerCase()) ||
       (p.projectName &&
         p.projectName.toLowerCase().includes(search.toLowerCase()));
+    // The filter offers both kinds of value — پیش‌نویس and ارسال شده are where
+    // the document is, the rest is what became of it — so it matches either.
     const matchesStatus =
-      selectedStatus === "all" || p.status === selectedStatus;
+      selectedStatus === "all" ||
+      p.status === selectedStatus ||
+      getProformaOutcomeStatus(p) === selectedStatus;
     return matchesSearch && matchesStatus;
   });
   const getStatusColor = (st: Proforma["status"]) => {

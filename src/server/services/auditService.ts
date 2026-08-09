@@ -8,9 +8,21 @@ import { compressLZW } from "../../utils/compress";
 /**
  * Audit logging helper for all services.
  *
- * Records every CREATE/UPDATE/DELETE operation with before/after state compression.
+ * Records changes to existing records, with before/after state compression.
  * Call this at the end of every mutation, after the database write succeeds.
+ *
+ * **Creations are not recorded.** The log is read to answer "who changed this,
+ * and what did it say before" — a question a creation cannot answer, since
+ * there is no before. Every new record already carries its author and its
+ * date, and logging them buried the edits and deletions among them. Sign-ins
+ * are kept: they are not creations of business data, and they are the only
+ * record of who was in the system.
  */
+
+/** What the log keeps. See the note above for why creations are not here. */
+const RECORDED_ACTIONS = new Set<AuditLogInput["action"]>([
+  "UPDATE", "DELETE", "LOGIN", "LOGOUT",
+]);
 
 export interface AuditLogInput {
   action: "CREATE" | "UPDATE" | "DELETE" | "LOGIN" | "LOGOUT";
@@ -33,6 +45,8 @@ export async function logAction(
   user: AuthUser,
   todayJalali: string,
 ): Promise<void> {
+  if (!RECORDED_ACTIONS.has(input.action)) return;
+
   const db = getDb();
 
   // Get user's full name

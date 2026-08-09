@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Bell, Calendar, User, CheckCircle2, Clock } from 'lucide-react';
 import { Task } from '../types';
 import { rowToTask, taskToWriteInput, tasksApi } from '../api/tasks';
+import { getTodayShamsi } from '../dateUtils';
+import { getJalaliMonthDays, getShamsiWeekDayOfFirst } from './ShamsiDatePicker';
 
 /**
  * The month's tasks are loaded here rather than handed in.
@@ -27,24 +29,35 @@ const MONTH_NAMES = [
   'دی', 'بهمن', 'اسفند'
 ];
 
-/** Days in a Shamsi month. Esfand is 29, or 30 in a leap year. */
-const getDaysInMonth = (monthIndex: number, year: number) => {
-  const monthNum = monthIndex + 1;
-  if (monthNum <= 6) return 31;
-  if (monthNum <= 11) return 30;
-  const isLeap = (year - 1309) % 4 === 0; // standard simple shamsi leap rule
-  return isLeap ? 30 : 29;
-};
+/** Days in a Shamsi month — the date picker's rule, not a second copy of it. */
+const getDaysInMonth = (monthIndex: number, year: number) =>
+  getJalaliMonthDays(year, monthIndex + 1);
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
+/** Today, as year / month index / day. */
+function todayParts(): { year: number; monthIndex: number; day: number } {
+  const [y, m, d] = getTodayShamsi().split('/').map((part) => parseInt(part, 10));
+  return { year: y, monthIndex: m - 1, day: d };
+}
+
 export default function TaskCalendarModal({ isOpen, onClose, currentUser }: TaskCalendarModalProps) {
-  // We can default to Tir 1405 (since current local time is 2026-07 which corresponds to mid-1405)
-  // Let's dynamically detect current shamsi month if possible, otherwise default to Tir 1405 (Month index 3, which is month 4 'تیر')
-  const [currentYear, setCurrentYear] = useState(1405);
-  const [currentMonthIndex, setCurrentMonthIndex] = useState(3); // index 3 is 'تیر' (Month 4)
-  const [selectedDay, setSelectedDay] = useState<number | null>(20); // default to 20
+  // Opens on today. It used to open on Tir 1405, day 20 — a date hardcoded when
+  // the screen was written, which every month since has been wrong.
+  const today = todayParts();
+  const [currentYear, setCurrentYear] = useState(today.year);
+  const [currentMonthIndex, setCurrentMonthIndex] = useState(today.monthIndex);
+  const [selectedDay, setSelectedDay] = useState<number | null>(today.day);
   const [tasks, setTasks] = useState<Task[]>([]);
+
+  // Reopening after months of navigating should still land on today.
+  useEffect(() => {
+    if (!isOpen) return;
+    const now = todayParts();
+    setCurrentYear(now.year);
+    setCurrentMonthIndex(now.monthIndex);
+    setSelectedDay(now.day);
+  }, [isOpen]);
 
   // Exactly the month on screen, so the page is bounded by the calendar itself.
   const load = useCallback(async () => {
@@ -84,6 +97,18 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
 
   const totalDays = getDaysInMonth(currentMonthIndex, currentYear);
   const monthName = MONTH_NAMES[currentMonthIndex];
+
+  /*
+   * Which column the 1st falls in.
+   *
+   * The grid used to start at the first cell whatever day the month began on,
+   * so every date sat under the wrong weekday unless the month happened to
+   * start on a Saturday — 12 Mordad 1405 is a Monday and was shown under
+   * چهارشنبه. The blanks put the month back under its own weekdays.
+   */
+  const startOffset = getShamsiWeekDayOfFirst(currentYear, currentMonthIndex + 1);
+  const isCurrentMonth =
+    currentYear === today.year && currentMonthIndex === today.monthIndex;
 
   // Navigate months
   const handlePrevMonth = () => {
@@ -186,20 +211,22 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
 
           {/* Calendar Grid */}
           <div className="grid grid-cols-7 gap-2 text-center text-xs font-semibold text-slate-500 mb-2">
-            <div>شـنبہ</div>
-            <div>۱شـنبہ</div>
-            <div>۲شـنبہ</div>
-            <div>۳شـنبہ</div>
-            <div>۴شـنبہ</div>
-            <div>۵شـنبہ</div>
-            <div>جمـعہ</div>
+            {/* Written out properly: these were spelled with an Arabic heh and
+                a tatweel, which renders as a different letter in Persian. */}
+            {['شنبه', 'یکشنبه', 'دوشنبه', 'سه‌شنبه', 'چهارشنبه', 'پنجشنبه', 'جمعه'].map((name, idx) => (
+              <div key={name} className={idx === 6 ? 'text-rose-500' : undefined}>{name}</div>
+            ))}
           </div>
 
           <div className="grid grid-cols-7 gap-2 min-h-[240px] sm:min-h-[280px]">
+            {Array.from({ length: startOffset }).map((_, index) => (
+              <div key={`lead-${index}`} className="min-h-[50px] sm:min-h-[64px]" />
+            ))}
             {Array.from({ length: totalDays }).map((_, index) => {
               const dayNum = index + 1;
               const dayTasks = getTasksForDay(dayNum);
               const isSelected = selectedDay === dayNum;
+              const isToday = isCurrentMonth && dayNum === today.day;
               const hasTasks = dayTasks.length > 0;
 
               return (
@@ -209,9 +236,11 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
                   className={`relative p-2.5 rounded-xl border flex flex-col justify-between items-center transition min-h-[50px] sm:min-h-[64px] hover:border-sky-300 group ${
                     isSelected 
                       ? 'border-sky-500 bg-sky-500 text-white shadow-md shadow-sky-500/10' 
-                      : hasTasks 
-                        ? 'border-slate-200 bg-slate-50/50 text-slate-800 hover:bg-slate-50' 
-                        : 'border-slate-100 bg-white text-slate-700 hover:bg-slate-50/50'
+                      : isToday
+                        ? 'border-sky-400 bg-sky-50/60 text-slate-800'
+                        : hasTasks 
+                          ? 'border-slate-200 bg-slate-50/50 text-slate-800 hover:bg-slate-50' 
+                          : 'border-slate-100 bg-white text-slate-700 hover:bg-slate-50/50'
                   }`}
                 >
                   <span className={`text-xs font-bold font-mono ${isSelected ? 'text-white' : 'text-slate-700 group-hover:text-sky-600'}`}>

@@ -4281,12 +4281,42 @@ export default function ProjectsView({
                                       <strong className="text-emerald-700 block mt-0.5 font-mono">{selectedProjectForActivities.winningDate}</strong>
                                     </div>
                                   )}
-                                  {selectedProjectForActivities.agreedDeliveryDate && (
-                                    <div>
-                                      <span className="text-sky-500 font-semibold">تاریخ توافقی تحویل:</span>
-                                      <strong className="text-sky-700 block mt-0.5 font-mono">{selectedProjectForActivities.agreedDeliveryDate}</strong>
-                                    </div>
-                                  )}
+                                  {(() => {
+                                    /*
+                                     * The derived date, not the stored one.
+                                     *
+                                     * Delivery is quoted as a term — "۳-۴ هفته کاری پس از
+                                     * پیش‌پرداخت" — so the date it lands on is counted from
+                                     * the prepayment, or from the approval date when there
+                                     * is none. The panel printed the field a person typed
+                                     * once when the project was first marked won, which
+                                     * then stayed put however the approval date moved.
+                                     * `summarizeProject` already counts this for the grid.
+                                     */
+                                    const derived = getProjectDeliveryDetails(selectedProjectForActivities.id);
+                                    if (derived.hasMultipleAgreed) {
+                                      return (
+                                        <div>
+                                          <span className="text-sky-500 font-semibold">تاریخ توافقی تحویل اقلام:</span>
+                                          <div className="mt-0.5 space-y-0.5">
+                                            {derived.agreedItems.map((item, i) => (
+                                              <div key={i} className="flex justify-between gap-2 text-sky-700">
+                                                <span className="truncate max-w-[140px]" title={item.productName}>{item.productName}:</span>
+                                                <strong className="font-mono">{item.calculatedDate}</strong>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                    const single = derived.singleAgreedDate || selectedProjectForActivities.agreedDeliveryDate;
+                                    return single ? (
+                                      <div>
+                                        <span className="text-sky-500 font-semibold">تاریخ توافقی تحویل:</span>
+                                        <strong className="text-sky-700 block mt-0.5 font-mono">{single}</strong>
+                                      </div>
+                                    ) : null;
+                                  })()}
                                 </>
                               )}
                             </div>

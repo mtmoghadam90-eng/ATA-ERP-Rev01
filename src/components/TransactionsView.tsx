@@ -405,7 +405,10 @@ export default function TransactionsView({
 
   // Find all proformas and transactions with incomplete historical or settlement rates
   const incompleteProformas = proformas.filter(pf => {
-    const isSale = pf.status === 'تأیید شده (برنده)' || pf.status === 'نیمه برنده';
+    // The outcome, not the workflow status: a proforma is a sale once its lines
+    // are won, whatever stage the document itself is recorded at.
+    const outcome = pf.outcomeStatus ?? pf.status;
+    const isSale = outcome === 'تأیید شده (برنده)' || outcome === 'نیمه برنده';
     return isSale && pf.currency && pf.currency !== 'ریال' && (!pf.historicalExchangeRate || pf.historicalExchangeRate <= 0);
   });
 
@@ -731,7 +734,11 @@ export default function TransactionsView({
 
     // Unassigned Receipt Warning
     if (type === 'دریافت' && projectId && !proformaId) {
-      const approvedPfs = proformas.filter(pf => pf.projectId === projectId && (pf.status === 'تأیید شده (برنده)' || pf.status === 'نیمه برنده'));
+      const approvedPfs = proformas.filter(pf => {
+        const outcome = pf.outcomeStatus ?? pf.status;
+        return pf.projectId === projectId
+          && (outcome === 'تأیید شده (برنده)' || outcome === 'نیمه برنده');
+      });
       if (approvedPfs.length > 0) {
         const confirmUnallocated = window.confirm(
           `هشدار عدم تخصیص به پیش‌فاکتور:\n` +

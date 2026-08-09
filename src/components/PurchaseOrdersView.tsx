@@ -41,6 +41,7 @@ import ModuleNotesSection from './ModuleNotesSection';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import { getCodeError, cleanCode } from '../utils/documentCodes';
+import { mapCurrencyToEnglish } from '../utils/finance';
 import { ApiError } from '../api/client';
 import { detailToPurchaseOrder, purchaseOrdersApi, purchaseOrderToWriteInput, rowToPurchaseOrder } from '../api/purchaseOrders';
 import { usePurchaseOrderList } from '../api/usePurchaseOrderList';
@@ -411,17 +412,25 @@ export default function PurchaseOrdersView({
   // Handle auto rate change based on selection
   const handleCurrencyChange = (curr: PurchaseOrder['currency']) => {
     setCurrency(curr);
-    let mappedSymbol = 'USD';
-    if (curr === 'دلار') mappedSymbol = 'USD';
-    else if (curr === 'یورو') mappedSymbol = 'EUR';
-    else if (curr === 'درهم') mappedSymbol = 'AED';
-    
+
     if (curr === 'ریال') {
       setExchangeRateInput(1);
-    } else {
-      const match = exchangeRates.find(r => r.currency === mappedSymbol);
-      if (match) setExchangeRateInput(match.rateToRIYAL);
+      return;
     }
+
+    // The shared mapping, rather than a fourth copy of it: this one listed only
+    // three currencies and defaulted to USD, so an order in یوان was quietly
+    // priced at the dollar rate.
+    const code = mapCurrencyToEnglish(curr);
+    const match = exchangeRates.find(r => r.currency === code);
+    if (match) {
+      setExchangeRateInput(match.rateToRIYAL);
+      return;
+    }
+    // No rate for this currency. Blank rather than leave the previous
+    // currency's number standing, which is how the wrong rate got saved.
+    // Only once the rates have actually arrived — an empty list is "not loaded".
+    if (exchangeRates.length > 0) setExchangeRateInput(0);
   };
 
   // Open create

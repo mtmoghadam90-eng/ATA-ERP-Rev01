@@ -42,9 +42,19 @@ export function rowToProforma(row: ProformaRow): Proforma {
     projectName: row.project?.name ?? undefined,
     issueDate: row.issueDateJalali ?? "",
     expiryDate: row.expiryDateJalali ?? "",
-    // The grid shows the derived outcome; the stored workflow status is only
-    // one of the inputs to it.
-    status: row.outcomeStatus as Proforma["status"],
+    /*
+     * Both statuses, under their own names.
+     *
+     * These were one field, holding the derived outcome — and the two mean
+     * different things. The edit form's "وضعیت سند" select offers the stored
+     * workflow status (پیش‌نویس / ارسال شده), so once a line had been decided it
+     * was handed an outcome like "نیمه برنده", which is not one of its options:
+     * the select fell back to its first entry and showed a sent proforma as a
+     * draft. Saving then wrote that back over the real status. The two locks
+     * that ask whether a proforma has been sent were reading the outcome too.
+     */
+    status: row.status as Proforma["status"],
+    outcomeStatus: row.outcomeStatus as Proforma["status"],
     isCancelled: row.isCancelled,
     currency: row.currency as Proforma["currency"],
     totalAmount: money(row.totalAmount),

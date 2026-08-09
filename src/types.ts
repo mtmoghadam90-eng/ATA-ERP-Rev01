@@ -210,7 +210,14 @@ export interface Proforma {
   issueDate: string;
   expiryDate: string;
   deliveryDate?: string; // تاریخ تحویل پیش‌فاکتور تایید شده
+  /** The stored workflow status: where the document is in its own lifecycle. */
   status: 'پیش‌نویس' | 'ارسال شده' | 'تأیید شده (برنده)' | 'لغو شده' | 'باخته' | 'نیمه برنده' | 'جاری';
+  /**
+   * The outcome derived from the line statuses — computed by the server, never
+   * stored, and deliberately a separate field: conflating it with `status`
+   * showed sent proformas as drafts and then saved that over the real value.
+   */
+  outcomeStatus?: 'پیش‌نویس' | 'ارسال شده' | 'تأیید شده (برنده)' | 'لغو شده' | 'باخته' | 'نیمه برنده' | 'جاری';
   isCancelled?: boolean;
   lossReason?: string; // e.g. "قیمت بالا", "زمان تحویل طولانی"
   currency?: 'دلار' | 'یورو' | 'درهم' | 'ریال' | 'یوان';
