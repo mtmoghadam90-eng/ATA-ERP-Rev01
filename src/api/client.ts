@@ -9,6 +9,8 @@
  * generic "request failed" that hides what the server actually said.
  */
 
+import { dataChanged, resourceOf } from "./liveData";
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code?: string;
@@ -99,6 +101,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       details,
     );
   }
+
+  // Anything that changed the server's state is announced here, once, rather
+  // than at each of the hundreds of call sites that perform one. Readers of the
+  // same resource re-read it — see liveData.ts.
+  if (method !== "GET") dataChanged(resourceOf(path));
 
   // `success` is protocol, not data; callers want what came with it.
   const { success: _ok, ...data } = (payload ?? {}) as Record<string, unknown>;

@@ -22,6 +22,7 @@ import { compressImage } from '../imageUtils';
 import { toShamsiStr } from '../dateUtils';
 import { ApiError } from '../api/client';
 import { NotificationRow, ReferralRow, inboxApi } from '../api/inbox';
+import { useRevalidate } from '../api/liveData';
 import { useUserDirectory } from '../api/useUserDirectory';
 
 /**
@@ -137,6 +138,11 @@ export default function ReferralsView({
 
     return () => { cancelled = true; controller.abort(); };
   }, [reloadToken]);
+
+  /* Both lists above re-run on `reloadToken`, so keeping them current is one
+     subscription: a referral filed or answered anywhere in the app, by this
+     user or picked up when the tab is looked at again. */
+  useRevalidate(["referrals", "notifications", "activities"], () => setReloadToken(n => n + 1));
 
   const toggleCard = (groupId: string) => {
     // Cards render collapsed, so an untouched one has to open on the first

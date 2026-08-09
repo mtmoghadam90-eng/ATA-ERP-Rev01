@@ -37,6 +37,7 @@ import { ApiError } from '../api/client';
 import { useDashboard } from '../api/dashboard';
 import { useExchangeRates } from '../api/exchangeRates';
 import { inboxApi, ReferralRow } from '../api/inbox';
+import { useRevalidate } from '../api/liveData';
 import { rowToTask, tasksApi } from '../api/tasks';
 import type { TaskRow } from '../api/tasks';
 
@@ -96,6 +97,13 @@ export default function DashboardView({
     });
     return () => controller.abort();
   }, [loadLists]);
+
+  // The two lists below the figures are other people's work — tasks assigned
+  // and referrals sent. `useDashboard` keeps the figures current; this keeps
+  // the lists beside them in step rather than a refresh behind.
+  useRevalidate(["tasks", "referrals", "activities"], () => {
+    void loadLists().catch(() => { /* the lists keep what they had */ });
+  });
 
   /* The headline figures, all computed by the server. Currency conversion and
      the won-proportion rule went with them — they were duplicated here from the

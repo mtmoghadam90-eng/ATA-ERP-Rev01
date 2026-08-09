@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ListResponse, api } from "./client";
+import { useRevalidate } from "./liveData";
 
 /**
  * The counts on the sidebar and in the header.
@@ -56,28 +57,36 @@ export function useSidebarBadges(enabled: boolean): SidebarBadges {
     });
   }, []);
 
+  const run = useCallback(() => {
+    load().catch(() => {
+      // A badge is decoration; a failure leaves the last figures showing
+      // rather than interrupting whatever the user is doing.
+    });
+  }, [load]);
+
   useEffect(() => {
     if (!enabled) {
       setBadges(EMPTY);
       return;
     }
-
     const controller = new AbortController();
-
-    const run = () => {
-      load(controller.signal).catch(() => {
-        // A badge is decoration; a failure leaves the last figures showing
-        // rather than interrupting whatever the user is doing.
-      });
-    };
-
-    run();
-    const timer = setInterval(run, REFRESH_MS);
-    return () => {
-      clearInterval(timer);
-      controller.abort();
-    };
+    load(controller.signal).catch(() => {});
+    return () => controller.abort();
   }, [enabled, load]);
+
+  /*
+   * These are the figures the staleness was noticed on: the referral count sat
+   * at whatever it was when the page loaded, because nothing here had any
+   * reason to look again. Now anything that writes one of these resources —
+   * filing a referral, finishing a task, receiving stock — makes them re-read
+   * immediately, a return to the tab does too, and the timer remains for what
+   * other people change while this tab sits open.
+   */
+  useRevalidate(
+    ["referrals", "tasks", "products", "notifications", "activities", "inventory"],
+    run,
+    { enabled, intervalMs: REFRESH_MS },
+  );
 
   return badges;
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, ListResponse, MAX_PAGE_SIZE, api } from "./client";
+import { resourceOf, useRevalidate } from "./liveData";
 
 /**
  * Paginated, server-filtered list state.
@@ -187,6 +188,12 @@ export function useList<T>(options: UseListOptions): UseListResult<T> {
   }, []);
 
   const refresh = useCallback(() => setReloadToken((n) => n + 1), []);
+
+  // The grid re-reads itself when its resource is written — by this tab, at
+  // once; by someone else, when this tab is looked at again. Views still call
+  // `refresh()` after their own saves, which costs nothing: the two land in the
+  // same tick and the request is superseded rather than duplicated.
+  useRevalidate([resourceOf(path) ?? ""], refresh, { enabled });
 
   return useMemo(
     () => ({

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "./client";
+import { useRevalidate } from "./liveData";
 
 /**
  * The front page's figures.
@@ -74,5 +75,14 @@ export function useDashboard(): UseDashboardResult {
     return () => controller.abort();
   }, [load]);
 
-  return { summary, loading, error, reload: useCallback(() => load(), [load]) };
+  const reload = useCallback(() => load(), [load]);
+
+  // Every figure here is computed from documents other screens write, so the
+  // dashboard was only ever right at the moment it was opened.
+  useRevalidate(
+    ["proformas", "projects", "transactions", "purchase-orders", "products", "tasks", "deliveries"],
+    reload,
+  );
+
+  return { summary, loading, error, reload };
 }

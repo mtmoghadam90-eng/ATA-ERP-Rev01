@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useRevalidate } from "./liveData";
 import type { ProjectCategoryGroup } from "../types";
 import { getTodayShamsi } from "../dateUtils";
 import { projectsApi } from "./projects";
@@ -56,6 +57,16 @@ export function useProjectActivities(projectId: string | null | undefined): Proj
   const [reloadKey, setReloadKey] = useState(0);
 
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  // The feed is written from every other module — a proforma issued, an
+  // instalment paid, a shipment packed all land here as entries. Those writes
+  // happen on screens this hook cannot see, so it listens for them.
+  useRevalidate(
+    ["activities", "referrals", "projects", "proformas", "purchase-orders",
+     "transactions", "deliveries", "inquiries"],
+    refresh,
+    { enabled: !!projectId },
+  );
 
   useEffect(() => {
     if (!projectId) {
