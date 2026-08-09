@@ -334,7 +334,14 @@ export interface Project {
   closingDate?: string;             // تاریخ بسته شدن
   
   attachments?: { name: string; url: string; }[]; // فایل‌های درخواست
-  manualDocuments?: { id: string; folderName: string; name: string; url: string; createdAt: string; size?: string; }[]; // مدارک آپلود شده دستی در پوشه‌ها
+  /**
+   * Documents uploaded by hand into the project's folders.
+   *
+   * `kind` marks a document filed for a particular purpose. The only one so far
+   * is the customer's written confirmation that the project was awarded, which
+   * the app asks for once and must then stop asking for.
+   */
+  manualDocuments?: { id: string; folderName: string; name: string; url: string; createdAt: string; size?: string; kind?: 'projectConfirmation'; }[];
 
   // Project Milestone & Automations
   milestones?: {

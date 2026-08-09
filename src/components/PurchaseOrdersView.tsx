@@ -1162,10 +1162,13 @@ export default function PurchaseOrdersView({
         
         return (
           <div className={`fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 ${isLandedModalFullscreen ? 'p-0' : 'p-4'}`}>
+            {/* Bounded to the viewport in both modes. Windowed, it had no height
+                limit at all: the sheet grew past the bottom of the screen and
+                took the notes section and the close button with it. */}
             <div className={`bg-white shadow-xl border border-slate-100 overflow-hidden animate-scale-in transition-all duration-300 flex flex-col ${
               isLandedModalFullscreen 
                 ? 'w-screen h-screen rounded-none my-0 max-w-full max-h-screen' 
-                : 'rounded-2xl w-full max-w-lg'
+                : 'rounded-2xl w-full max-w-lg max-h-[calc(100vh-2rem)]'
             }`}>
               <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                 <h3 className="font-bold text-slate-800">برگه تسهیم هزینه و بهای تمام شده نهایی</h3>
@@ -1188,7 +1191,9 @@ export default function PurchaseOrdersView({
                 </div>
               </div>
 
-              <div className={`p-6 space-y-4 text-xs font-sans overflow-y-auto ${isLandedModalFullscreen ? 'flex-1 max-h-[calc(100vh-80px)]' : ''}`}>
+              {/* The header is fixed and this scrolls — `min-h-0` because a flex
+                  child will not shrink below its content without it. */}
+              <div className="p-6 space-y-4 text-xs font-sans overflow-y-auto flex-1 min-h-0">
                 <div className="bg-slate-900 text-white p-4 rounded-xl font-mono text-center space-y-1">
                   <p className="text-[10px] text-sky-400 uppercase">سند خرید مادری</p>
                   <h4 className="text-base font-bold">{selectedPO.poNumber}</h4>

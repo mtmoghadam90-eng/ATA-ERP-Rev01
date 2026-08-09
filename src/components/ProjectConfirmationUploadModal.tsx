@@ -102,7 +102,12 @@ export default function ProjectConfirmationUploadModal({
         name: finalFileName,
         url: url,
         createdAt: getTodayShamsi(),
-        size: `${(selectedFile.size / 1024).toFixed(1)} KB`
+        size: `${(selectedFile.size / 1024).toFixed(1)} KB`,
+        // What this document is, not just where it was filed — the prompt reads
+        // it to know it has already been answered. The user may file it in any
+        // of the folders, and may rename it, so neither location nor name can
+        // stand in for this.
+        kind: 'projectConfirmation' as const,
       };
 
       // 3. Update project manualDocuments array

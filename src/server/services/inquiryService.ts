@@ -220,26 +220,17 @@ function scalarData(input: InquiryInput): Record<string, unknown> {
   return { ...out, ...expandDateFields(input as Record<string, unknown>, INQUIRY_DATE_FIELDS) };
 }
 
-/**
- * A project has at most one winning inquiry.
+/*
+ * A project may have several winning inquiries.
  *
- * The client used to enforce this by walking every inquiry it held and clearing
- * the others, which only worked while the browser had them all. Paged, it would
- * silently leave a winner on a page nobody had loaded — two winners for one
- * project, and the proforma built from "the winner" then depends on which one is
- * read first. Declaring a winner and demoting the previous one is one decision,
- * so it happens in one transaction, here.
+ * It used to have at most one: declaring a winner demoted the project's
+ * previous one in the same transaction. That is wrong for how these projects
+ * are actually supplied — the flow meters from one supplier and the valves from
+ * another are two winning offers for one project, and marking the second
+ * silently cancelled the first. Each inquiry now stands on its own, and every
+ * reader of "the winning offer" was already written against a list of them:
+ * the purchase-order form offers them all to choose from.
  */
-async function enforceSingleWinner(
-  tx: Prisma.TransactionClient,
-  inquiryId: string,
-  projectId: string,
-): Promise<void> {
-  await tx.supplierInquiry.updateMany({
-    where: { projectId, isWinner: true, id: { not: inquiryId } },
-    data: { isWinner: false, winnerDate: null, winnerDateJalali: null },
-  });
-}
 
 /* ------------------------------- auto steps ------------------------------- */
 
@@ -417,8 +408,6 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
 
     await appendAutoSteps(tx, inquiry.id, null, todayJalali);
 
-    if (inquiry.isWinner) await enforceSingleWinner(tx, inquiry.id, inquiry.projectId);
-
     return tx.supplierInquiry.findUnique({
       where: { id: inquiry.id },
       include: { items: { orderBy: { lineNo: "asc" } }, steps: { orderBy: { stepNo: "asc" } } },
@@ -513,8 +502,6 @@ export async function updateInquiry(
       where: { id },
       data: scalarData(input) as Prisma.SupplierInquiryUncheckedUpdateInput,
     });
-
-    if (updated.isWinner) await enforceSingleWinner(tx, id, updated.projectId);
 
     if (input.items !== undefined) {
       await syncChildren({

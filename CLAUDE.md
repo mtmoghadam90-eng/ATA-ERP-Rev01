@@ -74,7 +74,7 @@ Once those land, `/api/data/:key` and `database.json` can go. **Login is the exc
 
 The recurring pattern, worth expecting in the two screens that remain: a screen holds every record so it can compute something across all of them, and that computation silently breaks once the list is paged. Each one moved to the server, where the whole set is still visible:
 
-- **the winning supplier inquiry** — one per project, enforced by walking every inquiry in memory
+- **the winning supplier inquiries of a project** — found by walking every inquiry in memory (a project may have several: one supplier per part of the scope)
 - **how much of a won item is still unshipped** — promised minus already shipped, across every proforma and delivery
 - **document numbers** — `startSeq + collection.length`, which under paging is one page
 - **an after-sales record's status** — rolled up from its rows, and the column the grid filters on

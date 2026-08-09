@@ -112,6 +112,20 @@ export default function App() {
   // Project confirmation upload state
   const [projectToUploadDoc, setProjectToUploadDoc] = useState<Project | null>(null);
 
+  /**
+   * Whether this project's award confirmation has already been filed.
+   *
+   * `kind` is what documents uploaded through the prompt now carry. The name
+   * check is for the ones filed before that field existed — the modal builds
+   * the default name from this prefix, so it identifies them without a
+   * migration.
+   */
+  const hasConfirmationDocument = (project: Project): boolean =>
+    (project.manualDocuments || []).some(
+      (doc) => doc.kind === 'projectConfirmation'
+        || (doc.name || '').startsWith('تاییدیه_شروع_پروژه'),
+    );
+
   // Watches for a project becoming won. This compared successive renders of
   // store.projects, which comes from database.json — a store the project
   // screens no longer write to, so the statuses never moved and this could not
@@ -127,7 +141,16 @@ export default function App() {
     void (async () => {
       try {
         const project = detailToProject(await projectsApi.get(wonProject.wonProjectId!));
-        if (!cancelled) setProjectToUploadDoc(project);
+        if (cancelled) return;
+
+        // Already answered. Nothing recorded that the document had been filed,
+        // so the prompt came back on every sign-in for a project whose
+        // confirmation was uploaded months ago.
+        if (hasConfirmationDocument(project)) {
+          wonProject.clear();
+          return;
+        }
+        setProjectToUploadDoc(project);
       } catch (err) {
         console.error('Failed to load the project that was just won:', err);
         if (!cancelled) wonProject.clear();

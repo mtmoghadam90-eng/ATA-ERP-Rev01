@@ -122,18 +122,27 @@ export function deriveProjectStatus(proformas: StatusProforma[]): ProjectStatus 
   if (outcomes.every((o) => o === "لغو شده")) return "لغو شده";
   if (outcomes.every((o) => o === "باخته")) return "باخته";
 
-  let target = proformas.find((pf) => {
+  /*
+   * Every winning proforma, not the first one found.
+   *
+   * A project can legitimately be won in pieces — one quote for the flow meters
+   * and another for the valves — and this used to derive the project's status
+   * from whichever winning proforma happened to come first in the array. A
+   * project whose first quote was won outright and whose second was half lost
+   * reported برنده (موفق), and the same pair in the other order reported
+   * نیمه برنده. The lines of all of them decide together.
+   */
+  const winners = proformas.filter((pf) => {
     const o = getProformaOutcome(pf);
     return o === "تأیید شده (برنده)" || o === "نیمه برنده";
   });
 
-  if (!target) {
-    target = [...proformas].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    )[0];
-  }
+  const items: OutcomeItem[] = winners.length > 0
+    ? winners.flatMap((pf) => pf.items ?? [])
+    : ([...proformas].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      )[0]?.items ?? []);
 
-  const items = target?.items ?? [];
   if (items.length === 0) return "ارائه پیش‌فاکتور";
 
   const won = items.filter((i) => i.status === ITEM_WON).length;

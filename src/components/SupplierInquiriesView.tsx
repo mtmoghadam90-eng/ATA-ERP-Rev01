@@ -176,11 +176,10 @@ export default function SupplierInquiriesView({
   };
 
   /**
-   * Declares — or withdraws — the winning offer.
+   * Declares — or withdraws — a winning offer.
    *
-   * Only this inquiry is sent. Demoting the project's previous winner is the
-   * server's half of the same decision, so the refresh below is what shows it:
-   * the losing card may well be on a page this browser never loaded.
+   * A project may have several: one supplier for the flow meters, another for
+   * the valves. Marking this one no longer withdraws any other.
    */
   const handleSetWinner = async (inquiryId: string) => {
     const target = filteredInquiries.find(inq => inq.id === inquiryId);
