@@ -177,6 +177,44 @@ export const notifySessionExpired = () => {
  */
 setUnauthenticatedHandler(notifySessionExpired);
 
+/**
+ * The stored settings, over the defaults.
+ *
+ * The stored document was used as-is, which assumed it always carries every key
+ * the app reads. It need not: it is one JSON column written wholesale, so a
+ * document saved by an older version — or a database seeded without one, where
+ * the endpoint answers `null` — is missing whatever was added since. And these
+ * are not read defensively anywhere: `App` reads
+ * `settings.dropdownItems.categories` while rendering, so a missing branch is a
+ * white screen, not a missing dropdown.
+ *
+ * One level deep, because that is how the document is shaped: the top level is
+ * groups (`dropdownItems`, `documentFormats`, `requiredFields`), and it is a
+ * key *inside* one of those that goes missing when a new one is introduced.
+ * Arrays are taken whole — a user who empties a dropdown list means it, and
+ * merging the defaults back in would resurrect entries they deleted.
+ */
+function mergeSettings(loaded: unknown): ERPSettings {
+  if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) return DEFAULT_SETTINGS;
+
+  const stored = loaded as Record<string, unknown>;
+  const merged: Record<string, unknown> = { ...DEFAULT_SETTINGS };
+
+  for (const [key, value] of Object.entries(stored)) {
+    if (value === undefined) continue;
+    const fallback = (DEFAULT_SETTINGS as unknown as Record<string, unknown>)[key];
+    const bothPlainObjects =
+      value !== null && typeof value === "object" && !Array.isArray(value)
+      && fallback !== null && typeof fallback === "object" && !Array.isArray(fallback);
+
+    merged[key] = bothPlainObjects
+      ? { ...(fallback as object), ...(value as object) }
+      : value;
+  }
+
+  return merged as unknown as ERPSettings;
+}
+
 export function useERPStore() {
   const [settings, setSettings] = useState<ERPSettings>(DEFAULT_SETTINGS);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -196,7 +234,7 @@ export function useERPStore() {
       // object would empty every one of them on screen.
       try {
         const loaded = await settingsApi.load();
-        if (!cancelled) setSettings(loaded);
+        if (!cancelled) setSettings(mergeSettings(loaded));
       } catch (err) {
         console.error("Failed to load settings", err);
       }
