@@ -166,6 +166,7 @@ export function rowToPurchaseOrder(row: PurchaseOrderRow): PurchaseOrder {
     supplierName: row.supplier?.name ?? "",
     projectId: row.projectId ?? undefined,
     projectName: row.project?.name ?? undefined,
+    projectCode: row.project?.code ?? undefined,
     proformaId: row.proformaId ?? undefined,
     orderDate: row.orderDateJalali ?? "",
     expectedDeliveryDate: row.expectedDeliveryDateJalali ?? undefined,

@@ -24,7 +24,9 @@ import {
   Award,
   Maximize2,
   Minimize2,
-  Loader2
+  Loader2,
+  ChevronDown,
+  ChevronLeft
 } from 'lucide-react';
 import { PurchaseOrder, Supplier, Project, Product, PurchaseOrderItem, ExchangeRate, ERPSettings, Proforma, Customer, SupplierInquiry } from '../types';
 import { getTodayShamsi, addDaysToShamsi } from '../dateUtils';
@@ -229,6 +231,49 @@ export default function PurchaseOrdersView({
 
   // Delete confirm state
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  /**
+   * Which cards are open.
+   *
+   * Collapsed by default: a card carries its line items and the six-stage
+   * import timeline, so a page of them was mostly detail nobody was reading.
+   * The summary — number, status, supplier, project, the money and the actions
+   * — stays visible either way, so a collapsed card is still worth scanning.
+   */
+  const [expandedPOs, setExpandedPOs] = useState<Set<string>>(new Set());
+
+  /**
+   * The full record behind an opened card, loaded on demand.
+   *
+   * The grid holds list rows, and a row carries no line items and none of the
+   * middle milestone dates — so the items box was rendering empty, the per-unit
+   * averages were dividing by a quantity of zero, and four of the six timeline
+   * stages always read "awaiting". Opening a card is the natural moment to
+   * fetch what it needs, and it keeps the list itself cheap.
+   */
+  const [poDetails, setPoDetails] = useState<Record<string, PurchaseOrder>>({});
+  const [loadingDetail, setLoadingDetail] = useState<Set<string>>(new Set());
+
+  const togglePOExpanded = (id: string) => {
+    const opening = !expandedPOs.has(id);
+    setExpandedPOs((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+    if (!opening || poDetails[id]) return;
+    setLoadingDetail((prev) => new Set(prev).add(id));
+    void purchaseOrdersApi.get(id)
+      .then((detail) => setPoDetails((prev) => ({ ...prev, [id]: detailToPurchaseOrder(detail) })))
+      .catch((err) => reportError(err, 'بارگذاری جزئیات سفارش خرید با خطا مواجه شد.'))
+      .finally(() => setLoadingDetail((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      }));
+  };
+
   const [poToDeleteId, setPoToDeleteId] = useState<string | null>(null);
   const [poToDeleteNumber, setPoToDeleteNumber] = useState<string>('');
 
@@ -753,9 +798,13 @@ export default function PurchaseOrdersView({
 
       {/* Grid of PO cards */}
       <div className="grid grid-cols-1 gap-5">
-        {filteredPOs.map((po) => {
+        {filteredPOs.map((row) => {
+          // The loaded record when the card is open, the row otherwise. The row
+          // has no items and no middle dates, so anything derived from those
+          // has to come from here.
+          const po = poDetails[row.id] ?? row;
           const totalQty = po.items.reduce((sum, it) => sum + it.quantity, 0);
-          const landedCostAllocatedPerUnit = po.items.length > 0 
+          const landedCostAllocatedPerUnit = totalQty > 0
             ? Math.round(po.calculatedLandedCostRIYAL / totalQty)
             : 0;
 
@@ -765,13 +814,13 @@ export default function PurchaseOrdersView({
              (po.shippingCostForeign || (po.shippingCostRIYAL && po.exchangeRate ? Number((po.shippingCostRIYAL / po.exchangeRate).toFixed(2)) : 0)) + 
              (po.exchangeRate > 0 ? (po.customsDutyRIYAL / po.exchangeRate) : 0));
 
-          const landedCostAllocatedPerUnitForeign = po.items.length > 0
+          const landedCostAllocatedPerUnitForeign = totalQty > 0
             ? Number((poLandedCostForeign / totalQty).toFixed(2))
             : 0;
 
           return (
             <div 
-              key={po.id} 
+              key={row.id} 
               className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 hover:shadow-md transition flex flex-col gap-4"
             >
               <div className="flex flex-col lg:flex-row gap-6 justify-between items-start lg:items-center">
@@ -788,7 +837,17 @@ export default function PurchaseOrdersView({
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 text-xs text-slate-600">
                     <div>تأمین‌کننده: <span className="font-bold text-slate-800">{po.supplierName}</span></div>
-                    <div>پروژه مرتبط: <span className="text-slate-700 font-bold">{po.projectName || 'خرید عمومی بدون پروژه'}</span></div>
+                    <div>
+                      پروژه مرتبط:{' '}
+                      <span className="text-slate-700 font-bold">
+                        {po.projectName || 'خرید عمومی بدون پروژه'}
+                      </span>
+                      {po.projectCode && (
+                        <span className="font-mono text-[10px] text-sky-700 bg-sky-50 border border-sky-100 px-1.5 py-0.5 rounded mr-1.5">
+                          {po.projectCode}
+                        </span>
+                      )}
+                    </div>
                     {po.proformaNumber && (
                       <div>پیش‌فاکتور مرتبط: <span className="text-sky-700 font-bold">{po.proformaNumber}</span></div>
                     )}
@@ -884,9 +943,31 @@ export default function PurchaseOrdersView({
 
               </div>
 
+              {/* Line items and the import timeline: the detail, folded away by
+                  default so a page of orders stays scannable. */}
+              <button
+                type="button"
+                onClick={() => togglePOExpanded(row.id)}
+                aria-expanded={expandedPOs.has(row.id)}
+                className="w-full flex items-center justify-between gap-2 border-t border-slate-100 pt-3 text-xs font-bold text-slate-500 hover:text-sky-700 transition"
+              >
+                <span className="flex items-center gap-1.5">
+                  {expandedPOs.has(row.id) ? <ChevronDown size={15} /> : <ChevronLeft size={15} />}
+                  {expandedPOs.has(row.id) ? 'بستن جزئیات' : 'نمایش اقلام و چرخه زمانی'}
+                </span>
+                <span className="text-[10px] font-normal text-slate-400">
+                  {loadingDetail.has(row.id) ? 'در حال دریافت…' : ''}
+                </span>
+              </button>
+
+              {expandedPOs.has(row.id) && (
+                <>
               {/* Items mapping section */}
               <div className="border-t border-slate-100 pt-3">
                 <span className="text-[11px] font-bold text-slate-400 block mb-1.5">اقلام و ردیف‌های پیش‌فاکتور مرتبط این سفارش:</span>
+                {loadingDetail.has(row.id) && (
+                  <span className="text-[11px] text-slate-400">در حال دریافت اقلام…</span>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {po.items.map((it, i) => (
                     <div key={i} className="flex flex-wrap items-center justify-between text-xs bg-slate-50 px-3 py-2 rounded-xl border border-slate-100 gap-2">
@@ -943,6 +1024,8 @@ export default function PurchaseOrdersView({
                   ))}
                 </div>
               </div>
+                </>
+              )}
 
             </div>
           );

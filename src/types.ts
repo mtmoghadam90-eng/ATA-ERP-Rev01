@@ -254,6 +254,8 @@ export interface PurchaseOrder {
   supplierName: string;
   projectId?: string;
   projectName?: string;
+  /** کد پروژه، برای ارجاع سریع روی کارت سفارش. */
+  projectCode?: string;
   proformaId?: string; // پیش‌فاکتور مرتبط
   proformaNumber?: string; // شماره پیش‌فاکتور مرتبط
   orderDate: string;
