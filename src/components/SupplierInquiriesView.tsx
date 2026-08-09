@@ -1,8 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useExchangeRates } from '../api/exchangeRates';
-import {
-  computeInquiryTotals, inquiryTotalRiyal, inquiryTotalsByCurrency,
-} from '../utils/inquirySteps';
+import { computeInquiryTotals } from '../utils/inquirySteps';
 import { 
   Plus, 
   Edit, 
@@ -481,7 +479,8 @@ export default function SupplierInquiriesView({
                     <div className="flex gap-6 overflow-x-auto pb-6 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
                       {filteredInquiries.map((inq) => {
                         // Calculate total offer amount in Riyal for brief display
-                        const totalRiyal = inquiryTotalRiyal(inq.items, inq.discountPercent, inq.discountAmount);
+                        const totals = computeInquiryTotals(inq.items, inq.discountPercent, inq.discountAmount);
+                        const totalRiyal = totals.netRiyal;
                         return (
                           <div 
                             key={inq.id}
@@ -558,14 +557,33 @@ export default function SupplierInquiriesView({
                             {/* Card Body */}
                             <div className="p-4 space-y-4 flex-1">
                               {/* Total Price Brief */}
-                              <div className="flex items-center justify-between bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                                <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
-                                  <Coins size={14} className="text-slate-400" />
-                                  مجموع کل آفر (ریال):
-                                </span>
-                                <span className="text-xs font-extrabold text-sky-600">
-                                  {totalRiyal.toLocaleString('fa-IR')} <span className="text-[10px] font-normal text-slate-400">ریال</span>
-                                </span>
+                              <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
+                                    <Coins size={14} className="text-slate-400" />
+                                    مجموع کل آفر:
+                                  </span>
+                                  <span className="text-xs font-extrabold text-sky-600">
+                                    {Math.round(totalRiyal).toLocaleString('fa-IR')} <span className="text-[10px] font-normal text-slate-400">ریال</span>
+                                  </span>
+                                </div>
+                                {/* The offer's own currency, when it is quoted in one. */}
+                                {totals.currency && totals.netForeign > 0 && (
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[10px] font-bold text-slate-400">معادل ارزی:</span>
+                                    <span className="text-[11px] font-extrabold text-slate-600">
+                                      {Math.round(totals.netForeign).toLocaleString('fa-IR')} <span className="text-[10px] font-normal text-slate-400">{totals.currency}</span>
+                                    </span>
+                                  </div>
+                                )}
+                                {totals.discountRiyal > 0 && (
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[10px] font-bold text-slate-400">تخفیف:</span>
+                                    <span className="text-[10px] font-bold text-amber-600">
+                                      {Math.round(totals.discountRiyal).toLocaleString('fa-IR')} ریال
+                                    </span>
+                                  </div>
+                                )}
                               </div>
 
                               {/* Document Attachments */}
@@ -750,7 +768,8 @@ export default function SupplierInquiriesView({
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {filteredInquiries.map((inq) => {
-                          const totalRiyal = inquiryTotalRiyal(inq.items, inq.discountPercent, inq.discountAmount);
+                          const totals = computeInquiryTotals(inq.items, inq.discountPercent, inq.discountAmount);
+                          const totalRiyal = totals.netRiyal;
                           return (
                             <tr key={inq.id} className={`hover:bg-slate-50/50 transition ${inq.isWinner ? 'bg-amber-50/20' : ''}`}>
                               <td className="p-3 font-bold text-slate-800">
@@ -765,7 +784,14 @@ export default function SupplierInquiriesView({
                                 </div>
                               </td>
                               <td className="p-3 font-bold text-sky-600 font-mono text-sm">
-                                {totalRiyal.toLocaleString('fa-IR')} <span className="text-[10px] text-slate-400">ریال</span>
+                                <div>
+                                  {Math.round(totalRiyal).toLocaleString('fa-IR')} <span className="text-[10px] text-slate-400">ریال</span>
+                                </div>
+                                {totals.currency && totals.netForeign > 0 && (
+                                  <div className="text-[11px] font-bold text-slate-500">
+                                    {Math.round(totals.netForeign).toLocaleString('fa-IR')} <span className="text-[10px] font-normal text-slate-400">{totals.currency}</span>
+                                  </div>
+                                )}
                               </td>
                               <td className="p-3">
                                 <div className="space-y-1">
