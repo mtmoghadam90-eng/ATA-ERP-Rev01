@@ -1,6 +1,7 @@
 // Loads .env before anything reads process.env (PORT, DATABASE_URL, ERP_SQL_*).
 import "dotenv/config";
 import { startFileLogging } from "./src/server/logFile";
+import { checkSchema, reportSchemaState } from "./src/server/schemaCheck";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -274,7 +275,19 @@ async function startServer() {
       return res.json({ ok: false, configured: false, error: "DATABASE_URL تنظیم نشده است." });
     }
     const result = await pingDb();
-    res.status(result.ok ? 200 : 503).json({ configured: true, ...result });
+    // Reachable is not the same as correct. A database missing a migration
+    // answers every ping happily while one module 500s on everything.
+    const schema = await checkSchema();
+    res.status(result.ok ? 200 : 503).json({
+      configured: true,
+      ...result,
+      migrations: {
+        applied: schema.applied.length,
+        expected: schema.expected.length,
+        missing: schema.missing,
+        ...(schema.error ? { error: schema.error } : {}),
+      },
+    });
   });
 
   // Relational endpoints. Registered after the auth helpers exist, since they
@@ -546,6 +559,9 @@ async function startServer() {
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
     if (logFile) console.log(`Logging to ${logFile}`);
+    // After binding, so a slow or unreachable database delays the report rather
+    // than the port.
+    void reportSchemaState();
   });
 
   // Close the SQL Server pool on shutdown. A deploy restart kills this process
