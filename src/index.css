@@ -1,5 +1,28 @@
-@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&display=swap');
 @import "tailwindcss";
+
+/*
+ * Vazirmatn, served by this application rather than by Google.
+ *
+ * This used to be an `@import` from fonts.googleapis.com — a request the
+ * *browser* makes, not the server. On an internal network a client that cannot
+ * reach Google silently falls back to a system font, and the entire interface
+ * changes shape with nothing to say why. The file is checked in under
+ * `src/fonts/` (SIL Open Font License; see the licence note beside it), and
+ * Vite fingerprints it into the build like any other asset.
+ *
+ * One variable file covers every weight the app uses — 300 through 800 — in
+ * 111 KB, which is less than the six static weights it replaces, and it is one
+ * request instead of six.
+ */
+@font-face {
+  font-family: "Vazirmatn";
+  src: url("./fonts/Vazirmatn-Variable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  /* Text renders immediately in the fallback and is restyled when the font
+     arrives — over a LAN that swap is imperceptible, and a blank page is not. */
+  font-display: swap;
+}
 
 @theme {
   --font-sans: "Vazirmatn", "Inter", ui-sans-serif, system-ui, sans-serif;
