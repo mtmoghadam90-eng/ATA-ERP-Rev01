@@ -157,8 +157,8 @@ export function rowToInquiry(row: InquiryRow): SupplierInquiry {
     supplierId: row.supplierId,
     // The card reads this directly; on the server it is a join, not a column.
     supplierName: row.supplier?.name ?? "",
-    items: row.items.map(rowToItem),
-    steps: row.steps.map(rowToStep),
+    items: (row.items ?? []).map(rowToItem),
+    steps: (row.steps ?? []).map(rowToStep),
     technicalOfferUrl: row.technicalOfferUrl ?? undefined,
     financialOfferUrl: row.financialOfferUrl ?? undefined,
     discountPercent: Number(row.discountPercent ?? 0),

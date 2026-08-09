@@ -151,11 +151,11 @@ export function rowToDelivery(row: DeliveryRow): PackagingDelivery {
 
 export function detailToDelivery(detail: DeliveryDetail): PackagingDelivery {
   return {
-    ...rowToDelivery({ ...detail, _count: { items: detail.items.length } }),
+    ...rowToDelivery({ ...detail, _count: { items: (detail.items ?? []).length } }),
     preDeliveryTestNotes: detail.preDeliveryTestNotes ?? "",
     checklist: parseJson<DeliveryChecklistItem[]>(detail.checklist, []),
     photos: parseJson<string[]>(detail.photos, []),
-    items: detail.items.map((item): PackingItem => ({
+    items: (detail.items ?? []).map((item): PackingItem => ({
       id: item.id,
       itemOrDocName: item.itemOrDocName,
       productId: item.productId ?? undefined,

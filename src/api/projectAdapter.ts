@@ -69,7 +69,7 @@ export function detailToProject(detail: ProjectDetail): Project {
     endUserCustomerId: detail.endUserCustomerId ?? undefined,
     financialContactId: detail.financialContactId ?? undefined,
     technicalContactId: detail.technicalContactId ?? undefined,
-    itemsNeeded: detail.items.map((item) => ({
+    itemsNeeded: (detail.items ?? []).map((item) => ({
       // A line with no product is a generic requirement, and the forms say so
       // with this word — the column cannot hold it, because it is a foreign key.
       productId: item.productId ?? "generic",
@@ -82,7 +82,7 @@ export function detailToProject(detail: ProjectDetail): Project {
       size: item.size ?? undefined,
       tagNumber: item.tagNumber ?? undefined,
     })),
-    milestones: detail.milestones.map((m) => ({
+    milestones: (detail.milestones ?? []).map((m) => ({
       id: m.id,
       name: m.name,
       isCompleted: m.isCompleted,

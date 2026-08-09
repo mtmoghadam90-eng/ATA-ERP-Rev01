@@ -77,7 +77,7 @@ export function detailToProduct(detail: ProductDetail): Product {
     configRules: parseJson(detail.configRules, [] as Product["configRules"]),
     images: parseJson(detail.images, [] as string[]),
     customValues: parseJson(detail.customValues, {} as Record<string, unknown>),
-    variants: detail.variants.map(variantToClient),
+    variants: (detail.variants ?? []).map(variantToClient),
     // The price calculator's inputs are stored together as one blob and spread
     // back onto the record, which is where the form reads them from.
     ...parseJson<Record<string, unknown>>(detail.priceCalc, {}),

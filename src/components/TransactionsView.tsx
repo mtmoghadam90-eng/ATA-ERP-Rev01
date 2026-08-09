@@ -319,6 +319,9 @@ export default function TransactionsView({
     setDupMatches([]);
     setDupPayload(null);
     if (created && created.id) {
+      // Pinned so the field it was created from can show it: the picker's
+      // suggestions were fetched before this record existed.
+      customerPicker.include(created as any);
       setCustomerId(created.id);
       setShowQuickCustomerModal(false);
     }
@@ -2374,6 +2377,7 @@ export default function TransactionsView({
                   if (addSupplier) {
                     const created = await addSupplier(supData);
                     if (created && created.id) {
+                      supplierPicker.include(created as any);
                       setSupplierId(created.id);
                       setShowQuickSupplierModal(false);
                     }
@@ -2502,6 +2506,7 @@ export default function TransactionsView({
                   if (addProject) {
                     const created = await addProject(projData);
                     if (created && created.id) {
+                      projectPicker.include(created as any);
                       setProjectId(created.id);
                       setPartyType('customer');
                       setCustomerId(quickProjCustomerId);

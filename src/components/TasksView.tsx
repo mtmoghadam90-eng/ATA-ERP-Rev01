@@ -31,6 +31,9 @@ import { useUserDirectory } from '../api/useUserDirectory';
 import { useEntitySearch } from '../api/useEntitySearch';
 import type { CustomerRow } from '../api/customers';
 import type { ProjectRow } from '../api/projects';
+import { projectsApi } from '../api/projects';
+import { createCustomerWithLinks } from '../api/customerAdapter';
+import { detailToProject, projectToWriteInput } from '../api/projectAdapter';
 
 /**
  * Tasks board.
@@ -43,15 +46,11 @@ import type { ProjectRow } from '../api/projects';
 interface TasksViewProps {
   settings: ERPSettings;
   currentUser?: { fullName: string; role?: string } | null;
-  addCustomer?: (customer: Omit<Customer, 'id' | 'createdAt'>) => Promise<Customer | null>;
-  addProject?: (project: Omit<Project, 'id' | 'code' | 'creationDate'>) => Promise<Project | null>;
 }
 
 export default function TasksView({
   settings,
   currentUser,
-  addCustomer,
-  addProject
 }: TasksViewProps) {
   // Declared before the pickers below, which are disabled while it is closed.
   const [showModal, setShowModal] = useState(false);
@@ -92,6 +91,33 @@ export default function TasksView({
     // a console nobody has open. The detail goes on the alert too.
     console.error(fallback, err);
     alert(`${fallback}\n\n${(err as Error)?.message ?? String(err)}`);
+  };
+
+  /**
+   * Quick-add helpers for the "related to" picker.
+   *
+   * These used to be store methods handed down from `App`. App stopped passing
+   * them when the store was emptied, so both were `undefined` — and since the
+   * buttons render only when the prop is there, the quick-add buttons on this
+   * screen simply were not on the page. They call the API directly now, as the
+   * other screens do.
+   */
+  const addCustomer = async (customer: Partial<Customer>) => {
+    try {
+      return await createCustomerWithLinks(customer);
+    } catch (err) {
+      reportError(err, 'ثبت مشتری با خطا مواجه شد.');
+      return null;
+    }
+  };
+
+  const addProject = async (project: Partial<Project>) => {
+    try {
+      return detailToProject(await projectsApi.create(projectToWriteInput(project as any)));
+    } catch (err) {
+      reportError(err, 'ثبت پروژه با خطا مواجه شد.');
+      return null;
+    }
   };
 
   const addTask = async (task: Partial<Task>) => {

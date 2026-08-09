@@ -117,10 +117,10 @@ export function rowToService(row: ServiceRow): AfterSalesService {
 
 export function detailToService(detail: ServiceDetail): AfterSalesService {
   return {
-    ...rowToService({ ...detail, _count: { items: detail.items.length } }),
+    ...rowToService({ ...detail, _count: { items: (detail.items ?? []).length } }),
     issueDescription: detail.issueDescription ?? "",
     actionsTaken: detail.actionsTaken ?? "",
-    items: detail.items.map((item): AfterSalesServiceItem => ({
+    items: (detail.items ?? []).map((item): AfterSalesServiceItem => ({
       id: item.id,
       productId: item.productId ?? undefined,
       productName: item.productName,

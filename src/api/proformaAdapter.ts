@@ -53,7 +53,7 @@ export function rowToProforma(row: ProformaRow): Proforma {
     // A list row carries only what the grid prints beside the customer — each
     // line's name, quantity and status. Prices and specs arrive with the detail
     // record, which is the only place they are needed.
-    items: row.items.map((item) => ({
+    items: (row.items ?? []).map((item) => ({
       id: item.id,
       productName: item.productName,
       quantity: Number(item.quantity),
@@ -87,7 +87,7 @@ export function detailToProforma(detail: ProformaDetail): Proforma {
     sentMethod: detail.sentMethod ?? undefined,
     sentRecipients: parseJson<string[]>(detail.sentRecipients, []),
     customValues: parseJson<Record<string, unknown>>(detail.customValues, {}),
-    items: detail.items.map((item) => ({
+    items: (detail.items ?? []).map((item) => ({
       id: item.id,
       productId: item.productId ?? "",
       variantId: item.variantId ?? undefined,

@@ -185,7 +185,7 @@ export function rowToPurchaseOrder(row: PurchaseOrderRow): PurchaseOrder {
 
 export function detailToPurchaseOrder(detail: PurchaseOrderDetail): PurchaseOrder {
   return markComplete({
-    ...rowToPurchaseOrder({ ...detail, _count: { items: detail.items.length } }),
+    ...rowToPurchaseOrder({ ...detail, _count: { items: (detail.items ?? []).length } }),
     paymentDate: detail.paymentDateJalali ?? undefined,
     goodsReadyDate: detail.goodsReadyDateJalali ?? undefined,
     shipmentDate: detail.shipmentDateJalali ?? undefined,
@@ -198,7 +198,7 @@ export function detailToPurchaseOrder(detail: PurchaseOrderDetail): PurchaseOrde
     notes: detail.notes ?? "",
     customValues: parseJson<Record<string, unknown>>(detail.customValues, {}),
     proformaNumber: detail.proforma?.proformaNumber,
-    items: detail.items.map((item) => ({
+    items: (detail.items ?? []).map((item) => ({
       id: item.id,
       productId: item.productId ?? "",
       variantId: item.variantId ?? undefined,

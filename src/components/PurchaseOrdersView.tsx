@@ -50,6 +50,12 @@ import type { SupplierRow } from '../api/suppliers';
 import type { ProjectRow } from '../api/projects';
 import type { ProformaRow } from '../api/proformas';
 import type { CustomerRow } from '../api/customers';
+import { suppliersApi, detailToSupplier, supplierToWriteInput } from '../api/suppliers';
+import { projectsApi } from '../api/projects';
+import { productsApi } from '../api/products';
+import { detailToProject, projectToWriteInput } from '../api/projectAdapter';
+import { detailToProduct, productToWriteInput } from '../api/productAdapter';
+import { createCustomerWithLinks } from '../api/customerAdapter';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 
 /**
@@ -67,11 +73,7 @@ interface PurchaseOrdersViewProps {
   // the landed cost and the stock receipt come back from the server that
   // computed them.
   settings: ERPSettings;
-  addSupplier?: (supplier: Omit<Supplier, 'id' | 'createdAt'>) => Supplier | any;
-  addProject?: (project: Omit<Project, 'id' | 'code' | 'creationDate'> & { customValues?: Record<string, any> }) => Project | any;
-  addProduct?: (product: any) => any;
   customers?: Customer[];
-  addCustomer?: (customer: any) => any;
   currentUser?: any;
   categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
@@ -81,10 +83,6 @@ export default function PurchaseOrdersView({
   onClearInitialPrintDocId,
   supplierInquiries = [],
   settings,
-  addSupplier,
-  addProject,
-  addProduct,
-  addCustomer,
   currentUser,
   categoryCompletion,
 }: PurchaseOrdersViewProps) {
@@ -119,6 +117,51 @@ export default function PurchaseOrdersView({
     // a console nobody has open. The detail goes on the alert too.
     console.error(fallback, err);
     alert(`${fallback}\n\n${(err as Error)?.message ?? String(err)}`);
+  };
+
+  /**
+   * Quick-add helpers for the form's pickers.
+   *
+   * These arrived as props from `App` and held store methods. App stopped
+   * passing them when the store was emptied, so all four were `undefined` — and
+   * because each button renders only when its prop is present, the quick-add
+   * buttons on this screen were not on the page at all. They call the API
+   * directly now, as the other screens do.
+   */
+  const addSupplier = async (supplier: Partial<Supplier>) => {
+    try {
+      return detailToSupplier(await suppliersApi.create(supplierToWriteInput(supplier)));
+    } catch (err) {
+      reportError(err, 'ثبت تأمین‌کننده با خطا مواجه شد.');
+      return null;
+    }
+  };
+
+  const addProject = async (project: Partial<Project>) => {
+    try {
+      return detailToProject(await projectsApi.create(projectToWriteInput(project as any)));
+    } catch (err) {
+      reportError(err, 'ثبت پروژه با خطا مواجه شد.');
+      return null;
+    }
+  };
+
+  const addProduct = async (product: Partial<Product>) => {
+    try {
+      return detailToProduct(await productsApi.create(productToWriteInput(product as any)));
+    } catch (err) {
+      reportError(err, 'ثبت کالا با خطا مواجه شد.');
+      return null;
+    }
+  };
+
+  const addCustomer = async (customer: Partial<Customer>) => {
+    try {
+      return await createCustomerWithLinks(customer);
+    } catch (err) {
+      reportError(err, 'ثبت مشتری با خطا مواجه شد.');
+      return null;
+    }
   };
 
   const addPurchaseOrder = async (po: Partial<PurchaseOrder>) => {
@@ -2132,7 +2175,7 @@ export default function PurchaseOrdersView({
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   if (!quickSupName.trim()) {
                     alert('لطفاً نام تامین‌کننده را وارد کنید.');
                     return;
@@ -2155,12 +2198,14 @@ export default function PurchaseOrdersView({
                     notes: 'ثبت سریع از سفارش خرید خارجی'
                   };
 
-                  if (addSupplier) {
-                    const created = addSupplier(supData);
-                    if (created && created.id) {
-                      setSupplierId(created.id);
-                      setShowQuickSupplierModal(false);
-                    }
+                  // Awaited: without it `created` was the promise, `created.id`
+                  // undefined, and the button did nothing visible even though the
+                  // supplier had been written.
+                  const created = await addSupplier(supData);
+                  if (created && created.id) {
+                    supplierPicker.include(created as any);
+                    setSupplierId(created.id);
+                    setShowQuickSupplierModal(false);
                   }
                 }}
                 className="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition"
@@ -2273,7 +2318,7 @@ export default function PurchaseOrdersView({
               </button>
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   if (!quickProjName.trim()) {
                     alert('لطفاً نام پروژه را وارد کنید.');
                     return;
@@ -2299,12 +2344,11 @@ export default function PurchaseOrdersView({
                     customValues: {}
                   };
 
-                  if (addProject) {
-                    const created = addProject(projData);
-                    if (created && created.id) {
-                      setProjectId(created.id);
-                      setShowQuickProjectModal(false);
-                    }
+                  const created = await addProject(projData);
+                  if (created && created.id) {
+                    projectPicker.include(created as any);
+                    setProjectId(created.id);
+                    setShowQuickProjectModal(false);
                   }
                 }}
                 className="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition"

@@ -47,7 +47,7 @@ export function rowToCustomer(row: CustomerRow): Customer {
     province: row.province ?? undefined,
     city: row.city ?? undefined,
     tags: row.tags ?? undefined,
-    linkedCustomerIds: row.linksFrom.map((link) => link.to.id),
+    linkedCustomerIds: (row.linksFrom ?? []).map((link) => link.to.id),
     customValues: parseCustomValues(row.customValues),
     // Present on the detail record only; the grid does not show them.
     contactName: "",
@@ -64,7 +64,7 @@ export function detailToCustomer(detail: CustomerDetail): Customer {
     keyPerson: detail.keyPerson ?? undefined,
     address: detail.address ?? undefined,
     notes: detail.notes ?? undefined,
-    moduleAgreements: detail.agreements.map((a) => ({
+    moduleAgreements: (detail.agreements ?? []).map((a) => ({
       id: a.id,
       moduleName: a.moduleName,
       text: a.text,
@@ -75,13 +75,6 @@ export function detailToCustomer(detail: CustomerDetail): Customer {
   } as Customer);
 }
 
-/**
- * A form's state, as the write endpoint wants it.
- *
- * `linkedCustomerIds` and `moduleAgreements` are deliberately absent: they have
- * their own endpoints, because each is a relationship the server maintains on
- * both sides rather than a column on this record.
- */
 /**
  * Asks the server which existing customers the candidate looks like.
  *
@@ -140,6 +133,13 @@ export async function createCustomerWithLinks(customer: Partial<Customer>): Prom
   }
 }
 
+/**
+ * A form's state, as the write endpoint wants it.
+ *
+ * `linkedCustomerIds` and `moduleAgreements` are deliberately absent: they have
+ * their own endpoints, because each is a relationship the server maintains on
+ * both sides rather than a column on this record.
+ */
 export function customerToWriteInput(customer: Partial<Customer>): CustomerWriteInput {
   assertComplete(customer, "مشتری");
   const isLegal = customer.customerType === "حقوقی";

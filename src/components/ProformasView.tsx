@@ -692,6 +692,10 @@ export default function ProformasView({
     setDupMatches([]);
     setDupPayload(null);
     if (created && created.id) {
+      // Pinned so the field it was created from can show it: the picker's
+      // suggestions were fetched before this record existed.
+      customerPicker.include(created as any);
+      contactPicker.include(created as any);
       setCustomerId(created.id);
       setShowQuickCustomerModal(false);
     }
@@ -5872,6 +5876,7 @@ export default function ProformasView({
                   if (addProject) {
                     const created = await addProject(projData);
                     if (created && created.id) {
+                      projectPicker.include(created as any);
                       setProjectId(created.id);
                       setCustomerId(quickProjCustomerId);
                       setShowQuickProjectModal(false);
