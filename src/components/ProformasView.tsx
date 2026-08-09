@@ -732,6 +732,26 @@ export default function ProformasView({
   const modalCustomers = customerPicker.matches as unknown as Customer[];
 
   /**
+   * The contact field searches separately.
+   *
+   * Both fields list customers, but sharing one picker would mean the term
+   * typed into the buyer field decides what the contact field can offer — and
+   * the other way round.
+   */
+  const contactPicker = useEntitySearch<CustomerRow>({
+    path: '/api/customers',
+    limit: 50,
+    enabled: modalOpen && !!customerId,
+    // Scoped on the server to people linked to the buyer, which is what the
+    // field means. It used to be a client-side filter over the buyer picker's
+    // page, so a contact that page did not happen to contain was unofferable.
+    params: { customerType: 'حقیقی', linkedTo: customerId || undefined },
+    selectedId: contactCustomerId || null,
+    getLabel: (row) => row.companyName,
+  });
+  const contactCustomers = contactPicker.matches as unknown as Customer[];
+
+  /**
    * The projects the form can choose from.
    *
    * The list below is assembled from the proformas on the page, which is right
@@ -3662,9 +3682,14 @@ export default function ProformasView({
                           }
                         }
                       }}
+                      onSearchChange={projectPicker.setTerm}
+                      loading={projectPicker.loading}
                       options={[
                         { value: "", label: "بدون پروژه (خرید مستقیم)" },
-                        ...projects.map((p) => ({
+                        // The picker's own matches, not the merged list the grid
+                        // reads: that one also carries the projects the page's
+                        // rows refer to, which the search never asked for.
+                        ...projectPicker.matches.map((p) => ({
                           value: p.id,
                           label: `${p.name} (${p.code})`,
                         })),
@@ -3718,6 +3743,8 @@ export default function ProformasView({
                         }
                       }}
                       required={isFieldRequired(settings, 'proformas', 'customerId')}
+                      onSearchChange={customerPicker.setTerm}
+                      loading={customerPicker.loading}
                       options={[
                         { value: "", label: "-- انتخاب مشتری --" },
                         ...buildCustomerOptions(modalCustomers),
@@ -3790,13 +3817,18 @@ export default function ProformasView({
                   );
                   const isLegalCustomer =
                     selectedCustObj?.customerType === "حقوقی";
+                  // The linked contacts the server found, plus the namesake
+                  // fallback this field has always had.
                   const filteredContacts = isLegalCustomer
-                    ? modalCustomers.filter(
-                        (c) =>
-                          c.customerType === "حقیقی" &&
-                          (selectedCustObj.linkedCustomerIds?.includes(c.id) ||
-                            c.companyName === selectedCustObj.companyName),
-                      )
+                    ? [
+                        ...contactCustomers,
+                        ...modalCustomers.filter(
+                          (c) =>
+                            c.customerType === "حقیقی" &&
+                            c.companyName === selectedCustObj.companyName &&
+                            !contactCustomers.some((k) => k.id === c.id),
+                        ),
+                      ]
                     : [];
                   if (!isLegalCustomer) return null;
                   return (
@@ -3829,9 +3861,11 @@ export default function ProformasView({
                               }
                             }}
                             required={isFieldRequired(settings, 'proformas', 'contactCustomerId')}
+                            onSearchChange={contactPicker.setTerm}
+                            loading={contactPicker.loading}
                             options={[
                               { value: "", label: "-- انتخاب مخاطب --" },
-                              ...buildCustomerOptionsFromSubset(filteredContacts, modalCustomers),
+                              ...buildCustomerOptionsFromSubset(filteredContacts, [...contactCustomers, ...modalCustomers]),
                             ]}
                             placeholder="-- انتخاب مخاطب --"
                           />
@@ -4333,8 +4367,16 @@ export default function ProformasView({
                                     wrapperClassName="w-full min-w-0"
                                     value={item.productId}
                                     onChange={(val) => handleItemProductChange(idx, val)}
+                                    onSearchChange={productPicker.setTerm}
+                                    loading={productPicker.loading}
                                     options={[
                                       { value: "", label: "-- انتخاب کالا --" },
+                                      // A row's own product must stay selectable whatever is
+                                      // being searched for: every row shares one options list,
+                                      // so typing in one would otherwise blank the others.
+                                      ...(item.productId && !products.some(p => p.id === item.productId)
+                                        ? [{ value: item.productId, label: item.productName || item.productId }]
+                                        : []),
                                       ...products.map((p) => {
                                         let stockText = "";
                                         const hasVariants = p.hasVariants || (p.variants && p.variants.length > 0);
@@ -5948,7 +5990,10 @@ export default function ProformasView({
               // The pickers were filled before this record existed, so pin it —
               // otherwise the field is set to an id the select has no option
               // for, and renders its placeholder as though nothing was created.
-              if (quickAddType === "customer") customerPicker.include(newEntity);
+              if (quickAddType === "customer") {
+                customerPicker.include(newEntity);
+                contactPicker.include(newEntity);
+              }
               else if (quickAddType === "project") projectPicker.include(newEntity);
               else if (quickAddType === "product") productPicker.include(newEntity);
               if (quickAddType === "customer") {

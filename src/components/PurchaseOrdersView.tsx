@@ -107,41 +107,6 @@ export default function PurchaseOrdersView({
     () => list.rows.map(rowToPurchaseOrder), [list.rows],
   );
 
-  /** Pickers, searched on the server and idle while the form is closed. */
-  const supplierPicker = useEntitySearch<SupplierRow>({
-    path: '/api/suppliers', limit: 25, enabled: showCreateModal,
-    getLabel: (row) => row.name,
-  });
-  const projectPicker = useEntitySearch<ProjectRow>({
-    path: '/api/projects', limit: 25, enabled: showCreateModal,
-    params: { withSummary: 'false' },
-    getLabel: (row) => row.name,
-  });
-  const proformaPicker = useEntitySearch<ProformaRow>({
-    path: '/api/proformas', limit: 25, enabled: showCreateModal,
-    getLabel: (row) => row.proformaNumber,
-  });
-  const customerPicker = useEntitySearch<CustomerRow>({
-    path: '/api/customers', limit: 25, enabled: showCreateModal,
-    getLabel: (row) => row.companyName,
-  });
-  const productPicker = useEntitySearch<import('../api/products').ProductRow>({
-    path: '/api/products', limit: 100, enabled: showCreateModal,
-    getLabel: (row) => row.displayName,
-  });
-
-  const suppliers = supplierPicker.matches as unknown as Supplier[];
-  const projects = projectPicker.matches as unknown as Project[];
-  const proformas = proformaPicker.matches as unknown as Proforma[];
-  const customers = customerPicker.matches as unknown as Customer[];
-  const products = productPicker.matches.map(row => ({
-    ...row,
-    name: row.displayName,
-    variants: [],
-    features: [],
-    configRules: [],
-    images: [],
-  })) as unknown as Product[];
 
   /** Reports a failed call using the server's own Persian sentence. */
   const reportError = (err: unknown, fallback: string) => {
@@ -306,6 +271,45 @@ export default function PurchaseOrdersView({
   const [supplierId, setSupplierId] = useState('');
   const [projectId, setProjectId] = useState('');
   const [proformaId, setProformaId] = useState('');
+
+  /** Pickers, searched on the server and idle while the form is closed. */
+  const supplierPicker = useEntitySearch<SupplierRow>({
+    path: '/api/suppliers', limit: 25, enabled: showCreateModal,
+    selectedId: supplierId || null,
+    getLabel: (row) => row.name,
+  });
+  const projectPicker = useEntitySearch<ProjectRow>({
+    path: '/api/projects', limit: 25, enabled: showCreateModal,
+    params: { withSummary: 'false' },
+    selectedId: projectId || null,
+    getLabel: (row) => row.name,
+  });
+  const proformaPicker = useEntitySearch<ProformaRow>({
+    path: '/api/proformas', limit: 25, enabled: showCreateModal,
+    selectedId: proformaId || null,
+    getLabel: (row) => row.proformaNumber,
+  });
+  const customerPicker = useEntitySearch<CustomerRow>({
+    path: '/api/customers', limit: 25, enabled: showCreateModal,
+    getLabel: (row) => row.companyName,
+  });
+  const productPicker = useEntitySearch<import('../api/products').ProductRow>({
+    path: '/api/products', limit: 100, enabled: showCreateModal,
+    getLabel: (row) => row.displayName,
+  });
+
+  const suppliers = supplierPicker.matches as unknown as Supplier[];
+  const projects = projectPicker.matches as unknown as Project[];
+  const proformas = proformaPicker.matches as unknown as Proforma[];
+  const customers = customerPicker.matches as unknown as Customer[];
+  const products = productPicker.matches.map(row => ({
+    ...row,
+    name: row.displayName,
+    variants: [],
+    features: [],
+    configRules: [],
+    images: [],
+  })) as unknown as Product[];
   // Editable PO number. Blank on create means "generate it".
   const [poNumber, setPoNumber] = useState("");
   const [orderDate, setOrderDate] = useState(getTodayShamsi());
@@ -1368,6 +1372,8 @@ export default function PurchaseOrdersView({
                         }
                       }}
                       required={isFieldRequired(settings, 'purchaseOrders', 'projectId')}
+                      onSearchChange={projectPicker.setTerm}
+                      loading={projectPicker.loading}
                       options={[
                         { value: '', label: 'خرید عمومی (بدون پروژه)' },
                         ...projects.map(p => ({ value: p.id, label: `${p.name} (${p.code})` }))
@@ -1446,6 +1452,8 @@ export default function PurchaseOrdersView({
                       value={supplierId}
                       onChange={(val) => setSupplierId(val)}
                       required={isFieldRequired(settings, 'purchaseOrders', 'supplierId')}
+                      onSearchChange={supplierPicker.setTerm}
+                      loading={supplierPicker.loading}
                       options={[
                         { value: '', label: '-- انتخاب سازنده --' },
                         ...suppliers.map(s => ({ value: s.id, label: `${s.name} (${s.country})` }))
@@ -1501,6 +1509,8 @@ export default function PurchaseOrdersView({
                       }
                     }}
                     required={isFieldRequired(settings, 'purchaseOrders', 'proformaId')}
+                    onSearchChange={proformaPicker.setTerm}
+                    loading={proformaPicker.loading}
                     options={[
                       { value: '', label: 'خرید متفرقه (بدون ارتباط با پیش‌فاکتور)' },
                       ...proformas.map(pf => ({ value: pf.id, label: `${pf.proformaNumber} - ${pf.customerName}` }))
@@ -1682,8 +1692,16 @@ export default function PurchaseOrdersView({
                             <SearchableSelect wrapperClassName="w-full min-w-0"
                               value={item.productId}
                               onChange={(val) => handleItemProductChange(idx, val)}
+                              onSearchChange={productPicker.setTerm}
+                              loading={productPicker.loading}
                               options={[
                                 { value: '', label: '-- انتخاب کالا --' },
+                                // A row's own product must stay selectable whatever is being
+                                // searched for: every row shares one options list, so typing
+                                // in one would otherwise blank the labels of the rest.
+                                ...(item.productId && !products.some(p => p.id === item.productId)
+                                  ? [{ value: item.productId, label: item.productName || item.productId }]
+                                  : []),
                                 ...products.map(p => {
                                   let stockText = "";
                                   const hasVariants = p.hasVariants || (p.variants && p.variants.length > 0);

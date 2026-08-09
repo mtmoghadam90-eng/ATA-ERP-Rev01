@@ -146,10 +146,18 @@ export function useEntitySearch<T extends { id: string }>(
     setPinned((prev) => (prev.some((r) => r.id === row.id) ? prev : [...prev, row]));
   }, []);
 
-  // Pinned records lead, and never appear twice.
-  const visible = pinned.length === 0
+  /**
+   * What the field should offer: the suggestions, plus two records that must
+   * stay available whichever term is being typed — anything pinned, and the
+   * value currently held. Without the second, typing in a picker makes the
+   * field's own selection disappear from the list and the select falls back to
+   * its placeholder, which reads as the value having been cleared.
+   */
+  const extra = [...pinned];
+  if (selected && !extra.some((row) => row.id === selected.id)) extra.push(selected);
+  const visible = extra.length === 0
     ? matches
-    : [...pinned, ...matches.filter((row) => !pinned.some((p) => p.id === row.id))];
+    : [...extra, ...matches.filter((row) => !extra.some((e) => e.id === row.id))];
 
   return {
     term,

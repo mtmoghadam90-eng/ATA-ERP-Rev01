@@ -126,29 +126,6 @@ export default function TransactionsView({
     order: 'desc',
   });
 
-  /** Pickers, searched on the server and idle while the form is closed. */
-  const customerPicker = useEntitySearch<CustomerRow>({
-    path: '/api/customers', limit: 25, enabled: showModal,
-    getLabel: (row) => row.companyName,
-  });
-  const supplierPicker = useEntitySearch<SupplierRow>({
-    path: '/api/suppliers', limit: 25, enabled: showModal,
-    getLabel: (row) => row.name,
-  });
-  const projectPicker = useEntitySearch<ProjectRow>({
-    path: '/api/projects', limit: 25, enabled: showModal,
-    params: { withSummary: 'false' },
-    getLabel: (row) => row.name,
-  });
-  const proformaPicker = useEntitySearch<ProformaRow>({
-    path: '/api/proformas', limit: 25, enabled: showModal,
-    getLabel: (row) => row.proformaNumber,
-  });
-
-  const customers = customerPicker.matches as unknown as Customer[];
-  const suppliers = supplierPicker.matches as unknown as Supplier[];
-  const projects = projectPicker.matches as unknown as Project[];
-  const proformas = proformaPicker.matches as unknown as Proforma[];
 
   /** Reports a failed call using the server's own Persian sentence. */
   const reportError = (err: unknown, fallback: string) => {
@@ -292,6 +269,38 @@ export default function TransactionsView({
   const [isDirectForeign, setIsDirectForeign] = useState<boolean>(false);
   const [status, setStatus] = useState<Transaction['status']>('تأیید شده');
   const [reversalOfTransactionId, setReversalOfTransactionId] = useState('');
+
+  /** Pickers, searched on the server and idle while the form is closed. */
+  const customerPicker = useEntitySearch<CustomerRow>({
+    path: '/api/customers', limit: 25, enabled: showModal,
+    selectedId: customerId || null,
+    getLabel: (row) => row.companyName,
+  });
+  const supplierPicker = useEntitySearch<SupplierRow>({
+    path: '/api/suppliers', limit: 25, enabled: showModal,
+    selectedId: supplierId || null,
+    getLabel: (row) => row.name,
+  });
+  const projectPicker = useEntitySearch<ProjectRow>({
+    path: '/api/projects', limit: 25, enabled: showModal,
+    params: { withSummary: 'false' },
+    selectedId: projectId || null,
+    getLabel: (row) => row.name,
+  });
+  // Scoped to the chosen project on the server. It used to fetch a page of
+  // proformas and filter it here, so a project whose proformas were not on that
+  // page offered none of them.
+  const proformaPicker = useEntitySearch<ProformaRow>({
+    path: '/api/proformas', limit: 25, enabled: showModal,
+    params: { projectId: projectId || undefined },
+    selectedId: proformaId || null,
+    getLabel: (row) => row.proformaNumber,
+  });
+
+  const customers = customerPicker.matches as unknown as Customer[];
+  const suppliers = supplierPicker.matches as unknown as Supplier[];
+  const projects = projectPicker.matches as unknown as Project[];
+  const proformas = proformaPicker.matches as unknown as Proforma[];
 
   // Inline editing states for incomplete financial data
   const [editingHistoricalRates, setEditingHistoricalRates] = useState<Record<string, number>>({});
@@ -1715,6 +1724,8 @@ export default function TransactionsView({
                       value={customerId}
                       onChange={(val) => setCustomerId(val)}
                       required
+                      onSearchChange={customerPicker.setTerm}
+                      loading={customerPicker.loading}
                       options={[
                         { value: '', label: '-- انتخاب مشتری --' },
                         ...buildCustomerOptions(customers)
@@ -1744,6 +1755,8 @@ export default function TransactionsView({
                         value={supplierId}
                         onChange={(val) => setSupplierId(val)}
                         required
+                        onSearchChange={supplierPicker.setTerm}
+                        loading={supplierPicker.loading}
                         options={[
                           { value: '', label: '-- انتخاب تأمین‌کننده --' },
                           ...suppliers.map(s => ({ value: s.id, label: `${s.name} (${s.country})` }))
@@ -1876,6 +1889,8 @@ export default function TransactionsView({
                           }
                         }
                       }}
+                      onSearchChange={projectPicker.setTerm}
+                      loading={projectPicker.loading}
                       options={[
                         { value: '', label: '-- فاقد پروژه (صندوق عمومی) --' },
                         ...projects.map(p => ({ value: p.id, label: `${p.name} (${p.code})` }))
@@ -1911,10 +1926,11 @@ export default function TransactionsView({
                           }
                         }
                       }}
+                      onSearchChange={proformaPicker.setTerm}
+                      loading={proformaPicker.loading}
                       options={[
                         { value: '', label: '-- فاقد پیش‌فاکتور (آزاد در سطح پروژه) --' },
                         ...proformas
-                          .filter(pf => pf.projectId === projectId)
                           .map(pf => ({
                             value: pf.id,
                             label: `${pf.proformaNumber} (${pf.currency || 'ریال'}) - مبلغ: ${pf.finalAmount?.toLocaleString('fa-IR')}`

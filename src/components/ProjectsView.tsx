@@ -294,6 +294,21 @@ export default function ProjectsView({
     path: '/api/customers',
     limit: 25,
     getLabel: (row) => row.companyName,
+    selectedId: customerId || null,
+    enabled: showModal,
+  });
+
+  /**
+   * The end-user field searches separately.
+   *
+   * It lists customers too, but one shared picker would mean the term typed
+   * into the buyer field decides what this one can offer, and the reverse.
+   */
+  const endUserPicker = useEntitySearch<CustomerRow>({
+    path: '/api/customers',
+    limit: 25,
+    getLabel: (row) => row.companyName,
+    selectedId: endUser || null,
     enabled: showModal,
   });
 
@@ -319,6 +334,7 @@ export default function ProjectsView({
   /** Products currently offered by the picker, for resolving a chosen id. */
   const products = productPicker.matches as unknown as Product[];
   const customers = customerPicker.matches as unknown as Customer[];
+  const endUserCustomers = endUserPicker.matches as unknown as Customer[];
   const linkedContacts = linkedContactsPicker.matches as unknown as Customer[];
 
   /**
@@ -3385,6 +3401,8 @@ export default function ProjectsView({
                       value={customerId}
                       onChange={(val) => setCustomerId(val)}
                       required={isFieldRequired(settings, 'projects', 'customerId')}
+                      onSearchChange={customerPicker.setTerm}
+                      loading={customerPicker.loading}
                       options={[
                         { value: '', label: '-- انتخاب مشتری --' },
                         ...buildCustomerOptions(customers)
@@ -3421,9 +3439,11 @@ export default function ProjectsView({
                       value={endUser}
                       onChange={(val) => setEndUser(val)}
                       required={isFieldRequired(settings, 'projects', 'endUser')}
+                      onSearchChange={endUserPicker.setTerm}
+                      loading={endUserPicker.loading}
                       options={[
                         { value: '', label: '-- انتخاب مصرف‌کننده (مشتری) --' },
-                        ...buildCustomerOptions(customers)
+                        ...buildCustomerOptions(endUserCustomers)
                       ]}
                       placeholder="-- انتخاب مصرف‌کننده (مشتری) --"
                     />
@@ -3863,7 +3883,17 @@ export default function ProjectsView({
                                     <SearchableSelect wrapperClassName="flex-1 min-w-0"
                                       value={item.productId}
                                       onChange={(val) => handleItemProductChange(index, val)}
-                                      options={products.map(p => {
+                                      onSearchChange={productPicker.setTerm}
+                                      loading={productPicker.loading}
+                                      options={[
+                                      // A row's own product must stay selectable whatever is
+                                      // being searched for: every row shares one options list,
+                                      // so typing in one would otherwise blank the others.
+                                      ...(item.productId && item.productId !== 'generic'
+                                        && !products.some(p => p.id === item.productId)
+                                        ? [{ value: item.productId, label: item.name || item.productId }]
+                                        : []),
+                                      ...products.map(p => {
                                         const details = '';
                                         const detailsText = details ? ` (${details})` : '';
                                         let stockText = "";
@@ -3898,7 +3928,7 @@ export default function ProjectsView({
                                           value: p.id,
                                           label: `${p.code} - ${p.displayName}${detailsText}${stockText}`
                                         };
-                                      })}
+                                      })]}
                                       placeholder="-- انتخاب کالا --"
                                       className="text-xs"
                                     />
@@ -5258,6 +5288,7 @@ export default function ProjectsView({
               // for, and renders its placeholder as though nothing was created.
               if (quickAddType === 'customer') {
                 customerPicker.include(newEntity);
+                endUserPicker.include(newEntity);
                 linkedContactsPicker.include(newEntity);
               } else if (quickAddType === 'product') {
                 productPicker.include(newEntity);
