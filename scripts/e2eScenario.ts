@@ -193,6 +193,22 @@ async function run(options: Options): Promise<void> {
   const me = await api.get<{ user: { id: string } }>("/api/me");
   checkEqual("/api/me agrees who we are", me.user?.id, login.user.id);
 
+  /*
+   * What is already here.
+   *
+   * Printed before anything is written, because this is normally run against a
+   * server whose database is the real one. Non-zero counts are the moment to
+   * press Ctrl-C if that was not the intention.
+   */
+  const existingCustomers = await api.get<{ total: number }>("/api/customers?pageSize=1");
+  const existingProjects = await api.get<{ total: number }>("/api/projects?pageSize=1&withSummary=false");
+  log(`   this database already holds ${existingCustomers.total} customer(s)`
+    + ` and ${existingProjects.total} project(s)`);
+  if (existingCustomers.total + existingProjects.total > 0) {
+    log("   → it is not empty. Ctrl-C now if you did not mean to write to it.");
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+
   /* ------------------------------------------------------------- customer */
   beginStep("Customer");
   const customer = (await api.post<{ customer: Record<string, unknown> }>("/api/customers", {
