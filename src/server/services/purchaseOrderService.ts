@@ -394,15 +394,120 @@ export async function createPurchaseOrder(
         projectId: po.projectId,
         categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
         text:
-          `صدور سفارش خرید (شماره: ${po.poNumber}) برای تأمین‌کننده` +
-          ` «${await supplierNameOf(po.supplierId)}» جهت تأمین اقلام پروژه.`,
+          `صدور سفارش خرید شماره ${po.poNumber} به تأمین‌کننده` +
+          ` «${await supplierNameOf(po.supplierId)}» به ارزش` +
+          ` ${Number(po.totalForeignAmount ?? 0).toLocaleString("en-US")} ${po.currency}` +
+          ` برای تأمین ${po.items?.length ?? 0} قلم کالای پروژه.`,
+      },
+      user,
+      todayJalali,
+    );
+
+    // Dates entered on the form the first time it was opened are milestones
+    // too. Only an update used to be examined, so an order created with its
+    // payment and ready dates already filled in recorded none of them.
+    await logPurchaseOrderMilestones(po as unknown as Record<string, unknown>, null, user, todayJalali);
+  }
+
+  return po;
+}
+
+
+/* ------------------------- the import timeline ------------------------- */
+
+/**
+ * What each milestone date on a purchase order means, as a sentence.
+ *
+ * The timeline used to record only two things about an order: that it was
+ * issued, and that its *status* changed. The dates are the milestones people
+ * actually fill in — payment sent, goods ready, shipped, cleared, received —
+ * and filling them in produced nothing at all. Entering them while first
+ * creating the order produced nothing either, because only an update was
+ * examined and a creation has nothing to compare against.
+ *
+ * The sentences name the order, the supplier and the date, because the feed is
+ * read by people who were not part of the purchase and have only this to go on.
+ */
+const PO_MILESTONE_TEXT: Record<string, (c: MilestoneContext) => string> = {
+  orderDate: (c) =>
+    `سفارش خرید شماره ${c.poNumber} به تأمین‌کننده «${c.supplier}» در تاریخ ${c.date} ثبت و به سازنده ابلاغ شد.`,
+  paymentDate: (c) =>
+    `وجه سفارش خرید شماره ${c.poNumber} به مبلغ ${c.amount} ${c.currency} در تاریخ ${c.date}` +
+    ` به تأمین‌کننده «${c.supplier}» حواله شد.`,
+  goodsReadyDate: (c) =>
+    `کالای سفارش خرید شماره ${c.poNumber} نزد تأمین‌کننده «${c.supplier}» در تاریخ ${c.date}` +
+    ` آماده حمل اعلام شد.`,
+  shipmentDate: (c) =>
+    `محموله سفارش خرید شماره ${c.poNumber} (تأمین‌کننده «${c.supplier}») در تاریخ ${c.date}` +
+    ` از مبدأ حمل شد.`,
+  clearanceDate: (c) =>
+    `محموله سفارش خرید شماره ${c.poNumber} در تاریخ ${c.date} از گمرک ترخیص شد.`,
+  receivedDate: (c) =>
+    `کالای سفارش خرید شماره ${c.poNumber} (تأمین‌کننده «${c.supplier}») در تاریخ ${c.date}` +
+    ` تحویل گرفته شد و به انبار وارد گردید.`,
+  expectedDeliveryDate: (c) =>
+    `زمان تحویل پیش‌بینی‌شده سفارش خرید شماره ${c.poNumber} تاریخ ${c.date} تعیین شد.`,
+};
+
+interface MilestoneContext {
+  poNumber: string;
+  supplier: string;
+  date: string;
+  amount: string;
+  currency: string;
+}
+
+/** The Jalali column that carries each milestone. */
+const jalaliColumn = (field: string) => `${field}Jalali`;
+
+/**
+ * Records every milestone date that has just been filled in or moved.
+ *
+ * `before` is null for a newly created order, in which case every date it
+ * carries is new. A date that is cleared is not reported: removing a date is a
+ * correction, and the feed is a record of what happened.
+ */
+async function logPurchaseOrderMilestones(
+  po: Record<string, unknown>,
+  before: Record<string, unknown> | null,
+  user: AuthUser,
+  todayJalali: string,
+): Promise<void> {
+  const projectId = po.projectId as string | null;
+  if (!projectId) return;
+
+  const context: MilestoneContext = {
+    poNumber: String(po.poNumber ?? ""),
+    supplier: await supplierNameOf(po.supplierId as string),
+    date: "",
+    amount: Number(po.totalForeignAmount ?? 0).toLocaleString("en-US"),
+    currency: String(po.currency ?? ""),
+  };
+
+  for (const field of PO_DATE_FIELDS) {
+    const column = jalaliColumn(field);
+    const now = (po[column] as string | null) ?? null;
+    if (!now) continue;
+
+    const was = before ? ((before[column] as string | null) ?? null) : null;
+    if (was === now) continue;
+
+    const write = PO_MILESTONE_TEXT[field];
+    if (!write) continue;
+
+    const text = write({ ...context, date: now });
+    await logProjectFact(
+      {
+        projectId,
+        categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
+        // A date that moved says so, rather than reading as if it had just
+        // happened for the first time.
+        text: was ? `${text} (تاریخ پیشین: ${was} — اصلاح شد)` : text,
       },
       user,
       todayJalali,
     );
   }
-
-  return po;
 }
 
 export async function updatePurchaseOrder(
@@ -500,13 +605,21 @@ export async function updatePurchaseOrder(
           projectId: po.projectId,
           categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
           text:
-            `تغییر وضعیت سفارش خرید (شماره: ${po.poNumber}) مرتبط با تأمین‌کننده` +
-            ` «${await supplierNameOf(po.supplierId)}» به «${po.status}».`,
+            `وضعیت سفارش خرید شماره ${po.poNumber} (تأمین‌کننده` +
+            ` «${await supplierNameOf(po.supplierId)}») از «${before.status}»` +
+            ` به «${po.status}» تغییر کرد.`,
         },
         user,
         todayJalali,
       );
     }
+
+    await logPurchaseOrderMilestones(
+      po as unknown as Record<string, unknown>,
+      before as unknown as Record<string, unknown>,
+      user,
+      todayJalali,
+    );
   }
 
   return po;

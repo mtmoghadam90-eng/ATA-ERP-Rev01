@@ -222,6 +222,51 @@ function resolveAmount(input: TransactionInput, data: Record<string, unknown>): 
   }
 }
 
+
+/* ----------------------- the project's money timeline ---------------------- */
+
+const money = (value: unknown): string => Number(value ?? 0).toLocaleString("en-US");
+
+/**
+ * One transaction, in a sentence someone outside the deal can follow.
+ *
+ * The feed is read by people who were not part of the purchase — the point of
+ * these entries is that the project's history can be reconstructed from them
+ * alone. So each says which document, which direction, how much, against what,
+ * by which method and on what date, rather than "ثبت تراکنش ... مبلغ ...".
+ */
+function describeTransaction(
+  t: {
+    type?: string | null;
+    documentNumber?: string | null;
+    amountRial?: unknown;
+    amountForeign?: unknown;
+    currency?: string | null;
+    paymentType?: string | null;
+    occurredAtJalali?: string | null;
+    status?: string | null;
+    description?: string | null;
+  },
+  verb: "ثبت" | "ویرایش",
+): string {
+  const incoming = t.type === RECEIPT;
+  const direction = incoming ? "دریافت وجه از کارفرما" : "پرداخت وجه به تأمین‌کننده";
+
+  // A foreign-currency document is quoted in its own currency as well: the rial
+  // figure alone tells the reader nothing about what was actually agreed.
+  const foreign = Number(t.amountForeign ?? 0) > 0 && t.currency && t.currency !== "ریال"
+    ? ` (معادل ${money(t.amountForeign)} ${t.currency})`
+    : "";
+
+  return (
+    `${verb} سند ${incoming ? "دریافت" : "پرداخت"} شماره ${t.documentNumber || "-"}:` +
+    ` ${direction} به مبلغ ${money(t.amountRial)} ریال${foreign}` +
+    ` از طریق ${t.paymentType || "نامشخص"} در تاریخ ${t.occurredAtJalali || "-"}` +
+    ` — وضعیت سند: ${t.status || "-"}.` +
+    (t.description ? ` شرح: ${t.description}` : "")
+  );
+}
+
 export async function createTransaction(input: TransactionInput, user: AuthUser, todayJalali: string) {
   if (!allowed(user)) return null;
   const data = scalarData(input);
@@ -273,10 +318,7 @@ export async function createTransaction(input: TransactionInput, user: AuthUser,
     {
       projectId: transaction.projectId,
       categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
-      text:
-        `ثبت تراکنش ${transaction.type === "دریافت" ? "دریافت وجه از مشتری" : "پرداخت وجه به تامین‌کننده"}` +
-        ` بابت پروژه به مبلغ ${Number(transaction.amountRial ?? 0).toLocaleString()} ریال` +
-        ` (روش: ${transaction.paymentType || "-"}، تاریخ: ${transaction.occurredAtJalali || "-"})`,
+      text: describeTransaction(transaction, "ثبت"),
     },
     user,
     todayJalali,
@@ -337,10 +379,7 @@ export async function updateTransaction(
     {
       projectId: transaction.projectId,
       categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
-      text:
-        `ویرایش تراکنش ${transaction.type === "دریافت" ? "دریافت وجه" : "پرداخت وجه"} بابت پروژه` +
-        ` (مبلغ جدید: ${Number(transaction.amountRial ?? 0).toLocaleString()} ریال،` +
-        ` تاریخ: ${transaction.occurredAtJalali || "-"})`,
+      text: describeTransaction(transaction, "ویرایش"),
     },
     user,
     todayJalali,
@@ -422,9 +461,10 @@ export async function reverseTransaction(
       projectId: original.projectId,
       categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
       text:
-        `ابطال تراکنش ${original.type === RECEIPT ? "دریافت وجه" : "پرداخت وجه"} با سند ${documentNumber}` +
-        ` (سند ابطال‌شده: ${original.documentNumber || "-"}،` +
-        ` مبلغ: ${Number(original.amountRial ?? 0).toLocaleString()} ریال)`,
+        `سند ${original.type === RECEIPT ? "دریافت" : "پرداخت"} شماره ${original.documentNumber || "-"}` +
+        ` به مبلغ ${money(original.amountRial)} ریال ابطال شد.` +
+        ` سند اصلاحی (معکوس) با شماره ${documentNumber} صادر گردید؛` +
+        ` اثر مالی این دو سند یکدیگر را خنثی می‌کند و مانده پروژه به وضعیت پیش از سند اصلی بازمی‌گردد.`,
     },
     user,
     todayJalali,
@@ -482,8 +522,9 @@ export async function deleteTransaction(
         projectId: transaction.projectId,
         categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
         text:
-          `حذف تراکنش ${transaction.type === "دریافت" ? "دریافت وجه" : "پرداخت وجه"} مربوط به پروژه` +
-          ` (مبلغ: ${Number(transaction.amountRial ?? 0).toLocaleString()} ریال)`,
+          `سند ${transaction.type === "دریافت" ? "دریافت" : "پرداخت"} شماره` +
+          ` ${transaction.documentNumber || "-"} به مبلغ ${money(transaction.amountRial)} ریال` +
+          ` (تاریخ ${transaction.occurredAtJalali || "-"}) از سیستم حذف شد و از مانده پروژه کسر گردید.`,
       },
       user,
       todayJalali,

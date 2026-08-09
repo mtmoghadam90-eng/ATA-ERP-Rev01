@@ -230,9 +230,13 @@ export async function createDelivery(input: DeliveryInput, user: AuthUser, today
         projectId: delivery.projectId,
         categoryName: ACTIVITY_CATEGORY.DELIVERIES,
         text:
-          `شروع عملیات «بسته‌بندی و ارسال» کالا برای خروج از انبار` +
-          ` (شماره پکینگ‌لیست: ${delivery.packingListNumber}،` +
-          ` وضعیت فعلی: ${delivery.actualDeliveryDate ? "تحویل شده" : "در حال آماده‌سازی"}).`,
+          `پکینگ‌لیست شماره ${delivery.packingListNumber} برای خروج ${(input.items ?? []).length} قلم کالا` +
+          ` از انبار توسط {actor} صادر شد` +
+          (delivery.deliveryDateJalali ? ` (تاریخ سند: ${delivery.deliveryDateJalali})` : "") +
+          `. وضعیت فعلی محموله: ` +
+          (delivery.actualDeliveryDateJalali
+            ? `تحویل‌شده به کارفرما در تاریخ ${delivery.actualDeliveryDateJalali}.`
+            : "در حال آماده‌سازی و بسته‌بندی؛ هنوز به کارفرما تحویل نشده است.")
       },
       user,
       todayJalali,
@@ -313,8 +317,10 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
         projectId: delivery.projectId,
         categoryName: ACTIVITY_CATEGORY.DELIVERIES,
         text:
-          `تغییر وضعیت عملیات «بسته‌بندی و ارسال» کالا` +
-          ` (شماره پکینگ‌لیست: ${delivery.packingListNumber}) به «${newStatus}».`,
+          `وضعیت پکینگ‌لیست شماره ${delivery.packingListNumber} به «${newStatus}» تغییر کرد` +
+          (delivery.actualDeliveryDateJalali
+            ? `؛ تاریخ تحویل قطعی به کارفرما: ${delivery.actualDeliveryDateJalali}.`
+            : "؛ محموله هنوز تحویل کارفرما نشده است.")
       },
       user,
       todayJalali,
@@ -459,7 +465,9 @@ export async function deleteDelivery(
     {
       projectId: existing.projectId,
       categoryName: ACTIVITY_CATEGORY.DELIVERIES,
-      text: `رکورد بسته‌بندی و ارسال شماره ${existing.packingListNumber} حذف گردید.`,
+      text:
+        `پکینگ‌لیست شماره ${existing.packingListNumber} توسط {actor} حذف شد؛` +
+        ` اقلام آن دیگر به عنوان تحویل‌شده به کارفرما محسوب نمی‌شوند.`,
     },
     user,
     todayJalali,
@@ -681,8 +689,10 @@ export async function createService(input: ServiceInput, user: AuthUser, todayJa
         projectId: service.projectId,
         categoryName: ACTIVITY_CATEGORY.AFTER_SALES,
         text:
-          `ثبت درخواست خدمات پس از فروش برای کالای «${service.itemName || "نامشخص"}»` +
-          ` (شرح خرابی: ${service.issueDescription || "-"}، وضعیت: ${service.status}).`,
+          `درخواست خدمات پس از فروش برای کالای «${service.itemName || "نامشخص"}» توسط {actor} ثبت شد.` +
+          ` شرح ایراد اعلام‌شده: ${service.issueDescription || "ثبت نشده"}.` +
+          (service.startDateJalali ? ` تاریخ شروع رسیدگی: ${service.startDateJalali}.` : "") +
+          ` وضعیت فعلی رسیدگی: ${service.status}.`,
       },
       user,
       todayJalali,
@@ -761,8 +771,9 @@ export async function updateService(id: string, input: ServiceInput, user: AuthU
         projectId: service.projectId,
         categoryName: ACTIVITY_CATEGORY.AFTER_SALES,
         text:
-          `تغییر وضعیت درخواست خدمات پس از فروش کالای «${service.itemName || "نامشخص"}»` +
-          ` به «${service.status}» (اقدامات انجام‌شده: ${service.actionsTaken || "-"}).`,
+          `وضعیت رسیدگی به درخواست خدمات پس از فروش کالای «${service.itemName || "نامشخص"}»` +
+          ` به «${service.status}» تغییر کرد.` +
+          ` اقدامات انجام‌شده: ${service.actionsTaken || "تاکنون اقدامی ثبت نشده است"}.`,
       },
       user,
       todayJalali,

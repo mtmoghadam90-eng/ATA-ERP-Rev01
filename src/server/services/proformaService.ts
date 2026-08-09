@@ -501,9 +501,12 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
       projectId: proforma.projectId,
       categoryName: ACTIVITY_CATEGORY.PROFORMAS,
       text:
-        `صدور پیش‌فاکتور جدید (شماره: ${proforma.proformaNumber}) با مبلغ کل` +
-        ` ${Number(proforma.finalAmount ?? 0).toLocaleString("fa-IR")} ${proforma.currency || "ریال"}` +
-        ` (کاربر ثبت‌کننده: {actor}، وضعیت: ${proforma.status}).`,
+        `پیش‌فاکتور شماره ${proforma.proformaNumber} شامل ${(input.items ?? []).length} قلم کالا` +
+        ` به مبلغ کل ${Number(proforma.finalAmount ?? 0).toLocaleString("en-US")}` +
+        ` ${proforma.currency || "ریال"} توسط {actor} صادر شد` +
+        (proforma.issueDateJalali ? ` (تاریخ صدور: ${proforma.issueDateJalali}` : " (")
+        + (proforma.expiryDateJalali ? `، اعتبار تا ${proforma.expiryDateJalali}` : "")
+        + `، وضعیت سند: ${proforma.status}).`,
     },
     user,
     todayJalali,
@@ -620,9 +623,12 @@ export async function updateProforma(
         // the document store logged a status change as its own entry, but on
         // this side both arrive through the same write.
         text:
-          `ویرایش پیش‌فاکتور (شماره: ${result.proforma.proformaNumber}).` +
+          `پیش‌فاکتور شماره ${result.proforma.proformaNumber} توسط {actor} ویرایش شد` +
+          ` (مبلغ کل پس از ویرایش: ${Number(result.proforma.finalAmount ?? 0).toLocaleString("en-US")}` +
+          ` ${result.proforma.currency || "ریال"}).` +
           (oldOutcome !== newOutcome
-            ? ` وضعیت نهایی اقلام پیش‌فاکتور به «${newOutcome}» تغییر یافت.`
+            ? ` نتیجه اقلام این پیش‌فاکتور از «${oldOutcome}» به «${newOutcome}» تغییر یافت،` +
+              ` و وضعیت پروژه بر همین اساس بازمحاسبه شد.`
             : ""),
       },
       user,
@@ -710,7 +716,9 @@ export async function deleteProforma(
       {
         projectId: existing.projectId,
         categoryName: ACTIVITY_CATEGORY.PROFORMAS,
-        text: `پیش‌فاکتور شماره ${existing.proformaNumber} از سیستم حذف شد.`,
+        text:
+          `پیش‌فاکتور شماره ${existing.proformaNumber} توسط {actor} از سیستم حذف شد؛` +
+          ` اقلام آن دیگر جزو تعهدات پروژه محسوب نمی‌شوند و وضعیت پروژه بازمحاسبه گردید.`,
       },
       user,
       todayJalali,

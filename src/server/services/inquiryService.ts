@@ -464,9 +464,10 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
         projectId: inquiry.projectId,
         categoryName: ACTIVITY_CATEGORY.INQUIRIES,
         text:
-          `ثبت درخواست استعلام قیمت از تأمین‌کننده «${await inquirySupplierName(inquiry.supplierId)}»` +
-          ` برای ${(inquiry.items || []).length} قلم کالا` +
-          ` (مبلغ اعلامی: ${summary.amount}، وضعیت: ${summary.status}).`,
+          `استعلام قیمت از تأمین‌کننده «${await inquirySupplierName(inquiry.supplierId)}»` +
+          ` برای ${(inquiry.items || []).length} قلم از اقلام پروژه توسط {actor} ثبت شد` +
+          (inquiry.creationDateJalali ? ` (تاریخ استعلام: ${inquiry.creationDateJalali})` : "") +
+          `. مبلغ آفر: ${summary.amount}. مرحله فعلی: ${summary.status}.`,
       },
       user,
       todayJalali,
@@ -570,8 +571,12 @@ export async function updateInquiry(
         projectId: inquiry.projectId,
         categoryName: ACTIVITY_CATEGORY.INQUIRIES,
         text:
-          `بروزرسانی استعلام قیمت تأمین‌کننده «${await inquirySupplierName(inquiry.supplierId)}»` +
-          ` — ${summary.status} (مبلغ اعلامی: ${summary.amount}).`,
+          `استعلام قیمت تأمین‌کننده «${await inquirySupplierName(inquiry.supplierId)}» بروزرسانی شد` +
+          ` — مرحله فعلی: ${summary.status}، مبلغ آفر: ${summary.amount}.` +
+          (inquiry.isWinner
+            ? ` این آفر به عنوان یکی از پیشنهادهای برنده پروژه انتخاب شده است` +
+              (inquiry.winnerDateJalali ? ` (تاریخ انتخاب: ${inquiry.winnerDateJalali})` : "") + "."
+            : ""),
       },
       user,
       todayJalali,
@@ -690,8 +695,8 @@ export async function deleteInquiry(
       projectId: existing.projectId,
       categoryName: ACTIVITY_CATEGORY.INQUIRIES,
       text:
-        `استعلام قیمت مربوط به تأمین‌کننده` +
-        ` ${await inquirySupplierName(existing.supplierId)} حذف گردید.`,
+        `استعلام قیمت تأمین‌کننده «${await inquirySupplierName(existing.supplierId)}»` +
+        ` توسط {actor} حذف شد و دیگر در مقایسه پیشنهادهای پروژه لحاظ نمی‌شود.`,
     },
     user,
     todayJalali,
