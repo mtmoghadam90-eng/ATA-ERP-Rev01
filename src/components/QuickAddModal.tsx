@@ -7,11 +7,11 @@ import { uploadFile } from '../imageUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import { IRAN_PROVINCES, canonicalizeProvince } from '../utils/iranProvinces';
 import { getContactInfoError } from '../utils/customerValidation';
-import { findCustomerDuplicates, DuplicateMatch } from '../utils/customerDuplicates';
+import type { DuplicateMatch } from '../utils/customerDuplicates';
 import DuplicateCustomerModal from './DuplicateCustomerModal';
 import { SearchableSelect } from './SearchableSelect';
 import { customersApi } from '../api/customers';
-import { detailToCustomer } from '../api/customerAdapter';
+import { detailToCustomer, findServerDuplicates } from '../api/customerAdapter';
 import { getTodayShamsi } from '../dateUtils';
 
 interface QuickAddModalProps {
@@ -348,10 +348,16 @@ export default function QuickAddModal({
       } as Omit<Customer, 'id' | 'createdAt'>;
 
       // Warn before creating a record that looks like an existing customer.
-      const matches = findCustomerDuplicates(payload, customers);
-      if (matches.length > 0) {
-        setDupPayload(payload);
-        setDupMatches(matches);
+      // Asked of the server: the picker holds a page, not the customer base.
+      try {
+        const matches = await findServerDuplicates(payload);
+        if (matches.length > 0) {
+          setDupPayload(payload);
+          setDupMatches(matches);
+          return;
+        }
+      } catch {
+        alert('بررسی مشتری تکراری انجام نشد. لطفاً دوباره تلاش کنید.');
         return;
       }
 

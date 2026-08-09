@@ -40,7 +40,7 @@ import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/required
 import { buildCustomerOptions } from '../utils/customerLabel';
 import { getContactInfoError } from '../utils/customerValidation';
 import { getCodeError } from '../utils/documentCodes';
-import { findCustomerDuplicates, DuplicateMatch } from '../utils/customerDuplicates';
+import type { DuplicateMatch } from '../utils/customerDuplicates';
 import DuplicateCustomerModal from './DuplicateCustomerModal';
 import { ApiError } from '../api/client';
 import { detailToTransaction, rowToTransaction, transactionsApi, transactionToWriteInput } from '../api/transactions';
@@ -55,7 +55,7 @@ import { customersApi } from '../api/customers';
 import { suppliersApi, detailToSupplier, supplierToWriteInput } from '../api/suppliers';
 import { projectsApi } from '../api/projects';
 import { proformasApi } from '../api/proformas';
-import { customerToWriteInput, detailToCustomer } from '../api/customerAdapter';
+import { createCustomerWithLinks, customerToWriteInput, detailToCustomer, findServerDuplicates } from '../api/customerAdapter';
 import { projectToWriteInput, detailToProject } from '../api/projectAdapter';
 import { detailToProforma, proformaToWriteInput } from '../api/proformaAdapter';
 
@@ -152,7 +152,15 @@ export default function TransactionsView({
 
   /** Reports a failed call using the server's own Persian sentence. */
   const reportError = (err: unknown, fallback: string) => {
-    alert(err instanceof ApiError ? err.message : fallback);
+    if (err instanceof ApiError) {
+      alert(err.message);
+      return;
+    }
+    // Not a refusal from the server: a bug on this side, and until now it read
+    // exactly like one — the same generic sentence, with the real cause only in
+    // a console nobody has open. The detail goes on the alert too.
+    console.error(fallback, err);
+    alert(`${fallback}\n\n${(err as Error)?.message ?? String(err)}`);
   };
 
   /**
@@ -161,8 +169,7 @@ export default function TransactionsView({
    */
   const addCustomer = async (customer: Omit<Customer, 'id' | 'createdAt'>) => {
     try {
-      const created = await customersApi.create(customerToWriteInput(customer as any));
-      return detailToCustomer(created);
+      return await createCustomerWithLinks(customer as any);
     } catch (err) {
       reportError(err, 'ثبت مشتری با خطا مواجه شد.');
       return null;
@@ -2208,17 +2215,24 @@ export default function TransactionsView({
                     custData.contactLastName = quickCustLastName;
                   }
 
-                  // Warn before creating a record that looks like an existing customer.
-                  const dupes = findCustomerDuplicates(
-                    { ...custData, customerType: quickCustType },
-                    customers,
-                  );
-                  if (dupes.length > 0) {
-                    setDupPayload(custData);
-                    setDupMatches(dupes);
-                    return;
-                  }
-                  commitQuickCustomer(custData);
+                  // Warn before creating a record that looks like an existing
+                  // customer. Asked of the server: the picker holds a page, not
+                  // the customer base.
+                  void (async () => {
+                    let dupes;
+                    try {
+                      dupes = await findServerDuplicates({ ...custData, customerType: quickCustType });
+                    } catch {
+                      alert('بررسی مشتری تکراری انجام نشد. لطفاً دوباره تلاش کنید.');
+                      return;
+                    }
+                    if (dupes.length > 0) {
+                      setDupPayload(custData);
+                      setDupMatches(dupes);
+                      return;
+                    }
+                    commitQuickCustomer(custData);
+                  })();
                 }}
                 className="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition"
               >

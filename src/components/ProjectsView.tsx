@@ -36,7 +36,7 @@ import { useEntitySearch } from '../api/useEntitySearch';
 import type { CustomerRow } from '../api/customers';
 import { customersApi } from '../api/customers';
 import { productsApi } from '../api/products';
-import { customerToWriteInput, detailToCustomer } from '../api/customerAdapter';
+import { createCustomerWithLinks, customerToWriteInput, detailToCustomer } from '../api/customerAdapter';
 import { productToWriteInput, detailToProduct } from '../api/productAdapter';
 
 /**
@@ -93,7 +93,15 @@ export default function ProjectsView({
 
   /** Reports a failed call using the server's own Persian sentence. */
   const reportError = (err: unknown, fallback: string) => {
-    alert(err instanceof ApiError ? err.message : fallback);
+    if (err instanceof ApiError) {
+      alert(err.message);
+      return;
+    }
+    // Not a refusal from the server: a bug on this side, and until now it read
+    // exactly like one — the same generic sentence, with the real cause only in
+    // a console nobody has open. The detail goes on the alert too.
+    console.error(fallback, err);
+    alert(`${fallback}\n\n${(err as Error)?.message ?? String(err)}`);
   };
 
   /**
@@ -102,8 +110,7 @@ export default function ProjectsView({
    */
   const addCustomer = async (c: any) => {
     try {
-      const created = await customersApi.create(customerToWriteInput(c));
-      return detailToCustomer(created);
+      return await createCustomerWithLinks(c);
     } catch (err) {
       reportError(err, 'ثبت مشتری با خطا مواجه شد.');
       return null;
@@ -148,7 +155,15 @@ export default function ProjectsView({
 
   /** Surfaces a failed feed mutation using the server's own Persian sentence. */
   const reportActivityError = (err: unknown, fallback: string) => {
-    alert(err instanceof ApiError ? err.message : fallback);
+    if (err instanceof ApiError) {
+      alert(err.message);
+      return;
+    }
+    // Not a refusal from the server: a bug on this side, and until now it read
+    // exactly like one — the same generic sentence, with the real cause only in
+    // a console nobody has open. The detail goes on the alert too.
+    console.error(fallback, err);
+    alert(`${fallback}\n\n${(err as Error)?.message ?? String(err)}`);
   };
 
   /**

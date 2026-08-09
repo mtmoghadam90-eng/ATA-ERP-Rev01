@@ -83,7 +83,15 @@ export default function TasksView({
 
   /** Reports a failed call using the server's own Persian sentence. */
   const reportError = (err: unknown, fallback: string) => {
-    alert(err instanceof ApiError ? err.message : fallback);
+    if (err instanceof ApiError) {
+      alert(err.message);
+      return;
+    }
+    // Not a refusal from the server: a bug on this side, and until now it read
+    // exactly like one — the same generic sentence, with the real cause only in
+    // a console nobody has open. The detail goes on the alert too.
+    console.error(fallback, err);
+    alert(`${fallback}\n\n${(err as Error)?.message ?? String(err)}`);
   };
 
   const addTask = async (task: Partial<Task>) => {
@@ -756,4 +764,4 @@ export default function TasksView({
 
     </div>
   );
-}
+}
