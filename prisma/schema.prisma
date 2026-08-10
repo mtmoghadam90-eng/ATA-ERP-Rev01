@@ -763,6 +763,15 @@ model PackagingDelivery {
   shippingMethod       String? @db.NVarChar(100)
   preDeliveryTestNotes String? @db.NVarChar(Max)
 
+  /// How the shipment can be traced: the waybill, who drove it, and the
+  /// courier's tracking code. The save warns when a freight or courier
+  /// shipment has none of these.
+  waybillNumber String? @db.NVarChar(100)
+  driverName    String? @db.NVarChar(200)
+  driverPhone   String? @db.NVarChar(30)
+  vehiclePlate  String? @db.NVarChar(50)
+  trackingCode  String? @db.NVarChar(100)
+
   /// Snapshot of the checklist as ticked for this shipment, and photo paths.
   checklist String? @db.NVarChar(Max)
   photos    String? @db.NVarChar(Max)

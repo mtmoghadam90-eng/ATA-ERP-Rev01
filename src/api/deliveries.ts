@@ -33,6 +33,10 @@ export interface DeliveryRow {
   deliveryDateJalali: string | null;
   actualDeliveryDateJalali: string | null;
   shippingMethod: string | null;
+  /** Shown on the card; the rest arrive with the record. */
+  waybillNumber: string | null;
+  trackingCode: string | null;
+  driverName: string | null;
   createdAt: string;
   project: { id: string; code: string; name: string } | null;
   proforma: { id: string; proformaNumber: string } | null;
@@ -43,6 +47,8 @@ export interface DeliveryRow {
 
 export interface DeliveryDetail extends Omit<DeliveryRow, "_count"> {
   preDeliveryTestNotes: string | null;
+  driverPhone: string | null;
+  vehiclePlate: string | null;
   checklist: string | null;
   photos: string | null;
   items: PackingItemRow[];
@@ -56,6 +62,11 @@ export interface DeliveryWriteInput {
   actualDeliveryDate?: string | null;
   shippingMethod?: string | null;
   preDeliveryTestNotes?: string | null;
+  waybillNumber?: string | null;
+  driverName?: string | null;
+  driverPhone?: string | null;
+  vehiclePlate?: string | null;
+  trackingCode?: string | null;
   checklist?: unknown;
   photos?: unknown;
   items?: Record<string, unknown>[];
@@ -143,6 +154,9 @@ export function rowToDelivery(row: DeliveryRow): PackagingDelivery {
     deliveryDate: row.deliveryDateJalali ?? "",
     actualDeliveryDate: row.actualDeliveryDateJalali ?? undefined,
     shippingMethod: row.shippingMethod ?? "",
+    waybillNumber: row.waybillNumber ?? undefined,
+    trackingCode: row.trackingCode ?? undefined,
+    driverName: row.driverName ?? undefined,
     preDeliveryTestNotes: "",
     checklist: [],
     // A row carries no lines — only how many there are, and how many units they
@@ -160,6 +174,8 @@ export function detailToDelivery(detail: DeliveryDetail): PackagingDelivery {
   return {
     ...rowToDelivery({ ...detail, _count: { items: (detail.items ?? []).length } }),
     preDeliveryTestNotes: detail.preDeliveryTestNotes ?? "",
+    driverPhone: detail.driverPhone ?? undefined,
+    vehiclePlate: detail.vehiclePlate ?? undefined,
     checklist: parseJson<DeliveryChecklistItem[]>(detail.checklist, []),
     photos: parseJson<string[]>(detail.photos, []),
     itemCount: (detail.items ?? []).length,
@@ -188,6 +204,11 @@ export function deliveryToWriteInput(delivery: Partial<PackagingDelivery>): Deli
     actualDeliveryDate: delivery.actualDeliveryDate || null,
     shippingMethod: delivery.shippingMethod ?? null,
     preDeliveryTestNotes: delivery.preDeliveryTestNotes ?? null,
+    waybillNumber: delivery.waybillNumber ?? null,
+    driverName: delivery.driverName ?? null,
+    driverPhone: delivery.driverPhone ?? null,
+    vehiclePlate: delivery.vehiclePlate ?? null,
+    trackingCode: delivery.trackingCode ?? null,
     checklist: delivery.checklist,
     photos: delivery.photos,
     items: (delivery.items ?? []).map((item) => ({

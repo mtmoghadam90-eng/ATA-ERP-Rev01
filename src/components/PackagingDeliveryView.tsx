@@ -155,6 +155,15 @@ export default function PackagingDeliveryView({
   const [useItemizedDeliveryDates, setUseItemizedDeliveryDates] = useState<boolean>(false);
   const [shippingMethod, setShippingMethod] = useState<string>(settings.dropdownItems.shippingMethods?.[0] || 'باربری');
   const [preDeliveryTestNotes, setPreDeliveryTestNotes] = useState<string>('');
+
+  /* How the shipment can be traced. The save has always warned when a courier
+     or freight delivery had none of these recorded; there was nowhere to put
+     them, so it read the delivery report looking for a number. */
+  const [waybillNumber, setWaybillNumber] = useState<string>('');
+  const [driverName, setDriverName] = useState<string>('');
+  const [driverPhone, setDriverPhone] = useState<string>('');
+  const [vehiclePlate, setVehiclePlate] = useState<string>('');
+  const [trackingCode, setTrackingCode] = useState<string>('');
   const [packingItems, setPackingItems] = useState<PackingItem[]>([]);
   const [checklist, setChecklist] = useState<DeliveryChecklistItem[]>([]);
   const [photos, setPhotos] = useState<string[]>([]);
@@ -476,10 +485,22 @@ export default function PackagingDeliveryView({
     }));
   };
 
-  const downloadPackagingDeliveryHTML = (delivery: PackagingDelivery) => {
+  /**
+   * The printable packing list.
+   *
+   * `perBox` produces one page per box instead of one document listing them
+   * all: the same header and signatures, but only that box's contents, so each
+   * page can be printed and stuck on the box it describes. Everything is still
+   * one file — the pages are separated by a print page break, which is what
+   * makes "print all" produce the right stack.
+   */
+  const downloadPackagingDeliveryHTML = (
+    delivery: PackagingDelivery,
+    perBox = false,
+  ) => {
     const template = activeTemplate;
     if (!template) return;
-    
+
     // Group items by box
     const itemsByBox = delivery.items.reduce((acc, item) => {
       const box = item.boxNumber || 'اقلام بدون شماره جعبه';
@@ -488,7 +509,9 @@ export default function PackagingDeliveryView({
       return acc;
     }, {} as Record<string, typeof delivery.items>);
 
-    const itemsTables = Object.entries(itemsByBox).map(([box, items], boxIdx) => {
+    const boxCount = Object.keys(itemsByBox).length;
+
+    const renderBoxTable = ([box, items]: [string, typeof delivery.items], boxIdx: number) => {
       const itemsRows = items.map((item, index) => {
         const prod = item.productId ? documentProducts[item.productId] : undefined;
         const brandStr = overrideShowBrand && prod?.brand ? ` (${prod.brand})` : '';
@@ -530,9 +553,26 @@ export default function PackagingDeliveryView({
           </table>
         </div>
       `;
-    }).join('');
+    };
 
-    
+    const shipmentRows = [
+      ['شماره بارنامه', delivery.waybillNumber],
+      ['کد رهگیری', delivery.trackingCode],
+      ['نام راننده', delivery.driverName],
+      ['تلفن راننده', delivery.driverPhone],
+      ['پلاک خودرو', delivery.vehiclePlate],
+    ].filter(([, value]) => !!value);
+
+    const shipmentBlock = shipmentRows.length === 0 ? '' : `
+      <div style="margin-top: 16px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">
+        <div style="font-weight: bold; font-size: 12px; color: #0f172a; margin-bottom: 8px;">اطلاعات حمل و پیگیری</div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 11px; color: #334155;">
+          ${shipmentRows.map(([label, value]) =>
+            `<div><span style="color: #64748b;">${label}:</span> <strong style="font-family: monospace;">${value}</strong></div>`,
+          ).join('')}
+        </div>
+      </div>
+    `;
 
     const preDeliveryNotes = delivery.preDeliveryTestNotes ? `
       <div style="margin-bottom: 20px;">
@@ -542,6 +582,101 @@ export default function PackagingDeliveryView({
         </div>
       </div>
     ` : '';
+
+  const buildSheet = (sheetTables: string, sheetHeading: string, sheetBreakClass: string) => `
+    <div class="container${sheetBreakClass}">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo-box">
+                ${template.showLogo ? `
+                ${template.logoUrl ? `
+                    <img src="${template.logoUrl}" alt="${template.companyName}" style="width: 48px; height: 48px; object-fit: contain; border-radius: 8px; border: 1px solid #cbd5e1; background-color: #ffffff;" referrerPolicy="no-referrer" />
+                ` : `
+                    <div class="logo">ATA</div>
+                `}
+                <div>
+                    <h4 class="company-name">${template.companyName}</h4>
+                    <p class="subtitle">تامین تجهیزات اتوماسیون و ابزاردقیق</p>
+                </div>
+                ` : ''}
+            </div>
+            
+            <div class="title-box">
+                <h1 class="title">پکینگ لیست استاندارد کالا (Packing List)</h1>
+                <p class="doc-subtitle">مجموعه اسناد رسمی ترخیص و لجستیک</p>
+            </div>
+        </div>
+
+        <div class="meta-box">
+            <div class="meta-item"><span class="meta-label">شماره پکینگ لیست:</span> <span class="meta-value">${delivery.packingListNumber}</span></div>
+            <div class="meta-item"><span class="meta-label">تاریخ صدور پکینگ لیست:</span> <span class="meta-value font-mono">${delivery.deliveryDate}</span></div>
+            ${delivery.actualDeliveryDate ? `<div class="meta-item"><span class="meta-label">تاریخ تحویل کالا:</span> <span class="meta-value font-mono">${delivery.actualDeliveryDate}</span></div>` : ''}
+            <div class="meta-item"><span class="meta-label">روش ارسال و تحویل:</span> <span class="meta-value">${delivery.shippingMethod}</span></div>
+            <div class="meta-item"><span class="meta-label">پروژه (کارفرما):</span> <span class="meta-value">${delivery.projectName}</span></div>
+            ${delivery.proformaNumber ? `<div class="meta-item"><span class="meta-label">پیش‌فاکتور مرجع:</span> <span class="meta-value font-mono">${delivery.proformaNumber}</span></div>` : ''}
+            <div class="meta-item"><span class="meta-label">مسئول ثبت و کنترل:</span> <span class="meta-value">${currentUser?.fullName || 'مسئول انبار و لجستیک'}</span></div>
+        </div>
+
+        
+        
+
+        <div style="margin-bottom: 20px;">
+            <h4 style="font-size: 12px; font-weight: bold; border-bottom: 1px solid #cbd5e1; padding-bottom: 6px; margin-bottom: 10px;">${sheetHeading}</h4>
+            ${sheetTables}
+        </div>
+
+        <!-- Both of these were built and then never placed, so the delivery
+             report has never appeared on a printed packing list. -->
+        ${shipmentBlock}
+        ${preDeliveryNotes}
+
+        <div class="signatures">
+            <div>
+                <div class="signature-title">امضا و تایید تحویل‌گیرنده (کارفرما):</div>
+                <div class="signature-box"></div>
+                <div style="font-size: 10px; color: #94a3b8; margin-top: 8px; font-family: monospace;">نام و نام خانوادگی / تاریخ تحویل</div>
+            </div>
+            <div>
+                <div class="signature-title">مسئول انبار و تایید خروج کالا:</div>
+                <div class="signature-box" style="display: flex; flex-direction: row; gap: 16px; align-items: center; justify-content: center;">
+                    ${template.companySealUrl ? `<img src="${template.companySealUrl}" style="height: 80px; object-fit: contain;" />` : ''}
+                    ${currentUser?.signatureImage ? `<img src="${currentUser.signatureImage}" style="max-height: 60px; max-width: 120px; object-fit: contain;" />` : ''}
+                </div>
+                <div style="font-size: 10px; color: #94a3b8; margin-top: 8px; font-family: monospace;">${currentUser?.fullName || ''}</div>
+            </div>
+        </div>
+        
+        ${template.footerText ? `
+        <div style="text-align: center; font-size: 10px; color: #64748b; margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
+            ${template.footerText}
+        </div>
+        ` : ''}
+    </div>
+
+    <!-- Running print footer repeating on all pages when printing -->
+`;
+
+    /*
+     * One sheet, or one per box.
+     *
+     * Combined is the document as it has always been: every box in one list.
+     * Per-box repeats the header and the signatures for each box and carries
+     * only its contents, with a page break between, so printing the file gives
+     * one page per box to stick on it.
+     */
+    const sheets = perBox
+      ? Object.entries(itemsByBox)
+          .map(([box, boxItems], idx) => buildSheet(
+            renderBoxTable([box, boxItems], idx),
+            `محتویات جعبه ${box}${boxCount > 1 ? ` (${idx + 1} از ${boxCount})` : ''}`,
+            idx < boxCount - 1 ? ' sheet-break' : '',
+          ))
+          .join('\n')
+      : buildSheet(
+          Object.entries(itemsByBox).map(renderBoxTable).join(''),
+          'لیست کالاها و عدل‌بندی بسته‌بندی',
+          '',
+        );
 
     const htmlContent = `
 <!DOCTYPE html>
@@ -703,6 +838,11 @@ export default function PackagingDeliveryView({
                 box-shadow: none;
                 padding: 0;
             }
+            /* One box per page, when the file was produced that way. */
+            .sheet-break {
+                page-break-after: always;
+                break-after: page;
+            }
             .print-footer {
                 position: fixed;
                 bottom: 0;
@@ -716,71 +856,7 @@ export default function PackagingDeliveryView({
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <div class="logo-box">
-                ${template.showLogo ? `
-                ${template.logoUrl ? `
-                    <img src="${template.logoUrl}" alt="${template.companyName}" style="width: 48px; height: 48px; object-fit: contain; border-radius: 8px; border: 1px solid #cbd5e1; background-color: #ffffff;" referrerPolicy="no-referrer" />
-                ` : `
-                    <div class="logo">ATA</div>
-                `}
-                <div>
-                    <h4 class="company-name">${template.companyName}</h4>
-                    <p class="subtitle">تامین تجهیزات اتوماسیون و ابزاردقیق</p>
-                </div>
-                ` : ''}
-            </div>
-            
-            <div class="title-box">
-                <h1 class="title">پکینگ لیست استاندارد کالا (Packing List)</h1>
-                <p class="doc-subtitle">مجموعه اسناد رسمی ترخیص و لجستیک</p>
-            </div>
-        </div>
-
-        <div class="meta-box">
-            <div class="meta-item"><span class="meta-label">شماره پکینگ لیست:</span> <span class="meta-value">${delivery.packingListNumber}</span></div>
-            <div class="meta-item"><span class="meta-label">تاریخ صدور پکینگ لیست:</span> <span class="meta-value font-mono">${delivery.deliveryDate}</span></div>
-            ${delivery.actualDeliveryDate ? `<div class="meta-item"><span class="meta-label">تاریخ تحویل کالا:</span> <span class="meta-value font-mono">${delivery.actualDeliveryDate}</span></div>` : ''}
-            <div class="meta-item"><span class="meta-label">روش ارسال و تحویل:</span> <span class="meta-value">${delivery.shippingMethod}</span></div>
-            <div class="meta-item"><span class="meta-label">پروژه (کارفرما):</span> <span class="meta-value">${delivery.projectName}</span></div>
-            ${delivery.proformaNumber ? `<div class="meta-item"><span class="meta-label">پیش‌فاکتور مرجع:</span> <span class="meta-value font-mono">${delivery.proformaNumber}</span></div>` : ''}
-            <div class="meta-item"><span class="meta-label">مسئول ثبت و کنترل:</span> <span class="meta-value">${currentUser?.fullName || 'مسئول انبار و لجستیک'}</span></div>
-        </div>
-
-        
-        
-
-        <div style="margin-bottom: 20px;">
-            <h4 style="font-size: 12px; font-weight: bold; border-bottom: 1px solid #cbd5e1; padding-bottom: 6px; margin-bottom: 10px;">لیست کالاها و عدل‌بندی بسته‌بندی</h4>
-            ${itemsTables}
-        </div>
-
-        <div class="signatures">
-            <div>
-                <div class="signature-title">امضا و تایید تحویل‌گیرنده (کارفرما):</div>
-                <div class="signature-box"></div>
-                <div style="font-size: 10px; color: #94a3b8; margin-top: 8px; font-family: monospace;">نام و نام خانوادگی / تاریخ تحویل</div>
-            </div>
-            <div>
-                <div class="signature-title">مسئول انبار و تایید خروج کالا:</div>
-                <div class="signature-box" style="display: flex; flex-direction: row; gap: 16px; align-items: center; justify-content: center;">
-                    ${template.companySealUrl ? `<img src="${template.companySealUrl}" style="height: 80px; object-fit: contain;" />` : ''}
-                    ${currentUser?.signatureImage ? `<img src="${currentUser.signatureImage}" style="max-height: 60px; max-width: 120px; object-fit: contain;" />` : ''}
-                </div>
-                <div style="font-size: 10px; color: #94a3b8; margin-top: 8px; font-family: monospace;">${currentUser?.fullName || ''}</div>
-            </div>
-        </div>
-        
-        ${template.footerText ? `
-        <div style="text-align: center; font-size: 10px; color: #64748b; margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
-            ${template.footerText}
-        </div>
-        ` : ''}
-    </div>
-
-    <!-- Running print footer repeating on all pages when printing -->
+${sheets}
     <div class="print-footer">
         <div class="print-footer-info">
             <div><strong>آدرس شرکت:</strong> ${template.address || '-'}</div>
@@ -806,7 +882,9 @@ export default function PackagingDeliveryView({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `پکینگ_لیست_${delivery.packingListNumber}.html`;
+    link.download = perBox
+      ? `پکینگ_لیست_${delivery.packingListNumber}_به‌تفکیک_جعبه.html`
+      : `پکینگ_لیست_${delivery.packingListNumber}.html`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -835,6 +913,11 @@ export default function PackagingDeliveryView({
     setActualDeliveryDate(delivery.actualDeliveryDate || '');
     setShippingMethod(delivery.shippingMethod);
     setPreDeliveryTestNotes(delivery.preDeliveryTestNotes || '');
+    setWaybillNumber(delivery.waybillNumber || '');
+    setDriverName(delivery.driverName || '');
+    setDriverPhone(delivery.driverPhone || '');
+    setVehiclePlate(delivery.vehiclePlate || '');
+    setTrackingCode(delivery.trackingCode || '');
     setPackingItems(delivery.items);
     setChecklist(delivery.checklist);
     setPhotos(delivery.photos || []);
@@ -905,15 +988,17 @@ export default function PackagingDeliveryView({
     // Shipping tracking and driver details validation
     const nonLocalShipping = ['باربری', 'تیپاکس', 'پست پیشتاز', 'هواپیمایی'];
     if (isMarkedAsDelivered && nonLocalShipping.includes(shippingMethod)) {
-      const notesClean = (preDeliveryTestNotes || '').trim();
-      const hasTrackingKeywords = /بارنامه|راننده|رهگیری|پست|تیپاکس|کد|شماره|پلاک/g.test(notesClean);
-      const hasDigits = /\d+/g.test(notesClean);
-      
-      if (!notesClean || notesClean.length < 10 || (!hasTrackingKeywords && !hasDigits)) {
+      // The fields themselves, now that there are some. This used to search the
+      // delivery report for anything that looked like a number, which a stray
+      // digit satisfied and a real waybill in its own field did not.
+      const hasTracking = [waybillNumber, driverName, trackingCode]
+        .some((value) => value.trim().length > 0);
+
+      if (!hasTracking) {
         const confirmTracking = window.confirm(
           `هشدار اطلاعات حمل و نقل:\n` +
-          `روش ارسال کالا روی «${shippingMethod}» تنظیم شده است، اما اطلاعات بارنامه، نام راننده یا کد رهگیری معتبری در بخش گزارش تست و ارسال ثبت نشده است.\n\n` +
-          `ثبت شماره بارنامه یا مشخصات راننده جهت پیگیری‌های بعدی و شفافیت مالی مشتری الزامی است.\n` +
+          `روش ارسال کالا روی «${shippingMethod}» تنظیم شده است، اما شماره بارنامه، نام راننده و کد رهگیری هیچ‌کدام ثبت نشده‌اند.\n\n` +
+          `ثبت حداقل یکی از این موارد جهت پیگیری‌های بعدی و شفافیت مالی مشتری الزامی است.\n` +
           `آیا اطمینان دارید که می‌خواهید تحویل کالا را بدون این اطلاعات ثبت کنید؟`
         );
         if (!confirmTracking) {
@@ -933,6 +1018,11 @@ export default function PackagingDeliveryView({
       actualDeliveryDate: finalActualDeliveryDate,
       shippingMethod,
       preDeliveryTestNotes,
+      waybillNumber: waybillNumber.trim() || undefined,
+      driverName: driverName.trim() || undefined,
+      driverPhone: driverPhone.trim() || undefined,
+      vehiclePlate: vehiclePlate.trim() || undefined,
+      trackingCode: trackingCode.trim() || undefined,
       checklist,
       items: cleanItems,
       photos,
@@ -970,6 +1060,11 @@ export default function PackagingDeliveryView({
     setUseItemizedDeliveryDates(false);
     setShippingMethod(settings.dropdownItems.shippingMethods?.[0] || 'باربری');
     setPreDeliveryTestNotes('');
+    setWaybillNumber('');
+    setDriverName('');
+    setDriverPhone('');
+    setVehiclePlate('');
+    setTrackingCode('');
     setPackingItems([]);
     setChecklist([]);
     setPhotos([]);
@@ -1487,6 +1582,51 @@ export default function PackagingDeliveryView({
               </div>
             </div>
           )}
+
+          {/* Shipment tracing */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-bold text-slate-700 flex items-center gap-1">
+              <Truck size={15} className="text-sky-500" />
+              اطلاعات حمل و پیگیری
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              <input
+                type="text"
+                value={waybillNumber}
+                onChange={e => setWaybillNumber(e.target.value)}
+                placeholder="شماره بارنامه"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none"
+              />
+              <input
+                type="text"
+                value={trackingCode}
+                onChange={e => setTrackingCode(e.target.value)}
+                placeholder="کد رهگیری"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none font-mono"
+              />
+              <input
+                type="text"
+                value={driverName}
+                onChange={e => setDriverName(e.target.value)}
+                placeholder="نام راننده"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none"
+              />
+              <input
+                type="text"
+                value={driverPhone}
+                onChange={e => setDriverPhone(e.target.value)}
+                placeholder="تلفن راننده"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none font-mono"
+              />
+              <input
+                type="text"
+                value={vehiclePlate}
+                onChange={e => setVehiclePlate(e.target.value)}
+                placeholder="پلاک خودرو"
+                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none font-mono"
+              />
+            </div>
+          </div>
 
           {/* Test report textarea */}
           <div className="space-y-1.5">
@@ -2072,13 +2212,20 @@ export default function PackagingDeliveryView({
               <div className="flex gap-2 justify-end">
                 <button
                   type="button"
-                  onClick={() => {
-                    downloadPackagingDeliveryHTML(selectedDelivery);
-                  }}
+                  onClick={() => { downloadPackagingDeliveryHTML(selectedDelivery); }}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
                 >
                   <Printer size={15} />
-                  خروجی فایل چاپی مستقل (دانلود HTML)
+                  خروجی یکجا (همه جعبه‌ها)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { downloadPackagingDeliveryHTML(selectedDelivery, true); }}
+                  className="bg-sky-600 hover:bg-sky-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
+                  title="یک برگه جداگانه برای هر جعبه، جهت چاپ و الصاق روی همان جعبه"
+                >
+                  <Package size={15} />
+                  خروجی به تفکیک هر جعبه
                 </button>
                 <button
                   type="button"

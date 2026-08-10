@@ -31,7 +31,11 @@ export const DELIVERY_SORTABLE = [
 ] as const;
 export const DELIVERY_FILTERABLE = ["projectId", "proformaId", "shippingMethod"] as const;
 
-const DELIVERY_SEARCH = ["packingListNumber", "shippingMethod", "preDeliveryTestNotes"] as const;
+const DELIVERY_SEARCH = [
+  "packingListNumber", "shippingMethod", "preDeliveryTestNotes",
+  // A shipment is most often looked up by its waybill or tracking code.
+  "waybillNumber", "trackingCode", "driverName",
+] as const;
 export const DELIVERY_DATE_FIELDS = ["deliveryDate", "actualDeliveryDate"] as const;
 
 export function buildDeliveryWhere(
@@ -67,6 +71,7 @@ const DELIVERY_LIST_SELECT = {
   deliveryDate: true, deliveryDateJalali: true,
   actualDeliveryDate: true, actualDeliveryDateJalali: true,
   shippingMethod: true, createdAt: true,
+  waybillNumber: true, trackingCode: true, driverName: true,
   project: { select: { id: true, code: true, name: true } },
   proforma: { select: { id: true, proformaNumber: true } },
   _count: { select: { items: true } },
@@ -147,6 +152,11 @@ export interface DeliveryInput {
   actualDeliveryDate?: string | null;
   shippingMethod?: string | null;
   preDeliveryTestNotes?: string | null;
+  waybillNumber?: string | null;
+  driverName?: string | null;
+  driverPhone?: string | null;
+  vehiclePlate?: string | null;
+  trackingCode?: string | null;
   checklist?: unknown;
   photos?: unknown;
   items?: PackingItemInput[];
@@ -177,6 +187,11 @@ function deliveryScalarData(input: DeliveryInput): Record<string, unknown> {
   if ("proformaId" in input) set("proformaId", toNullableString(input.proformaId, 36));
   if ("shippingMethod" in input) set("shippingMethod", toNullableString(input.shippingMethod, 100));
   if ("preDeliveryTestNotes" in input) set("preDeliveryTestNotes", toNullableString(input.preDeliveryTestNotes));
+  if ("waybillNumber" in input) set("waybillNumber", toNullableString(input.waybillNumber, 100));
+  if ("driverName" in input) set("driverName", toNullableString(input.driverName, 200));
+  if ("driverPhone" in input) set("driverPhone", toNullableString(input.driverPhone, 30));
+  if ("vehiclePlate" in input) set("vehiclePlate", toNullableString(input.vehiclePlate, 50));
+  if ("trackingCode" in input) set("trackingCode", toNullableString(input.trackingCode, 100));
   // The checklist is a snapshot of how it was ticked for this shipment, so it
   // travels with the record rather than referring to the current template.
   if ("checklist" in input) set("checklist", toJsonColumn(input.checklist));

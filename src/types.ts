@@ -662,6 +662,18 @@ export interface PackagingDelivery {
   actualDeliveryDate?: string; // تاریخ تحویل به مشتری
   shippingMethod: string; // نحوه ارسال کالا
   preDeliveryTestNotes: string; // گزارش تست قبل از تحویل تجهیز
+  /**
+   * How the shipment can be traced.
+   *
+   * The save has always warned when a courier or freight delivery had none of
+   * these; until now there was nowhere to put them, so it scanned the delivery
+   * report for anything resembling a number.
+   */
+  waybillNumber?: string;
+  driverName?: string;
+  driverPhone?: string;
+  vehiclePlate?: string;
+  trackingCode?: string;
   checklist: DeliveryChecklistItem[]; // چک‌لیست تحویل تیک‌خورده
   items: PackingItem[]; // اقلام پکینگ لیست
   /**

@@ -17,6 +17,7 @@ import { getTodayShamsi } from "../../dateUtils";
 const DELIVERY_WRITABLE: (keyof DeliveryInput)[] = [
   "packingListNumber", "projectId", "proformaId", "deliveryDate", "actualDeliveryDate",
   "shippingMethod", "preDeliveryTestNotes", "checklist", "photos", "items",
+  "waybillNumber", "driverName", "driverPhone", "vehiclePlate", "trackingCode",
 ];
 
 const SERVICE_WRITABLE: (keyof ServiceInput)[] = [
