@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Calculator,
   Info,
@@ -19,6 +19,13 @@ interface Props {
   initialPriceForeign: number;
   currency: string;
   initialValues?: Partial<ProductVariant>;
+  /**
+   * Identifies what is being priced — a line index, a SKU, a product id.
+   *
+   * The seeding effect below keys on this rather than on `initialValues`, and
+   * that is the whole point of it: see the comment there.
+   */
+  seedKey?: string | number | null;
   exchangeRates: ExchangeRate[];
   onApply: (
     sellingForeign: number,
@@ -47,6 +54,7 @@ export default function PriceCalculatorModal({
   initialPriceForeign,
   currency,
   initialValues,
+  seedKey = null,
   exchangeRates,
   onApply,
 }: Props) {
@@ -67,8 +75,29 @@ export default function PriceCalculatorModal({
     "PERCENT",
   );
 
+  /*
+   * The inputs are seeded once per opening — not whenever a prop changes
+   * identity.
+   *
+   * This effect used to list `initialValues` and `exchangeRates` among its
+   * dependencies. Both are built fresh during the parent's render, so every
+   * re-render of the screen behind the modal handed it new objects, the effect
+   * ran again, and every field the user had typed was overwritten with the
+   * stored values — or, for a product that has none, with "0" and a 55%
+   * margin. Half-entered figures went to zero mid-edit, repeatedly, because
+   * something behind the modal re-renders on its own: exchange rates refresh,
+   * the pickers debounce and refetch, the list revalidates.
+   *
+   * So the seed is keyed on the two things that mean "start again": the modal
+   * opening, and the subject changing. The values themselves are read through a
+   * ref, so they are current without being able to trigger a reseed.
+   */
+  const latest = useRef({ currency, initialPriceForeign, initialValues, exchangeRates });
+  latest.current = { currency, initialPriceForeign, initialValues, exchangeRates };
+
   useEffect(() => {
     if (!open) return;
+    const { currency, initialPriceForeign, initialValues, exchangeRates } = latest.current;
     const curr = currency || "یورو";
     setCalcCurrency(curr);
 
@@ -130,7 +159,8 @@ export default function PriceCalculatorModal({
         : "0",
     );
     setCalcMarginType(initialValues?.calcMarginType || "PERCENT");
-  }, [open, currency, initialPriceForeign, initialValues, exchangeRates]);
+    // Deliberately not `initialValues`/`exchangeRates`/`currency`: see above.
+  }, [open, seedKey]);
 
   if (!open) return null;
 

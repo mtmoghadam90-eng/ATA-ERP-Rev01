@@ -5313,6 +5313,9 @@ export default function ProformasView({
             initialPriceForeign={initialForeign}
             currency={modalCurrency}
             initialValues={initialValues}
+            // The line being priced. Moving to another line reseeds; a
+            // re-render of the screen behind the modal does not.
+            seedKey={calcModalItemIdx}
             exchangeRates={exchangeRates}
             onApply={(sellingForeign, sellingRial, details, appliedCurrency) => {
               // Compute unit price in the proforma's currency

@@ -15,7 +15,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:generate": "prisma generate",
     "test:rules": "tsx scripts/rulesScenario.ts",
-    "test:e2e": "tsx scripts/e2eScenario.ts"
+    "test:e2e": "tsx scripts/e2eScenario.ts",
+    "test:ui": "tsx scripts/uiScenario.ts"
   },
   "dependencies": {
     "@prisma/adapter-mssql": "^7.9.1",

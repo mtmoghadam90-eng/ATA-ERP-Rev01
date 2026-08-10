@@ -3233,6 +3233,9 @@ export default function ProductsView({
           priceRIYAL: simplePriceRIYAL ? Number(simplePriceRIYAL) : undefined,
           ...simpleCalcDetails,
         }}
+        // One subject here — the simple product's own price — so opening the
+        // modal is the only thing that should reseed it.
+        seedKey="simple"
         exchangeRates={exchangeRates}
         onApply={(sellingForeign, sellingRial, details, appliedCurrency) => {
           handleApplyCalculatedPrice(sellingForeign, sellingRial, details, appliedCurrency);

@@ -14,9 +14,12 @@ npm run build        # vite build (client) + esbuild bundle of server.ts -> dist
 npm run start        # node dist/server.cjs (production; NODE_ENV=production serves dist/ instead of Vite)
 npm run lint         # tsc --noEmit — the only standing check; there is no test suite
 npm run sync:report  # push a flattened copy of the data into the SQL Server reporting tables
+npm run test:rules   # the derived-figure rules, with no database — run before every commit
+npm run test:ui      # renders modals into jsdom; catches state reset by a re-render
+npm run test:e2e     # drives the real HTTP API end to end (writes to the configured database)
 ```
 
-There are no committed tests and no ESLint. `npm run lint` (type-check) is the sole standing gate — run it after changes. Note `clean` uses `rm -rf` (won't work in PowerShell; use the Bash tool or delete manually on Windows).
+Three scenario suites exist (`test:rules`, `test:ui`, `test:e2e`); there is no ESLint. `npm run lint` (type-check) is the sole standing gate — run it after changes. Note `clean` uses `rm -rf` (won't work in PowerShell; use the Bash tool or delete manually on Windows).
 
 **Verifying non-trivial logic.** Since there is no test suite, the working practice is to write a throwaway `__something.ts` script at the repo root, run it with `npx tsx`, and delete it once green — this has repeatedly caught real bugs (the SKU decoder round-trip, the delta-merge lost-update case, the `extractNameAndCode` regex). Never leave those files behind. Server endpoints are verified by launching a second instance against a scratch database: `PORT=3100 ERP_DB_PATH=<scratch>/test.json npx tsx server.ts` — **never test against the real `database.json`.**
 
@@ -112,6 +115,7 @@ Live on a **shared** Windows server (`192.168.1.104`) alongside IIS, SQL Server,
 - `server.ts` statically imports seed constants from `src/` — esbuild resolves these at bundle time, so those imports must stay statically analyzable (no dynamic paths).
 - `database.json` is only seeded when the store is empty. To reseed, delete the file and restart. It is gitignored — **never commit it** (it holds real business data and password hashes).
 - The server binds `0.0.0.0` and has no session/token auth beyond the login endpoint; it assumes a trusted LAN. Do not expose its port to the internet.
+- **A modal must not seed its state from an object prop.** `useEffect(..., [initialValues])` where the parent builds `initialValues` inline re-seeds on *every* render of the screen behind the modal — and those screens re-render on their own, so a half-typed form was silently reset to zero, repeatedly. Key the seeding on what means "start again" (open, and the subject's id) and read the values through a ref. `npm run test:ui` renders the price calculator and asserts a typed figure survives a parent re-render.
 - **Shallow-copying arrays of records is a trap.** `const next = [...items]; next[i].field = x` mutates the objects the store still holds, which made before/after comparisons identical — that silently stopped SKU stock changes from being logged as inventory transactions and corrupted audit-log snapshots. Always replace the element: `next[i] = { ...next[i], field: x }`.
 - Persian text in **console/CLI** output is mangled by the Windows console codepage, so `scripts/*.ts` print English. JSON API messages stay Persian (they render correctly over HTTP and are shown to users).
 - Windows PowerShell 5.1 doesn't enable TLS 1.2, so GitHub downloads fail until `[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12` is set.
