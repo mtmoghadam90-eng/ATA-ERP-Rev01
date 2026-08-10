@@ -32,6 +32,13 @@ import {
 } from "../src/server/costs";
 import { describeTransaction } from "../src/server/services/transactionService";
 import { rowToCustomer } from "../src/api/customerAdapter";
+import { rowToProject } from "../src/api/projectAdapter";
+import { rowToProforma } from "../src/api/proformaAdapter";
+import { rowToProduct } from "../src/api/productAdapter";
+import { rowToSupplier } from "../src/api/suppliers";
+import { rowToTransaction } from "../src/api/transactions";
+import { rowToPurchaseOrder } from "../src/api/purchaseOrders";
+import { rowToTask } from "../src/api/tasks";
 import { samePermissions } from "../src/server/services/userService";
 import type { CustomerRow } from "../src/api/customers";
 
@@ -306,6 +313,72 @@ eq("a natural person's position reaches the grid", rowToCustomer(personRow).posi
 eq("a company's key person does too", rowToCustomer(companyRow).keyPerson, "مهندس احمدی");
 eq("and its industry", rowToCustomer(companyRow).industry, "نفت و گاز");
 eq("province survives the projection", rowToCustomer(personRow).province, "تهران");
+
+/*
+ * The same question asked of every other grid, because the same answer was
+ * wrong in all of them: the custom-fields column was empty on six screens, and
+ * several cards printed nothing where a field was meant to be.
+ */
+const cv = JSON.stringify({ f1: "مقدار" });
+const custom = (label: string, got: unknown) =>
+  ok(`${label} carries its custom fields`,
+    JSON.stringify(got) === JSON.stringify({ f1: "مقدار" }), got);
+
+custom("a product row", rowToProduct({
+  id: "x", code: "C", name: "n", displayName: "n", hasVariants: false,
+  stockLevel: "0", minStockLevel: "0", customValues: cv, variants: [],
+  _count: { variants: 0 },
+} as never).customValues);
+
+custom("a supplier row", rowToSupplier({
+  id: "s", name: "n", status: "فعال", customValues: cv,
+  _count: { purchaseOrders: 0, inquiries: 0 },
+} as never).customValues);
+
+custom("a transaction row", rowToTransaction({
+  id: "t", documentNumber: "D", type: "دریافت", status: "تأیید شده",
+  amountRial: "1", isDirectForeign: false, customValues: cv,
+} as never).customValues);
+
+// Tasks have no detail endpoint: the row is the record, so a dropped field is
+// not merely invisible in the grid, it is gone.
+custom("a task row", rowToTask({
+  id: "k", title: "t", priority: "متوسط", status: "در انتظار",
+  reminderEnabled: false, createdAt: "", customValues: cv,
+} as never).customValues);
+
+const poRow2 = rowToPurchaseOrder({
+  id: "o", poNumber: "PO-1", status: "s", currency: "یورو", exchangeRate: "1",
+  supplierId: "s", customValues: cv, proforma: { id: "q", proformaNumber: "PF-1" },
+  totalForeignAmount: "0", landedCostRial: "0", landedCostForeign: "0",
+  _count: { items: 0 },
+} as never);
+custom("a purchase-order row", poRow2.customValues);
+eq("and names the proforma it was raised against", poRow2.proformaNumber, "PF-1");
+
+const pfRow = rowToProforma({
+  id: "q", proformaNumber: "PF-1", status: "ارسال شده", currency: "ریال",
+  customerId: "c", isCancelled: false, sentMethod: "ایمیل",
+  sentRecipients: JSON.stringify(["a@b.com"]), lossReason: "دیر شد",
+  customValues: cv, items: [], totalAmount: "0", finalAmount: "0",
+} as never);
+custom("a proforma row", pfRow.customValues);
+eq("and how it was sent", pfRow.sentMethod, "ایمیل");
+eq("and to whom", JSON.stringify(pfRow.sentRecipients), JSON.stringify(["a@b.com"]));
+eq("and why it was lost", pfRow.lossReason, "دیر شد");
+
+const projRow = rowToProject({
+  id: "p", code: "PRJ-1", name: "پروژه", status: "باخته", customerId: "c",
+  lossReason: "قیمت بالا", closingDateJalali: "1405/05/12",
+  communicationMethod: "تلفن", customerInquiryNumber: "INQ-9",
+  referrerName: "آقای الف", endUser: "پالایشگاه", financialContact: "مالی",
+  technicalContact: "فنی", customValues: cv, summary: null,
+  _count: { items: 2, proformas: 1, categoryGroups: 0 },
+} as never);
+custom("a project row", projRow.customValues);
+eq("and the reason it was lost", projRow.lossReason, "قیمت بالا");
+eq("and the customer's inquiry number", projRow.customerInquiryNumber, "INQ-9");
+eq("and who referred it", projRow.referrerName, "آقای الف");
 
 /*
  * Saving an account revokes its sessions only when something actually changed.

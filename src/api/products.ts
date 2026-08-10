@@ -43,6 +43,8 @@ export interface ProductRow {
   createdAt: string;
   variants: Array<{ id: string; sku: string; attributes: string; stockLevel: string }>;
   _count: { variants: number };
+  /** The grid draws a custom-fields column from these. */
+  customValues: string | null;
 }
 
 export interface ProductDetail extends ProductRow {
@@ -51,7 +53,6 @@ export interface ProductDetail extends ProductRow {
   configRules: string | null;
   images: string | null;
   priceCalc: string | null;
-  customValues: string | null;
   updatedAt: string;
   variants: ProductVariantRow[];
 }

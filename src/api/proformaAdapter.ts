@@ -60,6 +60,12 @@ export function rowToProforma(row: ProformaRow): Proforma {
     totalAmount: money(row.totalAmount),
     finalAmount: money(row.finalAmount),
     creatorId: row.creatorUserId ?? undefined,
+    // Printed on the card, and none of it used to arrive: how the proforma was
+    // sent and to whom, why a lost one was lost, and the custom-field column.
+    sentMethod: row.sentMethod ?? undefined,
+    sentRecipients: parseJson<string[]>(row.sentRecipients, []),
+    lossReason: row.lossReason ?? undefined,
+    customValues: parseJson<Record<string, unknown>>(row.customValues, {}),
     // A list row carries only what the grid prints beside the customer — each
     // line's name, quantity and status. Prices and specs arrive with the detail
     // record, which is the only place they are needed.
@@ -85,7 +91,6 @@ export function detailToProforma(detail: ProformaDetail): Proforma {
     contactName: detail.contact?.companyName ?? undefined,
     contactPrefix: detail.contactPrefix ?? undefined,
     deliveryDate: detail.deliveryDateJalali ?? undefined,
-    lossReason: detail.lossReason ?? undefined,
     discountPercent: money(detail.discountPercent),
     discountAmount: money(detail.discountAmount),
     taxPercent: money(detail.taxPercent),
@@ -94,9 +99,6 @@ export function detailToProforma(detail: ProformaDetail): Proforma {
     historicalExchangeRate: detail.historicalExchangeRate
       ? money(detail.historicalExchangeRate) : undefined,
     notes: detail.notes ?? "",
-    sentMethod: detail.sentMethod ?? undefined,
-    sentRecipients: parseJson<string[]>(detail.sentRecipients, []),
-    customValues: parseJson<Record<string, unknown>>(detail.customValues, {}),
     items: (detail.items ?? []).map((item) => ({
       id: item.id,
       productId: item.productId ?? "",

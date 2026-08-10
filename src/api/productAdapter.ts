@@ -44,6 +44,8 @@ export function rowToProduct(row: ProductRow): Product {
     currencyForeign: row.currencyForeign ?? undefined,
     images: parseJson(row.images, [] as string[]),
     features: parseJson(row.features, [] as Product["features"]),
+    // The grid draws a custom-fields column from these.
+    customValues: parseJson(row.customValues, {} as Record<string, unknown>),
     description: row.description ?? "",
     variants: (row.variants || []).map((v) => ({
       id: v.id,
@@ -76,7 +78,6 @@ export function detailToProduct(detail: ProductDetail): Product {
     features: parseJson(detail.features, [] as Product["features"]),
     configRules: parseJson(detail.configRules, [] as Product["configRules"]),
     images: parseJson(detail.images, [] as string[]),
-    customValues: parseJson(detail.customValues, {} as Record<string, unknown>),
     variants: (detail.variants ?? []).map(variantToClient),
     // The price calculator's inputs are stored together as one blob and spread
     // back onto the record, which is where the form reads them from.

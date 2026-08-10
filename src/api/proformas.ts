@@ -58,12 +58,17 @@ export interface ProformaRow {
   _count: { items: number };
   /** Derived from the line statuses; the grid shows this, not `status`. */
   outcomeStatus: string;
+  /** Printed on the card: how it was sent, to whom, and why it was lost. */
+  sentMethod: string | null;
+  sentRecipients: string | null;
+  lossReason: string | null;
+  /** The grid draws a custom-fields column from these. */
+  customValues: string | null;
 }
 
 export interface ProformaDetail extends Omit<ProformaRow, "items"> {
   contactCustomerId: string | null;
   contactPrefix: string | null;
-  lossReason: string | null;
   deliveryDateJalali: string | null;
   discountPercent: string;
   discountAmount: string;
@@ -72,9 +77,6 @@ export interface ProformaDetail extends Omit<ProformaRow, "items"> {
   extraCosts: string;
   historicalExchangeRate: string | null;
   notes: string | null;
-  sentMethod: string | null;
-  sentRecipients: string | null;
-  customValues: string | null;
   contact: { id: string; companyName: string } | null;
   items: ProformaItemRow[];
   /** Which lines count as won — derived, so the client need not re-derive it. */

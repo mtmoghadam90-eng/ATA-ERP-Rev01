@@ -109,6 +109,16 @@ export interface ProjectRow {
   // `categoryGroups` counts only the in-progress ones (the grid's activity pulse).
   _count: { items: number; proformas: number; categoryGroups: number };
   summary: ProjectSummary | null;
+  /** Printed on the row or exported; see the server's LIST_SELECT. */
+  lossReason: string | null;
+  closingDateJalali: string | null;
+  communicationMethod: string | null;
+  customerInquiryNumber: string | null;
+  referrerName: string | null;
+  endUser: string | null;
+  financialContact: string | null;
+  technicalContact: string | null;
+  customValues: string | null;
 }
 
 export interface ProjectItemRow {
@@ -138,23 +148,13 @@ export interface ProjectMilestoneRow {
 }
 
 export interface ProjectDetail extends ProjectRow {
-  lossReason: string | null;
   description: string | null;
-  communicationMethod: string | null;
-  customerInquiryNumber: string | null;
-  referrerName: string | null;
-  closingDateJalali: string | null;
-  salesExpert: string | null;
-  financialContact: string | null;
-  technicalContact: string | null;
-  endUser: string | null;
   endUserCustomerId: string | null;
   financialContactId: string | null;
   technicalContactId: string | null;
   attachments: string | null;
   manualDocuments: string | null;
   milestoneRules: string | null;
-  customValues: string | null;
   endUserCustomer: { id: string; companyName: string } | null;
   financialContactCustomer: { id: string; companyName: string } | null;
   technicalContactCustomer: { id: string; companyName: string } | null;

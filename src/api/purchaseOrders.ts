@@ -48,6 +48,10 @@ export interface PurchaseOrderRow {
   supplier: { id: string; name: string } | null;
   project: { id: string; code: string; name: string } | null;
   _count: { items: number };
+  /** The grid draws a custom-fields column from these. */
+  customValues: string | null;
+  /** Joined, so a row can print the proforma it was raised against. */
+  proforma: { id: string; proformaNumber: string } | null;
 }
 
 export interface PurchaseOrderDetail extends Omit<PurchaseOrderRow, "_count"> {
@@ -61,8 +65,6 @@ export interface PurchaseOrderDetail extends Omit<PurchaseOrderRow, "_count"> {
   shippingCostForeign: string;
   remittanceFeeForeign: string;
   notes: string | null;
-  customValues: string | null;
-  proforma: { id: string; proformaNumber: string } | null;
   items: PurchaseOrderItemRow[];
 }
 
@@ -178,6 +180,10 @@ export function rowToPurchaseOrder(row: PurchaseOrderRow): PurchaseOrder {
     // under the names the view reads, or the fallback divides an undefined.
     calculatedLandedCostRIYAL: money(row.landedCostRial),
     calculatedLandedCostForeign: money(row.landedCostForeign),
+    // The card prints both of these, and neither reached it: the custom-field
+    // column was empty on every order, and «پیش‌فاکتور مرتبط» never appeared.
+    customValues: parseJson<Record<string, unknown>>(row.customValues, {}),
+    proformaNumber: row.proforma?.proformaNumber,
     createdAt: row.createdAt,
     items: [],
   } as unknown as PurchaseOrder);
@@ -196,8 +202,6 @@ export function detailToPurchaseOrder(detail: PurchaseOrderDetail): PurchaseOrde
     shippingCostForeign: money(detail.shippingCostForeign),
     remittanceFeeForeign: money(detail.remittanceFeeForeign),
     notes: detail.notes ?? "",
-    customValues: parseJson<Record<string, unknown>>(detail.customValues, {}),
-    proformaNumber: detail.proforma?.proformaNumber,
     items: (detail.items ?? []).map((item) => ({
       id: item.id,
       productId: item.productId ?? "",

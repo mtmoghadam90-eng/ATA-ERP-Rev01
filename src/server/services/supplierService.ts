@@ -46,6 +46,8 @@ export function buildSupplierWhere(q: ListQuery): Record<string, unknown> {
 const LIST_SELECT = {
   id: true, name: true, country: true, contactName: true, phone: true, email: true,
   website: true, paymentTerms: true, status: true, providedCategories: true, createdAt: true,
+  // The grid has a «فیلدهای سفارشی» column, so the row has to carry the values.
+  customValues: true,
   _count: { select: { purchaseOrders: true, inquiries: true } },
 } satisfies Prisma.SupplierSelect;
 

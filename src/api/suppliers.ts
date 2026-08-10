@@ -16,6 +16,8 @@ export interface SupplierRow {
   /** Serialized string[] of the categories this supplier can provide. */
   providedCategories: string | null;
   createdAt: string;
+  /** The grid draws a custom-fields column from these. */
+  customValues: string | null;
   _count: { purchaseOrders: number; inquiries: number };
 }
 
@@ -114,6 +116,9 @@ export function rowToSupplier(row: SupplierRow): Supplier {
     paymentTerms: row.paymentTerms ?? "",
     status: row.status as Supplier["status"],
     providedCategories: parseJson<string[]>(row.providedCategories, []),
+    // The grid draws a custom-fields column from these; it was blank for every
+    // supplier because the row never carried them.
+    customValues: parseJson<Record<string, unknown>>(row.customValues, {}),
     createdAt: row.createdAt,
     description: "",
   } as Supplier);
@@ -123,7 +128,6 @@ export function detailToSupplier(detail: SupplierDetail): Supplier {
   return markComplete({
     ...rowToSupplier({ ...detail, _count: { purchaseOrders: 0, inquiries: 0 } }),
     description: detail.description ?? "",
-    customValues: parseJson<Record<string, unknown>>(detail.customValues, {}),
   } as Supplier);
 }
 

@@ -112,6 +112,12 @@ const LIST_SELECT = {
   // so that comes down with the row rather than being looked up separately.
   project: { select: { id: true, code: true, name: true, status: true } },
   creator: { select: { id: true, fullName: true } },
+  // The card prints all three: how the proforma was sent and to whom, the
+  // reason a lost one was lost, and the custom-field column.
+  sentMethod: true,
+  sentRecipients: true,
+  lossReason: true,
+  customValues: true,
   // The grid lists each line's name and quantity beside the customer, and
   // colours it by status — four small columns, not the whole line.
   items: {

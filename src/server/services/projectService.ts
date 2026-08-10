@@ -118,6 +118,19 @@ const LIST_SELECT = {
   salesExpert: true,
   ownerUserId: true,
   createdAt: true,
+  // Printed on the grid row or in the Excel export, and none of it used to
+  // arrive: the reason a lost project was lost, the customer's own inquiry
+  // number, who referred it, how they were reached, the three named contacts,
+  // the closing date, and the custom-field column.
+  lossReason: true,
+  closingDateJalali: true,
+  communicationMethod: true,
+  customerInquiryNumber: true,
+  referrerName: true,
+  endUser: true,
+  financialContact: true,
+  technicalContact: true,
+  customValues: true,
   customer: { select: { id: true, companyName: true } },
   owner: { select: { id: true, fullName: true } },
   // `categoryGroups` is a filtered relation count: how many activity categories

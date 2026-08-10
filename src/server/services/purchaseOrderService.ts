@@ -81,8 +81,12 @@ const LIST_SELECT = {
   receivedDateJalali: true,
   totalForeignAmount: true, landedCostRial: true, landedCostForeign: true,
   createdAt: true,
+  // The grid draws a custom-fields column from these, and prints the number of
+  // the proforma the order was raised against.
+  customValues: true,
   supplier: { select: { id: true, name: true } },
   project: { select: { id: true, code: true, name: true } },
+  proforma: { select: { id: true, proformaNumber: true } },
   _count: { select: { items: true } },
 } satisfies Prisma.PurchaseOrderSelect;
 

@@ -84,6 +84,8 @@ const LIST_SELECT = {
   assignedToUserId: true, assignedToName: true,
   reminderEnabled: true, reminderDateJalali: true, reminderTime: true,
   createdAt: true,
+  // The task card draws a custom-fields block from these.
+  customValues: true,
 } satisfies Prisma.TaskSelect;
 
 export async function listTasks(

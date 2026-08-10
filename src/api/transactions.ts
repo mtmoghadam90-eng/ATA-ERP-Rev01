@@ -37,11 +37,12 @@ export interface TransactionRow {
   customer: { id: string; companyName: string } | null;
   supplier: { id: string; name: string } | null;
   project: { id: string; code: string; name: string } | null;
+  /** The grid draws a custom-fields column from these. */
+  customValues: string | null;
 }
 
 export interface TransactionDetail extends TransactionRow {
   notes: string | null;
-  customValues: string | null;
   proforma: { id: string; proformaNumber: string } | null;
   purchaseOrder: { id: string; poNumber: string } | null;
 }
@@ -172,6 +173,8 @@ export function rowToTransaction(row: TransactionRow): Transaction {
     paymentType: row.paymentType as Transaction["paymentType"],
     referenceNumber: row.referenceNumber ?? undefined,
     reversalOfTransactionId: row.reversalOfTransactionId ?? undefined,
+    // The grid draws a custom-fields column from these.
+    customValues: parseJson<Record<string, unknown>>(row.customValues, {}),
     notes: "",
   } as unknown as Transaction);
 }
@@ -180,7 +183,6 @@ export function detailToTransaction(detail: TransactionDetail): Transaction {
   return markComplete({
     ...rowToTransaction(detail),
     notes: detail.notes ?? "",
-    customValues: parseJson<Record<string, unknown>>(detail.customValues, {}),
     proformaNumber: detail.proforma?.proformaNumber,
     poNumber: detail.purchaseOrder?.poNumber,
   } as unknown as Transaction);

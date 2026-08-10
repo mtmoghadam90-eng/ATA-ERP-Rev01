@@ -92,6 +92,8 @@ const LIST_SELECT = {
   features: true,
   description: true,
   createdAt: true,
+  // The grid draws a custom-fields column from these.
+  customValues: true,
   variants: { select: { id: true, sku: true, attributes: true, stockLevel: true } },
   _count: { select: { variants: true } },
 } satisfies Prisma.ProductSelect;

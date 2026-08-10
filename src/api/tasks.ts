@@ -26,6 +26,8 @@ export interface TaskRow {
   reminderDateJalali: string | null;
   reminderTime: string | null;
   createdAt: string;
+  /** The task card draws a custom-fields block from these. */
+  customValues: string | null;
 }
 
 export interface TaskSummary {
@@ -72,6 +74,15 @@ export const tasksApi = {
 
 /* ------------------------------- adapter ------------------------------- */
 
+function parseTaskJson(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    return (JSON.parse(raw) ?? {}) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
 /** A row, in the shape the existing markup expects. */
 export function rowToTask(row: TaskRow): Task {
   return {
@@ -92,6 +103,10 @@ export function rowToTask(row: TaskRow): Task {
     reminderEnabled: row.reminderEnabled,
     reminderDate: row.reminderDateJalali ?? undefined,
     reminderTime: row.reminderTime ?? undefined,
+    // The card draws a custom-fields block from these. Tasks have no detail
+    // endpoint at all — the row *is* the record here, so a field the adapter
+    // drops is gone for good.
+    customValues: parseTaskJson(row.customValues),
   } as Task;
 }
 

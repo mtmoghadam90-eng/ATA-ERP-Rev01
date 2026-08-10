@@ -65,6 +65,8 @@ const LIST_SELECT = {
   customerId: true, supplierId: true, projectId: true, proformaId: true, purchaseOrderId: true,
   partyName: true, amountRial: true, amountForeign: true, exchangeRate: true, isDirectForeign: true,
   paymentType: true, referenceNumber: true, reversalOfTransactionId: true, createdAt: true,
+  // The grid draws a custom-fields column from these.
+  customValues: true,
   customer: { select: { id: true, companyName: true } },
   supplier: { select: { id: true, name: true } },
   project: { select: { id: true, code: true, name: true } },

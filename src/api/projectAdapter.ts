@@ -44,6 +44,17 @@ export function rowToProject(row: ProjectRow): Project {
     marketingChannel: row.marketingChannel ?? undefined,
     leadQuality: row.leadQuality ?? undefined,
     salesExpert: row.salesExpert ?? undefined,
+    // Printed on the row or written into the Excel export, and none of it used
+    // to arrive — the row adapter stopped at the pipeline figures.
+    lossReason: row.lossReason ?? undefined,
+    closingDate: row.closingDateJalali ?? undefined,
+    communicationMethod: row.communicationMethod ?? undefined,
+    customerInquiryNumber: row.customerInquiryNumber ?? undefined,
+    referrerName: row.referrerName ?? undefined,
+    endUser: row.endUser ?? undefined,
+    financialContact: row.financialContact ?? undefined,
+    technicalContact: row.technicalContact ?? undefined,
+    customValues: parseJson<Record<string, unknown>>(row.customValues, {}),
     description: "",
   } as Project);
 }
