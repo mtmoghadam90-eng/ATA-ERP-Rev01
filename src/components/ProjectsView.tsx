@@ -30,6 +30,7 @@ import { ApiError } from '../api/client';
 import { projectsApi, type ProjectRow, type ProjectSummary } from '../api/projects';
 import { useProjectActivities } from '../api/useProjectActivities';
 import { detailToProject, projectToWriteInput, rowToProject } from '../api/projectAdapter';
+import { firstOption, withStoredOption } from '../utils/selectOptions';
 import { useProjectList } from '../api/useProjectList';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { useEntitySearch } from '../api/useEntitySearch';
@@ -663,13 +664,18 @@ export default function ProjectsView({
     setCustomValues({});
     setItemsNeeded([]);
     setLossReason("");
-    setSalesExpert("");
-    setMarketingChannel("تماس مستقیم");
-    setLeadQuality("متوسط");
+    // Whoever is opening the form is nearly always the expert on the
+    // opportunity; it stays editable for the times they are not.
+    setSalesExpert(currentUser?.fullName || "");
+    // The first configured choice, not a literal: a literal the list does not
+    // offer makes the select show its first option while the form saves the
+    // literal — the value shown and the value stored then disagree.
+    setMarketingChannel(firstOption(settings.dropdownItems?.marketingChannels, "تماس مستقیم"));
+    setLeadQuality(firstOption(settings.dropdownItems?.leadQualities, "متوسط"));
     setReferrerName("");
     setFinancialContact("");
     setTechnicalContact("");
-    setCommunicationMethod("تلفن");
+    setCommunicationMethod(firstOption(settings.dropdownItems?.communicationMethods, "تلفن"));
     setOpportunityDate(getTodayShamsi());
     setCustomerInquiryNumber("");
     setWinningDate("");
@@ -3507,7 +3513,7 @@ export default function ProjectsView({
                       onChange={(e) => setMarketingChannel(e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                     >
-                      {(settings.dropdownItems?.marketingChannels || ['تماس مستقیم', 'نمایشگاه تجاری', 'وب‌سایت / آنلاین', 'معرفی', 'مناقصه رسمی', 'سایر']).map((ch, idx) => (
+                      {withStoredOption(settings.dropdownItems?.marketingChannels || ['تماس مستقیم', 'نمایشگاه تجاری', 'وب‌سایت / آنلاین', 'معرفی', 'مناقصه رسمی', 'سایر'], marketingChannel).map((ch, idx) => (
                         <option key={idx} value={ch}>{ch}</option>
                       ))}
                     </select>
@@ -3522,7 +3528,7 @@ export default function ProjectsView({
                       onChange={(e) => setLeadQuality(e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                     >
-                      {(settings.dropdownItems?.leadQualities || ['عالی (گرم)', 'متوسط', 'ضعیف (سرد)']).map((q, idx) => (
+                      {withStoredOption(settings.dropdownItems?.leadQualities || ['عالی (گرم)', 'متوسط', 'ضعیف (سرد)'], leadQuality).map((q, idx) => (
                         <option key={idx} value={q}>{q}</option>
                       ))}
                     </select>
@@ -3550,7 +3556,7 @@ export default function ProjectsView({
                       onChange={(e) => setCommunicationMethod(e.target.value)}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                     >
-                      {(settings.dropdownItems?.communicationMethods || ['تلفن', 'ایمیل', 'جلسه حضوری', 'مکاتبه رسمی', 'شبکه‌های اجتماعی']).map((m, idx) => (
+                      {withStoredOption(settings.dropdownItems?.communicationMethods || ['تلفن', 'ایمیل', 'جلسه حضوری', 'مکاتبه رسمی', 'شبکه‌های اجتماعی'], communicationMethod).map((m, idx) => (
                         <option key={idx} value={m}>{m}</option>
                       ))}
                     </select>

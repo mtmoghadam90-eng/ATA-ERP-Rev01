@@ -54,6 +54,8 @@ export function rowToCustomer(row: CustomerRow): Customer {
     // from the detail record, showed them correctly.
     position: row.position ?? undefined,
     keyPerson: row.keyPerson ?? undefined,
+    // The proforma form picks the honorific from this.
+    gender: (row.gender ?? undefined) as Customer["gender"],
     linkedCustomerIds: (row.linksFrom ?? []).map((link) => link.to.id),
     customValues: parseCustomValues(row.customValues),
     // Present on the detail record only; the grid does not show them.
@@ -66,7 +68,6 @@ export function rowToCustomer(row: CustomerRow): Customer {
 export function detailToCustomer(detail: CustomerDetail): Customer {
   return markComplete({
     ...rowToCustomer(detail),
-    gender: (detail.gender ?? undefined) as Customer["gender"],
     address: detail.address ?? undefined,
     notes: detail.notes ?? undefined,
     moduleAgreements: (detail.agreements ?? []).map((a) => ({

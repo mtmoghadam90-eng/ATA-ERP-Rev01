@@ -51,7 +51,10 @@ export interface ProformaRow {
   creatorUserId: string | null;
   createdAt: string;
   customer: { id: string; companyName: string; customerType: string } | null;
-  project: { id: string; code: string; name: string; status: string } | null;
+  project: {
+    id: string; code: string; name: string; status: string;
+    customer: { id: string; companyName: string } | null;
+  } | null;
   creator: { id: string; fullName: string } | null;
   /** Enough of each line for the grid: its name, quantity and status. */
   items: { id: string; productName: string; quantity: string; status: string | null; supplyMethod: string | null }[];

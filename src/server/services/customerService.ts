@@ -139,6 +139,9 @@ const LIST_SELECT = {
   province: true,
   city: true,
   tags: true,
+  // The proforma form derives the honorific from it, so it cannot wait for the
+  // detail record — the form has only a row when the buyer is chosen.
+  gender: true,
   position: true, // The grid's «سمت» column, and dropdown disambiguation
   keyPerson: true, // The grid's «شخص کلیدی» column
   ownerUserId: true,

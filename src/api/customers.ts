@@ -32,10 +32,11 @@ export interface CustomerRow {
   customValues: string | null;
   /** Joined in the list query so the grid does not fetch one per row. */
   linksFrom: { to: { id: string; companyName: string; customerType: string } }[];
+  /** Drives the honorific the proforma form suggests. */
+  gender: string | null;
 }
 
 export interface CustomerDetail extends CustomerRow {
-  gender: string | null;
   address: string | null;
   notes: string | null;
   customValues: string | null;

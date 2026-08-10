@@ -110,7 +110,14 @@ const LIST_SELECT = {
   customer: { select: { id: true, companyName: true, customerType: true } },
   // The grid groups by project and its header shows the project's own status,
   // so that comes down with the row rather than being looked up separately.
-  project: { select: { id: true, code: true, name: true, status: true } },
+  // The grid groups by project and prints «کارفرما: …» under its name, so the
+  // project's customer comes down with the row rather than being looked up.
+  project: {
+    select: {
+      id: true, code: true, name: true, status: true,
+      customer: { select: { id: true, companyName: true } },
+    },
+  },
   creator: { select: { id: true, fullName: true } },
   // The card prints all three: how the proforma was sent and to whom, the
   // reason a lost one was lost, and the custom-field column.

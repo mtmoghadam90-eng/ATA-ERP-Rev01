@@ -57,6 +57,7 @@ import { createCustomerWithLinks, customerToWriteInput, detailToCustomer, findSe
 import { productToWriteInput, detailToProduct, rowToProduct } from "../api/productAdapter";
 import { projectToWriteInput, detailToProject } from "../api/projectAdapter";
 import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
+import { isPartial } from "../api/partial";
 import { useProformaList } from "../api/useProformaList";
 import { useUserDirectory } from "../api/useUserDirectory";
 import { useModuleNotes } from "../api/moduleNotes";
@@ -253,7 +254,10 @@ export default function ProformasView({
           code: row.project.code,
           name: row.project.name,
           status: row.project.status,
-          customerId: row.customerId,
+          customerId: row.project.customer?.id ?? row.customerId,
+          // The group header prints this; it had no source at all and so read
+          // «کارفرما: نامشخص» on every group.
+          customerName: row.project.customer?.companyName ?? "",
         } as Project);
       }
     }
@@ -261,7 +265,23 @@ export default function ProformasView({
   }, [list.rows]);
 
 
-  const customers = React.useMemo(() => {
+  /*
+   * Every customer this screen might have to name or ask a question about.
+   *
+   * The buyers of the proformas on the page, *and* whatever the modal's picker
+   * currently holds — which includes the buyer that is selected, pinned there
+   * by the picker whether or not the search happens to return it.
+   *
+   * The page alone was not enough, and the consequences were not cosmetic. The
+   * save path decided «is this buyer a company?» by looking the id up here, and
+   * for a customer the page did not contain the answer was "no": the contact
+   * and their honorific were dropped, and the stored buyer name became
+   * "مشتری نامشخص". The picker's rows also carry the gender the form derives
+   * the honorific from, which the page rows never did.
+   *
+   * Declared after the picker it reads, so the picker is defined above.
+   */
+  const pageCustomers = React.useMemo(() => {
     const seen = new Map<string, Customer>();
     for (const row of list.rows) {
       if (row.customer && !seen.has(row.customer.id)) {
@@ -631,14 +651,28 @@ export default function ProformasView({
   const [sentMethodType, setSentMethodType] = useState<string>(() => (settings?.dropdownItems?.proformaSentMethods || [])[0] || "ایمیل");
   const [customSentMethod, setCustomSentMethod] = useState<string>("");
   const [selectedSentRecipients, setSelectedSentRecipients] = useState<string[]>([]);
+  /*
+   * A document opened straight into a print window by its id.
+   *
+   * Looked up in `proformas` — the page in hand. In a window opened for
+   * printing that is page one of the list, so unless the document happened to
+   * be on it nothing opened at all and the window stayed white. Asked for by
+   * id instead, which is also the only way to get the prices: a list row does
+   * not carry them.
+   */
   React.useEffect(() => {
-    if (initialPrintDocId) {
-      const pf = proformas.find((p) => p.id === initialPrintDocId);
-      if (pf) {
-        handleOpenPrint(pf);
+    if (!initialPrintDocId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const full = detailToProforma(await proformasApi.get(initialPrintDocId));
+        if (!cancelled) handleOpenPrint(full);
+      } catch (err) {
+        console.error('could not load the proforma to print', err);
       }
-    }
-  }, [initialPrintDocId, proformas]);
+    })();
+    return () => { cancelled = true; };
+  }, [initialPrintDocId]);
 
   // Expand Project sections state
   const [expandedProjects, setExpandedProjects] = useState<
@@ -821,6 +855,16 @@ export default function ProformasView({
   });
   const modalCustomers = customerPicker.matches as unknown as Customer[];
 
+  /** The page's buyers, plus whatever the picker holds. See `pageCustomers`. */
+  const customers = React.useMemo(() => {
+    const merged = new Map<string, Customer>();
+    // Picker rows first: they are the fuller record — they carry the gender and
+    // the person's name parts, which a page row does not.
+    for (const c of modalCustomers) merged.set(c.id, c);
+    for (const c of pageCustomers) if (!merged.has(c.id)) merged.set(c.id, c);
+    return [...merged.values()];
+  }, [modalCustomers, pageCustomers]);
+
   /**
    * The contact field searches separately.
    *
@@ -908,6 +952,7 @@ export default function ProformasView({
         name: row.name,
         status: row.status,
         customerId: row.customerId,
+        customerName: row.customer?.companyName ?? "",
       } as Project);
     }
     for (const p of rowProjects) if (!merged.has(p.id)) merged.set(p.id, p);
@@ -1606,8 +1651,25 @@ export default function ProformasView({
     setShowStatusModal(false);
   };
   // Open Preview layout
-  const handleOpenPrint = (pf: Proforma) => {
-    setSelectedProforma(pf);
+  /**
+   * Opens the print preview on the whole record.
+   *
+   * The grid hands this a row, and a row carries each line's name, quantity and
+   * status but no price, no discount, no notes and no contact — so the preview
+   * and the downloaded file were a document with zeros in every money column.
+   * The full record is fetched first; the preview opens when it arrives.
+   */
+  const handleOpenPrint = async (pf: Proforma) => {
+    let full = pf;
+    if (isPartial(pf)) {
+      try {
+        full = detailToProforma(await proformasApi.get(pf.id));
+      } catch (err) {
+        reportError(err, 'بارگذاری پیش‌فاکتور برای چاپ با خطا مواجه شد.');
+        return;
+      }
+    }
+    setSelectedProforma(full);
     setOverrideShowBrand(!!settings.showProductBrandInDocuments);
     setShowPrintView(true);
   };
