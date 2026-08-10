@@ -224,8 +224,19 @@ async function run(options: Options): Promise<void> {
     throw err;
   }
   check("session established", !!login.user?.id, login.user?.id);
-  const me = await api.get<{ user: { id: string } }>("/api/me");
+  const me = await api.get<{
+    user: { id: string; isSystemAdmin?: boolean; permissions?: Record<string, boolean> };
+  }>("/api/me");
   checkEqual("/api/me agrees who we are", me.user?.id, login.user.id);
+
+  /*
+   * This scenario writes purchase orders and supplier inquiries, which the
+   * server refuses from a user without the cost permission. Said here rather
+   * than left to surface as an unexplained 403 two hundred lines down.
+   */
+  check("this account may see costs, which the purchasing steps below need",
+    me.user?.isSystemAdmin === true || me.user?.permissions?.costs === true,
+    "grant «مشاهده بهای خرید» to this user, or run as an administrator");
 
   /*
    * What is already here.

@@ -379,6 +379,7 @@ export default function App() {
             categories={store.settings.dropdownItems.categories}
             units={store.settings.dropdownItems.units}
             settings={store.settings}
+            currentUser={store.currentUser}
           />
         );
       case 'proformas':
@@ -484,6 +485,7 @@ export default function App() {
         return (
           <SupplierInquiriesView
             settings={store.settings}
+            currentUser={store.currentUser}
             categoryCompletion={categoryCompletion}
           />
         );

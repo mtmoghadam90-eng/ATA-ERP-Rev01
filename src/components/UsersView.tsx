@@ -88,6 +88,10 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     referrals: true,
     settings: false,
     users: false,
+    // Off unless granted. Unlike the module flags this one hides fields rather
+    // than screens, so a new account should not learn what the company pays
+    // just because nobody thought about it.
+    costs: false,
   });
 
   // Module Persian names and descriptions
@@ -104,6 +108,8 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     { id: 'referrals', name: 'کارتابل ارجاعات کار', desc: 'کارتابل ارجاعات فنی و تسک‌های جاری ارشیا' },
     { id: 'settings', name: 'تنظیمات سیستم', desc: 'تغییر الگوهای پیش‌فاکتور، فیلدهای دلخواه و تنظیمات عمومی' },
     { id: 'users', name: 'مدیریت کاربران', desc: 'تعریف پرسنل، تغییر رمز عبور و تنظیم سطح دسترسی ماژول‌ها' },
+    // Not a screen: it governs fields inside modules the user already has.
+    { id: 'costs', name: 'مشاهده بهای خرید', desc: 'دیدن قیمت تمام شده: ماشین‌حساب قیمت کالا، هزینه‌های سفارش خرید و مبالغ آفر تأمین‌کنندگان. بدون این دسترسی، این اعداد نمایش داده نمی‌شوند و سفارش خرید و استعلام قابل ذخیره نیست.' },
   ];
 
   const handleRoleChange = (selectedRole: 'admin' | 'user') => {
@@ -123,6 +129,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
         referrals: true,
         settings: true,
         users: true,
+        costs: true,
       });
     }
   };
@@ -156,6 +163,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
       referrals: true,
       settings: false,
       users: false,
+      costs: false,
     });
     setShowPassword(false);
     setShowAddModal(true);
@@ -203,7 +211,10 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     setPosition(user.position || '');
     setSignatureImage(user.signatureImage || '');
     setPermissions({
-      ...user.permissions
+      ...user.permissions,
+      // Absent means denied for this one (see canSeeCosts), so the box has to
+      // show unticked rather than inheriting whatever spread produced.
+      costs: user.permissions?.costs === true,
     });
     setShowPassword(false);
     setShowEditModal(true);

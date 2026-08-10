@@ -39,7 +39,9 @@ import {
   SupplierInquiry, 
   SupplierInquiryItem,
   ExchangeRate,
-  ERPSettings
+  ERPSettings,
+  // Aliased: `User` here is the lucide icon.
+  User as AppUser
 } from '../types';
 import ConfirmModal from './ConfirmModal';
 import ShamsiDatePicker from './ShamsiDatePicker';
@@ -59,6 +61,8 @@ import { projectsApi } from '../api/projects';
 import type { ProjectRow } from '../api/projects';
 import type { SupplierRow } from '../api/suppliers';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
+import CostAccessNotice from './CostAccessNotice';
+import { canSeeCosts } from '../utils/permissions';
 
 /**
  * Supplier inquiries screen.
@@ -72,6 +76,8 @@ interface SupplierInquiriesViewProps {
   // three mutations: the view calls the API, so the derived steps come back
   // from the server that applied them.
   settings: ERPSettings;
+  /** Read for one thing: whether this user may see the offers. */
+  currentUser?: AppUser | null;
   /**
    * Offers to close the project's inquiry category when this module reaches its
    * end — the final offer confirmed, or a winner declared. Optional, like every
@@ -104,8 +110,17 @@ async function uploadToSupplierInquiries(file: File): Promise<string> {
 
 export default function SupplierInquiriesView({
   settings,
+  currentUser,
   categoryCompletion,
 }: SupplierInquiriesViewProps) {
+  /*
+   * An offer is the purchase price before it becomes one, so this screen is not
+   * hidden field by field for a user without the cost permission — the server
+   * sends it to them with the amounts blanked and refuses their saves. All this
+   * decides is whether they are told why.
+   */
+  const showCosts = canSeeCosts(currentUser);
+
   // Rates are read here rather than handed down: they are a short shared list
   // that changes during the day, and a stale one misprices a document.
   const { rates: exchangeRates } = useExchangeRates();
@@ -346,6 +361,8 @@ export default function SupplierInquiriesView({
 
   return (
     <div className="space-y-6 text-right" dir="rtl" id="supplier-inquiries-container">
+      <CostAccessNotice visible={!showCosts} />
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-100 shadow-sm" id="header-section">
         <div>

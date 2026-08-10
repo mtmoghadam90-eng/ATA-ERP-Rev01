@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
+import { redactInquiries, redactInquiry } from "../costs";
 import { expandDateFields } from "../dates";
 import { syncChildren, toNullableString, toNumber } from "../childSync";
 import { loadSettings } from "../settings";
@@ -118,12 +119,16 @@ export async function listInquiries(
     db.supplierInquiry.count({ where }),
   ]);
 
-  return buildResult(rows as unknown as Record<string, unknown>[], total, q);
+  return buildResult(
+    redactInquiries(rows as unknown as Record<string, unknown>[], user),
+    total,
+    q,
+  );
 }
 
 export async function getInquiry(id: string, user: AuthUser) {
   if (!allowed(user)) return null;
-  return getDb().supplierInquiry.findUnique({
+  const inquiry = await getDb().supplierInquiry.findUnique({
     where: { id },
     include: {
       supplier: true,
@@ -132,6 +137,7 @@ export async function getInquiry(id: string, user: AuthUser) {
       steps: { orderBy: { stepNo: "asc" } },
     },
   });
+  return redactInquiry(inquiry, user);
 }
 
 /* --------------------------------- writes --------------------------------- */

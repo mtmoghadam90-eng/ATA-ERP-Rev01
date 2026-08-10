@@ -58,6 +58,8 @@ import { detailToProject, projectToWriteInput } from '../api/projectAdapter';
 import { detailToProduct, productToWriteInput } from '../api/productAdapter';
 import { createCustomerWithLinks } from '../api/customerAdapter';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
+import CostAccessNotice from './CostAccessNotice';
+import { canSeeCosts } from '../utils/permissions';
 
 /**
  * Purchase orders screen.
@@ -87,6 +89,14 @@ export default function PurchaseOrdersView({
   currentUser,
   categoryCompletion,
 }: PurchaseOrdersViewProps) {
+  /*
+   * A purchase order is mostly a statement of what the company paid, so this
+   * screen is not hidden field by field for a user without the cost
+   * permission — the server sends it to them with the money already blanked and
+   * refuses their saves. All this decides is whether they are told why.
+   */
+  const showCosts = canSeeCosts(currentUser);
+
   // Rates are read here rather than handed down: they are a short shared list
   // that changes during the day, and a stale one misprices a document.
   const { rates: exchangeRates } = useExchangeRates();
@@ -812,7 +822,9 @@ export default function PurchaseOrdersView({
 
   return (
     <div className="space-y-6 animate-fade-in">
-      
+
+      <CostAccessNotice visible={!showCosts} />
+
       {/* View Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
         <div>

@@ -26,6 +26,10 @@ import { generateSku, decodeSku } from "../src/utils/skuUtils";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
 import { calculateProjectFinance } from "../src/utils/finance";
+import { canSeeCosts } from "../src/server/auth";
+import {
+  redactInquiry, redactProduct, redactPurchaseOrder, stripProductCostInput,
+} from "../src/server/costs";
 
 let pass = 0; const fails: string[] = [];
 const ok = (what: string, cond: boolean, got?: unknown) => {
@@ -164,6 +168,88 @@ eq("and the outstanding balance returns", withReversal.totalRemainingHistoricalR
 const loosePair = reversalPair.map((t: any) => ({ ...t, proformaId: undefined }));
 const looseReversal = calculateProjectFinance({ id: "pr1" } as any, wonProforma, loosePair, [] as any);
 eq("and cancels there too", looseReversal.totalReceivedRiyal, 0);
+
+/*
+ * Cost visibility.
+ *
+ * A field-level permission is the one kind of rule where a green type-check
+ * proves nothing at all: the redactors take and return the same shape, so a
+ * field left off the list compiles perfectly and ships the number. These assert
+ * the fields by name, in both directions — removed for a user without the
+ * permission, untouched for one with it.
+ */
+head("Costs: what a user without the permission sees");
+
+const buyer = { id: "u1", permissions: { products: true, purchaseOrders: true, costs: true } } as any;
+const storeman = { id: "u2", permissions: { products: true, purchaseOrders: true } } as any;
+const admin = { id: "u3", isSystemAdmin: true } as any;
+
+ok("absent means denied, not granted", canSeeCosts(storeman) === false);
+ok("granted when explicitly true", canSeeCosts(buyer) === true);
+ok("a system admin always sees costs", canSeeCosts(admin) === true);
+ok("and nobody at all sees them signed out", canSeeCosts(null) === false);
+
+const productRow = {
+  id: "p1", code: "FT100", basePriceRial: "5000000", priceCalc: '{"calcPriceForeign":1200}',
+  variants: [{ id: "v1", sku: "FT100-S2I", priceRial: "5000000", priceCalc: '{"calcPriceForeign":1100}' }],
+};
+const hiddenProduct = redactProduct(productRow, storeman);
+eq("the price calculator is gone", hiddenProduct.priceCalc, null);
+eq("including on every variant", hiddenProduct.variants[0].priceCalc, null);
+eq("but the sale price stays — the warehouse quotes from it", hiddenProduct.basePriceRial, "5000000");
+eq("and the buyer still sees the calculator",
+  redactProduct(productRow, buyer).priceCalc, '{"calcPriceForeign":1200}');
+eq("redaction does not mutate the row it was given", productRow.priceCalc, '{"calcPriceForeign":1200}');
+
+const poRow = {
+  id: "po1", poNumber: "PO-1", status: "ثبت شده", currency: "یورو",
+  exchangeRate: "850000", landedCostRial: "3445000000", landedCostForeign: "4800",
+  totalForeignAmount: "4800", customsDutyRial: "280000000",
+  items: [{ id: "i1", productName: "فلومتر", quantity: "2", unitPriceForeign: "2400", totalPriceForeign: "4800" }],
+};
+const hiddenPo = redactPurchaseOrder(poRow, storeman);
+eq("landed cost is gone", hiddenPo.landedCostRial, null);
+eq("so are its components", hiddenPo.customsDutyRial, null);
+eq("and the line prices", hiddenPo.items[0].unitPriceForeign, null);
+eq("what was ordered still reads", hiddenPo.items[0].productName, "فلومتر");
+eq("and how many", hiddenPo.items[0].quantity, "2");
+
+const inquiryRow = {
+  id: "q1", isWinner: true, discountPercent: "10", discountAmount: "500",
+  financialOfferUrl: "/uploads/offer.pdf", technicalOfferUrl: "/uploads/tech.pdf",
+  items: [{ id: "qi1", name: "فلومتر", quantity: "2", priceForeign: "1000", priceRial: "0" }],
+  steps: [
+    { id: "s1", title: "آفر اولیه", isAuto: true, notes: "ثبت خودکار: آفر اولیه با مبلغ ۲۰۰۰ یورو ثبت شد." },
+    { id: "s2", title: "تماس", isAuto: false, notes: "با آقای احمدی صحبت شد." },
+  ],
+};
+const hiddenInquiry = redactInquiry(inquiryRow, storeman);
+eq("the offer price is gone", hiddenInquiry.items[0].priceForeign, null);
+eq("and the discount", hiddenInquiry.discountPercent, null);
+eq("the priced quotation is not linked", hiddenInquiry.financialOfferUrl, null);
+eq("the technical one still is", hiddenInquiry.technicalOfferUrl, "/uploads/tech.pdf");
+eq("a derived step does not quote the amount back in prose",
+  hiddenInquiry.steps[0].notes, null);
+eq("a note somebody typed is left alone", hiddenInquiry.steps[1].notes, "با آقای احمدی صحبت شد.");
+eq("and the winner is still visible — that is not a price", hiddenInquiry.isWinner, true);
+
+// A save from a redacted form must not write its blanks over the stored costs.
+const stored = [{ id: "v1", priceCalc: '{"calcPriceForeign":1100}' }];
+const write = stripProductCostInput(
+  { code: "FT100", priceCalc: null, variants: [{ id: "v1", sku: "FT100-S2I", priceCalc: null }] },
+  storeman,
+  stored,
+);
+ok("the product's calculator is dropped, not set to null",
+  !("priceCalc" in write), Object.keys(write));
+eq("and each variant keeps what the database holds",
+  (write.variants as any[])[0].priceCalc, '{"calcPriceForeign":1100}');
+eq("a variant this user just added gets none rather than theirs",
+  (stripProductCostInput(
+    { variants: [{ sku: "FT100-S3I", priceCalc: '{"calcPriceForeign":9}' }] }, storeman, stored,
+  ).variants as any[])[0].priceCalc, null);
+ok("a buyer's write is passed through untouched",
+  stripProductCostInput({ priceCalc: "x" }, buyer).priceCalc === "x");
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

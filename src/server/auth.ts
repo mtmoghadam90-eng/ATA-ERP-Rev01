@@ -143,6 +143,29 @@ export function canSeeFullUsers(user: AuthUser | null | undefined): boolean {
   return hasPermission(user, "users");
 }
 
+/**
+ * True when the caller may see what the company pays — as opposed to what it
+ * charges.
+ *
+ * The first permission here that is not a screen. Every other flag answers "may
+ * this user open this module"; this one answers "may this user see these fields
+ * inside modules they already have". Warehouse staff need the inventory screen
+ * and the sale price, and must not learn the purchase price.
+ *
+ * What it covers, and why those three and not others, is in
+ * `src/server/costs.ts`.
+ */
+export function canSeeCosts(user: AuthUser | null | undefined): boolean {
+  if (!user) return false;
+  if (user.isSystemAdmin) return true;
+  // Deliberately *not* `hasPermission`, which reads an absent key as granted —
+  // the right default for module flags that predate every stored account, and
+  // the wrong one for a new flag guarding money. Absent means denied here, so
+  // nobody is quietly given access by a permissions object written before this
+  // existed. The cost is that it must be granted explicitly after deployment.
+  return user.permissions?.costs === true;
+}
+
 export interface AuthUser {
   id: string;
   username?: string;

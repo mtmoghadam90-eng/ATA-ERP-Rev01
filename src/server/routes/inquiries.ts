@@ -1,6 +1,7 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
+import { refuseCostWrite } from "../costs";
 import { getTodayShamsi } from "../../dateUtils";
 import {
   INQUIRY_FILTERABLE, INQUIRY_SORTABLE, InquiryInput,
@@ -69,6 +70,9 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
   app.post("/api/supplier-inquiries", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
+    // An offer is the purchase price before it becomes one; a user who cannot
+    // see it was served this record with the amounts blanked.
+    if (refuseCostWrite(res, user)) return;
     try {
       const input = pickInput(req.body);
       if (!input.projectId) {
@@ -92,6 +96,9 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
   app.put("/api/supplier-inquiries/:id", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
+    // An offer is the purchase price before it becomes one; a user who cannot
+    // see it was served this record with the amounts blanked.
+    if (refuseCostWrite(res, user)) return;
     try {
       const inquiry = await updateInquiry(req.params.id, pickInput(req.body), user, getTodayShamsi());
       if (!inquiry) {
@@ -161,6 +168,9 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
   app.delete("/api/supplier-inquiries/:id", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
+    // An offer is the purchase price before it becomes one; a user who cannot
+    // see it was served this record with the amounts blanked.
+    if (refuseCostWrite(res, user)) return;
     try {
       const outcome = await deleteInquiry(req.params.id, user, getTodayShamsi());
       if (outcome === "forbidden") return denied(res);

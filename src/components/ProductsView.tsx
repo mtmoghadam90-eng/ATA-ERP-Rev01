@@ -25,7 +25,8 @@ import {
   CheckCircle2,
   Loader2
 } from 'lucide-react';
-import { Product, ProductVariant, ERPSettings, InventoryTransaction, ProductFeature, ExchangeRate, ProductConfigRule } from '../types';
+import { Product, ProductVariant, ERPSettings, InventoryTransaction, ProductFeature, ExchangeRate, ProductConfigRule, User } from '../types';
+import { canSeeCosts } from '../utils/permissions';
 import { toShamsiStr, toGregorianStr } from '../dateUtils';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
@@ -55,12 +56,25 @@ interface ProductsViewProps {
   categories: string[];
   units: string[];
   settings: ERPSettings;
+  /** Read for one thing: whether this user may see what the goods cost. */
+  currentUser?: User | null;
 }
 
 export default function ProductsView({
   categories,
   settings,
+  currentUser,
 }: ProductsViewProps) {
+  /*
+   * The price calculator works backwards from what a product cost — foreign
+   * price, freight, customs, margin — to a sale price. Warehouse staff need
+   * this screen and must not see that, so the button is not drawn for them.
+   *
+   * Hiding it is a courtesy, not the control: the server already returns the
+   * stored calculator as null for these users and ignores it on save. See
+   * `src/server/costs.ts`.
+   */
+  const showCosts = canSeeCosts(currentUser);
   // Rates are read here rather than handed down: they are a short shared list
   // that changes during the day, and a stale one misprices a document.
   const { rates: exchangeRates } = useExchangeRates();
@@ -1374,8 +1388,8 @@ export default function ProductsView({
                         </div>
                       </div>
 
-                      {/* Calculator Button */}
-                      <div className="md:col-span-2 w-full">
+                      {/* Calculator Button — cost-derived, so not for everyone */}
+                      <div className={`md:col-span-2 w-full ${showCosts ? '' : 'hidden'}`}>
                         <button
                           type="button"
                           onClick={() => {

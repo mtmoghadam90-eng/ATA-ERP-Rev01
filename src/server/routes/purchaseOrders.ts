@@ -1,6 +1,7 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
+import { refuseCostWrite } from "../costs";
 import { getDb } from "../db";
 import { nextDocumentNumber } from "../documentNumbers";
 import { getTodayShamsi } from "../../dateUtils";
@@ -38,6 +39,7 @@ function pickInput(body: unknown): PurchaseOrderInput {
 
 const denied = (res: express.Response) =>
   res.status(403).json({ success: false, error: "شما اجازه دسترسی به این بخش را ندارید." });
+
 
 export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDeps): void {
   const KEY = "erp_purchase_orders";
@@ -86,6 +88,7 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
   app.post("/api/purchase-orders", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
+    if (refuseCostWrite(res, user)) return;
     try {
       const input = pickInput(req.body);
       if (!input.supplierId) {
@@ -128,6 +131,7 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
   app.put("/api/purchase-orders/:id", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
+    if (refuseCostWrite(res, user)) return;
     try {
       const purchaseOrder = await updatePurchaseOrder(
         req.params.id, pickInput(req.body), user, getTodayShamsi());
@@ -144,6 +148,7 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
   app.delete("/api/purchase-orders/:id", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
+    if (refuseCostWrite(res, user)) return;
     try {
       const outcome = await deletePurchaseOrder(req.params.id, user, getTodayShamsi());
       if (outcome === "forbidden") return denied(res);

@@ -614,6 +614,15 @@ export interface User {
     settings: boolean;
     users: boolean;
     packagingDelivery?: boolean;
+    /**
+     * Not a screen — the only flag here that is not.
+     *
+     * Governs what the company *pays*: the product price calculator, purchase
+     * order costs and supplier offers, inside modules the user already has.
+     * Enforced server-side in `src/server/costs.ts`; the screens hide the same
+     * fields so nobody is shown empty boxes.
+     */
+    costs?: boolean;
   };
 }
 

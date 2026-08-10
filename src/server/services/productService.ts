@@ -1,7 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
-import { AuthUser, hasPermission } from "../auth";
+import { AuthUser, canSeeCosts, hasPermission } from "../auth";
+import { redactProduct, stripProductCostInput } from "../costs";
 import { jalaliToDate, normalizeJalali } from "../dates";
 import { toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { logAction } from "./auditService";
@@ -117,10 +118,13 @@ export async function listProducts(
 export async function getProduct(id: string, user: AuthUser) {
   if (!requireProductPermission(user)) return null;
   const db = getDb();
-  return db.product.findUnique({
+  const product = await db.product.findUnique({
     where: { id },
     include: { variants: { orderBy: { sku: "asc" } } },
   });
+  // The list rows never carried the calculator, so this is the one read that
+  // has to drop it. `LIST_SELECT` above must stay that way.
+  return redactProduct(product, user);
 }
 
 /**
@@ -477,6 +481,10 @@ export async function createProduct(
   if (!requireProductPermission(user)) return null;
   const db = getDb();
 
+  // A user who may not see the price calculator may still add a product; the
+  // calculator is simply not theirs to fill in.
+  input = stripProductCostInput(input, user);
+
   const product = await db.$transaction(async (tx) => {
     const product = await tx.product.create({
       data: {
@@ -540,7 +548,9 @@ export async function createProduct(
     );
   }
 
-  return product;
+  // The audit snapshot above keeps the whole record on purpose — the log is
+  // read through the settings permission, not this one. Only the reply is cut.
+  return redactProduct(product, user);
 }
 
 export async function updateProduct(
@@ -558,6 +568,18 @@ export async function updateProduct(
       select: { id: true, hasVariants: true, stockLevel: true, name: true, code: true },
     });
     if (!before) return null;
+
+    // Their form was served with the calculator blanked, so what comes back
+    // carries nulls where the costs were. Dropping the product's own field
+    // leaves it unchanged; the variants need their stored values handed back,
+    // because a variant is written whole and a null would be written too.
+    if (!canSeeCosts(user)) {
+      const stored = await tx.productVariant.findMany({
+        where: { productId: id },
+        select: { id: true, priceCalc: true },
+      });
+      input = stripProductCostInput(input, user, stored);
+    }
 
     await tx.product.update({ where: { id }, data: scalarData(input) as Prisma.ProductUncheckedUpdateInput });
 
@@ -610,7 +632,7 @@ export async function updateProduct(
     }
   }
 
-  return result;
+  return redactProduct(result, user);
 }
 
 export async function countProductReferences(id: string) {
@@ -738,6 +760,11 @@ export async function copyProduct(
       });
     }
 
-    return tx.product.findUnique({ where: { id: copy.id }, include: { variants: true } });
+    const created = await tx.product.findUnique({
+      where: { id: copy.id }, include: { variants: true },
+    });
+    // The copy keeps the source's calculator in the database — copying a
+    // product is not editing its costs — but this user still may not read it.
+    return redactProduct(created, user);
   });
 }

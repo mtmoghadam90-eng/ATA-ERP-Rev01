@@ -1,7 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
-import { AuthUser, hasPermission } from "../auth";
+import { AuthUser, canSeeCosts, hasPermission } from "../auth";
+import { redactPurchaseOrder, redactPurchaseOrders } from "../costs";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { applyStockDelta } from "./productService";
@@ -101,12 +102,16 @@ export async function listPurchaseOrders(
     db.purchaseOrder.count({ where }),
   ]);
 
-  return buildResult(rows as unknown as Record<string, unknown>[], total, q);
+  return buildResult(
+    redactPurchaseOrders(rows as unknown as Record<string, unknown>[], user),
+    total,
+    q,
+  );
 }
 
 export async function getPurchaseOrder(id: string, user: AuthUser) {
   if (!allowed(user)) return null;
-  return getDb().purchaseOrder.findUnique({
+  const po = await getDb().purchaseOrder.findUnique({
     where: { id },
     include: {
       supplier: true,
@@ -115,6 +120,7 @@ export async function getPurchaseOrder(id: string, user: AuthUser) {
       items: { orderBy: { lineNo: "asc" } },
     },
   });
+  return redactPurchaseOrder(po, user);
 }
 
 /* --------------------------------- writes --------------------------------- */
