@@ -636,6 +636,8 @@ export interface PackingItem {
   id: string;
   itemOrDocName: string;
   productId?: string;
+  /** The exact SKU shipped. The stock ledger issues against it. */
+  variantId?: string;
   quantity: number;
   packageType: string; // e.g. کارتن، جعبه چوبی، پالت، کیسه
   dimensions: string; // e.g. 50x40x30 سانتی‌متر

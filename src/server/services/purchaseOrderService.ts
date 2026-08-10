@@ -319,6 +319,17 @@ async function reconcileStock(
       referenceId: purchaseOrderId,
       notes: `رسید انبار سفارش خرید ${po.poNumber}`,
       occurredAtJalali: todayJalali,
+      /*
+       * The ledger, but not what may be sold.
+       *
+       * A foreign order is placed against work that has already been won, so
+       * these goods were sold before they were bought. They arrive, sit in the
+       * warehouse and leave on that job's packing list — the ledger records
+       * both movements, and at no point were they free for anyone to quote. A
+       * salesperson who saw them as available would promise the same units
+       * twice.
+       */
+      affectsAvailable: false,
     });
     movements++;
   }

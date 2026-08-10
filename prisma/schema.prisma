@@ -794,6 +794,10 @@ model PackingItem {
 
   itemOrDocName String  @db.NVarChar(400)
   productId     String? @db.NVarChar(36)
+  /// The exact SKU being shipped, when the product has variants. Deliberately
+  /// not a relation: a packing list is a historical document and must survive
+  /// the SKU being retired. The stock ledger reads it to issue the right one.
+  variantId     String? @db.NVarChar(36)
   tagNumber     String? @db.NVarChar(100)
   quantity      Decimal @default(1) @db.Decimal(18, 3)
   packageType   String? @db.NVarChar(100)

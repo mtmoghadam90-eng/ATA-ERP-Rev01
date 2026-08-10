@@ -161,6 +161,21 @@ export interface StockChange {
   notes?: string | null;
   /** Shamsi date of the movement; defaults to today at the caller's clock. */
   occurredAtJalali: string;
+  /**
+   * Whether this movement changes what a salesperson may promise.
+   *
+   * True for ordinary warehouse stock: goods held against no particular order,
+   * which anyone may quote. False for goods that only ever belonged to one job
+   * — a foreign order bought against a won line arrives, sits in the warehouse
+   * and leaves on that job's packing list. Physically it came and went, and the
+   * ledger records both; it was never available to sell, because it was sold
+   * before it was bought.
+   *
+   * So `stockLevel` means *free to sell*, not *physically present*, and the two
+   * deliberately differ while job-specific goods are on the shelf. The ledger
+   * is the physical record; the level is the promise.
+   */
+  affectsAvailable?: boolean;
 }
 
 /**
@@ -195,6 +210,9 @@ export async function applyStockDelta(
       notes: toNullableString(change.notes),
     },
   });
+
+  // Ledger only: the goods moved, but nothing about what may be promised did.
+  if (change.affectsAvailable === false) return;
 
   if (change.variantId) {
     await tx.productVariant.update({

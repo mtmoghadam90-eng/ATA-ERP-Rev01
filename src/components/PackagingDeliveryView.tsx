@@ -312,6 +312,9 @@ export default function PackagingDeliveryView({
         id: `pack-item-auto-${idx}-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         itemOrDocName: line.productName,
         productId: line.productId ?? undefined,
+        // The SKU the proforma promised, carried onto the packing line so the
+        // stock ledger issues that variant rather than guessing at one.
+        variantId: line.variantId ?? undefined,
         quantity: line.remaining,
         packageType: 'کارتن',
         dimensions: '50x40x30 سانتی‌متر',

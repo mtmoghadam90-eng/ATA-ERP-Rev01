@@ -4,6 +4,7 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
+import { applyStockDelta } from "./productService";
 import { getWonItems } from "../proformaStatus";
 import { deriveServiceHeader } from "../afterSalesStatus";
 import { getTodayShamsi } from "../../dateUtils";
@@ -135,6 +136,7 @@ export async function getDelivery(id: string, user: AuthUser) {
 export interface PackingItemInput {
   itemOrDocName?: string;
   productId?: string | null;
+  variantId?: string | null;
   tagNumber?: string | null;
   quantity?: unknown;
   packageType?: string | null;
@@ -168,6 +170,8 @@ function mapPackingItem(row: PackingItemInput): Record<string, unknown> | null {
   return {
     itemOrDocName: name,
     productId: toNullableString(row.productId, 36),
+    // Which SKU, when the product has variants. The ledger issues against it.
+    variantId: toNullableString(row.variantId, 36),
     tagNumber: toNullableString(row.tagNumber, 100),
     quantity: toNumber(row.quantity, 1),
     packageType: toNullableString(row.packageType, 100),
@@ -200,6 +204,82 @@ function deliveryScalarData(input: DeliveryInput): Record<string, unknown> {
   return { ...out, ...expandDateFields(input as Record<string, unknown>, DELIVERY_DATE_FIELDS) };
 }
 
+/** Ledger tag for movements owned by a packing list. */
+const STOCK_REFERENCE = "DELIVERY";
+
+const positionKey = (productId: string, variantId: string | null | undefined) =>
+  `${productId}|${variantId ?? ""}`;
+
+/**
+ * Takes what this packing list ships out of the stock ledger.
+ *
+ * Written the same way a purchase order's receipt is: not by reverting and
+ * reapplying, but by comparing what this list has already issued against what
+ * its lines now say and writing only the difference. So it is idempotent, it
+ * survives the list being edited, and deleting the list returns everything by
+ * targeting zero.
+ *
+ * The movement is ledger-only. The level a salesperson sees was already reduced
+ * when the proforma line was won — for goods that came from the warehouse — and
+ * for goods bought against the job it was never increased. Reducing it again
+ * here would take the same units out twice.
+ */
+async function reconcileDeliveryStock(
+  tx: Prisma.TransactionClient,
+  deliveryId: string,
+  todayJalali: string,
+): Promise<void> {
+  const delivery = await tx.packagingDelivery.findUnique({
+    where: { id: deliveryId },
+    select: {
+      id: true, packingListNumber: true,
+      items: { select: { productId: true, variantId: true, quantity: true } },
+    },
+  });
+
+  const issued = new Map<string, number>();
+  const ledger = await tx.inventoryTransaction.findMany({
+    where: { referenceType: STOCK_REFERENCE, referenceId: deliveryId },
+    select: { productId: true, variantId: true, signedQuantity: true },
+  });
+  for (const row of ledger) {
+    const key = positionKey(row.productId, row.variantId);
+    issued.set(key, (issued.get(key) ?? 0) + Number(row.signedQuantity));
+  }
+
+  // Negative: goods leaving. A line naming no product is a document or a
+  // free-text entry and moves nothing.
+  const target = new Map<string, number>();
+  for (const item of delivery?.items ?? []) {
+    if (!item.productId) continue;
+    const key = positionKey(item.productId, item.variantId);
+    target.set(key, (target.get(key) ?? 0) - Number(item.quantity));
+  }
+
+  for (const key of new Set([...issued.keys(), ...target.keys()])) {
+    const delta = (target.get(key) ?? 0) - (issued.get(key) ?? 0);
+    if (delta === 0) continue;
+
+    const [productId, variantPart] = key.split("|");
+    const variantId = variantPart || null;
+
+    // The product or SKU may have been retired since the list was written.
+    if (variantId && (await tx.productVariant.count({ where: { id: variantId } })) === 0) continue;
+    if ((await tx.product.count({ where: { id: productId } })) === 0) continue;
+
+    await applyStockDelta(tx, {
+      productId, variantId, delta,
+      referenceType: STOCK_REFERENCE,
+      referenceId: deliveryId,
+      notes: delivery
+        ? `خروج انبار طبق پکینگ لیست ${delivery.packingListNumber}`
+        : `بازگشت به دلیل حذف پکینگ لیست`,
+      occurredAtJalali: todayJalali,
+      affectsAvailable: false,
+    });
+  }
+}
+
 export async function createDelivery(input: DeliveryInput, user: AuthUser, todayJalali: string) {
   if (!allowed(user)) return null;
   const db = getDb();
@@ -212,6 +292,8 @@ export async function createDelivery(input: DeliveryInput, user: AuthUser, today
       delegate: tx.packingItem, parentWhere: { deliveryId: delivery.id },
       rows: input.items ?? [], map: mapPackingItem,
     });
+    // Issuing the list is what takes the goods out of the warehouse.
+    await reconcileDeliveryStock(tx, delivery.id, todayJalali);
     return tx.packagingDelivery.findUnique({
       where: { id: delivery.id },
       include: { items: { orderBy: { lineNo: "asc" } } },
@@ -305,6 +387,10 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
       });
     }
 
+    // Only the difference between what this list has already issued and what it
+    // now says, so an edit corrects the ledger rather than doubling it.
+    await reconcileDeliveryStock(tx, id, todayJalali);
+
     return tx.packagingDelivery.findUnique({
       where: { id },
       include: { items: { orderBy: { lineNo: "asc" } } },
@@ -383,6 +469,8 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
 export interface RemainingLine {
   key: string;
   productId: string | null;
+  /** The SKU promised, when the product has variants. */
+  variantId: string | null;
   productName: string;
   tagNumber: string | null;
   promised: number;
@@ -407,7 +495,7 @@ export async function getDeliveryRemaining(
       items: {
         orderBy: { lineNo: "asc" },
         select: {
-          productId: true, productName: true, tagNumber: true,
+          productId: true, variantId: true, productName: true, tagNumber: true,
           quantity: true, supplyMethod: true, status: true,
         },
       },
@@ -415,13 +503,23 @@ export async function getDeliveryRemaining(
   });
 
   const lines = new Map<string, RemainingLine>();
-  const keyOf = (productId: string | null, name: string) => productId || name.trim();
+  /*
+   * Two lines are the same line when they are the same SKU.
+   *
+   * The key was the product alone, so a proforma promising one variant and a
+   * packing list shipping a different one of the same product counted against
+   * each other — the wrong SKU came off the outstanding list, and the ledger
+   * entry the packing line produced named whichever variant happened to be
+   * attached.
+   */
+  const keyOf = (productId: string | null, variantId: string | null, name: string) =>
+    productId ? `${productId}|${variantId ?? ""}` : name.trim();
 
   for (const pf of proformas) {
     // `true` keeps lines that will be purchased as well as those from stock:
     // both are delivered to the customer, and both belong on a packing list.
     for (const item of getWonItems(pf, true)) {
-      const key = keyOf(item.productId, item.productName);
+      const key = keyOf(item.productId, item.variantId ?? null, item.productName);
       const existing = lines.get(key);
       if (existing) {
         existing.promised += Number(item.quantity);
@@ -430,6 +528,7 @@ export async function getDeliveryRemaining(
         lines.set(key, {
           key,
           productId: item.productId,
+          variantId: item.variantId ?? null,
           productName: item.productName,
           tagNumber: item.tagNumber,
           promised: Number(item.quantity),
@@ -447,18 +546,19 @@ export async function getDeliveryRemaining(
         ...(params.excludeDeliveryId ? { id: { not: params.excludeDeliveryId } } : {}),
       },
     },
-    select: { productId: true, itemOrDocName: true, quantity: true },
+    select: { productId: true, variantId: true, itemOrDocName: true, quantity: true },
   });
 
   for (const row of shippedRows) {
-    const key = keyOf(row.productId, row.itemOrDocName);
+    const key = keyOf(row.productId, row.variantId, row.itemOrDocName);
     const line = lines.get(key);
     // Something shipped that no won line promised is still shipped, so it is
     // reported rather than dropped — otherwise it silently frees up quota.
     if (line) line.shipped += Number(row.quantity);
     else {
       lines.set(key, {
-        key, productId: row.productId, productName: row.itemOrDocName,
+        key, productId: row.productId, variantId: row.variantId,
+        productName: row.itemOrDocName,
         tagNumber: null, promised: 0, shipped: Number(row.quantity), remaining: 0,
       });
     }
@@ -481,7 +581,20 @@ export async function deleteDelivery(
   const existing = await db.packagingDelivery.findUnique({ where: { id } });
   if (!existing) return "not-found";
 
-  await db.packagingDelivery.delete({ where: { id } });
+  await db.$transaction(async (tx) => {
+    /*
+     * Put back what this list took out, then remove it.
+     *
+     * The lines cascade with the delivery, so the reconciliation has to run
+     * while they still exist — it targets zero once they are gone, and the
+     * ledger entries it writes carry a reference to a list that no longer
+     * exists, which is exactly right: the history says the goods left and came
+     * back.
+     */
+    await tx.packingItem.deleteMany({ where: { deliveryId: id } });
+    await reconcileDeliveryStock(tx, id, todayJalali);
+    await tx.packagingDelivery.delete({ where: { id } });
+  });
 
   // Audit log
   await logAction(

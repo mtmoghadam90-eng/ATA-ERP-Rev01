@@ -16,6 +16,7 @@ export interface PackingItemRow {
   lineNo: number;
   itemOrDocName: string;
   productId: string | null;
+  variantId: string | null;
   tagNumber: string | null;
   quantity: string;
   packageType: string | null;
@@ -76,6 +77,8 @@ export interface DeliveryWriteInput {
 export interface RemainingLine {
   key: string;
   productId: string | null;
+  /** The SKU promised, so the packing line it seeds issues the right one. */
+  variantId: string | null;
   productName: string;
   tagNumber: string | null;
   promised: number;
@@ -184,6 +187,7 @@ export function detailToDelivery(detail: DeliveryDetail): PackagingDelivery {
       id: item.id,
       itemOrDocName: item.itemOrDocName,
       productId: item.productId ?? undefined,
+      variantId: item.variantId ?? undefined,
       tagNumber: item.tagNumber ?? undefined,
       quantity: Number(item.quantity),
       packageType: item.packageType ?? "",
@@ -214,6 +218,7 @@ export function deliveryToWriteInput(delivery: Partial<PackagingDelivery>): Deli
     items: (delivery.items ?? []).map((item) => ({
       itemOrDocName: item.itemOrDocName,
       productId: item.productId || null,
+      variantId: item.variantId || null,
       tagNumber: item.tagNumber || null,
       quantity: item.quantity,
       packageType: item.packageType || null,

@@ -107,7 +107,16 @@ function termToDays(range: string | null, unit: string | null): number {
 }
 
 interface SupplyProduct { id: string; code: string; supplyType: string; stockLevel: unknown }
-interface SupplyLine { productId: string | null; productCode: string | null; supplyMethod: string | null }
+interface SupplyLine {
+  productId: string | null;
+  productCode: string | null;
+  productName?: string | null;
+  supplyMethod: string | null;
+}
+
+/** Names compare as names: spacing and ZWNJ are not part of one. */
+const sameName = (a?: string | null, b?: string | null): boolean =>
+  !!a && !!b && a.replace(/[\s‌]/g, "").trim() === b.replace(/[\s‌]/g, "").trim();
 
 /**
  * How a won line will actually be supplied.
@@ -120,10 +129,21 @@ interface SupplyLine { productId: string | null; productCode: string | null; sup
  */
 function resolveSupplyMethod(
   line: SupplyLine,
-  projectItems: { productId: string | null; supplyMethod: string | null }[] | undefined,
+  projectItems: { productId: string | null; name?: string | null; supplyMethod: string | null }[] | undefined,
   productsById: Map<string, SupplyProduct>,
 ): string {
-  const fromProject = projectItems?.find((i) => i.productId && i.productId === line.productId);
+  /*
+   * The project's requirement for this line, matched by product or by name.
+   *
+   * By product alone it never matched a requirement typed by hand — those carry
+   * no product id — so a line the project had marked as bought to order fell
+   * through to the product's stock and was reported as coming from the
+   * warehouse. Which is the same answer a proforma line gives when its own
+   * `supplyMethod` is missing, and it was missing on every proforma edited
+   * before the edit form stopped dropping it.
+   */
+  const fromProject = projectItems?.find((i) =>
+    (i.productId && i.productId === line.productId) || sameName(i.name, line.productName));
   const product = line.productId ? productsById.get(line.productId) : undefined;
 
   // An explicit non-default choice on the line wins outright.
@@ -224,7 +244,9 @@ export async function summarizeProjects(
   const db2 = getDb();
   const projectItems = await db2.projectItem.findMany({
     where: { projectId: { in: ids } },
-    select: { projectId: true, productId: true, supplyMethod: true },
+    // The name too: a requirement typed by hand has no product to match on, and
+    // it is exactly those lines that most often say how they will be supplied.
+    select: { projectId: true, productId: true, name: true, supplyMethod: true },
   });
   const projectItemsBy = byProject(projectItems);
 
