@@ -32,6 +32,7 @@ import {
 } from "../src/server/costs";
 import { describeTransaction } from "../src/server/services/transactionService";
 import { rowToCustomer } from "../src/api/customerAdapter";
+import { samePermissions } from "../src/server/services/userService";
 import type { CustomerRow } from "../src/api/customers";
 
 let pass = 0; const fails: string[] = [];
@@ -305,6 +306,29 @@ eq("a natural person's position reaches the grid", rowToCustomer(personRow).posi
 eq("a company's key person does too", rowToCustomer(companyRow).keyPerson, "مهندس احمدی");
 eq("and its industry", rowToCustomer(companyRow).industry, "نفت و گاز");
 eq("province survives the projection", rowToCustomer(personRow).province, "تهران");
+
+/*
+ * Saving an account revokes its sessions only when something actually changed.
+ *
+ * The edit form posts the whole record, so a save that touched only the name
+ * still carried the permissions — and a bump keyed on the field being *present*
+ * signed the user out of the browser they were saving from, over a change that
+ * had been written. Key order is not meaning: the stored text was serialized by
+ * whichever client last saved, so a textual comparison finds differences that
+ * are not there.
+ */
+head("User save: revoke sessions on a real change only");
+
+const permsStored = JSON.stringify({ dashboard: true, customers: true, costs: true });
+ok("an identical object is not a change", samePermissions(permsStored, permsStored));
+ok("nor the same flags in another order",
+  samePermissions(JSON.stringify({ customers: true, costs: true, dashboard: true }), permsStored));
+ok("a flipped flag is",
+  !samePermissions(JSON.stringify({ dashboard: true, customers: true, costs: false }), permsStored));
+ok("and so is a new one",
+  !samePermissions(JSON.stringify({ dashboard: true, customers: true, costs: true, users: true }), permsStored));
+ok("two accounts with nothing stored match", samePermissions(null, null));
+ok("but nothing stored against something is a change", !samePermissions(null, permsStored));
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

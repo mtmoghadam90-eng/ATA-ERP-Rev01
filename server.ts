@@ -292,7 +292,20 @@ async function startServer() {
 
   // Relational endpoints. Registered after the auth helpers exist, since they
   // close over the session secret and the user store.
-  const routeDeps = { requireAuth, requireKeyAccess };
+  /**
+   * Replaces the caller's cookie after their own `sessionEpoch` moved.
+   *
+   * The epoch is bumped to invalidate sessions already issued — the point of a
+   * password change. But it invalidates the browser doing the changing too, so
+   * without this the user was thrown out mid-operation and told their session
+   * had expired, over a change that had already been saved.
+   */
+  const reissueSession = (res: express.Response, userId: string, epoch: number): void => {
+    const token = signSession({ uid: userId, iat: Date.now(), epoch }, SESSION_SECRET);
+    res.setHeader("Set-Cookie", buildSessionCookie(token));
+  };
+
+  const routeDeps = { requireAuth, requireKeyAccess, reissueSession };
   registerCustomerRoutes(app, routeDeps);
   registerProjectRoutes(app, routeDeps);
   registerProformaRoutes(app, routeDeps);

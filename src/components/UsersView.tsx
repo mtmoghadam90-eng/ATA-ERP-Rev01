@@ -422,7 +422,17 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                 <span className="text-xs font-semibold text-slate-500 block mb-2">خلاصه دسترسی به ماژول‌ها:</span>
                 <div className="flex flex-wrap gap-1.5">
                   {moduleList.map((m) => {
-                    const hasAccess = user.permissions && user.permissions[m.id as keyof typeof user.permissions];
+                    /*
+                     * What the server would actually answer, which is not the
+                     * stored flag alone. A system administrator passes every
+                     * check regardless of what their permissions object says,
+                     * and theirs predates the newer flags — so this summary
+                     * struck through capabilities they plainly have, while the
+                     * edit form beside it showed the same boxes ticked.
+                     */
+                    const hasAccess = user.isSystemAdmin
+                      || (user.permissions
+                        && user.permissions[m.id as keyof typeof user.permissions] === true);
                     return (
                       <span 
                         key={m.id}

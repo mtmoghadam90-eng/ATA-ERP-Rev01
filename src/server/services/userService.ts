@@ -131,23 +131,62 @@ export async function createUser(
 }
 
 /**
+ * Whether two serialized permission objects say the same thing.
+ *
+ * Key order is not meaning. The stored string was written by whichever client
+ * last saved the account, so comparing the text would report a change every
+ * time the order differed — and a reported change revokes the sessions.
+ */
+export function samePermissions(next: unknown, stored: unknown): boolean {
+  const flatten = (value: unknown): string => {
+    if (value == null) return "";
+    let parsed: unknown = value;
+    if (typeof value === "string") {
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        return value;
+      }
+    }
+    if (!parsed || typeof parsed !== "object") return String(parsed);
+    return Object.entries(parsed as Record<string, unknown>)
+      .map(([k, v]) => `${k}=${v}`)
+      .sort()
+      .join("&");
+  };
+  return flatten(next) === flatten(stored);
+}
+
+/**
  * Updates an account.
  *
  * Changing permissions or deactivating someone bumps `sessionEpoch`, which
  * invalidates the cookies they already hold — otherwise a revoked permission
  * would not take effect until their session happened to expire.
+ *
+ * The bump follows a real change in value, not the mere presence of the field
+ * in the request. The edit form posts the whole record, so every save of any
+ * account used to revoke its sessions — including an administrator saving their
+ * own, who was then signed out and told their session had expired over a change
+ * that had in fact been written.
+ *
+ * Returns the new epoch when it moved, so the route can hand the caller a fresh
+ * cookie if the account they just edited is their own.
  */
 export async function updateUser(
   id: string,
   input: UserInput,
   user: AuthUser,
-): Promise<"forbidden" | "not-found" | "last-admin" | { user: unknown }> {
+): Promise<"forbidden" | "not-found" | "last-admin" | { user: unknown; epoch?: number }> {
   if (!canManage(user)) return "forbidden";
   const db = getDb();
 
   const existing = await db.user.findUnique({
     where: { id },
-    select: { id: true, isSystemAdmin: true, isActive: true },
+    select: {
+      id: true, isSystemAdmin: true, isActive: true,
+      permissions: true, sessionEpoch: true,
+    },
   });
   if (!existing) return "not-found";
 
@@ -163,15 +202,25 @@ export async function updateUser(
   }
 
   const data = scalarData(input);
-  const revoking = "permissions" in input || "isActive" in input || "isSystemAdmin" in input;
-  if (revoking) data.sessionEpoch = { increment: 1 };
+
+  // Compared, not merely present — and compared by meaning, not by text. Two
+  // serializations of the same permissions differ whenever the keys were
+  // written in a different order, and a false difference here signs the user
+  // out on a save that changed nothing.
+  const revoking =
+    ("permissions" in input && !samePermissions(data.permissions, existing.permissions))
+    || ("isActive" in input && input.isActive !== existing.isActive)
+    || ("isSystemAdmin" in input && input.isSystemAdmin !== existing.isSystemAdmin);
+
+  const epoch = (existing.sessionEpoch ?? 0) + 1;
+  if (revoking) data.sessionEpoch = epoch;
 
   const updated = await db.user.update({
     where: { id },
     data: data as Prisma.UserUncheckedUpdateInput,
     select: SAFE_SELECT,
   });
-  return { user: updated };
+  return { user: updated, ...(revoking ? { epoch } : {}) };
 }
 
 /**
@@ -186,12 +235,14 @@ export async function setPassword(
   newPassword: string,
   user: AuthUser,
   currentPassword?: string,
-): Promise<"forbidden" | "not-found" | "wrong-password" | "ok"> {
+): Promise<"forbidden" | "not-found" | "wrong-password" | { epoch: number }> {
   const db = getDb();
   const isSelf = user.id === id;
   if (!isSelf && !canManage(user)) return "forbidden";
 
-  const target = await db.user.findUnique({ where: { id }, select: { id: true, passwordHash: true } });
+  const target = await db.user.findUnique({
+    where: { id }, select: { id: true, passwordHash: true, sessionEpoch: true },
+  });
   if (!target) return "not-found";
 
   if (isSelf && !canManage(user)) {
@@ -200,14 +251,16 @@ export async function setPassword(
     }
   }
 
+  // Every session issued for this account ends here — that is the point of
+  // changing a password. The browser doing the changing is handed a new cookie
+  // by the route, so the person who just proved they know the old password is
+  // not the one signed out.
+  const epoch = (target.sessionEpoch ?? 0) + 1;
   await db.user.update({
     where: { id },
-    data: {
-      passwordHash: bcrypt.hashSync(newPassword, 10),
-      sessionEpoch: { increment: 1 },
-    },
+    data: { passwordHash: bcrypt.hashSync(newPassword, 10), sessionEpoch: epoch },
   });
-  return "ok";
+  return { epoch };
 }
 
 export async function countUserReferences(id: string) {

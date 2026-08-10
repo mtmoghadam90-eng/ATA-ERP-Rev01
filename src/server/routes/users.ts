@@ -124,6 +124,11 @@ export function registerUserRoutes(app: express.Express, deps: RouteDeps): void 
         });
         return;
       }
+      // Editing your own account revokes the sessions issued for it, this one
+      // included. Renew it, so saving your own record does not sign you out.
+      if (outcome.epoch !== undefined && req.params.id === user.id) {
+        deps.reissueSession(res, user.id, outcome.epoch);
+      }
       res.json({ success: true, user: outcome.user });
     } catch (err) {
       sendError(res, err, "PUT /api/users/:id");
@@ -160,6 +165,14 @@ export function registerUserRoutes(app: express.Express, deps: RouteDeps): void 
       if (outcome === "wrong-password") {
         res.status(400).json({ success: false, error: "رمز عبور فعلی نادرست است." });
         return;
+      }
+      // Changing your own password ends every session for the account. The
+      // browser that did it gets a cookie at the new epoch rather than being
+      // thrown out on the next request; an administrator resetting somebody
+      // else's keeps their own session and that person is signed out, which is
+      // the intended effect.
+      if (req.params.id === user.id) {
+        deps.reissueSession(res, user.id, outcome.epoch);
       }
       res.json({ success: true });
     } catch (err) {

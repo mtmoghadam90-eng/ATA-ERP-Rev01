@@ -16,6 +16,19 @@ export interface RouteDeps {
     key: string,
     mode: AccessMode,
   ): Promise<AuthUser | null>;
+  /**
+   * Issues a fresh session cookie for a user whose `sessionEpoch` has just
+   * moved.
+   *
+   * Bumping the epoch is how a password change or a permission change ends the
+   * sessions already issued — which is right for every device except the one
+   * making the change. Without this, changing your own password signed you out
+   * of the browser you did it in, and the next request came back "your session
+   * has expired" over an operation that had in fact succeeded.
+   *
+   * Only ever called for the authenticated caller, on their own account.
+   */
+  reissueSession(res: express.Response, userId: string, epoch: number): void;
 }
 
 /**
