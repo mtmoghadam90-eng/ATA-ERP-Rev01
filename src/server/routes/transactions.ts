@@ -2,6 +2,8 @@ import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
 import { getTodayShamsi } from "../../dateUtils";
+import { getDb } from "../db";
+import { nextDocumentNumber } from "../documentNumbers";
 import {
   TRANSACTION_FILTERABLE, TRANSACTION_SORTABLE, TransactionInput,
   createTransaction, deleteTransaction, getTransaction, listTransactions,
@@ -81,10 +83,6 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
     if (!user) return;
     try {
       const input = pickInput(req.body);
-      if (!input.documentNumber || !String(input.documentNumber).trim()) {
-        res.status(400).json({ success: false, error: "شماره سند الزامی است." });
-        return;
-      }
       if (input.type !== "دریافت" && input.type !== "پرداخت") {
         res.status(400).json({ success: false, error: "نوع تراکنش باید دریافت یا پرداخت باشد." });
         return;
@@ -96,6 +94,41 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
       if (!input.paymentType) {
         res.status(400).json({ success: false, error: "نوع پرداخت الزامی است." });
         return;
+      }
+
+      // Blank means "make one up", as it does for projects, proformas, purchase
+      // orders and packing lists. This endpoint alone demanded the number from
+      // the caller, although the format and the starting sequence were already
+      // in settings and the generator already existed — so every client had to
+      // reimplement the numbering, and one that did not simply could not write
+      // a transaction.
+      if (!input.documentNumber || !String(input.documentNumber).trim()) {
+        const db = getDb();
+        const [customer, supplier, project] = await Promise.all([
+          input.customerId
+            ? db.customer.findUnique({ where: { id: input.customerId }, select: { companyName: true } })
+            : Promise.resolve(null),
+          input.supplierId
+            ? db.supplier.findUnique({ where: { id: input.supplierId }, select: { name: true } })
+            : Promise.resolve(null),
+          input.projectId
+            ? db.project.findUnique({ where: { id: input.projectId }, select: { code: true } })
+            : Promise.resolve(null),
+        ]);
+        input.documentNumber = await nextDocumentNumber({
+          formatKey: "transactionFormat", startSeqKey: "transactionStartSeq",
+          fallbackFormat: "TR-{TYPE}-{YYYY}{MM}-{SEQ:3}",
+          count: () => db.transaction.count(),
+          taken: async (v) => !!(await db.transaction.findUnique({
+            where: { documentNumber: v }, select: { id: true },
+          })),
+          context: {
+            transactionType: input.type as "دریافت" | "پرداخت",
+            customerName: customer?.companyName,
+            supplierName: supplier?.name,
+            projectCode: project?.code,
+          },
+        });
       }
 
       const transaction = await createTransaction(input, user, getTodayShamsi());

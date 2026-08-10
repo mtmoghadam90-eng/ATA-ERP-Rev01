@@ -512,7 +512,11 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
     todayJalali,
   );
 
-  return proforma;
+  // With the derived outcome attached, as the list and the detail read both do.
+  // The write endpoints answered without it, so a caller that used what a write
+  // returned — the adapter does — had `outcomeStatus` undefined until it read
+  // the record back.
+  return withOutcomeFor(proforma.id);
 }
 
 export async function updateProforma(
@@ -635,10 +639,24 @@ export async function updateProforma(
       todayJalali,
     );
 
-    return result.proforma;
+    return withOutcomeFor(result.proforma.id);
   }
 
   return null;
+}
+
+/**
+ * Re-reads a proforma with its lines and its derived outcome.
+ *
+ * The outcome comes from the line statuses, so it can only be attached to a
+ * record that carries them — which the row a write returns does not.
+ */
+async function withOutcomeFor(id: string) {
+  const full = await getDb().proforma.findUnique({
+    where: { id },
+    include: { items: { orderBy: { lineNo: "asc" } } },
+  });
+  return full ? withOutcome(full) : null;
 }
 
 export async function countProformaReferences(id: string) {
