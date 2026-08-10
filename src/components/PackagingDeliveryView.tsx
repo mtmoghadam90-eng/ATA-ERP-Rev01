@@ -1129,7 +1129,8 @@ export default function PackagingDeliveryView({
             return (
               <div className="space-y-4 w-full">
                 {groupedDeliveriesList.map(projectGroup => {
-                  const totalItemsPacked = projectGroup.deliveries.reduce((sum, d) => sum + d.items.length, 0);
+                  const totalItemsPacked = projectGroup.deliveries.reduce(
+                    (sum, d) => sum + (d.itemCount ?? d.items.length), 0);
                   const isCollapsed = !!collapsedProjects[projectGroup.projectId];
                   
                   const toggleCollapse = () => {
@@ -1221,7 +1222,10 @@ export default function PackagingDeliveryView({
                                         {delivery.shippingMethod}
                                       </span>
                                       <span className="bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200 flex items-center gap-1">
-                                        {delivery.items.length} قلم کالا
+                                        {delivery.itemCount ?? delivery.items.length} ردیف
+                                        {(delivery.totalQuantity ?? 0) > 0
+                                          ? ` / ${delivery.totalQuantity} قلم کالا`
+                                          : ''}
                                       </span>
                                     </div>
 

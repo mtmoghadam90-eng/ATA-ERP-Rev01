@@ -92,7 +92,27 @@ export async function listDeliveries(
     db.packingItem.count({ where: { delivery: where } }),
   ]);
 
-  return { ...buildResult(rows as unknown as Record<string, unknown>[], total, q), totalItems };
+  /*
+   * How many units each list holds, alongside how many lines.
+   *
+   * The card prints both, and had neither: `_count.items` never reached the
+   * client record, so every card read «0 قلم کالا» however full the list was.
+   * Summed in SQL for the page's lists in one query, rather than by sending
+   * every packing line down so the browser can add them up.
+   */
+  const quantities = rows.length === 0 ? [] : await db.packingItem.groupBy({
+    by: ["deliveryId"],
+    where: { deliveryId: { in: rows.map((row) => row.id) } },
+    _sum: { quantity: true },
+  });
+  const unitsById = new Map(quantities.map((g) => [g.deliveryId, Number(g._sum.quantity ?? 0)]));
+
+  const withCounts = rows.map((row) => ({
+    ...row,
+    totalQuantity: unitsById.get(row.id) ?? 0,
+  }));
+
+  return { ...buildResult(withCounts as unknown as Record<string, unknown>[], total, q), totalItems };
 }
 
 export async function getDelivery(id: string, user: AuthUser) {

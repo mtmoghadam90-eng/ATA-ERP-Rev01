@@ -52,6 +52,7 @@ import type { SupplierRow } from '../api/suppliers';
 import type { ProjectRow } from '../api/projects';
 import { proformasApi, type ProformaRow } from '../api/proformas';
 import { detailToProforma } from '../api/proformaAdapter';
+import { isPartial } from '../api/partial';
 import type { CustomerRow } from '../api/customers';
 import { suppliersApi, detailToSupplier, supplierToWriteInput } from '../api/suppliers';
 import { projectsApi } from '../api/projects';
@@ -306,15 +307,29 @@ export default function PurchaseOrdersView({
   const [poToDeleteId, setPoToDeleteId] = useState<string | null>(null);
   const [poToDeleteNumber, setPoToDeleteNumber] = useState<string>('');
 
+  /*
+   * An order opened straight into its own window by id.
+   *
+   * Looked up in `purchaseOrders` — the page in hand — and a window opened for
+   * printing shows page one, so unless the order happened to be on it nothing
+   * opened and the window stayed white. Asked for by id, which is also the only
+   * way to get the cost breakdown the sheet is made of.
+   */
   React.useEffect(() => {
-    if (initialPrintDocId) {
-      const po = purchaseOrders.find(p => p.id === initialPrintDocId);
-      if (po) {
-        setSelectedPO(po);
+    if (!initialPrintDocId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const full = detailToPurchaseOrder(await purchaseOrdersApi.get(initialPrintDocId));
+        if (cancelled) return;
+        setSelectedPO(full);
         setShowLandedModal(true);
+      } catch (err) {
+        console.error('could not load the purchase order to print', err);
       }
-    }
-  }, [initialPrintDocId, purchaseOrders]);
+    })();
+    return () => { cancelled = true; };
+  }, [initialPrintDocId]);
 
   // Status Change State
   const [showStatusModal, setShowStatusModal] = useState(false);
@@ -898,8 +913,24 @@ export default function PurchaseOrdersView({
   };
 
   // Landed Cost Modal
-  const handleOpenLanded = (po: PurchaseOrder) => {
-    setSelectedPO(po);
+  /**
+   * Opens the landed-cost sheet on the whole order.
+   *
+   * The card hands this a list row, and the sheet prints the cost inputs a row
+   * does not carry — `selectedPO.customsDutyRIYAL.toLocaleString()` on
+   * `undefined` threw, React unmounted the tree, and the screen went white.
+   */
+  const handleOpenLanded = async (po: PurchaseOrder) => {
+    let full = po;
+    if (isPartial(po)) {
+      try {
+        full = detailToPurchaseOrder(await purchaseOrdersApi.get(po.id));
+      } catch (err) {
+        reportError(err, 'بارگذاری جزئیات سفارش خرید با خطا مواجه شد.');
+        return;
+      }
+    }
+    setSelectedPO(full);
     setShowLandedModal(true);
   };
 
@@ -1108,7 +1139,7 @@ export default function PurchaseOrdersView({
 
                   {/* Landed Cost Details */}
                   <button
-                    onClick={() => handleOpenLanded(po)}
+                    onClick={() => { void handleOpenLanded(po); }}
                     className="px-3 py-2 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 justify-center flex-1 lg:flex-none border border-sky-100"
                   >
                     <Calculator size={13} />

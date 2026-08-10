@@ -664,6 +664,14 @@ export interface PackagingDelivery {
   preDeliveryTestNotes: string; // گزارش تست قبل از تحویل تجهیز
   checklist: DeliveryChecklistItem[]; // چک‌لیست تحویل تیک‌خورده
   items: PackingItem[]; // اقلام پکینگ لیست
+  /**
+   * How many lines and how many units the list holds.
+   *
+   * Carried separately because a grid row has the counts but not the lines —
+   * the card printed both from `items.length`, which on a row is always zero.
+   */
+  itemCount?: number;
+  totalQuantity?: number;
   photos: string[]; // تصاویر آپلود شده بسته‌بندی و ارسال (base64)
   createdAt: string;
   moduleNotes?: ModuleNote[];

@@ -37,6 +37,8 @@ export interface DeliveryRow {
   project: { id: string; code: string; name: string } | null;
   proforma: { id: string; proformaNumber: string } | null;
   _count: { items: number };
+  /** Units across the list's lines, summed in SQL. */
+  totalQuantity: number;
 }
 
 export interface DeliveryDetail extends Omit<DeliveryRow, "_count"> {
@@ -143,7 +145,12 @@ export function rowToDelivery(row: DeliveryRow): PackagingDelivery {
     shippingMethod: row.shippingMethod ?? "",
     preDeliveryTestNotes: "",
     checklist: [],
+    // A row carries no lines — only how many there are, and how many units they
+    // come to. The card prints both and used to read them off this empty array,
+    // so every list showed as holding nothing.
     items: [],
+    itemCount: row._count?.items ?? 0,
+    totalQuantity: row.totalQuantity ?? 0,
     photos: [],
     createdAt: row.createdAt,
   };
@@ -155,6 +162,8 @@ export function detailToDelivery(detail: DeliveryDetail): PackagingDelivery {
     preDeliveryTestNotes: detail.preDeliveryTestNotes ?? "",
     checklist: parseJson<DeliveryChecklistItem[]>(detail.checklist, []),
     photos: parseJson<string[]>(detail.photos, []),
+    itemCount: (detail.items ?? []).length,
+    totalQuantity: (detail.items ?? []).reduce((sum, i) => sum + Number(i.quantity ?? 0), 0),
     items: (detail.items ?? []).map((item): PackingItem => ({
       id: item.id,
       itemOrDocName: item.itemOrDocName,

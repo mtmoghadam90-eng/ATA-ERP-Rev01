@@ -268,15 +268,26 @@ export default function TransactionsView({
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printTargetTx, setPrintTargetTx] = useState<Transaction | null>(null);
 
+  /*
+   * A document opened straight into its own window by id — see the same note on
+   * the proforma and purchase-order screens. The page in hand is page one of
+   * the ledger, so anything not on it opened nothing at all.
+   */
   useEffect(() => {
-    if (initialPrintDocId) {
-      const tx = transactions.find(t => t.id === initialPrintDocId);
-      if (tx) {
-        setPrintTargetTx(tx);
+    if (!initialPrintDocId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const full = detailToTransaction(await transactionsApi.get(initialPrintDocId));
+        if (cancelled) return;
+        setPrintTargetTx(full);
         setShowPrintModal(true);
+      } catch (err) {
+        console.error('could not load the transaction to print', err);
       }
-    }
-  }, [initialPrintDocId, transactions]);
+    })();
+    return () => { cancelled = true; };
+  }, [initialPrintDocId]);
 
   // Dynamic Custom Fields State
   const [customValues, setCustomValues] = useState<Record<string, any>>({});
