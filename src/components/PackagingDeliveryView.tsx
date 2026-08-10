@@ -154,7 +154,9 @@ export default function PackagingDeliveryView({
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
   /* The delivery date the record had when the form opened, so a save can tell a
      newly recorded delivery from one that was already there. */
-  const [editingDeliveryActualDate, setEditingDeliveryActualDate] = useState<string>('');
+  /* Whether the record was already delivered when the form opened — by a header
+     date or by any line carrying one, since a list may record either. */
+  const [editingDeliveryWasDelivered, setEditingDeliveryWasDelivered] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [selectedProformaId, setSelectedProformaId] = useState<string>('');
   // Editable packing-list number. Blank on create means "generate it".
@@ -956,7 +958,10 @@ ${sheets}
     setSelectedProformaId(delivery.proformaId || '');
     setDeliveryDate(delivery.deliveryDate);
     setActualDeliveryDate(delivery.actualDeliveryDate || '');
-    setEditingDeliveryActualDate(delivery.actualDeliveryDate || '');
+    setEditingDeliveryWasDelivered(
+      !!delivery.actualDeliveryDate
+      || (delivery.items ?? []).some(item => !!item.actualDeliveryDate),
+    );
     setShippingMethod(delivery.shippingMethod);
     setPreDeliveryTestNotes(delivery.preDeliveryTestNotes || '');
     setWaybillNumber(delivery.waybillNumber || '');
@@ -1076,27 +1081,37 @@ ${sheets}
 
     try {
       /*
-       * Whether this list already had a delivery date before this save.
+       * Whether this list was already delivered before this save.
        *
        * Read from the record the form was loaded with, not from `list.rows` —
-       * the page may not contain the list being edited, and then "did it have a
-       * date?" answered "no" for one that did, or nothing at all.
+       * the page may not contain the list being edited, and then "was it
+       * delivered?" answered "no" for one that was.
        */
-      const hadDeliveryDate = editingDeliveryId
-        ? !!editingDeliveryActualDate
-        : false;
+      const hadDeliveryDate = editingDeliveryId ? editingDeliveryWasDelivered : false;
 
       if (editingDeliveryId) await deliveriesApi.update(editingDeliveryId, payload);
       else await deliveriesApi.create(payload);
       list.refresh();
 
-      // Prompt for category completion when actualDeliveryDate is newly set
-      if (categoryCompletion && selectedProjectId && finalActualDeliveryDate &&
-          (!editingDeliveryId || !hadDeliveryDate)) {
+      /*
+       * Delivery recorded — however it was recorded.
+       *
+       * This asked about `finalActualDeliveryDate`, which is deliberately blank
+       * whenever the list dates each line separately: with per-item dates the
+       * question was never asked at all, however completely the goods had been
+       * delivered. `isMarkedAsDelivered` is the same test the checklist
+       * validation above already uses, and it covers both ways of recording it.
+       */
+      if (categoryCompletion && selectedProjectId && isMarkedAsDelivered && !hadDeliveryDate) {
+        const when = finalActualDeliveryDate
+          || cleanItems.map(i => i.actualDeliveryDate).filter(Boolean).sort().slice(-1)[0]
+          || '';
         categoryCompletion.promptCompletion({
           projectId: selectedProjectId,
           categoryName: ACTIVITY_CATEGORY.DELIVERIES,
-          message: `تاریخ تحویل کالا به مشتری (${finalActualDeliveryDate}) ثبت ${editingDeliveryId ? 'گردید' : 'شد'}. آیا می‌خواهید وضعیت دسته فعالیت بسته‌بندی را به «اتمام کار» تغییر دهید؟`
+          message:
+            `تحویل کالا به مشتری${when ? ` (${when})` : ''} ثبت ${editingDeliveryId ? 'گردید' : 'شد'}.`
+            + ' آیا می‌خواهید وضعیت دسته فعالیت بسته‌بندی را به «اتمام کار» تغییر دهید؟',
         });
       }
     } catch (err) {
@@ -1114,7 +1129,7 @@ ${sheets}
     setUseItemizedDeliveryDates(false);
     setShippingMethod(settings.dropdownItems.shippingMethods?.[0] || 'باربری');
     setPreDeliveryTestNotes('');
-    setEditingDeliveryActualDate('');
+    setEditingDeliveryWasDelivered(false);
     setWaybillNumber('');
     setDriverName('');
     setDriverPhone('');

@@ -2018,24 +2018,28 @@ export default function ProformasView({
               : undefined;
         return `
       <tr style="border-bottom: 1px solid #e2e8f0;">
-        <td style="padding: 12px; text-align: center; font-family: monospace;">${index + 1}</td>
-        <td style="padding: 12px;">
-          <div style="display: flex; align-items: center; gap: 12px; text-align: right;">
-            ${
-              imgToRender
-                ? `
-              <img src="${imgToRender}" alt="${item.productName}" style="width: 48px; height: 48px; object-fit: cover; border-radius: 6px; border: 1px solid #cbd5e1; flex-shrink: 0;" referrerPolicy="no-referrer" />
-            `
-                : ""
-            }
-            <div style="font-weight: bold; color: #1e293b;">${item.productName}${overrideShowBrand && item.brand ? ` (${item.brand})` : ""}</div>
+        <td style="padding: 12px; text-align: center; font-family: monospace; vertical-align: top;">${index + 1}</td>
+        <!-- The picture has a column of its own, and the name heads the
+             specification it belongs to — the same shape as the preview on
+             screen. Side by side, the name crowded a 48px thumbnail and the
+             specs read as though they belonged to nothing. -->
+        <td style="padding: 12px; text-align: center; vertical-align: top;">
+          ${
+            imgToRender
+              ? `<img src="${imgToRender}" alt="${item.productName}" style="width: 110px; height: 110px; object-fit: contain; border-radius: 8px; border: 1px solid #e2e8f0; background-color: #ffffff;" referrerPolicy="no-referrer" />`
+              : `<div style="width: 110px; height: 110px; border: 1px dashed #e2e8f0; border-radius: 8px; background-color: #f8fafc; color: #94a3b8; font-size: 10px; display: flex; align-items: center; justify-content: center; margin: 0 auto;">بدون تصویر</div>`
+          }
+        </td>
+        <td style="padding: 12px; vertical-align: top;">
+          <div style="font-weight: bold; color: #1e293b; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid #f1f5f9;">
+            ${item.productName}${overrideShowBrand && item.brand ? ` <span style="color: #4f46e5; font-size: 11px;">(${item.brand})</span>` : ""}${item.tagNumber ? ` <span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 1px 5px; border-radius: 4px;">تگ: ${item.tagNumber}</span>` : ""}
+          </div>
+          <div style="font-size: 11px; color: #475569; white-space: pre-line; line-height: 1.5; text-align: left; direction: ltr;">
+            ${item.techSpecs || "-"}
           </div>
         </td>
-        <td style="padding: 12px; font-size: 11px; color: #475569; white-space: pre-line; line-height: 1.4; text-align: left; direction: ltr;">
-          ${item.techSpecs || "-"}
-        </td>
-        <td style="padding: 12px; text-align: center; font-family: monospace;">${item.quantity}</td>
-        <td style="padding: 12px; text-align: center;">${prod?.unit || "عدد"}</td>
+        <td style="padding: 12px; text-align: center; font-family: monospace; vertical-align: top;">${item.quantity}</td>
+        <td style="padding: 12px; text-align: center; vertical-align: top;">${prod?.unit || "عدد"}</td>
         ${
           pf.proformaType !== "TECHNICAL"
             ? `
@@ -2374,8 +2378,8 @@ export default function ProformasView({
                 <thead>
                     <tr>
                         <th style="width: 50px; text-align: center;">ردیف</th>
-                        <th>نوع کالا</th>
-                        <th style="text-align: left;">توضیحات فنی</th>
+                        <th style="width: 130px; text-align: center;">تصویر کالا</th>
+                        <th>نوع کالا و مشخصات فنی</th>
                         <th style="text-align: center; width: 70px;">تعداد</th>
                         <th style="text-align: center; width: 70px;">واحد</th>
                         ${
