@@ -110,6 +110,13 @@ export const supplierInquiriesApi = {
     api.post<{ step: InquiryStepRow }>(`/api/supplier-inquiries/${id}/steps`, step)
       .then((r) => r.step),
 
+  /**
+   * Corrects a recorded step. For a derived one only `occurredAt` is applied —
+   * its wording comes from the offer and would be re-derived anyway.
+   */
+  updateStep: (id: string, stepId: string, step: Partial<InquiryStepInput>) =>
+    api.put<Record<string, never>>(`/api/supplier-inquiries/${id}/steps/${stepId}`, step),
+
   /** Rejected with 409 `AUTO_STEP` for a derived step. */
   removeStep: (id: string, stepId: string) =>
     api.delete<Record<string, never>>(`/api/supplier-inquiries/${id}/steps/${stepId}`),

@@ -348,6 +348,23 @@ export default function SupplierInquiriesView({
     }
   };
 
+  /**
+   * Corrects the date a step is recorded against.
+   *
+   * A derived step is dated when the system noticed the change, which is not
+   * always when it happened — an offer received on Sunday and entered on
+   * Tuesday reads as Tuesday. Only the date; its wording comes from the offer.
+   */
+  const handleStepDateChange = async (inquiryId: string, stepId: string, date: string) => {
+    if (!date) return;
+    try {
+      await supplierInquiriesApi.updateStep(inquiryId, stepId, { occurredAt: date });
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت تاریخ اقدام با خطا مواجه شد.');
+    }
+  };
+
   const handleAddStep = async (step: InquiryStepInput) => {
     if (!activeInquiryForStep) return;
     try {
@@ -774,14 +791,24 @@ export default function SupplierInquiriesView({
                                             )}
                                           </span>
                                           <div className="flex items-center gap-1">
-                                            <span className="text-[9px] text-slate-400 font-mono">{step.date}</span>
-                                            <button
-                                              type="button"
-                                              onClick={() => handleDeleteStepClick(inq.id, step.id)}
-                                              className="text-slate-300 hover:text-rose-500 transition"
-                                            >
-                                              <X size={10} />
-                                            </button>
+                                            {/* Editable, including on a derived step: the system
+                                                dates one when it notices, not when it happened. */}
+                                            <ShamsiDatePicker
+                                              value={step.date}
+                                              onChange={(date) => { void handleStepDateChange(inq.id, step.id, date); }}
+                                              compact
+                                              className="w-[92px]"
+                                            />
+                                            {!step.auto && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleDeleteStepClick(inq.id, step.id)}
+                                                className="text-slate-300 hover:text-rose-500 transition"
+                                                title="حذف این اقدام"
+                                              >
+                                                <X size={10} />
+                                              </button>
+                                            )}
                                           </div>
                                         </div>
                                         {step.method && (
@@ -1194,6 +1221,19 @@ function InquiryFormInner({
   const [initialStepRecipientName, setInitialStepRecipientName] = useState('');
   const [initialStepNotes, setInitialStepNotes] = useState('');
 
+  /*
+   * The currency the supplier quoted in — one per offer, not one per line.
+   *
+   * A supplier prices a whole inquiry in a single currency; the grid used to
+   * ask again on every row, which is a question nobody has a different answer
+   * to and an invitation to get one row wrong. It stays a column on each line,
+   * because that is what the totals are computed from and what a historical
+   * offer was actually stored with; this simply sets them all together.
+   */
+  const [offerCurrency, setOfferCurrency] = useState<SupplierInquiryItem['currency']>(
+    () => editingInquiry?.items?.[0]?.currency || 'دلار',
+  );
+
   // Pre-load items: either what inquiry has, or map from project's itemsNeeded
   const [items, setItems] = useState<SupplierInquiryItem[]>(() => {
     if (editingInquiry && editingInquiry.items) {
@@ -1205,7 +1245,7 @@ function InquiryFormInner({
         name: item.name,
         quantity: item.quantity,
         priceForeign: 0,
-        currency: 'دلار',
+        currency: offerCurrency,
         priceRiyal: 0,
         notes: '',
         tagNumber: item.tagNumber
@@ -1235,7 +1275,7 @@ function InquiryFormInner({
           name: item.name,
           quantity: item.quantity,
           priceForeign: 0,
-          currency: 'دلار',
+          currency: offerCurrency,
           priceRiyal: 0,
           notes: '',
           tagNumber: item.tagNumber
@@ -1253,11 +1293,22 @@ function InquiryFormInner({
         name: '',
         quantity: 1,
         priceForeign: 0,
-        currency: 'دلار',
+        currency: offerCurrency,
         priceRiyal: 0,
         notes: ''
       }
     ]);
+  };
+
+  /** Applies the offer's currency to every line, and revalues them. */
+  const handleOfferCurrencyChange = (currency: SupplierInquiryItem['currency']) => {
+    setOfferCurrency(currency);
+    const rate = getCurrencyRate(currency);
+    setItems(prev => prev.map(item => ({
+      ...item,
+      currency,
+      priceRiyal: Number(item.priceForeign || 0) * rate,
+    })));
   };
 
   const handleRemoveItemRow = (idx: number) => {
@@ -1492,8 +1543,25 @@ function InquiryFormInner({
 
       {/* Items Needed proposal lists */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
           <span className="text-xs font-bold text-slate-500 block">اقلام پیشنهادی آفر تأمین‌کننده</span>
+
+          {/* One currency for the whole offer — a supplier quotes in one. */}
+          <div className="flex items-center gap-2 mr-auto">
+            <label className="text-[11px] font-bold text-slate-500 whitespace-nowrap">ارز آفر</label>
+            <select
+              value={offerCurrency}
+              onChange={(e) => handleOfferCurrencyChange(e.target.value as SupplierInquiryItem['currency'])}
+              className="px-2 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+            >
+              <option value="دلار">دلار</option>
+              <option value="یورو">یورو</option>
+              <option value="درهم">درهم</option>
+              <option value="یوان">یوان</option>
+              <option value="ریال">ریال</option>
+            </select>
+          </div>
+
           <button
             type="button"
             onClick={handleAddItemRow}
@@ -1511,7 +1579,6 @@ function InquiryFormInner({
                 <th className="p-2.5 w-1/4">نام کالا / شرح دقیق آفر</th>
                 <th className="p-2.5 w-20 text-center">تعداد</th>
                 <th className="p-2.5 w-24">مبلغ ارزی واحد</th>
-                <th className="p-2.5 w-20">نوع ارز</th>
                 <th className="p-2.5 w-28">معادل ریالی پیشنهادی</th>
                 <th className="p-2.5 w-24">زمان تحویل</th>
                 <th className="p-2.5">توضیحات آفر</th>
@@ -1562,19 +1629,6 @@ function InquiryFormInner({
                       placeholder="0"
                       className="w-full px-2 py-1.5 border border-slate-200 rounded-lg font-mono focus:outline-none bg-white"
                     />
-                  </td>
-                  <td className="p-2">
-                    <select
-                      value={item.currency}
-                      onChange={(e) => handleItemFieldChange(index, 'currency', e.target.value)}
-                      className="w-full px-2 py-1.5 border border-slate-200 rounded-lg focus:outline-none bg-white"
-                    >
-                      <option value="دلار">دلار</option>
-                      <option value="یورو">یورو</option>
-                      <option value="درهم">درهم</option>
-                      <option value="یوان">یوان</option>
-                      <option value="ریال">ریال</option>
-                    </select>
                   </td>
                   <td className="p-2">
                     <input

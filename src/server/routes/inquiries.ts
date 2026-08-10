@@ -6,7 +6,7 @@ import { getTodayShamsi } from "../../dateUtils";
 import {
   INQUIRY_FILTERABLE, INQUIRY_SORTABLE, InquiryInput,
   addInquiryStep, createInquiry, deleteInquiry, deleteInquiryStep,
-  getInquiry, listInquiries, updateInquiry,
+  getInquiry, listInquiries, updateInquiry, updateInquiryStep,
 } from "../services/inquiryService";
 
 /**
@@ -138,6 +138,37 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
       res.status(201).json({ success: true, step: outcome.step });
     } catch (err) {
       sendError(res, err, "POST /api/supplier-inquiries/:id/steps");
+    }
+  });
+
+  /**
+   * Corrects a recorded step.
+   *
+   * A derived step is dated when the system noticed the change, not when the
+   * thing happened, so its date is editable — but only its date. The service
+   * ignores everything else for those.
+   */
+  app.put("/api/supplier-inquiries/:id/steps/:stepId", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    if (refuseCostWrite(res, user)) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const outcome = await updateInquiryStep(req.params.id, req.params.stepId, {
+        occurredAt: typeof body.occurredAt === "string" ? body.occurredAt : undefined,
+        title: typeof body.title === "string" ? body.title : undefined,
+        method: typeof body.method === "string" ? body.method : undefined,
+        recipientName: typeof body.recipientName === "string" ? body.recipientName : undefined,
+        notes: typeof body.notes === "string" ? body.notes : undefined,
+      }, user);
+      if (outcome === "forbidden") return denied(res);
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "اقدام یافت نشد." });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      sendError(res, err, "PUT /api/supplier-inquiries/:id/steps/:stepId");
     }
   });
 

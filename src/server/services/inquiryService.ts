@@ -642,6 +642,47 @@ export async function addInquiryStep(
 }
 
 /**
+ * Corrects a step that has already been recorded.
+ *
+ * A derived step is dated when the system noticed the change, which is not
+ * always when the thing happened — an offer received on Sunday and entered on
+ * Tuesday reads as Tuesday. So its date is editable. Nothing else about it is:
+ * its title and notes are derived from the offer, and `appendAutoSteps` would
+ * simply describe it again the same way. A step somebody typed is theirs to
+ * change entirely.
+ */
+export async function updateInquiryStep(
+  inquiryId: string,
+  stepId: string,
+  input: { occurredAt?: string | null; title?: string; method?: string | null; recipientName?: string | null; notes?: string | null },
+  user: AuthUser,
+): Promise<"ok" | "forbidden" | "not-found"> {
+  if (!allowed(user)) return "forbidden";
+  const db = getDb();
+
+  const step = await db.supplierInquiryStep.findFirst({
+    where: { id: stepId, inquiryId },
+    select: { id: true, isAuto: true },
+  });
+  if (!step) return "not-found";
+
+  const data: Record<string, unknown> = {};
+  if (input.occurredAt) {
+    Object.assign(data, expandDateFields({ occurredAt: input.occurredAt }, ["occurredAt"]));
+  }
+  if (!step.isAuto) {
+    if ("title" in input) data.title = toNullableString(input.title, 300);
+    if ("method" in input) data.method = toNullableString(input.method, 50);
+    if ("recipientName" in input) data.recipientName = toNullableString(input.recipientName, 200);
+    if ("notes" in input) data.notes = toNullableString(input.notes);
+  }
+  if (Object.keys(data).length === 0) return "ok";
+
+  await db.supplierInquiryStep.update({ where: { id: stepId }, data });
+  return "ok";
+}
+
+/**
  * Removes a step. Only a manually recorded one — a derived step describes
  * something that actually happened to the inquiry, and deleting it would just
  * mean it reappears on the next save.
