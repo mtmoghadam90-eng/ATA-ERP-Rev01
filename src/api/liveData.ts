@@ -104,6 +104,25 @@ function subscribe(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
+/**
+ * Calls `run` when one of `keys` is written. Returns an unsubscribe function.
+ *
+ * The same signal `useRevalidate` uses, for a caller that is not a React
+ * component's data source — a background watcher, say, that has its own
+ * lifecycle and only wants to be told sooner than its next poll.
+ */
+export function onDataChanged(
+  keys: readonly DataKey[],
+  run: () => void,
+): () => void {
+  const wanted = new Set(keys);
+  return subscribe((changed) => {
+    for (const key of changed) {
+      if (wanted.has(key)) { run(); return; }
+    }
+  });
+}
+
 /* ------------------------------ the hook ------------------------------ */
 
 export interface RevalidateOptions {

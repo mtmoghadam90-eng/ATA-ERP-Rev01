@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { projectsApi } from "./projects";
+import { onDataChanged } from "./liveData";
 
 /**
  * Watches for a project *becoming* won, so the app can offer to file the
@@ -113,9 +114,22 @@ export function useWonProjectWatch(enabled: boolean): WonProjectWatch {
 
     void look();
     const timer = setInterval(() => void look(), REFRESH_MS);
+
+    /*
+     * And immediately after anything that could have won a project.
+     *
+     * The poll alone made the prompt arrive up to half a minute after the user
+     * marked the last line won — long enough that it looked as though it had
+     * been triggered by whatever they happened to click next. A project's
+     * status is re-derived server-side when a proforma is written, so the
+     * proforma write is the signal.
+     */
+    const stop = onDataChanged(["projects", "proformas"], () => void look());
+
     return () => {
       cancelled = true;
       clearInterval(timer);
+      stop();
     };
   }, [enabled]);
 

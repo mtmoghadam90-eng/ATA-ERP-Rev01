@@ -711,19 +711,50 @@ export default function ProformasView({
     );
     setShowItemsModal(true);
   };
-  const handleSaveItemsStatus = (e: React.FormEvent) => {
+  /**
+   * Saves the per-line outcomes.
+   *
+   * Deciding the lines is what wins a proforma, so this is where the prompt to
+   * close the project's proforma category belongs — it used to live only on the
+   * document-level status change, which is a different action entirely. Marking
+   * the last line won therefore asked nothing at all, and the award-document
+   * prompt turned up whenever the background watcher next polled, which looked
+   * like it had been triggered by whatever the user clicked afterwards.
+   */
+  const handleSaveItemsStatus = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedProformaForItems) return;
-    updateProforma({
-      ...selectedProformaForItems,
+    const target = selectedProformaForItems;
+    if (!target) return;
+
+    const before = target.outcomeStatus;
+    setShowItemsModal(false);
+
+    await updateProforma({
+      ...target,
       items: editingItemsList,
       isCancelled: false,
-      status:
-        selectedProformaForItems.status === "لغو شده"
-          ? "ارسال شده"
-          : selectedProformaForItems.status,
+      status: target.status === "لغو شده" ? "ارسال شده" : target.status,
     });
-    setShowItemsModal(false);
+
+    if (!categoryCompletion || !target.projectId) return;
+    try {
+      const after = (await proformasApi.get(target.id)).outcomeStatus;
+      if (after === before) return;
+      if (after !== "تأیید شده (برنده)" && after !== "نیمه برنده") return;
+
+      categoryCompletion.promptCompletion({
+        projectId: target.projectId,
+        categoryName: "پیش‌فاکتورها و مهندسی فروش",
+        message:
+          `پیش‌فاکتور ${target.proformaNumber} `
+          + `${after === "تأیید شده (برنده)" ? "برنده شد" : "به صورت نیمه برنده بسته شد"}.`
+          + " آیا می‌خواهید وضعیت فعالیت‌های پیش‌فاکتور این پروژه را به «اتمام کار» تغییر دهید؟",
+      });
+    } catch (err) {
+      // The outcomes were saved; failing to *offer* to close a category is not
+      // worth an alert over.
+      console.error("could not read the proforma outcome back", err);
+    }
   };
   const handleItemStatusChangeInList = (
     index: number,
@@ -1095,8 +1126,23 @@ export default function ProformasView({
       productName: item.productName,
       productCode: item.productCode,
       brand: item.brand,
+      tagNumber: item.tagNumber,
       quantity: item.quantity,
       unitPriceRIYAL: item.unitPriceRIYAL,
+      /*
+       * The line's own outcome, and how it is to be supplied.
+       *
+       * Both were dropped here, and the edit form is what writes the lines
+       * back — so opening a won proforma, changing nothing and saving rewrote
+       * every line with no status at all, and the outcome derived from those
+       * lines fell back to «جاری». A won proforma was demoted by being looked
+       * at. `supplyMethod` going the same way silently moved every line back
+       * to the default supply route.
+       */
+      status: item.status,
+      supplyMethod: item.supplyMethod,
+      lossReason: item.lossReason,
+      selectedFeatures: item.selectedFeatures,
       techSpecs: item.techSpecs || "",
       selectedImage: item.selectedImage,
       deliveryRange: item.deliveryRange || "۳-۴",
