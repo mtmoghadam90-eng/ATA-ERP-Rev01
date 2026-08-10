@@ -211,8 +211,19 @@ export function detailToPurchaseOrder(detail: PurchaseOrderDetail): PurchaseOrde
       brand: item.brand ?? "",
       tagNumber: item.tagNumber ?? undefined,
       quantity: Number(item.quantity),
-      unitPriceForeign: money(item.unitPriceForeign),
-      totalPriceForeign: money(item.totalPriceForeign),
+      /*
+       * The names the client type actually declares.
+       *
+       * These read `unitPriceForeign`/`totalPriceForeign` — the column names —
+       * while `PurchaseOrderItem` calls them `…ForeignCurrency`, and the whole
+       * screen reads the latter. The `as unknown as PurchaseOrder` cast at the
+       * end of this function hid it: every line price in an opened order was
+       * undefined and rendered as zero, and the write mapper below read the
+       * same wrong name back, so saving stored zeros — and with them a landed
+       * cost of zero.
+       */
+      unitPriceForeignCurrency: money(item.unitPriceForeign),
+      totalPriceForeignCurrency: money(item.totalPriceForeign),
       proformaItemId: item.proformaItemId ?? undefined,
       proformaItemName: item.proformaItemName ?? undefined,
       supplierNotes: item.supplierNotes ?? undefined,
@@ -252,14 +263,17 @@ export function purchaseOrderToWriteInput(po: Partial<PurchaseOrder>): PurchaseO
     notes: po.notes ?? null,
     customValues: p.customValues,
     items: ((po.items ?? []) as unknown as Record<string, unknown>[]).map((item) => ({
-      productId: item.productId || null,
+      // "generic" marks a line typed by hand rather than chosen from the
+      // catalogue — the inquiry autofill sets it on every line it builds. It is
+      // not a product id, and sending it as one fails the foreign key.
+      productId: item.productId && item.productId !== "generic" ? item.productId : null,
       variantId: item.variantId || null,
       productName: item.productName,
       productCode: item.productCode || null,
       brand: item.brand || null,
       tagNumber: item.tagNumber || null,
       quantity: item.quantity,
-      unitPriceForeign: item.unitPriceForeign,
+      unitPriceForeign: item.unitPriceForeignCurrency,
       proformaItemId: item.proformaItemId || null,
       proformaItemName: item.proformaItemName || null,
       supplierNotes: item.supplierNotes || null,

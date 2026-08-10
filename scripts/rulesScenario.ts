@@ -37,7 +37,7 @@ import { rowToProforma } from "../src/api/proformaAdapter";
 import { rowToProduct } from "../src/api/productAdapter";
 import { rowToSupplier } from "../src/api/suppliers";
 import { rowToTransaction } from "../src/api/transactions";
-import { rowToPurchaseOrder } from "../src/api/purchaseOrders";
+import { detailToPurchaseOrder, purchaseOrderToWriteInput, rowToPurchaseOrder } from "../src/api/purchaseOrders";
 import { rowToTask } from "../src/api/tasks";
 import { samePermissions } from "../src/server/services/userService";
 import { buildCustomerWhere } from "../src/server/services/customerService";
@@ -426,6 +426,54 @@ ok("and links into it — an older one-way link still finds its contacts",
   linkJson.includes('"linksTo"'), linkJson);
 ok("and it is still restricted to natural persons",
   linkJson.includes('"customerType":"حقیقی"'), linkJson);
+
+/*
+ * A purchase order survives being opened and saved.
+ *
+ * The adapters read `unitPriceForeign` — the column name — while the client
+ * type and the whole screen call it `unitPriceForeignCurrency`. The
+ * `as unknown as PurchaseOrder` cast at the end of the adapter made that
+ * compile: every price in an opened order was undefined and rendered as zero,
+ * and the write mapper read the same wrong name back, so saving stored zeros
+ * and with them a landed cost of zero.
+ */
+head("Purchase order: prices survive the round trip");
+
+const poDetail = {
+  id: "po1", poNumber: "PO-1", status: "ثبت شده", currency: "یورو",
+  exchangeRate: "900000", supplierId: "s1", projectId: null, proformaId: null,
+  orderDateJalali: "1405/05/12", totalForeignAmount: "4800",
+  landedCostRial: "0", landedCostForeign: "0", createdAt: "",
+  shippingCostRial: "0", customsDutyRial: "0", remittanceFeeRial: "0",
+  shippingCostForeign: "0", remittanceFeeForeign: "0",
+  customValues: null, notes: null, proforma: null,
+  supplier: { id: "s1", name: "تأمین‌کننده" }, project: null,
+  items: [{
+    id: "i1", lineNo: 1, productId: "p1", variantId: null,
+    productName: "فلومتر", productCode: "FT100", brand: "X", tagNumber: "TG-1",
+    quantity: "2", unitPriceForeign: "2400", totalPriceForeign: "4800",
+    proformaItemId: null, proformaItemName: null, supplierNotes: null,
+  }],
+} as never;
+
+const openedPo = detailToPurchaseOrder(poDetail);
+const poLine = (openedPo.items ?? [])[0] as unknown as Record<string, unknown>;
+eq("the unit price reaches the form", poLine.unitPriceForeignCurrency, 2400);
+eq("and the line total", poLine.totalPriceForeignCurrency, 4800);
+
+const poWrite = purchaseOrderToWriteInput(openedPo);
+const writtenLine = (poWrite.items as Record<string, unknown>[])[0];
+eq("and goes back under the column's name", writtenLine.unitPriceForeign, 2400);
+eq("with its product still attached", writtenLine.productId, "p1");
+
+// "generic" marks a line typed by hand. It is not a product id, and sending it
+// as one fails the foreign key — which is how the same sentinel broke saving a
+// project until it was mapped away there too.
+const handEnteredPo = purchaseOrderToWriteInput({
+  ...openedPo, items: [{ ...poLine, productId: "generic" }],
+} as never);
+eq("a hand-entered line sends no product at all",
+  (handEnteredPo.items as Record<string, unknown>[])[0].productId, null);
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

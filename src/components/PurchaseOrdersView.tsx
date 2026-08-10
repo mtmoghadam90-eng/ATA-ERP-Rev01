@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useExchangeRates } from '../api/exchangeRates';
 import { 
   Plus, 
@@ -47,9 +47,11 @@ import { detailToPurchaseOrder, purchaseOrdersApi, purchaseOrderToWriteInput, ro
 import { usePurchaseOrderList } from '../api/usePurchaseOrderList';
 import { useModuleNotes } from '../api/moduleNotes';
 import { useEntitySearch } from '../api/useEntitySearch';
+import { supplierInquiriesApi, rowToInquiry } from '../api/supplierInquiries';
 import type { SupplierRow } from '../api/suppliers';
 import type { ProjectRow } from '../api/projects';
-import type { ProformaRow } from '../api/proformas';
+import { proformasApi, type ProformaRow } from '../api/proformas';
+import { detailToProforma } from '../api/proformaAdapter';
 import type { CustomerRow } from '../api/customers';
 import { suppliersApi, detailToSupplier, supplierToWriteInput } from '../api/suppliers';
 import { projectsApi } from '../api/projects';
@@ -71,7 +73,8 @@ import { canSeeCosts } from '../utils/permissions';
 interface PurchaseOrdersViewProps {
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
-  supplierInquiries?: SupplierInquiry[];
+  // The winning inquiries are no longer a prop either — this screen fetches
+  // them, because the prop was declared, defaulted to empty, and never passed.
   // The four order mutations are no longer props: the view calls the API, so
   // the landed cost and the stock receipt come back from the server that
   // computed them.
@@ -84,7 +87,6 @@ interface PurchaseOrdersViewProps {
 export default function PurchaseOrdersView({
   initialPrintDocId,
   onClearInitialPrintDocId,
-  supplierInquiries = [],
   settings,
   currentUser,
   categoryCompletion,
@@ -340,6 +342,9 @@ export default function PurchaseOrdersView({
   });
   const proformaPicker = useEntitySearch<ProformaRow>({
     path: '/api/proformas', limit: 25, enabled: showCreateModal,
+    // Scoped to the project once one is chosen: an order raised against a
+    // project is not going to reference another project's proforma.
+    params: projectId ? { projectId } : undefined,
     selectedId: proformaId || null,
     getLabel: (row) => row.proformaNumber,
   });
@@ -352,17 +357,74 @@ export default function PurchaseOrdersView({
     getLabel: (row) => row.displayName,
   });
 
+  /*
+   * The winning supplier offers this order can be built from.
+   *
+   * The screen expected them as a prop — `supplierInquiries` — that App never
+   * passed, so the list defaulted to empty and the field offered nothing at
+   * all. Fetched here instead, like every other list on this form. A project
+   * may have several winners (one supplier per part of the scope), so this is
+   * not narrowed to one.
+   */
+  const [winningInquiries, setWinningInquiries] = useState<SupplierInquiry[]>([]);
+  useEffect(() => {
+    if (!showCreateModal) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const page = await supplierInquiriesApi.list({
+          isWinner: 'true',
+          pageSize: 100,
+          ...(projectId ? { projectId } : {}),
+        });
+        if (!cancelled) setWinningInquiries(page.rows.map(rowToInquiry));
+      } catch (err) {
+        console.error('could not load the winning inquiries', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showCreateModal, projectId]);
+
+  /** A JSON column as the row carries it: a string, or already parsed. */
+  function parseRowJson<T>(raw: unknown, fallback: T): T {
+    if (raw == null) return fallback;
+    if (typeof raw !== 'string') return raw as T;
+    try {
+      return (JSON.parse(raw) ?? fallback) as T;
+    } catch {
+      return fallback;
+    }
+  }
+
   const suppliers = supplierPicker.matches as unknown as Supplier[];
   const projects = projectPicker.matches as unknown as Project[];
   const proformas = proformaPicker.matches as unknown as Proforma[];
   const customers = customerPicker.matches as unknown as Customer[];
+  /*
+   * The catalogue the item grid offers.
+   *
+   * `variants` was hardcoded empty, so the SKU dropdown under a configurable
+   * product never had a single option — there was no way to order a specific
+   * SKU at all. The list row does carry them (id, sku, attributes, stock), and
+   * carries the features too; those are used, and only the fields a row really
+   * lacks stay empty.
+   */
   const products = productPicker.matches.map(row => ({
     ...row,
     name: row.displayName,
-    variants: [],
-    features: [],
+    basePriceRIYAL: Number(row.basePriceRial ?? 0),
+    stockLevel: Number(row.stockLevel ?? 0),
+    minStockLevel: Number(row.minStockLevel ?? 0),
+    variants: (row.variants ?? []).map(v => ({
+      id: v.id,
+      sku: v.sku,
+      attributes: parseRowJson<Record<string, string>>(v.attributes, {}),
+      stockLevel: Number(v.stockLevel ?? 0),
+    })),
+    features: parseRowJson(row.features, [] as Product['features']),
+    images: parseRowJson(row.images, [] as string[]),
+    // Genuinely not on a list row.
     configRules: [],
-    images: [],
   })) as unknown as Product[];
   // Editable PO number. Blank on create means "generate it".
   const [poNumber, setPoNumber] = useState("");
@@ -549,6 +611,55 @@ export default function PurchaseOrdersView({
       totalPriceForeignCurrency: newItems[idx].quantity * newItems[idx].unitPriceForeignCurrency
     };
     setItems(newItems);
+  };
+
+  /**
+   * Linking a proforma copies its lines onto the order.
+   *
+   * The lines came from the proforma *list row*, which carries only each line's
+   * name, quantity and status — so every copied line arrived with no product,
+   * no code, no brand and no tag number, and its price was guessed at 100 units
+   * of foreign currency. The whole record is fetched instead, and the price
+   * starts from what the product is actually worth.
+   */
+  const applyProformaSelection = async (pfId: string) => {
+    setProformaId(pfId);
+    if (!pfId) return;
+
+    let pf: Proforma;
+    try {
+      pf = detailToProforma(await proformasApi.get(pfId));
+    } catch (err) {
+      reportError(err, 'بارگذاری اطلاعات پیش‌فاکتور با خطا مواجه شد.');
+      return;
+    }
+
+    if (pf.projectId) setProjectId(pf.projectId);
+
+    const lines = pf.items ?? [];
+    if (lines.length === 0) return;
+
+    const rate = exchangeRateInput || 1;
+    setItems(lines.map((line, idx) => {
+      // The rial price the customer was quoted, back into the order's currency.
+      // A starting point the buyer corrects against the supplier's offer, not a
+      // figure anyone should trust — but nearer than the flat 100 it replaced.
+      const unitPrice = line.unitPriceRIYAL ? Number((line.unitPriceRIYAL / rate).toFixed(2)) : 0;
+      return {
+        id: `poi-${Date.now()}-${idx}`,
+        productId: line.productId || 'generic',
+        variantId: line.variantId,
+        productName: line.productName,
+        productCode: line.productCode || '',
+        brand: line.brand || '',
+        quantity: line.quantity,
+        unitPriceForeignCurrency: unitPrice,
+        totalPriceForeignCurrency: Number((line.quantity * unitPrice).toFixed(2)),
+        proformaItemId: line.id,
+        proformaItemName: `${line.productName} (تعداد: ${line.quantity})`,
+        tagNumber: line.tagNumber,
+      } as PurchaseOrderItem;
+    }));
   };
 
   const handleItemVariantChange = (index: number, variantId: string) => {
@@ -1481,7 +1592,7 @@ export default function PurchaseOrdersView({
                       const inqId = e.target.value;
                       setSelectedInquiryId(inqId);
                       if (!inqId) return;
-                      const inq = supplierInquiries.find(i => i.id === inqId);
+                      const inq = winningInquiries.find(i => i.id === inqId);
                       if (inq) {
                         setSupplierId(inq.supplierId);
                         if (inq.projectId) setProjectId(inq.projectId);
@@ -1505,7 +1616,7 @@ export default function PurchaseOrdersView({
                     }}
                   >
                     <option value="">-- انتخاب از استعلام‌های برنده --</option>
-                    {supplierInquiries.filter(i => i.isWinner).map(inq => (
+                    {winningInquiries.map(inq => (
                       <option key={inq.id} value={inq.id}>
                         {inq.supplierName} - اقلام: {inq.items.length} عدد (پروژه: {projects.find(p => p.id === inq.projectId)?.name || 'بدون پروژه'})
                       </option>
@@ -1547,36 +1658,7 @@ export default function PurchaseOrdersView({
                   <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'purchaseOrders', 'proformaId', 'مرتبط با پیش‌فاکتور مشتری (پروفرما)')}</label>
                   <SearchableSelect wrapperClassName="flex-1 min-w-0"
                     value={proformaId}
-                    onChange={(val) => {
-                      const pfId = val;
-                      setProformaId(pfId);
-                      const pfObj = proformas.find(pf => pf.id === pfId);
-                      if (pfObj) {
-                        if (pfObj.projectId) {
-                          setProjectId(pfObj.projectId);
-                        }
-                        if (pfObj.items && pfObj.items.length > 0) {
-                          const poItems = pfObj.items.map((pfItem, idx) => {
-                            const prod = products.find(p => p.id === pfItem.productId);
-                            const basePriceForeign = prod ? Math.round(prod.basePriceRIYAL / exchangeRateInput) || 100 : 100;
-                            return {
-                              id: `poi-${Date.now()}-${idx}`,
-                              productId: pfItem.productId,
-                              productName: pfItem.productName,
-                              productCode: pfItem.productCode,
-                              brand: pfItem.brand,
-                              quantity: pfItem.quantity,
-                              unitPriceForeignCurrency: basePriceForeign,
-                              totalPriceForeignCurrency: pfItem.quantity * basePriceForeign,
-                              proformaItemId: pfItem.id,
-                              proformaItemName: `${pfItem.productName} (تعداد: ${pfItem.quantity})`,
-                              tagNumber: pfItem.tagNumber
-                            };
-                          });
-                          setItems(poItems);
-                        }
-                      }
-                    }}
+                    onChange={(val) => { void applyProformaSelection(val); }}
                     required={isFieldRequired(settings, 'purchaseOrders', 'proformaId')}
                     onSearchChange={proformaPicker.setTerm}
                     loading={proformaPicker.loading}
