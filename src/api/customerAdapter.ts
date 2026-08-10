@@ -47,6 +47,13 @@ export function rowToCustomer(row: CustomerRow): Customer {
     province: row.province ?? undefined,
     city: row.city ?? undefined,
     tags: row.tags ?? undefined,
+    // The grid has a column for each of these — «حوزه فعالیت / سمت» shows the
+    // position for a natural person, and «شخص کلیدی» the contact of a company.
+    // Both were read straight off the row and neither was mapped here, so both
+    // columns printed «-» for every customer while the edit form, which builds
+    // from the detail record, showed them correctly.
+    position: row.position ?? undefined,
+    keyPerson: row.keyPerson ?? undefined,
     linkedCustomerIds: (row.linksFrom ?? []).map((link) => link.to.id),
     customValues: parseCustomValues(row.customValues),
     // Present on the detail record only; the grid does not show them.
@@ -60,8 +67,6 @@ export function detailToCustomer(detail: CustomerDetail): Customer {
   return markComplete({
     ...rowToCustomer(detail),
     gender: (detail.gender ?? undefined) as Customer["gender"],
-    position: detail.position ?? undefined,
-    keyPerson: detail.keyPerson ?? undefined,
     address: detail.address ?? undefined,
     notes: detail.notes ?? undefined,
     moduleAgreements: (detail.agreements ?? []).map((a) => ({

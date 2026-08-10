@@ -129,7 +129,8 @@ const LIST_SELECT = {
   province: true,
   city: true,
   tags: true,
-  position: true, // Needed for customer disambiguation in dropdowns
+  position: true, // The grid's «سمت» column, and dropdown disambiguation
+  keyPerson: true, // The grid's «شخص کلیدی» column
   ownerUserId: true,
   createdAt: true,
   customValues: true,

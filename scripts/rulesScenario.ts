@@ -31,6 +31,8 @@ import {
   redactInquiry, redactProduct, redactPurchaseOrder, stripProductCostInput,
 } from "../src/server/costs";
 import { describeTransaction } from "../src/server/services/transactionService";
+import { rowToCustomer } from "../src/api/customerAdapter";
+import type { CustomerRow } from "../src/api/customers";
 
 let pass = 0; const fails: string[] = [];
 const ok = (what: string, cond: boolean, got?: unknown) => {
@@ -275,6 +277,34 @@ ok("no rial figure", !/60[,\u066c]?000/.test(receiptText), receiptText);
 ok("no foreign figure either", !receiptText.includes("1,200") && !receiptText.includes("یورو"), receiptText);
 ok("and no stray currency word left behind by the edit",
   !receiptText.includes("ریال"), receiptText);
+
+/*
+ * A grid row carries every column the grid draws.
+ *
+ * The recurring failure of this migration in one line: the screen reads a field
+ * off a list row, the row adapter never mapped it, and the column prints "-"
+ * forever while the edit form — built from the detail record — shows it
+ * correctly. Nothing catches it, because both shapes are `Customer`.
+ */
+head("Customer grid: the row carries what the columns read");
+
+const personRow = {
+  id: "c1", customerType: "حقیقی", status: "فعال", companyName: "علی رضایی",
+  firstName: "علی", lastName: "رضایی", economicCode: null, industry: null,
+  phone: null, mobile: "09120000000", email: null, province: "تهران", city: null,
+  tags: null, position: "مدیر خرید", keyPerson: null, ownerUserId: null,
+  createdAt: "2026-01-01", customValues: null, linksFrom: [],
+} as unknown as CustomerRow;
+
+const companyRow = {
+  ...personRow, customerType: "حقوقی", companyName: "پتروشیمی آزمون",
+  industry: "نفت و گاز", position: null, keyPerson: "مهندس احمدی",
+} as unknown as CustomerRow;
+
+eq("a natural person's position reaches the grid", rowToCustomer(personRow).position, "مدیر خرید");
+eq("a company's key person does too", rowToCustomer(companyRow).keyPerson, "مهندس احمدی");
+eq("and its industry", rowToCustomer(companyRow).industry, "نفت و گاز");
+eq("province survives the projection", rowToCustomer(personRow).province, "تهران");
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

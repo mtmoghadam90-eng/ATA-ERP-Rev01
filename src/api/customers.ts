@@ -25,6 +25,7 @@ export interface CustomerRow {
   city: string | null;
   tags: string | null;
   position: string | null;
+  keyPerson: string | null;
   ownerUserId: string | null;
   createdAt: string;
   /** Serialized custom-field values, or null. */
@@ -35,8 +36,6 @@ export interface CustomerRow {
 
 export interface CustomerDetail extends CustomerRow {
   gender: string | null;
-  position: string | null;
-  keyPerson: string | null;
   address: string | null;
   notes: string | null;
   customValues: string | null;
