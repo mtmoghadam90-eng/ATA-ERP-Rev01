@@ -1201,6 +1201,104 @@ export default function ProformasView({
     setItems(updatedItems);
   };
   // Add Item line
+  /**
+   * Selecting a project fills the buyer and the lines it asked for.
+   *
+   * This is what a proforma is *for*: the project records what the customer
+   * wants, and the proforma prices it. It read `proj.itemsNeeded` off the
+   * project list, which never carried the lines — they are children, and no
+   * list projection includes them — so nothing was ever loaded and every
+   * proforma had to be typed out again.
+   *
+   * The project's own record is fetched, and so is each product it names: their
+   * prices, stock and technical description are not on a picker row either, and
+   * the picker only holds whatever was last searched for.
+   */
+  const applyProjectSelection = async (projId: string) => {
+    setProjectId(projId);
+    if (!projId) return;
+
+    let detail: Project;
+    try {
+      detail = detailToProject(await projectsApi.get(projId));
+    } catch (err) {
+      reportError(err, 'بارگذاری اطلاعات پروژه با خطا مواجه شد.');
+      return;
+    }
+
+    if (detail.customerId) setCustomerId(detail.customerId);
+
+    const needed = detail.itemsNeeded ?? [];
+    if (needed.length === 0) return;
+
+    // One read per distinct catalogue product, not one per line.
+    const ids = [...new Set(needed.map((i) => i.productId).filter(
+      (id): id is string => !!id && id !== 'generic',
+    ))];
+    const catalogue = new Map<string, Product>();
+    await Promise.all(ids.map(async (id) => {
+      try {
+        catalogue.set(id, detailToProduct(await productsApi.get(id)));
+      } catch {
+        // A line whose product has since been deleted still carries its name.
+      }
+    }));
+
+    let overStock = false;
+    const stockOf = (prod: Product | undefined, variantId?: string) => {
+      if (!prod) return undefined;
+      if (variantId) return prod.variants?.find((v) => v.id === variantId)?.stockLevel;
+      return prod.stockLevel;
+    };
+
+    const newItems = needed.map((line) => {
+      const prod = line.productId ? catalogue.get(line.productId) : undefined;
+      const variant = prod?.variants?.find((v) => v.id === line.variantId);
+      const stock = stockOf(prod, line.variantId);
+      // A product supplied to order is never short: it is bought for the job.
+      const toOrder = !prod || (prod.supplyType || 'INVENTORY') === 'ORDER' || stock === 0;
+      if (!toOrder && stock !== undefined && line.quantity > stock) overStock = true;
+
+      return {
+        productId: line.productId === 'generic' ? '' : line.productId,
+        variantId: line.variantId,
+        productName: prod?.displayName || line.name,
+        productCode: (variant?.sku ?? prod?.code) || '',
+        brand: prod?.brand || '',
+        quantity: line.quantity,
+        unitPriceRIYAL: prod ? getProductOrVariantPriceInProformaCurrency(prod, variant) : 0,
+        techSpecs: describeProduct(prod, variant),
+        deliveryRange: '۳-۴',
+        deliveryUnit: 'هفته' as const,
+        deliveryType: 'کاری' as const,
+        deliveryPostfix: 'پس از تایید پیش فاکتور و دریافت پیش پرداخت',
+        tagNumber: line.tagNumber,
+      };
+    });
+
+    if (overStock) {
+      const keep = window.confirm(
+        'هشدار انبار:\n'
+        + 'تعداد برخی از اقلام درخواستی پروژه از موجودی انبار بیشتر است.\n'
+        + 'آیا مایلید با وجود کسر موجودی، همان تعداد درخواستی پروژه ثبت شود؟\n'
+        + 'در غیر این‌صورت، مقادیر به موجودی فعلی انبار محدود خواهند شد.',
+      );
+      if (!keep) {
+        newItems.forEach((item, idx) => {
+          const line = needed[idx];
+          const prod = line.productId ? catalogue.get(line.productId) : undefined;
+          const stock = stockOf(prod, line.variantId);
+          const toOrder = !prod || (prod.supplyType || 'INVENTORY') === 'ORDER' || stock === 0;
+          if (!toOrder && stock !== undefined && item.quantity > stock) item.quantity = stock;
+        });
+      }
+    }
+
+    setItems(newItems);
+    setNotes((prev) => updateNotesWithDelivery(prev, newItems, isEqualDelivery));
+    setDeliveryDate(getDeliverySummary(newItems));
+  };
+
   const handleAddItemLine = () => {
     const firstProd = products[0];
     if (!firstProd) return;
@@ -1251,7 +1349,7 @@ export default function ProformasView({
         brand: firstProd.brand,
         quantity: qty,
         unitPriceRIYAL: 0,
-        techSpecs: "",
+        techSpecs: describeProduct(firstProd),
         selectedImage:
           firstProd.images && firstProd.images.length > 0
             ? firstProd.images[0]
@@ -1329,6 +1427,46 @@ export default function ProformasView({
     }
   };
   // Get product or variant price in proforma's active currency
+  /**
+   * The technical description a proforma line carries.
+   *
+   * Two sources, in this order: what the configurator decided for this SKU, and
+   * then what was typed into the product when it was defined in the inventory
+   * module. Only the first was ever printed, so everything a colleague had
+   * written about the equipment — the part the customer actually reads — never
+   * reached the document.
+   *
+   * `previous` keeps whatever the user has typed on the line themselves: the
+   * feature lines and the stored description are replaced, their own text is
+   * not.
+   */
+  const describeProduct = (
+    prod?: Product,
+    variant?: ProductVariant,
+    previous?: string,
+  ): string => {
+    const attributes = variant?.attributes ?? {};
+    const configLines = Object.entries(attributes).map(([k, v]) => `${k}: ${v}`);
+    const stored = (prod?.description || "").trim();
+
+    // What the user wrote, minus the two things this function owns.
+    const featureNames = prod?.features?.map((f) => f.name) ?? Object.keys(attributes);
+    const storedLines = new Set(stored.split("\n").map((l) => l.trim()).filter(Boolean));
+    const kept = (previous || "")
+      .split("\n")
+      .filter((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        if (trimmed.startsWith("مشخصات:")) return false;
+        if (storedLines.has(trimmed)) return false;
+        return !featureNames.some((name) => trimmed.startsWith(`${name}:`));
+      });
+
+    return [...kept, ...configLines, ...(stored ? [stored] : [])]
+      .filter(Boolean)
+      .join("\n");
+  };
+
   const getProductOrVariantPriceInProformaCurrency = (
     product: Product,
     variant?: ProductVariant
@@ -1418,7 +1556,8 @@ export default function ProformasView({
       supplyMethod: prod.supplyType === "ORDER" ? "ORDER" : "INVENTORY",
       quantity: currentQty,
       unitPriceRIYAL: basePriceInSelectedCurrency,
-      techSpecs: newItems[index].techSpecs || "",
+      // No variant yet: the stored description alone, plus anything typed.
+      techSpecs: describeProduct(prod, undefined, newItems[index].techSpecs),
       selectedImage:
         prod.images && prod.images.length > 0 ? prod.images[0] : undefined,
     };
@@ -1447,16 +1586,7 @@ export default function ProformasView({
       }
     }
 
-    let currentSpecs = item.techSpecs || "";
-    const featureNames = prod.features?.map(f => f.name) || Object.keys(variant.attributes);
-    const filteredLines = currentSpecs.split('\n').filter(line => {
-      const trimmedLine = line.trim();
-      if (trimmedLine.startsWith('مشخصات:')) return false;
-      return !featureNames.some(fn => trimmedLine.startsWith(`${fn}:`));
-    });
-    
-    const newGeneratedLines = Object.entries(variant.attributes).map(([k, v]) => `${k}: ${v}`);
-    const newTechSpecs = [...filteredLines, ...newGeneratedLines].filter(Boolean).join('\n');
+    const newTechSpecs = describeProduct(prod, variant, item.techSpecs);
 
     const variantPrice = getProductOrVariantPriceInProformaCurrency(prod, variant);
 
@@ -3817,119 +3947,7 @@ export default function ProformasView({
                     <SearchableSelect
                       wrapperClassName="flex-1 min-w-0"
                       value={projectId}
-                      onChange={(val) => {
-                        const projId = val;
-                        setProjectId(projId);
-                        if (projId) {
-                          const proj = projects.find((p) => p.id === projId);
-                          if (proj) {
-                            if (proj.customerId) {
-                              setCustomerId(proj.customerId);
-                            }
-                            if (
-                              proj.itemsNeeded &&
-                              proj.itemsNeeded.length > 0
-                            ) {
-                              let hasTruncated = false;
-                              const newItems = proj.itemsNeeded.map((item) => {
-                                const prod = products.find(
-                                  (p) => p.id === item.productId,
-                                );
-                                let qty = item.quantity;
-                                let stockToCheck = undefined;
-                                let isOrderOnly = false;
-                                if (prod && item.variantId) {
-                                  const variant = prod.variants?.find(v => v.id === item.variantId);
-                                  if (variant) {
-                                    stockToCheck = variant.stockLevel;
-                                    isOrderOnly = variant.stockLevel === 0;
-                                  }
-                                } else if (prod) {
-                                  stockToCheck = prod.stockLevel;
-                                  isOrderOnly = prod.stockLevel === 0;
-                                }
-
-                                if (
-                                  prod &&
-                                  (!isOrderOnly && (prod.supplyType || "INVENTORY") !== "ORDER") &&
-                                  stockToCheck !== undefined
-                                ) {
-                                  if (qty > stockToCheck) {
-                                    hasTruncated = true;
-                                  }
-                                }
-                                return {
-                                  productId:
-                                    item.productId === "generic"
-                                      ? ""
-                                      : item.productId,
-                                  variantId: item.variantId,
-                                  productName: prod?.displayName || item.name,
-                                  productCode: (prod && item.variantId ? prod.variants?.find(v => v.id === item.variantId)?.sku : prod?.code) || "",
-                                  brand: prod?.brand || "",
-                                  quantity: qty,
-                                  unitPriceRIYAL: prod ? getProductOrVariantPriceInProformaCurrency(prod, prod.variants?.find(v => v.id === item.variantId)) : 0,
-                                  deliveryRange: "۳-۴",
-                                  deliveryUnit: "هفته" as const,
-                                  deliveryType: "کاری" as const,
-                                  deliveryPostfix:
-                                    "پس از تایید پیش فاکتور و دریافت پیش پرداخت",
-                                  tagNumber: item.tagNumber,
-                                };
-                              });
-
-                              if (hasTruncated) {
-                                const keepProjectQty = window.confirm(
-                                  `هشدار انبار:\n` +
-                                    `تعداد برخی از اقلام درخواستی پروژه از موجودی انبار بیشتر است.\n` +
-                                    `آیا مایلید با وجود کسر موجودی، همان تعداد درخواستی پروژه ثبت شود؟\n` +
-                                    `در غیر این‌صورت، مقادیر به موجودی فعلی انبار محدود خواهند شد.`,
-                                );
-                                if (!keepProjectQty) {
-                                  newItems.forEach((newItem, idx) => {
-                                    const origItem = proj.itemsNeeded![idx];
-                                    const prod = products.find(
-                                      (p) => p.id === origItem.productId,
-                                    );
-                                    let truncStock = undefined;
-                                    let truncOrderOnly = false;
-                                    if (prod && origItem.variantId) {
-                                      const variant = prod.variants?.find(v => v.id === origItem.variantId);
-                                      if (variant) {
-                                        truncStock = variant.stockLevel;
-                                        truncOrderOnly = variant.stockLevel === 0;
-                                      }
-                                    } else if (prod) {
-                                      truncStock = prod.stockLevel;
-                                      truncOrderOnly = prod.stockLevel === 0;
-                                    }
-
-                                    if (
-                                      prod &&
-                                      (!truncOrderOnly && (prod.supplyType || "INVENTORY") !== "ORDER") &&
-                                      truncStock !== undefined
-                                    ) {
-                                      if (newItem.quantity > truncStock) {
-                                        newItem.quantity = truncStock;
-                                      }
-                                    }
-                                  });
-                                }
-                              }
-
-                              setItems(newItems);
-                              setNotes((prev) =>
-                                updateNotesWithDelivery(
-                                  prev,
-                                  newItems,
-                                  isEqualDelivery,
-                                ),
-                              );
-                              setDeliveryDate(getDeliverySummary(newItems));
-                            }
-                          }
-                        }
-                      }}
+                      onChange={(val) => { void applyProjectSelection(val); }}
                       onSearchChange={projectPicker.setTerm}
                       loading={projectPicker.loading}
                       options={[
