@@ -8,7 +8,7 @@ import { syncChildren, toNullableString, toNumber } from "../childSync";
 import { loadSettings } from "../settings";
 import {
   INQUIRY_STEP_KEYS, InquiryStepKey, resolveStepTitle,
-  describeInquiryAmount, describeInquiryStatus, inquiryTotalRiyal,
+  describeInquiryStatus, inquiryTotalRiyal,
 } from "../../utils/inquirySteps";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
@@ -473,7 +473,7 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
           `استعلام قیمت از تأمین‌کننده «${await inquirySupplierName(inquiry.supplierId)}»` +
           ` برای ${(inquiry.items || []).length} قلم از اقلام پروژه توسط {actor} ثبت شد` +
           (inquiry.creationDateJalali ? ` (تاریخ استعلام: ${inquiry.creationDateJalali})` : "") +
-          `. مبلغ آفر: ${summary.amount}. مرحله فعلی: ${summary.status}.`,
+          `. مرحله فعلی: ${summary.status}.`,
       },
       user,
       todayJalali,
@@ -578,7 +578,7 @@ export async function updateInquiry(
         categoryName: ACTIVITY_CATEGORY.INQUIRIES,
         text:
           `استعلام قیمت تأمین‌کننده «${await inquirySupplierName(inquiry.supplierId)}» بروزرسانی شد` +
-          ` — مرحله فعلی: ${summary.status}، مبلغ آفر: ${summary.amount}.` +
+          ` — مرحله فعلی: ${summary.status}.` +
           (inquiry.isWinner
             ? ` این آفر به عنوان یکی از پیشنهادهای برنده پروژه انتخاب شده است` +
               (inquiry.winnerDateJalali ? ` (تاریخ انتخاب: ${inquiry.winnerDateJalali})` : "") + "."
@@ -601,14 +601,10 @@ function describeInquiry(inquiry: unknown) {
   const inq = inquiry as {
     items?: unknown[]; discountPercent?: unknown; discountAmount?: unknown;
   };
-  return {
-    amount: describeInquiryAmount(
-      inq.items as never,
-      Number(inq.discountPercent ?? 0),
-      Number(inq.discountAmount ?? 0),
-    ),
-    status: describeInquiryStatus(inq as never),
-  };
+  // The offer total used to be part of this. It is gone on purpose: these
+  // sentences go on the project timeline, which is read by anyone with the
+  // project — including people the cost permission withholds prices from.
+  return { status: describeInquiryStatus(inq as never) };
 }
 
 /** Records a step the user typed, alongside the derived ones. */

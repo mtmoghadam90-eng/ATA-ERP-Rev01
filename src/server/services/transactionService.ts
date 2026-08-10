@@ -225,7 +225,6 @@ function resolveAmount(input: TransactionInput, data: Record<string, unknown>): 
 
 /* ----------------------- the project's money timeline ---------------------- */
 
-const money = (value: unknown): string => Number(value ?? 0).toLocaleString("en-US");
 
 /**
  * One transaction, in a sentence someone outside the deal can follow.
@@ -235,7 +234,7 @@ const money = (value: unknown): string => Number(value ?? 0).toLocaleString("en-
  * alone. So each says which document, which direction, how much, against what,
  * by which method and on what date, rather than "ثبت تراکنش ... مبلغ ...".
  */
-function describeTransaction(
+export function describeTransaction(
   t: {
     type?: string | null;
     documentNumber?: string | null;
@@ -252,15 +251,14 @@ function describeTransaction(
   const incoming = t.type === RECEIPT;
   const direction = incoming ? "دریافت وجه از کارفرما" : "پرداخت وجه به تأمین‌کننده";
 
-  // A foreign-currency document is quoted in its own currency as well: the rial
-  // figure alone tells the reader nothing about what was actually agreed.
-  const foreign = Number(t.amountForeign ?? 0) > 0 && t.currency && t.currency !== "ریال"
-    ? ` (معادل ${money(t.amountForeign)} ${t.currency})`
-    : "";
-
+  // No figure. The project timeline is read by everyone with access to the
+  // project, including people who may not see what the company pays, so an
+  // amount written into its prose would hand over what `src/server/costs.ts`
+  // withholds everywhere else. The entry names the document; the document
+  // carries the number.
   return (
     `${verb} سند ${incoming ? "دریافت" : "پرداخت"} شماره ${t.documentNumber || "-"}:` +
-    ` ${direction} به مبلغ ${money(t.amountRial)} ریال${foreign}` +
+    ` ${direction}` +
     ` از طریق ${t.paymentType || "نامشخص"} در تاریخ ${t.occurredAtJalali || "-"}` +
     ` — وضعیت سند: ${t.status || "-"}.` +
     (t.description ? ` شرح: ${t.description}` : "")
@@ -462,7 +460,7 @@ export async function reverseTransaction(
       categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
       text:
         `سند ${original.type === RECEIPT ? "دریافت" : "پرداخت"} شماره ${original.documentNumber || "-"}` +
-        ` به مبلغ ${money(original.amountRial)} ریال ابطال شد.` +
+        ` ابطال شد.` +
         ` سند اصلاحی (معکوس) با شماره ${documentNumber} صادر گردید؛` +
         ` اثر مالی این دو سند یکدیگر را خنثی می‌کند و مانده پروژه به وضعیت پیش از سند اصلی بازمی‌گردد.`,
     },
@@ -523,8 +521,8 @@ export async function deleteTransaction(
         categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
         text:
           `سند ${transaction.type === "دریافت" ? "دریافت" : "پرداخت"} شماره` +
-          ` ${transaction.documentNumber || "-"} به مبلغ ${money(transaction.amountRial)} ریال` +
-          ` (تاریخ ${transaction.occurredAtJalali || "-"}) از سیستم حذف شد و از مانده پروژه کسر گردید.`,
+          ` ${transaction.documentNumber || "-"}` +
+          ` (تاریخ ${transaction.occurredAtJalali || "-"}) از سیستم حذف شد و مانده پروژه بازمحاسبه گردید.`,
       },
       user,
       todayJalali,

@@ -401,8 +401,7 @@ export async function createPurchaseOrder(
         categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
         text:
           `صدور سفارش خرید شماره ${po.poNumber} به تأمین‌کننده` +
-          ` «${await supplierNameOf(po.supplierId)}» به ارزش` +
-          ` ${Number(po.totalForeignAmount ?? 0).toLocaleString("en-US")} ${po.currency}` +
+          ` «${await supplierNameOf(po.supplierId)}»` +
           ` برای تأمین ${po.items?.length ?? 0} قلم کالای پروژه.`,
       },
       user,
@@ -438,7 +437,7 @@ const PO_MILESTONE_TEXT: Record<string, (c: MilestoneContext) => string> = {
   orderDate: (c) =>
     `سفارش خرید شماره ${c.poNumber} به تأمین‌کننده «${c.supplier}» در تاریخ ${c.date} ثبت و به سازنده ابلاغ شد.`,
   paymentDate: (c) =>
-    `وجه سفارش خرید شماره ${c.poNumber} به مبلغ ${c.amount} ${c.currency} در تاریخ ${c.date}` +
+    `وجه سفارش خرید شماره ${c.poNumber} در تاریخ ${c.date}` +
     ` به تأمین‌کننده «${c.supplier}» حواله شد.`,
   goodsReadyDate: (c) =>
     `کالای سفارش خرید شماره ${c.poNumber} نزد تأمین‌کننده «${c.supplier}» در تاریخ ${c.date}` +
@@ -459,8 +458,6 @@ interface MilestoneContext {
   poNumber: string;
   supplier: string;
   date: string;
-  amount: string;
-  currency: string;
 }
 
 /** The Jalali column that carries each milestone. */
@@ -486,8 +483,6 @@ async function logPurchaseOrderMilestones(
     poNumber: String(po.poNumber ?? ""),
     supplier: await supplierNameOf(po.supplierId as string),
     date: "",
-    amount: Number(po.totalForeignAmount ?? 0).toLocaleString("en-US"),
-    currency: String(po.currency ?? ""),
   };
 
   for (const field of PO_DATE_FIELDS) {

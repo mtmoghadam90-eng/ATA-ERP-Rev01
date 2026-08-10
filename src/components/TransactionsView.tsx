@@ -206,9 +206,13 @@ export default function TransactionsView({
       categoryCompletion.promptCompletion({
         projectId: tx.projectId,
         categoryName: 'تراکنش‌های مالی و پرداخت‌ها',
+        // No figure, deliberately: answering yes writes this sentence onto the
+        // project timeline, which is read by anyone with the project — so an
+        // amount here would publish what the cost permission withholds
+        // elsewhere. That the project is settled is the fact worth recording;
+        // the number is on the ledger.
         message:
-          `با ثبت این دریافت، پروژه «${position.name}» به طور کامل تسویه شد`
-          + ` (مجموع دریافتی: ${position.paidAmount.toLocaleString('fa-IR')} ریال).`
+          `با ثبت این دریافت، پروژه «${position.name}» به طور کامل تسویه شد.`
           + ' آیا می‌خواهید وضعیت دسته فعالیت مالی این پروژه را به «اتمام کار» تغییر دهید؟',
       });
     } catch (err) {

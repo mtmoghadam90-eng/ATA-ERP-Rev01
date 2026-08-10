@@ -502,8 +502,7 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
       categoryName: ACTIVITY_CATEGORY.PROFORMAS,
       text:
         `پیش‌فاکتور شماره ${proforma.proformaNumber} شامل ${(input.items ?? []).length} قلم کالا` +
-        ` به مبلغ کل ${Number(proforma.finalAmount ?? 0).toLocaleString("en-US")}` +
-        ` ${proforma.currency || "ریال"} توسط {actor} صادر شد` +
+        ` توسط {actor} صادر شد` +
         (proforma.issueDateJalali ? ` (تاریخ صدور: ${proforma.issueDateJalali}` : " (")
         + (proforma.expiryDateJalali ? `، اعتبار تا ${proforma.expiryDateJalali}` : "")
         + `، وضعیت سند: ${proforma.status}).`,
@@ -627,9 +626,7 @@ export async function updateProforma(
         // the document store logged a status change as its own entry, but on
         // this side both arrive through the same write.
         text:
-          `پیش‌فاکتور شماره ${result.proforma.proformaNumber} توسط {actor} ویرایش شد` +
-          ` (مبلغ کل پس از ویرایش: ${Number(result.proforma.finalAmount ?? 0).toLocaleString("en-US")}` +
-          ` ${result.proforma.currency || "ریال"}).` +
+          `پیش‌فاکتور شماره ${result.proforma.proformaNumber} توسط {actor} ویرایش شد.` +
           (oldOutcome !== newOutcome
             ? ` نتیجه اقلام این پیش‌فاکتور از «${oldOutcome}» به «${newOutcome}» تغییر یافت،` +
               ` و وضعیت پروژه بر همین اساس بازمحاسبه شد.`

@@ -30,6 +30,7 @@ import { canSeeCosts } from "../src/server/auth";
 import {
   redactInquiry, redactProduct, redactPurchaseOrder, stripProductCostInput,
 } from "../src/server/costs";
+import { describeTransaction } from "../src/server/services/transactionService";
 
 let pass = 0; const fails: string[] = [];
 const ok = (what: string, cond: boolean, got?: unknown) => {
@@ -250,6 +251,30 @@ eq("a variant this user just added gets none rather than theirs",
   ).variants as any[])[0].priceCalc, null);
 ok("a buyer's write is passed through untouched",
   stripProductCostInput({ priceCalc: "x" }, buyer).priceCalc === "x");
+
+/*
+ * The project timeline names documents; it does not quote them.
+ *
+ * These sentences are read by anyone with access to the project, including
+ * people the cost permission withholds prices from — so an amount written into
+ * the prose hands over exactly what is redacted everywhere else. Asserted here
+ * because the leak is a string, and no type can see it.
+ */
+head("Activity text: names the document, not the amount");
+
+const receiptText = describeTransaction({
+  type: "دریافت", documentNumber: "RC-1404-0007", amountRial: 60_000_000,
+  amountForeign: 1200, currency: "یورو", paymentType: "حواله بانکی",
+  occurredAtJalali: "1405/05/12", status: "تأیید شده",
+}, "ثبت");
+
+ok("it names the document", receiptText.includes("RC-1404-0007"), receiptText);
+ok("and says which way the money went", receiptText.includes("دریافت وجه از کارفرما"));
+ok("and how it was paid", receiptText.includes("حواله بانکی"));
+ok("no rial figure", !/60[,\u066c]?000/.test(receiptText), receiptText);
+ok("no foreign figure either", !receiptText.includes("1,200") && !receiptText.includes("یورو"), receiptText);
+ok("and no stray currency word left behind by the edit",
+  !receiptText.includes("ریال"), receiptText);
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
