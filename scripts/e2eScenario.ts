@@ -570,17 +570,31 @@ async function run(options: Options): Promise<void> {
   /* ------------------------------------------- closing a category group */
   beginStep("Closing an activity category");
   {
-    // What the prompt does when the user answers yes: find the project's group
-    // for that category by name, and close it.
-    const groups = (await api.get<{ groups: { id: string; categoryId: string; categoryName: string; status: string; endDate: string | null }[] }>(
+    type Group = {
+      id: string; categoryId: string; categoryName: string;
+      status: string; endDate: string | null; endDateJalali?: string | null;
+    };
+    const readGroups = async () => (await api.get<{ groups: Group[] }>(
       `/api/projects/${projectId}/category-groups`)).groups;
 
     const normalize = (value: string) => value.replace(/[\s\u200c]/g, "").trim().toLowerCase();
-    const target = groups.find((g) => normalize(g.categoryName) === normalize("سفارشات خرید تامین‌کنندگان"));
-    check("the purchase-order category exists to be closed",
-      !!target, groups.map((g) => g.categoryName));
+    /*
+     * What the prompt does when the user answers yes: find the project's group
+     * for that category by name, and close it.
+     *
+     * Run for every module that offers the prompt, because the group only
+     * exists if that module logged its facts under the canonical category
+     * name. A module whose name has drifted shows up here as a group that
+     * cannot be found — rather than as a prompt that appears in the browser
+     * and quietly closes nothing.
+     */
+    const closeCategory = async (label: string, categoryName: string) => {
+      const groups = await readGroups();
+      const target = groups.find((g) => normalize(g.categoryName) === normalize(categoryName));
+      check(`the ${label} category exists to be closed`,
+        !!target, groups.map((g) => g.categoryName));
+      if (!target) return;
 
-    if (target) {
       await api.put(`/api/projects/${projectId}/category-groups`, {
         categoryId: target.categoryId,
         categoryName: target.categoryName,
@@ -589,14 +603,18 @@ async function run(options: Options): Promise<void> {
         // Deliberately absent, as the prompt sends it: the server stamps today.
       });
 
-      const after = (await api.get<{ groups: { categoryName: string; status: string; endDate: string | null; endDateJalali?: string | null }[] }>(
-        `/api/projects/${projectId}/category-groups`)).groups
+      const after = (await readGroups())
         .find((g) => normalize(g.categoryName) === normalize(target.categoryName));
 
-      checkEqual("it closes", after?.status, "اتمام کار");
-      check("and is stamped with the day it closed, not blanked",
+      checkEqual(`the ${label} category closes`, after?.status, "اتمام کار");
+      check(`and is stamped with the day it closed, not blanked (${label})`,
         !!after?.endDateJalali, after?.endDateJalali ?? null);
-    }
+    };
+
+    await closeCategory("purchase-order", "سفارشات خرید تامین‌کنندگان");
+    // Offered from the supplier-inquiry screen once a final offer is confirmed
+    // or a winner is declared.
+    await closeCategory("supplier-inquiry", "استعلام قیمت تأمین‌کنندگان");
   }
 
   /* ------------------------------------------------------------- rollups */

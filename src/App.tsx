@@ -483,6 +483,7 @@ export default function App() {
         return (
           <SupplierInquiriesView
             settings={store.settings}
+            categoryCompletion={categoryCompletion}
           />
         );
       case 'settings':

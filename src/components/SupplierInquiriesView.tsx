@@ -58,19 +58,26 @@ import { detailToProject } from '../api/projectAdapter';
 import { projectsApi } from '../api/projects';
 import type { ProjectRow } from '../api/projects';
 import type { SupplierRow } from '../api/suppliers';
+import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 
 /**
  * Supplier inquiries screen.
  *
- * Reads through the API. Two rules that used to live here now belong to the
- * server, because neither survives a paged list: the event timeline is derived
- * from what the user does, and a project has at most one winning inquiry.
+ * Reads through the API. A rule that used to live here now belongs to the
+ * server, because it does not survive a paged list: the event timeline is
+ * derived from what the user does.
  */
 interface SupplierInquiriesViewProps {
   // Inquiries, projects and suppliers are no longer props, and neither are the
-  // three mutations: the view calls the API, so the derived steps and the
-  // winner rule come back from the server that applied them.
+  // three mutations: the view calls the API, so the derived steps come back
+  // from the server that applied them.
   settings: ERPSettings;
+  /**
+   * Offers to close the project's inquiry category when this module reaches its
+   * end — the final offer confirmed, or a winner declared. Optional, like every
+   * other module's, so the screen still works without it.
+   */
+  categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
 
 // Upload helper specifically for supplier inquiries subfolder
@@ -96,7 +103,8 @@ async function uploadToSupplierInquiries(file: File): Promise<string> {
 }
 
 export default function SupplierInquiriesView({
-  settings
+  settings,
+  categoryCompletion,
 }: SupplierInquiriesViewProps) {
   // Rates are read here rather than handed down: they are a short shared list
   // that changes during the day, and a stale one misprices a document.
@@ -176,6 +184,41 @@ export default function SupplierInquiriesView({
   };
 
   /**
+   * Offers to close the project's inquiry category.
+   *
+   * A project may be supplied piecewise, so several inquiries can win and
+   * several final offers can arrive — which is why this asks rather than
+   * closing, and why the message says how many winning offers the project has
+   * so far. Answering "no" on the first of three costs nothing; the prompt
+   * comes back with the next one.
+   *
+   * The category name is the canonical spelling the server writes when it
+   * records an inquiry on the timeline. A variant would find no group, and the
+   * prompt would have nothing to close.
+   */
+  const promptCloseInquiryCategory = (
+    inquiry: { projectId: string; id: string },
+    what: string,
+  ) => {
+    if (!categoryCompletion || !inquiry.projectId) return;
+
+    // Counted from what this screen holds for the project, including the change
+    // just made — the refresh above has not landed yet.
+    const winners = filteredInquiries.filter(
+      (i) => i.projectId === inquiry.projectId && (i.isWinner || i.id === inquiry.id),
+    ).length;
+
+    categoryCompletion.promptCompletion({
+      projectId: inquiry.projectId,
+      categoryName: 'استعلام قیمت تأمین‌کنندگان',
+      message:
+        `${what}`
+        + (winners > 1 ? ` این پروژه اکنون ${winners} آفر برنده دارد.` : '')
+        + ' آیا می‌خواهید وضعیت دسته فعالیت استعلام قیمت این پروژه را به «اتمام کار» تغییر دهید؟',
+    });
+  };
+
+  /**
    * Declares — or withdraws — a winning offer.
    *
    * A project may have several: one supplier for the flow meters, another for
@@ -192,6 +235,15 @@ export default function SupplierInquiriesView({
         winnerDate: isNowWinner ? getTodayShamsi() : null,
       });
       list.refresh();
+
+      // Declaring a winner is where this module ends for that part of the
+      // scope. Withdrawing one is not, so only the forward move asks.
+      if (isNowWinner) {
+        promptCloseInquiryCategory(
+          target,
+          `آفر تأمین‌کننده «${target.supplierName}» به عنوان پیشنهاد برنده انتخاب شد.`,
+        );
+      }
     } catch (err) {
       reportError(err, 'ثبت وضعیت برنده با خطا مواجه شد.');
     }
@@ -209,6 +261,13 @@ export default function SupplierInquiriesView({
         offerConfirmedDate: isNowConfirmed ? getTodayShamsi() : null,
       });
       list.refresh();
+
+      if (isNowConfirmed) {
+        promptCloseInquiryCategory(
+          inq,
+          `آفر نهایی تأمین‌کننده «${inq.supplierName}» دریافت و تأیید شد.`,
+        );
+      }
     } catch (err) {
       reportError(err, 'ثبت تأیید آفر با خطا مواجه شد.');
     }
