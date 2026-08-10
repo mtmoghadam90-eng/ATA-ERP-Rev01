@@ -34,6 +34,11 @@ import {
 } from '../types';
 import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
+import { inlineDocumentAssets } from '../utils/inlineAssets';
+import {
+  packableLines, packingRowKey,
+  outstandingFor as packingOutstandingFor,
+} from '../utils/packingAllocation';
 import { cleanCode } from '../utils/documentCodes';
 import ConfirmModal from './ConfirmModal';
 import ShamsiDatePicker from './ShamsiDatePicker';
@@ -247,6 +252,10 @@ export default function PackagingDeliveryView({
 
   // Temporary item inputs
   const [tempItemName, setTempItemName] = useState<string>('');
+  /* Which won line this row is packing, if it is packing one. Empty means the
+     row is something the proforma never promised — a document, packaging, a
+     spare — and those are never counted against anything. */
+  const [tempItemSourceKey, setTempItemSourceKey] = useState<string>('');
   const [tempItemQty, setTempItemQty] = useState<number>(1);
   const [tempItemPackType, setTempItemPackType] = useState<string>(settings.dropdownItems.packageTypes?.[0] || 'کارتن');
   const [tempItemWidth, setTempItemWidth] = useState<string>('');
@@ -329,13 +338,20 @@ export default function PackagingDeliveryView({
    * packing list legitimately carries documents and packaging that no proforma
    * lists — so those rows are simply not capped.
    */
-  const getMaxAllowedQty = (item: PackingItem) => {
-    if (!selectedProjectId) return Infinity;
-    const key = item.productId || item.itemOrDocName.trim();
-    const line = remainingLines.find(l => l.key === key);
-    if (!line || line.promised === 0) return Infinity;
-    return line.remaining;
-  };
+  /*
+   * How this list's rows divide up what the project still owes.
+   *
+   * The arithmetic is in `src/utils/packingAllocation.ts` so it can be checked
+   * without a browser: it is the calculation that decides what the stock ledger
+   * issues, and it was wrong in a way no screen made obvious.
+   */
+  const outstandingFor = (key: string, excludeRowId?: string) =>
+    packingOutstandingFor(remainingLines, packingItems, key, excludeRowId);
+
+  const getMaxAllowedQty = (item: PackingItem) =>
+    selectedProjectId ? outstandingFor(packingRowKey(item), item.id) : Infinity;
+
+  const packableProformaLines = packableLines(remainingLines, packingItems);
 
   // Delete Modal State
   const [deleteDeliveryId, setDeleteDeliveryId] = useState<string | null>(null);
@@ -445,8 +461,8 @@ export default function PackagingDeliveryView({
 
   // Add custom item/document
   const handleAddCustomItem = () => {
-    if (!tempItemName.trim()) {
-      alert('لطفاً نام کالا یا مدرک را وارد کنید.');
+    if (!tempItemSourceKey && !tempItemName.trim()) {
+      alert('یک قلم از پیش‌فاکتور انتخاب کنید، یا نام کالا/مدرک را وارد کنید.');
       return;
     }
 
@@ -454,9 +470,33 @@ export default function PackagingDeliveryView({
       ? `${tempItemLength}x${tempItemWidth}x${tempItemHeight} سانتی‌متر` 
       : 'نامشخص';
 
+    /*
+     * A row taken from the proforma carries its product and SKU.
+     *
+     * Without them the stock ledger has nothing to issue against, which is
+     * exactly what went wrong: splitting two units across two cartons by
+     * reducing the loaded row to one and typing the second by hand left the
+     * second row with no product, so only one unit ever left the warehouse.
+     */
+    const source = tempItemSourceKey
+      ? remainingLines.find(l => l.key === tempItemSourceKey)
+      : undefined;
+
+    const spare = source ? outstandingFor(source.key) : Infinity;
+    if (source && spare !== Infinity && tempItemQty > spare) {
+      alert(
+        `از «${source.productName}» تنها ${spare} عدد باقی مانده که هنوز پکینگ نشده است.\n`
+        + `تعداد این ردیف را کمتر یا مساوی ${spare} وارد کنید.`,
+      );
+      return;
+    }
+
     const newItem: PackingItem = {
       id: `pack-item-custom-${Date.now()}`,
-      itemOrDocName: tempItemName.trim(),
+      itemOrDocName: source ? source.productName : tempItemName.trim(),
+      productId: source?.productId ?? undefined,
+      variantId: source?.variantId ?? undefined,
+      tagNumber: source?.tagNumber ?? undefined,
       quantity: tempItemQty,
       packageType: tempItemPackType,
       dimensions,
@@ -467,6 +507,7 @@ export default function PackagingDeliveryView({
     setPackingItems(prev => [...prev, newItem]);
 
     // Reset inputs
+    setTempItemSourceKey('');
     setTempItemName('');
     setTempItemQty(1);
     setTempItemPackType(settings.dropdownItems.packageTypes?.[0] || 'کارتن');
@@ -501,7 +542,7 @@ export default function PackagingDeliveryView({
    * one file — the pages are separated by a print page break, which is what
    * makes "print all" produce the right stack.
    */
-  const downloadPackagingDeliveryHTML = (
+  const downloadPackagingDeliveryHTML = async (
     delivery: PackagingDelivery,
     perBox = false,
   ) => {
@@ -877,7 +918,12 @@ ${sheets}
 </html>
     `;
 
-    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+    // The logo, the seal and any signature are stored as `/uploads/…` paths,
+    // which resolve to nothing once the file is opened from disk. They travel
+    // inside the document instead.
+    const standalone = await inlineDocumentAssets(htmlContent);
+
+    const blob = new Blob([standalone], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -1797,16 +1843,51 @@ ${sheets}
 
               {/* Add Custom Item / Doc Block */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/60 space-y-3">
-                <div className="text-xs font-bold text-slate-700">افزودن کالا، مدارک یا وسایل جانبی متفرقه</div>
+                <div className="text-xs font-bold text-slate-700">افزودن ردیف جدید به پکینگ لیست</div>
+
+                {/* From the proforma, while anything it promised is unpacked. */}
+                {selectedProjectId && (
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500 block">
+                      انتخاب از اقلام پیش‌فاکتور برنده
+                      {packableProformaLines.length === 0 && ' — همه اقلام پیش‌فاکتور پکینگ شده‌اند'}
+                    </label>
+                    <select
+                      value={tempItemSourceKey}
+                      onChange={e => {
+                        const key = e.target.value;
+                        setTempItemSourceKey(key);
+                        const picked = packableProformaLines.find(o => o.line.key === key);
+                        if (picked) {
+                          setTempItemName(picked.line.productName);
+                          // The whole remainder by default: one carton is the
+                          // common case, and splitting is a quick edit.
+                          setTempItemQty(picked.spare);
+                        }
+                      }}
+                      disabled={packableProformaLines.length === 0}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none bg-white disabled:bg-slate-100 disabled:text-slate-400"
+                    >
+                      <option value="">— ردیف دستی (کالا یا مدرکی خارج از پیش‌فاکتور) —</option>
+                      {packableProformaLines.map(({ line, spare }) => (
+                        <option key={line.key} value={line.key}>
+                          {line.productName} — {spare} عدد باقی‌مانده
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
                   <div className="space-y-1">
                     <label className="text-[10px] font-bold text-slate-500 block">نام کالا یا مستندات (مثال: شناسنامه گارانتی)</label>
                     <input
                       type="text"
                       value={tempItemName}
-                      onChange={e => setTempItemName(e.target.value)}
+                      onChange={e => { setTempItemName(e.target.value); setTempItemSourceKey(''); }}
+                      readOnly={!!tempItemSourceKey}
                       placeholder="کاتالوگ، قطعه یدکی، نقشه فونداسیون..."
-                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none"
+                      className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none read-only:bg-slate-100 read-only:text-slate-500"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -2221,7 +2302,7 @@ ${sheets}
               <div className="flex gap-2 justify-end">
                 <button
                   type="button"
-                  onClick={() => { downloadPackagingDeliveryHTML(selectedDelivery); }}
+                  onClick={() => { void downloadPackagingDeliveryHTML(selectedDelivery); }}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
                 >
                   <Printer size={15} />
@@ -2229,7 +2310,7 @@ ${sheets}
                 </button>
                 <button
                   type="button"
-                  onClick={() => { downloadPackagingDeliveryHTML(selectedDelivery, true); }}
+                  onClick={() => { void downloadPackagingDeliveryHTML(selectedDelivery, true); }}
                   className="bg-sky-600 hover:bg-sky-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
                   title="یک برگه جداگانه برای هر جعبه، جهت چاپ و الصاق روی همان جعبه"
                 >

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useExchangeRates } from '../api/exchangeRates';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
+import { inlineDocumentAssets } from '../utils/inlineAssets';
 import {
   Plus,
   Search,
@@ -1988,7 +1989,7 @@ export default function ProformasView({
     showSignatures: true,
     showTotals: true,
   };
-  const downloadProformaHTML = (pf: Proforma) => {
+  const downloadProformaHTML = async (pf: Proforma) => {
     const template = activeTemplate;
     if (!template) return;
     const customerObj = customers.find((c) => c.id === pf.customerId);
@@ -2508,7 +2509,11 @@ export default function ProformasView({
 </body>
 </html>
     `;
-    const blob = new Blob([htmlContent], { type: "text/html;charset=utf-8" });
+    // Same as the packing list: the logo, seal, signature and product photos
+    // are `/uploads/…` paths that resolve to nothing outside the application.
+    const standalone = await inlineDocumentAssets(htmlContent);
+
+    const blob = new Blob([standalone], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -2559,7 +2564,7 @@ export default function ProformasView({
             <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 pb-6 mb-6 border-b border-slate-200 print:hidden">
               <div className="flex flex-wrap items-center gap-3">
                 <button
-                  onClick={() => downloadProformaHTML(selectedProforma)}
+                  onClick={() => { void downloadProformaHTML(selectedProforma); }}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition flex items-center gap-2 shadow-lg shadow-emerald-600/10"
                   title="دانلود فایل بهینه برای چاپ و خروجی تمیز بدون محدودیت مرورگر"
                 >

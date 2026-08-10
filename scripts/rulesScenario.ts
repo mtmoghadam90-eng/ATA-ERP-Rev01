@@ -42,6 +42,7 @@ import { rowToTask } from "../src/api/tasks";
 import { samePermissions } from "../src/server/services/userService";
 import { buildCustomerWhere } from "../src/server/services/customerService";
 import { ACTIVITY_CATEGORY, canonicalCategoryName, sameCategory } from "../src/utils/activityCategories";
+import { packableLines, outstandingFor } from "../src/utils/packingAllocation";
 import type { CustomerRow } from "../src/api/customers";
 
 let pass = 0; const fails: string[] = [];
@@ -499,6 +500,44 @@ ok("spacing and ZWNJ are not meaning",
   sameCategory("تراکنش های مالی و پرداخت ها", ACTIVITY_CATEGORY.TRANSACTIONS));
 ok("but two different categories stay different",
   !sameCategory(ACTIVITY_CATEGORY.DELIVERIES, ACTIVITY_CATEGORY.AFTER_SALES));
+
+/*
+ * Two of an item, shipped in two cartons.
+ *
+ * A packing list is not a copy of the proforma: what was sold as one line of
+ * two is often shipped as two boxes of one. Splitting it used to mean reducing
+ * the loaded row and typing the second by hand — and a hand-typed row carried
+ * no product, so the stock ledger issued one unit where two had left the
+ * building. The goods were gone and the history said otherwise.
+ */
+head("Packing list: splitting a promised line across boxes");
+
+const promisedLine = {
+  key: "p1|", productId: "p1", variantId: null, productName: "فلومتر",
+  promised: 2, remaining: 2,
+};
+const offered = (rows: Parameters<typeof packableLines>[1]) =>
+  packableLines([promisedLine], rows).map((o) => `${o.line.productName}:${o.spare}`);
+
+let packRows = [{ id: "r1", productId: "p1", itemOrDocName: "فلومتر", quantity: 2 }];
+eq("with the whole line in one box, nothing is left to add",
+  JSON.stringify(offered(packRows)), "[]");
+
+packRows = packRows.map((r) => ({ ...r, quantity: 1 }));
+eq("reducing that row frees the other unit",
+  JSON.stringify(offered(packRows)), JSON.stringify(["فلومتر:1"]));
+eq("and the row itself may still hold both",
+  outstandingFor([promisedLine], packRows, "p1|", "r1"), 2);
+
+packRows = [...packRows, { id: "r2", productId: "p1", itemOrDocName: "فلومتر", quantity: 1 }];
+eq("packing it into a second box uses the line up",
+  JSON.stringify(offered(packRows)), "[]");
+eq("and the ledger issues both units",
+  packRows.filter((r) => r.productId).reduce((sum, r) => sum + r.quantity, 0), 2);
+
+// Documents and packaging were never promised, so nothing caps them.
+ok("a row the proforma never mentioned is uncapped",
+  outstandingFor([promisedLine], packRows, "کاتالوگ") === Infinity);
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
