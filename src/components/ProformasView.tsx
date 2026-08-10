@@ -631,7 +631,6 @@ export default function ProformasView({
   const [sentMethodType, setSentMethodType] = useState<string>(() => (settings?.dropdownItems?.proformaSentMethods || [])[0] || "ایمیل");
   const [customSentMethod, setCustomSentMethod] = useState<string>("");
   const [selectedSentRecipients, setSelectedSentRecipients] = useState<string[]>([]);
-  const [recipientSearchTerm, setRecipientSearchTerm] = useState("");
   React.useEffect(() => {
     if (initialPrintDocId) {
       const pf = proformas.find((p) => p.id === initialPrintDocId);
@@ -843,6 +842,43 @@ export default function ProformasView({
   const contactCustomers = contactPicker.matches as unknown as Customer[];
 
   /**
+   * The people a proforma can be recorded as sent to.
+   *
+   * Natural persons linked to the buyer — which is what the field means, and
+   * which no page of customers reliably contains. Both places that ask the
+   * question used to filter a list they already had in the browser: the create
+   * form filtered the buyer picker's page, and the mark-as-sent modal filtered
+   * the customers appearing on the current page of proformas. A linked person
+   * outside either was simply unofferable, and the box read «مشتری حقیقی یافت
+   * نشد» however many of them existed.
+   *
+   * Scoped on the server instead, by the same `linkedTo` filter the contact
+   * field already uses. Links are stored in both directions, so this finds the
+   * person whether the pair was linked from the company or from the person.
+   */
+  const recipientOwnerId = modalOpen
+    ? customerId
+    : (proformas.find((p) => p.id === statusTargetId)?.customerId ?? '');
+
+  const recipientPicker = useEntitySearch<CustomerRow>({
+    path: '/api/customers',
+    limit: 50,
+    enabled: !!recipientOwnerId,
+    params: { customerType: 'حقیقی', linkedTo: recipientOwnerId || undefined },
+    getLabel: (row) => row.companyName,
+  });
+
+  /**
+   * The name to record for a person, and the one the field matches on.
+   *
+   * A natural person's record keeps their name in `firstName`/`lastName`;
+   * `companyName` is filled for them too, so it is preferred and the parts are
+   * the fallback.
+   */
+  const recipientName = (c: { companyName?: string; firstName?: string; lastName?: string }) =>
+    c.companyName || `${c.firstName || ''} ${c.lastName || ''}`.trim();
+
+  /**
    * The projects the form can choose from.
    *
    * The list below is assembled from the proformas on the page, which is right
@@ -907,7 +943,7 @@ export default function ProformasView({
     setSentMethodType((settings?.dropdownItems?.proformaSentMethods || [])[0] || "ایمیل");
     setCustomSentMethod("");
     setSelectedSentRecipients([]);
-    setRecipientSearchTerm("");
+    recipientPicker.setTerm("");
     setCustomerId("");
     setContactCustomerId("");
     setContactPrefix("");
@@ -1006,7 +1042,7 @@ export default function ProformasView({
       setCustomSentMethod("");
     }
     setSelectedSentRecipients(pf.sentRecipients || []);
-    setRecipientSearchTerm("");
+    recipientPicker.setTerm("");
 
     const loadedItems = pf.items.map((item) => ({
       productId: item.productId,
@@ -1541,7 +1577,7 @@ export default function ProformasView({
       setCustomSentMethod("");
       setSelectedSentRecipients([]);
     }
-    setRecipientSearchTerm("");
+    recipientPicker.setTerm("");
     setShowStatusModal(true);
   };
   const handleSaveStatusChange = (e: React.FormEvent) => {
@@ -3214,7 +3250,6 @@ export default function ProformasView({
 
               {newStatusSelected === "ارسال شده" && (() => {
                 const targetPf = proformas.find((p) => p.id === statusTargetId);
-                const pfCustomerObj = targetPf ? customers.find((c) => c.id === targetPf.customerId) : null;
                 return (
                   <div className="space-y-4 border-t border-slate-100 pt-3 animate-fade-in">
                     <div className="space-y-1.5">
@@ -3270,8 +3305,8 @@ export default function ProformasView({
                         <div className="relative flex-1 min-w-0">
                           <input
                             type="text"
-                            value={recipientSearchTerm}
-                            onChange={(e) => setRecipientSearchTerm(e.target.value)}
+                            value={recipientPicker.term}
+                            onChange={(e) => recipientPicker.setTerm(e.target.value)}
                             placeholder="جستجوی نام شخص (مشتری حقیقی)..."
                             className="w-full border border-slate-200 rounded-lg pr-8 pl-3 py-1.5 text-[11px] focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
                           />
@@ -3281,27 +3316,29 @@ export default function ProformasView({
                           
                           <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
                             {(() => {
-                              const filtered = customers
-                                .filter(c => c.customerType === "حقیقی")
-                                .filter(c => {
-                                  if (!pfCustomerObj) return false;
-                                  if (pfCustomerObj.customerType === "حقوقی") {
-                                    return pfCustomerObj.linkedCustomerIds?.includes(c.id) || c.companyName === pfCustomerObj.companyName;
-                                  } else {
-                                    return c.id === pfCustomerObj.id || pfCustomerObj.linkedCustomerIds?.includes(c.id);
-                                  }
-                                })
-                                .filter(c => {
-                                  const fullName = c.companyName || `${c.firstName || ""} ${c.lastName || ""}`.trim();
-                                  return fullName.toLowerCase().includes(recipientSearchTerm.toLowerCase());
-                                });
-                              
+                              // Scoped and searched by the server; see recipientPicker.
+                              const filtered = recipientPicker.matches as unknown as Customer[];
+
+                              // Three different situations, and one message used
+                              // to cover all of them.
+                              if (!recipientOwnerId) {
+                                return <div className="p-2 text-[10px] text-slate-400 text-center">ابتدا کارفرما را انتخاب کنید.</div>;
+                              }
+                              if (recipientPicker.loading) {
+                                return <div className="p-2 text-[10px] text-slate-400 text-center">در حال جستجو…</div>;
+                              }
                               if (filtered.length === 0) {
-                                return <div className="p-2 text-[10px] text-slate-400 text-center">مشتری حقیقی یافت نشد.</div>;
+                                return (
+                                  <div className="p-2 text-[10px] text-slate-400 text-center">
+                                    {recipientPicker.term
+                                      ? 'مشتری حقیقی با این نام یافت نشد.'
+                                      : 'هیچ مشتری حقیقی به این کارفرما متصل نشده است.'}
+                                  </div>
+                                );
                               }
                               
                               return filtered.map(c => {
-                                const fullName = c.companyName || `${c.firstName || ""} ${c.lastName || ""}`.trim();
+                                const fullName = recipientName(c);
                                 const isSelected = selectedSentRecipients.includes(fullName);
                                 
                                 return (
@@ -3314,7 +3351,7 @@ export default function ProformasView({
                                       } else {
                                         setSelectedSentRecipients(prev => [...prev, fullName]);
                                       }
-                                      setRecipientSearchTerm("");
+                                      recipientPicker.setTerm("");
                                     }}
                                     className={`w-full text-right px-3 py-1.5 text-[11px] transition flex items-center justify-between hover:bg-slate-50 ${
                                       isSelected ? "bg-sky-50/50 text-sky-700 font-semibold" : "text-slate-700"
@@ -4126,8 +4163,8 @@ export default function ProformasView({
                         <div className="relative flex-1 min-w-0">
                           <input
                             type="text"
-                            value={recipientSearchTerm}
-                            onChange={(e) => setRecipientSearchTerm(e.target.value)}
+                            value={recipientPicker.term}
+                            onChange={(e) => recipientPicker.setTerm(e.target.value)}
                             placeholder="جستجوی نام شخص (مشتری حقیقی)..."
                             className="w-full border border-slate-200 rounded-lg pr-8 pl-3 py-1.5 text-[11px] focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
                           />
@@ -4137,28 +4174,29 @@ export default function ProformasView({
                           
                           <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
                             {(() => {
-                              const pfCustomerObj = modalCustomers.find((c) => c.id === customerId);
-                              const filtered = modalCustomers
-                                .filter(c => c.customerType === "حقیقی")
-                                .filter(c => {
-                                  if (!pfCustomerObj) return false;
-                                  if (pfCustomerObj.customerType === "حقوقی") {
-                                    return pfCustomerObj.linkedCustomerIds?.includes(c.id) || c.companyName === pfCustomerObj.companyName;
-                                  } else {
-                                    return c.id === pfCustomerObj.id || pfCustomerObj.linkedCustomerIds?.includes(c.id);
-                                  }
-                                })
-                                .filter(c => {
-                                  const fullName = c.companyName || `${c.firstName || ""} ${c.lastName || ""}`.trim();
-                                  return fullName.toLowerCase().includes(recipientSearchTerm.toLowerCase());
-                                });
-                              
+                              // Scoped and searched by the server; see recipientPicker.
+                              const filtered = recipientPicker.matches as unknown as Customer[];
+
+                              // Three different situations, and one message used
+                              // to cover all of them.
+                              if (!recipientOwnerId) {
+                                return <div className="p-2 text-[10px] text-slate-400 text-center">ابتدا کارفرما را انتخاب کنید.</div>;
+                              }
+                              if (recipientPicker.loading) {
+                                return <div className="p-2 text-[10px] text-slate-400 text-center">در حال جستجو…</div>;
+                              }
                               if (filtered.length === 0) {
-                                return <div className="p-2 text-[10px] text-slate-400 text-center">مشتری حقیقی یافت نشد.</div>;
+                                return (
+                                  <div className="p-2 text-[10px] text-slate-400 text-center">
+                                    {recipientPicker.term
+                                      ? 'مشتری حقیقی با این نام یافت نشد.'
+                                      : 'هیچ مشتری حقیقی به این کارفرما متصل نشده است.'}
+                                  </div>
+                                );
                               }
                               
                               return filtered.map(c => {
-                                const fullName = c.companyName || `${c.firstName || ""} ${c.lastName || ""}`.trim();
+                                const fullName = recipientName(c);
                                 const isSelected = selectedSentRecipients.includes(fullName);
                                 
                                 return (
@@ -4171,7 +4209,7 @@ export default function ProformasView({
                                       } else {
                                         setSelectedSentRecipients(prev => [...prev, fullName]);
                                       }
-                                      setRecipientSearchTerm("");
+                                      recipientPicker.setTerm("");
                                     }}
                                     className={`w-full text-right px-3 py-1.5 text-[11px] transition flex items-center justify-between hover:bg-slate-50 ${
                                       isSelected ? "bg-sky-50/50 text-sky-700 font-semibold" : "text-slate-700"

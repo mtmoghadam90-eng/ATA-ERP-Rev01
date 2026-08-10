@@ -40,6 +40,7 @@ import { rowToTransaction } from "../src/api/transactions";
 import { rowToPurchaseOrder } from "../src/api/purchaseOrders";
 import { rowToTask } from "../src/api/tasks";
 import { samePermissions } from "../src/server/services/userService";
+import { buildCustomerWhere } from "../src/server/services/customerService";
 import type { CustomerRow } from "../src/api/customers";
 
 let pass = 0; const fails: string[] = [];
@@ -402,6 +403,29 @@ ok("and so is a new one",
   !samePermissions(JSON.stringify({ dashboard: true, customers: true, costs: true, users: true }), permsStored));
 ok("two accounts with nothing stored match", samePermissions(null, null));
 ok("but nothing stored against something is a change", !samePermissions(null, permsStored));
+
+/*
+ * The contacts of a company are found on the server, in either direction.
+ *
+ * The proforma's "sent to whom" field lists the natural persons linked to the
+ * buyer. It used to filter a list the browser already held — the buyer picker's
+ * page, or the customers appearing on the current page of proformas — so a
+ * linked person outside that page could not be offered at all, and the box
+ * reported that no natural customer existed.
+ */
+head("Customer contacts: scoped by the server, both link directions");
+
+const linkWhere = buildCustomerWhere(
+  { search: "", filters: { customerType: "حقیقی" }, sort: "", order: "asc", page: 1, pageSize: 50 } as never,
+  { id: "u1", permissions: { customers: true } } as never,
+  { linkedTo: "company-1" },
+);
+const linkJson = JSON.stringify(linkWhere);
+ok("the query asks for links out of the company", linkJson.includes('"linksFrom"'), linkJson);
+ok("and links into it — an older one-way link still finds its contacts",
+  linkJson.includes('"linksTo"'), linkJson);
+ok("and it is still restricted to natural persons",
+  linkJson.includes('"customerType":"حقیقی"'), linkJson);
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

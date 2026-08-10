@@ -93,9 +93,19 @@ export function buildCustomerWhere(
     and.push({ [field]: value });
   }
 
-  // Filter by linked-to customer: show only contacts linked to this company
+  // Only the customers linked to this one — the contacts of a company.
+  //
+  // Either direction. `setCustomerLinks` writes the pair both ways, so one side
+  // would be enough for anything saved through this application; a link that
+  // arrived from the old document store may exist only as it was first entered,
+  // and asking for one direction would hide those contacts entirely.
   if (typeof extra.linkedTo === "string" && extra.linkedTo) {
-    and.push({ linksFrom: { some: { toId: extra.linkedTo } } });
+    and.push({
+      OR: [
+        { linksFrom: { some: { toId: extra.linkedTo } } },
+        { linksTo: { some: { fromId: extra.linkedTo } } },
+      ],
+    });
   }
 
   // Several custom fields can be filtered at once. Express gives an array when
