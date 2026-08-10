@@ -138,20 +138,32 @@ eq("an unallocated receipt still counts as money received", unallocated.totalRec
 eq("but does not settle the invoice", unallocated.totalRemainingHistoricalRiyal, 200_000_000);
 eq("it is reported separately", unallocated.totalUnallocatedRiyal, 60_000_000);
 
-// A confirmed receipt is corrected by a reversing entry; both halves stay in
-// the totals so the pair cancels.
-const withReversal = calculateProjectFinance(
-  { id: "pr1" } as any,
-  [{ id: "pf1", projectId: "pr1", status: "ارسال شده", currency: "ریال", finalAmount: 200_000_000,
-     items: [{ id: "i1", status: "برنده", totalPriceRIYAL: 200_000_000, quantity: 1, unitPriceRIYAL: 200_000_000 }] }] as any,
-  [
-    { id: "t1", projectId: "pr1", proformaId: "pf1", type: "دریافت", status: "تأیید شده", amountRIYAL: 60_000_000 },
-    { id: "t2", projectId: "pr1", proformaId: "pf1", type: "دریافت", status: "تأیید شده", amountRIYAL: 60_000_000, reversalOfTransactionId: "t1" },
-  ] as any,
-  [] as any,
-);
+/*
+ * A confirmed receipt is corrected by a reversing entry, and both halves stay
+ * in the totals so the pair cancels.
+ *
+ * Shaped the way `reverseTransaction` actually writes it, which is the point:
+ * the reversal is the *mirror image*, so a receipt is undone by a payment, and
+ * the original is marked ابطال شده. An earlier version of this test invented a
+ * reversal that kept the original's type — a shape the application never
+ * produces — and so it passed while the real thing double-counted.
+ */
+const reversalPair = [
+  { id: "t1", projectId: "pr1", proformaId: "pf1", type: "دریافت", status: "ابطال شده", amountRIYAL: 60_000_000 },
+  { id: "t2", projectId: "pr1", proformaId: "pf1", type: "پرداخت", status: "تأیید شده",
+    amountRIYAL: 60_000_000, reversalOfTransactionId: "t1" },
+] as any;
+const wonProforma = [{ id: "pf1", projectId: "pr1", status: "ارسال شده", currency: "ریال", finalAmount: 200_000_000,
+  items: [{ id: "i1", status: "برنده", totalPriceRIYAL: 200_000_000, quantity: 1, unitPriceRIYAL: 200_000_000 }] }] as any;
+
+const withReversal = calculateProjectFinance({ id: "pr1" } as any, wonProforma, reversalPair, [] as any);
 eq("a reversal cancels the receipt it corrects", withReversal.totalReceivedRiyal, 0);
 eq("and the outstanding balance returns", withReversal.totalRemainingHistoricalRiyal, 200_000_000);
+
+// The same pair booked at project level rather than against the invoice.
+const loosePair = reversalPair.map((t: any) => ({ ...t, proformaId: undefined }));
+const looseReversal = calculateProjectFinance({ id: "pr1" } as any, wonProforma, loosePair, [] as any);
+eq("and cancels there too", looseReversal.totalReceivedRiyal, 0);
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

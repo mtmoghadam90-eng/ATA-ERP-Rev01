@@ -573,9 +573,24 @@ async function run(options: Options): Promise<void> {
   check("the dashboard counts the new customer", dashboard.summary.counts.customers > 0, dashboard.summary.counts);
   check("and the new project", dashboard.summary.counts.projects > 0, dashboard.summary.counts.projects);
 
-  const auditPage = await api.get<{ rows: { action: string }[] }>("/api/audit-logs?pageSize=200");
-  check("the audit log records no creations", !auditPage.rows.some((r) => r.action === "CREATE"),
-    [...new Set(auditPage.rows.map((r) => r.action))]);
+  /*
+   * Creations are no longer recorded — asked of *this run's* records, not of the
+   * whole log. An earlier version of this check asked whether the log contained
+   * any CREATE at all, which fails on any database that was in use before the
+   * change, for entries that are simply history.
+   */
+  const auditForProject = await api.get<{ rows: { action: string }[] }>(
+    `/api/audit-logs?entityId=${projectId}&pageSize=50`);
+  check("no creation was recorded for the project this run made",
+    !auditForProject.rows.some((r) => r.action === "CREATE"),
+    auditForProject.rows.map((r) => r.action));
+
+  // And an edit still is: the log's whole purpose is what changed and from what.
+  await api.put(`/api/projects/${projectId}`, { description: `${tag} touched` });
+  const auditAfterEdit = await api.get<{ rows: { action: string }[] }>(
+    `/api/audit-logs?entityId=${projectId}&pageSize=50`);
+  check("but the edit was", auditAfterEdit.rows.some((r) => r.action === "UPDATE"),
+    auditAfterEdit.rows.map((r) => r.action));
 
   const notes = await api.post<{ note: { id: string } }>(`/api/notes/project/${projectId}`, { text: `${tag} note` });
   check("module notes are their own record", !!notes.note?.id);

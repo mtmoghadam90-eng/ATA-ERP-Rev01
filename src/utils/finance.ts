@@ -198,9 +198,15 @@ export const calculateProformaFinance = (
     .sort((a, b) => parsePersianDate(a.date).getTime() - parsePersianDate(b.date).getTime());
     
   for (const t of linkedTx) {
+    // The direction is the type, and nothing else. A reversal is *already* the
+    // mirror image — a receipt is undone by a payment, which is how
+    // `reverseTransaction` writes it — so negating again for `isReversal` undid
+    // the undoing: a reversed 60,000,000 receipt read as 120,000,000 received.
+    // `isReversal` still matters below, for what a reversal is *not*: a data
+    // gap when it carries no settlement rate, and never an excess payment.
     const isReversal = !!t.reversalOfTransactionId;
     const isPayment = t.type === 'پرداخت';
-    const sign = (isReversal ? -1 : 1) * (isPayment ? -1 : 1);
+    const sign = isPayment ? -1 : 1;
     
     let txRiyal = (t.amountRIYAL || 0) * sign;
     let txRate = t.exchangeRate || 0;
@@ -394,9 +400,12 @@ export const calculateProjectFinance = (
   
   const unallocatedTx = projectReceipts.filter(t => !t.proformaId);
   const directUnallocatedRiyal = unallocatedTx.reduce((sum, t) => {
-    const isReversal = !!t.reversalOfTransactionId;
+    // The direction is the type, and nothing else. A reversal is *already* the
+    // mirror image — a receipt is undone by a payment, which is how
+    // `reverseTransaction` writes it — so negating again for `isReversal` undid
+    // the undoing: a reversed 60,000,000 receipt read as 120,000,000 received.
     const isPayment = t.type === 'پرداخت';
-    const sign = (isReversal ? -1 : 1) * (isPayment ? -1 : 1);
+    const sign = isPayment ? -1 : 1;
     return sum + ((t.amountRIYAL || 0) * sign);
   }, 0);
   
@@ -576,9 +585,12 @@ export const calculateCompanyFinanceSummary = (
     (t.type === 'دریافت' || (t.type === 'پرداخت' && (t.customerId || t.proformaId || t.reversalOfTransactionId)))
   );
   const generalReceivedRiyal = generalReceipts.reduce((sum, t) => {
-    const isReversal = !!t.reversalOfTransactionId;
+    // The direction is the type, and nothing else. A reversal is *already* the
+    // mirror image — a receipt is undone by a payment, which is how
+    // `reverseTransaction` writes it — so negating again for `isReversal` undid
+    // the undoing: a reversed 60,000,000 receipt read as 120,000,000 received.
     const isPayment = t.type === 'پرداخت';
-    const sign = (isReversal ? -1 : 1) * (isPayment ? -1 : 1);
+    const sign = isPayment ? -1 : 1;
     return sum + ((t.amountRIYAL || 0) * sign);
   }, 0);
   totalReceivedRiyal += generalReceivedRiyal;
