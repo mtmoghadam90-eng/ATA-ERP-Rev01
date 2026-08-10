@@ -169,10 +169,42 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const documentNumber = typeof body.documentNumber === "string" ? body.documentNumber.trim() : "";
+      let documentNumber = typeof body.documentNumber === "string" ? body.documentNumber.trim() : "";
+
+      // Generated when the caller does not name one — and a caller rarely
+      // should. A reversal is the system's own correcting entry, issued because
+      // a confirmed transaction may not be edited or deleted; asking whoever
+      // pressed the button to invent its number is asking them to do the
+      // application's bookkeeping.
       if (!documentNumber) {
-        res.status(400).json({ success: false, error: "شماره سند ابطال الزامی است." });
-        return;
+        const db = getDb();
+        const original = await db.transaction.findUnique({
+          where: { id: req.params.id },
+          select: {
+            type: true,
+            customer: { select: { companyName: true } },
+            supplier: { select: { name: true } },
+            project: { select: { code: true } },
+          },
+        });
+        if (!original) {
+          res.status(404).json({ success: false, error: "تراکنش یافت نشد." });
+          return;
+        }
+        documentNumber = await nextDocumentNumber({
+          formatKey: "transactionFormat", startSeqKey: "transactionStartSeq",
+          fallbackFormat: "TR-{TYPE}-{YYYY}{MM}-{SEQ:3}",
+          count: () => db.transaction.count(),
+          taken: async (v) => !!(await db.transaction.findUnique({
+            where: { documentNumber: v }, select: { id: true },
+          })),
+          context: {
+            transactionType: original.type as "دریافت" | "پرداخت",
+            customerName: original.customer?.companyName,
+            supplierName: original.supplier?.name,
+            projectCode: original.project?.code,
+          },
+        });
       }
 
       const outcome = await reverseTransaction(req.params.id, documentNumber, user, getTodayShamsi());

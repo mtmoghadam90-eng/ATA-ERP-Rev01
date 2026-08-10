@@ -19,7 +19,10 @@
  * **It writes to whatever database the server is pointed at.** Everything it
  * creates is deleted again at the end, in reverse dependency order, and the
  * cleanup is verified — but point it at a scratch database if you have one.
- * `--keep` leaves the records behind for inspection.
+ * `--keep` leaves the records behind for inspection. `--skip-money` omits the
+ * one step that cannot be undone — a confirmed transaction is corrected by a
+ * reversing entry and never deleted, so that step, and everything referring to
+ * it, stays. Use it for a run against a live database that leaves nothing.
  *
  * Output is English on purpose: Persian in a Windows console comes out as
  * question marks (see CLAUDE.md).
@@ -32,6 +35,8 @@ interface Options {
   user: string;
   password: string;
   keep: boolean;
+  /** Skip the financial step, so the run can tidy itself away completely. */
+  skipMoney: boolean;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -44,6 +49,7 @@ function parseArgs(argv: string[]): Options {
     user: get("user", process.env.E2E_USER ?? "admin"),
     password: get("password", process.env.E2E_PASSWORD ?? "123"),
     keep: argv.includes("--keep"),
+    skipMoney: argv.includes("--skip-money"),
   };
 }
 
@@ -176,9 +182,18 @@ function addDaysJalali(date: string, days: number): string {
 
 /* ------------------------------- the run ------------------------------- */
 
-/** Everything created, newest first, so cleanup can walk it in that order. */
-const created: { label: string; path: string }[] = [];
-const remember = (label: string, path: string) => created.unshift({ label, path });
+/**
+ * Everything created, newest first, so cleanup can walk it in that order.
+ *
+ * `permanent` marks a record the application refuses to delete by design — a
+ * confirmed financial document and its reversal. Both are frozen: they cannot be
+ * edited either, because a transaction that has been confirmed is corrected by a
+ * reversing entry and never by removal. That is right, and it means a run that
+ * exercises the money can never tidy itself away completely.
+ */
+const created: { label: string; path: string; permanent?: boolean }[] = [];
+const remember = (label: string, path: string, permanent = false) =>
+  created.unshift({ label, path, permanent });
 
 const tag = `E2E-${Date.now().toString(36)}`;
 const num = (value: unknown) => Number(value ?? 0);
@@ -431,32 +446,42 @@ async function run(options: Options): Promise<void> {
 
   /* --------------------------------------------------------- transactions */
   beginStep("Money in and out");
-  const receipt = (await api.post<{ transaction: Record<string, unknown> }>("/api/transactions", {
-    type: "دریافت",
-    projectId,
-    customerId,
-    proformaId,
-    amountRial: 60_000_000,
-    paymentType: "حواله بانکی",
-    occurredAt: today,
-    status: "تأیید شده",
-  })).transaction;
-  const receiptId = String(receipt.id);
-  remember("receipt", `/api/transactions/${receiptId}`);
-  check("receipt recorded", !!receiptId);
+  if (options.skipMoney) {
+    log("   skipped (--skip-money): a confirmed transaction is corrected by a reversing");
+    log("   entry and never deleted, so this is the step that leaves records behind.");
+  } else {
+    const receipt = (await api.post<{ transaction: Record<string, unknown> }>("/api/transactions", {
+      type: "دریافت",
+      projectId,
+      customerId,
+      proformaId,
+      amountRial: 60_000_000,
+      paymentType: "حواله بانکی",
+      occurredAt: today,
+      status: "تأیید شده",
+      // No document number on purpose: the server assigns one, as it does for
+      // every other document type.
+    })).transaction;
+    const receiptId = String(receipt.id);
+    remember("receipt", `/api/transactions/${receiptId}`, true);
+    check("receipt recorded", !!receiptId);
+    check("the server assigned its document number", !!receipt.documentNumber, receipt.documentNumber);
 
-  const finance = await api.get<{ rows: Record<string, unknown>[] }>("/api/projects/finance?pageSize=200");
-  const financeRow = finance.rows.find((r) => String(r.id) === projectId);
-  checkEqual("the project's received total is the receipt", num(financeRow?.paidAmount), 60_000_000);
+    const finance = await api.get<{ rows: Record<string, unknown>[] }>("/api/projects/finance?pageSize=200");
+    const financeRow = finance.rows.find((r) => String(r.id) === projectId);
+    checkEqual("the project's received total is the receipt", num(financeRow?.paidAmount), 60_000_000);
 
-  // A confirmed transaction is corrected by a reversing entry, and both halves
-  // must stay in the totals so the pair cancels.
-  const reversal = (await api.post<{ reversal: Record<string, unknown> }>(
-    `/api/transactions/${receiptId}/reverse`, {})).reversal;
-  remember("reversal", `/api/transactions/${String(reversal.id)}`);
-  const financeAfter = await api.get<{ rows: Record<string, unknown>[] }>("/api/projects/finance?pageSize=200");
-  const rowAfter = financeAfter.rows.find((r) => String(r.id) === projectId);
-  checkEqual("the reversal cancels the original in the totals", num(rowAfter?.paidAmount), 0);
+    // A confirmed transaction is corrected by a reversing entry, and both halves
+    // must stay in the totals so the pair cancels.
+    const reversal = (await api.post<{ reversal: Record<string, unknown> }>(
+      `/api/transactions/${receiptId}/reverse`, {})).reversal;
+    remember("reversal", `/api/transactions/${String(reversal.id)}`, true);
+    check("the reversal was issued with its own number", !!reversal.documentNumber, reversal.documentNumber);
+
+    const financeAfter = await api.get<{ rows: Record<string, unknown>[] }>("/api/projects/finance?pageSize=200");
+    const rowAfter = financeAfter.rows.find((r) => String(r.id) === projectId);
+    checkEqual("the reversal cancels the original in the totals", num(rowAfter?.paidAmount), 0);
+  }
 
   /* ------------------------------------------------------- purchase order */
   beginStep("Foreign purchase order");
@@ -563,17 +588,43 @@ async function cleanUp(options: Options): Promise<void> {
   const api = new Session(options.url);
   await api.post("/api/login", { username: options.user, password: options.password });
 
-  const left: string[] = [];
+  const frozen: string[] = [];
+  const blocked: string[] = [];
+  const failed: string[] = [];
+
   for (const item of created) {
+    if (item.permanent) {
+      frozen.push(`${item.label} (${item.path})`);
+      log(`   kept    ${item.label} — a confirmed financial document cannot be deleted`);
+      continue;
+    }
     try {
       await api.del(item.path);
       log(`   removed ${item.label}`);
     } catch (err) {
-      left.push(`${item.label} (${item.path}): ${(err as Error).message}`);
+      const status = (err as { status?: number }).status;
+      // 409 means something still refers to it. With a financial document left
+      // standing, that is expected: the proforma it was booked against, and the
+      // project and customer above them, cannot go while it is there.
+      if (status === 409 && frozen.length > 0) {
+        blocked.push(`${item.label} (${item.path})`);
+        log(`   kept    ${item.label} — still referred to by a document that cannot be deleted`);
+      } else {
+        failed.push(`${item.label} (${item.path}): ${(err as Error).message}`);
+      }
     }
   }
 
-  check("everything this run created was removed again", left.length === 0, left);
+  check("everything that could be removed was removed", failed.length === 0, failed);
+
+  if (frozen.length > 0 || blocked.length > 0) {
+    log("");
+    log(`   ${frozen.length + blocked.length} record(s) remain, by design, all tagged ${tag}:`);
+    for (const line of [...frozen, ...blocked]) log(`     - ${line}`);
+    log("   A confirmed transaction is corrected by a reversing entry, never removed,");
+    log("   and what refers to it cannot go either. Run with --skip-money against a");
+    log("   live database if you want a run that leaves nothing behind.");
+  }
 }
 
 /* --------------------------------- main ---------------------------------- */
