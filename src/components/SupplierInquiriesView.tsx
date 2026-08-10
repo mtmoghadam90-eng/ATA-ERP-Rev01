@@ -45,6 +45,7 @@ import {
   User as AppUser
 } from '../types';
 import ConfirmModal from './ConfirmModal';
+import DeleteActivitiesOption from './DeleteActivitiesOption';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
@@ -139,6 +140,7 @@ export default function SupplierInquiriesView({
 
   // Confirm Delete state
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'inquiry' | 'step'; inquiryId: string; stepId?: string } | null>(null);
+  const [alsoRemoveActivities, setAlsoRemoveActivities] = useState(false);
 
   /* The project selector doubles as the list's filter, so its options come from
      the server rather than from every project the browser happens to hold. */
@@ -318,10 +320,11 @@ export default function SupplierInquiriesView({
     if (!deleteTarget) return;
     const target = deleteTarget;
     setDeleteTarget(null);
+    setAlsoRemoveActivities(false);
 
     try {
       if (target.type === 'inquiry') {
-        await supplierInquiriesApi.remove(target.inquiryId);
+        await supplierInquiriesApi.remove(target.inquiryId, alsoRemoveActivities);
       } else if (target.stepId) {
         // Refused for a derived step, with the server's own explanation.
         await supplierInquiriesApi.removeStep(target.inquiryId, target.stepId);
@@ -1127,7 +1130,7 @@ export default function SupplierInquiriesView({
       {/* ---------------------------------------------------- */}
       <ConfirmModal
         isOpen={deleteTarget !== null}
-        onClose={() => setDeleteTarget(null)}
+        onClose={() => { setDeleteTarget(null); setAlsoRemoveActivities(false); }}
         onConfirm={handleConfirmDelete}
         title="تایید حذف اطلاعات"
         message={
@@ -1137,7 +1140,16 @@ export default function SupplierInquiriesView({
         }
         confirmText="بله، حذف شود"
         cancelText="انصراف"
-      />
+      >
+        {/* Only the inquiry itself writes to the timeline; a single step does not. */}
+        {deleteTarget?.type === 'inquiry' && (
+          <DeleteActivitiesOption
+            checked={alsoRemoveActivities}
+            onChange={setAlsoRemoveActivities}
+            what="این استعلام"
+          />
+        )}
+      </ConfirmModal>
     </div>
   );
 }

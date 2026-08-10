@@ -203,7 +203,13 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
     // see it was served this record with the amounts blanked.
     if (refuseCostWrite(res, user)) return;
     try {
-      const outcome = await deleteInquiry(req.params.id, user, getTodayShamsi());
+      // `?removeActivities=true` takes the record's automatic timeline entries
+      // with it. Absent means keep them, which is the safe default: the entry
+      // recording the deletion then joins them.
+      const outcome = await deleteInquiry(
+        req.params.id, user, getTodayShamsi(),
+        req.query.removeActivities === "true",
+      );
       if (outcome === "forbidden") return denied(res);
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "استعلام یافت نشد." });

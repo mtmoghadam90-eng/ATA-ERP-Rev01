@@ -11,7 +11,7 @@ import { getTodayShamsi } from "../../dateUtils";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
-import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
+import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 
 /**
  * Packaging and delivery (packing lists) plus after-sales service.
@@ -346,6 +346,8 @@ export async function createDelivery(input: DeliveryInput, user: AuthUser, today
       {
         projectId: delivery.projectId,
         categoryName: ACTIVITY_CATEGORY.DELIVERIES,
+        sourceType: "DELIVERY",
+        sourceId: delivery.id,
         text:
           `پکینگ‌لیست شماره ${delivery.packingListNumber} برای خروج ${(input.items ?? []).length} قلم کالا` +
           ` از انبار توسط {actor} صادر شد` +
@@ -437,6 +439,8 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
       {
         projectId: delivery.projectId,
         categoryName: ACTIVITY_CATEGORY.DELIVERIES,
+        sourceType: "DELIVERY",
+        sourceId: delivery.id,
         text:
           `وضعیت پکینگ‌لیست شماره ${delivery.packingListNumber} به «${newStatus}» تغییر کرد` +
           (delivery.actualDeliveryDateJalali
@@ -571,10 +575,18 @@ export async function getDeliveryRemaining(
   return [...lines.values()];
 }
 
+/**
+ * `removeActivities` takes the automatic timeline entries about this record
+ * with it — matched on the link each entry stores, never on its wording — and
+ * drops a category group that is left empty. The default keeps them, and the
+ * entry recording the deletion joins them, so the project's history stays
+ * whole.
+ */
 export async function deleteDelivery(
   id: string,
   user: AuthUser,
   todayJalali: string,
+  removeActivities = false,
 ): Promise<"ok" | "forbidden" | "not-found"> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
@@ -609,7 +621,10 @@ export async function deleteDelivery(
     todayJalali,
   );
 
-  await logProjectFact(
+  await settleRecordHistory(
+    removeActivities,
+    existing.projectId,
+    id,
     {
       projectId: existing.projectId,
       categoryName: ACTIVITY_CATEGORY.DELIVERIES,
@@ -836,6 +851,8 @@ export async function createService(input: ServiceInput, user: AuthUser, todayJa
       {
         projectId: service.projectId,
         categoryName: ACTIVITY_CATEGORY.AFTER_SALES,
+        sourceType: "AFTER_SALES",
+        sourceId: service.id,
         text:
           `درخواست خدمات پس از فروش برای کالای «${service.itemName || "نامشخص"}» توسط {actor} ثبت شد.` +
           ` شرح ایراد اعلام‌شده: ${service.issueDescription || "ثبت نشده"}.` +
@@ -918,6 +935,8 @@ export async function updateService(id: string, input: ServiceInput, user: AuthU
       {
         projectId: service.projectId,
         categoryName: ACTIVITY_CATEGORY.AFTER_SALES,
+        sourceType: "AFTER_SALES",
+        sourceId: service.id,
         text:
           `وضعیت رسیدگی به درخواست خدمات پس از فروش کالای «${service.itemName || "نامشخص"}»` +
           ` به «${service.status}» تغییر کرد.` +
@@ -931,10 +950,18 @@ export async function updateService(id: string, input: ServiceInput, user: AuthU
   return service;
 }
 
+/**
+ * `removeActivities` takes the automatic timeline entries about this record
+ * with it — matched on the link each entry stores, never on its wording — and
+ * drops a category group that is left empty. The default keeps them, and the
+ * entry recording the deletion joins them, so the project's history stays
+ * whole.
+ */
 export async function deleteService(
   id: string,
   user: AuthUser,
   todayJalali: string,
+  removeActivities = false,
 ): Promise<"ok" | "forbidden" | "not-found"> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
@@ -956,7 +983,10 @@ export async function deleteService(
     todayJalali,
   );
 
-  await logProjectFact(
+  await settleRecordHistory(
+    removeActivities,
+    existing.projectId,
+    id,
     {
       projectId: existing.projectId,
       categoryName: ACTIVITY_CATEGORY.AFTER_SALES,

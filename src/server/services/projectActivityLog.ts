@@ -46,6 +46,16 @@ export interface ProjectFact {
   projectId?: string | null;
   categoryName: string;
   text: string;
+  /**
+   * The record this entry is about.
+   *
+   * Carried so that deleting that record can offer to remove what the system
+   * wrote about it. Omit it for an entry that describes something *becoming*
+   * gone — the sentence recording a deletion belongs to the project, not to the
+   * record it is the obituary of, and would otherwise delete itself.
+   */
+  sourceType?: string | null;
+  sourceId?: string | null;
 }
 
 /**
@@ -104,6 +114,8 @@ export async function logProjectFact(
   await db.projectActivity.create({
     data: {
       groupId,
+      sourceType: toNullableString(fact.sourceType, 30),
+      sourceId: toNullableString(fact.sourceId, 36),
       // Several of these sentences name whoever did the thing. `AuthUser`
       // carries only an id, so the placeholder is filled from the lookup the
       // entry needs anyway rather than every caller querying for a name.
@@ -113,6 +125,79 @@ export async function logProjectFact(
       authorName: author?.fullName ?? null,
     } as Prisma.ProjectActivityUncheckedCreateInput,
   });
+}
+
+/**
+ * Removes the automatic entries written about one record.
+ *
+ * Matched on the stored link alone. The previous version of this fell back to
+ * matching the *wording* of an entry when no link was stored, which could
+ * delete a sibling document's entry that happened to name the same product —
+ * so entries written before the link existed are left alone rather than
+ * guessed at.
+ *
+ * A category group left with nothing in it is removed too: it was opened by
+ * these entries, and an empty heading on the timeline is noise. One a user
+ * opened themselves survives, because it will still hold whatever else they
+ * put in it.
+ *
+ * Returns how many entries went, so the caller can say.
+ */
+export async function removeFactsForRecord(
+  tx: Prisma.TransactionClient,
+  projectId: string | null | undefined,
+  sourceId: string,
+): Promise<number> {
+  if (!projectId || !sourceId) return 0;
+
+  const doomed = await tx.projectActivity.findMany({
+    where: { sourceId, group: { projectId } },
+    select: { id: true, groupId: true },
+  });
+  if (doomed.length === 0) return 0;
+
+  const groupIds = [...new Set(doomed.map((a) => a.groupId))];
+  await tx.projectActivity.deleteMany({ where: { id: { in: doomed.map((a) => a.id) } } });
+
+  for (const groupId of groupIds) {
+    const left = await tx.projectActivity.count({ where: { groupId } });
+    if (left === 0) await tx.projectCategoryGroup.delete({ where: { id: groupId } });
+  }
+
+  return doomed.length;
+}
+
+/**
+ * What happens to a record's timeline entries when the record is deleted.
+ *
+ * Two coherent outcomes, and the caller picks by asking the user:
+ *
+ *  - **Keep** (the default): the automatic entries stay, and one more is added
+ *    saying the document was removed. The project's history reads continuously
+ *    — a proforma was issued, was won, and was later deleted.
+ *  - **Remove**: the entries about that record go, along with a category group
+ *    they leave empty. The timeline reads as though the document never existed,
+ *    which is what someone who created it by mistake wants.
+ *
+ * The deletion sentence deliberately carries no source link. It is about the
+ * project, not about the record — a record that is gone cannot be deleted
+ * again, and linking it would make the entry delete itself.
+ */
+export async function settleRecordHistory(
+  removeActivities: boolean,
+  projectId: string | null | undefined,
+  sourceId: string,
+  deletionFact: ProjectFact,
+  user: AuthUser,
+  todayJalali: string,
+): Promise<void> {
+  if (removeActivities) {
+    await getDb().$transaction(async (tx) => {
+      await removeFactsForRecord(tx, projectId, sourceId);
+    });
+    return;
+  }
+  await logProjectFact(deletionFact, user, todayJalali);
 }
 
 function randomSuffix(): string {

@@ -108,7 +108,16 @@ export const deliveriesApi = {
   update: (id: string, input: DeliveryWriteInput) =>
     api.put<{ delivery: DeliveryDetail }>(`/api/deliveries/${id}`, input).then((r) => r.delivery),
 
-  remove: (id: string) => api.delete<Record<string, never>>(`/api/deliveries/${id}`),
+  /**
+   * `removeActivities` also deletes the automatic project-timeline entries this
+   * record produced, and any category group they leave empty. Omitted, the
+   * entries stay and one more records the deletion.
+   */
+  remove: (id: string, removeActivities = false) =>
+    api.delete<Record<string, never>>(
+      `/api/deliveries/${id}`,
+      removeActivities ? { removeActivities: "true" } : undefined,
+    ),
 
   /** Every match, for export only. Several round trips at the server's 200 cap. */
   listAll: async (

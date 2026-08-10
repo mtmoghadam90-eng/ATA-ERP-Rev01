@@ -35,6 +35,7 @@ import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import ConfirmModal from './ConfirmModal';
+import DeleteActivitiesOption from './DeleteActivitiesOption';
 import QuickAddModal from './QuickAddModal';
 import { SearchableSelect } from './SearchableSelect';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
@@ -249,9 +250,11 @@ export default function TransactionsView({
     }
   };
 
-  const deleteTransaction = async (id: string) => {
+  const [alsoRemoveActivities, setAlsoRemoveActivities] = useState(false);
+
+  const deleteTransaction = async (id: string, removeActivities = false) => {
     try {
-      await transactionsApi.remove(id);
+      await transactionsApi.remove(id, removeActivities);
       list.refresh();
       finance.refresh();
     } catch (err) {
@@ -2079,15 +2082,23 @@ export default function TransactionsView({
           setDeleteConfirmOpen(false);
           setTransactionToDeleteId(null);
           setTransactionToDeleteDoc('');
+          setAlsoRemoveActivities(false);
         }}
         onConfirm={() => {
           if (transactionToDeleteId) {
-            deleteTransaction(transactionToDeleteId);
+            void deleteTransaction(transactionToDeleteId, alsoRemoveActivities);
           }
+          setAlsoRemoveActivities(false);
         }}
         title="حذف سند مالی"
         message={`آیا از حذف سند حسابداری "${transactionToDeleteDoc}" اطمینان دارید؟ این عمل قابل بازیابی نیست.`}
-      />
+      >
+        <DeleteActivitiesOption
+          checked={alsoRemoveActivities}
+          onChange={setAlsoRemoveActivities}
+          what="این سند مالی"
+        />
+      </ConfirmModal>
 
       {/* Quick Customer Add Modal */}
       {showQuickCustomerModal && (

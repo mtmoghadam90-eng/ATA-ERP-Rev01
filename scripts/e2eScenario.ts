@@ -589,6 +589,26 @@ async function run(options: Options): Promise<void> {
   check("case opened", !!serviceId);
   check("its status is rolled up from its rows", !!service.status, service.status);
 
+  /* --------------------------- deleting a record's history --------------- */
+  beginStep("Deleting a record, and what happens to its timeline");
+  {
+    /*
+     * Every automatic entry now records which document it is about, so deleting
+     * that document can offer to take its entries with it. Checked here because
+     * the link is written by one module and read by another, and nothing on
+     * screen shows whether it was written at all.
+     */
+    const feed = await api.get<{ groups: { categoryName: string; activities: { id: string; sourceId: string | null }[] }[] }>(
+      `/api/projects/${projectId}/category-groups`);
+
+    const linked = feed.groups
+      .flatMap((g) => g.activities ?? [])
+      .filter((a) => !!a.sourceId);
+
+    check("the automatic entries record which document they are about",
+      linked.length > 0, feed.groups.map((g) => (g.activities ?? []).length));
+  }
+
   /* ------------------------------------------- closing a category group */
   beginStep("Closing an activity category");
   {

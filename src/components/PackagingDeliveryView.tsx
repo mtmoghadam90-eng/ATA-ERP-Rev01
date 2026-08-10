@@ -41,6 +41,7 @@ import {
 } from '../utils/packingAllocation';
 import { cleanCode } from '../utils/documentCodes';
 import ConfirmModal from './ConfirmModal';
+import DeleteActivitiesOption from './DeleteActivitiesOption';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { uploadFile } from '../imageUtils';
 import ModuleNotesSection from './ModuleNotesSection';
@@ -357,6 +358,7 @@ export default function PackagingDeliveryView({
 
   // Delete Modal State
   const [deleteDeliveryId, setDeleteDeliveryId] = useState<string | null>(null);
+  const [alsoRemoveActivities, setAlsoRemoveActivities] = useState(false);
 
   /**
    * Won or partly-won proformas of the selected project.
@@ -2349,13 +2351,15 @@ ${sheets}
       {/* Delete Confirmation Modal */}
       <ConfirmModal
         isOpen={!!deleteDeliveryId}
-        onClose={() => setDeleteDeliveryId(null)}
+        onClose={() => { setDeleteDeliveryId(null); setAlsoRemoveActivities(false); }}
         onConfirm={async () => {
           if (!deleteDeliveryId) return;
           const id = deleteDeliveryId;
+          const alsoActivities = alsoRemoveActivities;
           setDeleteDeliveryId(null);
+          setAlsoRemoveActivities(false);
           try {
-            await deliveriesApi.remove(id);
+            await deliveriesApi.remove(id, alsoActivities);
             list.refresh();
           } catch (err) {
             reportError(err, 'حذف پکینگ لیست با خطا مواجه شد.');
@@ -2363,7 +2367,13 @@ ${sheets}
         }}
         title="حذف پکینگ لیست"
         message="آیا از حذف این پکینگ لیست و تحویل کالا اطمینان دارید؟ این عملیات غیرقابل بازگشت است."
-      />
+      >
+        <DeleteActivitiesOption
+          checked={alsoRemoveActivities}
+          onChange={setAlsoRemoveActivities}
+          what="این پکینگ لیست"
+        />
+      </ConfirmModal>
 
       <style>{`
         @media print {

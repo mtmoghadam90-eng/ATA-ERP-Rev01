@@ -909,12 +909,21 @@ model ProjectActivity {
   attachmentSize String? @db.NVarChar(50)
   attachmentUrl  String? @db.NVarChar(500)
 
+  /// The record whose life this entry describes — a proforma, a packing list,
+  /// an inquiry. Deliberately not a foreign key: it points at six different
+  /// tables, and the entry has to outlive the record when the user chooses to
+  /// keep the history. Deleting that record can offer to take its entries with
+  /// it, and this is what makes that exact rather than a guess at the wording.
+  sourceType String? @db.NVarChar(30)
+  sourceId   String? @db.NVarChar(36)
+
   createdAt DateTime @default(now())
 
   referral ProjectReferral?
 
   @@index([groupId])
   @@index([createdAt])
+  @@index([sourceId])
   @@map("project_activities")
 }
 

@@ -248,6 +248,15 @@ export interface ActivityRow {
   attachmentName: string | null;
   attachmentSize: string | null;
   attachmentUrl: string | null;
+  /**
+   * The record this entry is about — a proforma, a packing list, an inquiry.
+   *
+   * Written by the module that recorded the entry, so deleting that record can
+   * offer to take its entries with it. Null on an entry someone typed, and on
+   * everything written before the link existed.
+   */
+  sourceType: string | null;
+  sourceId: string | null;
   createdAt: string;
   referral: ActivityReferralRow | null;
 }

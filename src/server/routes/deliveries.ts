@@ -151,7 +151,13 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
     const user = await deps.requireKeyAccess(req, res, DELIVERY_KEY, "write");
     if (!user) return;
     try {
-      const outcome = await deleteDelivery(req.params.id, user, getTodayShamsi());
+      // `?removeActivities=true` takes the record's automatic timeline entries
+      // with it. Absent means keep them, which is the safe default: the entry
+      // recording the deletion then joins them.
+      const outcome = await deleteDelivery(
+        req.params.id, user, getTodayShamsi(),
+        req.query.removeActivities === "true",
+      );
       if (outcome === "forbidden") return denied(res);
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "لیست بسته‌بندی یافت نشد." });
@@ -236,7 +242,13 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
     const user = await deps.requireKeyAccess(req, res, SERVICE_KEY, "write");
     if (!user) return;
     try {
-      const outcome = await deleteService(req.params.id, user, getTodayShamsi());
+      // `?removeActivities=true` takes the record's automatic timeline entries
+      // with it. Absent means keep them, which is the safe default: the entry
+      // recording the deletion then joins them.
+      const outcome = await deleteService(
+        req.params.id, user, getTodayShamsi(),
+        req.query.removeActivities === "true",
+      );
       if (outcome === "forbidden") return denied(res);
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "خدمات پس از فروش یافت نشد." });

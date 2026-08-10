@@ -148,7 +148,16 @@ export const proformasApi = {
   ) => api.post<{ proforma: ProformaDetail }>(`/api/proformas/${id}/item-outcomes`, { outcomes })
     .then((r) => r.proforma),
 
-  remove: (id: string) => api.delete<Record<string, never>>(`/api/proformas/${id}`),
+  /**
+   * `removeActivities` also deletes the automatic project-timeline entries this
+   * record produced, and any category group they leave empty. Omitted, the
+   * entries stay and one more records the deletion.
+   */
+  remove: (id: string, removeActivities = false) =>
+    api.delete<Record<string, never>>(
+      `/api/proformas/${id}`,
+      removeActivities ? { removeActivities: "true" } : undefined,
+    ),
 
   /** Every match, for export only. Several round trips at the server's 200 cap. */
   listAll: async (

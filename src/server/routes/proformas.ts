@@ -190,7 +190,13 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const outcome = await deleteProforma(req.params.id, user, getTodayShamsi());
+      // `?removeActivities=true` takes the record's automatic timeline entries
+      // with it. Absent means keep them, which is the safe default: the entry
+      // recording the deletion then joins them.
+      const outcome = await deleteProforma(
+        req.params.id, user, getTodayShamsi(),
+        req.query.removeActivities === "true",
+      );
       if (outcome === "forbidden") {
         res.status(403).json({ success: false, error: "شما اجازه حذف این پیش‌فاکتور را ندارید." });
         return;

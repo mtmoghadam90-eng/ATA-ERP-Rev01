@@ -67,7 +67,16 @@ export const afterSalesApi = {
   update: (id: string, input: ServiceWriteInput) =>
     api.put<{ service: ServiceDetail }>(`/api/after-sales/${id}`, input).then((r) => r.service),
 
-  remove: (id: string) => api.delete<Record<string, never>>(`/api/after-sales/${id}`),
+  /**
+   * `removeActivities` also deletes the automatic project-timeline entries this
+   * record produced, and any category group they leave empty. Omitted, the
+   * entries stay and one more records the deletion.
+   */
+  remove: (id: string, removeActivities = false) =>
+    api.delete<Record<string, never>>(
+      `/api/after-sales/${id}`,
+      removeActivities ? { removeActivities: "true" } : undefined,
+    ),
 
   /** Every match, for export only. Several round trips at the server's 200 cap. */
   listAll: async (

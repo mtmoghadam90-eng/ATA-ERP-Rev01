@@ -9,7 +9,7 @@ import { applyStockDelta } from "./productService";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
-import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
+import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 
 /**
  * Purchase order data access.
@@ -414,6 +414,8 @@ export async function createPurchaseOrder(
       {
         projectId: po.projectId,
         categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
+        sourceType: "PURCHASE_ORDER",
+        sourceId: po.id,
         text:
           `صدور سفارش خرید شماره ${po.poNumber} به تأمین‌کننده` +
           ` «${await supplierNameOf(po.supplierId)}»` +
@@ -516,6 +518,8 @@ async function logPurchaseOrderMilestones(
       {
         projectId,
         categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
+        sourceType: "PURCHASE_ORDER",
+        sourceId: String(po.id ?? ""),
         // A date that moved says so, rather than reading as if it had just
         // happened for the first time.
         text: was ? `${text} (تاریخ پیشین: ${was} — اصلاح شد)` : text,
@@ -620,6 +624,8 @@ export async function updatePurchaseOrder(
         {
           projectId: po.projectId,
           categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
+          sourceType: "PURCHASE_ORDER",
+          sourceId: po.id,
           text:
             `وضعیت سفارش خرید شماره ${po.poNumber} (تأمین‌کننده` +
             ` «${await supplierNameOf(po.supplierId)}») از «${before.status}»` +
@@ -654,10 +660,18 @@ export async function countPurchaseOrderReferences(id: string) {
  * exists, and the ledger entries would block the delete on their foreign key
  * anyway.
  */
+/**
+ * `removeActivities` takes the automatic timeline entries about this record
+ * with it — matched on the link each entry stores, never on its wording — and
+ * drops a category group that is left empty. The default keeps them, and the
+ * entry recording the deletion joins them, so the project's history stays
+ * whole.
+ */
 export async function deletePurchaseOrder(
   id: string,
   user: AuthUser,
   todayJalali: string,
+  removeActivities = false,
 ): Promise<"ok" | "forbidden" | "in-use" | "not-found"> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
@@ -700,7 +714,10 @@ export async function deletePurchaseOrder(
       todayJalali,
     );
 
-    await logProjectFact(
+    await settleRecordHistory(
+      removeActivities,
+      po.projectId,
+      id,
       {
         projectId: po.projectId,
         categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,

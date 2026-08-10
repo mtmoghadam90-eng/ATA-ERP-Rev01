@@ -36,6 +36,7 @@ import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import ConfirmModal from './ConfirmModal';
+import DeleteActivitiesOption from './DeleteActivitiesOption';
 import QuickAddModal from './QuickAddModal';
 import { SearchableSelect } from './SearchableSelect';
 import ModuleNotesSection from './ModuleNotesSection';
@@ -234,9 +235,11 @@ export default function PurchaseOrdersView({
     }
   };
 
-  const deletePurchaseOrder = async (id: string) => {
+  const [alsoRemoveActivities, setAlsoRemoveActivities] = useState(false);
+
+  const deletePurchaseOrder = async (id: string, removeActivities = false) => {
     try {
-      await purchaseOrdersApi.remove(id);
+      await purchaseOrdersApi.remove(id, removeActivities);
       list.refresh();
     } catch (err) {
       // The server refuses while a transaction points at the order.
@@ -2227,15 +2230,23 @@ export default function PurchaseOrdersView({
           setDeleteConfirmOpen(false);
           setPoToDeleteId(null);
           setPoToDeleteNumber('');
+          setAlsoRemoveActivities(false);
         }}
         onConfirm={() => {
           if (poToDeleteId) {
-            deletePurchaseOrder(poToDeleteId);
+            void deletePurchaseOrder(poToDeleteId, alsoRemoveActivities);
           }
+          setAlsoRemoveActivities(false);
         }}
         title="حذف سفارش خرید خارجی"
         message={`آیا از حذف سفارش خرید شماره "${poToDeleteNumber}" اطمینان دارید؟ این عمل غیرقابل بازگشت است.`}
-      />
+      >
+        <DeleteActivitiesOption
+          checked={alsoRemoveActivities}
+          onChange={setAlsoRemoveActivities}
+          what="این سفارش خرید"
+        />
+      </ConfirmModal>
 
       {/* Quick Supplier Add Modal */}
       {showQuickSupplierModal && (

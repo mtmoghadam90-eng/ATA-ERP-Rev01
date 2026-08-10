@@ -13,7 +13,7 @@ import {
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
-import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
+import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 
 /**
  * Supplier inquiry data access.
@@ -469,6 +469,8 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
       {
         projectId: inquiry.projectId,
         categoryName: ACTIVITY_CATEGORY.INQUIRIES,
+        sourceType: "SUPPLIER_INQUIRY",
+        sourceId: inquiry.id,
         text:
           `استعلام قیمت از تأمین‌کننده «${await inquirySupplierName(inquiry.supplierId)}»` +
           ` برای ${(inquiry.items || []).length} قلم از اقلام پروژه توسط {actor} ثبت شد` +
@@ -576,6 +578,8 @@ export async function updateInquiry(
       {
         projectId: inquiry.projectId,
         categoryName: ACTIVITY_CATEGORY.INQUIRIES,
+        sourceType: "SUPPLIER_INQUIRY",
+        sourceId: inquiry.id,
         text:
           `استعلام قیمت تأمین‌کننده «${await inquirySupplierName(inquiry.supplierId)}» بروزرسانی شد` +
           ` — مرحله فعلی: ${summary.status}.` +
@@ -706,10 +710,18 @@ export async function deleteInquiryStep(
   return "ok";
 }
 
+/**
+ * `removeActivities` takes the automatic timeline entries about this record
+ * with it — matched on the link each entry stores, never on its wording — and
+ * drops a category group that is left empty. The default keeps them, and the
+ * entry recording the deletion joins them, so the project's history stays
+ * whole.
+ */
 export async function deleteInquiry(
   id: string,
   user: AuthUser,
   todayJalali: string,
+  removeActivities = false,
 ): Promise<"ok" | "forbidden" | "not-found"> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
@@ -733,7 +745,10 @@ export async function deleteInquiry(
     todayJalali,
   );
 
-  await logProjectFact(
+  await settleRecordHistory(
+    removeActivities,
+    existing.projectId,
+    id,
     {
       projectId: existing.projectId,
       categoryName: ACTIVITY_CATEGORY.INQUIRIES,

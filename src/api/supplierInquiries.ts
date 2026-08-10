@@ -104,7 +104,16 @@ export const supplierInquiriesApi = {
   update: (id: string, input: InquiryWriteInput) =>
     api.put<{ inquiry: InquiryRow }>(`/api/supplier-inquiries/${id}`, input).then((r) => r.inquiry),
 
-  remove: (id: string) => api.delete<Record<string, never>>(`/api/supplier-inquiries/${id}`),
+  /**
+   * `removeActivities` also deletes the automatic project-timeline entries this
+   * record produced, and any category group they leave empty. Omitted, the
+   * entries stay and one more records the deletion.
+   */
+  remove: (id: string, removeActivities = false) =>
+    api.delete<Record<string, never>>(
+      `/api/supplier-inquiries/${id}`,
+      removeActivities ? { removeActivities: "true" } : undefined,
+    ),
 
   addStep: (id: string, step: InquiryStepInput) =>
     api.post<{ step: InquiryStepRow }>(`/api/supplier-inquiries/${id}/steps`, step)

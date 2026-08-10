@@ -21,6 +21,7 @@ import {
   Eye
 } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
+import DeleteActivitiesOption from './DeleteActivitiesOption';
 import { SearchableSelect } from './SearchableSelect';
 import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
@@ -114,6 +115,7 @@ export default function AfterSalesServicesView({
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [serviceToDelete, setServiceToDelete] = useState<string | null>(null);
+  const [alsoRemoveActivities, setAlsoRemoveActivities] = useState(false);
 
   // Notes are their own records, not a field on the service.
   const serviceNotes = useModuleNotes('afterSalesService', editingService?.id, (m) => alert(m));
@@ -1029,14 +1031,16 @@ export default function AfterSalesServicesView({
       {/* Delete Confirmation Modal */}
       <ConfirmModal
         isOpen={isDeleteModalOpen}
-        onClose={() => setIsDeleteModalOpen(false)}
+        onClose={() => { setIsDeleteModalOpen(false); setAlsoRemoveActivities(false); }}
         onConfirm={async () => {
           if (!serviceToDelete) return;
           const id = serviceToDelete;
+          const alsoActivities = alsoRemoveActivities;
           setIsDeleteModalOpen(false);
           setServiceToDelete(null);
+          setAlsoRemoveActivities(false);
           try {
-            await afterSalesApi.remove(id);
+            await afterSalesApi.remove(id, alsoActivities);
             list.refresh();
           } catch (err) {
             reportError(err, 'حذف سابقه خدمات با خطا مواجه شد.');
@@ -1044,7 +1048,13 @@ export default function AfterSalesServicesView({
         }}
         title="حذف رکورد خدمات پس از فروش"
         message="آیا از حذف این رکورد خدمات پس از فروش اطمینان دارید؟ این عملیات غیرقابل بازگشت است."
-      />
+      >
+        <DeleteActivitiesOption
+          checked={alsoRemoveActivities}
+          onChange={setAlsoRemoveActivities}
+          what="این رکورد خدمات پس از فروش"
+        />
+      </ConfirmModal>
 
       {showPrintModal && printTargetService && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xs overflow-y-auto p-4 md:p-8 z-50 flex justify-center">

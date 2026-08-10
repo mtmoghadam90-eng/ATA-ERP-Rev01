@@ -48,6 +48,7 @@ import ShamsiDatePicker from "./ShamsiDatePicker";
 import { getProformaOutcomeStatus } from "../useERPStore";
 import { uploadFile } from "../imageUtils";
 import ConfirmModal from "./ConfirmModal";
+import DeleteActivitiesOption from './DeleteActivitiesOption';
 import { SearchableSelect } from "./SearchableSelect";
 import { ApiError } from "../api/client";
 import { proformasApi } from "../api/proformas";
@@ -502,9 +503,11 @@ export default function ProformasView({
     }
   };
 
-  const deleteProforma = async (id: string) => {
+  const [alsoRemoveActivities, setAlsoRemoveActivities] = useState(false);
+
+  const deleteProforma = async (id: string, removeActivities = false) => {
     try {
-      await proformasApi.remove(id);
+      await proformasApi.remove(id, removeActivities);
       list.refresh();
     } catch (err) {
       // The server refuses while orders, transactions or deliveries point at it.
@@ -5368,15 +5371,23 @@ export default function ProformasView({
           setDeleteConfirmOpen(false);
           setProformaToDeleteId(null);
           setProformaToDeleteNumber("");
+          setAlsoRemoveActivities(false);
         }}
         onConfirm={() => {
           if (proformaToDeleteId) {
-            deleteProforma(proformaToDeleteId);
+            void deleteProforma(proformaToDeleteId, alsoRemoveActivities);
           }
+          setAlsoRemoveActivities(false);
         }}
         title="حذف پیش‌فاکتور"
         message={`آیا از حذف پیش‌فاکتور "${proformaToDeleteNumber}" اطمینان دارید؟ این عمل غیرقابل بازگشت است.`}
-      />
+      >
+        <DeleteActivitiesOption
+          checked={alsoRemoveActivities}
+          onChange={setAlsoRemoveActivities}
+          what="این پیش‌فاکتور"
+        />
+      </ConfirmModal>
 
       {/* Confirm Cancel All Modal */}
       <ConfirmModal

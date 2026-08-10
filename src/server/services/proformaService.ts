@@ -11,7 +11,7 @@ import {
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
-import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
+import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 import { applyStockDelta } from "./productService";
 
 /**
@@ -513,6 +513,8 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
     {
       projectId: proforma.projectId,
       categoryName: ACTIVITY_CATEGORY.PROFORMAS,
+      sourceType: "PROFORMA",
+      sourceId: proforma.id,
       text:
         `پیش‌فاکتور شماره ${proforma.proformaNumber} شامل ${(input.items ?? []).length} قلم کالا` +
         ` توسط {actor} صادر شد` +
@@ -635,6 +637,8 @@ export async function updateProforma(
       {
         projectId: result.proforma.projectId,
         categoryName: ACTIVITY_CATEGORY.PROFORMAS,
+        sourceType: "PROFORMA",
+        sourceId: result.proforma.id,
         // One sentence for the edit, with the outcome appended when it moved —
         // the document store logged a status change as its own entry, but on
         // this side both arrive through the same write.
@@ -679,10 +683,18 @@ export async function countProformaReferences(id: string) {
   return { purchaseOrders, transactions, deliveries, total: purchaseOrders + transactions + deliveries };
 }
 
+/**
+ * `removeActivities` takes the automatic timeline entries about this record
+ * with it — matched on the link each entry stores, never on its wording — and
+ * drops a category group that is left empty. The default keeps them, and the
+ * entry recording the deletion joins them, so the project's history stays
+ * whole.
+ */
 export async function deleteProforma(
   id: string,
   user: AuthUser,
   todayJalali: string,
+  removeActivities = false,
 ): Promise<"ok" | "forbidden" | "in-use"> {
   const db = getDb();
   const visibility = visibilityClause(user);
@@ -740,7 +752,10 @@ export async function deleteProforma(
       todayJalali,
     );
 
-    await logProjectFact(
+    await settleRecordHistory(
+      removeActivities,
+      existing.projectId,
+      id,
       {
         projectId: existing.projectId,
         categoryName: ACTIVITY_CATEGORY.PROFORMAS,

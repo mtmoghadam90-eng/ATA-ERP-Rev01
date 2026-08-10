@@ -150,7 +150,13 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
     if (!user) return;
     if (refuseCostWrite(res, user)) return;
     try {
-      const outcome = await deletePurchaseOrder(req.params.id, user, getTodayShamsi());
+      // `?removeActivities=true` takes the record's automatic timeline entries
+      // with it. Absent means keep them, which is the safe default: the entry
+      // recording the deletion then joins them.
+      const outcome = await deletePurchaseOrder(
+        req.params.id, user, getTodayShamsi(),
+        req.query.removeActivities === "true",
+      );
       if (outcome === "forbidden") return denied(res);
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "سفارش خرید یافت نشد." });

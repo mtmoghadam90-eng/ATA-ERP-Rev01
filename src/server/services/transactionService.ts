@@ -7,7 +7,7 @@ import { toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
-import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
+import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 
 /**
  * Transaction (receipts and payments) data access.
@@ -318,6 +318,8 @@ export async function createTransaction(input: TransactionInput, user: AuthUser,
     {
       projectId: transaction.projectId,
       categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
+      sourceType: "TRANSACTION",
+      sourceId: transaction.id,
       text: describeTransaction(transaction, "ثبت"),
     },
     user,
@@ -379,6 +381,8 @@ export async function updateTransaction(
     {
       projectId: transaction.projectId,
       categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
+      sourceType: "TRANSACTION",
+      sourceId: transaction.id,
       text: describeTransaction(transaction, "ویرایش"),
     },
     user,
@@ -481,10 +485,18 @@ export async function reverseTransaction(
  * never removed, or the original would be left marked reversed with nothing
  * explaining it.
  */
+/**
+ * `removeActivities` takes the automatic timeline entries about this record
+ * with it — matched on the link each entry stores, never on its wording — and
+ * drops a category group that is left empty. The default keeps them, and the
+ * entry recording the deletion joins them, so the project's history stays
+ * whole.
+ */
 export async function deleteTransaction(
   id: string,
   user: AuthUser,
   todayJalali: string,
+  removeActivities = false,
 ): Promise<"ok" | "forbidden" | "not-found" | "confirmed"> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
@@ -517,7 +529,10 @@ export async function deleteTransaction(
       todayJalali,
     );
 
-    await logProjectFact(
+    await settleRecordHistory(
+      removeActivities,
+      transaction.projectId,
+      id,
       {
         projectId: transaction.projectId,
         categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
