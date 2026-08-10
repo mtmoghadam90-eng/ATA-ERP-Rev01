@@ -75,6 +75,22 @@ function render(value: unknown): string {
 }
 
 /**
+ * Stamps every physical line, not just the first.
+ *
+ * A Prisma error message begins with a newline and runs to a dozen lines. With
+ * one stamp per *call*, the first line of the file read `[api] GET /api/x:` and
+ * nothing else, and everything that said what actually happened sat on
+ * following lines carrying no marker at all — so searching the log for `[api]`
+ * returned a list of empty messages. Which is precisely what happened the first
+ * time this log was used in anger.
+ */
+function prefixEveryLine(level: string, text: string): string {
+  const stamp = `${new Date().toISOString()} [${level}] `;
+  const body = text.replace(/\s+$/, "");
+  return body.split("\n").map((line) => `${stamp}${line}`).join("\n") + "\n";
+}
+
+/**
  * Starts teeing console output to the log directory.
  *
  * Output still goes to the console as before — this adds a destination rather
@@ -91,8 +107,7 @@ export function startFileLogging(): string | null {
     console[level] = (...args: unknown[]) => {
       original(...args);
       try {
-        const line = `${new Date().toISOString()} [${level}] ${args.map(render).join(" ")}\n`;
-        streamFor(dayStamp())?.write(line);
+        streamFor(dayStamp())?.write(prefixEveryLine(level, args.map(render).join(" ")));
       } catch {
         // Never let logging break the thing being logged.
       }

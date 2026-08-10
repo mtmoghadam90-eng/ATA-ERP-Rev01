@@ -29,7 +29,10 @@ export function sendError(res: express.Response, err: unknown, context: string):
   const code = (err as { code?: string })?.code;
   const message = (err as { message?: string })?.message || String(err);
 
-  console.error(`[api] ${context}:`, message);
+  // The code first, on the same line: it is one word, it is often the whole
+  // answer (P2003 is a foreign key, 207 is an unknown column), and a Prisma
+  // message begins with a newline — so anything after it lands further down.
+  console.error(`[api] ${context}:`, code ? `[${code}]` : "", message);
 
   if (code === "P2002") {
     res.status(409).json({
