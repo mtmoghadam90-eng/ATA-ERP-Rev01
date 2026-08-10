@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useExchangeRates } from '../api/exchangeRates';
+import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import {
   Plus,
   Search,
@@ -205,7 +206,7 @@ export default function TransactionsView({
 
       categoryCompletion.promptCompletion({
         projectId: tx.projectId,
-        categoryName: 'تراکنش‌های مالی و پرداخت‌ها',
+        categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
         // No figure, deliberately: answering yes writes this sentence onto the
         // project timeline, which is read by anyone with the project — so an
         // amount here would publish what the cost permission withholds

@@ -42,6 +42,7 @@ import ModuleNotesSection from './ModuleNotesSection';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { SearchableSelect } from './SearchableSelect';
 import { ApiError } from '../api/client';
+import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import {
   RemainingLine, deliveriesApi, deliveryToWriteInput, detailToDelivery, rowToDelivery,
 } from '../api/deliveries';
@@ -146,6 +147,9 @@ export default function PackagingDeliveryView({
 
   // Form States (New Delivery)
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
+  /* The delivery date the record had when the form opened, so a save can tell a
+     newly recorded delivery from one that was already there. */
+  const [editingDeliveryActualDate, setEditingDeliveryActualDate] = useState<string>('');
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [selectedProformaId, setSelectedProformaId] = useState<string>('');
   // Editable packing-list number. Blank on create means "generate it".
@@ -911,6 +915,7 @@ ${sheets}
     setSelectedProformaId(delivery.proformaId || '');
     setDeliveryDate(delivery.deliveryDate);
     setActualDeliveryDate(delivery.actualDeliveryDate || '');
+    setEditingDeliveryActualDate(delivery.actualDeliveryDate || '');
     setShippingMethod(delivery.shippingMethod);
     setPreDeliveryTestNotes(delivery.preDeliveryTestNotes || '');
     setWaybillNumber(delivery.waybillNumber || '');
@@ -1029,8 +1034,16 @@ ${sheets}
     });
 
     try {
-      const oldDelivery = editingDeliveryId ? list.rows.find(r => r.id === editingDeliveryId) : null;
-      const hadDeliveryDate = oldDelivery?.actualDeliveryDateJalali;
+      /*
+       * Whether this list already had a delivery date before this save.
+       *
+       * Read from the record the form was loaded with, not from `list.rows` —
+       * the page may not contain the list being edited, and then "did it have a
+       * date?" answered "no" for one that did, or nothing at all.
+       */
+      const hadDeliveryDate = editingDeliveryId
+        ? !!editingDeliveryActualDate
+        : false;
 
       if (editingDeliveryId) await deliveriesApi.update(editingDeliveryId, payload);
       else await deliveriesApi.create(payload);
@@ -1041,7 +1054,7 @@ ${sheets}
           (!editingDeliveryId || !hadDeliveryDate)) {
         categoryCompletion.promptCompletion({
           projectId: selectedProjectId,
-          categoryName: 'بسته‌بندی و تحویل کالا',
+          categoryName: ACTIVITY_CATEGORY.DELIVERIES,
           message: `تاریخ تحویل کالا به مشتری (${finalActualDeliveryDate}) ثبت ${editingDeliveryId ? 'گردید' : 'شد'}. آیا می‌خواهید وضعیت دسته فعالیت بسته‌بندی را به «اتمام کار» تغییر دهید؟`
         });
       }
@@ -1060,6 +1073,7 @@ ${sheets}
     setUseItemizedDeliveryDates(false);
     setShippingMethod(settings.dropdownItems.shippingMethods?.[0] || 'باربری');
     setPreDeliveryTestNotes('');
+    setEditingDeliveryActualDate('');
     setWaybillNumber('');
     setDriverName('');
     setDriverPhone('');

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { useExchangeRates } from '../api/exchangeRates';
+import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import {
   Plus,
   Search,
@@ -420,8 +421,15 @@ export default function ProformasView({
     sentRecipients?: string[],
   ) => {
     try {
-      // Get the old proforma before update
-      const oldProforma = list.rows.find(r => r.id === id);
+      /*
+       * The proforma as it stands, for its project and its outcome.
+       *
+       * Read from the server rather than from `list.rows`: a proforma the
+       * current page does not contain gave no project id at all, and the prompt
+       * below is skipped without one.
+       */
+      const oldProforma = list.rows.find(r => r.id === id)
+        ?? await proformasApi.get(id).catch(() => null);
       const oldOutcome = oldProforma?.outcomeStatus;
 
       await proformasApi.update(id, {
@@ -446,7 +454,7 @@ export default function ProformasView({
             (newOutcome === 'تأیید شده (برنده)' || newOutcome === 'نیمه برنده')) {
           categoryCompletion.promptCompletion({
             projectId: oldProforma.projectId,
-            categoryName: 'پیش‌فاکتورها و مهندسی فروش',
+            categoryName: ACTIVITY_CATEGORY.PROFORMAS,
             message: `پیش‌فاکتور ${oldProforma.proformaNumber} تایید شد (${newOutcome === 'تأیید شده (برنده)' ? 'برنده' : 'نیمه برنده'}). آیا می‌خواهید وضعیت فعالیت‌های پیش‌فاکتور این پروژه را به «اتمام کار» تغییر دهید؟`
           });
         }
@@ -484,7 +492,7 @@ export default function ProformasView({
         const actionMessage = status === 'لغو شده' ? 'لغو شدند' : 'باخت شدند';
         categoryCompletion.promptCompletion({
           projectId,
-          categoryName: 'پیش‌فاکتورها و مهندسی فروش',
+          categoryName: ACTIVITY_CATEGORY.PROFORMAS,
           message: `تمامی نسخه‌های پیش‌فاکتور پروژه با موفقیت ${actionMessage}. آیا می‌خواهید وضعیت فعالیت‌های پیش‌فاکتور این پروژه را به «اتمام کار» تغییر دهید؟`
         });
       }
@@ -744,7 +752,7 @@ export default function ProformasView({
 
       categoryCompletion.promptCompletion({
         projectId: target.projectId,
-        categoryName: "پیش‌فاکتورها و مهندسی فروش",
+        categoryName: ACTIVITY_CATEGORY.PROFORMAS,
         message:
           `پیش‌فاکتور ${target.proformaNumber} `
           + `${after === "تأیید شده (برنده)" ? "برنده شد" : "به صورت نیمه برنده بسته شد"}.`

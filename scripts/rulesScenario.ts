@@ -41,6 +41,7 @@ import { detailToPurchaseOrder, purchaseOrderToWriteInput, rowToPurchaseOrder } 
 import { rowToTask } from "../src/api/tasks";
 import { samePermissions } from "../src/server/services/userService";
 import { buildCustomerWhere } from "../src/server/services/customerService";
+import { ACTIVITY_CATEGORY, canonicalCategoryName, sameCategory } from "../src/utils/activityCategories";
 import type { CustomerRow } from "../src/api/customers";
 
 let pass = 0; const fails: string[] = [];
@@ -474,6 +475,30 @@ const handEnteredPo = purchaseOrderToWriteInput({
 } as never);
 eq("a hand-entered line sends no product at all",
   (handEnteredPo.items as Record<string, unknown>[])[0].productId, null);
+
+/*
+ * A category keeps its identity when it is renamed.
+ *
+ * The server names a category when it records a fact; the browser names the
+ * same category when it offers to close it. They used to agree only by both
+ * holding the same literal, so renaming one would have left every existing
+ * group unreachable: the prompt appears, the user says yes, and the group it
+ * looks for does not exist under that name.
+ */
+head("Activity categories: renamed, still the same category");
+
+eq("the purchase-order category has its new name",
+  ACTIVITY_CATEGORY.PURCHASE_ORDERS, "سفارش خرید و حمل");
+ok("and a group stored under the old one still matches",
+  sameCategory("سفارشات خرید تامین‌کنندگان", ACTIVITY_CATEGORY.PURCHASE_ORDERS));
+ok("as does the short spelling used elsewhere",
+  sameCategory("سفارش خرید", ACTIVITY_CATEGORY.PURCHASE_ORDERS));
+eq("the old name canonicalises to the new",
+  canonicalCategoryName("سفارشات خرید تامین‌کنندگان"), ACTIVITY_CATEGORY.PURCHASE_ORDERS);
+ok("spacing and ZWNJ are not meaning",
+  sameCategory("تراکنش های مالی و پرداخت ها", ACTIVITY_CATEGORY.TRANSACTIONS));
+ok("but two different categories stay different",
+  !sameCategory(ACTIVITY_CATEGORY.DELIVERIES, ACTIVITY_CATEGORY.AFTER_SALES));
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

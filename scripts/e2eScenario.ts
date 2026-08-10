@@ -633,7 +633,7 @@ async function run(options: Options): Promise<void> {
         !!after?.endDateJalali, after?.endDateJalali ?? null);
     };
 
-    await closeCategory("purchase-order", "سفارشات خرید تامین‌کنندگان");
+    await closeCategory("purchase-order", "سفارش خرید و حمل");
     // Offered from the supplier-inquiry screen once a final offer is confirmed
     // or a winner is declared.
     await closeCategory("supplier-inquiry", "استعلام قیمت تأمین‌کنندگان");

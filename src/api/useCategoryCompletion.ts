@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { projectsApi } from "./projects";
+import { sameCategory } from "../utils/activityCategories";
 
 /**
  * Category completion prompt hook.
@@ -35,11 +36,15 @@ export function useCategoryCompletion() {
       // Fetch the category groups for this project
       const groups = await projectsApi.categoryGroups(prompt.projectId);
 
-      // Find the matching group by normalized category name
-      const normalize = (str: string) => str.replace(/[\s‌]/g, "").trim().toLowerCase();
-      const targetGroup = groups.find(
-        (g) => normalize(g.categoryName) === normalize(prompt.categoryName)
-      );
+      /*
+       * Matched as a category, not as a string.
+       *
+       * A project's group may be stored under a spelling — or a previous name —
+       * that is not the one the prompt asked about. Comparing the raw text
+       * meant a renamed category could never be closed: the prompt appeared,
+       * the user said yes, and the group it was looking for did not exist.
+       */
+      const targetGroup = groups.find((g) => sameCategory(g.categoryName, prompt.categoryName));
 
       /*
        * Three outcomes, and two of them used to be silent.

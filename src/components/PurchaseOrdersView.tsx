@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useExchangeRates } from '../api/exchangeRates';
+import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { 
   Plus, 
   Search, 
@@ -187,21 +188,28 @@ export default function PurchaseOrdersView({
     }
   };
 
-  const updatePurchaseOrder = async (po: PurchaseOrder) => {
+  /**
+   * Saves an order, and offers to close the project's category when it arrives.
+   *
+   * `previousStatus` is passed by the caller that loaded the record, because
+   * the alternative — looking the order up in `list.rows` — answers only for an
+   * order the current page happens to contain. For any other order the previous
+   * status read as undefined, which is not what it was.
+   */
+  const updatePurchaseOrder = async (po: PurchaseOrder, previousStatus?: string) => {
     try {
-      const oldPO = list.rows.find(r => r.id === po.id);
-      const oldStatus = oldPO?.status;
+      const oldStatus = previousStatus ?? list.rows.find(r => r.id === po.id)?.status;
 
       await purchaseOrdersApi.update(po.id, purchaseOrderToWriteInput(po));
       list.refresh();
 
-      // Prompt for category completion when status changes to delivered
+      // Receiving the goods is where this module's work on the project ends.
       if (categoryCompletion && po.projectId &&
-          oldStatus !== 'تحویل شده (رسید انبار)' &&
-          po.status === 'تحویل شده (رسید انبار)') {
+          oldStatus !== RECEIVED_STATUS &&
+          po.status === RECEIVED_STATUS) {
         categoryCompletion.promptCompletion({
           projectId: po.projectId,
-          categoryName: 'سفارشات خرید تامین‌کنندگان',
+          categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
           message: `سفارش خرید ${po.poNumber} به انبار تحویل شد. آیا می‌خواهید وضعیت فعالیت‌های سفارش خرید این پروژه را به «اتمام کار» تغییر دهید؟`
         });
       }
@@ -303,6 +311,9 @@ export default function PurchaseOrdersView({
         return next;
       }));
   };
+
+  /** The status at which the goods are in the warehouse. Shared with the server. */
+  const RECEIVED_STATUS = 'تحویل شده (رسید انبار)';
 
   const [poToDeleteId, setPoToDeleteId] = useState<string | null>(null);
   const [poToDeleteNumber, setPoToDeleteNumber] = useState<string>('');
@@ -790,7 +801,7 @@ export default function PurchaseOrdersView({
         receivedDate: receivedDate || undefined,
         customValues,
         notes
-      });
+      }, editingPO.status);
     } else {
       addPurchaseOrder({
         poNumber: cleanCode(poNumber),
@@ -907,7 +918,8 @@ export default function PurchaseOrdersView({
       updatedPO.receivedDate = eventDate;
     }
 
-    updatePurchaseOrder(updatedPO);
+    // The record this modal loaded knows what the status *was*; the page may not.
+    void updatePurchaseOrder(updatedPO, po.status);
     setShowStatusModal(false);
     })();
   };

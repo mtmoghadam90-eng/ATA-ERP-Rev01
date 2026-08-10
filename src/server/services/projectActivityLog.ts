@@ -4,6 +4,7 @@ import { AuthUser } from "../auth";
 import { expandDateFields } from "../dates";
 import { toNullableString } from "../childSync";
 import { GROUP_DATE_FIELDS } from "./activityService";
+import { ACTIVITY_CATEGORY, canonicalCategoryName, sameCategory } from "../../utils/activityCategories";
 
 /**
  * The project timeline's automatic entries.
@@ -36,40 +37,10 @@ import { GROUP_DATE_FIELDS } from "./activityService";
  * ever gets written.
  */
 
-export const ACTIVITY_CATEGORY = {
-  PROFORMAS: "پیش‌فاکتورها و مهندسی فروش",
-  PURCHASE_ORDERS: "سفارشات خرید تامین‌کنندگان",
-  INQUIRIES: "استعلام قیمت تأمین‌کنندگان",
-  TRANSACTIONS: "تراکنش‌های مالی و پرداخت‌ها",
-  DELIVERIES: "بسته‌بندی و تحویل کالا",
-  AFTER_SALES: "خدمات پس از فروش",
-} as const;
-
-/** Spaces and ZWNJ carry no meaning in these names, so they are not compared. */
-const normalize = (value: string): string =>
-  value ? value.replace(/[\s\u200c]/g, "").trim().toLowerCase() : "";
-
-/** The spellings each canonical category has been written as elsewhere. */
-const ALIASES: ReadonlyArray<readonly [string, readonly string[]]> = [
-  [ACTIVITY_CATEGORY.PROFORMAS, ["پیش‌فاکتور", "پیش‌فاکتورها", ACTIVITY_CATEGORY.PROFORMAS]],
-  [ACTIVITY_CATEGORY.PURCHASE_ORDERS, [
-    "سفارش خرید", "سفارشات خرید تامین‌کنندگان", "سفارشات خرید تامین کنندگان",
-  ]],
-  [ACTIVITY_CATEGORY.INQUIRIES, [
-    "استعلام قیمت از تامین‌کننده‌ها", "استعلام قیمت تأمین‌کنندگان", "استعلام قیمت تامین کنندگان",
-  ]],
-  [ACTIVITY_CATEGORY.TRANSACTIONS, [
-    "مالی", "تراکنش‌های مالی و پرداخت‌ها", "تراکنش های مالی و پرداخت ها",
-  ]],
-];
-
-export function canonicalCategoryName(name: string): string {
-  const n = normalize(name);
-  for (const [canonical, spellings] of ALIASES) {
-    if (spellings.some((s) => normalize(s) === n)) return canonical;
-  }
-  return name;
-}
+// Re-exported so the twenty call sites in this package keep their import, and
+// so the browser and the server cannot drift apart on what a category is
+// called. See src/utils/activityCategories.ts.
+export { ACTIVITY_CATEGORY, canonicalCategoryName, sameCategory } from "../../utils/activityCategories";
 
 export interface ProjectFact {
   projectId?: string | null;
@@ -101,8 +72,11 @@ export async function logProjectFact(
     where: { projectId: fact.projectId },
     select: { id: true, categoryName: true },
   });
-  const target = normalize(categoryName);
-  let groupId = groups.find((g) => normalize(g.categoryName) === target)?.id;
+  // Compared as categories, not as strings: a project's group may be stored
+  // under a spelling — or a previous name — that is not the one being recorded.
+  // Matching on the raw text would quietly open a second group for the same
+  // thing, which is exactly what renaming a category would otherwise cause.
+  let groupId = groups.find((g) => sameCategory(g.categoryName, categoryName))?.id;
 
   if (!groupId) {
     // The category has not been opened on this project yet. The id is

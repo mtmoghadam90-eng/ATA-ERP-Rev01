@@ -28,6 +28,7 @@ import ShamsiDatePicker from './ShamsiDatePicker';
 import ModuleNotesSection from './ModuleNotesSection';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { ApiError } from '../api/client';
+import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { afterSalesApi, detailToService, rowToService, serviceToWriteInput } from '../api/afterSales';
 import { useAfterSalesList } from '../api/useAfterSalesList';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
@@ -426,7 +427,7 @@ export default function AfterSalesServicesView({
           : (serviceItems[0]?.productName || serviceItems[0]?.issueDescription || 'کالا');
         categoryCompletion.promptCompletion({
           projectId: selectedProjectId,
-          categoryName: 'خدمات پس از فروش',
+          categoryName: ACTIVITY_CATEGORY.AFTER_SALES,
           message: `${itemDesc} تحویل مشتری داده شد. آیا می‌خواهید وضعیت دسته فعالیت مربوط به خدمات پس از فروش را به «اتمام کار» تغییر دهید؟`
         });
       }

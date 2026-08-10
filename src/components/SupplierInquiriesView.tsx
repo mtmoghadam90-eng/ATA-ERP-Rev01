@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useExchangeRates } from '../api/exchangeRates';
+import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { computeInquiryTotals } from '../utils/inquirySteps';
 import { 
   Plus, 
@@ -225,7 +226,7 @@ export default function SupplierInquiriesView({
 
     categoryCompletion.promptCompletion({
       projectId: inquiry.projectId,
-      categoryName: 'استعلام قیمت تأمین‌کنندگان',
+      categoryName: ACTIVITY_CATEGORY.INQUIRIES,
       message:
         `${what}`
         + (winners > 1 ? ` این پروژه اکنون ${winners} آفر برنده دارد.` : '')
