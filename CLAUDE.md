@@ -19,7 +19,7 @@ npm run test:ui      # renders modals into jsdom; catches state reset by a re-re
 npm run test:e2e     # drives the real HTTP API end to end (writes to the configured database)
 ```
 
-Three scenario suites exist (`test:rules`, `test:ui`, `test:e2e`); there is no ESLint. `npm run lint` (type-check) is the sole standing gate — run it after changes. Note `clean` uses `rm -rf` (won't work in PowerShell; use the Bash tool or delete manually on Windows).
+Three scenario suites exist (`test:rules`, `test:ui`, `test:e2e`); there is no ESLint. `npm run lint` (type-check) is the sole standing gate — run it after changes. **It covers `scripts/` too, and `deploy.ps1` refuses to deploy when it fails**, so anything a script imports must be a declared dependency: `scripts/uiScenario.ts` imported `jsdom` while that package was only ever present locally as an extraneous leftover, and the deployment stopped on the server with TS2307. Note `clean` uses `rm -rf` (won't work in PowerShell; use the Bash tool or delete manually on Windows).
 
 **Verifying non-trivial logic.** Since there is no test suite, the working practice is to write a throwaway `__something.ts` script at the repo root, run it with `npx tsx`, and delete it once green — this has repeatedly caught real bugs (the SKU decoder round-trip, the delta-merge lost-update case, the `extractNameAndCode` regex). Never leave those files behind. Server endpoints are verified by launching a second instance against a scratch database: `PORT=3100 ERP_DB_PATH=<scratch>/test.json npx tsx server.ts` — **never test against the real `database.json`.**
 
