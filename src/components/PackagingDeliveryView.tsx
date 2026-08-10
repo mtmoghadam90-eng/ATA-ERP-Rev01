@@ -581,15 +581,6 @@ export default function PackagingDeliveryView({
       </div>
     `;
 
-    const preDeliveryNotes = delivery.preDeliveryTestNotes ? `
-      <div style="margin-bottom: 20px;">
-        <h4 style="font-size: 12px; font-weight: bold; border-bottom: 1px solid #cbd5e1; padding-bottom: 6px; margin-bottom: 10px;">گزارش تست قبل از تحویل تجهیز</h4>
-        <div style="background-color: #f8fafc; padding: 12px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 11px; line-height: 1.6;">
-          ${delivery.preDeliveryTestNotes}
-        </div>
-      </div>
-    ` : '';
-
   const buildSheet = (sheetTables: string, sheetHeading: string, sheetBreakClass: string) => `
     <div class="container${sheetBreakClass}">
         <!-- Header -->
@@ -632,10 +623,11 @@ export default function PackagingDeliveryView({
             ${sheetTables}
         </div>
 
-        <!-- Both of these were built and then never placed, so the delivery
-             report has never appeared on a printed packing list. -->
+        <!-- The shipment details only. The pre-delivery test report is
+             deliberately not here: it is an internal record of what was
+             checked before the goods went out, and the packing list is a
+             document the customer receives. -->
         ${shipmentBlock}
-        ${preDeliveryNotes}
 
         <div class="signatures">
             <div>
