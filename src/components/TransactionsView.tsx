@@ -54,31 +54,12 @@ import type { ProformaRow } from '../api/proformas';
 import { customersApi } from '../api/customers';
 import { suppliersApi, detailToSupplier, supplierToWriteInput } from '../api/suppliers';
 import { projectsApi } from '../api/projects';
+import type { ProjectFinanceRow } from '../api/projects';
+import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import { proformasApi } from '../api/proformas';
 import { createCustomerWithLinks, customerToWriteInput, detailToCustomer, findServerDuplicates } from '../api/customerAdapter';
 import { projectToWriteInput, detailToProject } from '../api/projectAdapter';
 import { detailToProforma, proformaToWriteInput } from '../api/proformaAdapter';
-
-/** One row of the per-project financial position, as the endpoint returns it. */
-interface ProjectFinanceRow {
-  id: string;
-  code: string;
-  name: string;
-  status: string;
-  customerName: string;
-  /** Null when a foreign sale has no stored rate to value it at. */
-  salesAmount: number | null;
-  paidAmount: number;
-  remainingAmount: number | null;
-  settlementPercent: number;
-  /**
-   * The full per-proforma, per-receipt breakdown the screen drills into.
-   *
-   * Shaped by `calculateProjectFinance`, which this view still imports for its
-   * types — the same function the server ran to produce this.
-   */
-  summary: ReturnType<typeof calculateProjectFinance>;
-}
 
 /**
  * Transactions ledger and the per-project financial position.
@@ -91,12 +72,19 @@ interface TransactionsViewProps {
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
   settings: ERPSettings;
+  /**
+   * Offers to close the project's financial category once the customer has
+   * settled in full. Optional, like every other module's, so the screen still
+   * works without it.
+   */
+  categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
 
 export default function TransactionsView({
   initialPrintDocId,
   onClearInitialPrintDocId,
   settings,
+  categoryCompletion,
 }: TransactionsViewProps) {
   // Rates are read here rather than handed down: they are a short shared list
   // that changes during the day, and a stale one misprices a document.
@@ -192,11 +180,51 @@ export default function TransactionsView({
     }
   };
 
+  /**
+   * Offers to close the project's financial category once it is fully settled.
+   *
+   * Asked only after a confirmed receipt, and only when that receipt leaves
+   * nothing to collect — a project is normally paid in instalments, so
+   * prompting on every document would be noise rather than help.
+   *
+   * The position is read back from the server for this one project rather than
+   * taken from `finance.rows`: that grid is paged, so the project just paid may
+   * not be on the page in hand, and the figures there are from before the write
+   * in any case. `remainingAmount` is null when a foreign sale has no stored
+   * rate — unknown, which is not the same as settled, so it does not ask.
+   */
+  const promptCloseFinanceCategory = async (tx: Partial<Transaction>) => {
+    if (!categoryCompletion) return;
+    if (!tx.projectId) return;
+    if (tx.type !== 'دریافت' || tx.status !== 'تأیید شده') return;
+
+    try {
+      const position = await projectsApi.finance(tx.projectId);
+      if (position.salesAmount === null || position.salesAmount <= 0) return;
+      if (position.remainingAmount === null || position.remainingAmount > 0) return;
+
+      categoryCompletion.promptCompletion({
+        projectId: tx.projectId,
+        categoryName: 'تراکنش‌های مالی و پرداخت‌ها',
+        message:
+          `با ثبت این دریافت، پروژه «${position.name}» به طور کامل تسویه شد`
+          + ` (مجموع دریافتی: ${position.paidAmount.toLocaleString('fa-IR')} ریال).`
+          + ' آیا می‌خواهید وضعیت دسته فعالیت مالی این پروژه را به «اتمام کار» تغییر دهید؟',
+      });
+    } catch (err) {
+      // The receipt itself saved. Failing to *offer* to close a category is not
+      // worth an alert over a document the user has already been told was
+      // stored — so this is logged and swallowed.
+      console.error('could not read the project financial position', err);
+    }
+  };
+
   const addTransaction = async (tx: Partial<Transaction>) => {
     try {
       await transactionsApi.create(transactionToWriteInput(tx));
       list.refresh();
       finance.refresh();
+      await promptCloseFinanceCategory(tx);
     } catch (err) {
       reportError(err, 'ثبت تراکنش با خطا مواجه شد.');
     }
@@ -207,6 +235,9 @@ export default function TransactionsView({
       await transactionsApi.update(tx.id, transactionToWriteInput(tx));
       list.refresh();
       finance.refresh();
+      // An edit can be what settles a project too — a draft confirmed, or an
+      // amount corrected upwards.
+      await promptCloseFinanceCategory(tx);
     } catch (err) {
       // A reversed entry and its reversal are frozen; the server says so.
       reportError(err, 'ثبت تغییرات تراکنش با خطا مواجه شد.');

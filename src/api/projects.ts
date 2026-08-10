@@ -1,4 +1,5 @@
 import { ListResponse, api } from "./client";
+import type { calculateProjectFinance } from "../utils/finance";
 
 /**
  * Project endpoints.
@@ -9,6 +10,29 @@ import { ListResponse, api } from "./client";
  * meant holding proformas, transactions and packing lists in memory and scanning
  * all three once per visible row.
  */
+
+/**
+ * One project's financial position, as `/api/projects/finance` and
+ * `/api/projects/:id/finance` both return it.
+ *
+ * `salesAmount` and `remainingAmount` are null — not zero — when a
+ * foreign-currency sale has no stored rate to value it at. A caller deciding
+ * whether a project is settled must treat null as "unknown" and not as "nothing
+ * left to collect".
+ */
+export interface ProjectFinanceRow {
+  id: string;
+  code: string;
+  name: string;
+  status: string;
+  customerName: string;
+  salesAmount: number | null;
+  paidAmount: number;
+  remainingAmount: number | null;
+  settlementPercent: number;
+  /** The full per-proforma, per-receipt breakdown the ledger screen drills into. */
+  summary: ReturnType<typeof calculateProjectFinance>;
+}
 
 export interface DeliveryLine {
   id: string;
@@ -254,6 +278,16 @@ export const projectsApi = {
 
   get: (id: string) =>
     api.get<{ project: ProjectDetail }>(`/api/projects/${id}`).then((r) => r.project),
+
+  /**
+   * One project's financial position.
+   *
+   * The grid's own query pages, so a caller that has just written a receipt
+   * cannot look up the project it touched in the page it happens to hold.
+   */
+  finance: (id: string) =>
+    api.get<{ finance: ProjectFinanceRow }>(`/api/projects/${id}/finance`)
+      .then((r) => r.finance),
 
   references: (id: string) =>
     api.get<{ references: ProjectReferences }>(`/api/projects/${id}/references`)

@@ -149,6 +149,36 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
   });
 
   /**
+   * The financial position of one project.
+   *
+   * `/api/projects/finance` answers the same question for a page of the grid,
+   * but a caller that has just written a receipt needs the position of *that*
+   * project and cannot assume it is on the page in hand — which is exactly the
+   * mistake the migration exists to stop repeating. Visibility is checked
+   * against the project first, because the finance summariser takes ids and
+   * applies none.
+   */
+  app.get("/api/projects/:id/finance", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const project = await getProject(req.params.id, user);
+      if (!project) {
+        res.status(404).json({ success: false, error: "پروژه یافت نشد." });
+        return;
+      }
+      const finance = (await summarizeProjectFinance([req.params.id])).get(req.params.id);
+      if (!finance) {
+        res.status(404).json({ success: false, error: "پروژه یافت نشد." });
+        return;
+      }
+      res.json({ success: true, finance });
+    } catch (err) {
+      sendError(res, err, "GET /api/projects/:id/finance");
+    }
+  });
+
+  /**
    * Every document attached to the project, grouped by folder. Fetched when the
    * documents tab is opened, not with the project — it touches seven tables.
    */

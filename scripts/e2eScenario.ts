@@ -471,6 +471,17 @@ async function run(options: Options): Promise<void> {
     const financeRow = finance.rows.find((r) => String(r.id) === projectId);
     checkEqual("the project's received total is the receipt", num(financeRow?.paidAmount), 60_000_000);
 
+    // The same position asked for one project, which is what the ledger screen
+    // reads after writing a receipt to decide whether the project is settled —
+    // the grid above pages, so it cannot be asked about a project that is not
+    // on the page in hand.
+    const one = (await api.get<{ finance: Record<string, unknown> }>(
+      `/api/projects/${projectId}/finance`)).finance;
+    checkEqual("the single-project position agrees with the grid",
+      num(one.paidAmount), num(financeRow?.paidAmount));
+    check("and carries what settles the project, remaining and sold",
+      "remainingAmount" in one && "salesAmount" in one, Object.keys(one));
+
     // A confirmed transaction is corrected by a reversing entry, and both halves
     // must stay in the totals so the pair cancels.
     const reversal = (await api.post<{ reversal: Record<string, unknown> }>(
@@ -615,6 +626,13 @@ async function run(options: Options): Promise<void> {
     // Offered from the supplier-inquiry screen once a final offer is confirmed
     // or a winner is declared.
     await closeCategory("supplier-inquiry", "استعلام قیمت تأمین‌کنندگان");
+
+    // Offered from the ledger once a confirmed receipt settles the project in
+    // full. Only the money step creates this category, so with --skip-money
+    // there is nothing to close and no failure to report.
+    if (!options.skipMoney) {
+      await closeCategory("finance", "تراکنش‌های مالی و پرداخت‌ها");
+    }
   }
 
   /* ------------------------------------------------------------- rollups */

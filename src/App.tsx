@@ -448,6 +448,7 @@ export default function App() {
             // Reads its own data from the API; the per-project financial
             // position is its own paginated query.
             settings={store.settings}
+            categoryCompletion={categoryCompletion}
           />
         );
             case 'tasks':
