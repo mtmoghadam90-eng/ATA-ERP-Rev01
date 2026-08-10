@@ -41,20 +41,31 @@ export function useCategoryCompletion() {
         (g) => normalize(g.categoryName) === normalize(prompt.categoryName)
       );
 
-      if (targetGroup && targetGroup.status !== "اتمام کار") {
-        // Mark it complete via the API
+      /*
+       * Three outcomes, and two of them used to be silent.
+       *
+       * No group at all means this project has no activity in that category yet
+       * — there is nothing to close, and the user who just answered "yes"
+       * deserves to be told rather than left to assume it worked. Already closed
+       * is the same: not an error, but not nothing either.
+       */
+      if (!targetGroup) {
+        alert(`دسته‌بندی «${prompt.categoryName}» هنوز برای این پروژه فعالیتی ندارد، بنابراین چیزی برای بستن وجود ندارد.`);
+      } else if (targetGroup.status === "اتمام کار") {
+        alert(`دسته‌بندی «${targetGroup.categoryName}» پیش از این بسته شده است.`);
+      } else {
         await projectsApi.upsertCategoryGroup(prompt.projectId, {
           categoryId: targetGroup.categoryId,
           categoryName: targetGroup.categoryName,
           status: "اتمام کار",
           startDate: targetGroup.startDate || undefined,
-          endDate: undefined, // Server will set to today
+          // Left out on purpose: the server stamps the day it closed.
         });
 
-        // Log an activity for the completion
+        // The feed says why it closed, not just that it did.
         await projectsApi.addActivity({
           groupId: targetGroup.id,
-          text: `اتمام کار دسته‌بندی «${targetGroup.categoryName}»`,
+          text: `دسته‌بندی «${targetGroup.categoryName}» با اتمام کار بسته شد. ${prompt.message.replace(/آیا می‌خواهید.*$/s, "").trim()}`,
         });
       }
 

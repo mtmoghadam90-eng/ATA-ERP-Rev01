@@ -3,6 +3,7 @@ import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields } from "../dates";
+import { getTodayShamsi } from "../../dateUtils";
 import { toNullableString } from "../childSync";
 import { processWorkflowRules } from "./workflowService";
 import { notifyUser } from "./notificationService";
@@ -66,10 +67,27 @@ export async function upsertCategoryGroup(
     if (owned === 0) return "forbidden";
   }
 
+  const status = toNullableString(input.status, 30) ?? "جاری";
+
+  /*
+   * Closing a category stamps the day it closed.
+   *
+   * The caller sends `endDate: undefined` and a comment saying the server will
+   * fill it in. It did not: `expandDateFields` sees the key, finds no value, and
+   * writes NULL — so confirming "بستن دسته‌بندی" cleared the completion date
+   * instead of setting it, and a closed category could never say when it closed.
+   * An explicit date still wins; this only supplies the one nobody gave.
+   */
+  const closing = status === "اتمام کار";
+  const dates = expandDateFields(input as Record<string, unknown>, GROUP_DATE_FIELDS);
+  if (closing && !dates.endDate) {
+    Object.assign(dates, expandDateFields({ endDate: getTodayShamsi() }, ["endDate"]));
+  }
+
   const data = {
-    status: toNullableString(input.status, 30) ?? "جاری",
+    status,
     categoryName: toNullableString(input.categoryName, 200)!,
-    ...expandDateFields(input as Record<string, unknown>, GROUP_DATE_FIELDS),
+    ...dates,
   };
 
   // One group per category per project: the pair is the natural key even though

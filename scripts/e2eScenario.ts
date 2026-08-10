@@ -567,6 +567,38 @@ async function run(options: Options): Promise<void> {
   check("case opened", !!serviceId);
   check("its status is rolled up from its rows", !!service.status, service.status);
 
+  /* ------------------------------------------- closing a category group */
+  beginStep("Closing an activity category");
+  {
+    // What the prompt does when the user answers yes: find the project's group
+    // for that category by name, and close it.
+    const groups = (await api.get<{ groups: { id: string; categoryId: string; categoryName: string; status: string; endDate: string | null }[] }>(
+      `/api/projects/${projectId}/category-groups`)).groups;
+
+    const normalize = (value: string) => value.replace(/[\s\u200c]/g, "").trim().toLowerCase();
+    const target = groups.find((g) => normalize(g.categoryName) === normalize("سفارشات خرید تامین‌کنندگان"));
+    check("the purchase-order category exists to be closed",
+      !!target, groups.map((g) => g.categoryName));
+
+    if (target) {
+      await api.put(`/api/projects/${projectId}/category-groups`, {
+        categoryId: target.categoryId,
+        categoryName: target.categoryName,
+        status: "اتمام کار",
+        startDate: undefined,
+        // Deliberately absent, as the prompt sends it: the server stamps today.
+      });
+
+      const after = (await api.get<{ groups: { categoryName: string; status: string; endDate: string | null; endDateJalali?: string | null }[] }>(
+        `/api/projects/${projectId}/category-groups`)).groups
+        .find((g) => normalize(g.categoryName) === normalize(target.categoryName));
+
+      checkEqual("it closes", after?.status, "اتمام کار");
+      check("and is stamped with the day it closed, not blanked",
+        !!after?.endDateJalali, after?.endDateJalali ?? null);
+    }
+  }
+
   /* ------------------------------------------------------------- rollups */
   beginStep("Rollups the screens read");
   const dashboard = await api.get<{ summary: { counts: Record<string, number> } }>("/api/dashboard");
