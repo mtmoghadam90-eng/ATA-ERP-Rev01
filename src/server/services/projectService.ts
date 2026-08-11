@@ -8,6 +8,7 @@ import { summarizeProject, summarizeProjects } from "./projectSummary";
 // The custom-field clause is identical for every module; defined once with customers.
 import { customFieldClause } from "./customerService";
 import { logAction } from "./auditService";
+import { runMilestoneRules } from "./milestoneAutomation";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
 
@@ -279,6 +280,8 @@ export interface ProjectItemInput {
 }
 
 export interface ProjectMilestoneInput {
+  /** The row's own id, when it is an existing one — see `syncMilestones`. */
+  id?: string | null;
   name?: string;
   isCompleted?: boolean;
   completedAt?: string | null;
@@ -413,6 +416,79 @@ function mapMilestone(row: ProjectMilestoneInput): Record<string, unknown> | nul
   };
 }
 
+/**
+ * Writes the milestones grid, keeping each row's id.
+ *
+ * **Not `syncChildren`**, and this is the same rule that keeps product variants
+ * out of it: a milestone is *referenced*. The project's automation rules are
+ * stored as JSON naming a `triggerMilestoneId`, so delete-and-reinsert handed
+ * every milestone a new uuid on every project save and silently detached every
+ * rule from its trigger. The panel showed it as «رویداد: اتمام حذف‌شده», and
+ * nothing would ever have fired for it again.
+ *
+ * Rows are matched by id, then — for a row the client invented an id for, which
+ * the add form does — by name among the rows not already claimed. Anything left
+ * over was removed in the form and is deleted. `lineNo` still records the
+ * user's order.
+ *
+ * Returns the milestones that went from open to completed in this write, which
+ * is what the automation runs on.
+ */
+async function syncMilestones(
+  tx: Prisma.TransactionClient,
+  projectId: string,
+  rows: ProjectMilestoneInput[],
+): Promise<{ id: string; name: string }[]> {
+  const existing = await tx.projectMilestone.findMany({
+    where: { projectId },
+    select: { id: true, name: true, isCompleted: true },
+  });
+  const byId = new Map(existing.map((m) => [m.id, m]));
+  const byName = new Map<string, typeof existing[number]>();
+  for (const m of existing) if (!byName.has(m.name)) byName.set(m.name, m);
+
+  const seen = new Set<string>();
+  const newlyCompleted: { id: string; name: string }[] = [];
+  let lineNo = 0;
+
+  for (const row of rows ?? []) {
+    const data = mapMilestone(row);
+    if (!data) continue; // a blank trailing line
+    lineNo++;
+
+    const id = toNullableString(row.id, 36);
+    let match = id ? byId.get(id) : undefined;
+    if (match && seen.has(match.id)) match = undefined;
+    if (!match) {
+      const named = byName.get(String(data.name));
+      if (named && !seen.has(named.id)) match = named;
+    }
+
+    if (match) {
+      seen.add(match.id);
+      await tx.projectMilestone.update({ where: { id: match.id }, data: { ...data, lineNo } });
+      if (!match.isCompleted && data.isCompleted) {
+        newlyCompleted.push({ id: match.id, name: String(data.name) });
+      }
+    } else {
+      const fresh = await tx.projectMilestone.create({
+        data: { projectId, ...data, lineNo } as Prisma.ProjectMilestoneUncheckedCreateInput,
+      });
+      seen.add(fresh.id);
+      // A milestone created already ticked still counts: the rules the user
+      // attached to it are about the checkpoint being reached, not about which
+      // save reached it.
+      if (data.isCompleted) newlyCompleted.push({ id: fresh.id, name: fresh.name });
+    }
+  }
+
+  const removed = existing.filter((m) => !seen.has(m.id)).map((m) => m.id);
+  if (removed.length > 0) {
+    await tx.projectMilestone.deleteMany({ where: { id: { in: removed } } });
+  }
+  return newlyCompleted;
+}
+
 export async function createProject(input: ProjectInput, user: AuthUser, todayJalali: string) {
   const db = getDb();
 
@@ -438,10 +514,7 @@ export async function createProject(input: ProjectInput, user: AuthUser, todayJa
       delegate: tx.projectItem, parentWhere: { projectId: project.id },
       rows: input.items ?? [], map: mapItem,
     });
-    await syncChildren({
-      delegate: tx.projectMilestone, parentWhere: { projectId: project.id },
-      rows: input.milestones ?? [], map: mapMilestone,
-    });
+    await syncMilestones(tx, project.id, input.milestones ?? []);
 
     return project;
   });
@@ -496,6 +569,13 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
   const before = await db.project.findUnique({ where: { id } });
   if (!before) return null;
 
+  /*
+   * Checkpoints ticked by this save, collected inside the transaction and acted
+   * on after it commits. The tasks and notices a rule raises are separate
+   * records: one that cannot be created must not roll back the tick itself.
+   */
+  let completedNow: { id: string; name: string }[] = [];
+
   const project = await db.$transaction(async (tx) => {
     // Re-check visibility inside the transaction, before anything is written.
     const existing = await tx.project.findFirst({
@@ -517,10 +597,7 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
       });
     }
     if (input.milestones !== undefined) {
-      await syncChildren({
-        delegate: tx.projectMilestone, parentWhere: { projectId: id },
-        rows: input.milestones, map: mapMilestone,
-      });
+      completedNow = await syncMilestones(tx, id, input.milestones);
     }
 
     return project;
@@ -541,6 +618,10 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
     user,
     todayJalali,
   );
+
+  // The project's own automation: a checkpoint reached raises what the user
+  // attached to it. Fires only for the ones that changed in this save.
+  await runMilestoneRules(id, completedNow, user, todayJalali);
 
   // Workflow trigger for status change
   if (before.status !== project.status) {

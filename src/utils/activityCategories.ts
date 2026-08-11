@@ -43,7 +43,15 @@ const ALIASES: ReadonlyArray<readonly [string, readonly string[]]> = [
     "سفارشات خرید تامین‌کنندگان",
     "سفارشات خرید تامین کنندگان",
     "سفارشات خرید تأمین‌کنندگان",
+    // The milestone panel's trigger picker offered this spelling — a name no
+    // group was ever filed under, so a smart trigger set to it matched nothing.
+    "سفارشات خرید (PO)",
     ACTIVITY_CATEGORY.PURCHASE_ORDERS,
+  ]],
+  [ACTIVITY_CATEGORY.DELIVERIES, [
+    "بسته‌بندی و ارسال",
+    "بسته بندی و ارسال",
+    ACTIVITY_CATEGORY.DELIVERIES,
   ]],
   [ACTIVITY_CATEGORY.INQUIRIES, [
     "استعلام قیمت از تامین‌کننده‌ها", "استعلام قیمت تأمین‌کنندگان", "استعلام قیمت تامین کنندگان",

@@ -43,6 +43,7 @@ import { samePermissions } from "../src/server/services/userService";
 import { buildCustomerWhere } from "../src/server/services/customerService";
 import { ACTIVITY_CATEGORY, canonicalCategoryName, sameCategory } from "../src/utils/activityCategories";
 import { packableLines, outstandingFor } from "../src/utils/packingAllocation";
+import { parseMilestoneRules } from "../src/server/services/milestoneAutomation";
 import type { CustomerRow } from "../src/api/customers";
 
 let pass = 0; const fails: string[] = [];
@@ -538,6 +539,39 @@ eq("and the ledger issues both units",
 // Documents and packaging were never promised, so nothing caps them.
 ok("a row the proforma never mentioned is uncapped",
   outstandingFor([promisedLine], packRows, "کاتالوگ") === Infinity);
+
+/*
+ * The project's own milestones and their automation.
+ *
+ * A checkpoint completed raises what the user attached to it. Two things had to
+ * be right for that ever to work, and neither was: the rule has to still name a
+ * milestone that exists, and a "smart" trigger has to name a category the app
+ * actually files groups under.
+ */
+head("Project milestones: automation rules");
+
+eq("a stored rule list parses",
+  parseMilestoneRules('[{"id":"r1","triggerMilestoneId":"m1","actionType":"create_task","taskTitle":"t"}]').length, 1);
+eq("and so does one handed over already parsed",
+  parseMilestoneRules([{ id: "r1", triggerMilestoneId: "m1", actionType: "send_notification" }]).length, 1);
+eq("an unknown action falls back to raising a task, never to doing nothing",
+  parseMilestoneRules([{ id: "r1", triggerMilestoneId: "m1", actionType: "explode" }])[0].actionType, "create_task");
+eq("a rule with no trigger is dropped rather than fired at everything",
+  parseMilestoneRules([{ id: "r1", actionType: "create_task" }]).length, 0);
+eq("a corrupt column is empty, not a crash", parseMilestoneRules("{not json").length, 0);
+
+// The trigger picker used to offer names no group was ever stored under, so a
+// smart trigger set to one of them could never match.
+ok("a milestone bound to the picker's old purchase-order name still matches",
+  sameCategory("سفارشات خرید (PO)", ACTIVITY_CATEGORY.PURCHASE_ORDERS));
+ok("and to its pre-rename name",
+  sameCategory("سفارشات خرید تامین‌کنندگان", ACTIVITY_CATEGORY.PURCHASE_ORDERS));
+ok("the old packing name matches the delivery category",
+  sameCategory("بسته‌بندی و ارسال", ACTIVITY_CATEGORY.DELIVERIES));
+ok("after-sales was already canonical",
+  sameCategory("خدمات پس از فروش", ACTIVITY_CATEGORY.AFTER_SALES));
+ok("two different categories still do not match",
+  !sameCategory(ACTIVITY_CATEGORY.PROFORMAS, ACTIVITY_CATEGORY.DELIVERIES));
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

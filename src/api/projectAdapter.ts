@@ -171,6 +171,16 @@ export function projectToWriteInput(
       tagNumber: item.tagNumber ?? null,
     })),
     milestones: (project.milestones ?? []).map((m) => ({
+      /*
+       * Sent back, and it matters.
+       *
+       * A milestone is referenced: the project's automation rules name a
+       * `triggerMilestoneId`. Dropping the id here meant the server matched
+       * nothing and rebuilt the row under a new uuid on every save, which
+       * detached every rule from its trigger — the panel then showed
+       * «رویداد: اتمام حذف‌شده» and nothing could ever fire for it again.
+       */
+      id: m.id ?? null,
       name: m.name,
       isCompleted: m.isCompleted,
       completedAt: m.completedAt ?? null,

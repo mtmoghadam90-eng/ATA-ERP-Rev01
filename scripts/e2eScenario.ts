@@ -372,6 +372,84 @@ async function run(options: Options): Promise<void> {
   check("the create reply carries items and milestones",
     Array.isArray(project.items) && Array.isArray(project.milestones));
 
+  /* ------------------------------------------------- milestones & automation */
+  /*
+   * The project's own checkpoints and the rules hanging off them.
+   *
+   * This whole panel used to store and display and never act: no rule was ever
+   * run, and a milestone's id was regenerated on every save, so a rule stopped
+   * naming anything the moment the project was touched again. Three things are
+   * checked here — identity survives a save, completing a checkpoint raises
+   * what is attached to it, and a checkpoint bound to a category is completed
+   * by that category opening.
+   */
+  beginStep("Project milestones and automation");
+  type Milestone = { id: string; name: string; isCompleted: boolean };
+  const milestonesOf = async (): Promise<Milestone[]> =>
+    ((await api.get<{ project: { milestones: Milestone[] } }>(`/api/projects/${projectId}`))
+      .project.milestones ?? []);
+
+  await api.put(`/api/projects/${projectId}`, {
+    milestones: [
+      { name: `${tag} تأیید نقشه‌ها`, isCompleted: false, triggerType: "manual" },
+      // Bound to the proforma category by a *previous* spelling of its name, so
+      // this also proves the trigger matches through the alias table rather
+      // than by string equality.
+      { name: `${tag} شروع مهندسی فروش`, isCompleted: false,
+        triggerType: "category_start", triggerCategoryName: "پیش‌فاکتورها" },
+    ],
+  });
+
+  const firstPass = await milestonesOf();
+  checkEqual("both checkpoints stored", firstPass.length, 2);
+  const manualMs = firstPass.find((m) => m.name.includes("تأیید نقشه‌ها"))!;
+  const smartMs = firstPass.find((m) => m.name.includes("مهندسی فروش"))!;
+
+  await api.put(`/api/projects/${projectId}`, {
+    milestoneRules: [{
+      id: `${tag}-rule`,
+      triggerMilestoneId: manualMs.id,
+      actionType: "create_task",
+      taskTitle: `${tag} پیگیری پس از تأیید نقشه‌ها`,
+      taskDesc: "",
+      assignedTo: login.user.fullName,
+      priority: "بالا",
+      dueDaysOffset: 2,
+    }],
+  });
+
+  // The regression that made every rule dead on arrival: an unrelated save used
+  // to hand every milestone a new id, and the rule above would then name one
+  // that no longer existed.
+  await api.put(`/api/projects/${projectId}`, { description: `${tag} یادداشت` });
+  const afterUnrelatedSave = await milestonesOf();
+  check("a milestone keeps its id across an unrelated save",
+    afterUnrelatedSave.some((m) => m.id === manualMs.id), afterUnrelatedSave.map((m) => m.id));
+
+  // Completing it must raise the task the rule describes — and only once.
+  await api.put(`/api/projects/${projectId}`, {
+    milestones: afterUnrelatedSave.map((m) =>
+      m.id === manualMs.id ? { ...m, isCompleted: true, completedAt: today } : m),
+  });
+  const raised = await api.get<{ rows: { id: string; title: string; priority: string }[] }>(
+    `/api/tasks?search=${encodeURIComponent(tag)}&pageSize=50`);
+  const automatic = raised.rows.filter((t) => t.title.includes("پیگیری پس از تأیید نقشه‌ها"));
+  checkEqual("completing a checkpoint raises its task exactly once", automatic.length, 1);
+  checkEqual("and with the priority the rule asked for", automatic[0]?.priority, "بالا");
+  if (automatic[0]) remember("automatic task", `/api/tasks/${automatic[0].id}`);
+
+  // Saving again with it already complete must not raise a second one: only the
+  // transition counts, not the state.
+  const stillComplete = await milestonesOf();
+  await api.put(`/api/projects/${projectId}`, { milestones: stillComplete });
+  const reread = await api.get<{ rows: { title: string }[] }>(
+    `/api/tasks?search=${encodeURIComponent(tag)}&pageSize=50`);
+  checkEqual("saving an already-complete checkpoint raises nothing further",
+    reread.rows.filter((t) => t.title.includes("پیگیری پس از تأیید نقشه‌ها")).length, 1);
+
+  check("the category-bound checkpoint is still open before its category exists",
+    !(await milestonesOf()).find((m) => m.id === smartMs.id)?.isCompleted);
+
   /* ------------------------------------------------ activities & referral */
   beginStep("Activity feed and referral");
   await api.put(`/api/projects/${projectId}/category-groups`, {
@@ -384,6 +462,12 @@ async function run(options: Options): Promise<void> {
     `/api/projects/${projectId}/category-groups`)).groups;
   check("category group created", groups.length >= 1, groups.length);
   const groupId = groups[0].id;
+
+  // Opening that category is what ticks a checkpoint bound to it.
+  const afterCategory = await milestonesOf();
+  check("opening the category completes the checkpoint bound to it",
+    !!afterCategory.find((m) => m.id === smartMs.id)?.isCompleted,
+    afterCategory.map((m) => `${m.name}:${m.isCompleted}`));
 
   const activity = (await api.post<{ activity: { id: string } }>("/api/activities", {
     groupId,

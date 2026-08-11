@@ -5,6 +5,7 @@ import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields } from "../dates";
 import { getTodayShamsi } from "../../dateUtils";
 import { toNullableString } from "../childSync";
+import { applyCategoryMilestoneTriggers } from "./milestoneAutomation";
 import { processWorkflowRules } from "./workflowService";
 import { notifyUser } from "./notificationService";
 
@@ -94,8 +95,9 @@ export async function upsertCategoryGroup(
   // the table carries a surrogate id.
   const existing = await db.projectCategoryGroup.findFirst({
     where: { projectId: input.projectId, categoryId: input.categoryId },
-    select: { id: true },
+    select: { id: true, status: true },
   });
+  const wasClosed = existing?.status === "اتمام کار";
 
   const group = existing
     ? await db.projectCategoryGroup.update({ where: { id: existing.id }, data })
@@ -106,6 +108,29 @@ export async function upsertCategoryGroup(
           ...data,
         } as Prisma.ProjectCategoryGroupUncheckedCreateInput,
       });
+
+  /*
+   * The project's "تریگر هوشمند" milestones.
+   *
+   * A checkpoint can be bound to a category rather than ticked by hand — done
+   * when the category opens, or when it closes. This is where that happens; the
+   * flag was stored and displayed with a pulsing badge and nothing ever acted
+   * on it.
+   *
+   * Only on the transitions, not on every save of the group: opening fires when
+   * the group is created, closing when its status becomes "اتمام کار" having not
+   * been. `applyCategoryMilestoneTriggers` is idempotent anyway — it only moves
+   * a milestone from open to done — but a re-closed category should not look
+   * like a fresh event.
+   */
+  if (!existing) {
+    await applyCategoryMilestoneTriggers(
+      input.projectId, data.categoryName, "category_start", user, getTodayShamsi());
+  }
+  if (closing && !wasClosed) {
+    await applyCategoryMilestoneTriggers(
+      input.projectId, data.categoryName, "category_complete", user, getTodayShamsi());
+  }
 
   return { group };
 }

@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import {
   Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, TrendingUp, X,
   FileSpreadsheet, Clock, Sliders, User, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
@@ -1748,6 +1749,23 @@ export default function ProjectsView({
     const projectMilestones = project.milestones || [];
     const projectRules = project.milestoneRules || [];
 
+    /**
+     * Saves, and adopts what came back.
+     *
+     * Not optional here. A new milestone is sent with a client-side `ms-…` id
+     * and stored under a server uuid; a rule created next points at whichever
+     * id the panel is holding. Discarding the response — which every one of
+     * these handlers used to do — left the panel naming an id the server never
+     * had, so the rule pointed at nothing from the moment it was written.
+     *
+     * It is also how the automation's own effects become visible: completing a
+     * checkpoint can tick others and raise tasks, server-side.
+     */
+    const saveMilestones = async (changes: Record<string, unknown>) => {
+      const saved = await persistProject(project, changes);
+      if (saved) setSelectedProjectForActivities(saved);
+    };
+
     const handleAddMilestone = (e: React.FormEvent) => {
       e.preventDefault();
       if (!newMilestoneName.trim()) return;
@@ -1762,12 +1780,7 @@ export default function ProjectsView({
         triggerCategoryName: newMilestoneTriggerType !== 'manual' ? newMilestoneTriggerCategoryName : undefined
       };
 
-      const updated = {
-        ...project,
-        milestones: [...projectMilestones, newMs]
-      };
-
-      void persistProject(project, updated);
+      void saveMilestones({ milestones: [...projectMilestones, newMs] });
       setNewMilestoneName("");
       setNewMilestoneDueDate("");
       setNewMilestoneNotes("");
@@ -1788,12 +1801,7 @@ export default function ProjectsView({
         return m;
       });
 
-      const updated = {
-        ...project,
-        milestones: updatedMilestones
-      };
-
-      void persistProject(project, updated);
+      void saveMilestones({ milestones: updatedMilestones });
     };
 
     const handleDeleteMilestone = (milestoneId: string) => {
@@ -1801,13 +1809,7 @@ export default function ProjectsView({
       // Also filter out any rules tied to this deleted milestone
       const updatedRules = projectRules.filter(r => r.triggerMilestoneId !== milestoneId);
 
-      const updated = {
-        ...project,
-        milestones: updatedMilestones,
-        milestoneRules: updatedRules
-      };
-
-      void persistProject(project, updated);
+      void saveMilestones({ milestones: updatedMilestones, milestoneRules: updatedRules });
     };
 
     const handleAddRule = (e: React.FormEvent) => {
@@ -1825,12 +1827,7 @@ export default function ProjectsView({
         dueDaysOffset: newRuleDueDays
       };
 
-      const updated = {
-        ...project,
-        milestoneRules: [...projectRules, newRule]
-      };
-
-      void persistProject(project, updated);
+      void saveMilestones({ milestoneRules: [...projectRules, newRule] });
       setNewRuleTitle("");
       setNewRuleDesc("");
       setNewRuleAssignedTo("");
@@ -1840,12 +1837,7 @@ export default function ProjectsView({
     };
 
     const handleDeleteRule = (ruleId: string) => {
-      const updatedRules = projectRules.filter(r => r.id !== ruleId);
-      const updated = {
-        ...project,
-        milestoneRules: updatedRules
-      };
-      void persistProject(project, updated);
+      void saveMilestones({ milestoneRules: projectRules.filter(r => r.id !== ruleId) });
     };
 
     return (
@@ -1941,11 +1933,18 @@ export default function ProjectsView({
                       className="w-full text-xs border border-slate-200 rounded-lg p-2 bg-white font-sans"
                     >
                       <option value="" disabled>-- انتخاب کنید --</option>
+                      {/*
+                        The names the server actually files these groups under.
+                        They were hardcoded here as four different strings —
+                        «سفارشات خرید (PO)», «بسته‌بندی و ارسال» — none of which
+                        matched a real category, so a trigger set to any of them
+                        could never match anything. Read from the shared module
+                        so a rename cannot separate them again.
+                      */}
                       <optgroup label="ماژول‌های سیستمی">
-                        <option value="پیش‌فاکتورها">پیش‌فاکتورها</option>
-                        <option value="سفارشات خرید (PO)">سفارشات خرید (PO)</option>
-                        <option value="بسته‌بندی و ارسال">بسته‌بندی و ارسال</option>
-                        <option value="خدمات پس از فروش">خدمات پس از فروش</option>
+                        {Object.values(ACTIVITY_CATEGORY).map((name) => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
                       </optgroup>
                       <optgroup label="دسته‌بندی‌های سفارشی (فعالیت‌ها)">
                         {(settings.activityCategories || []).map(cat => (
