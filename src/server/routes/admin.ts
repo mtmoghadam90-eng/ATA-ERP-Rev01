@@ -8,6 +8,7 @@ import {
   getAuditLog, getSettings, listAuditLogs, listExchangeRates,
   purgeAuditLogs, purgeBusinessData, recordAudit, saveSettings, trimAuditLogs, upsertExchangeRate,
 } from "../services/adminService";
+import { ensureRatesFreshToday } from "../services/rateRefresh";
 
 /** Settings, exchange rates and the audit log. */
 
@@ -53,6 +54,17 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
     const user = await deps.requireKeyAccess(req, res, "erp_exchange_rates", "read");
     if (!user) return;
     try {
+      /*
+       * The first read of the day brings the rates up to date first, so the
+       * numbers this answer carries are today's.
+       *
+       * Waited on here — unlike at login, where it is only started — because
+       * this is the call a pricing screen makes and its answer is what a
+       * document will be valued at. The wait is bounded; see
+       * `ensureRatesFreshToday`. It never throws: older rates are still
+       * usable, and a scrape that fails must not take the screen with it.
+       */
+      await ensureRatesFreshToday();
       res.json({ success: true, rates: await listExchangeRates() });
     } catch (err) {
       sendError(res, err, "GET /api/exchange-rates");

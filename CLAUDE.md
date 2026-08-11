@@ -54,7 +54,7 @@ Three scenario suites exist (`test:rules`, `test:ui`, `test:e2e`); there is no E
 - Product variant filtering uses `configRules` (`ProductConfigRule[]`) on products.
 - **Audit log** — `logAction()` records CREATE/UPDATE/DELETE/LOGIN/LOGOUT with before/after snapshots LZW-compressed via `src/utils/compress.ts`, capped at the most recent 1000 entries.
 - **Jalali/Shamsi dates** — the app runs on the Persian calendar. Use the helpers in `src/dateUtils.ts` (`getTodayShamsi`, `toShamsiStr`, `addWorkingDaysToShamsi`, etc.); dates are stored as Shamsi strings, not ISO. Persian/Arabic digits are normalized with a `faToEnDigits`-style helper before parsing.
-- **Live exchange rates** — `GET /api/rates` scrapes tgju.org HTML for USD/EUR/AED/CNY with hardcoded fallbacks; used to price items in multiple currencies.
+- **Live exchange rates** — `GET /api/rates` scrapes tgju.org HTML for USD/EUR/AED/CNY (alanchand.com behind it) with hardcoded fallbacks; used to price items in multiple currencies. `src/server/services/rateRefresh.ts` brings the *stored* rates up to date once per Shamsi day, on first use: started (not awaited) at login, awaited with a short budget by `GET /api/exchange-rates`. Server-side because refreshing needs the `settings` permission and the first person in each morning usually lacks it; one in-process promise so a busy 08:00 does not scrape four ways at once. `refreshDecision` is the pure scheduling rule and is covered by `test:rules`.
 
 ### Frontend conventions
 

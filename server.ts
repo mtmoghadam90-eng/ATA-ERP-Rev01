@@ -40,6 +40,7 @@ import { registerActivityRoutes } from "./src/server/routes/activities";
 import { registerNotificationRoutes } from "./src/server/routes/notifications";
 import { registerDashboardRoutes } from "./src/server/routes/dashboard";
 import { scrapeRates } from "./src/server/rateSource";
+import { ensureRatesFreshToday } from "./src/server/services/rateRefresh";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 import { authenticateUser, findAuthUser } from "./src/server/services/userService";
 
@@ -471,6 +472,18 @@ async function startServer() {
           user: authResult.user,
           mustChangePassword: authResult.isDefaultPassword
         });
+
+        /*
+         * Somebody has opened the app: if today's currency rates have not been
+         * fetched yet, start fetching them.
+         *
+         * Started, not waited on — the answer has already been sent, and a
+         * login must never sit behind two web pages that may be slow. By the
+         * time any screen that prices something asks for the rates, this has
+         * normally finished; that request waits on the same run rather than
+         * beginning a second one. It swallows its own failures.
+         */
+        void ensureRatesFreshToday();
       } else {
         // Increment failed attempts
         const currentU = userLoginAttempts.get(userKey) || { count: 0, lastAttempt: 0 };
