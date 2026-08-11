@@ -77,9 +77,24 @@ export interface InventoryMovementRow {
   referenceType: string | null;
   referenceId: string | null;
   notes: string | null;
+  /**
+   * Whether this movement also changed the sellable level, or only the physical
+   * record. False for a foreign order's receipt and a packing list's issue —
+   * goods that were sold before they were bought. The correction dialog reads
+   * it to explain that fixing such a row will not move the level.
+   */
+  affectsAvailable: boolean;
   createdAt: string;
   product: { id: string; code: string; displayName: string } | null;
   variant: { id: string; sku: string } | null;
+}
+
+/** What a system administrator may correct on a ledger row. */
+export interface InventoryMovementEdit {
+  quantity?: number;
+  type?: "IN" | "OUT";
+  occurredAtJalali?: string | null;
+  notes?: string | null;
 }
 
 export interface ProductWriteInput {
@@ -155,6 +170,22 @@ export const productsApi = {
   /** The stock ledger, optionally scoped to one product or one SKU. */
   movements: (query: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     api.get<ListResponse<InventoryMovementRow>>("/api/inventory-transactions", query, signal),
+
+  /**
+   * Corrects one ledger row. System administrator only — the server refuses
+   * everyone else, including a user with full stock write access.
+   *
+   * The level follows the difference: halving a receipt takes half back. A row
+   * that never moved the level (a foreign order's receipt, a packing issue)
+   * still does not move it.
+   */
+  updateMovement: (id: string, body: InventoryMovementEdit) =>
+    api.put<{ movement: InventoryMovementRow }>(`/api/inventory-transactions/${id}`, body)
+      .then((r) => r.movement),
+
+  /** Removes one ledger row, taking back whatever level it had moved. */
+  removeMovement: (id: string) =>
+    api.delete<Record<string, never>>(`/api/inventory-transactions/${id}`),
 
   /** Every match, for export only. Several round trips at the server's 200 cap. */
   listAll: async (

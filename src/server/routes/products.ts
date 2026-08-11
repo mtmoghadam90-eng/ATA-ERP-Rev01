@@ -6,7 +6,8 @@ import { toNumber } from "../childSync";
 import {
   INVENTORY_SORTABLE, PRODUCT_FILTERABLE, PRODUCT_SORTABLE, ProductInput,
   adjustStock, copyProduct, countProductReferences, createProduct, deleteProduct,
-  getProduct, listInventoryTransactions, listProducts, lowStockProducts, updateProduct,
+  deleteInventoryTransaction, getProduct, listInventoryTransactions, listProducts,
+  lowStockProducts, updateInventoryTransaction, updateProduct,
 } from "../services/productService";
 
 /**
@@ -81,6 +82,70 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "GET /api/inventory-transactions");
+    }
+  });
+
+  /*
+   * Correcting the ledger: system administrator only.
+   *
+   * The gate is `isSystemAdmin`, not the products permission, and it is checked
+   * again in the service — a warehouse user with full write access to stock
+   * still cannot rewrite what the warehouse did, which is the whole point of
+   * keeping a history. `requireKeyAccess` runs first only so an unauthenticated
+   * caller gets the ordinary session answer rather than this one.
+   */
+  const adminOnly = (res: express.Response) =>
+    res.status(403).json({
+      success: false,
+      error: "ویرایش یا حذف ردیف‌های تاریخچه انبار فقط توسط مدیر سیستم امکان‌پذیر است.",
+    });
+
+  app.put("/api/inventory-transactions/:id", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const outcome = await updateInventoryTransaction(req.params.id, {
+        // Picked, not spread: the product, the SKU and the source document are
+        // not writable — moving a row between products is two corrections, and
+        // rewriting its source would detach it from the document that
+        // reconciles against it.
+        ...("quantity" in body ? { quantity: body.quantity } : {}),
+        ...(typeof body.type === "string" ? { type: body.type } : {}),
+        ...("occurredAtJalali" in body
+          ? { occurredAtJalali: typeof body.occurredAtJalali === "string" ? body.occurredAtJalali : null }
+          : {}),
+        ...("notes" in body ? { notes: typeof body.notes === "string" ? body.notes : null } : {}),
+      }, user, getTodayShamsi());
+
+      if (outcome === "forbidden") return adminOnly(res);
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "ردیف تاریخچه انبار یافت نشد." });
+        return;
+      }
+      if (outcome === "invalid") {
+        res.status(400).json({ success: false, error: "تعداد باید عددی بزرگ‌تر از صفر باشد. برای صفر کردن، ردیف را حذف کنید." });
+        return;
+      }
+      res.json({ success: true, movement: outcome.after });
+    } catch (err) {
+      sendError(res, err, "PUT /api/inventory-transactions/:id");
+    }
+  });
+
+  app.delete("/api/inventory-transactions/:id", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const outcome = await deleteInventoryTransaction(req.params.id, user, getTodayShamsi());
+      if (outcome === "forbidden") return adminOnly(res);
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "ردیف تاریخچه انبار یافت نشد." });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      sendError(res, err, "DELETE /api/inventory-transactions/:id");
     }
   });
 

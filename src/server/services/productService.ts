@@ -208,30 +208,52 @@ export async function applyStockDelta(
       referenceType: toNullableString(change.referenceType, 30),
       referenceId: toNullableString(change.referenceId, 36),
       notes: toNullableString(change.notes),
+      // Recorded on the row, not merely acted on: correcting this entry by hand
+      // later has to put back exactly what it took, and nothing else can tell
+      // whether it moved the level or only the physical record.
+      affectsAvailable: change.affectsAvailable !== false,
     },
   });
 
   // Ledger only: the goods moved, but nothing about what may be promised did.
   if (change.affectsAvailable === false) return;
 
-  if (change.variantId) {
+  await moveLevel(tx, change.productId, change.variantId ?? null, change.delta);
+}
+
+/**
+ * Moves the sellable level by a signed delta, without writing a ledger entry.
+ *
+ * Private on purpose: the only callers are `applyStockDelta`, which writes the
+ * entry itself, and the two administrative corrections below, where the edited
+ * or deleted row *is* the record and a second entry would double-count it.
+ */
+async function moveLevel(
+  tx: Prisma.TransactionClient,
+  productId: string,
+  variantId: string | null,
+  delta: number,
+): Promise<void> {
+  if (!delta || !Number.isFinite(delta)) return;
+
+  if (variantId) {
     await tx.productVariant.update({
-      where: { id: change.variantId },
-      data: { stockLevel: { increment: change.delta } },
+      where: { id: variantId },
+      data: { stockLevel: { increment: delta } },
     });
     // Keep the parent's total consistent with its SKUs.
     const agg = await tx.productVariant.aggregate({
-      where: { productId: change.productId },
+      where: { productId },
       _sum: { stockLevel: true },
     });
     await tx.product.update({
-      where: { id: change.productId },
+      where: { id: productId },
       data: { stockLevel: agg._sum.stockLevel ?? 0 },
     });
   } else {
     await tx.product.update({
-      where: { id: change.productId },
-      data: { stockLevel: { increment: change.delta } },
+      where: { id: productId },
+      data: { stockLevel: { increment: delta } },
     });
   }
 }
@@ -297,6 +319,174 @@ export async function listInventoryTransactions(
 }
 
 export const INVENTORY_SORTABLE = ["occurredAt", "createdAt", "quantity", "type"] as const;
+
+/* ------------------------- correcting a ledger row ------------------------ */
+
+/**
+ * Editing and deleting a single ledger row.
+ *
+ * The ledger is otherwise append-only, and deliberately so: it is the record of
+ * what physically happened, and a business that can rewrite it has no record at
+ * all. But a wrong entry does get made — a receipt counted twice, a quantity
+ * mistyped, an adjustment dated to the wrong month — and until now the only way
+ * to answer that was another adjustment, which leaves both the mistake and the
+ * correction in the history and neither of them true.
+ *
+ * So the row can be corrected, by a system administrator and nobody else. Not
+ * the products permission, not a warehouse role: the same rule the audit-log
+ * purge already follows, for the same reason.
+ *
+ * Three things make the correction safe:
+ *
+ *  - The level is corrected by the *difference*, inside the same transaction.
+ *    An edit that halves a receipt takes half back; a delete takes all of it.
+ *  - A row that never moved the level does not move it now. That is what the
+ *    stored `affectsAvailable` is for — a purchase-order receipt sits in the
+ *    ledger without ever having been sellable, and "putting it back" would
+ *    invent stock that was never promised.
+ *  - What changed is written to the audit log with both states, by the caller.
+ *
+ * What a correction cannot do is move a row to a different product or SKU. That
+ * is not a typo being fixed, it is two corrections wearing one coat, and it is
+ * better done as a delete and a fresh adjustment where both halves are visible.
+ */
+export interface InventoryTransactionEdit {
+  quantity?: unknown;
+  type?: string;
+  occurredAtJalali?: string | null;
+  notes?: string | null;
+}
+
+const inventoryDetail = {
+  include: {
+    product: { select: { id: true, code: true, displayName: true } },
+    variant: { select: { id: true, sku: true } },
+  },
+} satisfies { include: Prisma.InventoryTransactionInclude };
+
+export async function getInventoryTransaction(id: string, user: AuthUser) {
+  if (!requireProductPermission(user)) return null;
+  return getDb().inventoryTransaction.findUnique({ where: { id }, ...inventoryDetail });
+}
+
+/**
+ * Rewrites one ledger row and corrects the level by the difference.
+ *
+ * Returns `"reference-changed"` never — the product and SKU are not writable —
+ * and `"forbidden"` for anyone who is not a system administrator, including a
+ * user with full products access.
+ */
+export async function updateInventoryTransaction(
+  id: string,
+  input: InventoryTransactionEdit,
+  user: AuthUser,
+  todayJalali: string,
+): Promise<"forbidden" | "not-found" | "invalid" | { before: Record<string, unknown>; after: Record<string, unknown> }> {
+  if (!user.isSystemAdmin) return "forbidden";
+  const db = getDb();
+
+  const outcome = await db.$transaction(async (tx) => {
+    const before = await tx.inventoryTransaction.findUnique({ where: { id }, ...inventoryDetail });
+    if (!before) return "not-found" as const;
+
+    const type = input.type === "IN" || input.type === "OUT" ? input.type : before.type;
+    const quantity = "quantity" in input
+      ? Math.abs(toNumber(input.quantity, Number(before.quantity)))
+      : Math.abs(Number(before.quantity));
+
+    // Zero would be a row recording that nothing happened. Deleting is the way
+    // to say that, and it corrects the level too.
+    if (!Number.isFinite(quantity) || quantity <= 0) return "invalid" as const;
+
+    const signed = type === "OUT" ? -quantity : quantity;
+    const jalali = "occurredAtJalali" in input && input.occurredAtJalali
+      ? normalizeJalali(input.occurredAtJalali)
+      : before.occurredAtJalali;
+
+    const after = await tx.inventoryTransaction.update({
+      where: { id },
+      data: {
+        type,
+        quantity,
+        signedQuantity: signed,
+        occurredAtJalali: jalali,
+        occurredAt: jalaliToDate(jalali ?? "") ?? before.occurredAt,
+        ...("notes" in input ? { notes: toNullableString(input.notes) } : {}),
+      },
+      ...inventoryDetail,
+    });
+
+    if (before.affectsAvailable) {
+      await moveLevel(tx, before.productId, before.variantId, signed - Number(before.signedQuantity));
+    }
+
+    return { before, after } as unknown as { before: Record<string, unknown>; after: Record<string, unknown> };
+  });
+
+  if (typeof outcome !== "string") {
+    await logAction(
+      {
+        action: "UPDATE",
+        module: "تاریخچه انبار",
+        entityId: id,
+        description: `اصلاح دستی ردیف تاریخچه انبار: ${describeMovement(outcome.after)}`,
+        beforeState: outcome.before,
+        afterState: outcome.after,
+      },
+      user,
+      todayJalali,
+    );
+  }
+  return outcome;
+}
+
+/** A ledger row in one sentence, for the audit description. */
+function describeMovement(row: Record<string, unknown>): string {
+  const product = row.product as { displayName?: string } | null;
+  const variant = row.variant as { sku?: string } | null;
+  const name = product?.displayName ?? "کالای حذف شده";
+  const sku = variant?.sku ? ` / ${variant.sku}` : "";
+  const direction = row.type === "OUT" ? "خروج" : "ورود";
+  return `${name}${sku} — ${direction} ${String(row.quantity)} در تاریخ ${String(row.occurredAtJalali ?? "")}`;
+}
+
+/** Removes one ledger row, taking back whatever level it had moved. */
+export async function deleteInventoryTransaction(
+  id: string,
+  user: AuthUser,
+  todayJalali: string,
+): Promise<"forbidden" | "not-found" | { before: Record<string, unknown> }> {
+  if (!user.isSystemAdmin) return "forbidden";
+  const db = getDb();
+
+  const outcome = await db.$transaction(async (tx) => {
+    const before = await tx.inventoryTransaction.findUnique({ where: { id }, ...inventoryDetail });
+    if (!before) return "not-found" as const;
+
+    await tx.inventoryTransaction.delete({ where: { id } });
+
+    if (before.affectsAvailable) {
+      await moveLevel(tx, before.productId, before.variantId, -Number(before.signedQuantity));
+    }
+
+    return { before } as unknown as { before: Record<string, unknown> };
+  });
+
+  if (typeof outcome !== "string") {
+    await logAction(
+      {
+        action: "DELETE",
+        module: "تاریخچه انبار",
+        entityId: id,
+        description: `حذف ردیف تاریخچه انبار: ${describeMovement(outcome.before)}`,
+        beforeState: outcome.before,
+      },
+      user,
+      todayJalali,
+    );
+  }
+  return outcome;
+}
 
 /* --------------------------------- writes --------------------------------- */
 

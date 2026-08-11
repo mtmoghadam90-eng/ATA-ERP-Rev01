@@ -279,6 +279,12 @@ model InventoryTransaction {
   referenceId   String? @db.NVarChar(36)
   notes         String? @db.NVarChar(Max)
 
+  /// Whether this movement also changed `stockLevel` (what may be promised), or
+  /// only the physical record. False for a foreign order's receipt and a packing
+  /// list's issue — goods that were sold before they were bought. Persisted
+  /// because correcting a row by hand has to put back exactly what it took.
+  affectsAvailable Boolean @default(true)
+
   createdAt DateTime @default(now())
 
   @@index([productId, occurredAt])

@@ -40,7 +40,8 @@ import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { ApiError } from '../api/client';
-import { productsApi, type InventoryMovementRow } from '../api/products';
+import { productsApi, type InventoryMovementEdit, type InventoryMovementRow } from '../api/products';
+import StockMovementEditModal from './StockMovementEditModal';
 import { detailToProduct, productToWriteInput, rowToProduct } from '../api/productAdapter';
 import { useProductList } from '../api/useProductList';
 import { useList } from '../api/useList';
@@ -177,6 +178,44 @@ export default function ProductsView({
       if (activeTab === 'TRANSACTIONS') ledger.refresh();
     } catch (err) {
       reportError(err, 'ثبت تغییر موجودی با خطا مواجه شد.');
+    }
+  };
+
+  /*
+   * Correcting the ledger.
+   *
+   * Offered to a system administrator only. The button is simply not drawn for
+   * anyone else — but that is a courtesy, not the control: the server refuses
+   * both calls for every other account, including one with full write access to
+   * stock. Rewriting what the warehouse did is exactly what a history is meant
+   * to prevent, so it sits behind the same gate as purging the audit log.
+   */
+  const isSystemAdmin = !!currentUser?.isSystemAdmin;
+  const [editingMovement, setEditingMovement] = useState<InventoryMovementRow | null>(null);
+  const [deletingMovement, setDeletingMovement] = useState<InventoryMovementRow | null>(null);
+
+  const saveMovement = async (body: InventoryMovementEdit) => {
+    if (!editingMovement) return;
+    try {
+      await productsApi.updateMovement(editingMovement.id, body);
+      setEditingMovement(null);
+      ledger.refresh();
+      // The level moved by the difference, so the catalogue is stale too.
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'اصلاح ردیف تاریخچه انبار با خطا مواجه شد.');
+    }
+  };
+
+  const removeMovement = async () => {
+    if (!deletingMovement) return;
+    try {
+      await productsApi.removeMovement(deletingMovement.id);
+      setDeletingMovement(null);
+      ledger.refresh();
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'حذف ردیف تاریخچه انبار با خطا مواجه شد.');
     }
   };
 
@@ -1123,12 +1162,14 @@ export default function ProductsView({
                 <th className="p-4 w-1/6 text-center">نوع</th>
                 <th className="p-4 w-1/6 text-center">تعداد</th>
                 <th className="p-4 w-1/3">توضیحات و رفرنس</th>
+                {/* Drawn only for a system administrator; see saveMovement. */}
+                {isSystemAdmin && <th className="p-4 w-24 text-center">اصلاح</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700 text-xs">
               {ledger.initialLoading && (
                  <tr>
-                    <td colSpan={5} className="text-center p-12 text-slate-400">
+                    <td colSpan={isSystemAdmin ? 6 : 5} className="text-center p-12 text-slate-400">
                       <Loader2 className="mx-auto text-slate-300 mb-3 animate-spin" size={36} />
                       در حال دریافت تاریخچه…
                     </td>
@@ -1136,7 +1177,7 @@ export default function ProductsView({
               )}
               {inventoryTransactions.length === 0 && !ledger.initialLoading && (
                  <tr>
-                    <td colSpan={5} className="text-center p-12 text-slate-400">هیچ تراکنشی یافت نشد.</td>
+                    <td colSpan={isSystemAdmin ? 6 : 5} className="text-center p-12 text-slate-400">هیچ تراکنشی یافت نشد.</td>
                  </tr>
               )}
               {/* Already ordered by the query, and the product and SKU come
@@ -1163,6 +1204,28 @@ export default function ProductsView({
                        {tr.referenceType && <div className="font-bold text-slate-700 mb-0.5">منبع: {tr.referenceType}</div>}
                        {tr.notes}
                     </td>
+                    {isSystemAdmin && (
+                      <td className="p-4">
+                        <div className="flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            title="اصلاح این ردیف"
+                            onClick={() => setEditingMovement(tr)}
+                            className="p-1.5 text-slate-400 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition"
+                          >
+                            <Edit size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            title="حذف این ردیف"
+                            onClick={() => setDeletingMovement(tr)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 )
               })}
@@ -2906,6 +2969,45 @@ export default function ProductsView({
         </div>
       )}
 
+
+      {/* Correcting one ledger row — system administrator only. */}
+      {editingMovement && (
+        <StockMovementEditModal
+          movement={editingMovement}
+          onClose={() => setEditingMovement(null)}
+          onSave={saveMovement}
+        />
+      )}
+
+      <ConfirmModal
+        isOpen={!!deletingMovement}
+        onClose={() => setDeletingMovement(null)}
+        onConfirm={removeMovement}
+        variant="danger"
+        title="حذف ردیف تاریخچه انبار"
+        message={
+          deletingMovement
+            ? `«${deletingMovement.product ? deletingMovement.product.displayName : 'کالای حذف شده'}» — ` +
+              `${deletingMovement.type === 'IN' ? 'ورود' : 'خروج'} ${deletingMovement.quantity} ` +
+              `در تاریخ ${deletingMovement.occurredAtJalali || toShamsiStr(deletingMovement.occurredAt)}`
+            : ''
+        }
+      >
+        <div className="text-[11px] text-slate-500 leading-relaxed space-y-2 text-right">
+          <p>
+            {deletingMovement?.affectsAvailable
+              ? 'با حذف این ردیف، همان مقدار از موجودی قابل فروش پس گرفته می‌شود.'
+              : 'این ردیف موجودی قابل فروش را تغییر نداده بود، پس حذف آن هم موجودی را جابه‌جا نمی‌کند.'}
+          </p>
+          {deletingMovement?.referenceId && deletingMovement.referenceType !== 'MANUAL' && (
+            <p className="text-amber-700">
+              این ردیف را یک سند ({deletingMovement.referenceType}) ثبت کرده است؛ با ذخیره‌ی دوباره‌ی آن سند
+              دوباره نوشته می‌شود.
+            </p>
+          )}
+          <p>این حذف با نام شما در گزارش تغییرات ثبت می‌شود.</p>
+        </div>
+      </ConfirmModal>
 
       {/* SKU Decoder Modal */}
       {decodeModalOpen && (

@@ -312,10 +312,33 @@ async function run(options: Options): Promise<void> {
   const stocked = (await api.get<{ product: Record<string, unknown> }>(`/api/products/${productId}`)).product;
   checkEqual("stock level after a +10 adjustment", num(stocked.stockLevel), 10);
 
-  const ledger = await api.get<{ rows: { quantity: string }[] }>(
+  const ledger = await api.get<{ rows: { id: string; quantity: string; affectsAvailable: boolean }[] }>(
     `/api/inventory-transactions?productId=${productId}&pageSize=50`);
   check("the adjustment wrote a ledger entry, not just a number",
     ledger.rows.length >= 1, ledger.rows.length);
+  check("a manual adjustment is marked as moving the sellable level",
+    ledger.rows[0]?.affectsAvailable === true, ledger.rows[0]?.affectsAvailable);
+
+  /*
+   * Correcting a ledger row moves the level by the difference, not from zero.
+   *
+   * The whole point of storing the row's own effect: an edit that halves a
+   * receipt takes half back. Getting this wrong is invisible until someone
+   * fixes a typo and the warehouse figure quietly moves by the full quantity.
+   * (The scenario runs as a system administrator, which is the only account the
+   * server lets do this at all.)
+   */
+  const movementId = ledger.rows[0].id;
+  await api.put(`/api/inventory-transactions/${movementId}`, { quantity: 4, type: "IN" });
+  const corrected = (await api.get<{ product: Record<string, unknown> }>(`/api/products/${productId}`)).product;
+  checkEqual("correcting a +10 entry to +4 leaves 4, not 14", num(corrected.stockLevel), 4);
+
+  await api.del(`/api/inventory-transactions/${movementId}`);
+  const afterDelete = (await api.get<{ product: Record<string, unknown> }>(`/api/products/${productId}`)).product;
+  checkEqual("deleting the entry takes its quantity back", num(afterDelete.stockLevel), 0);
+
+  // Put the opening stock back; everything downstream expects 10 on the shelf.
+  await api.post(`/api/products/${productId}/stock`, { delta: 10, notes: `${tag} opening stock` });
 
   /* --------------------------------------------------------------- project */
   beginStep("Project");
