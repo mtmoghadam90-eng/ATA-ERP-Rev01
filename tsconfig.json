@@ -21,7 +21,20 @@
       ]
     },
     "allowImportingTsExtensions": true,
-    "noEmit": true
+    "noEmit": true,
+
+    // Dead imports and dead locals fail the build.
+    //
+    // `npm run lint` is the only standing gate in this project and deploy.ps1
+    // refuses to deploy when it fails, so this is what keeps the sweep done.
+    // Turning it on removed ~190 leftovers in one pass — icon imports for
+    // buttons that no longer exist, types from the document store, state for
+    // forms that were replaced — and every one of them had been invisible.
+    //
+    // Parameters are deliberately not included: an unused argument in a
+    // callback or an event handler is normal and naming it is often the
+    // clearest thing to do.
+    "noUnusedLocals": true
   },
-  "exclude": ["dist", "downloadPackagingDeliveryHTML.ts"]
+  "exclude": ["dist"]
 }

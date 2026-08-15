@@ -2,10 +2,6 @@ import React, { useState } from 'react';
 import { 
   Plus, 
   Search, 
-  CheckSquare, 
-  Clock, 
-  XCircle, 
-  AlertCircle, 
   Edit, 
   Trash2, 
   User, 
@@ -16,14 +12,14 @@ import {
   Maximize2,
   Minimize2
 } from 'lucide-react';
-import { Task, Customer, Project, ERPSettings, User as ERPUser } from '../types';
+import { Task, Customer, Project, ERPSettings } from '../types';
 import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import QuickAddModal from './QuickAddModal';
-import { Bell, BellOff, Loader2 } from 'lucide-react';
+import { Bell, Loader2 } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { rowToTask, tasksApi, taskToWriteInput } from '../api/tasks';
 import { useTaskList } from '../api/useTaskList';

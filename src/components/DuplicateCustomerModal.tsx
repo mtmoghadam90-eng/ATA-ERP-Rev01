@@ -1,4 +1,3 @@
-import React from 'react';
 import { AlertTriangle, ShieldAlert, UserCheck, X } from 'lucide-react';
 import { Customer } from '../types';
 import { DuplicateMatch, hasHardDuplicate } from '../utils/customerDuplicates';

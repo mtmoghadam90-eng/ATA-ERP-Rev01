@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { X, ChevronRight, ChevronLeft, Bell, Calendar, User, CheckCircle2, Clock } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { X, ChevronRight, ChevronLeft, Bell, Calendar, User, Clock } from 'lucide-react';
 import { Task } from '../types';
 import { rowToTask, taskToWriteInput, tasksApi } from '../api/tasks';
 import { getTodayShamsi } from '../dateUtils';

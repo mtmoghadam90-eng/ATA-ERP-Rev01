@@ -3,22 +3,14 @@ import {
   Plus, 
   Search, 
   Filter, 
-  Phone, 
-  Mail, 
-  MapPin, 
-  Briefcase, 
   Edit, 
   Trash2, 
   UserPlus,
   Building,
-  CheckCircle,
-  XCircle,
   X,
   Users,
   User,
-  Tag,
   Link2,
-  FileText,
   FileSpreadsheet,
   ArrowLeft,
   Maximize2,
@@ -26,10 +18,7 @@ import {
   Loader2,
   AlertCircle
 } from 'lucide-react';
-import {
-  Customer, ERPSettings, Project, Proforma, Transaction, Task,
-  SupplierInquiry, PurchaseOrder, PackagingDelivery, AfterSalesService,
-} from '../types';
+import { Customer, ERPSettings } from '../types';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import { exportToCSV } from '../excelUtils';
@@ -872,9 +861,6 @@ export default function CustomersView({
             <tbody className="divide-y divide-slate-100 text-slate-700 text-xs">
               {filteredCustomers.map((cust) => {
                 const isLegal = cust.customerType === 'حقوقی';
-                const linkedCustomers = (cust.linkedCustomerIds || [])
-                  .map(id => customers.find(c => c.id === id))
-                  .filter(Boolean) as Customer[];
                 const tagsList = cust.tags ? cust.tags.split(/[,،]/).map(t => t.trim()).filter(Boolean) : [];
 
                 return (

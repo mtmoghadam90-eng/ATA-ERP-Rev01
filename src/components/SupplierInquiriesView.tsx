@@ -6,10 +6,8 @@ import {
   Plus, 
   Edit, 
   Trash2, 
-  Eye, 
   Check, 
   Upload, 
-  Download, 
   Search, 
   FileText, 
   CheckCircle2, 
@@ -17,17 +15,11 @@ import {
   FileDown, 
   Activity, 
   Clock, 
-  User, 
-  DollarSign, 
-  TrendingUp, 
-  Send, 
-  Calendar, 
   ArrowLeftRight, 
   Trophy,
   BadgeCheck,
   Zap,
   AlertTriangle,
-  FileSpreadsheet,
   Globe,
   Coins,
   Maximize2,
@@ -1238,8 +1230,6 @@ function InquiryFormInner({
     return selectedProjectId === 'all' ? '' : selectedProjectId;
   });
   const [supplierId, setSupplierId] = useState<string>(editingInquiry?.supplierId || '');
-  const [technicalFile, setTechnicalFile] = useState<File | null>(null);
-  const [financialFile, setFinancialFile] = useState<File | null>(null);
   const [technicalOfferUrl, setTechnicalOfferUrl] = useState<string>(editingInquiry?.technicalOfferUrl || '');
   const [discountPercent, setDiscountPercent] = useState<number>(editingInquiry?.discountPercent || 0);
   const [discountAmount, setDiscountAmount] = useState<number>(editingInquiry?.discountAmount || 0);

@@ -364,11 +364,6 @@ const inventoryDetail = {
   },
 } satisfies { include: Prisma.InventoryTransactionInclude };
 
-export async function getInventoryTransaction(id: string, user: AuthUser) {
-  if (!requireProductPermission(user)) return null;
-  return getDb().inventoryTransaction.findUnique({ where: { id }, ...inventoryDetail });
-}
-
 /**
  * Rewrites one ledger row and corrects the level by the difference.
  *

@@ -4,7 +4,7 @@ import { AuthUser } from "../auth";
 import { expandDateFields } from "../dates";
 import { toNullableString } from "../childSync";
 import { GROUP_DATE_FIELDS } from "./activityService";
-import { ACTIVITY_CATEGORY, canonicalCategoryName, sameCategory } from "../../utils/activityCategories";
+import { canonicalCategoryName, sameCategory } from "../../utils/activityCategories";
 
 /**
  * The project timeline's automatic entries.

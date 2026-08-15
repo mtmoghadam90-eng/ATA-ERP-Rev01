@@ -1,5 +1,4 @@
-import React from 'react';
-import { Paperclip, Calendar, CheckSquare, Square, Download } from 'lucide-react';
+import { Paperclip, Calendar, Download } from 'lucide-react';
 import { CustomField } from '../types';
 import { downloadFileFromServer } from '../imageUtils';
 

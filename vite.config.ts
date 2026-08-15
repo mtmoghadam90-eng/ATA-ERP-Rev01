@@ -14,7 +14,10 @@ export default defineConfig(() => {
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {
-        ignored: ['**/database.json', '**/database.sqlite', '**/uploads/**'],
+        // Uploaded files are written by the server at runtime; a reload on
+        // every upload is noise. (The two JSON/SQLite store files this used to
+        // name went with the move to SQL Server.)
+        ignored: ['**/uploads/**'],
       },
     },
   };

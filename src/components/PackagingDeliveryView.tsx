@@ -3,7 +3,6 @@ import {
   Package, 
   Plus, 
   Trash2, 
-  Check, 
   X, 
   Printer, 
   Upload, 

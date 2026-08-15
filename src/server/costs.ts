@@ -127,11 +127,6 @@ export function redactProduct<T>(row: T, user: AuthUser): T {
   return product as T;
 }
 
-export function redactProducts<T>(rows: T[], user: AuthUser): T[] {
-  if (canSeeCosts(user)) return rows;
-  return rows.map((row) => redactProduct(row, user));
-}
-
 /** One purchase order, with its cost columns and line prices removed. */
 export function redactPurchaseOrder<T>(row: T, user: AuthUser): T {
   if (canSeeCosts(user)) return row;

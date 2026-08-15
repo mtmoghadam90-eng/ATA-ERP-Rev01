@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { X, Upload, File, Loader2, AlertCircle, CheckCircle2, FolderOpen } from 'lucide-react';
+import { X, Upload, Loader2, AlertCircle, CheckCircle2, FolderOpen } from 'lucide-react';
 import { Project } from '../types';
 import { uploadFile } from '../imageUtils';
 import { getTodayShamsi } from '../dateUtils';
@@ -20,21 +20,14 @@ export default function ProjectConfirmationUploadModal({
   const [dragActive, setDragActive] = useState<boolean>(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [customFileName, setCustomFileName] = useState<string>('');
-  const [selectedFolder, setSelectedFolder] = useState<string>('پیش‌فاکتورها و مهندسی فروش');
+  // Fixed: the award confirmation belongs in the sales folder. The picker
+  // that let it be filed anywhere was removed.
+  const selectedFolder = 'پیش‌فاکتورها و مهندسی فروش';
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen || !project) return null;
-
-  const folders = [
-    'پیش‌فاکتورها و مهندسی فروش',
-    'درخواست مشتری و استعلام اولیه',
-    'تراکنش‌های مالی و پرداخت‌ها',
-    'بسته‌بندی و تحویل کالا',
-    'خدمات پس از فروش',
-    'سایر مدارک و فایل‌های دستی'
-  ];
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();

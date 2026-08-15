@@ -79,15 +79,6 @@ export function verifySession(
   return payload;
 }
 
-/** Strips password hashes from user records before they leave the server. */
-export function sanitizeUsers<T extends Record<string, any>>(users: T[]): T[] {
-  return (users || []).map((u) => {
-    if (!u || typeof u !== "object") return u;
-    const { password, ...safe } = u as any;
-    return safe as T;
-  });
-}
-
 /**
  * Minimal directory of colleagues, for the "assign to…" pickers.
  *

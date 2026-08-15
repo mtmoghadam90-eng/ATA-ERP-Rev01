@@ -43,6 +43,7 @@ import { samePermissions } from "../src/server/services/userService";
 import { buildCustomerWhere } from "../src/server/services/customerService";
 import { ACTIVITY_CATEGORY, canonicalCategoryName, sameCategory } from "../src/utils/activityCategories";
 import { packableLines, outstandingFor } from "../src/utils/packingAllocation";
+import { importStageDurations } from "../src/utils/importTimeline";
 import { parseMilestoneRules } from "../src/server/services/milestoneAutomation";
 import { refreshDecision, type RateRefreshState } from "../src/server/services/rateRefresh";
 import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
@@ -687,6 +688,36 @@ eq("rial-quoted freight and fees count as well",
 const unrated = computeTotals([line(10, 1000)], { customsDutyRial: 450_000_000 });
 ok("a missing rate never produces Infinity",
   Number.isFinite(unrated.landedCostForeign), unrated.landedCostForeign);
+
+/*
+ * Where the time went on an import.
+ *
+ * The card lists the stages with the date each finished on; what a buyer wants
+ * from that row is how long each one took, and subtracting Shamsi dates in your
+ * head is exactly what a screen should be doing instead.
+ */
+head("Purchase order: how long each import stage took");
+
+const stage = (label: string, date?: string) => ({ label, date, color: "" });
+const durations = (dates: (string | undefined)[]) =>
+  importStageDurations(dates.map((d, i) => stage(`s${i}`, d))).map((s) => s.days);
+
+eq("the first stage has no duration — ordering is a moment, not a span",
+  JSON.stringify(durations(["1405/01/10"])), JSON.stringify([null]));
+eq("each stage counts from the one before it",
+  JSON.stringify(durations(["1405/01/10", "1405/01/20", "1405/02/01"])),
+  JSON.stringify([null, 10, 12]));
+eq("a stage with no date has nothing to report",
+  JSON.stringify(durations(["1405/01/10", undefined, "1405/02/01"])),
+  JSON.stringify([null, null, 22]));
+// The interval across a skipped stage is the one that usually took longest;
+// measuring against the empty slot would have hidden exactly that.
+eq("and the days still add up across a gap",
+  durations(["1405/01/10", undefined, "1405/02/01"])[2], 22);
+eq("dates entered out of order show negative rather than nothing",
+  durations(["1405/02/01", "1405/01/20"])[1], -12);
+eq("an order with no dates at all reports nothing",
+  JSON.stringify(durations([undefined, undefined])), JSON.stringify([null, null]));
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

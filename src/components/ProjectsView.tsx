@@ -1,16 +1,15 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import {
   Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, TrendingUp, X,
   FileSpreadsheet, Clock, Sliders, User, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
   Send, CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
-  ChevronRight, Loader2, Image as ImageIcon, Maximize2, Minimize2, ArrowLeftRight, Flag, Zap, MessageSquare,
+  ChevronRight, Loader2, Image as ImageIcon, Maximize2, Minimize2, ArrowLeftRight, Flag, Zap,
   ExternalLink
 } from 'lucide-react';
 
-import { getTodayShamsi, addDaysToShamsi, addWorkingDaysToShamsi, formatDateTimeToShamsi } from '../dateUtils';
-import { getProformaOutcomeStatus } from '../useERPStore';
+import { getTodayShamsi, formatDateTimeToShamsi } from '../dateUtils';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
 import { uploadFile, downloadFileFromServer } from '../imageUtils';
@@ -36,9 +35,8 @@ import { useProjectList } from '../api/useProjectList';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { useEntitySearch } from '../api/useEntitySearch';
 import type { CustomerRow } from '../api/customers';
-import { customersApi } from '../api/customers';
 import { productsApi } from '../api/products';
-import { createCustomerWithLinks, customerToWriteInput, detailToCustomer } from '../api/customerAdapter';
+import { createCustomerWithLinks } from '../api/customerAdapter';
 import { productToWriteInput, detailToProduct } from '../api/productAdapter';
 
 /**
@@ -243,7 +241,6 @@ export default function ProjectsView({
   const [projectToDeleteId, setProjectToDeleteId] = useState<any>(null);
   const [projectToDeleteName, setProjectToDeleteName] = useState("");
   const [activityDeleteConfirmOpen, setActivityDeleteConfirmOpen] = useState(false);
-  const [activityToDeleteGroupId, setActivityToDeleteGroupId] = useState<any>(null);
   const [activityToDeleteId, setActivityToDeleteId] = useState<any>(null);
   const [completeGroupConfirmOpen, setCompleteGroupConfirmOpen] = useState(false);
   const [groupToCompleteId, setGroupToCompleteId] = useState<any>(null);
@@ -256,16 +253,6 @@ export default function ProjectsView({
   const [description, setDescription] = useState("");
   const [itemsNeeded, setItemsNeeded] = useState<any[]>([]);
   const [lossReason, setLossReason] = useState("");
-  const [showQuickCustomerModal, setShowQuickCustomerModal] = useState(false);
-  const [quickCustType, setQuickCustType] = useState("حقوقی");
-  const [quickCustName, setQuickCustName] = useState("");
-  const [quickCustFirstName, setQuickCustFirstName] = useState("");
-  const [quickCustLastName, setQuickCustLastName] = useState("");
-  const [quickCustPhone, setQuickCustPhone] = useState("");
-  const [quickCustEmail, setQuickCustEmail] = useState("");
-  const [quickCustIndustry, setQuickCustIndustry] = useState("نفت و گاز");
-  const [quickCustKeyPerson, setQuickCustKeyPerson] = useState("");
-  const [quickCustPosition, setQuickCustPosition] = useState("");
   const [salesExpert, setSalesExpert] = useState("");
   const [marketingChannel, setMarketingChannel] = useState("");
   const [leadQuality, setLeadQuality] = useState("متوسط");
@@ -367,15 +354,6 @@ export default function ProjectsView({
 
   const getActualDeliveryDate = (projectId: string): string | null =>
     summaryOf(projectId)?.actualDeliveryDate ?? null;
-
-  const getApprovedProformaDeliveryDate = (projectId: string): string | null =>
-    summaryOf(projectId)?.approvedDeliveryDate ?? null;
-
-  /** Customer name for a row. Joined by the server, so no lookup table here. */
-  const getCustomerDisplayName = (idOrName: string): string => {
-    const project = projects.find((p) => p.customerId === idOrName || p.id === idOrName);
-    return project?.customerName || idOrName;
-  };
 
   const EMPTY_DELIVERY = {
     agreedItems: [] as ProjectSummary["agreedItems"],
@@ -564,24 +542,6 @@ export default function ProjectsView({
         } : item
       )
     );
-  };
-  const handleItemVariantChange = (index: number, variantId: string) => {
-    const newItems = [...itemsNeeded];
-    const item = newItems[index];
-    const prod = products.find(p => p.id === item.productId);
-    if (!prod || !prod.hasVariants || !prod.variants) return;
-
-    const variant = prod.variants.find(v => v.id === variantId);
-    if (!variant) return;
-
-    const effectiveST = variant.stockLevel === 0 ? "ORDER" : (prod.supplyType || "INVENTORY");
-    
-    newItems[index] = {
-      ...item,
-      variantId: variant.id,
-      supplyMethod: effectiveST === "ORDER" ? "ORDER" : "INVENTORY",
-    };
-    setItemsNeeded(newItems);
   };
   const handleItemCategoryChange = (index, cat) => {
     setItemsNeeded(
@@ -918,14 +878,12 @@ export default function ProjectsView({
    * is now one call, made when the tab is opened rather than with the project.
    */
   const [projectDocuments, setProjectDocuments] = useState<Record<string, any[]>>({});
-  const [documentsLoading, setDocumentsLoading] = useState(false);
 
   React.useEffect(() => {
     const projectId = selectedProjectForActivities?.id;
     if (!projectId || modalTab !== "documents") return;
 
     let cancelled = false;
-    setDocumentsLoading(true);
     projectsApi
       .documents(projectId)
       .then((docs) => { if (!cancelled) setProjectDocuments(docs); })
@@ -935,7 +893,6 @@ export default function ProjectsView({
         setProjectDocuments({});
         reportError(err, "دریافت اسناد پروژه با خطا مواجه شد.");
       })
-      .finally(() => { if (!cancelled) setDocumentsLoading(false); });
 
     return () => { cancelled = true; };
   }, [selectedProjectForActivities?.id, modalTab]);
@@ -1008,7 +965,6 @@ export default function ProjectsView({
           setSelectedProjectForActivities(saved);
           // The documents tab is served by the API, so it has to re-read.
           setProjectDocuments(await projectsApi.documents(p.id));
-          alert('فایل‌ها با موفقیت در پوشه مربوطه بارگذاری شدند.');
         }
       }
     } catch (err: any) {
@@ -1048,8 +1004,8 @@ export default function ProjectsView({
     });
     if (saved) {
       setSelectedProjectForActivities(saved);
+      // The row leaves the list; saying so as well is noise.
       setProjectDocuments(await projectsApi.documents(p.id));
-      alert('فایل با موفقیت حذف شد.');
     }
   };
 
@@ -4640,7 +4596,6 @@ export default function ProjectsView({
 
                           try {
                             await activityFeed.addGroup(cat.id, cat.name, categoryStartDate);
-                            alert(`دسته‌بندی «${cat.name}» با موفقیت برای این پروژه فعال شد.`);
                             setSelectedCategoryToCreate('');
                             setCategoryStartDate(getTodayShamsi());
                           } catch (err) {
@@ -4910,7 +4865,6 @@ export default function ProjectsView({
                                               <button
                                                 type="button"
                                                 onClick={() => {
-                                                  setActivityToDeleteGroupId(group.id);
                                                   setActivityToDeleteId(act.id);
                                                   setActivityDeleteConfirmOpen(true);
                                                 }}
@@ -5198,7 +5152,9 @@ export default function ProjectsView({
                                               setReferralEnabled(prev => ({ ...prev, [group.id]: false }));
                                               setReferralAssignedTo(prev => ({ ...prev, [group.id]: '' }));
                                               setReferralAction(prev => ({ ...prev, [group.id]: '' }));
-                                              alert('فعالیت جدید با موفقیت ثبت گردید.');
+                                              // No confirmation: the entry is on
+                                              // the feed in front of the person
+                                              // who just wrote it.
                                             } catch (err) {
                                               reportActivityError(err, 'ثبت فعالیت با خطا مواجه شد.');
                                             }
@@ -5281,7 +5237,6 @@ export default function ProjectsView({
         isOpen={activityDeleteConfirmOpen}
         onClose={() => {
           setActivityDeleteConfirmOpen(false);
-          setActivityToDeleteGroupId(null);
           setActivityToDeleteId(null);
         }}
         onConfirm={() => {

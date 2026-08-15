@@ -1,5 +1,5 @@
 import React from 'react';
-import { Paperclip, Upload, X, HelpCircle } from 'lucide-react';
+import { Paperclip, Upload, X } from 'lucide-react';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { CustomField } from '../types';
 

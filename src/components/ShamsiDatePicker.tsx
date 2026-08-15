@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getTodayShamsi, gregorianToJalali, jalaliToGregorian } from '../dateUtils';
+import { getTodayShamsi, jalaliToGregorian } from '../dateUtils';
 
 interface ShamsiDatePickerProps {
   value: string; // "1405/04/14" or "YYYY/MM/DD"

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { User, ERPSettings } from '../types';
 import ConfirmModal from './ConfirmModal';
-import { compressAndResizeImage, uploadFile } from '../imageUtils';
+import { uploadFile } from '../imageUtils';
 import { ApiError } from '../api/client';
 import { rowToUser, userToWriteInput, usersApi } from '../api/users';
 import { useUserList } from '../api/useUserList';
@@ -10,7 +10,6 @@ import {
   UserPlus, 
   ShieldCheck, 
   ShieldAlert, 
-  Key, 
   Edit2, 
   Trash2, 
   Search, 

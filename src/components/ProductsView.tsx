@@ -1,4 +1,3 @@
-import { parsePersianDate } from '../dateUtils';
 import { useExchangeRates } from '../api/exchangeRates';
 import React, { useState } from 'react';
 import { 
@@ -11,9 +10,6 @@ import {
   Trash2,
   X,
   Calculator,
-  Percent,
-  Info,
-  TrendingUp,
   Image as ImageIcon,
   Download,
   Maximize2,
@@ -25,7 +21,7 @@ import {
   CheckCircle2,
   Loader2
 } from 'lucide-react';
-import { Product, ProductVariant, ERPSettings, InventoryTransaction, ProductFeature, ExchangeRate, ProductConfigRule, User } from '../types';
+import { Product, ProductVariant, ERPSettings, ProductFeature, ProductConfigRule, User } from '../types';
 import { canSeeCosts } from '../utils/permissions';
 import { toShamsiStr, toGregorianStr } from '../dateUtils';
 import CustomFieldsForm from './CustomFieldsForm';
@@ -225,7 +221,6 @@ export default function ProductsView({
   const [isProductModalFullscreen, setIsProductModalFullscreen] = useState(false);
   const [isStockModalFullscreen, setIsStockModalFullscreen] = useState(false);
   const [isBatchModalFullscreen, setIsBatchModalFullscreen] = useState(false);
-  const [isCalculatorFullscreen, setIsCalculatorFullscreen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isLoadingEdit, setIsLoadingEdit] = useState(false);
 
@@ -264,7 +259,6 @@ export default function ProductsView({
   const [variantCurrentPage, setVariantCurrentPage] = useState(1);
   const VARIANT_PAGE_SIZE = 50;
   const [bulkPriceForeign, setBulkPriceForeign] = useState<string>('');
-  const [bulkCurrencyForeign, setBulkCurrencyForeign] = useState<string>('یورو');
   const [bulkPriceRIYAL, setBulkPriceRIYAL] = useState<string>('');
   const [bulkApplyToFilteredOnly, setBulkApplyToFilteredOnly] = useState<boolean>(false);
   const [bulkSuccessMsg, setBulkSuccessMsg] = useState<string>('');
@@ -309,7 +303,6 @@ export default function ProductsView({
     setSimpleCurrencyForeign(appliedCurrency);
     setSimpleCalcDetails(details);
     setShowCalculator(false);
-    setIsCalculatorFullscreen(false);
   };
 
   const convertForeignToRialSimple = (priceForeign: number, currency: string) => {

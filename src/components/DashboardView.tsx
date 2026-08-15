@@ -1,20 +1,12 @@
 import React, { useState } from 'react';
 import { 
-  TrendingUp, 
   FileText, 
-  ShoppingCart, 
-  AlertTriangle, 
   ArrowUpRight, 
-  ArrowDownLeft, 
-  DollarSign, 
   FileSpreadsheet, 
-  Users, 
-  CheckSquare,
   Clock,
   Briefcase,
   ChevronLeft,
   Activity,
-  UserCheck,
   CheckCircle2,
   AlertCircle
 } from 'lucide-react';
@@ -111,10 +103,6 @@ export default function DashboardView({
   const totalRevenue = Number(summary.revenue.wonRial);
   const activeProformasValue = Number(summary.revenue.activeRial);
   const activeProformas = { length: summary.revenue.activeCount };
-  const activePOs = { length: summary.counts.activePurchaseOrders };
-  const customers = { length: summary.counts.customers };
-  const lowStockProducts = { length: summary.counts.lowStock };
-  const projects = { length: summary.counts.projects };
 
   // Referrals still waiting on this user, already scoped by the server.
   const myReferrals = referrals

@@ -354,15 +354,6 @@ export default function ReferralsView({
     }
   };
 
-  const markAllModuleNotificationsAsRead = async () => {
-    try {
-      await inboxApi.markAllNotificationsRead();
-      refresh();
-    } catch (err) {
-      reportError(err, 'ثبت خوانده‌شدن اعلان‌ها با خطا مواجه شد.');
-    }
-  };
-
   /**
    * Records the response to a referral.
    *
@@ -385,11 +376,10 @@ export default function ReferralsView({
       if (outcome !== 'none') {
         const next = outcome === 'done' ? 'انجام شده' : 'در انتظار اقدام';
         try {
+          // The card's own badge and the counter both move; saying so as
+          // well is a dialog the user has to dismiss to see the answer.
           await inboxApi.setReferralStatus(referralId, next);
           refresh();
-          alert(outcome === 'done'
-            ? 'وضعیت اقدام با موفقیت به انجام شده تغییر یافت.'
-            : 'ارجاع مجدداً در وضعیت در انتظار اقدام قرار گرفت.');
         } catch (err) {
           reportError(err, 'تغییر وضعیت ارجاع با خطا مواجه شد.');
         }
@@ -433,9 +423,10 @@ export default function ReferralsView({
       setForwardToMap(prev => ({ ...prev, [referralId]: '' }));
       refresh();
 
+      // Only forwarding is worth a word: the thread leaves this inbox for
+      // someone else's, so there is nothing left on screen to show for it.
+      // A reply and a status change are both visible where they happened.
       if (forwardTo) alert('ارجاع به همکار انتخاب‌شده منتقل شد.');
-      else if (outcome === 'done') alert('نتیجه اقدام با موفقیت ثبت شد.');
-      else if (outcome === 'reopen') alert('پاسخ شما ثبت شد و ارجاع دوباره در انتظار اقدام قرار گرفت.');
     } catch (err) {
       reportError(err, 'ثبت پاسخ ارجاع با خطا مواجه شد.');
     }

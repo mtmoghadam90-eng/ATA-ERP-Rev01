@@ -518,7 +518,7 @@ export async function updateInquiry(
     });
     if (!before) return null;
 
-    const updated = await tx.supplierInquiry.update({
+    await tx.supplierInquiry.update({
       where: { id },
       data: scalarData(input) as Prisma.SupplierInquiryUncheckedUpdateInput,
     });

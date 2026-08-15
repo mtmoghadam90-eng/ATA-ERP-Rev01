@@ -1,12 +1,8 @@
 import React, { useState } from 'react';
 import { 
-  TrendingUp, 
   RefreshCw, 
   ArrowRightLeft, 
-  Coins, 
-  CheckCircle,
   Clock,
-  ChevronLeft
 } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { exchangeRatesApi, useExchangeRates } from '../api/exchangeRates';
@@ -53,8 +49,8 @@ export default function RatesView() {
     setSavingId(id);
     try {
       await exchangeRatesApi.update(target.currency, rates[id], target.name);
+      // The row shows the new figure and its timestamp; no notice needed.
       await reload();
-      alert('نرخ تسعیر ارز با موفقیت در سیستم بروزرسانی شد و در محاسبات لندد کاست جدید اعمال می‌گردد.');
     } catch (err) {
       alert(err instanceof ApiError ? err.message : 'ثبت نرخ ارز با خطا مواجه شد.');
     } finally {
@@ -89,9 +85,9 @@ export default function RatesView() {
                   `${result.updated} نرخ بروزرسانی شد، اما دریافت این ارزها ناموفق بود و مقدار قبلی‌شان دست‌نخورده ماند: ` +
                   `${result.failedCurrencies.join('، ')}. در صورت نیاز آنها را دستی وارد کنید.`
                 );
-              } else {
-                alert('نرخ‌های روزانه با موفقیت از سامانه tgju.com استخراج و بروزرسانی شدند.');
               }
+              // Nothing said when every currency came back: the table in front
+              // of the user now shows the new figures and today's date.
             } catch (err) {
               alert(err instanceof ApiError ? err.message
                 : 'خطا در استخراج خودکار اطلاعات؛ لطفاً اتصال اینترنت را بررسی نموده یا نرخ‌ها را به صورت دستی وارد نمایید.');

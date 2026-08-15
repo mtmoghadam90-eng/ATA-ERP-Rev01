@@ -9,8 +9,6 @@ import fs from "fs";
 import multer from "multer";
 import sharp from "sharp";
 
-// We need to import seed data. 
-// Since esbuild bundles server.ts, we can import from src/seedData.ts
 // Power BI reporting sync (one-way export into SQL Server)
 import { syncToSqlServer, testConnection, readConfigFromEnv } from "./src/reporting/sqlSync";
 import { buildReportingTables } from "./src/reporting/flatten";
@@ -19,11 +17,10 @@ import { readSqlCollections } from "./src/reporting/loadFromSql";
 import {
   signSession, verifySession, checkKeyAccess, hasPermission,
   parseCookies, buildSessionCookie, buildClearCookie, resolveSessionSecret,
-  canSeeFullUsers, toUserDirectory,
   SESSION_COOKIE, AuthUser, AccessMode,
 } from "./src/server/auth";
-// Relational data access (SQL Server via Prisma). These endpoints are paginated
-// and coexist with the legacy /api/data/:key routes during the migration.
+// Relational data access (SQL Server via Prisma). Every list is paginated; the
+// document store these replaced, and its /api/data/:key routes, are gone.
 import { registerCustomerRoutes } from "./src/server/routes/customers";
 import { registerProjectRoutes } from "./src/server/routes/projects";
 import { registerProformaRoutes } from "./src/server/routes/proformas";

@@ -18,13 +18,6 @@
  * dollar and alanchand 185,650.
  */
 
-export const RATE_FALLBACKS: Record<string, number> = {
-  USD: 625000,
-  EUR: 678000,
-  AED: 171000,
-  CNY: 86000,
-};
-
 const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
   "Chrome/120.0.0.0 Safari/537.36";

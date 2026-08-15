@@ -71,7 +71,14 @@ export default function QuickAddModal({
   const [custMobile, setCustMobile] = useState('');
   const [custEmail, setCustEmail] = useState('');
   const [industry, setIndustry] = useState(() => (settings.dropdownItems?.industries || ['نفت و گاز', 'پتروشیمی', 'نیروگاهی', 'فولاد و معادن', 'آب و فاضلاب', 'شیمیایی', 'سایر'])[0] || 'سایر');
-  const [keyPerson, setKeyPerson] = useState('');
+  /*
+   * Read by the validation below and written to the customer, but this form has
+   * no input for it — so it is always empty. Left in place rather than deleted
+   * because deleting it would hide the real gap: if «شخص کلیدی» is switched on
+   * in the required-fields settings, this quick-add form can never be
+   * submitted. The missing half is a field, not this state.
+   */
+  const [keyPerson] = useState('');
   const [custProvince, setCustProvince] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');

@@ -1,7 +1,5 @@
-import React, { useState } from "react";
-import { MessageSquare, Calendar, Trash2, User, Plus } from "lucide-react";
-import { getTodayShamsi } from "../dateUtils";
-
+import { useState } from "react";
+import { MessageSquare, Calendar, Trash2, Plus } from "lucide-react";
 interface NoteItem {
   id: string;
   text: string;

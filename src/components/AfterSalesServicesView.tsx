@@ -8,7 +8,6 @@ import {
   Trash2, 
   X,
   FileText,
-  Clock,
   Calendar,
   CheckCircle2,
   AlertCircle,
@@ -18,7 +17,6 @@ import {
   Maximize2,
   Minimize2,
   Printer,
-  Eye
 } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import DeleteActivitiesOption from './DeleteActivitiesOption';

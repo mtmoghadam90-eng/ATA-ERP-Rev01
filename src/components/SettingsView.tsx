@@ -1,10 +1,9 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 
 import { 
   Settings, 
   Building, 
   FileText, 
-  Percent, 
   Save, 
   RefreshCw,
   Sliders,
@@ -15,12 +14,7 @@ import {
   Plus,
   Trash2,
   Edit2,
-  HelpCircle,
-  AlertCircle,
-  Calendar,
-  Paperclip,
   Check,
-  ToggleLeft,
   XCircle,
   LayoutDashboard,
   Users,
@@ -33,7 +27,6 @@ import {
   TrendingUp,
   CheckSquare,
   Inbox,
-  BarChart3,
   ArrowUp,
   ArrowDown,
   Menu,
@@ -46,7 +39,7 @@ import {
   Copy,
   ShieldAlert,
 } from 'lucide-react';
-import { ERPSettings, CustomField, ProjectCategoryGroup, User, Project, AuditLog, WorkflowRule, ExchangeRate } from '../types';
+import { ERPSettings, CustomField, User, Project, AuditLog, WorkflowRule } from '../types';
 import { formatERPNumber } from '../numUtils';
 import { ApiError, api } from '../api/client';
 import { auditLogsApi } from '../api/auditLogs';
@@ -57,7 +50,7 @@ import type { ProjectRow } from '../api/projects';
 import RatesView from './RatesView';
 import { decompressLZW } from '../utils/compress';
 import ConfirmModal from './ConfirmModal';
-import { compressAndResizeImage, uploadFile } from '../imageUtils';
+import { uploadFile } from '../imageUtils';
 import { REQUIRED_FIELDS_METADATA, DEFAULT_REQUIRED_FIELDS } from '../utils/requiredFields';
 
 interface SettingsViewProps {
@@ -156,7 +149,6 @@ export default function SettingsView({
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
   // Loss reasons state
-  const [newLossReason, setNewLossReason] = useState('');
   
   // Activity categories state
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -175,7 +167,6 @@ export default function SettingsView({
   const [deleteType, setDeleteType] = useState<'dropdownItem' | 'activityCategory' | 'lossReason' | 'customField' | 'clearData' | 'workflow' | null>(null);
   const [deleteTargetId, setDeleteTargetId] = useState<string>('');
   const [deleteTargetName, setDeleteTargetName] = useState<string>('');
-  const [deleteTargetExtra, setDeleteTargetExtra] = useState<any>(null);
 
   const allowedDropdownKeys: (keyof ERPSettings['dropdownItems'] | 'lossReasons')[] = [
     'industries',
@@ -408,28 +399,6 @@ export default function SettingsView({
     setDeleteConfirmOpen(true);
   };
 
-  const handleAddLossReason = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newLossReason.trim()) return;
-    if (settings.lossReasons?.includes(newLossReason.trim())) {
-      alert('این علت باخت قبلاً تعریف شده است.');
-      return;
-    }
-    const updatedReasons = [...(settings.lossReasons || []), newLossReason.trim()];
-    updateSettings({
-      ...settings,
-      lossReasons: updatedReasons
-    });
-    setNewLossReason('');
-  };
-
-  const handleDeleteLossReason = (reasonToDelete: string) => {
-    setDeleteType('lossReason');
-    setDeleteTargetId(reasonToDelete);
-    setDeleteTargetName(reasonToDelete);
-    setDeleteConfirmOpen(true);
-  };
-
   const handleToggleWorkflowActive = (ruleId: string) => {
     const rules = settings.workflows || [];
     const updated = rules.map(r => r.id === ruleId ? { ...r, active: !r.active } : r);
@@ -505,8 +474,10 @@ export default function SettingsView({
   const [logoUrl, setLogoUrl] = useState(template?.logoUrl || '');
   const [companySealUrl, setCompanySealUrl] = useState(template?.companySealUrl || '');
   const [termsAndConditions, setTermsAndConditions] = useState(template?.termsAndConditions || '');
-  const [proformaPrefix, setProformaPrefix] = useState(settings.documentFormats.proformaPrefix);
-  const [purchaseOrderPrefix, setPurchaseOrderPrefix] = useState(settings.documentFormats.poPrefix);
+  // Read-only here: the numbering formats below are what actually drive a
+  // document number, and these two only appear beside them as a reminder.
+  const [proformaPrefix] = useState(settings.documentFormats.proformaPrefix);
+  const [purchaseOrderPrefix] = useState(settings.documentFormats.poPrefix);
   const [projectFormat, setProjectFormat] = useState(settings.documentFormats.projectFormat || 'ATA-{YYYY}-{SEQ:3}');
   const [projectStartSeq, setProjectStartSeq] = useState(settings.documentFormats.projectStartSeq || 1);
   const [proformaFormat, setProformaFormat] = useState(settings.documentFormats.proformaFormat || 'QT-{PROJECT}-{SEQ:2}');
@@ -521,7 +492,6 @@ export default function SettingsView({
   const [productStartSeq, setProductStartSeq] = useState(settings.documentFormats.productStartSeq || 1);
   const [packingListFormat, setPackingListFormat] = useState(settings.documentFormats.packingListFormat || 'PL-{PROJECT}-{SEQ:3}');
   const [packingListStartSeq, setPackingListStartSeq] = useState(settings.documentFormats.packingListStartSeq || 1);
-  const [vatPercent, setVatPercent] = useState(10);
   const [showProductBrandInDocuments, setShowProductBrandInDocuments] = useState(!!settings.showProductBrandInDocuments);
 
   const [isSaved, setIsSaved] = useState(false);
@@ -637,7 +607,7 @@ export default function SettingsView({
     setNewFieldRequired(false);
     setNewFieldUseSeparator(false);
     setNewFieldOptions('');
-    alert(`فیلد سفارشی "${newField.name}" با موفقیت ایجاد شد.`);
+    // The field joins the list below the form as soon as this returns.
   };
 
   const handleDeleteCustomField = (fieldId: string) => {

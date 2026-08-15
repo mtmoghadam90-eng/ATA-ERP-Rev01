@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ERPSettings, Proforma, ProjectCategoryGroup, User } from "./types";
+import { ERPSettings, Proforma, User } from "./types";
 import { ApiError, setUnauthenticatedHandler } from "./api/client";
 import { settingsApi } from "./api/settings";
 import { DEFAULT_SETTINGS } from "./seedData";
@@ -16,8 +16,6 @@ import { DEFAULT_SETTINGS } from "./seedData";
  * What genuinely belongs to the whole app is kept: who is signed in, and the
  * settings document every screen reads. Both come from SQL.
  */
-
-export const SEED_PROJECT_CATEGORY_GROUPS: ProjectCategoryGroup[] = [];
 
 export const SEED_USERS: User[] = [
   {

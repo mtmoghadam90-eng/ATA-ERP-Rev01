@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { 
   LayoutDashboard, 
   Users, 
@@ -8,17 +8,10 @@ import {
   Truck, 
   ShoppingCart, 
   ArrowDownLeft, 
-  ArrowUpRight, 
-  TrendingUp, 
   CheckSquare, 
-  BarChart3, 
   Settings as SettingsIcon,
-  Menu,
-  X,
-  Clock,
   Inbox,
   ShieldCheck,
-  HelpCircle,
   Boxes,
   Wrench,
   ArrowLeftRight

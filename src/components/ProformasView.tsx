@@ -9,10 +9,8 @@ import {
   FileText,
   Edit,
   Trash2,
-  Printer,
   CheckCircle,
   Check,
-  Clock,
   XCircle,
   Ban,
   AlertCircle,
@@ -23,10 +21,8 @@ import {
   FileSpreadsheet,
   Settings,
   Building,
-  DollarSign,
   Copy,
   Package,
-  ChevronDown,
   Maximize2,
   Minimize2,
   Calculator,
@@ -40,7 +36,6 @@ import {
   ProductVariant,
   ProformaItem,
   ERPSettings,
-  ExchangeRate,
   User,
 } from "../types";
 import { getTodayShamsi, addDaysToShamsi } from "../dateUtils";
@@ -56,7 +51,7 @@ import { customersApi, type CustomerRow } from "../api/customers";
 import { useEntitySearch } from "../api/useEntitySearch";
 import { productsApi, type ProductRow } from "../api/products";
 import { projectsApi, type ProjectRow } from "../api/projects";
-import { createCustomerWithLinks, customerToWriteInput, detailToCustomer, findServerDuplicates } from "../api/customerAdapter";
+import { createCustomerWithLinks, findServerDuplicates } from "../api/customerAdapter";
 import { productToWriteInput, detailToProduct, rowToProduct } from "../api/productAdapter";
 import { projectToWriteInput, detailToProject } from "../api/projectAdapter";
 import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
@@ -532,7 +527,6 @@ export default function ProformasView({
   const [isCreateModalFullscreen, setIsCreateModalFullscreen] = useState(false);
   const [editingProforma, setEditingProforma] = useState<Proforma | null>(null);
   const [showPrintView, setShowPrintView] = useState(false);
-  const [isPrintViewFullscreen, setIsPrintViewFullscreen] = useState(false);
   const [selectedProforma, setSelectedProforma] = useState<Proforma | null>(
     null,
   );
@@ -1315,16 +1309,6 @@ export default function ProformasView({
     const firstProd = products[0];
     if (!firstProd) return;
     // Convert first product's IRR basePrice to the selected currency
-    const engCurrency = mapPersianCurrencyToEnglish(currency || "ریال");
-    const rateObj = engCurrency
-      ? exchangeRates.find((r) => r.currency === engCurrency)
-      : undefined;
-    const rate = rateObj ? rateObj.rateToRIYAL : 1;
-    const basePriceInSelectedCurrency =
-      currency === "ریال"
-        ? firstProd.basePriceRIYAL
-        : firstProd.basePriceRIYAL / rate;
-
     let qty = 1;
     if (
       (firstProd.stockLevel === 0 ? "ORDER" : (firstProd.supplyType || "INVENTORY")) !== "ORDER" &&
@@ -1908,22 +1892,6 @@ export default function ProformasView({
       getProformaOutcomeStatus(p) === selectedStatus;
     return matchesSearch && matchesStatus;
   });
-  const getStatusColor = (st: Proforma["status"]) => {
-    switch (st) {
-      case "پیش‌نویس":
-        return "bg-slate-100 text-slate-700 border-slate-200";
-      case "ارسال شده":
-        return "bg-sky-50 text-sky-700 border-sky-200";
-      case "تأیید شده (برنده)":
-        return "bg-emerald-50 text-emerald-700 border-emerald-200";
-      case "نیمه برنده":
-        return "bg-teal-50 text-teal-700 border-teal-200";
-      case "لغو شده":
-        return "bg-amber-50 text-amber-700 border-amber-200";
-      case "باخته":
-        return "bg-red-50 text-red-700 border-red-200";
-    }
-  };
   const getProjectDetails = (projId: string) => {
     return projects.find((p) => p.id === projId);
   };
@@ -1950,9 +1918,6 @@ export default function ProformasView({
   // Format Persian currency
   const formatToman = (num: number) => {
     return (num / 10).toLocaleString("fa-IR") + " تومان";
-  };
-  const formatRawRIYAL = (num: number) => {
-    return num.toLocaleString("fa-IR") + " ریال";
   };
   const mapPersianCurrencyToEnglish = (
     cur: string,
@@ -3507,7 +3472,6 @@ export default function ProformasView({
               </div>
 
               {newStatusSelected === "ارسال شده" && (() => {
-                const targetPf = proformas.find((p) => p.id === statusTargetId);
                 return (
                   <div className="space-y-4 border-t border-slate-100 pt-3 animate-fade-in">
                     <div className="space-y-1.5">

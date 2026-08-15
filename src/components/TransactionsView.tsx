@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { useExchangeRates } from '../api/exchangeRates';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import {
   Plus,
@@ -12,25 +11,19 @@ import {
   Trash2,
   FileSpreadsheet,
   X,
-  CreditCard,
-  Building,
-  UserCheck,
   RefreshCw,
   ChevronDown,
   ChevronUp,
   AlertTriangle,
   Globe,
-  DollarSign,
   Maximize2,
   Minimize2,
   Printer,
-  Eye,
   Loader2
 } from 'lucide-react';
-import { Transaction, Customer, Supplier, Project, ERPSettings, Proforma, ExchangeRate } from '../types';
+import { Transaction, Customer, Supplier, Project, ERPSettings, Proforma } from '../types';
 import { getTodayShamsi } from '../dateUtils';
 import { formatERPNumber } from '../numUtils';
-import { calculateProformaFinance, calculateProjectFinance, calculateCompanyFinanceSummary } from '../utils/finance';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
@@ -53,13 +46,12 @@ import type { CustomerRow } from '../api/customers';
 import type { SupplierRow } from '../api/suppliers';
 import type { ProjectRow } from '../api/projects';
 import type { ProformaRow } from '../api/proformas';
-import { customersApi } from '../api/customers';
 import { suppliersApi, detailToSupplier, supplierToWriteInput } from '../api/suppliers';
 import { projectsApi } from '../api/projects';
 import type { ProjectFinanceRow } from '../api/projects';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import { proformasApi } from '../api/proformas';
-import { createCustomerWithLinks, customerToWriteInput, detailToCustomer, findServerDuplicates } from '../api/customerAdapter';
+import { createCustomerWithLinks, findServerDuplicates } from '../api/customerAdapter';
 import { projectToWriteInput, detailToProject } from '../api/projectAdapter';
 import { detailToProforma, proformaToWriteInput } from '../api/proformaAdapter';
 
@@ -88,10 +80,6 @@ export default function TransactionsView({
   settings,
   categoryCompletion,
 }: TransactionsViewProps) {
-  // Rates are read here rather than handed down: they are a short shared list
-  // that changes during the day, and a stale one misprices a document.
-  const { rates: exchangeRates } = useExchangeRates();
-
   // Declared before the pickers below, which are disabled while it is closed.
   const [showModal, setShowModal] = useState(false);
 
@@ -743,7 +731,6 @@ export default function TransactionsView({
       resolvedPartyName = partyNameManual || 'متفرقه';
     }
 
-    const linkedProjName = projects.find(p => p.id === projectId)?.name;
 
     // Financial Transaction Over-Payment Protection Validation
     if (type === 'دریافت' && projectId) {

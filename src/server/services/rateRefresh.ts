@@ -69,18 +69,11 @@ let freshFor: string | null = null;
 let lastFailureAt = 0;
 let inFlight: Promise<number> | null = null;
 
-/** Test seam: forget what has been done today. */
-export function resetRateRefreshState(): void {
-  freshFor = null;
-  lastFailureAt = 0;
-  inFlight = null;
-}
-
 /** Whether every stored rate already carries today's date. */
 async function alreadyRefreshedToday(today: string): Promise<boolean> {
   const rows = await getDb().exchangeRate.findMany({ select: { lastUpdated: true } });
-  // Nothing stored yet is not "fresh": seeding creates the rows, and their
-  // opening values are the hardcoded fallbacks.
+  // Nothing stored yet is not "fresh": seeding creates the rows with opening
+  // values that were current whenever the seed file was last touched.
   if (rows.length === 0) return false;
   return rows.every((r) => toShamsiStr(r.lastUpdated) === today);
 }

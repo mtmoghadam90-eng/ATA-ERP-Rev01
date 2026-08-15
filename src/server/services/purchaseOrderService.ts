@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
-import { AuthUser, canSeeCosts, hasPermission } from "../auth";
+import { AuthUser, hasPermission } from "../auth";
 import { redactPurchaseOrder, redactPurchaseOrders } from "../costs";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";

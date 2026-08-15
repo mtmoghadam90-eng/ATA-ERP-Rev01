@@ -10,9 +10,7 @@ import {
   Trash2, 
   Truck, 
   Anchor, 
-  ShieldAlert,
   CheckCircle2, 
-  DollarSign, 
   Calculator,
   Calendar,
   Clock,
@@ -21,7 +19,6 @@ import {
   PlusCircle,
   MinusCircle,
   RefreshCw,
-  TrendingUp,
   Award,
   Maximize2,
   Minimize2,
@@ -29,9 +26,8 @@ import {
   ChevronDown,
   ChevronLeft
 } from 'lucide-react';
-import { PurchaseOrder, Supplier, Project, Product, PurchaseOrderItem, ExchangeRate, ERPSettings, Proforma, Customer, SupplierInquiry } from '../types';
+import { PurchaseOrder, Supplier, Project, Product, PurchaseOrderItem, ERPSettings, Proforma, Customer, SupplierInquiry } from '../types';
 import { getTodayShamsi, addDaysToShamsi } from '../dateUtils';
-import { getProformaOutcomeStatus } from '../useERPStore';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
@@ -45,6 +41,7 @@ import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/required
 import { getCodeError, cleanCode } from '../utils/documentCodes';
 import { mapCurrencyToEnglish } from '../utils/finance';
 import { ApiError } from '../api/client';
+import { importStageDurations } from '../utils/importTimeline';
 import { detailToPurchaseOrder, purchaseOrdersApi, purchaseOrderToWriteInput, rowToPurchaseOrder } from '../api/purchaseOrders';
 import { usePurchaseOrderList } from '../api/usePurchaseOrderList';
 import { useModuleNotes } from '../api/moduleNotes';
@@ -238,22 +235,6 @@ export default function PurchaseOrdersView({
     }
   };
 
-  /**
-   * Changes the status alone.
-   *
-   * Reaching the received status is what puts the goods into stock, and leaving
-   * it is what takes them back out — the server reconciles that against the
-   * ledger, so this is only ever a status change from here.
-   */
-  const updatePurchaseOrderStatus = async (id: string, status: string) => {
-    try {
-      await purchaseOrdersApi.update(id, { status });
-      list.refresh();
-    } catch (err) {
-      reportError(err, 'تغییر وضعیت سفارش خرید با خطا مواجه شد.');
-    }
-  };
-
   const [alsoRemoveActivities, setAlsoRemoveActivities] = useState(false);
 
   const deletePurchaseOrder = async (id: string, removeActivities = false) => {
@@ -281,7 +262,6 @@ export default function PurchaseOrdersView({
   // they are never part of its write body — folding one into the record and
   // saving it discarded the note.
   const poNotes = useModuleNotes('purchaseOrder', selectedPO?.id, (m) => alert(m));
-  const [isPOModalFullscreen, setIsPOModalFullscreen] = useState(false);
 
   // Editing state
   const [editingPO, setEditingPO] = useState<PurchaseOrder | null>(null);
@@ -1331,20 +1311,26 @@ export default function PurchaseOrdersView({
                   <span className="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-150 font-bold">زمان واقعی فرآیند</span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 text-center">
-                  {[
+                  {importStageDurations([
                     { label: '۱. ثبت سفارش اولیه', date: po.orderDate, color: 'text-slate-700 border-slate-200 bg-slate-50' },
                     { label: '۲. پرداخت صرافی و جاری شدن', date: po.paymentDate, color: 'text-blue-700 border-blue-200 bg-blue-50' },
                     { label: '۳. آماده‌سازی سازنده', date: po.goodsReadyDate, color: 'text-amber-700 border-amber-200 bg-amber-50' },
                     { label: '۴. حمل و ترانزیت بین‌الملل', date: po.shipmentDate, color: 'text-sky-700 border-sky-200 bg-sky-50' },
                     { label: '۵. ترخیص گمرکی نهایی', date: po.clearanceDate, color: 'text-purple-700 border-purple-200 bg-purple-50' },
                     { label: '۶. تحویل نهایی (رسید انبار)', date: po.receivedDate, color: 'text-emerald-700 border-emerald-200 bg-emerald-50' },
-                  ].map((step, idx) => (
+                  ]).map((step, idx) => (
                     <div 
                       key={idx} 
                       className={`p-2 rounded-xl border ${step.date ? `${step.color} shadow-xs` : 'border-slate-100 bg-slate-50/50 opacity-40'} flex flex-col justify-center items-center`}
                     >
                       <span className="text-[10px] font-bold text-slate-500 mb-0.5">{step.label}</span>
                       <span className="text-xs font-extrabold font-mono">{step.date || 'در انتظار...'}</span>
+                      {/* How long this stage itself took. See importStageDurations. */}
+                      {step.days !== null && (
+                        <span className="text-[9px] font-bold text-slate-500 mt-0.5">
+                          {step.days.toLocaleString('fa-IR')} روز
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>
