@@ -45,6 +45,7 @@ import { ACTIVITY_CATEGORY, canonicalCategoryName, sameCategory } from "../src/u
 import { packableLines, outstandingFor } from "../src/utils/packingAllocation";
 import { parseMilestoneRules } from "../src/server/services/milestoneAutomation";
 import { refreshDecision, type RateRefreshState } from "../src/server/services/rateRefresh";
+import { receivedDateImpliesStatus, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
 import type { CustomerRow } from "../src/api/customers";
 
 let pass = 0; const fails: string[] = [];
@@ -607,6 +608,35 @@ eq("an hour later, someone tries again",
   decide({ lastFailureAt: 10 * HOUR - HOUR }), "start");
 eq("but a day already marked fresh still wins over a stale failure",
   decide({ freshFor: "1405/05/20", lastFailureAt: 10 * HOUR - HOUR }), "skip");
+
+/*
+ * A warehouse-arrival date means the order arrived.
+ *
+ * The form offers the arrival date and the status as two separate fields, but
+ * everything downstream — crediting stock, offering to close the project's
+ * category — keys on the status alone. So an order whose whole timeline was
+ * filled in at once had arrived on paper and not at all in the system.
+ */
+head("Purchase order: the arrival date and the status");
+
+const poData = (data: Record<string, unknown>, existing?: string | null) => {
+  const copy = { ...data };
+  receivedDateImpliesStatus(copy, existing);
+  return copy.status;
+};
+
+eq("an arrival date entered on creation receives the order",
+  poData({ receivedDateJalali: "1405/05/20" }), RECEIVED_STATUS);
+eq("and does so even when the form sent an earlier status",
+  poData({ receivedDateJalali: "1405/05/20", status: "در حال حمل" }), RECEIVED_STATUS);
+eq("an order already received is left alone",
+  poData({ receivedDateJalali: "1405/05/20" }, RECEIVED_STATUS), undefined);
+eq("no arrival date changes nothing",
+  poData({ status: "در حال حمل" }), "در حال حمل");
+// One-directional on purpose: removing a date corrects the record of what
+// happened; taking goods back out of stock is a decision, made with the status.
+eq("clearing the date does not un-receive the order",
+  poData({ receivedDateJalali: null }, RECEIVED_STATUS), undefined);
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

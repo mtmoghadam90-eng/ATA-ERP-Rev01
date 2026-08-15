@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getTodayShamsi, gregorianToJalali, jalaliToGregorian } from '../dateUtils';
 
@@ -52,6 +53,8 @@ export default function ShamsiDatePicker({
 }: ShamsiDatePickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
 
   // Calendar view states
   const [currentYear, setCurrentYear] = useState(1405);
@@ -80,13 +83,67 @@ export default function ShamsiDatePicker({
   // Handle outside click to close calendar
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
+      const target = event.target as Node;
+      if (containerRef.current?.contains(target)) return;
+      // The calendar is rendered into <body>, so it is no longer a descendant
+      // of the field — without this, clicking a day closed the calendar before
+      // the day registered.
+      if (popoverRef.current?.contains(target)) return;
+      setIsOpen(false);
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  /*
+   * Where to draw the calendar.
+   *
+   * It used to be `position: absolute` inside the field, which put it at the
+   * mercy of every ancestor: inside a modal it was clipped by the modal's own
+   * rounded, `overflow-hidden` box, and near the bottom of a form half of it
+   * fell below the fold. Both were reported — the payment-date field and the
+   * shipment status modal.
+   *
+   * So it is drawn into <body> at viewport coordinates instead, flipped above
+   * the field when there is not enough room below, and clamped so neither edge
+   * can leave the screen. Recomputed on scroll and resize while open, because
+   * fixed coordinates taken once would drift as the form scrolls under it.
+   */
+  const PANEL_WIDTH = 280;
+  const PANEL_HEIGHT = 320;
+  const GAP = 6;
+
+  useEffect(() => {
+    if (!isOpen) {
+      setPopoverPos(null);
+      return;
+    }
+
+    const place = () => {
+      const anchor = containerRef.current;
+      if (!anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const room = window.innerHeight - rect.bottom;
+
+      const top = room >= PANEL_HEIGHT + GAP || rect.top < PANEL_HEIGHT + GAP
+        ? Math.min(rect.bottom + GAP, window.innerHeight - PANEL_HEIGHT - GAP)
+        : rect.top - PANEL_HEIGHT - GAP;
+
+      const left = Math.min(
+        Math.max(GAP, rect.left),
+        Math.max(GAP, window.innerWidth - PANEL_WIDTH - GAP),
+      );
+      setPopoverPos({ top: Math.max(GAP, top), left });
+    };
+
+    place();
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [isOpen]);
 
   const handleDaySelect = (day: number) => {
     const formattedMonth = String(currentMonth).padStart(2, '0');
@@ -200,9 +257,12 @@ export default function ShamsiDatePicker({
         </button>
       </div>
 
-      {isOpen && (
-        <div 
-          className="absolute left-0 mt-1.5 w-[280px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 p-3 animate-in fade-in-50 slide-in-from-top-1 duration-150"
+      {isOpen && popoverPos && createPortal(
+        <div
+          ref={popoverRef}
+          dir="rtl"
+          style={{ position: 'fixed', top: popoverPos.top, left: popoverPos.left, width: PANEL_WIDTH }}
+          className="bg-white border border-slate-200 rounded-xl shadow-xl z-[100] p-3 animate-in fade-in-50 slide-in-from-top-1 duration-150"
           id="shamsi-datepicker-popover"
         >
           {/* Header selectors */}
@@ -311,7 +371,8 @@ export default function ShamsiDatePicker({
               امروز
             </button>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

@@ -3010,7 +3010,7 @@ export default function ProjectsView({
           <table className="w-full text-right border-collapse min-w-[1000px]">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-xs font-bold">
-                <th className="p-3 w-28">کد پروژه</th>
+                <th className="p-3 w-44">شماره پروژه</th>
                 <th className="p-3">نام و مشخصات پروژه</th>
                 <th className="p-3">کارفرما / مشتری</th>
                 <th className="p-3">ارزش پایپ‌لاین</th>
@@ -3024,7 +3024,7 @@ export default function ProjectsView({
                 <th className="p-2">
                   <input
                     type="text"
-                    placeholder="فیلتر کد..."
+                    placeholder="فیلتر شماره..."
                     value={colFilters.code || ''}
                     onChange={(e) => setColFilters({...colFilters, code: e.target.value})}
                     className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white font-mono"
@@ -3083,7 +3083,10 @@ export default function ProjectsView({
               {filteredProjects.map((p) => (
                 <tr key={p.id} className="hover:bg-slate-50/50 transition">
                   {/* Code */}
-                  <td className="p-3 font-mono font-bold text-slate-500">
+                  {/* The number is what people quote on the phone, so it is not
+                      allowed to wrap mid-code — the column is wide enough for
+                      the format the settings produce. */}
+                  <td className="p-3 font-mono font-bold text-slate-500 whitespace-nowrap">
                     {p.code}
                   </td>
 

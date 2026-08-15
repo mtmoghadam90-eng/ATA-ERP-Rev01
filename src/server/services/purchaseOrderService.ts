@@ -243,6 +243,36 @@ function scalarData(input: PurchaseOrderInput): Record<string, unknown> {
   return { ...out, ...expandDateFields(input as Record<string, unknown>, PO_DATE_FIELDS) };
 }
 
+/**
+ * A warehouse-arrival date means the order arrived.
+ *
+ * Everything downstream keys on the *status*: stock is credited by
+ * `reconcileStock` when it reads RECEIVED_STATUS, and the screen offers to
+ * close the project's purchase-order category on the same transition. The form,
+ * meanwhile, offers the arrival date and the status as two separate fields — so
+ * someone filling in the whole timeline at once, arrival date included, ended
+ * up with an order that had arrived on paper and had not arrived as far as the
+ * system was concerned. Nothing entered stock and no prompt appeared, and the
+ * only way through was to save without the date and then use the status button.
+ *
+ * That is one fact with two switches, and the date is the one people fill in.
+ * So the date promotes the status, here, where every client goes through it.
+ *
+ * Deliberately one-directional: clearing the date does not un-receive an order.
+ * Removing a date is a correction to the record of what happened, and taking
+ * goods back out of stock is a decision, made with the status.
+ */
+export function receivedDateImpliesStatus(
+  data: Record<string, unknown>,
+  existingStatus?: string | null,
+): void {
+  const arrived = data.receivedDateJalali ?? data.receivedDate;
+  if (!arrived) return;
+  const status = (data.status as string | undefined) ?? existingStatus ?? undefined;
+  if (status === RECEIVED_STATUS) return;
+  data.status = RECEIVED_STATUS;
+}
+
 /* ------------------------------ stock receipt ------------------------------ */
 
 /** Key identifying one stock position: a product, optionally a specific SKU. */
@@ -356,11 +386,12 @@ export async function createPurchaseOrder(
   const db = getDb();
 
   const po = await db.$transaction(async (tx) => {
+    const data = { ...scalarData(input), ...computeTotals(input.items ?? [], input) };
+    // An order can be entered already arrived, e.g. when recording history.
+    receivedDateImpliesStatus(data);
+
     const po = await tx.purchaseOrder.create({
-      data: {
-        ...scalarData(input),
-        ...computeTotals(input.items ?? [], input),
-      } as Prisma.PurchaseOrderUncheckedCreateInput,
+      data: data as Prisma.PurchaseOrderUncheckedCreateInput,
     });
 
     await syncChildren({
@@ -566,6 +597,10 @@ export async function updatePurchaseOrder(
       }));
       Object.assign(data, computeTotals(asInput, input));
     }
+
+    // Filling in the arrival date is how people say the goods came in; the
+    // status is what stock and the category prompt read.
+    receivedDateImpliesStatus(data, before.status);
 
     await tx.purchaseOrder.update({
       where: { id },

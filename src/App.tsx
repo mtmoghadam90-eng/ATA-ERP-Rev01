@@ -30,6 +30,7 @@ import { Project } from './types';
 import { useSidebarBadges } from './api/useSidebarBadges';
 import { tasksApi, taskToWriteInput } from './api/tasks';
 import { useCategoryCompletion } from './api/useCategoryCompletion';
+import { useBrowserTab } from './api/useBrowserTab';
 
 export default function App() {
   const store = useERPStore();
@@ -517,6 +518,8 @@ export default function App() {
 
   const activeTemplate = store.settings?.proformaTemplates?.find(t => t.name === store.settings?.activeTemplateId) || store.settings?.proformaTemplates?.[0];
   const logoUrl = activeTemplate?.logoUrl;
+  // Names the tab and points its icon at the stored logo.
+  useBrowserTab(logoUrl);
   const isStandalone = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('standalone') === 'true';
 
   return (

@@ -180,10 +180,34 @@ export default function PurchaseOrdersView({
     }
   };
 
+  /**
+   * Offers to close the project's purchase-order category.
+   *
+   * Raised from the *saved* record, not from what was sent. Filling in the
+   * warehouse-arrival date is how people record that the goods came in, and the
+   * server promotes an order carrying that date to the received status — so the
+   * status that matters is the one that came back.
+   */
+  const offerCategoryClose = (saved: { projectId?: string | null; poNumber?: string | null; status?: string },
+                              previousStatus?: string) => {
+    if (!categoryCompletion || !saved.projectId) return;
+    if (saved.status !== RECEIVED_STATUS || previousStatus === RECEIVED_STATUS) return;
+
+    categoryCompletion.promptCompletion({
+      projectId: saved.projectId,
+      categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
+      message: `سفارش خرید ${saved.poNumber ?? ''} به انبار تحویل شد. آیا می‌خواهید وضعیت فعالیت‌های سفارش خرید این پروژه را به «اتمام کار» تغییر دهید؟`,
+    });
+  };
+
   const addPurchaseOrder = async (po: Partial<PurchaseOrder>) => {
     try {
-      await purchaseOrdersApi.create(purchaseOrderToWriteInput(po));
+      const saved = await purchaseOrdersApi.create(purchaseOrderToWriteInput(po));
       list.refresh();
+      // An order can be entered already arrived — recording a purchase after
+      // the fact, or filling the whole timeline in one go. That used to produce
+      // no prompt at all: only an *update* was ever examined.
+      offerCategoryClose(saved);
     } catch (err) {
       reportError(err, 'ثبت سفارش خرید با خطا مواجه شد.');
     }
@@ -201,19 +225,14 @@ export default function PurchaseOrdersView({
     try {
       const oldStatus = previousStatus ?? list.rows.find(r => r.id === po.id)?.status;
 
-      await purchaseOrdersApi.update(po.id, purchaseOrderToWriteInput(po));
+      const saved = await purchaseOrdersApi.update(po.id, purchaseOrderToWriteInput(po));
       list.refresh();
 
       // Receiving the goods is where this module's work on the project ends.
-      if (categoryCompletion && po.projectId &&
-          oldStatus !== RECEIVED_STATUS &&
-          po.status === RECEIVED_STATUS) {
-        categoryCompletion.promptCompletion({
-          projectId: po.projectId,
-          categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
-          message: `سفارش خرید ${po.poNumber} به انبار تحویل شد. آیا می‌خواهید وضعیت فعالیت‌های سفارش خرید این پروژه را به «اتمام کار» تغییر دهید؟`
-        });
-      }
+      // Judged on what came back: an arrival date filled in on this save
+      // promotes the status server-side, and reading `po.status` — what we
+      // sent — missed exactly that case.
+      offerCategoryClose(saved, oldStatus);
     } catch (err) {
       reportError(err, 'ثبت تغییرات سفارش خرید با خطا مواجه شد.');
     }
@@ -356,6 +375,8 @@ export default function PurchaseOrdersView({
   const [supplierId, setSupplierId] = useState('');
   const [projectId, setProjectId] = useState('');
   const [proformaId, setProformaId] = useState('');
+  /** The linked proforma's full record — its lines, with codes and prices. */
+  const [selectedProforma, setSelectedProforma] = useState<Proforma | null>(null);
 
   /** Pickers, searched on the server and idle while the form is closed. */
   const supplierPicker = useEntitySearch<SupplierRow>({
@@ -427,7 +448,17 @@ export default function PurchaseOrdersView({
 
   const suppliers = supplierPicker.matches as unknown as Supplier[];
   const projects = projectPicker.matches as unknown as Project[];
-  const proformas = proformaPicker.matches as unknown as Proforma[];
+  /*
+   * Left as list rows on purpose, not cast to `Proforma`.
+   *
+   * The cast made every field of the detail record look available on a row that
+   * does not carry it, and the compiler agreed. That is how the picker came to
+   * render «ATA-05-19-C1 - undefined»: it read `customerName`, which only the
+   * client type has — the row carries `customer.companyName`. The full record,
+   * where lines have products, codes and prices, is fetched deliberately into
+   * `selectedProforma` below.
+   */
+  const proformas = proformaPicker.matches;
   const customers = customerPicker.matches as unknown as Customer[];
   /*
    * The catalogue the item grid offers.
@@ -584,6 +615,19 @@ export default function PurchaseOrdersView({
     setSupplierId(po.supplierId);
     setProjectId(po.projectId || '');
     setProformaId(po.proformaId || '');
+    /*
+     * The linked proforma's full record, for the per-line "which proforma line
+     * is this?" picker. Fetched rather than found among the loaded rows: the
+     * picker needs each line's code, and only the detail carries it. Its own
+     * failure is not worth interrupting the edit for — the picker simply has
+     * nothing to offer.
+     */
+    setSelectedProforma(null);
+    if (po.proformaId) {
+      void proformasApi.get(po.proformaId)
+        .then((detail) => setSelectedProforma(detailToProforma(detail)))
+        .catch(() => { /* the picker stays empty */ });
+    }
     setSelectedInquiryId('');
     setPoNumber(po.poNumber || "");
     setOrderDate(po.orderDate);
@@ -653,7 +697,10 @@ export default function PurchaseOrdersView({
    */
   const applyProformaSelection = async (pfId: string) => {
     setProformaId(pfId);
-    if (!pfId) return;
+    if (!pfId) {
+      setSelectedProforma(null);
+      return;
+    }
 
     let pf: Proforma;
     try {
@@ -662,6 +709,10 @@ export default function PurchaseOrdersView({
       reportError(err, 'بارگذاری اطلاعات پیش‌فاکتور با خطا مواجه شد.');
       return;
     }
+    // Kept, because the "which proforma line is this?" picker under each order
+    // line needs the real lines. Read from the list row, it offered names with
+    // an undefined code beside them — a row carries no product code.
+    setSelectedProforma(pf);
 
     if (pf.projectId) setProjectId(pf.projectId);
 
@@ -1140,7 +1191,7 @@ export default function PurchaseOrdersView({
                     className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 justify-center flex-1 lg:flex-none"
                   >
                     <RefreshCw size={13} />
-                    <span>تغییر وضعیت حمل</span>
+                    <span>تغییر وضعیت سفارش</span>
                   </button>
 
                   {/* Edit PO Button */}
@@ -1544,58 +1595,29 @@ export default function PurchaseOrdersView({
                       onChange={(val) => {
                         const projId = val;
                         setProjectId(projId);
-                        if (projId) {
-                          const relatedProformas = proformas.filter(pf => pf.projectId === projId);
-                          const approvedPf = relatedProformas.find(pf => {
-                            const outcome = getProformaOutcomeStatus(pf);
-                            return outcome === 'تأیید شده (برنده)' || outcome === 'نیمه برنده';
-                          });
-                          const targetPf = approvedPf || relatedProformas[0];
-                          if (targetPf) {
-                            setProformaId(targetPf.id);
-                            if (targetPf.items && targetPf.items.length > 0) {
-                              const poItems = targetPf.items.map((pfItem, idx) => {
-                                const prod = products.find(p => p.id === pfItem.productId);
-                                const basePriceForeign = prod ? Math.round(prod.basePriceRIYAL / exchangeRateInput) || 100 : 100;
-                                return {
-                                  id: `poi-${Date.now()}-${idx}`,
-                                  productId: pfItem.productId,
-                                  productName: pfItem.productName,
-                                  productCode: pfItem.productCode,
-                                  brand: pfItem.brand,
-                                  quantity: pfItem.quantity,
-                                  unitPriceForeignCurrency: basePriceForeign,
-                                  totalPriceForeignCurrency: pfItem.quantity * basePriceForeign,
-                                  proformaItemId: pfItem.id,
-                                  proformaItemName: `${pfItem.productName} (تعداد: ${pfItem.quantity})`,
-                                  tagNumber: pfItem.tagNumber
-                                };
-                              });
-                              setItems(poItems);
-                            }
-                          } else {
-                            // No proforma, check if the project itself has needed items
-                            const proj = projects.find(p => p.id === projId);
-                            if (proj && proj.itemsNeeded && proj.itemsNeeded.length > 0) {
-                              const poItems = proj.itemsNeeded.map((neededItem, idx) => {
-                                const prod = products.find(p => p.id === neededItem.productId);
-                                const basePriceForeign = prod ? Math.round(prod.basePriceRIYAL / exchangeRateInput) || 100 : 100;
-                                return {
-                                  id: `poi-${Date.now()}-${idx}`,
-                                  productId: neededItem.productId === 'generic' ? '' : neededItem.productId,
-                                  productName: prod?.displayName || neededItem.name,
-                                  productCode: prod?.code || '',
-                                  brand: prod?.brand || '',
-                                  quantity: neededItem.quantity,
-                                  unitPriceForeignCurrency: basePriceForeign,
-                                  totalPriceForeignCurrency: neededItem.quantity * basePriceForeign,
-                                  tagNumber: neededItem.tagNumber
-                                };
-                              });
-                              setItems(poItems);
-                            }
-                          }
-                        }
+                        if (!projId) return;
+
+                        /*
+                         * Choosing a project picks its winning proforma and
+                         * loads that, through the same path the proforma picker
+                         * uses.
+                         *
+                         * This block used to copy the lines itself, out of the
+                         * *list rows* it had in hand — which carry a name, a
+                         * quantity and a status and nothing else. So every line
+                         * it produced had no product, no code, no brand and no
+                         * tag number, and its price was a flat 100 units of
+                         * foreign currency. The same fault was found and fixed
+                         * in the proforma picker; this second copy of it was
+                         * missed. There is now only one copy.
+                         */
+                        const related = proformas.filter(pf => pf.projectId === projId);
+                        // The row carries the derived outcome; deriving it here
+                        // from line statuses a row does not have cannot work.
+                        const won = related.find(pf =>
+                          pf.outcomeStatus === 'تأیید شده (برنده)' || pf.outcomeStatus === 'نیمه برنده');
+                        const targetPf = won || related[0];
+                        if (targetPf) void applyProformaSelection(targetPf.id);
                       }}
                       required={isFieldRequired(settings, 'purchaseOrders', 'projectId')}
                       onSearchChange={projectPicker.setTerm}
@@ -1643,8 +1665,18 @@ export default function PurchaseOrdersView({
                         setSupplierId(inq.supplierId);
                         if (inq.projectId) setProjectId(inq.projectId);
                         
-                        setCurrency(inq.items[0]?.currency || 'دلار');
-                        
+                        /*
+                         * Through the handler, not by setting the state.
+                         *
+                         * `setCurrency` alone changed the label and left the
+                         * exchange rate on the previous currency's number, so
+                         * an order filled from a euro offer was priced at the
+                         * dollar rate until somebody happened to nudge the
+                         * currency by hand. Everything that changes the
+                         * currency has to go through here.
+                         */
+                        handleCurrencyChange(inq.items[0]?.currency || 'دلار');
+
                         const poItems = inq.items.map((inqItem, idx) => ({
                           id: `poi-${Date.now()}-${idx}`,
                           productId: 'generic',
@@ -1710,7 +1742,10 @@ export default function PurchaseOrdersView({
                     loading={proformaPicker.loading}
                     options={[
                       { value: '', label: 'خرید متفرقه (بدون ارتباط با پیش‌فاکتور)' },
-                      ...proformas.map(pf => ({ value: pf.id, label: `${pf.proformaNumber} - ${pf.customerName}` }))
+                      ...proformas.map(pf => ({
+                        value: pf.id,
+                        label: [pf.proformaNumber, pf.customer?.companyName].filter(Boolean).join(' - '),
+                      }))
                     ]}
                     placeholder="خرید متفرقه (بدون ارتباط با پیش‌فاکتور)"
                   />
@@ -1964,8 +1999,7 @@ export default function PurchaseOrdersView({
                               value={item.proformaItemId || ''}
                               onChange={(e) => {
                                 const pfItemId = e.target.value;
-                                const pfObj = proformas.find(pf => pf.id === proformaId);
-                                const matchedItem = pfObj?.items.find(it => it.id === pfItemId);
+                                const matchedItem = selectedProforma?.items?.find(it => it.id === pfItemId);
                                 
                                 const newItems = [...items];
                                 newItems[idx] = {
@@ -1978,7 +2012,7 @@ export default function PurchaseOrdersView({
                               className="w-full border border-slate-200 rounded-md px-2 py-1 text-[9px] bg-sky-50 text-sky-800 text-right"
                             >
                               <option value="">-- انتخاب ردیف پیش‌فاکتور --</option>
-                              {proformas.find(pf => pf.id === proformaId)?.items.map(it => (
+                              {(selectedProforma?.items ?? []).map(it => (
                                 <option key={it.id} value={it.id}>
                                   {it.productName} (کد: {it.productCode} - تعداد: {it.quantity})
                                 </option>
