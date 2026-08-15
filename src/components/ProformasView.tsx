@@ -60,7 +60,8 @@ import { useProformaList } from "../api/useProformaList";
 import { useUserDirectory } from "../api/useUserDirectory";
 import { useModuleNotes } from "../api/moduleNotes";
 import QuickAddModal from "./QuickAddModal";
-import { toPersianDigits } from "../numUtils";
+import { toPersianDigits, formatMoney } from "../numUtils";
+import { printHtmlDocument } from "../utils/printDocument";
 import ModuleNotesSection from "./ModuleNotesSection";
 import CustomerAgreementAlert from "./CustomerAgreementAlert";
 import { isFieldRequired, renderFieldLabelWithAsterisk } from "../utils/requiredFields";
@@ -1922,10 +1923,15 @@ export default function ProformasView({
         return "bg-slate-100 text-slate-700 border-slate-200";
     }
   };
-  // Format Persian currency
-  const formatToman = (num: number) => {
-    return (num / 10).toLocaleString("fa-IR") + " تومان";
-  };
+  /*
+   * Money, in Latin digits, everywhere.
+   *
+   * These read `toLocaleString("fa-IR")` while the form beside them used a
+   * plain `toLocaleString()`, so one proforma showed «۱۲٬۵۰۰٬۰۰۰» on the
+   * summary and 12,500,000 on the line above it. Amounts get copied into bank
+   * portals and spreadsheets; Persian digits survive neither.
+   */
+  const formatToman = (num: number) => `${formatMoney(num / 10)} تومان`;
   const mapPersianCurrencyToEnglish = (
     cur: string,
   ): "USD" | "EUR" | "AED" | "CNY" | undefined => {
@@ -1935,10 +1941,8 @@ export default function ProformasView({
     if (cur === "یوان") return "CNY";
     return undefined;
   };
-  const formatCurrency = (num: number, cur?: Proforma["currency"]) => {
-    const unit = cur || "ریال";
-    return num.toLocaleString("fa-IR") + " " + unit;
-  };
+  const formatCurrency = (num: number, cur?: Proforma["currency"]) =>
+    `${formatMoney(num)} ${cur || "ریال"}`;
   const activeTemplate = settings?.proformaTemplates?.[0] || {
     name: "قالب پیش‌فرض رسمی",
     companyName: "ابزار تامین ارشیا (سهامی خاص)",
@@ -1964,7 +1968,7 @@ export default function ProformasView({
     showSignatures: true,
     showTotals: true,
   };
-  const downloadProformaHTML = async (pf: Proforma) => {
+  const exportProformaPdf = async (pf: Proforma) => {
     const template = activeTemplate;
     if (!template) return;
     const customerObj = customers.find((c) => c.id === pf.customerId);
@@ -2018,8 +2022,8 @@ export default function ProformasView({
         ${
           pf.proformaType !== "TECHNICAL"
             ? `
-        <td style="padding: 12px; text-align: left; font-family: monospace;">${item.unitPriceRIYAL.toLocaleString("fa-IR")}</td>
-        <td style="padding: 12px; text-align: left; font-family: monospace;">${item.totalPriceRIYAL.toLocaleString("fa-IR")}</td>
+        <td style="padding: 12px; text-align: left; font-family: monospace;">${formatMoney(item.unitPriceRIYAL)}</td>
+        <td style="padding: 12px; text-align: left; font-family: monospace;">${formatMoney(item.totalPriceRIYAL)}</td>
         `
             : ""
         }
@@ -2279,7 +2283,17 @@ export default function ProformasView({
         .page-number:after {
             content: "صفحه " counter(page);
         }
+        /*
+         * A real A4 page, with the margins the document wants.
+         *
+         * There was no size and no margin here, so every print used whatever
+         * the browser felt like — which is where "the PDF quality is bad" came
+         * from: default margins, the browser's own URL-and-date header across
+         * the top, and page breaks landing in the middle of table rows.
+         */
         @page {
+            size: A4;
+            margin: 12mm 10mm 16mm 10mm;
             counter-reset: page 1;
         }
         @media print {
@@ -2288,10 +2302,29 @@ export default function ProformasView({
                 background-color: #ffffff;
                 padding: 0;
                 padding-bottom: 60px;
+                /* Without this the browser drops every background colour and
+                   the document prints as grey text on white. */
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
             }
             .container {
                 box-shadow: none;
                 padding: 0;
+            }
+            /* A row, a signature block or a totals panel split across two pages
+               reads as a mistake. */
+            tr, .signature-box, .totals-box, .terms-box {
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            thead {
+                display: table-header-group;
+            }
+            tfoot {
+                display: table-footer-group;
+            }
+            img {
+                max-width: 100% !important;
             }
             .print-footer {
                 position: fixed;
@@ -2384,26 +2417,26 @@ export default function ProformasView({
             <div class="totals-card">
                 <div class="totals-row">
                     <span style="color: #64748b;">جمع ناخالص ردیف‌ها:</span>
-                    <strong style="font-family: monospace;">${pf.totalAmount.toLocaleString("fa-IR")} ${targetCurrency}</strong>
+                    <strong style="font-family: monospace;">${formatMoney(pf.totalAmount)} ${targetCurrency}</strong>
                 </div>
                 <div class="totals-row">
                     <span style="color: #64748b;">تخفیف کلی (${pf.discountPercent}%):</span>
-                    <strong style="font-family: monospace; color: #dc2626;">-${pf.discountAmount.toLocaleString("fa-IR")} ${targetCurrency}</strong>
+                    <strong style="font-family: monospace; color: #dc2626;">-${formatMoney(pf.discountAmount)} ${targetCurrency}</strong>
                 </div>
                 <div class="totals-row">
                     <span style="color: #64748b;">مالیات بر ارزش افزوده (${pf.taxPercent}%):</span>
-                    <strong style="font-family: monospace;">+${pf.taxAmount.toLocaleString("fa-IR")} ${targetCurrency}</strong>
+                    <strong style="font-family: monospace;">+${formatMoney(pf.taxAmount)} ${targetCurrency}</strong>
                 </div>
                 <div class="totals-row final-amount">
                     <span>مبلغ قابل پرداخت نهایی:</span>
-                    <span style="font-family: monospace;">${pf.finalAmount.toLocaleString("fa-IR")} ${targetCurrency}</span>
+                    <span style="font-family: monospace;">${formatMoney(pf.finalAmount)} ${targetCurrency}</span>
                 </div>
                 <div style="text-align: left; font-size: 11px; color: #64748b; font-weight: bold; margin-top: 8px; line-height: 1.5;">
                     ${
                       targetCurrency !== "ریال"
                         ? `
-                      نرخ تسعیر روز ${targetCurrency}: ${currentRate.toLocaleString("fa-IR")} ریال <br/>
-                      معادل ریالی نهایی: ${equivalentRiyal.toLocaleString("fa-IR")} ریال (${equivalentToman.toLocaleString("fa-IR")} تومان)
+                      نرخ تسعیر روز ${targetCurrency}: ${formatMoney(currentRate)} ریال <br/>
+                      معادل ریالی نهایی: ${formatMoney(equivalentRiyal)} ریال (${formatMoney(equivalentToman)} تومان)
                     `
                         : `
                       معادل ریالی نهایی: ${formattedToman}
@@ -2492,15 +2525,16 @@ export default function ProformasView({
     // are `/uploads/…` paths that resolve to nothing outside the application.
     const standalone = await inlineDocumentAssets(htmlContent);
 
-    const blob = new Blob([standalone], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `پیش_فاکتور_${pf.proformaNumber}.html`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    /*
+     * Straight to the print dialog, where "Save as PDF" lives.
+     *
+     * This used to download the page as an `.html` file, which the user then
+     * had to find, open and print — four steps for one PDF, and a file left in
+     * Downloads that nobody wanted. The same document is printed directly
+     * instead, by the browser's own engine, so the text in the resulting PDF is
+     * real text rather than a picture of text.
+     */
+    await printHtmlDocument(standalone, `پیش‌فاکتور ${pf.proformaNumber}`);
   };
   // Grouping proformas by project
   const proformasByProject = filteredProformas.reduce(
@@ -2543,12 +2577,12 @@ export default function ProformasView({
             <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 pb-6 mb-6 border-b border-slate-200 print:hidden">
               <div className="flex flex-wrap items-center gap-3">
                 <button
-                  onClick={() => { void downloadProformaHTML(selectedProforma); }}
+                  onClick={() => { void exportProformaPdf(selectedProforma); }}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition flex items-center gap-2 shadow-lg shadow-emerald-600/10"
-                  title="دانلود فایل بهینه برای چاپ و خروجی تمیز بدون محدودیت مرورگر"
+                  title="سند در پنجره چاپ باز می‌شود؛ مقصد را روی «ذخیره به صورت PDF» بگذارید"
                 >
                   <FileSpreadsheet size={16} />
-                  خروجی فایل چاپی مستقل (دانلود HTML)
+                  خروجی PDF
                 </button>
 
                 {/* Instant Brand display toggle */}
@@ -2762,10 +2796,10 @@ export default function ProformasView({
                           {selectedProforma.proformaType !== "TECHNICAL" && (
                             <>
                               <td className="p-3 text-left font-mono">
-                                {item.unitPriceRIYAL.toLocaleString()}
+                                {formatMoney(item.unitPriceRIYAL)}
                               </td>
                               <td className="p-3 text-left font-mono">
-                                {item.totalPriceRIYAL.toLocaleString()}
+                                {formatMoney(item.totalPriceRIYAL)}
                               </td>
                             </>
                           )}
@@ -2853,7 +2887,7 @@ export default function ProformasView({
                           const rate = rateObj ? rateObj.rateToRIYAL : 1;
                           const riyalVal = selectedProforma.finalAmount * rate;
                           const tomanVal = Math.round(riyalVal / 10);
-                          return `نرخ تسعیر روز ${cur}: ${rate.toLocaleString("fa-IR")} ریال | معادل: ${riyalVal.toLocaleString("fa-IR")} ریال (${tomanVal.toLocaleString("fa-IR")} تومان)`;
+                          return `نرخ تسعیر روز ${cur}: ${formatMoney(rate)} ریال | معادل: ${formatMoney(riyalVal)} ریال (${formatMoney(tomanVal)} تومان)`;
                         } else {
                           return `معادل ریالی نهایی: ${formatToman(selectedProforma.finalAmount)}`;
                         }
@@ -3204,7 +3238,7 @@ export default function ProformasView({
                                   const rate = rateObj
                                     ? rateObj.rateToRIYAL
                                     : 1;
-                                  return `تسعیر: ${(pf.finalAmount * rate).toLocaleString("fa-IR")} ریال`;
+                                  return `تسعیر: ${formatMoney(pf.finalAmount * rate)} ریال`;
                                 })()}
                               </span>
                             )}
@@ -3758,9 +3792,7 @@ export default function ProformasView({
                           {item.quantity}
                         </td>
                         <td className="py-3 px-4 text-left font-mono text-slate-600">
-                          {(item.quantity * item.unitPriceRIYAL).toLocaleString(
-                            "fa-IR",
-                          )}
+                          {formatMoney(item.quantity * item.unitPriceRIYAL)}
                         </td>
                         <td className="py-3 px-4 text-center">
                           <select
@@ -4944,9 +4976,7 @@ export default function ProformasView({
                                 بهای کل ردیف
                               </label>
                               <div className="font-mono font-bold text-xs text-slate-700 py-1.5 text-left md:text-left">
-                                {(
-                                  item.quantity * item.unitPriceRIYAL
-                                ).toLocaleString()}{" "}
+                                {formatMoney(item.quantity * item.unitPriceRIYAL)}{" "}
                                 {currency}
                               </div>
                             </div>
@@ -5227,7 +5257,7 @@ export default function ProformasView({
                     <div className="flex justify-between items-center flex-wrap gap-2">
                       <span className="text-slate-500">جمع ناخالص اقلام:</span>
                       <span className="font-mono text-slate-700">
-                        {subTotal.toLocaleString()} {currency}
+                        {formatMoney(subTotal)} {currency}
                       </span>
                     </div>
                     {/* Discount percentage input */}
@@ -5253,7 +5283,7 @@ export default function ProformasView({
                         />
                         <span className="text-slate-400">%</span>
                         <span className="font-mono text-red-600 font-semibold">
-                          ({discountAmount.toLocaleString()} {currency})
+                          ({formatMoney(discountAmount)} {currency})
                         </span>
                       </div>
                     </div>
@@ -5280,14 +5310,14 @@ export default function ProformasView({
                         />
                         <span className="text-slate-400">%</span>
                         <span className="font-mono text-slate-600 font-semibold">
-                          ({taxAmount.toLocaleString()} {currency})
+                          ({formatMoney(taxAmount)} {currency})
                         </span>
                       </div>
                     </div>
                     <div className="border-t border-slate-200 pt-2 flex justify-between items-center flex-wrap gap-2 text-sm font-bold text-sky-700">
                       <span>مبلغ کل خالص فاکتور:</span>
                       <span className="font-mono text-base">
-                        {finalAmount.toLocaleString()} {currency}
+                        {formatMoney(finalAmount)} {currency}
                       </span>
                     </div>
                     {currency === "ریال" ? (
@@ -5303,7 +5333,7 @@ export default function ProformasView({
                             : undefined;
                           const rate = rateObj ? rateObj.rateToRIYAL : 1;
                           const riyalAmount = finalAmount * rate;
-                          return `تسعیر همزمان: ${Math.round(riyalAmount).toLocaleString()} ریال (${Math.round(riyalAmount / 10).toLocaleString()} تومان)`;
+                          return `تسعیر همزمان: ${formatMoney(Math.round(riyalAmount))} ریال (${formatMoney(Math.round(riyalAmount / 10))} تومان)`;
                         })()}
                       </div>
                     )}
@@ -5597,9 +5627,18 @@ export default function ProformasView({
           };
 
           return (
-            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg border border-slate-100 overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+            /*
+              Bounded to the viewport and scrolled inside.
+              
+              This panel had a width and no height: a product with a handful of
+              features and a dozen options each grew it straight past the bottom
+              of the screen, taking the تایید and انصراف buttons with it and
+              leaving nothing to scroll. The overlay scrolls, the body scrolls,
+              and the header and footer stay put.
+            */
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-start sm:items-center justify-center z-50 p-2 sm:p-4 overflow-y-auto">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg sm:max-w-2xl border border-slate-100 overflow-hidden my-auto flex flex-col max-h-[calc(100vh-1rem)] sm:max-h-[calc(100vh-2rem)]">
+                <div className="px-4 sm:px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
                   <h3 className="font-bold text-slate-800 flex items-center gap-2">
                     <Settings size={18} className="text-sky-600" />
                     پیکربندی ویژگی‌های کالا
@@ -5613,7 +5652,7 @@ export default function ProformasView({
                   </button>
                 </div>
 
-                <div className="p-6 space-y-5">
+                <div className="p-4 sm:p-6 space-y-5 overflow-y-auto flex-1">
                   <div className="bg-sky-50 text-sky-800 p-3 rounded-lg text-xs leading-relaxed border border-sky-100 mb-4">
                     در این بخش می‌توانید مقادیر ویژگی‌های تعریف شده برای محصول{" "}
                     <span className="font-bold">{prod.displayName}</span> را
@@ -5689,7 +5728,9 @@ export default function ProformasView({
                         <label className="text-sm font-bold text-slate-700">
                           {feature.name}
                         </label>
-                        <div className="flex flex-col gap-2 mt-2">
+                        {/* One column on a phone, two once there is room: a
+                            feature with a dozen sizes was a very long list. */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 mt-2">
                           {feature.options.map((opt) => {
                             const isSelected = (
                               configSelections[feature.id] || []
@@ -5751,7 +5792,7 @@ export default function ProformasView({
                   })()}
                 </div>
 
-                <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+                <div className="p-4 border-t border-slate-100 bg-slate-50 flex flex-wrap justify-end gap-3 shrink-0">
                   <button
                     type="button"
                     onClick={() => setShowConfigModal(null)}
@@ -5762,7 +5803,7 @@ export default function ProformasView({
                   <button
                     type="button"
                     onClick={handleConfirmConfig}
-                    className="px-6 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-bold shadow-sm transition"
+                    className="flex-1 sm:flex-none px-6 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-bold shadow-sm transition"
                   >
                     تایید و افزودن به مشخصات فنی
                   </button>

@@ -7,6 +7,26 @@ export function toPersianDigits(str: string | number): string {
 }
 
 /**
+ * An amount, in Latin digits with Latin thousands separators.
+ *
+ * Money on a document is read, compared and copied into other systems — a bank
+ * portal, a spreadsheet, an email — and Persian digits survive none of that
+ * well. Figures were also inconsistent: `toLocaleString("fa-IR")` in one place
+ * and a plain number in another, so a single proforma showed «۱۲٬۵۰۰٬۰۰۰» on
+ * one line and 12,500,000 on the next.
+ *
+ * Counts in prose are a different thing and stay Persian — "نمایش ۵ از ۱۲" reads
+ * as a sentence, not as a figure to be copied.
+ */
+export function formatMoney(value: number | string | null | undefined): string {
+  const n = typeof value === "number" ? value : Number(value ?? 0);
+  if (!Number.isFinite(n)) return "0";
+  // en-US rather than a hand-rolled regex: it groups correctly for negatives
+  // and keeps decimals when a figure has them.
+  return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+/**
  * Advanced Document and Code Generator for Abzar Tamin Arshia ERP
  * Parses dynamic templates with multiple custom placeholders to construct professional coding systems.
  */

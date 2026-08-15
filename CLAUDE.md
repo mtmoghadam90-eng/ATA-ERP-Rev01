@@ -64,6 +64,8 @@ The flat JSON document store this replaced is **gone**: no `database.json`, no `
 - Tailwind v4 (via `@tailwindcss/vite`), dark mode through a `dark` class on `<html>` persisted to `localStorage`.
 - Types are centralized in `src/types.ts`; seed data in `src/seedData.ts` (but `SEED_USERS` and `SEED_PROJECT_CATEGORY_GROUPS` live in `useERPStore.ts` and are imported by `server.ts` for seeding).
 - Excel import/export via `exceljs`/`xlsx` in `src/excelUtils.ts`; financial math in `src/utils/finance.ts`.
+- **Printed documents are HTML printed by the browser, never rasterised.** Each screen builds a whole standalone page, `inlineDocumentAssets` turns its `/uploads/…` paths into data URIs, and `printHtmlDocument` (`src/utils/printDocument.ts`) writes it into a hidden iframe and prints that. The resulting PDF carries embedded fonts and real selectable text — verified. Do **not** reach for html2canvas/jsPDF: those photograph the page, and Persian text photographed at screen resolution is the poor quality this replaced. Each document owns its `@page { size: A4; margin: … }` and `print-color-adjust: exact`; without them the browser prints its own URL-and-date header and drops every background colour.
+- **Money is formatted by `formatMoney` (`src/numUtils.ts`), in Latin digits.** Amounts get copied into bank portals and spreadsheets. `toLocaleString("fa-IR")` on an amount is a bug; on a count in prose («نمایش ۵ از ۱۲») it is correct.
 
 ## SQL Server
 

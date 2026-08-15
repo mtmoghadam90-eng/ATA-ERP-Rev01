@@ -34,6 +34,7 @@ import {
 import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import { inlineDocumentAssets } from '../utils/inlineAssets';
+import { printHtmlDocument } from '../utils/printDocument';
 import {
   packableLines, packingRowKey,
   outstandingFor as packingOutstandingFor,
@@ -545,7 +546,7 @@ export default function PackagingDeliveryView({
    * one file — the pages are separated by a print page break, which is what
    * makes "print all" produce the right stack.
    */
-  const downloadPackagingDeliveryHTML = async (
+  const exportPackagingDeliveryPdf = async (
     delivery: PackagingDelivery,
     perBox = false,
   ) => {
@@ -867,7 +868,11 @@ export default function PackagingDeliveryView({
         .page-number:after {
             content: "صفحه " counter(page);
         }
+        /* A real A4 page. Without a size and a margin the browser used its own,
+           and printed its URL-and-date header across the top of every sheet. */
         @page {
+            size: A4;
+            margin: 12mm 10mm 16mm 10mm;
             counter-reset: page 1;
         }
         @media print {
@@ -876,7 +881,17 @@ export default function PackagingDeliveryView({
                 background-color: #ffffff;
                 padding: 0;
                 padding-bottom: 60px;
+                /* Or every background colour is dropped and the sheet prints
+                   as grey text on white. */
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
             }
+            tr, .signature-box, .box-sheet {
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            thead { display: table-header-group; }
+            img { max-width: 100% !important; }
             .container {
                 box-shadow: none;
                 padding: 0;
@@ -926,17 +941,14 @@ ${sheets}
     // inside the document instead.
     const standalone = await inlineDocumentAssets(htmlContent);
 
-    const blob = new Blob([standalone], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = perBox
-      ? `پکینگ_لیست_${delivery.packingListNumber}_به‌تفکیک_جعبه.html`
-      : `پکینگ_لیست_${delivery.packingListNumber}.html`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    // Printed directly rather than downloaded as an .html file the user then
+    // has to find and open. See `printHtmlDocument`.
+    await printHtmlDocument(
+      standalone,
+      perBox
+        ? `پکینگ لیست ${delivery.packingListNumber} — به تفکیک جعبه`
+        : `پکینگ لیست ${delivery.packingListNumber}`,
+    );
   };
   /**
    * Loads a packing list into the form.
@@ -2318,20 +2330,20 @@ ${sheets}
               <div className="flex gap-2 justify-end">
                 <button
                   type="button"
-                  onClick={() => { void downloadPackagingDeliveryHTML(selectedDelivery); }}
+                  onClick={() => { void exportPackagingDeliveryPdf(selectedDelivery); }}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
                 >
                   <Printer size={15} />
-                  خروجی یکجا (همه جعبه‌ها)
+                  خروجی PDF (همه جعبه‌ها)
                 </button>
                 <button
                   type="button"
-                  onClick={() => { void downloadPackagingDeliveryHTML(selectedDelivery, true); }}
+                  onClick={() => { void exportPackagingDeliveryPdf(selectedDelivery, true); }}
                   className="bg-sky-600 hover:bg-sky-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition flex items-center gap-1.5 shadow-sm"
                   title="یک برگه جداگانه برای هر جعبه، جهت چاپ و الصاق روی همان جعبه"
                 >
                   <Package size={15} />
-                  خروجی به تفکیک هر جعبه
+                  خروجی PDF به تفکیک هر جعبه
                 </button>
                 <button
                   type="button"
