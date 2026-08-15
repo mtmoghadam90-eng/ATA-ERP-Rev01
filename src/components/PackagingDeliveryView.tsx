@@ -943,11 +943,12 @@ ${sheets}
 
     // Printed directly rather than downloaded as an .html file the user then
     // has to find and open. See `printHtmlDocument`.
+    // Named after the document number, not the application — see printDocument.
     await printHtmlDocument(
       standalone,
       perBox
-        ? `پکینگ لیست ${delivery.packingListNumber} — به تفکیک جعبه`
-        : `پکینگ لیست ${delivery.packingListNumber}`,
+        ? `${delivery.packingListNumber} - به تفکیک جعبه`
+        : delivery.packingListNumber,
     );
   };
   /**

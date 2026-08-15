@@ -24,6 +24,21 @@
 const SETTLE_MS = 350;
 
 /**
+ * The name the browser suggests for the saved PDF.
+ *
+ * Chrome takes it from the **top-level** document's title, not the iframe's, so
+ * every document this application printed was offered as «پنل کاری ارشیا.pdf» —
+ * the application's own tab title. The title is swapped for the document's
+ * number while the dialog is open and put back afterwards.
+ */
+function swapDocumentTitle(title: string | undefined): () => void {
+  if (!title || typeof document === "undefined") return () => {};
+  const previous = document.title;
+  document.title = title;
+  return () => { document.title = previous; };
+}
+
+/**
  * Prints a complete HTML document.
  *
  * `html` must be a whole page, with its own `<style>` — that is what these
@@ -46,10 +61,12 @@ export function printHtmlDocument(html: string, title?: string): Promise<void> {
     frame.style.border = "0";
     document.body.appendChild(frame);
 
+    let restoreTitle = () => {};
     const done = () => {
       // Left on the page briefly: removing the iframe while the print dialog
-      // still holds it produces a blank sheet in Safari.
-      setTimeout(() => frame.remove(), 1000);
+      // still holds it produces a blank sheet in Safari. The title goes back on
+      // the same beat — the dialog has read it by then.
+      setTimeout(() => { frame.remove(); restoreTitle(); }, 1000);
       resolve();
     };
 
@@ -72,7 +89,10 @@ export function printHtmlDocument(html: string, title?: string): Promise<void> {
       try {
         const win = frame.contentWindow;
         if (!win) { done(); return; }
-        if (title) { try { win.document.title = title; } catch { /* same-origin only */ } }
+        if (title) {
+          try { win.document.title = title; } catch { /* same-origin only */ }
+          restoreTitle = swapDocumentTitle(title);
+        }
         win.focus();
         win.print();
       } catch {

@@ -199,3 +199,29 @@ export function buildCustomerOptionsFromSubset(
     label: getCustomerDisplayLabel(c, allCustomers, ambiguous, subset),
   }));
 }
+
+/**
+ * The family name alone, for a document that addresses someone formally.
+ *
+ * A proforma reads «سرکار خانم مهندس شریفی», not «… مارال شریفی» — the prefix
+ * already carries the courtesy, and the given name beside it is what a letter
+ * would never print. Records store the name both ways: as `lastName` when the
+ * contact is a customer record of their own, and as one string when it was
+ * typed into the document, so both are accepted and the structured one wins.
+ *
+ * A single-word name is returned as it is: it is either the family name
+ * already, or all there is.
+ */
+export function familyNameOnly(
+  fullName: string | undefined,
+  lastName?: string | undefined,
+): string {
+  const stored = String(lastName ?? "").trim();
+  if (stored) return stored;
+
+  const parts = String(fullName ?? "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) return parts[0] ?? "";
+  // Everything after the given name: Persian family names are often two words
+  // («کاظمی نسب»), and dropping all but the last would rename the person.
+  return parts.slice(1).join(" ");
+}

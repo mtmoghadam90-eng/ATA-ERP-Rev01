@@ -65,7 +65,7 @@ import { printHtmlDocument } from "../utils/printDocument";
 import ModuleNotesSection from "./ModuleNotesSection";
 import CustomerAgreementAlert from "./CustomerAgreementAlert";
 import { isFieldRequired, renderFieldLabelWithAsterisk } from "../utils/requiredFields";
-import { buildCustomerOptions, buildCustomerOptionsFromSubset } from "../utils/customerLabel";
+import { buildCustomerOptions, buildCustomerOptionsFromSubset, familyNameOnly } from "../utils/customerLabel";
 import { getContactInfoError } from "../utils/customerValidation";
 import { getCodeError, cleanCode } from "../utils/documentCodes";
 import type { DuplicateMatch } from "../utils/customerDuplicates";
@@ -1977,6 +1977,13 @@ export default function ProformasView({
     const template = activeTemplate;
     if (!template) return;
     const customerObj = customers.find((c) => c.id === pf.customerId);
+    // The document addresses the contact by family name only — see familyNameOnly.
+    const contactRecord = pf.contactCustomerId
+      ? customers.find((c) => c.id === pf.contactCustomerId)
+      : undefined;
+    const contactFamilyName =
+      familyNameOnly(pf.contactName, contactRecord?.lastName)
+      || familyNameOnly(customerObj?.contactName, customerObj?.contactLastName);
     const creatorUser = pf.creatorId
       ? users.find((u) => u.id === pf.creatorId)
       : currentUser;
@@ -2002,19 +2009,22 @@ export default function ProformasView({
               : undefined;
         return `
       <tr style="border-bottom: 1px solid #e2e8f0;">
-        <td style="padding: 12px; text-align: center; font-family: monospace; vertical-align: top;">${index + 1}</td>
+        <td style="padding: 10px; text-align: center; font-family: monospace; vertical-align: middle;">${index + 1}</td>
         <!-- The picture has a column of its own, and the name heads the
              specification it belongs to — the same shape as the preview on
              screen. Side by side, the name crowded a 48px thumbnail and the
              specs read as though they belonged to nothing. -->
-        <td style="padding: 12px; text-align: center; vertical-align: top;">
+        <td style="padding: 10px; text-align: center; vertical-align: middle;">
           ${
             imgToRender
-              ? `<img src="${imgToRender}" alt="${item.productName}" style="width: 110px; height: 110px; object-fit: contain; border-radius: 8px; border: 1px solid #e2e8f0; background-color: #ffffff;" referrerPolicy="no-referrer" />`
-              : `<div style="width: 110px; height: 110px; border: 1px dashed #e2e8f0; border-radius: 8px; background-color: #f8fafc; color: #94a3b8; font-size: 10px; display: flex; align-items: center; justify-content: center; margin: 0 auto;">بدون تصویر</div>`
+              ? `<img src="${imgToRender}" alt="${item.productName}" style="width: 92px; height: 92px; object-fit: contain; border-radius: 8px; border: 1px solid #e2e8f0; background-color: #ffffff;" referrerPolicy="no-referrer" />`
+              : `<div style="width: 92px; height: 92px; border: 1px dashed #e2e8f0; border-radius: 8px; background-color: #f8fafc; color: #94a3b8; font-size: 10px; display: flex; align-items: center; justify-content: center; margin: 0 auto;">بدون تصویر</div>`
           }
         </td>
-        <td style="padding: 12px; vertical-align: top;">
+        <!-- The specification is the one column that stays top-aligned: it is a
+             block of text, and centring it against a short neighbour would
+             leave the product name floating in the middle of the row. -->
+        <td style="padding: 10px; vertical-align: top;">
           <div style="font-weight: bold; color: #1e293b; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid #f1f5f9;">
             ${item.productName}${overrideShowBrand && item.brand ? ` <span style="color: #4f46e5; font-size: 11px;">(${item.brand})</span>` : ""}${item.tagNumber ? ` <span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 1px 5px; border-radius: 4px;">تگ: ${item.tagNumber}</span>` : ""}
           </div>
@@ -2022,13 +2032,13 @@ export default function ProformasView({
             ${item.techSpecs || "-"}
           </div>
         </td>
-        <td style="padding: 12px; text-align: center; font-family: monospace; vertical-align: top;">${item.quantity}</td>
-        <td style="padding: 12px; text-align: center; vertical-align: top;">${prod?.unit || "عدد"}</td>
+        <td style="padding: 10px; text-align: center; font-family: monospace; vertical-align: middle;">${item.quantity}</td>
+        <td style="padding: 10px; text-align: center; vertical-align: middle;">${prod?.unit || "عدد"}</td>
         ${
           pf.proformaType !== "TECHNICAL"
             ? `
-        <td style="padding: 12px; text-align: left; font-family: monospace;">${formatMoney(item.unitPriceRIYAL)}</td>
-        <td style="padding: 12px; text-align: left; font-family: monospace;">${formatMoney(item.totalPriceRIYAL)}</td>
+        <td style="padding: 10px; text-align: left; font-family: monospace; vertical-align: middle;">${formatMoney(item.unitPriceRIYAL)}</td>
+        <td style="padding: 10px; text-align: left; font-family: monospace; vertical-align: middle;">${formatMoney(item.totalPriceRIYAL)}</td>
         `
             : ""
         }
@@ -2121,7 +2131,7 @@ export default function ProformasView({
         .section-card {
             border: 1px solid #e2e8f0;
             border-radius: 8px;
-            padding: 12px 14px;
+            padding: 10px 12px;
             background-color: #f8fafc;
             page-break-inside: avoid;
             break-inside: avoid;
@@ -2213,7 +2223,7 @@ export default function ProformasView({
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 5px 0;
+            padding: 3px 0;
             border-bottom: 1px solid #e2e8f0;
         }
         .totals-row:last-child {
@@ -2227,21 +2237,30 @@ export default function ProformasView({
             padding-top: 8px;
             margin-top: 4px;
         }
+        /*
+         * The seal and signature, kept small on purpose.
+         *
+         * A proforma with a single item was printing on two pages, with nothing
+         * on the second but this block — the stamp panel alone stood 100px tall
+         * with 45px of margin above it. Everything here is sized so that one
+         * item, its photograph and its specifications, the totals and the seal
+         * all land on the same sheet.
+         */
         .signatures {
             display: flex;
             justify-content: flex-end;
-            margin-top: 25px;
+            margin-top: 10px;
             text-align: center;
             page-break-inside: avoid;
             break-inside: avoid;
         }
         .signature-box {
-            padding-top: 20px;
+            padding-top: 4px;
             page-break-inside: avoid;
             break-inside: avoid;
         }
         .signature-title {
-            font-size: 11px;
+            font-size: 10px;
             color: #64748b;
             font-weight: bold;
             margin-bottom: 30px;
@@ -2382,7 +2401,7 @@ export default function ProformasView({
             <h4 class="section-title">مشخصات خریدار</h4>
             <div class="buyer-horizontal-row">
                 <div><span style="color: #64748b;">نام خریدار / شرکت:</span> <strong>${customerObj?.customerType === "حقیقی" && pf.contactPrefix ? pf.contactPrefix + " " : ""}${pf.customerName}</strong></div>
-                <div><span style="color: #64748b;">مخاطب:</span> ${customerObj?.customerType === "حقوقی" && pf.contactPrefix ? pf.contactPrefix + " " : ""}${pf.contactName || (customerObj ? `${customerObj.contactName || ""} ${customerObj.contactLastName || ""}`.trim() : "") || "نماینده خریدار"}</div>
+                <div><span style="color: #64748b;">مخاطب:</span> ${customerObj?.customerType === "حقوقی" && pf.contactPrefix ? pf.contactPrefix + " " : ""}${contactFamilyName || "نماینده خریدار"}</div>
             </div>
         </div>
         <!-- Items Table -->
@@ -2458,20 +2477,20 @@ export default function ProformasView({
           template.showSignatures
             ? `
         <div class="signatures">
-            <div class="signature-box" style="width: 320px; border: 1px solid #f1f5f9; border-radius: 12px; padding: 12px; background-color: #fafafa;">
-                <div class="signature-title" style="margin-bottom: 8px;">مهر و امضای صادرکننده پیش‌فاکتور</div>
-                <div class="signature-name" style="margin-bottom: 12px;">${creatorUser ? creatorUser.fullName : template.signatureLabel1}</div>
-                <div style="margin-top: 10px;">
+            <div class="signature-box" style="width: 280px; border: 1px solid #f1f5f9; border-radius: 12px; padding: 8px 10px; background-color: #fafafa;">
+                <div class="signature-title" style="margin-bottom: 4px;">مهر و امضای صادرکننده پیش‌فاکتور</div>
+                <div class="signature-name" style="margin-bottom: 6px;">${creatorUser ? creatorUser.fullName : template.signatureLabel1}</div>
+                <div style="margin-top: 4px;">
                     ${
                       template.companySealUrl
                         ? `
-                        <div style="display: flex; justify-content: space-evenly; align-items: center; gap: 10px; height: 100px; background-color: #ffffff; border-radius: 8px; border: 1px dashed #cbd5e1; padding: 4px;">
+                        <div style="display: flex; justify-content: space-evenly; align-items: center; gap: 8px; height: 68px; background-color: #ffffff; border-radius: 8px; border: 1px dashed #cbd5e1; padding: 3px;">
                             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1;">
-                                <span style="font-size: 8px; color: #94a3b8; font-weight: bold; margin-bottom: 4px;">امضای صادرکننده</span>
+                                <span style="font-size: 8px; color: #94a3b8; font-weight: bold; margin-bottom: 2px;">امضای صادرکننده</span>
                                 ${
                                   creatorUser && creatorUser.signatureImage
                                     ? `
-                                    <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 70px; max-width: 120px; object-fit: contain;" referrerPolicy="no-referrer" />
+                                    <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 52px; max-width: 100px; object-fit: contain;" referrerPolicy="no-referrer" />
                                 `
                                     : `
                                     <span style="font-size: 10px; color: #cbd5e1; font-weight: bold;">فاقد امضا</span>
@@ -2479,18 +2498,18 @@ export default function ProformasView({
                                 }
                             </div>
                             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; border-right: 1px solid #f1f5f9; padding-right: 8px;">
-                                <span style="font-size: 8px; color: #94a3b8; font-weight: bold; margin-bottom: 4px;">مهر شرکت</span>
-                                <img src="${template.companySealUrl}" alt="Company Seal" style="max-height: 70px; max-width: 110px; object-fit: contain; transform: rotate(-3deg);" referrerPolicy="no-referrer" />
+                                <span style="font-size: 8px; color: #94a3b8; font-weight: bold; margin-bottom: 2px;">مهر شرکت</span>
+                                <img src="${template.companySealUrl}" alt="Company Seal" style="max-height: 52px; max-width: 92px; object-fit: contain; transform: rotate(-3deg);" referrerPolicy="no-referrer" />
                             </div>
                         </div>
                     `
                         : `
-                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100px; background-color: #ffffff; border-radius: 8px; border: 1px dashed #cbd5e1; padding: 4px;">
-                            <span style="font-size: 8px; color: #94a3b8; font-weight: bold; margin-bottom: 4px;">امضای صادرکننده</span>
+                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 68px; background-color: #ffffff; border-radius: 8px; border: 1px dashed #cbd5e1; padding: 3px;">
+                            <span style="font-size: 8px; color: #94a3b8; font-weight: bold; margin-bottom: 2px;">امضای صادرکننده</span>
                             ${
                               creatorUser && creatorUser.signatureImage
                                 ? `
-                                <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 75px; max-width: 180px; object-fit: contain;" referrerPolicy="no-referrer" />
+                                <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 54px; max-width: 170px; object-fit: contain;" referrerPolicy="no-referrer" />
                             `
                                 : `
                                 <span style="font-size: 10px; color: #cbd5e1; font-weight: bold;">فاقد امضا</span>
@@ -2539,7 +2558,9 @@ export default function ProformasView({
      * instead, by the browser's own engine, so the text in the resulting PDF is
      * real text rather than a picture of text.
      */
-    await printHtmlDocument(standalone, `پیش‌فاکتور ${pf.proformaNumber}`);
+    // The saved file is named after the document, not after the application —
+    // «ATA-05-26-C1.pdf», which is what it is filed under everywhere else.
+    await printHtmlDocument(standalone, pf.proformaNumber);
   };
   // Grouping proformas by project
   const proformasByProject = filteredProformas.reduce(
