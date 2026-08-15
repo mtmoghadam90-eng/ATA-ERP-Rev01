@@ -107,7 +107,10 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
         input.proformaNumber = await nextDocumentNumber({
           formatKey: "proformaFormat", startSeqKey: "proformaStartSeq",
           fallbackFormat: "QT-{PROJECT}-{SEQ:2}",
-          count: () => db.proforma.count(),
+          existing: async (prefix) => (await db.proforma.findMany({
+            where: { proformaNumber: { startsWith: prefix } },
+            select: { proformaNumber: true },
+          })).map((r) => r.proformaNumber),
           taken: async (v) => !!(await db.proforma.findUnique({
             where: { proformaNumber: v }, select: { id: true },
           })),

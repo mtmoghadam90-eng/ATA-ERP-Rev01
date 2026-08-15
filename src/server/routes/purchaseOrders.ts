@@ -111,7 +111,10 @@ export function registerPurchaseOrderRoutes(app: express.Express, deps: RouteDep
         input.poNumber = await nextDocumentNumber({
           formatKey: "poFormat", startSeqKey: "poStartSeq",
           fallbackFormat: "PO-{YYYY}-{SEQ:4}",
-          count: () => db.purchaseOrder.count(),
+          existing: async (prefix) => (await db.purchaseOrder.findMany({
+            where: { poNumber: { startsWith: prefix } },
+            select: { poNumber: true },
+          })).map((r) => r.poNumber),
           taken: async (v) => !!(await db.purchaseOrder.findUnique({
             where: { poNumber: v }, select: { id: true },
           })),

@@ -49,6 +49,7 @@ import { refreshDecision, type RateRefreshState } from "../src/server/services/r
 import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
 import { REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
 import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
+import { nextSequence, renderAround } from "../src/server/documentNumbers";
 import { formatMoney } from "../src/numUtils";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -953,6 +954,51 @@ head("Document lines: no invented catalogue references");
   }
   ok("no screen invents a SKU id the database will not use",
     invented.length === 0, invented);
+}
+
+/*
+ * Document numbers count their own series, not the whole table.
+ *
+ * Every template here is scoped by something — a project code, a year and
+ * month, a transaction type — but the sequence was `startSeq + <rows in the
+ * table>`. So issuing a proforma on one project advanced the next number of
+ * every other project, and a number could be skipped without ever having been
+ * used: a save that failed and was retried came back «…-C2» while «…-C1» never
+ * existed. That is what "the number was burnt" looks like from the outside.
+ */
+head("Document numbers: the sequence follows the prefix");
+{
+  const around = renderAround("QT-{PROJECT}-{SEQ:2}", { projectCode: "ATA-05-19" });
+  eq("the prefix is the template around its sequence", around?.head, "QT-ATA-05-19-");
+  eq("a template with no sequence has no series", renderAround("QT-FIXED", {}), null);
+
+  const { head: h, tail: t } = around!;
+  eq("an unused series starts at startSeq", nextSequence(h, t, [], 1), 1);
+  eq("and startSeq is a floor, not only an opening value",
+    nextSequence(h, t, ["QT-ATA-05-19-03"], 1000), 1000);
+  eq("one past the highest already issued",
+    nextSequence(h, t, ["QT-ATA-05-19-01", "QT-ATA-05-19-07"], 1), 8);
+  eq("another project's numbers do not advance this one",
+    nextSequence(h, t, ["QT-ATA-06-01-09", "QT-ATA-06-01-12"], 1), 1);
+  eq("a number replaced by the customer's own reference is not part of the series",
+    nextSequence(h, t, ["QT-ATA-05-19-ABC"], 1), 1);
+
+  // The observed case, exactly: nothing issued yet, so the next number is C1 —
+  // and it stays C1 until a document actually carries it.
+  const c = renderAround("{PROJECT}-{CUSTOMER}{SEQ}", { projectCode: "ATA-05-19" })!;
+  eq("a project with no proforma yet gets its first number", nextSequence(c.head, c.tail, [], 1), 1);
+  eq("and the second only once the first exists",
+    nextSequence(c.head, c.tail, ["ATA-05-19-C1"], 1), 2);
+
+  // No route may go back to counting rows.
+  const routeDir = "src/server/routes";
+  const counters = readdirSync(routeDir)
+    .filter((f) => f.endsWith(".ts"))
+    .flatMap((f) => {
+      const src = readFileSync(joinPath(routeDir, f), "utf-8");
+      return src.includes("nextDocumentNumber") && /count:\s*\(\)\s*=>/.test(src) ? [f] : [];
+    });
+  ok("no document number is generated from a table count", counters.length === 0, counters);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

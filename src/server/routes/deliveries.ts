@@ -117,7 +117,10 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
         input.packingListNumber = await nextDocumentNumber({
           formatKey: "packingListFormat", startSeqKey: "packingListStartSeq",
           fallbackFormat: "PL-{PROJECT}-{SEQ:3}",
-          count: () => db.packagingDelivery.count(),
+          existing: async (prefix) => (await db.packagingDelivery.findMany({
+            where: { packingListNumber: { startsWith: prefix } },
+            select: { packingListNumber: true },
+          })).map((r) => r.packingListNumber),
           taken: async (v) => !!(await db.packagingDelivery.findUnique({
             where: { packingListNumber: v }, select: { id: true },
           })),

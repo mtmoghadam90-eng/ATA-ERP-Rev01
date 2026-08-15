@@ -77,7 +77,7 @@ The recurring pattern, and the one to expect in anything added next: a screen ho
 
 - **the winning supplier inquiries of a project** — found by walking every inquiry in memory (a project may have several: one supplier per part of the scope)
 - **how much of a won item is still unshipped** — promised minus already shipped, across every proforma and delivery
-- **document numbers** — `startSeq + collection.length`, which under paging is one page
+- **document numbers** — `startSeq + collection.length`, which under paging is one page. The count moved to SQL but the arithmetic stayed, and it was wrong in a second way: every template is scoped (a project code, a year and month, a transaction type) while the count was the whole table, so a document on one project advanced the next number of every other, and a failed-then-retried save came back «…-C2» with «…-C1» never issued. `nextSequence`/`renderAround` in `src/server/documentNumbers.ts` count the numbers already issued under the same rendered prefix; `startSeq` is the floor. Covered by `test:rules`.
 - **an after-sales record's status** — rolled up from its rows, and the column the grid filters on
 - **dashboard revenue** — eight collections reduced to a dozen numbers
 

@@ -241,7 +241,10 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
         input.code = await nextDocumentNumber({
           formatKey: "projectFormat", startSeqKey: "projectStartSeq",
           fallbackFormat: "ATA-{YYYY}-{SEQ:3}",
-          count: () => db.project.count(),
+          existing: async (prefix) => (await db.project.findMany({
+            where: { code: { startsWith: prefix } },
+            select: { code: true },
+          })).map((r) => r.code),
           taken: async (v) => !!(await db.project.findUnique({ where: { code: v }, select: { id: true } })),
           context: { customerName: customer?.companyName },
         });

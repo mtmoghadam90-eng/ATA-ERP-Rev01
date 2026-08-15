@@ -118,7 +118,10 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
         input.documentNumber = await nextDocumentNumber({
           formatKey: "transactionFormat", startSeqKey: "transactionStartSeq",
           fallbackFormat: "TR-{TYPE}-{YYYY}{MM}-{SEQ:3}",
-          count: () => db.transaction.count(),
+          existing: async (prefix) => (await db.transaction.findMany({
+            where: { documentNumber: { startsWith: prefix } },
+            select: { documentNumber: true },
+          })).map((r) => r.documentNumber),
           taken: async (v) => !!(await db.transaction.findUnique({
             where: { documentNumber: v }, select: { id: true },
           })),
@@ -194,7 +197,10 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
         documentNumber = await nextDocumentNumber({
           formatKey: "transactionFormat", startSeqKey: "transactionStartSeq",
           fallbackFormat: "TR-{TYPE}-{YYYY}{MM}-{SEQ:3}",
-          count: () => db.transaction.count(),
+          existing: async (prefix) => (await db.transaction.findMany({
+            where: { documentNumber: { startsWith: prefix } },
+            select: { documentNumber: true },
+          })).map((r) => r.documentNumber),
           taken: async (v) => !!(await db.transaction.findUnique({
             where: { documentNumber: v }, select: { id: true },
           })),
