@@ -1996,6 +1996,34 @@ export default function ProformasView({
     const equivalentRiyal =
       pf.finalAmount * (targetCurrency === "ریال" ? 1 : currentRate);
     const equivalentToman = Math.round(equivalentRiyal / 10);
+    /*
+     * The price columns are as wide as the longest amount on the document.
+     *
+     * Sized by eye, they were fine for a figure in a foreign currency — 1,620 —
+     * and wrong for the same document priced in rials, where 1,250,000,000 is
+     * thirteen characters and broke over two lines inside a fixed column. An
+     * amount split across two lines stops being a number you can read at a
+     * glance, so the column is measured from the longest figure instead.
+     *
+     * Monospace, so this is arithmetic rather than measurement: a character is
+     * 0.6 of the font size. Past ten characters the figure is set a size
+     * smaller rather than the column growing further — widening it enough for
+     * twelve digits would take the width straight back off the specification,
+     * which is the column that needs it.
+     */
+    const amountChars = Math.max(
+      6,
+      ...pf.items.flatMap((i) => [
+        formatMoney(i.unitPriceRIYAL).length,
+        formatMoney(i.totalPriceRIYAL).length,
+      ]),
+    );
+    const priceFontPx = amountChars <= 10 ? 12 : amountChars <= 13 ? 11 : 10;
+    const priceColWidth = Math.min(
+      118,
+      Math.max(74, Math.round(amountChars * priceFontPx * 0.6) + 18),
+    );
+
     const itemsRows = pf.items
       .map((item, index) => {
         const prod = products.find((p) => p.id === item.productId);
@@ -2041,8 +2069,8 @@ export default function ProformasView({
         ${
           pf.proformaType !== "TECHNICAL"
             ? `
-        <td style="padding: 10px; text-align: left; font-family: monospace; vertical-align: middle;">${formatMoney(item.unitPriceRIYAL)}</td>
-        <td style="padding: 10px; text-align: left; font-family: monospace; vertical-align: middle;">${formatMoney(item.totalPriceRIYAL)}</td>
+        <td style="padding: 10px 6px; text-align: left; font-family: monospace; font-size: ${priceFontPx}px; vertical-align: middle; white-space: nowrap;">${formatMoney(item.unitPriceRIYAL)}</td>
+        <td style="padding: 10px 6px; text-align: left; font-family: monospace; font-size: ${priceFontPx}px; vertical-align: middle; white-space: nowrap;">${formatMoney(item.totalPriceRIYAL)}</td>
         `
             : ""
         }
@@ -2189,6 +2217,13 @@ export default function ProformasView({
             page-break-inside: avoid;
             page-break-after: auto;
         }
+        /* A column width means the whole column.
+           With the default content-box sizing every one of these cells came out
+           20px wider than asked for — its padding — and six columns quietly
+           took 120px off the specification column. */
+        th, td {
+            box-sizing: border-box;
+        }
         th {
             background-color: #f1f5f9;
             color: #475569;
@@ -2223,10 +2258,17 @@ export default function ProformasView({
             page-break-inside: avoid;
             break-inside: avoid;
         }
+        /* An amount stays on one line here too; the label beside it gives way
+           instead, which costs nothing. */
+        .totals-row strong,
+        .totals-row .final-amount-value {
+            white-space: nowrap;
+        }
         .totals-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 10px;
             padding: 3px 0;
             border-bottom: 1px solid #e2e8f0;
         }
@@ -2444,8 +2486,8 @@ export default function ProformasView({
                         ${
                           pf.proformaType !== "TECHNICAL"
                             ? `
-                        <th style="text-align: left; width: 88px;">بهای واحد (${targetCurrency})</th>
-                        <th style="text-align: left; width: 96px;">بهای کل (${targetCurrency})</th>
+                        <th style="text-align: left; width: ${priceColWidth}px;">بهای واحد (${targetCurrency})</th>
+                        <th style="text-align: left; width: ${priceColWidth}px;">بهای کل (${targetCurrency})</th>
                         `
                             : ""
                         }
@@ -2480,7 +2522,7 @@ export default function ProformasView({
                 </div>
                 <div class="totals-row final-amount">
                     <span>مبلغ قابل پرداخت نهایی:</span>
-                    <span style="font-family: monospace;">${formatMoney(pf.finalAmount)} ${targetCurrency}</span>
+                    <span class="final-amount-value" style="font-family: monospace;">${formatMoney(pf.finalAmount)} ${targetCurrency}</span>
                 </div>
                 <div style="text-align: left; font-size: 11px; color: #64748b; font-weight: bold; margin-top: 8px; line-height: 1.5;">
                     ${
