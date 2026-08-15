@@ -1647,6 +1647,13 @@ export default function ProformasView({
     }
 
     // Project-Proforma Customer Mismatch Check on Save
+    // A SearchableSelect, so the browser enforces nothing; the asterisk beside
+    // this field was decoration until now.
+    if (isFieldRequired(settings, "proformas", "projectId") && !projectId) {
+      alert("انتخاب پروژه برای این پیش‌فاکتور الزامی است.");
+      return;
+    }
+
     if (projectId) {
       const selectedProj = projects.find((p) => p.id === projectId);
       if (selectedProj && selectedProj.customerId !== customerId) {

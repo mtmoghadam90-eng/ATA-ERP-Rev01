@@ -71,14 +71,7 @@ export default function QuickAddModal({
   const [custMobile, setCustMobile] = useState('');
   const [custEmail, setCustEmail] = useState('');
   const [industry, setIndustry] = useState(() => (settings.dropdownItems?.industries || ['نفت و گاز', 'پتروشیمی', 'نیروگاهی', 'فولاد و معادن', 'آب و فاضلاب', 'شیمیایی', 'سایر'])[0] || 'سایر');
-  /*
-   * Read by the validation below and written to the customer, but this form has
-   * no input for it — so it is always empty. Left in place rather than deleted
-   * because deleting it would hide the real gap: if «شخص کلیدی» is switched on
-   * in the required-fields settings, this quick-add form can never be
-   * submitted. The missing half is a field, not this state.
-   */
-  const [keyPerson] = useState('');
+  const [keyPerson, setKeyPerson] = useState('');
   const [custProvince, setCustProvince] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -646,6 +639,23 @@ export default function QuickAddModal({
                           <option key={i} value={ind}>{ind}</option>
                         ))}
                       </select>
+                    </div>
+                    {/*
+                      The form validated this and wrote it to the customer while
+                      offering nowhere to type it, so it was always empty — and
+                      switching «شخص کلیدی» on in the required-fields settings
+                      made this form impossible to submit at all.
+                    */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-600">{renderFieldLabelWithAsterisk(settings, 'customers', 'keyPerson', 'شخص کلیدی / رابط')}</label>
+                      <input
+                        type="text"
+                        required={isFieldRequired(settings, 'customers', 'keyPerson')}
+                        value={keyPerson}
+                        onChange={(e) => setKeyPerson(e.target.value)}
+                        placeholder="مثال: مهندس رضایی - مدیر خرید"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-bold text-slate-600">{renderFieldLabelWithAsterisk(settings, 'customers', 'province', 'استان')}</label>

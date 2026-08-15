@@ -47,6 +47,9 @@ import { importStageDurations } from "../src/utils/importTimeline";
 import { parseMilestoneRules } from "../src/server/services/milestoneAutomation";
 import { refreshDecision, type RateRefreshState } from "../src/server/services/rateRefresh";
 import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
+import { REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
+import { readdirSync, readFileSync } from "node:fs";
+import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
 
 let pass = 0; const fails: string[] = [];
@@ -718,6 +721,60 @@ eq("dates entered out of order show negative rather than nothing",
   durations(["1405/02/01", "1405/01/20"])[1], -12);
 eq("an order with no dates at all reports nothing",
   JSON.stringify(durations([undefined, undefined])), JSON.stringify([null, null]));
+
+/*
+ * Configurable required fields: the metadata and the forms must agree.
+ *
+ * `settings.requiredFields[module][field]` drives a switch in the settings
+ * screen. Drift either way is silent — a switch that does nothing, or a field
+ * nobody can make optional — and there is a third kind that neither direction
+ * catches: a field the form *validates* while offering nowhere to type it. That
+ * one is worse than silent. «شخص کلیدی» on the quick-add customer form was
+ * exactly that: validated, written to the record, and with no input, so turning
+ * the switch on made the form impossible to submit at all.
+ *
+ * Reading the source is the only way to check this — the relationship is
+ * between a constant and the JSX that honours it.
+ */
+head("Required fields: the switches and the forms agree");
+
+{
+  const dir = (p: string) => p;
+  const files: string[] = [];
+  (function walk(d: string) {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = joinPath(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.tsx?$/.test(e.name)) files.push(p);
+    }
+  })(dir("src"));
+  const src = files.map((f) => readFileSync(f, "utf-8")).join("\n");
+
+  const asked = new Set<string>();
+  const drawn = new Set<string>();
+  for (const m of src.matchAll(/isFieldRequired\(\s*settings\s*,\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g)) {
+    asked.add(`${m[1]}.${m[2]}`);
+  }
+  // The two ways a field draws its own label; a date picker takes a string, so
+  // it uses the asterisk helper rather than the element one.
+  for (const re of [
+    /renderFieldLabelWithAsterisk\(\s*settings\s*,\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g,
+    /getFieldAsterisk\(\s*settings\s*,\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]/g,
+  ]) for (const m of src.matchAll(re)) drawn.add(`${m[1]}.${m[2]}`);
+
+  const declared = new Set<string>();
+  for (const mod of REQUIRED_FIELDS_METADATA) {
+    for (const f of mod.fields) declared.add(`${mod.key}.${f.key}`);
+  }
+
+  const deadSwitch = [...declared].filter((k) => !asked.has(k));
+  const noSwitch = [...asked].filter((k) => !declared.has(k));
+  const invisible = [...declared].filter((k) => asked.has(k) && !drawn.has(k));
+
+  ok("every switch reaches a form", deadSwitch.length === 0, deadSwitch);
+  ok("every form field has a switch", noSwitch.length === 0, noSwitch);
+  ok("nothing is validated without being offered", invisible.length === 0, invisible);
+}
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

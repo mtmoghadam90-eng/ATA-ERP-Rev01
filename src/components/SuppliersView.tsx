@@ -157,6 +157,18 @@ export default function SuppliersView({
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
 
+    /*
+     * Checked here because the control is a row of toggle chips, not an
+     * `<input>` — there is no `required` attribute for the browser to enforce.
+     * The label already drew an asterisk when the setting was on, so turning
+     * that switch on made a promise nothing kept: a supplier with no categories
+     * saved anyway.
+     */
+    if (isFieldRequired(settings, 'suppliers', 'providedCategories') && providedCategories.length === 0) {
+      alert('انتخاب حداقل یک دسته محصول قابل ارائه الزامی است.');
+      return;
+    }
+
     // Custom Fields Validation
     const moduleFields = (settings?.customFields || []).filter(f => f.module === 'suppliers');
     for (const field of moduleFields) {

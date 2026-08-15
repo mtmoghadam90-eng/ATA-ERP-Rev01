@@ -624,6 +624,14 @@ export default function TransactionsView({
       return;
     }
 
+    // The type is a pair of buttons rather than a field, so nothing native
+    // enforces it. It always carries a value in practice; this is what makes
+    // the asterisk beside it true rather than decorative.
+    if (isFieldRequired(settings, 'transactions', 'type') && !type) {
+      alert('نوع تراکنش مالی را مشخص کنید.');
+      return;
+    }
+
     // 4 & 5. شماره پیگیری برای حواله و چک
     if (isFieldRequired(settings, 'transactions', 'referenceNumber') && (!referenceNumber || referenceNumber.trim() === '')) {
       alert('شماره پیگیری مرجع / فیش بانکی الزامی است.');
