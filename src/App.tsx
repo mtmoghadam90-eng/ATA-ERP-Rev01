@@ -298,6 +298,21 @@ export default function App() {
     return () => clearInterval(interval);
   }, [store.isInitialized, store.currentUser, triggeredReminders]);
 
+  /*
+   * Names the browser tab and points its icon at the logo in settings.
+   *
+   * Called here, above every early return in this component, because it is a
+   * hook. Placed lower — next to the `logoUrl` it reads — it ran only for a
+   * signed-in user: the login screen returns before reaching it, so signing in
+   * grew the hook count mid-session and React tore the whole tree down with
+   * "Rendered more hooks than during the previous render". A white page, and
+   * neither the type-checker nor the build can see it coming.
+   */
+  useBrowserTab(
+    store.settings?.proformaTemplates?.find((t) => t.name === store.settings?.activeTemplateId)?.logoUrl
+      ?? store.settings?.proformaTemplates?.[0]?.logoUrl,
+  );
+
   if (!store.isInitialized) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex flex-col justify-center items-center gap-3 font-sans">
@@ -516,8 +531,6 @@ export default function App() {
 
   const activeTemplate = store.settings?.proformaTemplates?.find(t => t.name === store.settings?.activeTemplateId) || store.settings?.proformaTemplates?.[0];
   const logoUrl = activeTemplate?.logoUrl;
-  // Names the tab and points its icon at the stored logo.
-  useBrowserTab(logoUrl);
   const isStandalone = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('standalone') === 'true';
 
   return (

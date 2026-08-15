@@ -48,6 +48,7 @@ import { parseMilestoneRules } from "../src/server/services/milestoneAutomation"
 import { refreshDecision, type RateRefreshState } from "../src/server/services/rateRefresh";
 import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
 import { REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
+import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -774,6 +775,70 @@ head("Required fields: the switches and the forms agree");
   ok("every switch reaches a form", deadSwitch.length === 0, deadSwitch);
   ok("every form field has a switch", noSwitch.length === 0, noSwitch);
   ok("nothing is validated without being offered", invisible.length === 0, invisible);
+}
+
+/*
+ * Hooks that only run some of the time.
+ *
+ * React identifies a hook by the order it was called in, so a hook placed below
+ * an early return is skipped on the renders that take that branch — and the
+ * render where the branch stops being taken calls a hook that was not there
+ * before. React tears the whole tree down, and the user sees a white page.
+ *
+ * This shipped. `useBrowserTab` was written next to the value it reads, which
+ * sits under App's early return for the login screen, so it ran for a signed-in
+ * user and not for a signed-out one: every sign-in crashed the application, on
+ * the one path every user takes. Nothing else here could see it — a hook is an
+ * ordinary function call to the type-checker, no derived figure was wrong, and
+ * every endpoint answered correctly. `react-hooks/rules-of-hooks` is what
+ * normally says so, and there is no ESLint in this project.
+ */
+head("Hooks are called on every render");
+
+{
+  const componentFiles: string[] = [];
+  (function walk(d: string) {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = joinPath(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.tsx?$/.test(e.name)) componentFiles.push(p);
+    }
+  })("src");
+
+  const problems = componentFiles.flatMap((f) =>
+    findHooksAfterEarlyReturn(f, readFileSync(f, "utf-8")));
+
+  ok("no hook sits below an early return",
+    problems.length === 0,
+    problems.map((p) => `${p.file}:${p.line} ${p.component} -> ${p.hook}`));
+
+  // A check that cannot fail is not a check. This is the shape of the bug that
+  // shipped, and the detector has to still recognise it.
+  const shipped = `
+export default function App({ open }: { open: boolean }) {
+  const [a] = useState(0);
+  if (!open) {
+    return <Login />;
+  }
+  useEffect(() => {}, []);
+  return <div>{a}</div>;
+}`;
+  eq("and the detector still recognises that shape",
+    findHooksAfterEarlyReturn("sample.tsx", shipped).length, 1);
+
+  // ...without flagging a return inside a callback, which leaves nothing.
+  const fine = `
+export default function Fine() {
+  const [a] = useState(0);
+  const render = () => {
+    if (!a) return null;
+    return <span />;
+  };
+  useEffect(() => {}, []);
+  return <div>{render()}</div>;
+}`;
+  eq("a return inside a callback is not an early return",
+    findHooksAfterEarlyReturn("fine.tsx", fine).length, 0);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
