@@ -32,6 +32,7 @@ import { inboxApi, ReferralRow } from '../api/inbox';
 import { useRevalidate } from '../api/liveData';
 import { rowToTask, tasksApi } from '../api/tasks';
 import type { TaskRow } from '../api/tasks';
+import { formatMoney } from '../numUtils';
 
 /**
  * The front page.
@@ -142,9 +143,9 @@ export default function DashboardView({
   });
 
   // Format IRR Currency helper
-  const formatToman = (num: number) => {
-    return (num / 10000000).toLocaleString('fa-IR', { maximumFractionDigits: 0 }) + ' میلیون تومان';
-  };
+  // Latin, like every other amount; only the unit stays Persian prose.
+  const formatToman = (num: number) =>
+    `${formatMoney(Math.round(num / 10_000_000))} میلیون تومان`;
 
   const getPriorityBadgeClass = (priority: Task['priority']) => {
     switch (priority) {
@@ -246,7 +247,7 @@ export default function DashboardView({
           <div className="space-y-1">
             <span className="text-[11px] text-slate-400 font-bold block">مجموع قراردادهای برنده</span>
             <span className="text-lg font-black text-slate-800 block">
-              {totalRevenue > 0 ? formatToman(totalRevenue) : "۰ ریال"}
+              {totalRevenue > 0 ? formatToman(totalRevenue) : "0 ریال"}
             </span>
             <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
               <ArrowUpRight size={12} /> {summary.revenue.activeCount === 0 && totalRevenue === 0 ? "بدون پیش‌فاکتور برنده" : "ارزش قراردادهای برنده"}
@@ -352,7 +353,7 @@ export default function DashboardView({
                       tickLine={false}
                     />
                     <Tooltip 
-                      formatter={(value) => [`${Number(value).toLocaleString('fa-IR')} میلیون تومان`, 'حجم سفارش']}
+                      formatter={(value) => [`${formatMoney(Number(value))} میلیون تومان`, 'حجم سفارش']}
                       contentStyle={{  borderRadius: '12px', border: '1px solid #e2e8f0', fontFamily: 'inherit' }}
                     />
                     <Bar dataKey="فروش" fill="#2563eb" radius={[4, 4, 0, 0]} barSize={36} />
@@ -396,7 +397,7 @@ export default function DashboardView({
                 </div>
                 <div className="text-left font-mono">
                   <span className="text-xs font-black text-slate-800">
-                    {rate.rateToRIYAL.toLocaleString('fa-IR')}
+                    {formatMoney(rate.rateToRIYAL)}
                   </span>
                   <span className="text-[10px] text-slate-400 mr-1">ریال</span>
                 </div>

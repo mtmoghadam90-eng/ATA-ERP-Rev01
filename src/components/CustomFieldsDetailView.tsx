@@ -1,6 +1,7 @@
 import { Paperclip, Calendar, Download } from 'lucide-react';
 import { CustomField } from '../types';
 import { downloadFileFromServer } from '../imageUtils';
+import { formatMoney } from '../numUtils';
 
 interface CustomFieldsDetailViewProps {
   module: 'customers' | 'projects' | 'products' | 'proformas' | 'suppliers' | 'purchaseOrders' | 'transactions' | 'tasks';
@@ -13,7 +14,8 @@ function formatSeparator(val: any): string {
   if (val === undefined || val === null || val === '') return '';
   const num = String(val).replace(/[^0-9.-]/g, '');
   if (!num || isNaN(Number(num))) return '';
-  return Number(num).toLocaleString('fa-IR');
+  // A custom field with a thousands separator is a figure, not prose.
+  return formatMoney(Number(num));
 }
 
 export default function CustomFieldsDetailView({

@@ -1,4 +1,5 @@
 import { ERPSettings, InquiryStep, SupplierInquiry, SupplierInquiryItem } from '../types';
+import { formatMoney } from '../numUtils';
 
 /**
  * Automatic workflow-step engine for supplier price inquiries.
@@ -90,7 +91,8 @@ function makeStep(
   };
 }
 
-const fmt = (n: number): string => Math.round(n).toLocaleString('fa-IR');
+// Amounts are Latin everywhere; see `formatMoney`.
+const fmt = (n: number): string => formatMoney(Math.round(n));
 
 /**
  * The discount as a fraction, clamped.

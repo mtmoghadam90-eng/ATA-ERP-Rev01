@@ -1,6 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
+import { formatMoney } from '../numUtils';
 import {
   Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, TrendingUp, X,
   FileSpreadsheet, Clock, Sliders, User, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
@@ -850,7 +851,7 @@ export default function ProjectsView({
       p.salesExpert || "",
       p.customerName,
       p.endUser || "",
-      getPipelineValue(p.id) ? `${getPipelineValue(p.id).toLocaleString('fa-IR')} ${getPipelineCurrency(p.id)}` : "۰",
+      getPipelineValue(p.id) ? `${formatMoney(getPipelineValue(p.id))} ${getPipelineCurrency(p.id)}` : "0",
       p.status,
       p.lossReason || "",
       p.marketingChannel || "",
@@ -1030,8 +1031,8 @@ export default function ProjectsView({
             <span class="text-[10px] text-slate-500 block">برند: ${item.brand || 'متفرقه'} - پارت‌نامبر: ${item.partNumber || '-'}</span>
           </td>
           <td class="p-2 border border-slate-200 text-center font-mono">${item.quantity}</td>
-          <td class="p-2 border border-slate-200 text-left font-mono">${item.unitPrice?.toLocaleString('fa-IR')}</td>
-          <td class="p-2 border border-slate-200 text-left font-mono">${(item.unitPrice * item.quantity)?.toLocaleString('fa-IR')}</td>
+          <td class="p-2 border border-slate-200 text-left font-mono">${formatMoney(item.unitPrice)}</td>
+          <td class="p-2 border border-slate-200 text-left font-mono">${formatMoney(item.unitPrice * item.quantity)}</td>
         </tr>
       `).join('');
 
@@ -1079,19 +1080,19 @@ export default function ProjectsView({
             <div class="w-64 space-y-1.5 text-[11px]">
               <div class="flex justify-between border-b border-slate-100 pb-1">
                 <span class="text-slate-400 font-bold">مجموع ناخالص:</span>
-                <span class="font-mono">${pf?.totalAmount?.toLocaleString('fa-IR')} ریال</span>
+                <span class="font-mono">${formatMoney(pf?.totalAmount)} ریال</span>
               </div>
               <div class="flex justify-between border-b border-slate-100 pb-1">
                 <span class="text-slate-400 font-bold">تخفیف:</span>
-                <span class="font-mono text-red-600">${(pf?.discountAmount || 0)?.toLocaleString('fa-IR')} ریال</span>
+                <span class="font-mono text-red-600">${formatMoney(pf?.discountAmount || 0)} ریال</span>
               </div>
               <div class="flex justify-between border-b border-slate-100 pb-1">
                 <span class="text-slate-400 font-bold">مالیات بر ارزش افزوده (۱۰٪):</span>
-                <span class="font-mono">${(pf?.vatAmount || 0)?.toLocaleString('fa-IR')} ریال</span>
+                <span class="font-mono">${formatMoney(pf?.vatAmount || 0)} ریال</span>
               </div>
               <div class="flex justify-between font-bold text-slate-900 border-b-2 border-slate-300 pb-1.5 text-xs">
                 <span>مبلغ قابل پرداخت:</span>
-                <span class="font-mono">${pf?.finalAmount?.toLocaleString('fa-IR')} ریال</span>
+                <span class="font-mono">${formatMoney(pf?.finalAmount)} ریال</span>
               </div>
             </div>
           </div>
@@ -1122,8 +1123,8 @@ export default function ProjectsView({
             <span class="text-[10px] text-slate-500 block">برند: ${item.brand || '-'} - پارت‌نامبر: ${item.partNumber || '-'}</span>
           </td>
           <td class="p-2 border border-slate-200 text-center font-mono">${item.quantity}</td>
-          <td class="p-2 border border-slate-200 text-left font-mono">${item.foreignUnitPrice?.toLocaleString('fa-IR')} ${po?.currency}</td>
-          <td class="p-2 border border-slate-200 text-left font-mono">${(item.foreignUnitPrice * item.quantity)?.toLocaleString('fa-IR')} ${po?.currency}</td>
+          <td class="p-2 border border-slate-200 text-left font-mono">${formatMoney(item.foreignUnitPrice)} ${po?.currency}</td>
+          <td class="p-2 border border-slate-200 text-left font-mono">${formatMoney(item.foreignUnitPrice * item.quantity)} ${po?.currency}</td>
         </tr>
       `).join('');
 
@@ -1266,7 +1267,7 @@ export default function ProjectsView({
           <div class="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-100 text-slate-700 text-[11px]">
             <div>
               <span class="text-slate-400 font-bold">مبلغ تراکنش:</span>
-              <strong class="text-slate-900 text-sm font-mono mr-1">${tx?.amountRIYAL?.toLocaleString('fa-IR')} ریال</strong>
+              <strong class="text-slate-900 text-sm font-mono mr-1">${formatMoney(tx?.amountRIYAL)} ریال</strong>
             </div>
             <div>
               <span class="text-slate-400 font-bold">نوع پرداخت/دریافت:</span>
@@ -2542,8 +2543,8 @@ export default function ProjectsView({
                             <span className="text-[10px] text-slate-500 block">برند: {item.brand || 'متفرقه'} - پارت‌نامبر: {item.partNumber || '-'}</span>
                           </td>
                           <td className="p-2 border border-slate-200 text-center font-mono">{item.quantity}</td>
-                          <td className="p-2 border border-slate-200 text-left font-mono">{item.unitPrice?.toLocaleString('fa-IR')}</td>
-                          <td className="p-2 border border-slate-200 text-left font-mono">{(item.unitPrice * item.quantity)?.toLocaleString('fa-IR')}</td>
+                          <td className="p-2 border border-slate-200 text-left font-mono">{formatMoney(item.unitPrice)}</td>
+                          <td className="p-2 border border-slate-200 text-left font-mono">{formatMoney(item.unitPrice * item.quantity)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2553,19 +2554,19 @@ export default function ProjectsView({
                     <div className="w-64 space-y-1.5 text-[11px]">
                       <div className="flex justify-between border-b border-slate-100 pb-1">
                         <span className="text-slate-400 font-bold">مجموع ناخالص:</span>
-                        <span className="font-mono">{doc.originalEntity?.totalAmount?.toLocaleString('fa-IR')} ریال</span>
+                        <span className="font-mono">{formatMoney(doc.originalEntity?.totalAmount)} ریال</span>
                       </div>
                       <div className="flex justify-between border-b border-slate-100 pb-1">
                         <span className="text-slate-400 font-bold">تخفیف:</span>
-                        <span className="font-mono text-red-600">{(doc.originalEntity?.discountAmount || 0)?.toLocaleString('fa-IR')} ریال</span>
+                        <span className="font-mono text-red-600">{formatMoney(doc.originalEntity?.discountAmount || 0)} ریال</span>
                       </div>
                       <div className="flex justify-between border-b border-slate-100 pb-1">
                         <span className="text-slate-400 font-bold">مالیات بر ارزش افزوده (۱۰٪):</span>
-                        <span className="font-mono">{(doc.originalEntity?.vatAmount || 0)?.toLocaleString('fa-IR')} ریال</span>
+                        <span className="font-mono">{formatMoney(doc.originalEntity?.vatAmount || 0)} ریال</span>
                       </div>
                       <div className="flex justify-between font-bold text-slate-900 border-b-2 border-slate-300 pb-1.5 text-xs">
                         <span>مبلغ قابل پرداخت:</span>
-                        <span className="font-mono">{doc.originalEntity?.finalAmount?.toLocaleString('fa-IR')} ریال</span>
+                        <span className="font-mono">{formatMoney(doc.originalEntity?.finalAmount)} ریال</span>
                       </div>
                     </div>
                   </div>
@@ -2630,8 +2631,8 @@ export default function ProjectsView({
                             <span className="text-[10px] text-slate-500 block">برند: {item.brand || '-'} - پارت‌نامبر: {item.partNumber || '-'}</span>
                           </td>
                           <td className="p-2 border border-slate-200 text-center font-mono">{item.quantity}</td>
-                          <td className="p-2 border border-slate-200 text-left font-mono">{item.foreignUnitPrice?.toLocaleString('fa-IR')} {doc.originalEntity?.currency}</td>
-                          <td className="p-2 border border-slate-200 text-left font-mono">{(item.foreignUnitPrice * item.quantity)?.toLocaleString('fa-IR')} {doc.originalEntity?.currency}</td>
+                          <td className="p-2 border border-slate-200 text-left font-mono">{formatMoney(item.foreignUnitPrice)} {doc.originalEntity?.currency}</td>
+                          <td className="p-2 border border-slate-200 text-left font-mono">{formatMoney(item.foreignUnitPrice * item.quantity)} {doc.originalEntity?.currency}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2730,7 +2731,7 @@ export default function ProjectsView({
                   <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-100 text-slate-700 text-[11px]">
                     <div>
                       <span className="text-slate-400 font-bold">مبلغ تراکنش:</span>
-                      <strong className="text-slate-900 text-sm font-mono mr-1">{doc.originalEntity?.amountRIYAL?.toLocaleString('fa-IR')} ریال</strong>
+                      <strong className="text-slate-900 text-sm font-mono mr-1">{formatMoney(doc.originalEntity?.amountRIYAL)} ریال</strong>
                     </div>
                     <div>
                       <span className="text-slate-400 font-bold">نوع پرداخت/دریافت:</span>
@@ -3102,7 +3103,7 @@ export default function ProjectsView({
                   <td className="p-3 text-slate-800 text-left">
                     {getPipelineValue(p.id) > 0 ? (
                       <div className="flex items-center justify-end gap-1">
-                        <span className="font-mono font-bold">{getPipelineValue(p.id).toLocaleString('fa-IR')}</span>
+                        <span className="font-mono font-bold">{formatMoney(getPipelineValue(p.id))}</span>
                         <span className="text-[10px] text-slate-500 font-medium">{getPipelineCurrency(p.id)}</span>
                       </div>
                     ) : (

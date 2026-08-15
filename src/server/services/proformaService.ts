@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
+import { formatMoney } from "../../numUtils";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } from "../dates";
@@ -478,7 +479,7 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
       action: "CREATE",
       module: "پیش‌فاکتورها",
       entityId: proforma.id,
-      description: `ایجاد پیش‌فاکتور جدید شماره ${proforma.proformaNumber} به مبلغ کل ${(proforma.finalAmount || 0).toLocaleString('fa-IR')} ${proforma.currency || 'ریال'}`,
+      description: `ایجاد پیش‌فاکتور جدید شماره ${proforma.proformaNumber} به مبلغ کل ${formatMoney(Number(proforma.finalAmount ?? 0))} ${proforma.currency || 'ریال'}`,
       afterState: proforma,
     },
     user,

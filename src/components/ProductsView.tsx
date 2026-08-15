@@ -41,6 +41,7 @@ import StockMovementEditModal from './StockMovementEditModal';
 import { detailToProduct, productToWriteInput, rowToProduct } from '../api/productAdapter';
 import { useProductList } from '../api/useProductList';
 import { useList } from '../api/useList';
+import { formatMoney } from '../numUtils';
 
 /**
  * Product catalogue and stock ledger.
@@ -1466,7 +1467,7 @@ export default function ProductsView({
                         <div className="relative">
                           <input
                             type="text"
-                            value={simplePriceRIYAL ? Number(simplePriceRIYAL).toLocaleString('fa-IR') : ''}
+                            value={simplePriceRIYAL ? formatMoney(simplePriceRIYAL) : ''}
                             onChange={(e) => {
                               const rawVal = e.target.value
                                 .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
@@ -2484,7 +2485,7 @@ export default function ProductsView({
                                     <label className="text-[11px] text-slate-500 font-medium block">قیمت فروش یکسان (ریال)</label>
                                     <input
                                       type="text"
-                                      value={bulkPriceRIYAL !== "" ? Number(bulkPriceRIYAL).toLocaleString('fa-IR') : ""}
+                                      value={bulkPriceRIYAL !== "" ? formatMoney(bulkPriceRIYAL) : ""}
                                       onChange={(e) => {
                                         const rawVal = e.target.value
                                           .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
@@ -2706,7 +2707,7 @@ export default function ProductsView({
                                               <td className="py-2 px-3">
                                                 <input
                                                   type="text"
-                                                  value={variant.priceRIYAL !== undefined ? Number(variant.priceRIYAL).toLocaleString('fa-IR') : ""}
+                                                  value={variant.priceRIYAL !== undefined ? formatMoney(variant.priceRIYAL) : ""}
                                                   onChange={(e) => {
                                                     const rawVal = e.target.value
                                                       .replace(/[۰-۹]/g, d => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))

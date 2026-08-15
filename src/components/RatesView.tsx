@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { exchangeRatesApi, useExchangeRates } from '../api/exchangeRates';
+import { formatMoney } from '../numUtils';
 
 /**
  * Currency rates.
@@ -208,10 +209,10 @@ export default function RatesView() {
             <div className="bg-slate-50 p-4 rounded-xl space-y-1 font-mono border border-slate-100 text-center">
               <p className="text-[10px] text-slate-400 font-sans">برآورد معادل نهایی به ریال</p>
               <h4 className="text-base font-extrabold text-slate-800">
-                {computedRiyal.toLocaleString('fa-IR')} <span className="text-xs font-normal">ریال</span>
+                {formatMoney(computedRiyal)} <span className="text-xs font-normal">ریال</span>
               </h4>
               <p className="text-[10px] text-sky-600 font-sans mt-1">
-                معادل {(computedRiyal / 10).toLocaleString('fa-IR')} تومان
+                معادل {formatMoney(computedRiyal / 10)} تومان
               </p>
             </div>
           </div>

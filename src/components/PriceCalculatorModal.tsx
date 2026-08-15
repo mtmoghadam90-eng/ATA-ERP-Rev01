@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { ExchangeRate, ProductVariant } from "../types";
 import { calculateSellingPrice } from "../utils/priceCalculator";
+import { formatMoney } from '../numUtils';
 
 interface Props {
   open: boolean;
@@ -278,7 +279,7 @@ export default function PriceCalculatorModal({
                   </span>
                 </h4>
                 <p className="text-[10px] text-slate-300 font-mono">
-                  {Math.round(result.landedRial).toLocaleString("fa-IR")} ریال
+                  {formatMoney(Math.round(result.landedRial))} ریال
                 </p>
               </div>
 
@@ -296,7 +297,7 @@ export default function PriceCalculatorModal({
                   </span>
                 </h4>
                 <p className="text-[10px] text-emerald-300 font-mono">
-                  {Math.round(result.sellingRial).toLocaleString("fa-IR")} ریال
+                  {formatMoney(Math.round(result.sellingRial))} ریال
                 </p>
               </div>
             </div>
@@ -305,14 +306,12 @@ export default function PriceCalculatorModal({
               <span>
                 سود ناخالص فروش:{" "}
                 {result.profitAmountRial > 0
-                  ? `${Math.round(result.profitAmountRial).toLocaleString(
-                      "fa-IR",
-                    )} ریال`
-                  : "۰"}
+                  ? `${formatMoney(Math.round(result.profitAmountRial))} ریال`
+                  : "0"}
               </span>
               <span className="font-mono bg-slate-800/60 px-2 py-0.5 rounded text-sky-300">
                 ارز مرجع: {calcCurrency} | نرخ تسعیر:{" "}
-                {rate.toLocaleString("fa-IR")}
+                {formatMoney(rate)}
               </span>
             </div>
           </div>

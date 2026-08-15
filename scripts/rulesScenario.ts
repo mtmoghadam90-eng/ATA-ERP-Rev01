@@ -49,6 +49,7 @@ import { refreshDecision, type RateRefreshState } from "../src/server/services/r
 import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
 import { REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
 import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
+import { formatMoney } from "../src/numUtils";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -839,6 +840,58 @@ export default function Fine() {
 }`;
   eq("a return inside a callback is not an early return",
     findHooksAfterEarlyReturn("fine.tsx", fine).length, 0);
+}
+
+/*
+ * Money is written in Latin digits, everywhere.
+ *
+ * Amounts leave this application: they are read down a phone, typed into a bank
+ * portal, pasted into a spreadsheet. Persian digits survive none of that. The
+ * figures were also inconsistent with each other — one proforma printed
+ * «۱۲٬۵۰۰٬۰۰۰» in its summary and 12,500,000 on the form beside it, because one
+ * used `toLocaleString("fa-IR")` and the other a plain `toLocaleString()`.
+ *
+ * Counts in prose are the opposite case and stay Persian: «نمایش ۵ از ۱۲» is a
+ * sentence, not a figure anybody copies. So this checks the amounts only, by
+ * what is being formatted.
+ */
+head("Amounts are written in Latin digits");
+
+eq("thousands are grouped, in Latin", formatMoney(12_500_000), "12,500,000");
+eq("a negative keeps its sign", formatMoney(-4_200), "-4,200");
+eq("decimals survive, to two places", formatMoney(1234.567), "1,234.57");
+eq("a string amount is accepted, as the API returns them", formatMoney("98765"), "98,765");
+eq("nothing is zero, never NaN", formatMoney(null), "0");
+eq("and so is a value that cannot be a number", formatMoney("abc"), "0");
+
+{
+  // The screens, read as source: no amount may still be formatted fa-IR.
+  const MONEY = /(amount|price|total(?!Pages|Count)|value|cost|riyal|rial|balance|sales|paid|remaining|revenue|rate|discount|tax|fee|landed|gain|loss|profit)/i;
+  // `list.total` and friends are the row count a pagination line prints
+  // («نمایش ۵ از ۱۲ پیش‌فاکتور»), not an amount — the paging hooks all name it
+  // `total`, which is the one word this rule has to disambiguate by receiver.
+  const COUNT = /(\.length|count|\bpage\b|totalPages|^(list|ledger|auditList|\w*List)\.total$)/i;
+
+  const uiFiles: string[] = [];
+  (function walk(d: string) {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = joinPath(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.tsx?$/.test(e.name)) uiFiles.push(p);
+    }
+  })("src");
+
+  const strays: string[] = [];
+  for (const f of uiFiles) {
+    readFileSync(f, "utf-8").split("\n").forEach((line, i) => {
+      for (const m of line.matchAll(/([A-Za-z0-9_.?\[\]]{0,50})\.toLocaleString\(['"]fa-IR['"]/g)) {
+        const subject = m[1];
+        if (COUNT.test(subject) || !MONEY.test(subject)) continue;
+        strays.push(`${f}:${i + 1} ${subject}`);
+      }
+    });
+  }
+  ok("no amount is still formatted in Persian digits", strays.length === 0, strays);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

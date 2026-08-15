@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useExchangeRates } from '../api/exchangeRates';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { computeInquiryTotals } from '../utils/inquirySteps';
+import { formatMoney } from '../numUtils';
 import { 
   Plus, 
   Edit, 
@@ -681,7 +682,7 @@ export default function SupplierInquiriesView({
                                     مجموع کل آفر:
                                   </span>
                                   <span className="text-xs font-extrabold text-sky-600">
-                                    {Math.round(totalRiyal).toLocaleString('fa-IR')} <span className="text-[10px] font-normal text-slate-400">ریال</span>
+                                    {formatMoney(Math.round(totalRiyal))} <span className="text-[10px] font-normal text-slate-400">ریال</span>
                                   </span>
                                 </div>
                                 {/* The offer's own currency, when it is quoted in one. */}
@@ -689,7 +690,7 @@ export default function SupplierInquiriesView({
                                   <div className="flex items-center justify-between">
                                     <span className="text-[10px] font-bold text-slate-400">معادل ارزی:</span>
                                     <span className="text-[11px] font-extrabold text-slate-600">
-                                      {Math.round(totals.netForeign).toLocaleString('fa-IR')} <span className="text-[10px] font-normal text-slate-400">{totals.currency}</span>
+                                      {formatMoney(Math.round(totals.netForeign))} <span className="text-[10px] font-normal text-slate-400">{totals.currency}</span>
                                     </span>
                                   </div>
                                 )}
@@ -697,7 +698,7 @@ export default function SupplierInquiriesView({
                                   <div className="flex items-center justify-between">
                                     <span className="text-[10px] font-bold text-slate-400">تخفیف:</span>
                                     <span className="text-[10px] font-bold text-amber-600">
-                                      {Math.round(totals.discountRiyal).toLocaleString('fa-IR')} ریال
+                                      {formatMoney(Math.round(totals.discountRiyal))} ریال
                                     </span>
                                   </div>
                                 )}
@@ -754,8 +755,8 @@ export default function SupplierInquiriesView({
                                         <span className="text-slate-500 font-mono">({item.quantity} عدد)</span>
                                       </div>
                                       <div className="flex justify-between text-[10px] text-slate-500">
-                                        <span>آفر ارزی: {item.priceForeign.toLocaleString('fa-IR')} {item.currency}</span>
-                                        <span className="font-semibold text-slate-600">{(item.priceRiyal * item.quantity).toLocaleString('fa-IR')} ریال</span>
+                                        <span>آفر ارزی: {formatMoney(item.priceForeign)} {item.currency}</span>
+                                        <span className="font-semibold text-slate-600">{formatMoney(item.priceRiyal * item.quantity)} ریال</span>
                                       </div>
                                       {item.deliveryTime && (
                                         <div className="text-[9px] text-amber-600 font-medium">زمان تحویل: {item.deliveryTime}</div>
@@ -914,11 +915,11 @@ export default function SupplierInquiriesView({
                               </td>
                               <td className="p-3 font-bold text-sky-600 font-mono text-sm">
                                 <div>
-                                  {Math.round(totalRiyal).toLocaleString('fa-IR')} <span className="text-[10px] text-slate-400">ریال</span>
+                                  {formatMoney(Math.round(totalRiyal))} <span className="text-[10px] text-slate-400">ریال</span>
                                 </div>
                                 {totals.currency && totals.netForeign > 0 && (
                                   <div className="text-[11px] font-bold text-slate-500">
-                                    {Math.round(totals.netForeign).toLocaleString('fa-IR')} <span className="text-[10px] font-normal text-slate-400">{totals.currency}</span>
+                                    {formatMoney(Math.round(totals.netForeign))} <span className="text-[10px] font-normal text-slate-400">{totals.currency}</span>
                                   </div>
                                 )}
                               </td>
@@ -927,7 +928,7 @@ export default function SupplierInquiriesView({
                                   {inq.items.map((item, idx) => (
                                     <div key={idx} className="text-[11px] text-slate-600 flex items-center gap-1">
                                       <span className="font-medium text-slate-800">{item.name}:</span>
-                                      <span className="font-mono">{item.priceForeign.toLocaleString('fa-IR')} {item.currency}</span>
+                                      <span className="font-mono">{formatMoney(item.priceForeign)} {item.currency}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -1540,7 +1541,7 @@ function InquiryFormInner({
             <span className="font-bold text-slate-600 block">نرخ‌های ارز فعال جهت مرجع محاسبات:</span>
             <div className="flex flex-wrap gap-1 font-mono text-[10px] text-slate-500">
               {exchangeRates.map(rate => (
-                <span key={rate.id} className="bg-white px-1.5 py-0.5 rounded border border-slate-100">{rate.currency}: {rate.rateToRIYAL.toLocaleString('fa-IR')}</span>
+                <span key={rate.id} className="bg-white px-1.5 py-0.5 rounded border border-slate-100">{rate.currency}: {formatMoney(rate.rateToRIYAL)}</span>
               ))}
             </div>
           </div>
@@ -1798,7 +1799,8 @@ function InquiryFormInner({
         // A supplier prices an inquiry in one currency, so the fixed amount is
         // in that currency; a Rial-only offer takes the amount in Rial.
         const unit = t.currency || 'ریال';
-        const fa = (v: number) => Math.round(v).toLocaleString('fa-IR');
+        // Amounts are Latin everywhere; see `formatMoney`.
+        const fa = (v: number) => formatMoney(Math.round(v));
         return (
           <div className="border border-slate-150 p-4 rounded-xl bg-slate-50/50 space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">

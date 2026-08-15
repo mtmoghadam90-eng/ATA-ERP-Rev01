@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { Transaction, Customer, Supplier, Project, ERPSettings, Proforma } from '../types';
 import { getTodayShamsi } from '../dateUtils';
-import { formatERPNumber } from '../numUtils';
+import { formatERPNumber, formatMoney } from '../numUtils';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
@@ -754,8 +754,8 @@ export default function TransactionsView({
           const overAmount = newTotal - currentSales;
           const confirmProceed = window.confirm(
             `هشدار مغایرت حسابداری:\n` +
-            `مجموع دریافتی‌های این پروژه با ثبت این تراکنش (${newTotal.toLocaleString('fa-IR')} ریال) از کل مبلغ فروش پروژه (${currentSales.toLocaleString('fa-IR')} ریال) بیشتر می‌شود!\n` +
-            `مبلغ اضافی (مغایرت): ${overAmount.toLocaleString('fa-IR')} ریال.\n\n` +
+            `مجموع دریافتی‌های این پروژه با ثبت این تراکنش (${formatMoney(newTotal)} ریال) از کل مبلغ فروش پروژه (${formatMoney(currentSales)} ریال) بیشتر می‌شود!\n` +
+            `مبلغ اضافی (مغایرت): ${formatMoney(overAmount)} ریال.\n\n` +
             `آیا مایل به ثبت این سند با وجود مغایرت هستید؟`
           );
           if (!confirmProceed) {
@@ -861,7 +861,7 @@ export default function TransactionsView({
         <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
           <div className="space-y-1">
             <p className="text-xs text-slate-400 font-bold">مجموع دریافتی‌های نقدی ریالی</p>
-            <h4 className="text-lg font-extrabold text-emerald-600 font-mono">+{totalReceived.toLocaleString('fa-IR')} <span className="text-xs font-normal">ریال</span></h4>
+            <h4 className="text-lg font-extrabold text-emerald-600 font-mono">+{formatMoney(totalReceived)} <span className="text-xs font-normal">ریال</span></h4>
           </div>
           <div className="p-3 bg-emerald-50 text-emerald-500 rounded-xl">
             <ArrowDownLeft size={24} />
@@ -871,7 +871,7 @@ export default function TransactionsView({
         <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
           <div className="space-y-1">
             <p className="text-xs text-slate-400 font-bold">مجموع پرداخت‌های ریالی صندوق</p>
-            <h4 className="text-lg font-extrabold text-red-600 font-mono">-{totalPaid.toLocaleString('fa-IR')} <span className="text-xs font-normal">ریال</span></h4>
+            <h4 className="text-lg font-extrabold text-red-600 font-mono">-{formatMoney(totalPaid)} <span className="text-xs font-normal">ریال</span></h4>
           </div>
           <div className="p-3 bg-red-50 text-red-500 rounded-xl">
             <ArrowUpRight size={24} />
@@ -882,7 +882,7 @@ export default function TransactionsView({
           <div className="space-y-1">
             <p className="text-xs text-slate-400 font-bold">تراز خالص صندوق (گردش مالی)</p>
             <h4 className={`text-lg font-extrabold font-mono ${netBalance >= 0 ? 'text-sky-700' : 'text-red-700'}`}>
-              {netBalance.toLocaleString('fa-IR')} <span className="text-xs font-normal">ریال</span>
+              {formatMoney(netBalance)} <span className="text-xs font-normal">ریال</span>
             </h4>
           </div>
           <div className="p-3 bg-sky-50 text-sky-600 rounded-xl">
@@ -1037,7 +1037,7 @@ export default function TransactionsView({
                         {/* Amount */}
                         <td className="p-4 text-left font-mono font-bold text-sm">
                           <span className={isReceipt ? 'text-emerald-600' : 'text-red-600'}>
-                            {isReceipt ? '+' : '-'}{t.amountRIYAL.toLocaleString('fa-IR')}
+                            {isReceipt ? '+' : '-'}{formatMoney(t.amountRIYAL)}
                           </span>
                           <span className="text-[10px] text-slate-400 font-normal mr-1">ریال</span>
                         </td>
@@ -1139,7 +1139,7 @@ export default function TransactionsView({
               <div className="space-y-1">
                 <p className="text-xs text-slate-400 font-bold">مجموع مبلغ فروش پروژه‌ها</p>
                 <h4 className="text-lg font-extrabold text-slate-800 font-mono">
-                  {totalProjSales !== null ? totalProjSales.toLocaleString('fa-IR') : <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>} <span className="text-xs font-normal text-slate-500">ریال</span>
+                  {totalProjSales !== null ? formatMoney(totalProjSales) : <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>} <span className="text-xs font-normal text-slate-500">ریال</span>
                 </h4>
                 <p className="text-[10px] text-slate-400">بر اساس پیش‌فاکتورهای تایید شده</p>
               </div>
@@ -1152,7 +1152,7 @@ export default function TransactionsView({
               <div className="space-y-1">
                 <p className="text-xs text-slate-400 font-bold">مجموع مبالغ دریافتی از پروژه‌ها</p>
                 <h4 className="text-lg font-extrabold text-emerald-600 font-mono">
-                  +{totalProjReceived.toLocaleString('fa-IR')} <span className="text-xs font-normal">ریال</span>
+                  +{formatMoney(totalProjReceived)} <span className="text-xs font-normal">ریال</span>
                 </h4>
                 <p className="text-[10px] text-slate-400">کل وجوه دریافتی ثبت شده بابت پروژه‌ها</p>
               </div>
@@ -1165,7 +1165,7 @@ export default function TransactionsView({
               <div className="space-y-1">
                 <p className="text-xs text-slate-400 font-bold">مجموع مطالبات معوق (مانده طلب)</p>
                 <h4 className="text-lg font-extrabold text-amber-600 font-mono">
-                  {totalProjRemaining !== null ? totalProjRemaining.toLocaleString('fa-IR') : <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>} <span className="text-xs font-normal">ریال</span>
+                  {totalProjRemaining !== null ? formatMoney(totalProjRemaining) : <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>} <span className="text-xs font-normal">ریال</span>
                 </h4>
                 <p className="text-[10px] text-slate-400">مانده کل قابل وصول از پروژه‌ها</p>
               </div>
@@ -1267,13 +1267,13 @@ export default function TransactionsView({
                             </span>
                           </td>
                           <td className="p-4 text-left font-mono font-semibold text-slate-800">
-                            {p.salesAmount !== null ? p.salesAmount.toLocaleString('fa-IR') : <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>}
+                            {p.salesAmount !== null ? formatMoney(p.salesAmount) : <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>}
                           </td>
                           <td className="p-4 text-left font-mono font-semibold text-emerald-600">
-                            {p.paidAmount > 0 ? `+${p.paidAmount.toLocaleString('fa-IR')}` : '۰'}
+                            {p.paidAmount > 0 ? `+${formatMoney(p.paidAmount)}` : '0'}
                           </td>
                           <td className="p-4 text-left font-mono font-bold text-amber-600">
-                            {p.remainingAmount !== null ? p.remainingAmount.toLocaleString('fa-IR') : <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>}
+                            {p.remainingAmount !== null ? formatMoney(p.remainingAmount) : <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>}
                           </td>
                           <td className="p-4">
                             <div className="flex flex-col items-center gap-1 min-w-[100px]">
@@ -1334,7 +1334,7 @@ export default function TransactionsView({
                                     <span className="font-mono font-bold text-slate-800 bg-slate-100 px-2 py-1 rounded">
                                       {Object.entries(p.summary.currencyBalances).length > 0 
                                         ? Object.entries(p.summary.currencyBalances)
-                                            .map(([cur, amt]) => `${amt.toLocaleString('fa-IR')} ${cur}`)
+                                            .map(([cur, amt]) => `${formatMoney(amt)} ${cur}`)
                                             .join(' ، ')
                                         : 'فاقد مانده ارزی'}
                                     </span>
@@ -1349,7 +1349,7 @@ export default function TransactionsView({
                                       {p.summary.totalRealizedGainLoss !== null ? (
                                         <>
                                           {p.summary.totalRealizedGainLoss >= 0 ? '+' : ''}
-                                          {p.summary.totalRealizedGainLoss.toLocaleString('fa-IR')} <span className="text-[10px] font-normal">ریال</span>
+                                          {formatMoney(p.summary.totalRealizedGainLoss)} <span className="text-[10px] font-normal">ریال</span>
                                         </>
                                       ) : (
                                         <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>
@@ -1364,7 +1364,7 @@ export default function TransactionsView({
                                       {p.summary.totalUnrealizedGainLoss !== null ? (
                                         <>
                                           {p.summary.totalUnrealizedGainLoss >= 0 ? '+' : ''}
-                                          {p.summary.totalUnrealizedGainLoss.toLocaleString('fa-IR')} <span className="text-[10px] font-normal">ریال</span>
+                                          {formatMoney(p.summary.totalUnrealizedGainLoss)} <span className="text-[10px] font-normal">ریال</span>
                                         </>
                                       ) : (
                                         <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>
@@ -1376,7 +1376,7 @@ export default function TransactionsView({
                                   <div className="bg-slate-50 p-3 rounded-lg border border-slate-100/80">
                                     <div className="text-[10px] text-slate-400 font-bold">پیش‌پرداخت / مبالغ تخصیص‌نیافته</div>
                                     <div className="text-xs sm:text-sm font-extrabold text-blue-600 font-mono mt-1">
-                                      {p.summary.totalUnallocatedRiyal.toLocaleString('fa-IR')} <span className="text-[10px] font-normal">ریال</span>
+                                      {formatMoney(p.summary.totalUnallocatedRiyal)} <span className="text-[10px] font-normal">ریال</span>
                                     </div>
                                     <div className="text-[9px] text-slate-400 mt-0.5">دریافتی‌های مازاد ریالی متصل به پروژه</div>
                                   </div>
@@ -1414,19 +1414,19 @@ export default function TransactionsView({
                                             <tr key={rep.proformaId} className="hover:bg-slate-50/50">
                                               <td className="p-2 font-bold text-slate-700">{rep.proformaNumber}</td>
                                               <td className="p-2 text-center text-emerald-700 font-bold">{rep.currency}</td>
-                                              <td className="p-2 text-left font-mono">{rep.salesAmountForeign.toLocaleString('fa-IR')}</td>
+                                              <td className="p-2 text-left font-mono">{formatMoney(rep.salesAmountForeign)}</td>
                                               <td className="p-2 text-left font-mono text-slate-500">
                                                 {rep.missingHistoricalRate ? (
                                                   <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded">⚠️ نامشخص</span>
                                                 ) : (
-                                                  rep.historicalExchangeRate.toLocaleString('fa-IR')
+                                                  formatMoney(rep.historicalExchangeRate)
                                                 )}
                                               </td>
-                                              <td className="p-2 text-left font-mono">{rep.salesAmountHistoricalRiyal !== null ? rep.salesAmountHistoricalRiyal.toLocaleString('fa-IR') : <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>}</td>
-                                              <td className="p-2 text-left font-mono text-emerald-600">{rep.settledAmountForeign.toLocaleString('fa-IR')}</td>
-                                              <td className="p-2 text-left font-mono text-emerald-600">{rep.actualReceivedRiyal.toLocaleString('fa-IR')}</td>
-                                              <td className="p-2 text-left font-mono font-bold text-amber-600">{rep.remainingAmountForeign.toLocaleString('fa-IR')}</td>
-                                              <td className="p-2 text-left font-mono font-bold text-amber-600">{rep.remainingAmountCurrentRiyal !== null ? rep.remainingAmountCurrentRiyal.toLocaleString('fa-IR') : <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>}</td>
+                                              <td className="p-2 text-left font-mono">{rep.salesAmountHistoricalRiyal !== null ? formatMoney(rep.salesAmountHistoricalRiyal) : <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>}</td>
+                                              <td className="p-2 text-left font-mono text-emerald-600">{formatMoney(rep.settledAmountForeign)}</td>
+                                              <td className="p-2 text-left font-mono text-emerald-600">{formatMoney(rep.actualReceivedRiyal)}</td>
+                                              <td className="p-2 text-left font-mono font-bold text-amber-600">{formatMoney(rep.remainingAmountForeign)}</td>
+                                              <td className="p-2 text-left font-mono font-bold text-amber-600">{rep.remainingAmountCurrentRiyal !== null ? formatMoney(rep.remainingAmountCurrentRiyal) : <span className="text-red-500 font-bold bg-red-50 px-1 py-0.5 rounded text-[10px]">⚠️ نامشخص</span>}</td>
                                             </tr>
                                           ))}
                                         </tbody>
@@ -1502,7 +1502,7 @@ export default function TransactionsView({
                         <td className="p-3 text-slate-600">{linkedProj?.name || 'فاقد پروژه'}</td>
                         <td className="p-3 text-slate-600">{pf.customerName}</td>
                         <td className="p-3 text-center font-bold text-emerald-700">{pf.currency}</td>
-                        <td className="p-3 text-left font-mono text-slate-700">{pf.finalAmount?.toLocaleString()}</td>
+                        <td className="p-3 text-left font-mono text-slate-700">{formatMoney(pf.finalAmount)}</td>
                         <td className="p-3">
                           <div className="flex items-center gap-2 justify-center">
                             <input
@@ -1580,7 +1580,7 @@ export default function TransactionsView({
                         <td className="p-3 font-bold text-slate-700">{linkedPf?.proformaNumber || 'ناشناس'}</td>
                         <td className="p-3 text-slate-600">{t.projectName}</td>
                         <td className="p-3 text-slate-600">{t.customerName}</td>
-                        <td className="p-3 text-left font-mono text-slate-700">{t.amountRIYAL?.toLocaleString()}</td>
+                        <td className="p-3 text-left font-mono text-slate-700">{formatMoney(t.amountRIYAL)}</td>
                         <td className="p-3">
                           <div className="flex items-center gap-2 justify-center">
                             <input
@@ -1988,7 +1988,7 @@ export default function TransactionsView({
                         ...proformas
                           .map(pf => ({
                             value: pf.id,
-                            label: `${pf.proformaNumber} (${pf.currency || 'ریال'}) - مبلغ: ${pf.finalAmount?.toLocaleString('fa-IR')}`
+                            label: `${pf.proformaNumber} (${pf.currency || 'ریال'}) - مبلغ: ${formatMoney(pf.finalAmount)}`
                           }))
                       ]}
                       placeholder="-- انتخاب پیش‌فاکتور --"
@@ -2678,7 +2678,7 @@ export default function TransactionsView({
                   <div>
                     <span className="text-slate-400 font-bold">مبلغ تراکنش:</span>
                     <strong className="text-slate-950 text-sm font-mono mr-1">
-                      {printTargetTx.amountRIYAL?.toLocaleString('fa-IR')} ریال
+                      {formatMoney(printTargetTx.amountRIYAL)} ریال
                     </strong>
                   </div>
                   <div>
