@@ -2423,19 +2423,29 @@ export default function ProformasView({
         </div>
         <!-- Items Table -->
         <div class="table-container">
-            <table>
+            <!--
+                The specification column is the widest one, deliberately.
+                It holds the product name and a dozen lines of technical
+                detail, while every other column holds a short known value —
+                but the row number, the photograph and the two price columns
+                were sized generously and the text got whatever was left, so
+                a specification line wrapped two or three times beside half
+                empty neighbours. A fixed table layout makes these widths the
+                real ones rather than suggestions.
+            -->
+            <table style="table-layout: fixed;">
                 <thead>
                     <tr>
-                        <th style="width: 50px; text-align: center;">ردیف</th>
-                        <th style="width: 130px; text-align: center;">تصویر کالا</th>
+                        <th style="width: 30px; text-align: center;">ردیف</th>
+                        <th style="width: 106px; text-align: center;">تصویر کالا</th>
                         <th>نوع کالا و مشخصات فنی</th>
-                        <th style="text-align: center; width: 70px;">تعداد</th>
-                        <th style="text-align: center; width: 70px;">واحد</th>
+                        <th style="text-align: center; width: 44px;">تعداد</th>
+                        <th style="text-align: center; width: 48px;">واحد</th>
                         ${
                           pf.proformaType !== "TECHNICAL"
                             ? `
-                        <th style="text-align: left;">بهای واحد (${targetCurrency})</th>
-                        <th style="text-align: left;">بهای کل (${targetCurrency})</th>
+                        <th style="text-align: left; width: 88px;">بهای واحد (${targetCurrency})</th>
+                        <th style="text-align: left; width: 96px;">بهای کل (${targetCurrency})</th>
                         `
                             : ""
                         }
