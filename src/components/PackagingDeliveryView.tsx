@@ -571,13 +571,13 @@ export default function PackagingDeliveryView({
         const displayedName = `${item.itemOrDocName}${brandStr}${tagStr}`;
         return `
         <tr style="border-bottom: 1px solid #e2e8f0;">
-          <td style="padding: 12px; text-align: center; font-family: monospace;">${index + 1}</td>
-          <td style="padding: 12px; font-weight: bold; color: #1e293b;">${displayedName}</td>
-          <td style="padding: 12px; text-align: center; font-family: monospace; font-weight: bold;">${item.quantity}</td>
-          <td style="padding: 12px; text-align: center;">${item.packageType}</td>
-          <td style="padding: 12px; text-align: left; font-family: monospace;" dir="ltr">${item.dimensions}</td>
-          <td style="padding: 12px; text-align: center; font-family: monospace;">${item.weight} Kg</td>
-          <td style="padding: 12px; text-align: center; font-family: monospace; font-weight: bold; color: #059669;">${item.actualDeliveryDate || delivery.actualDeliveryDate || 'در انتظار تحویل'}</td>
+          <td style="padding: 7px 4px; text-align: center; font-family: monospace; vertical-align: middle;">${index + 1}</td>
+          <td style="padding: 7px 8px; font-weight: bold; color: #1e293b; vertical-align: middle;">${displayedName}</td>
+          <td style="padding: 7px 4px; text-align: center; font-family: monospace; font-weight: bold; vertical-align: middle;">${item.quantity}</td>
+          <td style="padding: 7px 4px; text-align: center; vertical-align: middle;">${item.packageType}</td>
+          <td style="padding: 7px 4px; text-align: left; font-family: monospace; vertical-align: middle;" dir="ltr">${item.dimensions}</td>
+          <td style="padding: 7px 4px; text-align: center; font-family: monospace; vertical-align: middle;">${item.weight}</td>
+          <td style="padding: 7px 4px; text-align: center; font-family: monospace; font-weight: bold; color: #059669; vertical-align: middle;">${item.actualDeliveryDate || delivery.actualDeliveryDate || 'در انتظار تحویل'}</td>
         </tr>
         `;
       }).join('');
@@ -587,16 +587,25 @@ export default function PackagingDeliveryView({
           <div style="background-color: #f1f5f9; padding: 10px; font-weight: bold; font-size: 12px; border-bottom: 1px solid #cbd5e1;">
             بسته‌بندی / جعبه: ${box}
           </div>
-          <table style="width: 100%; border-collapse: collapse; text-align: right; font-size: 11px;">
+          <!--
+            The goods column gets whatever the others do not need.
+            Every other column holds a short, known value — a row number, a
+            count, a weight — but they were laid out at 40-140px each with
+            12px of padding, which left the name so narrow that an ordinary
+            product name broke over two or three lines while six columns sat
+            half empty beside it. A fixed table layout makes the widths below
+            the real ones rather than suggestions.
+          -->
+          <table style="width: 100%; table-layout: fixed; border-collapse: collapse; text-align: right; font-size: 11px;">
             <thead style="background-color: #f8fafc; color: #64748b;">
               <tr>
-                <th style="padding: 12px; width: 40px;">ردیف</th>
-                <th style="padding: 12px;">کالا / تجهیز / سند</th>
-                <th style="padding: 12px; text-align: center; width: 60px;">تعداد</th>
-                <th style="padding: 12px; width: 100px;">نوع بسته‌بندی</th>
-                <th style="padding: 12px; width: 140px;">ابعاد بسته‌بندی</th>
-                <th style="padding: 12px; text-align: center; width: 100px;">وزن (کیلوگرم)</th>
-                <th style="padding: 12px; text-align: center; width: 120px;">تاریخ تحویل قطعی</th>
+                <th style="padding: 8px 4px; width: 26px; text-align: center;">ردیف</th>
+                <th style="padding: 8px;">کالا / تجهیز / سند</th>
+                <th style="padding: 8px 4px; text-align: center; width: 42px;">تعداد</th>
+                <th style="padding: 8px 4px; text-align: center; width: 68px;">نوع بسته</th>
+                <th style="padding: 8px 4px; text-align: center; width: 86px;">ابعاد</th>
+                <th style="padding: 8px 4px; text-align: center; width: 52px;">وزن (kg)</th>
+                <th style="padding: 8px 4px; text-align: center; width: 74px;">تاریخ تحویل</th>
               </tr>
             </thead>
             <tbody>
@@ -607,24 +616,14 @@ export default function PackagingDeliveryView({
       `;
     };
 
-    const shipmentRows = [
-      ['شماره بارنامه', delivery.waybillNumber],
-      ['کد رهگیری', delivery.trackingCode],
-      ['نام راننده', delivery.driverName],
-      ['تلفن راننده', delivery.driverPhone],
-      ['پلاک خودرو', delivery.vehiclePlate],
-    ].filter(([, value]) => !!value);
-
-    const shipmentBlock = shipmentRows.length === 0 ? '' : `
-      <div style="margin-top: 16px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px;">
-        <div style="font-weight: bold; font-size: 12px; color: #0f172a; margin-bottom: 8px;">اطلاعات حمل و پیگیری</div>
-        <div style="display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 11px; color: #334155;">
-          ${shipmentRows.map(([label, value]) =>
-            `<div><span style="color: #64748b;">${label}:</span> <strong style="font-family: monospace;">${value}</strong></div>`,
-          ).join('')}
-        </div>
-      </div>
-    `;
+    /*
+     * Shipment and tracking details are deliberately not printed.
+     *
+     * The waybill number, the driver, the plate and the tracking code are how
+     * *we* follow a consignment; the packing list is what travels with the
+     * goods and what the customer signs. They stay on the screen, where the
+     * people who need them work, and off the document.
+     */
 
   const buildSheet = (sheetTables: string, sheetHeading: string, sheetBreakClass: string) => `
     <div class="container${sheetBreakClass}">
@@ -667,12 +666,6 @@ export default function PackagingDeliveryView({
             <h4 style="font-size: 12px; font-weight: bold; border-bottom: 1px solid #cbd5e1; padding-bottom: 6px; margin-bottom: 10px;">${sheetHeading}</h4>
             ${sheetTables}
         </div>
-
-        <!-- The shipment details only. The pre-delivery test report is
-             deliberately not here: it is an internal record of what was
-             checked before the goods went out, and the packing list is a
-             document the customer receives. -->
-        ${shipmentBlock}
 
         <div class="signatures">
             <div>
@@ -865,19 +858,32 @@ export default function PackagingDeliveryView({
             align-items: center;
             flex-wrap: wrap;
         }
-        .page-number:after {
-            content: "صفحه " counter(page);
-        }
+        /*
+         * «صفحه ۲ از ۳», printed in the page margin.
+         *
+         * Every sheet used to print "صفحه 1" — twice wrong. A page counter
+         * reset sat in both the @page rule and the print body rule, and @page
+         * applies to *each* page, so it was set back to one before every sheet
+         * was numbered; and a counter read from a position-fixed element is 0
+         * in Chromium regardless, because the element is painted once and
+         * repeated rather than laid out per page. The number belongs in the
+         * page's own margin box, which is the one place the browser resolves
+         * counter(page) and counter(pages) per sheet.
+         */
         /* A real A4 page. Without a size and a margin the browser used its own,
            and printed its URL-and-date header across the top of every sheet. */
         @page {
             size: A4;
             margin: 12mm 10mm 16mm 10mm;
-            counter-reset: page 1;
+            @bottom-center {
+                content: "صفحه " counter(page) " از " counter(pages);
+                font-family: 'Vazirmatn', Tahoma, sans-serif;
+                font-size: 9pt;
+                color: #64748b;
+            }
         }
         @media print {
             body {
-                counter-reset: page 1;
                 background-color: #ffffff;
                 padding: 0;
                 padding-bottom: 60px;
@@ -921,7 +927,6 @@ ${sheets}
             <div><strong>تلفن تماس:</strong> ${template.phone || '-'}</div>
             <div><strong>پست الکترونیکی:</strong> ${template.email || '-'}</div>
         </div>
-        <div class="page-number"></div>
     </div>
 
     <!-- Auto Print Script -->

@@ -7,6 +7,7 @@ import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } fr
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { scrubProductRefs } from "../refIntegrity";
 import { afterCommit } from "../afterCommit";
+import { describeProformaChanges, proformaChangeSentence } from "./proformaChanges";
 import {
   ProformaOutcome, deriveProjectStatus, getProformaOutcome, getWonItems, isWonStatus,
   statusWithoutProformas,
@@ -563,6 +564,9 @@ export async function updateProforma(
       where: { id },
       include: { items: true },
     });
+    // Read while the previous values are still current: the timeline entry has
+    // to name what the customer, the project and its status *were*.
+    const beforeLabels = await readLabels(tx, before?.customerId, before?.projectId);
 
     const data: Record<string, unknown> = scalarData(input);
 
@@ -604,13 +608,17 @@ export async function updateProforma(
       await syncProjectStatus(tx, existing.projectId, todayJalali);
     }
 
-    return { proforma, before };
+    const afterLabels = await readLabels(tx, proforma.customerId, proforma.projectId);
+
+    return { proforma, before, after, beforeLabels, afterLabels };
   });
 
   if (result) {
-    // Check if outcome changed for workflow trigger
+    // Both sides carry their lines: the outcome is derived from them, and the
+    // row an update returns has none — so this comparison used to see only the
+    // send status and called that "the result of the items".
     const oldOutcome = result.before ? getProformaOutcome(result.before as any) : null;
-    const newOutcome = getProformaOutcome(result.proforma as any);
+    const newOutcome = getProformaOutcome((result.after ?? result.proforma) as any);
 
     // Audit log
     await afterCommit("proforma update", async () => {
@@ -645,21 +653,28 @@ export async function updateProforma(
         );
       }
 
+      // What the edit actually did, spelled out — see proformaChanges.ts.
       await logProjectFact(
         {
           projectId: result.proforma.projectId,
           categoryName: ACTIVITY_CATEGORY.PROFORMAS,
           sourceType: "PROFORMA",
           sourceId: result.proforma.id,
-          // One sentence for the edit, with the outcome appended when it moved —
-          // the document store logged a status change as its own entry, but on
-          // this side both arrive through the same write.
-          text:
-            `پیش‌فاکتور شماره ${result.proforma.proformaNumber} توسط {actor} ویرایش شد.` +
-            (oldOutcome !== newOutcome
-              ? ` نتیجه اقلام این پیش‌فاکتور از «${oldOutcome}» به «${newOutcome}» تغییر یافت،` +
-                ` و وضعیت پروژه بر همین اساس بازمحاسبه شد.`
-              : ""),
+          text: proformaChangeSentence(
+            result.proforma.proformaNumber,
+            describeProformaChanges(
+              result.before as never,
+              (result.after ?? result.proforma) as never,
+              {
+                customerBefore: result.beforeLabels.customerName,
+                customerAfter: result.afterLabels.customerName,
+                projectBefore: result.beforeLabels.projectName,
+                projectAfter: result.afterLabels.projectName,
+                projectStatusBefore: result.beforeLabels.projectStatus,
+                projectStatusAfter: result.afterLabels.projectStatus,
+              },
+            ),
+          ),
         },
         user,
         todayJalali,
@@ -670,6 +685,32 @@ export async function updateProforma(
   }
 
   return null;
+}
+
+/**
+ * The names and the project status behind a proforma's ids.
+ *
+ * Read twice, on both sides of a write, so an entry can say what changed rather
+ * than printing an id or claiming a recalculation that did not happen.
+ */
+async function readLabels(
+  tx: Prisma.TransactionClient,
+  customerId: string | null | undefined,
+  projectId: string | null | undefined,
+): Promise<{ customerName: string | null; projectName: string | null; projectStatus: string | null }> {
+  const [customer, project] = await Promise.all([
+    customerId
+      ? tx.customer.findUnique({ where: { id: customerId }, select: { companyName: true } })
+      : Promise.resolve(null),
+    projectId
+      ? tx.project.findUnique({ where: { id: projectId }, select: { name: true, status: true } })
+      : Promise.resolve(null),
+  ]);
+  return {
+    customerName: customer?.companyName ?? null,
+    projectName: project?.name ?? null,
+    projectStatus: project?.status ?? null,
+  };
 }
 
 /**

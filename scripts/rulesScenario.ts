@@ -50,6 +50,7 @@ import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../sr
 import { REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
 import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
 import { nextSequence, renderAround } from "../src/server/documentNumbers";
+import { describeProformaChanges, proformaChangeSentence } from "../src/server/services/proformaChanges";
 import { formatMoney } from "../src/numUtils";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -999,6 +1000,64 @@ head("Document numbers: the sequence follows the prefix");
       return src.includes("nextDocumentNumber") && /count:\s*\(\)\s*=>/.test(src) ? [f] : [];
     });
   ok("no document number is generated from a table count", counters.length === 0, counters);
+}
+
+/*
+ * The timeline says what an edit did.
+ *
+ * «پیش‌فاکتور شماره X توسط Y ویرایش شد» told a reader that something happened
+ * and nothing about what — and the one detail it did add was wrong: it called
+ * the document's send status «نتیجه اقلام» and claimed the project's status had
+ * been recalculated on the strength of it. Sending a quotation is not a result,
+ * and it moves no project.
+ */
+head("Project timeline: what an edit changed");
+{
+  const base = {
+    status: "پیش‌نویس", isCancelled: false, currency: "دلار", finalAmount: 3240,
+    discountPercent: 0, taxPercent: 0, issueDateJalali: "1405/05/24",
+    expiryDateJalali: "1405/06/23", customerId: "c1", projectId: "p1", notes: "n",
+    items: [{ productName: "Turbine Flow Meter", quantity: 2, unitPriceRial: 1620, status: "جاری" }],
+  };
+
+  const sent = describeProformaChanges(base, { ...base, status: "ارسال شده" }, {
+    projectStatusBefore: "ارائه پیش‌فاکتور", projectStatusAfter: "ارائه پیش‌فاکتور",
+  });
+  eq("sending the document is one clause, about sending", sent.length, 1);
+  ok("named as the send status, not as a result",
+    sent[0].startsWith("وضعیت ارسال پیش‌فاکتور از «پیش‌نویس» به «ارسال شده»"), sent[0]);
+  ok("and no project recalculation is claimed",
+    !sent.some((c) => c.includes("پروژه")), sent);
+
+  const won = describeProformaChanges(base, {
+    ...base, items: [{ ...base.items[0], status: "برنده" }],
+  }, { projectStatusBefore: "ارائه پیش‌فاکتور", projectStatusAfter: "برنده (موفق)" });
+  ok("a won line is named", won.some((c) => c.includes("قلم برنده شد")), won);
+  ok("the document's own result is reported once the lines decide it",
+    won.some((c) => c.includes("نتیجه کلی سند")), won);
+  ok("and the project is mentioned because it really moved",
+    won.some((c) => c.includes("«ارائه پیش‌فاکتور» به «برنده (موفق)»")), won);
+
+  const edited = describeProformaChanges(base, {
+    ...base, finalAmount: 5000, expiryDateJalali: "1405/07/10",
+    items: [
+      { productName: "Turbine Flow Meter", quantity: 3, unitPriceRial: 1700, status: "جاری" },
+      { productName: "Pressure Transmitter", quantity: 1, unitPriceRial: 900, status: "جاری" },
+    ],
+  });
+  ok("an added line is named", edited.some((c) => c.includes("اضافه شد") && c.includes("Pressure Transmitter")), edited);
+  ok("a changed quantity is given both ways", edited.some((c) => c.includes("تعداد") && c.includes("از 2 به 3")), edited);
+  ok("so is a changed unit price", edited.some((c) => c.includes("بهای واحد") && c.includes("1,620")), edited);
+  ok("and the total, in Latin digits with its currency",
+    edited.some((c) => c.includes("مبلغ نهایی از 3,240 به 5,000 دلار")), edited);
+  ok("a moved date is spelled out", edited.some((c) => c.includes("تاریخ اعتبار از 1405/06/23 به 1405/07/10")), edited);
+
+  const removed = describeProformaChanges(base, { ...base, items: [] });
+  ok("a removed line is named", removed.some((c) => c.includes("حذف شد")), removed);
+
+  eq("a save that changed nothing says exactly that",
+    proformaChangeSentence("X-1", describeProformaChanges(base, { ...base })),
+    "پیش‌فاکتور شماره X-1 توسط {actor} ویرایش شد (بدون تغییر در اطلاعات اصلی سند).");
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

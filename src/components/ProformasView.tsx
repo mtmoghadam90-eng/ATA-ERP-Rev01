@@ -2025,7 +2025,11 @@ export default function ProformasView({
              block of text, and centring it against a short neighbour would
              leave the product name floating in the middle of the row. -->
         <td style="padding: 10px; vertical-align: top;">
-          <div style="font-weight: bold; color: #1e293b; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid #f1f5f9;">
+          <!-- Left-aligned, like the specification beneath it: the names are
+               Latin product names, and hanging them off the right-hand edge of
+               an RTL cell put them at the opposite side of the text they
+               belong to. -->
+          <div style="font-weight: bold; color: #1e293b; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid #f1f5f9; text-align: left; direction: ltr;">
             ${item.productName}${overrideShowBrand && item.brand ? ` <span style="color: #4f46e5; font-size: 11px;">(${item.brand})</span>` : ""}${item.tagNumber ? ` <span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 1px 5px; border-radius: 4px;">تگ: ${item.tagNumber}</span>` : ""}
           </div>
           <div style="font-size: 11px; color: #475569; white-space: pre-line; line-height: 1.5; text-align: left; direction: ltr;">
@@ -2304,9 +2308,18 @@ export default function ProformasView({
             align-items: center;
             flex-wrap: wrap;
         }
-        .page-number:after {
-            content: "صفحه " counter(page);
-        }
+        /*
+         * «صفحه ۲ از ۳», printed in the page margin.
+         *
+         * Every sheet used to print "صفحه 1" — twice wrong. A page counter
+         * reset sat in both the @page rule and the print body rule, and @page
+         * applies to *each* page, so it was set back to one before every sheet
+         * was numbered; and a counter read from a position-fixed element is 0
+         * in Chromium regardless, because the element is painted once and
+         * repeated rather than laid out per page. The number belongs in the
+         * page's own margin box, which is the one place the browser resolves
+         * counter(page) and counter(pages) per sheet.
+         */
         /*
          * A real A4 page, with the margins the document wants.
          *
@@ -2318,11 +2331,15 @@ export default function ProformasView({
         @page {
             size: A4;
             margin: 12mm 10mm 16mm 10mm;
-            counter-reset: page 1;
+            @bottom-center {
+                content: "صفحه " counter(page) " از " counter(pages);
+                font-family: 'Vazirmatn', Tahoma, sans-serif;
+                font-size: 9pt;
+                color: #64748b;
+            }
         }
         @media print {
             body {
-                counter-reset: page 1;
                 background-color: #ffffff;
                 padding: 0;
                 padding-bottom: 60px;
@@ -2532,7 +2549,6 @@ export default function ProformasView({
             <div><strong>تلفن تماس:</strong> ${template.phone || "-"}</div>
             <div><strong>پست الکترونیکی:</strong> ${template.email || "-"}</div>
         </div>
-        <div class="page-number"></div>
     </div>
     <!-- Auto Print Script -->
     <script>
@@ -3182,9 +3198,13 @@ export default function ProformasView({
                   <table className="w-full text-right border-collapse">
                     <thead>
                       <tr className="bg-slate-50/80 border-b border-slate-100 text-slate-500 text-xs font-bold">
-                        <th className="p-4 w-32">شماره نسخه/سند</th>
-                        <th className="p-4 w-48">تاریخ صدور / انقضا</th>
-                        <th className="p-4 min-w-[300px]">مشتری/اقلام</th>
+                        {/* The document number is the column people scan the
+                            grid by and it was the narrowest one, so a number
+                            like ATA-05-26-C1 wrapped or was cut; the goods
+                            column had 300px it did not need. */}
+                        <th className="p-4 w-44">شماره نسخه/سند</th>
+                        <th className="p-4 w-44">تاریخ صدور / انقضا</th>
+                        <th className="p-4 min-w-[200px]">مشتری/اقلام</th>
                         <th className="p-4 text-left w-52">مبلغ کل نهایی</th>
                         <th className="p-4 text-center w-36">وضعیت ارسال</th>
                         <th className="p-4 text-center w-32">
@@ -3201,7 +3221,7 @@ export default function ProformasView({
                         >
                           {/* Number */}
                           <td className="p-4">
-                            <span className="font-mono font-extrabold text-slate-900 text-sm block">
+                            <span className="font-mono font-extrabold text-slate-900 text-sm block whitespace-nowrap">
                               {pf.proformaNumber}
                             </span>
                           </td>
