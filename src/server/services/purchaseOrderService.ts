@@ -201,7 +201,7 @@ function mapItem(row: PurchaseOrderItemInput): Record<string, unknown> | null {
  * fees. It is stored because the rate moves and a historical order must keep the
  * figure it was costed at.
  */
-function computeTotals(
+export function computeTotals(
   items: PurchaseOrderItemInput[],
   input: PurchaseOrderInput,
 ): Record<string, number> {
@@ -215,9 +215,32 @@ function computeTotals(
   const shippingCostForeign = toNumber(input.shippingCostForeign, 0);
   const remittanceFeeForeign = toNumber(input.remittanceFeeForeign, 0);
 
-  const landedCostForeign = totalForeignAmount + shippingCostForeign + remittanceFeeForeign;
+  /*
+   * The landed cost, once, in two currencies.
+   *
+   * The rial figure is the real one — it is what the goods cost delivered, and
+   * three of the six cost inputs are quoted in rial (customs above all). The
+   * foreign figure is that same money divided by the order's own rate, not a
+   * separate sum.
+   *
+   * It used to be a separate sum, and one that left customs duty out: so an
+   * order's «بهای تمام‌شده ارزی» was goods plus freight plus remittance and
+   * nothing else, while the same screen's cost-allocation sheet showed customs
+   * included. Three places disagreed — the sheet inside the form, the "landed
+   * details" popup and the row card — because two of them recomputed the figure
+   * themselves when the stored one looked empty, using a third formula again.
+   * Deriving one from the other makes the two figures the same money by
+   * construction, and there is nothing left for a client to recompute.
+   */
   const landedCostRial =
-    landedCostForeign * exchangeRate + shippingCostRial + customsDutyRial + remittanceFeeRial;
+    (totalForeignAmount + shippingCostForeign + remittanceFeeForeign) * exchangeRate
+    + shippingCostRial + customsDutyRial + remittanceFeeRial;
+
+  const landedCostForeign = exchangeRate > 0
+    ? Number((landedCostRial / exchangeRate).toFixed(2))
+    // No rate to convert at — the rial-quoted costs cannot be expressed in the
+    // order's currency, so the foreign figure carries only what was foreign.
+    : totalForeignAmount + shippingCostForeign + remittanceFeeForeign;
 
   return {
     totalForeignAmount, exchangeRate,

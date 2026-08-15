@@ -183,10 +183,12 @@ export function rowToPurchaseOrder(row: PurchaseOrderRow): PurchaseOrder {
     expectedDeliveryDate: row.expectedDeliveryDateJalali ?? undefined,
     receivedDate: row.receivedDateJalali ?? undefined,
     totalForeignAmount: money(row.totalForeignAmount),
-    // Both landed-cost figures are computed by the server. The view has a
-    // fallback that re-derives them from the cost inputs, but those only come
-    // with the detail record — so a list row must carry the computed values
-    // under the names the view reads, or the fallback divides an undefined.
+    // Both landed-cost figures are computed by the server, and nothing on the
+    // client recomputes them: the screen used to carry its own fallback
+    // formula for whenever these looked empty, which is how the row card, the
+    // "landed details" popup and the cost sheet inside the form came to show
+    // three different numbers for one order. A row must therefore carry them
+    // under the names the view reads.
     calculatedLandedCostRIYAL: money(row.landedCostRial),
     calculatedLandedCostForeign: money(row.landedCostForeign),
     // The card prints both of these, and neither reached it: the custom-field

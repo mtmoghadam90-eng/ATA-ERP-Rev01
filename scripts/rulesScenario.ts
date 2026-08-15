@@ -45,7 +45,7 @@ import { ACTIVITY_CATEGORY, canonicalCategoryName, sameCategory } from "../src/u
 import { packableLines, outstandingFor } from "../src/utils/packingAllocation";
 import { parseMilestoneRules } from "../src/server/services/milestoneAutomation";
 import { refreshDecision, type RateRefreshState } from "../src/server/services/rateRefresh";
-import { receivedDateImpliesStatus, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
+import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
 import type { CustomerRow } from "../src/api/customers";
 
 let pass = 0; const fails: string[] = [];
@@ -637,6 +637,56 @@ eq("no arrival date changes nothing",
 // happened; taking goods back out of stock is a decision, made with the status.
 eq("clearing the date does not un-receive the order",
   poData({ receivedDateJalali: null }, RECEIVED_STATUS), undefined);
+
+/*
+ * The landed cost, in two currencies that describe the same money.
+ *
+ * Three places on the purchase-order screen showed three different figures for
+ * one order: the cost sheet inside the form, the "landed details" popup and the
+ * row card. Two of them carried their own fallback formula for whenever the
+ * stored figure looked empty, and the stored one left customs duty out of the
+ * foreign total altogether — so «بهای تمام‌شده ارزی» was goods plus freight and
+ * nothing else.
+ */
+head("Purchase order: landed cost");
+
+const line = (qty: number, price: number) =>
+  ({ productName: "x", quantity: qty, unitPriceForeign: price });
+
+const euroOrder = computeTotals([line(10, 1000)], {
+  exchangeRate: 900_000,
+  shippingCostForeign: 500,
+  remittanceFeeForeign: 120,
+  customsDutyRial: 450_000_000,
+});
+
+eq("the order's own value is the lines", euroOrder.totalForeignAmount, 10_000);
+eq("rial landed cost carries everything",
+  euroOrder.landedCostRial, (10_000 + 500 + 120) * 900_000 + 450_000_000);
+ok("customs duty reaches the foreign figure too",
+  euroOrder.landedCostForeign > 10_620, euroOrder.landedCostForeign);
+ok("and the two figures are the same money at the order's rate",
+  Math.abs(euroOrder.landedCostForeign * 900_000 - euroOrder.landedCostRial) < 1_000_000,
+  euroOrder.landedCostForeign * 900_000 - euroOrder.landedCostRial);
+
+// Rial-quoted freight and remittance exist on older orders, from before the
+// foreign-currency fields were added. They belong to the landed cost as much as
+// customs does, and the form's own preview ignored them.
+const legacy = computeTotals([line(10, 1000)], {
+  exchangeRate: 900_000,
+  shippingCostRial: 80_000_000,
+  remittanceFeeRial: 12_000_000,
+  customsDutyRial: 450_000_000,
+});
+eq("rial-quoted freight and fees count as well",
+  legacy.landedCostRial, 10_000 * 900_000 + 80_000_000 + 12_000_000 + 450_000_000);
+
+// No rate yet: the rial-quoted costs cannot be expressed in the order's
+// currency, so the foreign figure carries only what was foreign — never a
+// division by zero.
+const unrated = computeTotals([line(10, 1000)], { customsDutyRial: 450_000_000 });
+ok("a missing rate never produces Infinity",
+  Number.isFinite(unrated.landedCostForeign), unrated.landedCostForeign);
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

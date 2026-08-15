@@ -771,9 +771,23 @@ export default function PurchaseOrdersView({
     setItems(newItems);
   };
 
+  /*
+   * The form's live preview of the landed cost.
+   *
+   * Same rule as the server's `computeTotals`, and the same shape: the rial
+   * figure is the real one — customs and any rial-quoted freight or remittance
+   * belong to it — and the foreign figure is that money at the order's own
+   * rate, never a second sum. Three places on this screen used to disagree
+   * about this; there is one rule now, and the two figures cannot drift apart.
+   */
   const subTotalForeign = items.reduce((sum, item) => sum + (item.quantity * item.unitPriceForeignCurrency), 0);
-  const calculatedLandedCost = Math.round((subTotalForeign + remittanceFeeForeign + shippingCostForeign) * exchangeRateInput + customsDutyRIYAL);
-  const calculatedLandedCostForeign = Number((subTotalForeign + remittanceFeeForeign + shippingCostForeign + (exchangeRateInput > 0 ? (customsDutyRIYAL / exchangeRateInput) : 0)).toFixed(2));
+  const calculatedLandedCost = Math.round(
+    (subTotalForeign + remittanceFeeForeign + shippingCostForeign) * exchangeRateInput
+    + shippingCostRIYAL + customsDutyRIYAL + remittanceFeeRIYAL,
+  );
+  const calculatedLandedCostForeign = exchangeRateInput > 0
+    ? Number((calculatedLandedCost / exchangeRateInput).toFixed(2))
+    : Number((subTotalForeign + remittanceFeeForeign + shippingCostForeign).toFixed(2));
 
   // Handle Save
   const handleSavePO = (e: React.FormEvent) => {
@@ -840,9 +854,22 @@ export default function PurchaseOrdersView({
         exchangeRate: exchangeRateInput,
         items: formattedItems,
         totalForeignAmount: subTotalForeign,
-        shippingCostRIYAL: Math.round(shippingCostForeign * exchangeRateInput),
+        /*
+         * Freight and remittance are sent once, in the currency the form asks
+         * for them in.
+         *
+         * They used to be sent twice — the foreign figure *and* its rial
+         * conversion — and the server adds both, so every order carrying
+         * freight or a remittance fee had them counted twice in its stored
+         * landed cost. The rial columns are the older half of the pair, kept
+         * for orders entered before the foreign fields existed; `handleOpenEdit`
+         * converts those into the foreign fields when it loads one, so writing
+         * zero here is what finishes that conversion rather than losing it.
+         * Customs is genuinely rial-only and stays.
+         */
+        shippingCostRIYAL: 0,
         customsDutyRIYAL,
-        remittanceFeeRIYAL: Math.round(remittanceFeeForeign * exchangeRateInput),
+        remittanceFeeRIYAL: 0,
         shippingCostForeign,
         remittanceFeeForeign,
         calculatedLandedCostRIYAL: calculatedLandedCost,
@@ -871,9 +898,22 @@ export default function PurchaseOrdersView({
         exchangeRate: exchangeRateInput,
         items: formattedItems,
         totalForeignAmount: subTotalForeign,
-        shippingCostRIYAL: Math.round(shippingCostForeign * exchangeRateInput),
+        /*
+         * Freight and remittance are sent once, in the currency the form asks
+         * for them in.
+         *
+         * They used to be sent twice — the foreign figure *and* its rial
+         * conversion — and the server adds both, so every order carrying
+         * freight or a remittance fee had them counted twice in its stored
+         * landed cost. The rial columns are the older half of the pair, kept
+         * for orders entered before the foreign fields existed; `handleOpenEdit`
+         * converts those into the foreign fields when it loads one, so writing
+         * zero here is what finishes that conversion rather than losing it.
+         * Customs is genuinely rial-only and stays.
+         */
+        shippingCostRIYAL: 0,
         customsDutyRIYAL,
-        remittanceFeeRIYAL: Math.round(remittanceFeeForeign * exchangeRateInput),
+        remittanceFeeRIYAL: 0,
         shippingCostForeign,
         remittanceFeeForeign,
         calculatedLandedCostRIYAL: calculatedLandedCost,
@@ -1092,11 +1132,12 @@ export default function PurchaseOrdersView({
             ? Math.round(po.calculatedLandedCostRIYAL / totalQty)
             : 0;
 
-          const poLandedCostForeign = po.calculatedLandedCostForeign || 
-            (po.totalForeignAmount + 
-             (po.remittanceFeeForeign || (po.remittanceFeeRIYAL && po.exchangeRate ? Number((po.remittanceFeeRIYAL / po.exchangeRate).toFixed(2)) : 0)) + 
-             (po.shippingCostForeign || (po.shippingCostRIYAL && po.exchangeRate ? Number((po.shippingCostRIYAL / po.exchangeRate).toFixed(2)) : 0)) + 
-             (po.exchangeRate > 0 ? (po.customsDutyRIYAL / po.exchangeRate) : 0));
+          // Whatever the server stored, with no second opinion. This used to
+          // fall back to a formula of its own whenever the stored figure was
+          // falsy — a different formula again — which is how the card, the
+          // popup and the cost sheet came to show three different numbers for
+          // the same order.
+          const poLandedCostForeign = po.calculatedLandedCostForeign;
 
           const landedCostAllocatedPerUnitForeign = totalQty > 0
             ? Number((poLandedCostForeign / totalQty).toFixed(2))
@@ -1377,8 +1418,8 @@ export default function PurchaseOrdersView({
         const selShippingCostForeign = selectedPO.shippingCostForeign !== undefined 
           ? selectedPO.shippingCostForeign 
           : (selectedPO.shippingCostRIYAL && selectedPO.exchangeRate ? Number((selectedPO.shippingCostRIYAL / selectedPO.exchangeRate).toFixed(2)) : 0);
-        const selLandedCostForeign = selectedPO.calculatedLandedCostForeign || 
-          (selectedPO.totalForeignAmount + selRemittanceFeeForeign + selShippingCostForeign + (selectedPO.exchangeRate > 0 ? (selectedPO.customsDutyRIYAL / selectedPO.exchangeRate) : 0));
+        // The stored figure, same as everywhere else on this screen.
+        const selLandedCostForeign = selectedPO.calculatedLandedCostForeign;
         
         return (
           <div className={`fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 ${isLandedModalFullscreen ? 'p-0' : 'p-4'}`}>
