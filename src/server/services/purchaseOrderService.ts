@@ -5,6 +5,7 @@ import { AuthUser, hasPermission } from "../auth";
 import { redactPurchaseOrder, redactPurchaseOrders } from "../costs";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
+import { scrubProductRefs } from "../refIntegrity";
 import { applyStockDelta } from "./productService";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
@@ -409,7 +410,9 @@ export async function createPurchaseOrder(
   const db = getDb();
 
   const po = await db.$transaction(async (tx) => {
-    const data = { ...scalarData(input), ...computeTotals(input.items ?? [], input) };
+    // A line naming a product or SKU that is gone loses the link, not the order.
+    const items = (await scrubProductRefs(tx, input.items)) ?? [];
+    const data = { ...scalarData(input), ...computeTotals(items, input) };
     // An order can be entered already arrived, e.g. when recording history.
     receivedDateImpliesStatus(data);
 
@@ -419,7 +422,7 @@ export async function createPurchaseOrder(
 
     await syncChildren({
       delegate: tx.purchaseOrderItem, parentWhere: { purchaseOrderId: po.id },
-      rows: input.items ?? [], map: mapItem,
+      rows: items, map: mapItem,
     });
 
     // An order can be entered already received, e.g. when recording history.
@@ -633,7 +636,7 @@ export async function updatePurchaseOrder(
     if (input.items !== undefined) {
       await syncChildren({
         delegate: tx.purchaseOrderItem, parentWhere: { purchaseOrderId: id },
-        rows: input.items, map: mapItem,
+        rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapItem,
       });
     }
 

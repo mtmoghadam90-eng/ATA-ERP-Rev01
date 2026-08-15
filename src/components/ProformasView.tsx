@@ -368,12 +368,17 @@ export default function ProformasView({
   const updateProductById = async (
     productId: string,
     mutate: (full: Product) => Product,
-  ) => {
+  ): Promise<Product | null> => {
     try {
       const full = detailToProduct(await productsApi.get(productId));
-      await productsApi.update(productId, productToWriteInput(mutate(full)));
+      const saved = await productsApi.update(productId, productToWriteInput(mutate(full)));
+      // Returned, because ids are the server's: a variant created here gets its
+      // id assigned on insert, and a caller that used the one it made up would
+      // put a reference to nothing on a proforma line.
+      return detailToProduct(saved);
     } catch (err) {
       reportError(err, 'ثبت تغییرات کالا با خطا مواجه شد.');
+      return null;
     }
   };
 
@@ -5535,7 +5540,7 @@ export default function ProformasView({
           if (!prod || !prod.features || prod.features.length === 0)
             return null;
 
-          const handleConfirmConfig = () => {
+          const handleConfirmConfig = async () => {
             const configParts = [];
             let matchedVariantId: string | undefined = undefined;
 
@@ -5567,31 +5572,39 @@ export default function ProformasView({
             if (attributesForVariant && !matchedVariantId) {
               const targetCurrency = prod.currencyForeign || "یورو";
               const calculatedFob = getCombinedFeaturePrice(prod.features || [], attributesForVariant);
-              const newVariantId = `var-${Date.now()}`;
+              const newSku = generateSku(prod.code || "SKU", prod.features || [], attributesForVariant);
               const newVariant: ProductVariant = {
-                id: newVariantId,
-                sku: generateSku(prod.code || "SKU", prod.features || [], attributesForVariant),
+                // Provisional only. The id below is the one that gets stored.
+                id: "",
+                sku: newSku,
                 attributes: attributesForVariant,
                 stockLevel: 0,
                 minStockLevel: 0,
                 priceForeign: calculatedFob > 0 ? calculatedFob : undefined,
                 currencyForeign: targetCurrency,
               };
-              const updatedProduct: Product = {
-                ...prod,
-                hasVariants: true,
-                variants: [...(prod.variants || []), newVariant],
-              };
               // Append to the stored variants, not to this screen's copy — the
               // row carries variants but not config rules or the price
               // calculator, so the record has to be reloaded to add to it.
-              void updateProductById(prod.id, (full) => ({
+              //
+              // Awaited, and the id read back from what was saved: a SKU's id is
+              // assigned by the database on insert. A made-up `var-<timestamp>`
+              // used to go onto the line instead, and since the line's variant
+              // is a real foreign key the whole proforma then failed to save —
+              // with the foreign-key message, which reads as "this record
+              // cannot be deleted" and explains nothing.
+              const saved = await updateProductById(prod.id, (full) => ({
                 ...full,
                 hasVariants: true,
                 variants: [...(full.variants || []), newVariant],
               }));
-              productForItem = updatedProduct;
-              matchedVariantId = newVariantId;
+              const storedVariant = saved?.variants?.find((v) => v.sku === newSku);
+              if (saved && storedVariant) {
+                productForItem = saved;
+                matchedVariantId = storedVariant.id;
+              }
+              // The SKU could not be stored: the line keeps its specifications
+              // and its manual price, and simply carries no SKU link.
             }
 
             let currentSpecs = item.techSpecs || "";
@@ -5604,25 +5617,30 @@ export default function ProformasView({
 
             const newTechSpecs = [...filteredLines, ...configParts].filter(Boolean).join('\n');
 
-            const newItems = [...items];
-            newItems[itemIdx] = {
-                ...item,
-                techSpecs: newTechSpecs,
-            };
-            if (matchedVariantId) {
-                const variant = productForItem.variants!.find(v => v.id === matchedVariantId);
-                newItems[itemIdx].variantId = matchedVariantId;
-                if (variant) {
-                    newItems[itemIdx].productCode = variant.sku;
-                    newItems[itemIdx].unitPriceRIYAL = getProductOrVariantPriceInProformaCurrency(productForItem, variant);
-                    const effectiveSupplyType = variant.stockLevel === 0 ? "ORDER" : (productForItem.supplyType || "INVENTORY");
-                    newItems[itemIdx].supplyMethod = effectiveSupplyType === "ORDER" ? "ORDER" : "INVENTORY";
+            // Applied to the rows as they are *now*: storing the SKU is a round
+            // trip to the server, and the user may have typed on another line
+            // while it ran — writing back the copy captured before the call
+            // would undo that.
+            setItems((prev) => {
+                const newItems = [...prev];
+                newItems[itemIdx] = {
+                    ...(newItems[itemIdx] ?? item),
+                    techSpecs: newTechSpecs,
+                };
+                if (matchedVariantId) {
+                    const variant = productForItem.variants!.find(v => v.id === matchedVariantId);
+                    newItems[itemIdx].variantId = matchedVariantId;
+                    if (variant) {
+                        newItems[itemIdx].productCode = variant.sku;
+                        newItems[itemIdx].unitPriceRIYAL = getProductOrVariantPriceInProformaCurrency(productForItem, variant);
+                        const effectiveSupplyType = variant.stockLevel === 0 ? "ORDER" : (productForItem.supplyType || "INVENTORY");
+                        newItems[itemIdx].supplyMethod = effectiveSupplyType === "ORDER" ? "ORDER" : "INVENTORY";
+                    }
+                } else {
+                    newItems[itemIdx].variantId = undefined;
                 }
-            } else {
-                newItems[itemIdx].variantId = undefined;
-            }
-
-            setItems(newItems);
+                return newItems;
+            });
             setShowConfigModal(null);
           };
 

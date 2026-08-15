@@ -5,6 +5,8 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
+import { scrubProductRefs } from "../refIntegrity";
+import { afterCommit } from "../afterCommit";
 import {
   ProformaOutcome, deriveProjectStatus, getProformaOutcome, getWonItems, isWonStatus,
   statusWithoutProformas,
@@ -446,17 +448,21 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
   const db = getDb();
 
   const proforma = await db.$transaction(async (tx) => {
+    // A line may name a product or SKU that is no longer there — see
+    // scrubProductRefs. The link goes, the document is still saved.
+    const items = (await scrubProductRefs(tx, input.items)) ?? [];
+
     const proforma = await tx.proforma.create({
       data: {
         ...scalarData(input),
-        ...computeTotals(input.items ?? [], input),
+        ...computeTotals(items, input),
         creatorUserId: input.creatorUserId ?? user.id,
       } as Prisma.ProformaUncheckedCreateInput,
     });
 
     await syncChildren({
       delegate: tx.proformaItem, parentWhere: { proformaId: proforma.id },
-      rows: input.items ?? [], map: mapItem,
+      rows: items, map: mapItem,
     });
 
     // Load full proforma with items to reconcile stock
@@ -474,58 +480,60 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
   });
 
   // Audit log
-  await logAction(
-    {
-      action: "CREATE",
-      module: "پیش‌فاکتورها",
-      entityId: proforma.id,
-      description: `ایجاد پیش‌فاکتور جدید شماره ${proforma.proformaNumber} به مبلغ کل ${formatMoney(Number(proforma.finalAmount ?? 0))} ${proforma.currency || 'ریال'}`,
-      afterState: proforma,
-    },
-    user,
-    todayJalali,
-  );
+  await afterCommit("proforma create", async () => {
+    await logAction(
+      {
+        action: "CREATE",
+        module: "پیش‌فاکتورها",
+        entityId: proforma.id,
+        description: `ایجاد پیش‌فاکتور جدید شماره ${proforma.proformaNumber} به مبلغ کل ${formatMoney(Number(proforma.finalAmount ?? 0))} ${proforma.currency || 'ریال'}`,
+        afterState: proforma,
+      },
+      user,
+      todayJalali,
+    );
 
-  // Notification
-  await notifyModuleResponsible(
-    "proformas",
-    "صدور پیش‌فاکتور جدید",
-    `پیش‌فاکتور جدید شماره ${proforma.proformaNumber} ثبت شد`,
-    user,
-    proforma.projectId,
-  );
+    // Notification
+    await notifyModuleResponsible(
+      "proformas",
+      "صدور پیش‌فاکتور جدید",
+      `پیش‌فاکتور جدید شماره ${proforma.proformaNumber} ثبت شد`,
+      user,
+      proforma.projectId,
+    );
 
-  // Workflow rules
-  await processWorkflowRules(
-    "proforma_created",
-    {
-      proformaId: proforma.id,
-      proformaNumber: proforma.proformaNumber,
-      projectId: proforma.projectId,
-      customerId: proforma.customerId,
-      finalAmount: proforma.finalAmount,
-      totalAmount: proforma.totalAmount,
-      currency: proforma.currency,
-    },
-    user,
-  );
+    // Workflow rules
+    await processWorkflowRules(
+      "proforma_created",
+      {
+        proformaId: proforma.id,
+        proformaNumber: proforma.proformaNumber,
+        projectId: proforma.projectId,
+        customerId: proforma.customerId,
+        finalAmount: proforma.finalAmount,
+        totalAmount: proforma.totalAmount,
+        currency: proforma.currency,
+      },
+      user,
+    );
 
-  await logProjectFact(
-    {
-      projectId: proforma.projectId,
-      categoryName: ACTIVITY_CATEGORY.PROFORMAS,
-      sourceType: "PROFORMA",
-      sourceId: proforma.id,
-      text:
-        `پیش‌فاکتور شماره ${proforma.proformaNumber} شامل ${(input.items ?? []).length} قلم کالا` +
-        ` توسط {actor} صادر شد` +
-        (proforma.issueDateJalali ? ` (تاریخ صدور: ${proforma.issueDateJalali}` : " (")
-        + (proforma.expiryDateJalali ? `، اعتبار تا ${proforma.expiryDateJalali}` : "")
-        + `، وضعیت سند: ${proforma.status}).`,
-    },
-    user,
-    todayJalali,
-  );
+    await logProjectFact(
+      {
+        projectId: proforma.projectId,
+        categoryName: ACTIVITY_CATEGORY.PROFORMAS,
+        sourceType: "PROFORMA",
+        sourceId: proforma.id,
+        text:
+          `پیش‌فاکتور شماره ${proforma.proformaNumber} شامل ${(input.items ?? []).length} قلم کالا` +
+          ` توسط {actor} صادر شد` +
+          (proforma.issueDateJalali ? ` (تاریخ صدور: ${proforma.issueDateJalali}` : " (")
+          + (proforma.expiryDateJalali ? `، اعتبار تا ${proforma.expiryDateJalali}` : "")
+          + `، وضعیت سند: ${proforma.status}).`,
+      },
+      user,
+      todayJalali,
+    );
+  });
 
   // With the derived outcome attached, as the list and the detail read both do.
   // The write endpoints answered without it, so a caller that used what a write
@@ -558,11 +566,13 @@ export async function updateProforma(
 
     const data: Record<string, unknown> = scalarData(input);
 
+    const items = await scrubProductRefs(tx, input.items);
+
     // Totals depend on the lines, so they can only be recomputed when the lines
     // are part of this request. Otherwise the stored totals already match the
     // stored lines and must be left alone.
-    if (input.items !== undefined) {
-      Object.assign(data, computeTotals(input.items, input));
+    if (items !== undefined) {
+      Object.assign(data, computeTotals(items, input));
     }
 
     const proforma = await tx.proforma.update({
@@ -570,10 +580,10 @@ export async function updateProforma(
       data: data as Prisma.ProformaUncheckedUpdateInput,
     });
 
-    if (input.items !== undefined) {
+    if (items !== undefined) {
       await syncChildren({
         delegate: tx.proformaItem, parentWhere: { proformaId: id },
-        rows: input.items, map: mapItem,
+        rows: items, map: mapItem,
       });
     }
 
@@ -603,56 +613,58 @@ export async function updateProforma(
     const newOutcome = getProformaOutcome(result.proforma as any);
 
     // Audit log
-    await logAction(
-      {
-        action: "UPDATE",
-        module: "پیش‌فاکتورها",
-        entityId: id,
-        description: `ویرایش پیش‌فاکتور (شماره: ${result.proforma.proformaNumber})`,
-        beforeState: result.before,
-        afterState: result.proforma,
-      },
-      user,
-      todayJalali,
-    );
-
-    // Workflow rules for outcome change
-    if (oldOutcome !== newOutcome) {
-      await processWorkflowRules(
-        "proforma_outcome_change",
+    await afterCommit("proforma update", async () => {
+      await logAction(
         {
-          proformaId: result.proforma.id,
-          proformaNumber: result.proforma.proformaNumber,
-          projectId: result.proforma.projectId,
-          customerId: result.proforma.customerId,
-          oldOutcome,
-          newOutcome,
-          outcome: newOutcome,
-          proformaAmount: result.proforma.finalAmount,
+          action: "UPDATE",
+          module: "پیش‌فاکتورها",
+          entityId: id,
+          description: `ویرایش پیش‌فاکتور (شماره: ${result.proforma.proformaNumber})`,
+          beforeState: result.before,
+          afterState: result.proforma,
         },
         user,
+        todayJalali,
       );
-    }
 
-    await logProjectFact(
-      {
-        projectId: result.proforma.projectId,
-        categoryName: ACTIVITY_CATEGORY.PROFORMAS,
-        sourceType: "PROFORMA",
-        sourceId: result.proforma.id,
-        // One sentence for the edit, with the outcome appended when it moved —
-        // the document store logged a status change as its own entry, but on
-        // this side both arrive through the same write.
-        text:
-          `پیش‌فاکتور شماره ${result.proforma.proformaNumber} توسط {actor} ویرایش شد.` +
-          (oldOutcome !== newOutcome
-            ? ` نتیجه اقلام این پیش‌فاکتور از «${oldOutcome}» به «${newOutcome}» تغییر یافت،` +
-              ` و وضعیت پروژه بر همین اساس بازمحاسبه شد.`
-            : ""),
-      },
-      user,
-      todayJalali,
-    );
+      // Workflow rules for outcome change
+      if (oldOutcome !== newOutcome) {
+        await processWorkflowRules(
+          "proforma_outcome_change",
+          {
+            proformaId: result.proforma.id,
+            proformaNumber: result.proforma.proformaNumber,
+            projectId: result.proforma.projectId,
+            customerId: result.proforma.customerId,
+            oldOutcome,
+            newOutcome,
+            outcome: newOutcome,
+            proformaAmount: result.proforma.finalAmount,
+          },
+          user,
+        );
+      }
+
+      await logProjectFact(
+        {
+          projectId: result.proforma.projectId,
+          categoryName: ACTIVITY_CATEGORY.PROFORMAS,
+          sourceType: "PROFORMA",
+          sourceId: result.proforma.id,
+          // One sentence for the edit, with the outcome appended when it moved —
+          // the document store logged a status change as its own entry, but on
+          // this side both arrive through the same write.
+          text:
+            `پیش‌فاکتور شماره ${result.proforma.proformaNumber} توسط {actor} ویرایش شد.` +
+            (oldOutcome !== newOutcome
+              ? ` نتیجه اقلام این پیش‌فاکتور از «${oldOutcome}» به «${newOutcome}» تغییر یافت،` +
+                ` و وضعیت پروژه بر همین اساس بازمحاسبه شد.`
+              : ""),
+        },
+        user,
+        todayJalali,
+      );
+    });
 
     return withOutcomeFor(result.proforma.id);
   }

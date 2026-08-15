@@ -894,5 +894,66 @@ eq("and so is a value that cannot be a number", formatMoney("abc"), "0");
   ok("no amount is still formatted in Persian digits", strays.length === 0, strays);
 }
 
+/*
+ * Document lines never carry a catalogue reference the database does not have.
+ *
+ * `productId` and `variantId` on a proforma, purchase-order, packing, inquiry or
+ * project line are real foreign keys, so one that points at nothing does not
+ * degrade — it fails the whole save with P2003, which the API used to report as
+ * "this record cannot be deleted because others depend on it". A proforma was
+ * lost that way: the configurator auto-created a SKU, made up its id instead of
+ * waiting for the one the database assigns, and put that on the line.
+ *
+ * Two rules, read from the source:
+ *  - every service that writes lines scrubs them first, and
+ *  - no screen invents an id for a record the server stores.
+ */
+head("Document lines: no invented catalogue references");
+{
+  const serviceDir = "src/server/services";
+  const writers = [
+    "proformaService.ts", "purchaseOrderService.ts", "deliveryService.ts",
+    "inquiryService.ts", "projectService.ts",
+  ];
+  const unscrubbed: string[] = [];
+  for (const f of writers) {
+    const src = readFileSync(joinPath(serviceDir, f), "utf-8");
+    src.split("\n").forEach((line, i) => {
+      // A line grid handed straight to syncChildren, with nothing having
+      // checked that what it references still exists.
+      if (/rows:\s*input\.items/.test(line)) unscrubbed.push(`${f}:${i + 1}`);
+    });
+    if (!src.includes("scrubProductRefs")) unscrubbed.push(`${f}: never scrubs`);
+  }
+  ok("every service that writes lines scrubs their catalogue references",
+    unscrubbed.length === 0, unscrubbed);
+
+  // The shape that caused it: a made-up id written onto a line's foreign key.
+  // Only a *foreign key* — a form's own grid may key its rows however it likes,
+  // because the server matches those by SKU and assigns the stored id.
+  const INVENTED = /(variantId|productId)\s*[:=]\s*`?(var|prod)-\$\{Date\.now/;
+  ok("the check recognises the line that lost a proforma",
+    INVENTED.test("newItems[itemIdx].variantId = `var-${Date.now()}`;"));
+  ok("and leaves a form's own row keys alone",
+    !INVENTED.test("id: `var-${Date.now()}-${i}`,"));
+
+  const invented: string[] = [];
+  const viewFiles: string[] = [];
+  (function walk(d: string) {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = joinPath(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.tsx?$/.test(e.name)) viewFiles.push(p);
+    }
+  })("src/components");
+  for (const f of viewFiles) {
+    readFileSync(f, "utf-8").split("\n").forEach((line, i) => {
+      if (INVENTED.test(line)) invented.push(`${f}:${i + 1}`);
+    });
+  }
+  ok("no screen invents a SKU id the database will not use",
+    invented.length === 0, invented);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

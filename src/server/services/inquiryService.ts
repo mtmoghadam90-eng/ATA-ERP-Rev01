@@ -5,6 +5,7 @@ import { AuthUser, hasPermission } from "../auth";
 import { redactInquiries, redactInquiry } from "../costs";
 import { expandDateFields } from "../dates";
 import { syncChildren, toNullableString, toNumber } from "../childSync";
+import { scrubProductRefs } from "../refIntegrity";
 import { loadSettings } from "../settings";
 import {
   INQUIRY_STEP_KEYS, InquiryStepKey, resolveStepTitle,
@@ -399,7 +400,7 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
 
     await syncChildren({
       delegate: tx.supplierInquiryItem, parentWhere: { inquiryId: inquiry.id },
-      rows: input.items ?? [], map: mapItem,
+      rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapItem,
     });
 
     // Sending the inquiry is the first thing that happened to it. The form can
@@ -526,7 +527,7 @@ export async function updateInquiry(
     if (input.items !== undefined) {
       await syncChildren({
         delegate: tx.supplierInquiryItem, parentWhere: { inquiryId: id },
-        rows: input.items, map: mapItem,
+        rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapItem,
       });
     }
 

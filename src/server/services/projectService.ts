@@ -4,6 +4,7 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
+import { scrubProductRefs } from "../refIntegrity";
 import { summarizeProject, summarizeProjects } from "./projectSummary";
 // The custom-field clause is identical for every module; defined once with customers.
 import { customFieldClause } from "./customerService";
@@ -512,7 +513,7 @@ export async function createProject(input: ProjectInput, user: AuthUser, todayJa
 
     await syncChildren({
       delegate: tx.projectItem, parentWhere: { projectId: project.id },
-      rows: input.items ?? [], map: mapItem,
+      rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapItem,
     });
     await syncMilestones(tx, project.id, input.milestones ?? []);
 
@@ -593,7 +594,7 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
     if (input.items !== undefined) {
       await syncChildren({
         delegate: tx.projectItem, parentWhere: { projectId: id },
-        rows: input.items, map: mapItem,
+        rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapItem,
       });
     }
     if (input.milestones !== undefined) {

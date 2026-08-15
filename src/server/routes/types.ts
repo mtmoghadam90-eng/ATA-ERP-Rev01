@@ -56,10 +56,18 @@ export function sendError(res: express.Response, err: unknown, context: string):
     return;
   }
   if (code === "P2003" || code === "P2014") {
+    // The same database error means two opposite things, and answering with
+    // only one of them misleads: on a delete the row is still referenced, but
+    // on a save the *request* referenced something that is not there. Saving a
+    // proforma whose line pointed at a SKU that had not been stored answered
+    // "this record cannot be deleted", which describes nothing the user did.
+    const isDelete = res.req?.method === "DELETE";
     res.status(409).json({
       success: false,
-      error: "این رکورد به رکوردهای دیگری وابسته است و قابل حذف نیست.",
-      code: "IN_USE",
+      error: isDelete
+        ? "این رکورد به رکوردهای دیگری وابسته است و قابل حذف نیست."
+        : "یکی از موارد انتخاب‌شده در این فرم دیگر در سیستم موجود نیست. لطفاً آن را دوباره انتخاب کنید.",
+      code: isDelete ? "IN_USE" : "BAD_REFERENCE",
     });
     return;
   }

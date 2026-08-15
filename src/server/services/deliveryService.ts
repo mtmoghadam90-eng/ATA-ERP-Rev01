@@ -4,6 +4,7 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
+import { scrubProductRefs } from "../refIntegrity";
 import { applyStockDelta } from "./productService";
 import { getWonItems } from "../proformaStatus";
 import { deriveServiceHeader } from "../afterSalesStatus";
@@ -290,7 +291,7 @@ export async function createDelivery(input: DeliveryInput, user: AuthUser, today
     });
     await syncChildren({
       delegate: tx.packingItem, parentWhere: { deliveryId: delivery.id },
-      rows: input.items ?? [], map: mapPackingItem,
+      rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapPackingItem,
     });
     // Issuing the list is what takes the goods out of the warehouse.
     await reconcileDeliveryStock(tx, delivery.id, todayJalali);
@@ -385,7 +386,7 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
     if (input.items !== undefined) {
       await syncChildren({
         delegate: tx.packingItem, parentWhere: { deliveryId: id },
-        rows: input.items, map: mapPackingItem,
+        rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapPackingItem,
       });
     }
 
@@ -811,7 +812,7 @@ export async function createService(input: ServiceInput, user: AuthUser, todayJa
     });
     await syncChildren({
       delegate: tx.afterSalesServiceItem, parentWhere: { serviceId: service.id },
-      rows: input.items ?? [], map: mapServiceItem,
+      rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapServiceItem,
     });
     await applyServiceHeader(tx, service.id);
 
@@ -887,7 +888,7 @@ export async function updateService(id: string, input: ServiceInput, user: AuthU
     if (input.items !== undefined) {
       await syncChildren({
         delegate: tx.afterSalesServiceItem, parentWhere: { serviceId: id },
-        rows: input.items, map: mapServiceItem,
+        rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapServiceItem,
       });
     }
     // Also on a save that sent no rows: the header still has to agree with what
