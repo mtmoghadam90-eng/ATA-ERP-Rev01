@@ -801,6 +801,16 @@ export interface InquiryStep {
 
 export interface SupplierInquiryItem {
   id: string;
+  /**
+   * The catalogue item this line prices, and its SKU.
+   *
+   * Optional: an inquiry is often the first time a part is mentioned, priced
+   * before anyone decides to carry it. When it is set, the offer stays tied to
+   * exactly what was quoted — which is what lets a winning offer become a
+   * purchase-order line with a real product behind it.
+   */
+  productId?: string;
+  variantId?: string;
   name: string;
   brand?: string;
   partNumber?: string;

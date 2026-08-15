@@ -91,6 +91,9 @@ const LIST_SELECT = {
       id: true, name: true, brand: true, partNumber: true, tagNumber: true,
       quantity: true, currency: true, priceForeign: true, priceRial: true,
       deliveryTime: true, notes: true,
+      // The card offers to build a purchase order from a winning offer, and
+      // that order's lines need the product the offer was actually for.
+      productId: true, variantId: true,
     },
   },
   steps: {
@@ -143,6 +146,9 @@ export async function getInquiry(id: string, user: AuthUser) {
 /* --------------------------------- writes --------------------------------- */
 
 export interface InquiryItemInput {
+  /** The catalogue item being priced, and its SKU, when the line names one. */
+  productId?: string | null;
+  variantId?: string | null;
   name?: string;
   brand?: string | null;
   partNumber?: string | null;
@@ -189,6 +195,11 @@ function mapItem(row: InquiryItemInput): Record<string, unknown> | null {
   const name = toNullableString(row?.name, 400);
   if (!name) return null;
   return {
+    // Optional by design: an inquiry is often the first time a part is
+    // mentioned, priced before anyone decides to carry it. A blank string from
+    // an empty picker must land as NULL, not as a foreign key to nothing.
+    productId: toNullableString(row.productId, 36),
+    variantId: toNullableString(row.variantId, 36),
     name,
     brand: toNullableString(row.brand, 150),
     partNumber: toNullableString(row.partNumber, 150),

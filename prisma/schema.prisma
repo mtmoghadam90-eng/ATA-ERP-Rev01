@@ -223,6 +223,7 @@ model Product {
   inventoryTransactions InventoryTransaction[]
   proformaItems         ProformaItem[]
   purchaseOrderItems    PurchaseOrderItem[]
+  inquiryItems          SupplierInquiryItem[]
   projectItems          ProjectItem[]
 
   @@index([category])
@@ -254,6 +255,7 @@ model ProductVariant {
   inventoryTransactions InventoryTransaction[]
   proformaItems         ProformaItem[]
   purchaseOrderItems    PurchaseOrderItem[]
+  inquiryItems          SupplierInquiryItem[]
 
   @@unique([sku], map: "UQ_product_variants_sku")
   @@index([productId])
@@ -713,6 +715,17 @@ model SupplierInquiryItem {
   inquiry   SupplierInquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
   lineNo    Int
 
+  /// The catalogue item this line is asking about, when it is one.
+  ///
+  /// Optional because an inquiry is often the first time a part is mentioned —
+  /// it is priced before anyone decides to carry it. A line that does name a
+  /// product carries its SKU too, so an offer for a specific configuration is
+  /// unambiguous when it becomes a purchase order.
+  productId String?  @db.NVarChar(36)
+  product   Product? @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variantId String?  @db.NVarChar(36)
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
   name         String  @db.NVarChar(400)
   brand        String? @db.NVarChar(150)
   partNumber   String? @db.NVarChar(150)
@@ -725,6 +738,7 @@ model SupplierInquiryItem {
   notes        String? @db.NVarChar(Max)
 
   @@index([inquiryId])
+  @@index([productId])
   @@map("supplier_inquiry_items")
 }
 

@@ -1720,7 +1720,13 @@ export default function PurchaseOrdersView({
 
                         const poItems = inq.items.map((inqItem, idx) => ({
                           id: `poi-${Date.now()}-${idx}`,
-                          productId: 'generic',
+                          // The catalogue item the offer was actually for, when
+                          // the inquiry line named one. Everything was copied as
+                          // 'generic' before inquiry lines could name a product,
+                          // so an order built from a winning offer arrived with
+                          // nothing behind it and credited no stock on receipt.
+                          productId: inqItem.productId || 'generic',
+                          variantId: inqItem.variantId,
                           productName: inqItem.name,
                           productCode: inqItem.partNumber || '',
                           brand: inqItem.brand || '',

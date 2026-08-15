@@ -17,6 +17,9 @@ import type { InquiryStep, SupplierInquiry, SupplierInquiryItem } from "../types
 
 export interface InquiryItemRow {
   id: string;
+  /** The catalogue item and SKU being priced, when the line names one. */
+  productId: string | null;
+  variantId: string | null;
   name: string;
   brand: string | null;
   partNumber: string | null;
@@ -138,6 +141,8 @@ const money = (value: string | null | undefined): number => Number(value ?? 0);
 function rowToItem(item: InquiryItemRow): SupplierInquiryItem {
   return {
     id: item.id,
+    productId: item.productId ?? undefined,
+    variantId: item.variantId ?? undefined,
     name: item.name,
     brand: item.brand ?? undefined,
     partNumber: item.partNumber ?? undefined,
@@ -206,6 +211,10 @@ export function inquiryToWriteInput(inquiry: Partial<SupplierInquiry>): InquiryW
     discountPercent: Number(inquiry.discountPercent) || 0,
     discountAmount: Number(inquiry.discountAmount) || 0,
     items: (inquiry.items ?? []).map((item) => ({
+      // Sent back, so an offer stays tied to the thing that was quoted; blank
+      // means the line names no catalogue item, which is normal.
+      productId: item.productId || null,
+      variantId: item.variantId || null,
       name: item.name,
       brand: item.brand || null,
       partNumber: item.partNumber || null,

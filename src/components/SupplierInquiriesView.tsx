@@ -62,6 +62,7 @@ import { detailToProject } from '../api/projectAdapter';
 import { projectsApi } from '../api/projects';
 import type { ProjectRow } from '../api/projects';
 import type { SupplierRow } from '../api/suppliers';
+import type { ProductRow } from '../api/products';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import CostAccessNotice from './CostAccessNotice';
 import { canSeeCosts } from '../utils/permissions';
@@ -154,8 +155,23 @@ export default function SupplierInquiriesView({
     getLabel: (row) => row.name,
   });
 
+  /*
+   * The catalogue an inquiry line can point at.
+   *
+   * Left as list rows: a row carries the SKUs (id, sku, attributes) and that is
+   * everything the picker needs. Casting it to `Product` would make the whole
+   * detail record look available and the compiler would agree — which is how
+   * three separate `undefined`s reached the browser on the purchase-order
+   * screen.
+   */
+  const productPicker = useEntitySearch<ProductRow>({
+    path: '/api/products', limit: 100, enabled: isInquiryModalOpen,
+    getLabel: (row) => row.displayName,
+  });
+
   const projects = projectPicker.matches as unknown as Project[];
   const suppliers = supplierPicker.matches as unknown as Supplier[];
+  const catalogue = productPicker.matches;
 
   const filteredInquiries = useMemo(() => list.rows.map(rowToInquiry), [list.rows]);
 
@@ -1081,6 +1097,8 @@ export default function SupplierInquiriesView({
                   selectedProjectId={selectedProjectId}
                   suppliers={suppliers}
                   supplierPicker={supplierPicker}
+                  catalogue={catalogue}
+                  productPicker={productPicker}
                   exchangeRates={exchangeRates}
                   selectedProject={selectedProject}
                   projects={projects}
@@ -1185,6 +1203,9 @@ interface InquiryFormInnerProps {
   selectedProjectId: string;
   suppliers: Supplier[];
   supplierPicker: PickerHandle;
+  /** The catalogue an inquiry line may point at, plus its search box. */
+  catalogue: ProductRow[];
+  productPicker: PickerHandle;
   exchangeRates: ExchangeRate[];
   selectedProject?: Project;
   projects: Project[];
@@ -1201,6 +1222,8 @@ function InquiryFormInner({
   selectedProjectId,
   suppliers,
   supplierPicker,
+  catalogue,
+  productPicker,
   exchangeRates,
   selectedProject,
   projects,
@@ -1326,6 +1349,50 @@ function InquiryFormInner({
 
   const handleRemoveItemRow = (idx: number) => {
     setItems(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  /**
+   * Points an inquiry line at a catalogue item.
+   *
+   * The name, brand and part number are filled in from the product — they are
+   * what the supplier is being asked to price — but they stay editable: what a
+   * supplier is quoted often differs in wording from what the catalogue calls
+   * it, and an inquiry is not the place to insist on the house name.
+   *
+   * Choosing the blank option unlinks the line and leaves what was typed. That
+   * matters: an inquiry is frequently the *first* mention of a part, priced
+   * before anyone decides to carry it, so a line with no product behind it is
+   * the normal case and not an incomplete one.
+   */
+  const handleItemProductChange = (idx: number, productId: string) => {
+    const product = productId ? catalogue.find(p => p.id === productId) : undefined;
+    setItems(prev => prev.map((item, i) => {
+      if (i !== idx) return item;
+      if (!product) return { ...item, productId: undefined, variantId: undefined };
+      return {
+        ...item,
+        productId: product.id,
+        // The previous product's SKU cannot belong to this one.
+        variantId: undefined,
+        name: product.displayName || item.name,
+        brand: product.brand ?? item.brand,
+        partNumber: product.code || item.partNumber,
+      };
+    }));
+  };
+
+  /** Narrows the line to one SKU, and records that SKU's code as the part number. */
+  const handleItemVariantChange = (idx: number, variantId: string) => {
+    setItems(prev => prev.map((item, i) => {
+      if (i !== idx) return item;
+      const product = catalogue.find(p => p.id === item.productId);
+      const variant = product?.variants?.find(v => v.id === variantId);
+      return {
+        ...item,
+        variantId: variantId || undefined,
+        partNumber: variant?.sku || item.partNumber,
+      };
+    }));
   };
 
   const handleItemFieldChange = (idx: number, field: keyof SupplierInquiryItem, value: any) => {
@@ -1589,7 +1656,7 @@ function InquiryFormInner({
           <table className="w-full text-right text-xs min-w-[950px]">
             <thead className="bg-slate-50 text-slate-500 font-bold sticky top-0 border-b border-slate-150 z-10">
               <tr>
-                <th className="p-2.5 w-1/4">نام کالا / شرح دقیق آفر</th>
+                <th className="p-2.5 w-[28%]">کالا و شرح دقیق آفر</th>
                 <th className="p-2.5 w-20 text-center">تعداد</th>
                 <th className="p-2.5 w-24">مبلغ ارزی واحد</th>
                 <th className="p-2.5 w-28">معادل ریالی پیشنهادی</th>
@@ -1602,13 +1669,58 @@ function InquiryFormInner({
               {items.map((item, index) => (
                 <tr key={item.id} className="hover:bg-slate-50/50">
                   <td className="p-2">
+                    {/*
+                      Optional on purpose. An inquiry is often the first time a
+                      part is mentioned — priced before anyone decides to carry
+                      it — so a line naming no catalogue item is the normal case.
+                      Naming one is what lets a winning offer become an order
+                      line with a real product, and a SKU, behind it.
+                    */}
+                    <SearchableSelect
+                      value={item.productId || ''}
+                      onChange={(val) => handleItemProductChange(index, val)}
+                      onSearchChange={productPicker.setTerm}
+                      loading={productPicker.loading}
+                      options={[
+                        { value: '', label: 'خارج از انبار (شرح دستی)' },
+                        ...catalogue.map(p => ({
+                          value: p.id,
+                          label: `${p.displayName}${p.code ? ` (${p.code})` : ''}`,
+                        })),
+                      ]}
+                      placeholder="خارج از انبار (شرح دستی)"
+                    />
+
+                    {(() => {
+                      const linked = item.productId
+                        ? catalogue.find(p => p.id === item.productId)
+                        : undefined;
+                      const skus = linked?.variants ?? [];
+                      if (skus.length === 0) return null;
+                      return (
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className="text-[9px] text-slate-500 whitespace-nowrap">SKU:</span>
+                          <select
+                            value={item.variantId || ''}
+                            onChange={(e) => handleItemVariantChange(index, e.target.value)}
+                            className="w-full border border-slate-200 rounded-md px-1.5 py-0.5 text-[9px] bg-sky-50 text-sky-800 text-right"
+                          >
+                            <option value="">-- کل کالا (بدون تفکیک SKU) --</option>
+                            {skus.map(v => (
+                              <option key={v.id} value={v.id}>{v.sku}</option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })()}
+
                     <input
                       type="text"
                       value={item.name}
                       onChange={(e) => handleItemFieldChange(index, 'name', e.target.value)}
                       placeholder="مثال: ترانسمیتر فشار فلوبر"
                       required
-                      className="w-full px-2 py-1.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white"
+                      className="w-full px-2 py-1.5 mt-1 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white"
                     />
                     <div className="flex items-center gap-1.5 mt-1">
                       <span className="text-[9px] text-slate-500 whitespace-nowrap">تگ نامبر:</span>
