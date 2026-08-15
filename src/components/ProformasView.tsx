@@ -2494,39 +2494,39 @@ export default function ProformasView({
           template.showSignatures
             ? `
         <div class="signatures">
-            <div class="signature-box" style="width: 280px; border: 1px solid #f1f5f9; border-radius: 12px; padding: 8px 10px; background-color: #fafafa;">
-                <div class="signature-title" style="margin-bottom: 4px;">مهر و امضای صادرکننده پیش‌فاکتور</div>
-                <div class="signature-name" style="margin-bottom: 6px;">${creatorUser ? creatorUser.fullName : template.signatureLabel1}</div>
-                <div style="margin-top: 4px;">
+            <div class="signature-box" style="width: 215px; border: 1px solid #f1f5f9; border-radius: 10px; padding: 6px 8px; background-color: #fafafa;">
+                <div class="signature-title" style="margin-bottom: 3px; font-size: 9px;">مهر و امضای صادرکننده</div>
+                <div class="signature-name" style="margin-bottom: 4px; font-size: 10px;">${creatorUser ? creatorUser.fullName : template.signatureLabel1}</div>
+                <div style="margin-top: 2px;">
                     ${
                       template.companySealUrl
                         ? `
-                        <div style="display: flex; justify-content: space-evenly; align-items: center; gap: 8px; height: 68px; background-color: #ffffff; border-radius: 8px; border: 1px dashed #cbd5e1; padding: 3px;">
+                        <div style="display: flex; justify-content: space-evenly; align-items: center; gap: 6px; height: 48px; background-color: #ffffff; border-radius: 8px; border: 1px dashed #cbd5e1; padding: 2px;">
                             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1;">
-                                <span style="font-size: 8px; color: #94a3b8; font-weight: bold; margin-bottom: 2px;">امضای صادرکننده</span>
+                                <span style="font-size: 7px; color: #94a3b8; font-weight: bold; margin-bottom: 1px;">امضای صادرکننده</span>
                                 ${
                                   creatorUser && creatorUser.signatureImage
                                     ? `
-                                    <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 52px; max-width: 100px; object-fit: contain;" referrerPolicy="no-referrer" />
+                                    <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 38px; max-width: 78px; object-fit: contain;" referrerPolicy="no-referrer" />
                                 `
                                     : `
                                     <span style="font-size: 10px; color: #cbd5e1; font-weight: bold;">فاقد امضا</span>
                                 `
                                 }
                             </div>
-                            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; border-right: 1px solid #f1f5f9; padding-right: 8px;">
-                                <span style="font-size: 8px; color: #94a3b8; font-weight: bold; margin-bottom: 2px;">مهر شرکت</span>
-                                <img src="${template.companySealUrl}" alt="Company Seal" style="max-height: 52px; max-width: 92px; object-fit: contain; transform: rotate(-3deg);" referrerPolicy="no-referrer" />
+                            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; border-right: 1px solid #f1f5f9; padding-right: 6px;">
+                                <span style="font-size: 7px; color: #94a3b8; font-weight: bold; margin-bottom: 1px;">مهر شرکت</span>
+                                <img src="${template.companySealUrl}" alt="Company Seal" style="max-height: 38px; max-width: 70px; object-fit: contain; transform: rotate(-3deg);" referrerPolicy="no-referrer" />
                             </div>
                         </div>
                     `
                         : `
-                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 68px; background-color: #ffffff; border-radius: 8px; border: 1px dashed #cbd5e1; padding: 3px;">
-                            <span style="font-size: 8px; color: #94a3b8; font-weight: bold; margin-bottom: 2px;">امضای صادرکننده</span>
+                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 48px; background-color: #ffffff; border-radius: 8px; border: 1px dashed #cbd5e1; padding: 2px;">
+                            <span style="font-size: 7px; color: #94a3b8; font-weight: bold; margin-bottom: 1px;">امضای صادرکننده</span>
                             ${
                               creatorUser && creatorUser.signatureImage
                                 ? `
-                                <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 54px; max-width: 170px; object-fit: contain;" referrerPolicy="no-referrer" />
+                                <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 40px; max-width: 150px; object-fit: contain;" referrerPolicy="no-referrer" />
                             `
                                 : `
                                 <span style="font-size: 10px; color: #cbd5e1; font-weight: bold;">فاقد امضا</span>
