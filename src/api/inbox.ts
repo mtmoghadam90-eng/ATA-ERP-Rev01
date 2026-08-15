@@ -66,8 +66,15 @@ export const inboxApi = {
     signal?: AbortSignal,
   ) => api.get<ListResponse<ReferralRow>>("/api/referrals", query, signal),
 
-  setReferralStatus: (id: string, status: string) =>
-    api.put<Record<string, never>>(`/api/referrals/${id}/status`, { status }),
+  /**
+   * Moves a referral between "awaiting action" and "done".
+   *
+   * `silent` suppresses the status notice, for when a reply was posted in the
+   * same action — that reply notifies the other party already, and with the
+   * message in it rather than just the fact of a change.
+   */
+  setReferralStatus: (id: string, status: string, silent = false) =>
+    api.put<Record<string, never>>(`/api/referrals/${id}/status`, { status, silent }),
 
   /** Hands the thread to someone else and puts it back into "awaiting action". */
   reassignReferral: (id: string, assignedToUserId: string) =>

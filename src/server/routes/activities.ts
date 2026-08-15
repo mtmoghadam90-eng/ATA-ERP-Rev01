@@ -226,7 +226,10 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
         res.status(400).json({ success: false, error: "وضعیت ارجاع الزامی است." });
         return;
       }
-      const outcome = await setReferralStatus(req.params.id, status, user);
+      // `silent` when the caller has just posted a reply in the same action:
+      // that reply already carries the notice, and with the message in it.
+      const silent = (req.body as { silent?: unknown })?.silent === true;
+      const outcome = await setReferralStatus(req.params.id, status, user, { silent });
       if (outcome === "forbidden") return denied(res, "شما در این ارجاع نقشی ندارید.");
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "ارجاع یافت نشد." });

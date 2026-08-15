@@ -450,6 +450,13 @@ export async function setReferralStatus(
   id: string,
   status: string,
   user: AuthUser,
+  /**
+   * Set when a reply was posted in the same action, which has already told the
+   * other party — and told them the part that matters, the message itself. The
+   * bare "so-and-so reopened it" on top of that says the same thing twice. Same
+   * reasoning as `andForwarded` on a reply.
+   */
+  options: { silent?: boolean } = {},
 ): Promise<"ok" | "forbidden" | "not-found"> {
   const db = getDb();
   const referral = await db.projectReferral.findUnique({
@@ -479,7 +486,7 @@ export async function setReferralStatus(
    * whoever raised it had to go and look. Reopening was silent the same way, and
    * that one is a request for more work.
    */
-  if (oldStatus !== newStatus) {
+  if (oldStatus !== newStatus && !options.silent) {
     const counterpart = user.id === referral.assignedByUserId
       ? referral.assignedToUserId
       : referral.assignedByUserId;

@@ -34,6 +34,18 @@ export interface ProjectDocument {
   size: string;
   date: string;
   type: string;
+  /**
+   * Whether this is a record the app renders on demand rather than a file that
+   * exists.
+   *
+   * It matters because the two are handled completely differently: a real file
+   * is fetched and saved, a generated one is opened in its module's printable
+   * view. The tab used to tell them apart by guessing from the id, with
+   * prefixes that did not match what this builder emits — so the download
+   * button fetched the application's own HTML shell and saved it under a .pdf
+   * name. That is the "corrupt PDF" people were opening.
+   */
+  generated?: boolean;
 }
 
 export type ProjectDocuments = Record<string, ProjectDocument[]>;
@@ -109,11 +121,12 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
   for (const pf of proformas) {
     folders["پیش‌فاکتورها و مهندسی فروش"].push({
       id: `proforma-${pf.id}`,
-      name: `پیش‌فاکتور ${pf.proformaNumber} - مشتری: ${pf.customer?.companyName ?? "—"}.pdf`,
+      name: `پیش‌فاکتور ${pf.proformaNumber} - مشتری: ${pf.customer?.companyName ?? "—"}`,
       url: `?printModule=proformas&printId=${pf.id}`,
       size: "سند سیستمی",
       date: pf.issueDateJalali ?? fallbackDate,
       type: "proforma",
+      generated: true,
     });
   }
 
@@ -144,22 +157,24 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
   for (const po of purchaseOrders) {
     folders["سفارشات خرید تامین‌کنندگان"].push({
       id: `po-${po.id}`,
-      name: `سفارش خرید ${po.poNumber} - ${po.supplier?.name ?? "تأمین‌کننده"}.pdf`,
+      name: `سفارش خرید ${po.poNumber} - ${po.supplier?.name ?? "تأمین‌کننده"}`,
       url: `?printModule=purchaseOrders&printId=${po.id}`,
       size: "سند سیستمی",
       date: po.orderDateJalali ?? fallbackDate,
       type: "purchaseOrder",
+      generated: true,
     });
   }
 
   for (const del of deliveries) {
     folders["بسته‌بندی و تحویل کالا"].push({
       id: `delivery-${del.id}`,
-      name: `پکینگ لیست ${del.packingListNumber}.pdf`,
-      url: `?printModule=packaging&printId=${del.id}`,
+      name: `پکینگ لیست ${del.packingListNumber}`,
+      url: `?printModule=packagingDelivery&printId=${del.id}`,
       size: "سند سیستمی",
       date: del.deliveryDateJalali ?? fallbackDate,
       type: "delivery",
+      generated: true,
     });
     attachmentsOf(del.photos).forEach((photo, index) => {
       if (!photo?.url) return;
@@ -182,6 +197,7 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
       size: "سند مالی",
       date: tx.occurredAtJalali ?? fallbackDate,
       type: "transaction",
+      generated: true,
     });
   }
 
@@ -189,10 +205,11 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
     folders["خدمات پس از فروش"].push({
       id: `service-${service.id}`,
       name: `خدمات ${service.itemName} - ${service.status}`,
-      url: `?printModule=afterSales&printId=${service.id}`,
+      url: `?printModule=afterSalesServices&printId=${service.id}`,
       size: "سند خدمات",
       date: service.startDateJalali ?? fallbackDate,
       type: "service",
+      generated: true,
     });
   }
 

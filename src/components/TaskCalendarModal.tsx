@@ -80,6 +80,56 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
     void load();
   }, [isOpen, load]);
 
+  /*
+   * Setting something for yourself on a day, from the day itself.
+   *
+   * The calendar could only ever show what had been raised on the tasks board.
+   * Picking a date there and typing it again is the long way round when the
+   * date is already the thing being pointed at.
+   *
+   * The assignee is left out on purpose: the server gives an unassigned task to
+   * whoever raised it, which is exactly what "for myself" means, and it is one
+   * fewer place that has to know the current user's id.
+   */
+  const [newTitle, setNewTitle] = useState('');
+  const [newPriority, setNewPriority] = useState<Task['priority']>('متوسط');
+  const [newReminderTime, setNewReminderTime] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const selectedDateStr = selectedDay
+    ? `${currentYear}/${pad2(currentMonthIndex + 1)}/${pad2(selectedDay)}`
+    : '';
+
+  const createTaskForDay = async () => {
+    const title = newTitle.trim();
+    if (!title || !selectedDateStr) return;
+
+    setSaving(true);
+    try {
+      await tasksApi.create({
+        title,
+        priority: newPriority,
+        status: 'در حال انجام',
+        dueDate: selectedDateStr,
+        assignedToName: currentUser?.fullName ?? null,
+        // A time turns it into a reminder on the same day; without one it is
+        // simply due that day.
+        reminderEnabled: !!newReminderTime,
+        reminderDate: newReminderTime ? selectedDateStr : null,
+        reminderTime: newReminderTime || null,
+      });
+      setNewTitle('');
+      setNewReminderTime('');
+      setNewPriority('متوسط');
+      await load();
+    } catch (err) {
+      alert('ثبت وظیفه با خطا مواجه شد.');
+      console.error('Failed to create a task from the calendar:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const updateTaskStatus = async (task: Task, status: Task['status']) => {
     try {
       await tasksApi.update(task.id, taskToWriteInput({ ...task, status }));
@@ -359,6 +409,51 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
               )}
             </div>
           </div>
+
+          {/* Add a task or reminder on the day that is selected. */}
+          {selectedDay && (
+            <div className="mt-4 pt-4 border-t border-slate-200/60 space-y-2">
+              <span className="text-[11px] font-bold text-slate-600 block">
+                ثبت کار یا یادآوری برای {selectedDay} {monthName}
+              </span>
+              <input
+                type="text"
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void createTaskForDay(); }}
+                placeholder="مثلاً: تماس با کارفرما بابت تأییدیه نقشه"
+                className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs bg-white outline-none focus:border-sky-500 text-right"
+              />
+              <div className="flex items-center gap-2">
+                <select
+                  value={newPriority}
+                  onChange={(e) => setNewPriority(e.target.value as Task['priority'])}
+                  className="flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] bg-white outline-none focus:border-sky-500"
+                >
+                  <option value="پایین">پایین</option>
+                  <option value="متوسط">متوسط</option>
+                  <option value="بالا">بالا</option>
+                  <option value="فوری">فوری</option>
+                </select>
+                <input
+                  type="time"
+                  value={newReminderTime}
+                  onChange={(e) => setNewReminderTime(e.target.value)}
+                  title="ساعت یادآوری (اختیاری)"
+                  className="w-24 border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] bg-white outline-none focus:border-sky-500 font-mono"
+                  dir="ltr"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => { void createTaskForDay(); }}
+                disabled={!newTitle.trim() || saving}
+                className="w-full py-2 bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition"
+              >
+                {saving ? 'در حال ثبت…' : 'ثبت برای این روز'}
+              </button>
+            </div>
+          )}
 
           <div className="mt-4 pt-4 border-t border-slate-200/60 hidden md:block">
             <button

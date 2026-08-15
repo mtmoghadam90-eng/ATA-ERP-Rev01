@@ -82,6 +82,13 @@ export interface ProjectDocument {
   size: string;
   date: string;
   type: string;
+  /**
+   * True for a document the app renders from a record on demand — a proforma,
+   * a packing list — rather than a file that exists on disk. Those are opened
+   * in their module's printable view; fetching their route saves the
+   * application's HTML shell instead of a document.
+   */
+  generated?: boolean;
 }
 
 export interface ProjectRow {

@@ -4,7 +4,7 @@ import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import {
   Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, TrendingUp, X,
   FileSpreadsheet, Clock, Sliders, User, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
-  Send, CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload,
+  Send, CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
   ChevronRight, Loader2, Image as ImageIcon, Maximize2, Minimize2, ArrowLeftRight, Flag, Zap, MessageSquare,
   ExternalLink
 } from 'lucide-react';
@@ -1461,31 +1461,29 @@ export default function ProjectsView({
     `;
   };
 
+  /**
+   * Whether a row is a record the app renders rather than a file that exists.
+   *
+   * The server says so. This used to be worked out here from id prefixes —
+   * `delivery-pl-`, `tx-` — and a `type` of `'system'`, none of which the
+   * server has ever emitted. So the branch was dead: every generated document
+   * fell through to the plain file handling below.
+   */
+  const isGeneratedDoc = (doc: any): boolean =>
+    !!doc?.generated || (typeof doc?.url === 'string' && doc.url.startsWith('?printModule='));
+
+  /** Opens a generated document in its own module's printable view. */
+  const openGeneratedDoc = (doc: any) => {
+    // The url the server built is already the right query; it only needs the
+    // leading slash and the standalone flag that hides the shell.
+    const query = String(doc.url).replace(/^\??/, '');
+    window.open(`/?${query}&standalone=true`, '_blank');
+  };
+
   const handlePreviewOrDownload = (doc: any) => {
-    if (doc.type === 'system' && doc.id) {
-      let printModule = '';
-      let printId = '';
-      if (doc.id.startsWith('proforma-')) {
-        printModule = 'proformas';
-        printId = doc.id.replace('proforma-', '');
-      } else if (doc.id.startsWith('po-')) {
-        printModule = 'purchaseOrders';
-        printId = doc.id.replace('po-', '');
-      } else if (doc.id.startsWith('delivery-pl-')) {
-        printModule = 'packagingDelivery';
-        printId = doc.id.replace('delivery-pl-', '');
-      } else if (doc.id.startsWith('tx-')) {
-        printModule = 'transactions';
-        printId = doc.id.replace('tx-', '');
-      } else if (doc.id.startsWith('service-')) {
-        printModule = 'afterSalesServices';
-        printId = doc.id.replace('service-', '');
-      }
-      if (printModule && printId) {
-        const url = `/?printModule=${printModule}&printId=${printId}&standalone=true`;
-        window.open(url, '_blank');
-        return;
-      }
+    if (isGeneratedDoc(doc)) {
+      openGeneratedDoc(doc);
+      return;
     }
 
     const isImage = doc.url && (doc.url.startsWith('data:image/') || doc.url.startsWith('http') || doc.name.endsWith('.png') || doc.name.endsWith('.jpg') || doc.name.endsWith('.jpeg'));
@@ -2420,7 +2418,25 @@ export default function ProjectsView({
                                 <Trash2 size={14} />
                               </button>
                             )}
-                            {doc.url !== '#' && (
+                            {/*
+                              A generated document has no file behind it — it is
+                              rendered from the record on demand. Pointing the
+                              download at its route fetched the application's own
+                              HTML shell and saved it under a .pdf name, which is
+                              the unopenable file people were getting. It opens
+                              the printable view instead, which is where a PDF
+                              actually comes from.
+                            */}
+                            {isGeneratedDoc(doc) ? (
+                              <button
+                                type="button"
+                                onClick={() => openGeneratedDoc(doc)}
+                                className="p-1.5 hover:bg-slate-100 rounded text-slate-600 hover:text-slate-800 transition flex items-center cursor-pointer"
+                                title="مشاهده و چاپ / ذخیره به صورت PDF"
+                              >
+                                <Printer size={14} />
+                              </button>
+                            ) : doc.url !== '#' && (
                               <button
                                 type="button"
                                 onClick={() => downloadFileFromServer(doc.url, doc.name)}

@@ -212,6 +212,19 @@ export default function ReferralsView({
           actionRequired: row.actionRequired ?? '',
           assignedTo: row.assignedToName ?? '',
           assignedBy: row.assignedByName ?? '',
+          /*
+           * Who these people actually are.
+           *
+           * Which buttons a card offers used to be decided by comparing the
+           * signed-in user's *full name* with the name stored on the referral.
+           * That is not an identity: two colleagues can share a name, a renamed
+           * account stops matching its own past referrals, and a referral whose
+           * `assignedByName` was never filled in matched nobody — so the person
+           * who raised it saw no way to carry on the conversation, which is
+           * exactly what was reported.
+           */
+          assignedToUserId: row.assignedToUserId ?? null,
+          assignedByUserId: row.assignedByUserId ?? null,
           createdAt: row.createdAt,
           messages: row.messages.map(m => ({
             id: m.id,
@@ -359,18 +372,24 @@ export default function ReferralsView({
    * leaves the thread reading correctly: the reply is already there when the
    * next person opens it.
    */
-  const handleReplySubmit = async (referralId: string, markAsDone: boolean) => {
+  const handleReplySubmit = async (
+    referralId: string,
+    outcome: 'none' | 'done' | 'reopen' = 'none',
+  ) => {
     const text = replyText[referralId] || '';
     const attachment = replyAttachments[referralId] || null;
     const forwardTo = forwardToMap[referralId] || undefined;
 
     let textToSave = text.trim();
     if (!textToSave && !attachment && !forwardTo) {
-      if (markAsDone) {
+      if (outcome !== 'none') {
+        const next = outcome === 'done' ? 'انجام شده' : 'در انتظار اقدام';
         try {
-          await inboxApi.setReferralStatus(referralId, 'انجام شده');
+          await inboxApi.setReferralStatus(referralId, next);
           refresh();
-          alert('وضعیت اقدام با موفقیت به انجام شده تغییر یافت.');
+          alert(outcome === 'done'
+            ? 'وضعیت اقدام با موفقیت به انجام شده تغییر یافت.'
+            : 'ارجاع مجدداً در وضعیت در انتظار اقدام قرار گرفت.');
         } catch (err) {
           reportError(err, 'تغییر وضعیت ارجاع با خطا مواجه شد.');
         }
@@ -395,9 +414,15 @@ export default function ReferralsView({
         andForwarded: !!forwardTo,
       });
 
-      // Forwarding sets its own status, so only apply "done" when not forwarding.
-      if (markAsDone && !forwardTo) {
-        await inboxApi.setReferralStatus(referralId, 'انجام شده');
+      // Forwarding sets its own status, so only apply an outcome when not
+      // forwarding. `reopen` is the person who raised it saying the work is
+      // not what they meant: the reply is already on the thread, and putting
+      // the referral back to "در انتظار اقدام" is what puts it back in the
+      // assignee's inbox and back into their counter.
+      if (outcome === 'done' && !forwardTo) {
+        await inboxApi.setReferralStatus(referralId, 'انجام شده', true);
+      } else if (outcome === 'reopen' && !forwardTo) {
+        await inboxApi.setReferralStatus(referralId, 'در انتظار اقدام', true);
       }
       if (forwardTo) {
         await inboxApi.reassignReferral(referralId, forwardTo);
@@ -409,7 +434,8 @@ export default function ReferralsView({
       refresh();
 
       if (forwardTo) alert('ارجاع به همکار انتخاب‌شده منتقل شد.');
-      else if (markAsDone) alert('نتیجه اقدام با موفقیت ثبت شد.');
+      else if (outcome === 'done') alert('نتیجه اقدام با موفقیت ثبت شد.');
+      else if (outcome === 'reopen') alert('پاسخ شما ثبت شد و ارجاع دوباره در انتظار اقدام قرار گرفت.');
     } catch (err) {
       reportError(err, 'ثبت پاسخ ارجاع با خطا مواجه شد.');
     }
@@ -784,6 +810,18 @@ export default function ReferralsView({
                     {referrals.map((item, refIdx) => {
                     const { activity, referral } = item;
                     const isItemPending = (referral.status || 'در انتظار اقدام') === 'در انتظار اقدام';
+                    /*
+                     * By account, not by name.
+                     *
+                     * These were `currentUserName === referral.assignedBy`, a
+                     * comparison of display names. A referral whose stored
+                     * name did not match — an account since renamed, a name
+                     * never filled in — matched nobody, and the person who
+                     * raised it was left with no way to answer. The id is the
+                     * identity; the name is a label.
+                     */
+                    const isAssignee = !!currentUser?.id && referral.assignedToUserId === currentUser.id;
+                    const isReferrer = !!currentUser?.id && referral.assignedByUserId === currentUser.id;
 
                     return (
                       <div key={`${activity.id}-${refIdx}`} className={`${refIdx !== 0 ? 'pt-8 border-t-2 border-slate-100' : ''} space-y-4`}>
@@ -959,38 +997,45 @@ export default function ReferralsView({
                                 <div className="flex items-center gap-2">
                                   <button
                                     type="button"
-                                    onClick={() => handleReplySubmit(referral.id, false)}
+                                    onClick={() => handleReplySubmit(referral.id, 'none')}
                                     className="px-6 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-sky-500/15 flex items-center justify-center gap-1.5 min-h-[42px]"
                                   >
                                     <MessageSquare size={15} />
                                     ارسال پیام
                                   </button>
-                                  {isItemPending && currentUserName === referral.assignedTo && (
+                                  {isItemPending && isAssignee && (
                                     <button
                                       type="button"
-                                      onClick={() => handleReplySubmit(referral.id, true)}
+                                      onClick={() => handleReplySubmit(referral.id, 'done')}
                                       className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-emerald-500/15 flex items-center justify-center gap-1.5 min-h-[42px]"
                                     >
                                       <CheckCircle2 size={15} />
                                       ثبت اتمام کار
                                     </button>
                                   )}
-                                  {!isItemPending && currentUserName === referral.assignedBy && (
+                                  {/*
+                                    The conversation does not end when the
+                                    assignee calls it done.
+                                    
+                                    Often that is when it really starts: the
+                                    person who raised the referral reads the
+                                    result and finds it is not what they asked
+                                    for. Sending a message alone left the
+                                    referral closed, so the assignee was never
+                                    told to look again and the counter did not
+                                    move; reopening alone said nothing about
+                                    what was wanted. This does both — the reply
+                                    goes on the same thread and the referral
+                                    goes back to «در انتظار اقدام».
+                                  */}
+                                  {!isItemPending && isReferrer && (
                                     <button
                                       type="button"
-                                      onClick={async () => {
-                                        try {
-                                          await inboxApi.setReferralStatus(referral.id, 'در انتظار اقدام');
-                                          refresh();
-                                          alert('ارجاع مجدداً در وضعیت در انتظار اقدام قرار گرفت.');
-                                        } catch (err) {
-                                          reportError(err, 'بازگشایی ارجاع با خطا مواجه شد.');
-                                        }
-                                      }}
+                                      onClick={() => handleReplySubmit(referral.id, 'reopen')}
                                       className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-amber-500/15 flex items-center justify-center gap-1.5 min-h-[42px]"
                                     >
                                       <RefreshCcw size={15} />
-                                      بازگشایی ارجاع مجدد
+                                      ثبت پاسخ و ارجاع مجدد
                                     </button>
                                   )}
                                 </div>
