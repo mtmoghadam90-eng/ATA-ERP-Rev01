@@ -1,5 +1,5 @@
 import type { Project } from "../types";
-import type { ProjectDetail, ProjectRow, ProjectWriteInput } from "./projects";
+import type { LinkedCustomer, ProjectDetail, ProjectRow, ProjectWriteInput } from "./projects";
 import { assertComplete, markComplete, markPartial } from "./partial";
 
 /**
@@ -60,6 +60,13 @@ export function rowToProject(row: ProjectRow): Project {
 }
 
 /** The full record, for the detail and edit views. */
+/** A joined customer's name: a person by their own, a company by its. */
+function linkedName(linked: LinkedCustomer | null | undefined): string | undefined {
+  if (!linked) return undefined;
+  const person = `${linked.firstName || ""} ${linked.lastName || ""}`.trim();
+  return person || linked.companyName || undefined;
+}
+
 export function detailToProject(detail: ProjectDetail): Project {
   return markComplete({
     ...rowToProject(detail),
@@ -71,9 +78,17 @@ export function detailToProject(detail: ProjectDetail): Project {
     referrerName: detail.referrerName ?? undefined,
     salesExpert: detail.salesExpert ?? undefined,
     // The view shows names; the record stores both string fields and FK ids
-    endUser: detail.endUser ?? detail.endUserCustomer?.companyName ?? undefined,
-    financialContact: detail.financialContact ?? detail.financialContactCustomer?.companyName ?? undefined,
-    technicalContact: detail.technicalContact ?? detail.technicalContactCustomer?.companyName ?? undefined,
+    /*
+     * The linked customer's *current* name wins over the stored text.
+     *
+     * Both exist: the foreign key says who this is, and the text column is what
+     * the project recorded at the time. Reading the text first showed a stale
+     * name after a customer was renamed — and, for projects saved before the
+     * pickers wrote the foreign key, a raw id where a name belonged.
+     */
+    endUser: linkedName(detail.endUserCustomer) ?? detail.endUser ?? undefined,
+    financialContact: linkedName(detail.financialContactCustomer) ?? detail.financialContact ?? undefined,
+    technicalContact: linkedName(detail.technicalContactCustomer) ?? detail.technicalContact ?? undefined,
     // The ids travel with the record too. Without them the edit form had
     // nothing to restore its three contact pickers from, so saving an existing
     // project cleared all three links.

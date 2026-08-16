@@ -20,7 +20,7 @@ import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
-import { buildCustomerOptions } from '../utils/customerLabel';
+import { buildCustomerOptions, getCustomerName } from '../utils/customerLabel';
 import { getCodeError, cleanCode } from '../utils/documentCodes';
 import ConfirmModal from './ConfirmModal';
 import QuickAddModal from './QuickAddModal';
@@ -294,11 +294,33 @@ export default function ProjectsView({
    * It lists customers too, but one shared picker would mean the term typed
    * into the buyer field decides what this one can offer, and the reverse.
    */
+  /**
+   * The name behind a picked customer id.
+   *
+   * Stored beside the foreign key so the record still reads correctly if the
+   * customer is later renamed or removed — the same reason a proforma line
+   * keeps the product name it was quoted under.
+   */
+  const nameOfCustomer = (id: string, pool: Customer[]): string => {
+    if (!id) return "";
+    const found = pool.find((c) => c.id === id);
+    if (!found) return "";
+    return found.companyName
+      || `${found.firstName || ""} ${found.lastName || ""}`.trim();
+  };
+
+  // Declared above the pickers, which pin the current selection by id.
+  const [endUserId, setEndUserId] = useState("");
+  const [financialContactId, setFinancialContactId] = useState("");
+  const [technicalContactId, setTechnicalContactId] = useState("");
+
   const endUserPicker = useEntitySearch<CustomerRow>({
     path: '/api/customers',
     limit: 25,
     getLabel: (row) => row.companyName,
-    selectedId: endUser || null,
+    // The picked id, not the stored name: this is what pins the current
+    // selection into the options so the field shows it when the form opens.
+    selectedId: endUserId || null,
     enabled: showModal,
   });
 
@@ -331,9 +353,6 @@ export default function ProjectsView({
    * The three contact fields are foreign keys on the server. The form holds the
    * ids; the names come from the record the server joins for display.
    */
-  const [endUserId, setEndUserId] = useState("");
-  const [financialContactId, setFinancialContactId] = useState("");
-  const [technicalContactId, setTechnicalContactId] = useState("");
   /**
    * The grid's derived figures.
    *
@@ -635,14 +654,20 @@ export default function ProjectsView({
     setMarketingChannel(firstOption(settings.dropdownItems?.marketingChannels, "تماس مستقیم"));
     setLeadQuality(firstOption(settings.dropdownItems?.leadQualities, "متوسط"));
     setReferrerName("");
+    // Both halves of each contact: the id that links it and the name that
+    // records it. Clearing only the names left the previous project's links
+    // attached to the next one.
     setFinancialContact("");
+    setFinancialContactId("");
     setTechnicalContact("");
+    setTechnicalContactId("");
     setCommunicationMethod(firstOption(settings.dropdownItems?.communicationMethods, "تلفن"));
     setOpportunityDate(getTodayShamsi());
     setCustomerInquiryNumber("");
     setWinningDate("");
     setAgreedDeliveryDate("");
     setEndUser("");
+    setEndUserId("");
     setAttachments([]);
     setShowModal(true);
   };
@@ -3416,9 +3441,20 @@ export default function ProjectsView({
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'projects', 'endUser', 'مصرف‌کننده نهایی')}</label>
                     <div className="flex gap-1.5 items-center">
+                    {/*
+                        The picker's value is a customer id, and it belongs on
+                        the foreign key. It used to be written into `endUser` —
+                        the *name* column — so the link was never made and every
+                        screen that resolved it showed «مشخص نشده». The name is
+                        stored alongside, as the document's own record of who
+                        this was at the time.
+                    */}
                     <SearchableSelect wrapperClassName="flex-1 min-w-0"
-                      value={endUser}
-                      onChange={(val) => setEndUser(val)}
+                      value={endUserId}
+                      onChange={(val) => {
+                        setEndUserId(val);
+                        setEndUser(nameOfCustomer(val, endUserCustomers));
+                      }}
                       required={isFieldRequired(settings, 'projects', 'endUser')}
                       onSearchChange={endUserPicker.setTerm}
                       loading={endUserPicker.loading}
@@ -3548,11 +3584,21 @@ export default function ProjectsView({
                     <label className="text-xs font-semibold text-slate-500">فرد کلیدی مالی</label>
                     <div className="flex gap-1.5 items-center">
                       <select
-                        value={financialContact}
-                        onChange={(e) => setFinancialContact(e.target.value)}
+                        value={financialContactId}
+                        onChange={(e) => {
+                          setFinancialContactId(e.target.value);
+                          setFinancialContact(nameOfCustomer(e.target.value, linkedContacts));
+                        }}
                         className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                       >
                         <option value="">-- انتخاب فرد مالی (مشتری) --</option>
+                        {/* A contact whose link to this customer was removed is
+                            still the person this project recorded, so the field
+                            keeps showing them rather than falling back to the
+                            placeholder as though nothing was chosen. */}
+                        {financialContactId && !linkedContacts.some(c => c.id === financialContactId) && (
+                          <option value={financialContactId}>{financialContact || 'فرد ثبت‌شده'}</option>
+                        )}
                         {linkedContacts.map(c => {
                           const name = `${c.firstName || ''} ${c.lastName || ''}`.trim();
                           return (
@@ -3581,11 +3627,17 @@ export default function ProjectsView({
                     <label className="text-xs font-semibold text-slate-500">فرد کلیدی فنی</label>
                     <div className="flex gap-1.5 items-center">
                       <select
-                        value={technicalContact}
-                        onChange={(e) => setTechnicalContact(e.target.value)}
+                        value={technicalContactId}
+                        onChange={(e) => {
+                          setTechnicalContactId(e.target.value);
+                          setTechnicalContact(nameOfCustomer(e.target.value, linkedContacts));
+                        }}
                         className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                       >
                         <option value="">-- انتخاب فرد فنی (مشتری) --</option>
+                        {technicalContactId && !linkedContacts.some(c => c.id === technicalContactId) && (
+                          <option value={technicalContactId}>{technicalContact || 'فرد ثبت‌شده'}</option>
+                        )}
                         {linkedContacts.map(c => {
                           const name = `${c.firstName || ''} ${c.lastName || ''}`.trim();
                           return (
@@ -4130,14 +4182,31 @@ export default function ProjectsView({
               
               {/* Project Profile Section (Collapsible) */}
               {(() => {
-                const endUserObj = customers.find((c: any) => c.id === selectedProjectForActivities.endUser);
-                const endUserName = endUserObj ? endUserObj.companyName : null;
+                /*
+                 * The names the record itself carries.
+                 *
+                 * These three were looked up as ids in `customers` — the
+                 * customer *picker's* search results, which on this screen hold
+                 * whatever was last searched for and usually nothing at all. So
+                 * a project that had an end user and both key people showed
+                 * «مشخص نشده» for all three, while the form had saved them
+                 * perfectly well. The server already joins each one and the
+                 * adapter resolves the name, so the panel just reads it; the
+                 * lookup survives only as a fallback for projects saved before
+                 * the pickers wrote the foreign key, where the name column
+                 * still holds an id.
+                 */
+                const displayName = (stored?: string | null): string | null => {
+                  const value = (stored || '').trim();
+                  if (!value) return null;
+                  const legacy = customers.find((c: any) => c.id === value);
+                  if (!legacy) return value;
+                  return getCustomerName(legacy) || legacy.companyName || null;
+                };
 
-                const financialContactObj = customers.find((c: any) => c.id === selectedProjectForActivities.financialContact);
-                const financialContactName = financialContactObj ? `${financialContactObj.firstName || ''} ${financialContactObj.lastName || ''}`.trim() : null;
-
-                const technicalContactObj = customers.find((c: any) => c.id === selectedProjectForActivities.technicalContact);
-                const technicalContactName = technicalContactObj ? `${technicalContactObj.firstName || ''} ${technicalContactObj.lastName || ''}`.trim() : null;
+                const endUserName = displayName(selectedProjectForActivities.endUser);
+                const financialContactName = displayName(selectedProjectForActivities.financialContact);
+                const technicalContactName = displayName(selectedProjectForActivities.technicalContact);
 
                 return (
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden text-right">
@@ -4168,6 +4237,17 @@ export default function ProjectsView({
                               <span>مشخصات عمومی</span>
                             </h4>
                             <div className="space-y-1.5">
+                              {/* The project's own identity: its number and the
+                                  day it was opened, which the panel named
+                                  nowhere even though the header shows a name. */}
+                              <div>
+                                <span className="text-slate-400 font-semibold">شماره پروژه:</span>
+                                <strong className="text-slate-700 block mt-0.5 font-mono">{selectedProjectForActivities.code || 'مشخص نشده'}</strong>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 font-semibold">تاریخ ثبت پروژه:</span>
+                                <strong className="text-slate-700 block mt-0.5 font-mono">{selectedProjectForActivities.creationDate || 'مشخص نشده'}</strong>
+                              </div>
                               <div>
                                 <span className="text-slate-400 font-semibold">مشتری/کارفرما:</span>
                                 <strong className="text-slate-700 block mt-0.5">{selectedProjectForActivities.customerName}</strong>
@@ -5307,11 +5387,19 @@ export default function ProjectsView({
                 if (quickAddCustomerTarget === 'customerId') {
                   setCustomerId(newEntity.id);
                 } else if (quickAddCustomerTarget === 'endUser') {
-                  setEndUser(newEntity.id);
+                  // The id on the foreign key, the name beside it — the same
+                  // pair the pickers write.
+                  setEndUserId(newEntity.id);
+                  setEndUser(newEntity.companyName
+                    || `${newEntity.firstName || ''} ${newEntity.lastName || ''}`.trim());
                 } else if (quickAddCustomerTarget === 'financialContact') {
-                  setFinancialContact(newEntity.id);
+                  setFinancialContactId(newEntity.id);
+                  setFinancialContact(`${newEntity.firstName || ''} ${newEntity.lastName || ''}`.trim()
+                    || newEntity.companyName || '');
                 } else if (quickAddCustomerTarget === 'technicalContact') {
-                  setTechnicalContact(newEntity.id);
+                  setTechnicalContactId(newEntity.id);
+                  setTechnicalContact(`${newEntity.firstName || ''} ${newEntity.lastName || ''}`.trim()
+                    || newEntity.companyName || '');
                 } else {
                   setCustomerId(newEntity.id);
                 }

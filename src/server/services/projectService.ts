@@ -199,9 +199,11 @@ async function getProjectRecord(id: string, user: AuthUser) {
     include: {
       customer: { select: { id: true, companyName: true, customerType: true } },
       owner: { select: { id: true, fullName: true } },
-      endUserCustomer: { select: { id: true, companyName: true } },
-      financialContactCustomer: { select: { id: true, companyName: true } },
-      technicalContactCustomer: { select: { id: true, companyName: true } },
+      // The two key people are individuals, whose name lives in first/last —
+      // selecting only `companyName` gave the panel a blank to render.
+      endUserCustomer: { select: { id: true, companyName: true, firstName: true, lastName: true } },
+      financialContactCustomer: { select: { id: true, companyName: true, firstName: true, lastName: true } },
+      technicalContactCustomer: { select: { id: true, companyName: true, firstName: true, lastName: true } },
       items: { orderBy: { lineNo: "asc" } },
       milestones: { orderBy: { lineNo: "asc" } },
       categoryGroups: {

@@ -154,6 +154,14 @@ export interface ProjectMilestoneRow {
   triggerCategoryName: string | null;
 }
 
+/** A customer joined for display: a company by its name, a person by theirs. */
+export interface LinkedCustomer {
+  id: string;
+  companyName: string;
+  firstName?: string | null;
+  lastName?: string | null;
+}
+
 export interface ProjectDetail extends ProjectRow {
   description: string | null;
   endUserCustomerId: string | null;
@@ -162,9 +170,9 @@ export interface ProjectDetail extends ProjectRow {
   attachments: string | null;
   manualDocuments: string | null;
   milestoneRules: string | null;
-  endUserCustomer: { id: string; companyName: string } | null;
-  financialContactCustomer: { id: string; companyName: string } | null;
-  technicalContactCustomer: { id: string; companyName: string } | null;
+  endUserCustomer: LinkedCustomer | null;
+  financialContactCustomer: LinkedCustomer | null;
+  technicalContactCustomer: LinkedCustomer | null;
   items: ProjectItemRow[];
   milestones: ProjectMilestoneRow[];
   categoryGroups: unknown[];
