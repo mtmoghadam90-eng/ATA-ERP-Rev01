@@ -317,6 +317,18 @@ export default function PackagingDeliveryView({
   };
 
   /** The lines still owed, pre-filled as packing rows ready to be adjusted. */
+  /*
+   * The unit a packing line is counted in.
+   *
+   * Same list, same place as the proforma's: تنظیمات ← لیست‌های بازشو ←
+   * «واحدهای سنجش و شمارش کالا». A line seeded from a won proforma line
+   * inherits the unit that proforma quoted, so the two documents agree.
+   */
+  const unitOptions = settings.dropdownItems.units?.length
+    ? settings.dropdownItems.units
+    : ["عدد"];
+  const defaultUnitFor = (unit?: string | null) => unit || unitOptions[0];
+
   const getRemainingPackingItems = (): PackingItem[] =>
     remainingLines
       .filter(line => line.remaining > 0)
@@ -328,6 +340,7 @@ export default function PackagingDeliveryView({
         // stock ledger issues that variant rather than guessing at one.
         variantId: line.variantId ?? undefined,
         quantity: line.remaining,
+        unit: defaultUnitFor(line.unit),
         packageType: 'کارتن',
         dimensions: '50x40x30 سانتی‌متر',
         weight: 1,
@@ -502,6 +515,7 @@ export default function PackagingDeliveryView({
       variantId: source?.variantId ?? undefined,
       tagNumber: source?.tagNumber ?? undefined,
       quantity: tempItemQty,
+      unit: defaultUnitFor(source?.unit),
       packageType: tempItemPackType,
       dimensions,
       weight: tempItemWeight,
@@ -573,7 +587,7 @@ export default function PackagingDeliveryView({
         <tr style="border-bottom: 1px solid #e2e8f0;">
           <td style="padding: 7px 4px; text-align: center; font-family: monospace; vertical-align: middle;">${index + 1}</td>
           <td style="padding: 7px 8px; font-weight: bold; color: #1e293b; vertical-align: middle;">${displayedName}</td>
-          <td style="padding: 7px 4px; text-align: center; font-family: monospace; font-weight: bold; vertical-align: middle;">${item.quantity}</td>
+          <td style="padding: 7px 4px; text-align: center; font-family: monospace; font-weight: bold; vertical-align: middle;">${item.quantity}<span style="font-family: inherit; font-weight: normal; color: #64748b;"> ${item.unit || ''}</span></td>
           <td style="padding: 7px 4px; text-align: center; vertical-align: middle;">${item.packageType}</td>
           <td style="padding: 7px 4px; text-align: left; font-family: monospace; vertical-align: middle;" dir="ltr">${item.dimensions}</td>
           <td style="padding: 7px 4px; text-align: center; font-family: monospace; vertical-align: middle;">${item.weight}</td>
@@ -601,7 +615,7 @@ export default function PackagingDeliveryView({
               <tr>
                 <th style="padding: 8px 4px; width: 26px; text-align: center;">ردیف</th>
                 <th style="padding: 8px;">کالا / تجهیز / سند</th>
-                <th style="padding: 8px 4px; text-align: center; width: 42px;">تعداد</th>
+                <th style="padding: 8px 4px; text-align: center; width: 62px;">تعداد</th>
                 <th style="padding: 8px 4px; text-align: center; width: 68px;">نوع بسته</th>
                 <th style="padding: 8px 4px; text-align: center; width: 86px;">ابعاد</th>
                 <th style="padding: 8px 4px; text-align: center; width: 52px;">وزن (kg)</th>
@@ -1756,6 +1770,7 @@ ${sheets}
                         <th className="p-2 w-8">ردیف</th>
                         <th className="p-2">کالا یا مدرک ارسالی</th>
                         <th className="p-2 w-20">تعداد</th>
+                        <th className="p-2 w-20">واحد</th>
                         <th className="p-2 w-28">نوع بسته‌بندی</th>
                         <th className="p-2 w-44">ابعاد (طولxعرضxارتفاع)</th>
                         <th className="p-2 w-24">وزن (کیلوگرم)</th>
@@ -1810,6 +1825,23 @@ ${sheets}
                                 </>
                               );
                             })()}
+                          </td>
+                          <td className="p-2">
+                            {/* The unit the line is counted in, from the
+                                settings list; a unit no longer on that list is
+                                still shown for the line that carries it. */}
+                            <select
+                              value={item.unit || defaultUnitFor()}
+                              onChange={e => handleUpdateItemField(item.id, 'unit', e.target.value)}
+                              className="w-full border border-slate-200 rounded px-1.5 py-1 text-xs"
+                            >
+                              {(unitOptions.includes(item.unit || '')
+                                ? unitOptions
+                                : [...(item.unit ? [item.unit] : []), ...unitOptions]
+                              ).map((u, i) => (
+                                <option key={i} value={u}>{u}</option>
+                              ))}
+                            </select>
                           </td>
                           <td className="p-2">
                             <select
@@ -2215,6 +2247,7 @@ ${sheets}
                           <th className="p-3 w-10">ردیف</th>
                           <th className="p-3">کالا / تجهیز / سند</th>
                           <th className="p-3 text-center w-16">تعداد</th>
+                          <th className="p-3 text-center w-16">واحد</th>
                           <th className="p-3 w-28">نوع بسته‌بندی</th>
                           <th className="p-3 w-40">ابعاد بسته‌بندی</th>
                           <th className="p-3 text-center w-24">وزن (کیلوگرم)</th>
@@ -2241,6 +2274,7 @@ ${sheets}
                               </div>
                             </td>
                             <td className="p-3 font-extrabold text-slate-700 text-center font-mono">{item.quantity}</td>
+                            <td className="p-3 text-center text-slate-600">{item.unit || '-'}</td>
                             <td className="p-3 font-medium text-slate-600">{item.packageType}</td>
                             <td className="p-3 font-mono text-left text-slate-600" dir="ltr">{item.dimensions}</td>
                             <td className="p-3 font-mono text-slate-700 text-center font-semibold">{item.weight} Kg</td>

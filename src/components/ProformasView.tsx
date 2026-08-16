@@ -62,6 +62,7 @@ import { useModuleNotes } from "../api/moduleNotes";
 import QuickAddModal from "./QuickAddModal";
 import { toPersianDigits, formatMoney } from "../numUtils";
 import { printHtmlDocument } from "../utils/printDocument";
+import { DocumentPreview } from "./DocumentPreview";
 import ModuleNotesSection from "./ModuleNotesSection";
 import CustomerAgreementAlert from "./CustomerAgreementAlert";
 import { isFieldRequired, renderFieldLabelWithAsterisk } from "../utils/requiredFields";
@@ -533,6 +534,8 @@ export default function ProformasView({
   const [isCreateModalFullscreen, setIsCreateModalFullscreen] = useState(false);
   const [editingProforma, setEditingProforma] = useState<Proforma | null>(null);
   const [showPrintView, setShowPrintView] = useState(false);
+  /** The preview's document, built exactly as the printed one is. */
+  const [previewHtml, setPreviewHtml] = useState("");
   const [selectedProforma, setSelectedProforma] = useState<Proforma | null>(
     null,
   );
@@ -627,6 +630,27 @@ export default function ProformasView({
     return () => { cancelled = true; };
   }, [selectedProforma]);
   const [overrideShowBrand, setOverrideShowBrand] = useState(false);
+
+  /*
+   * The preview's document, rebuilt whenever what it shows changes.
+   *
+   * `printImages` is in the list on purpose: the photographs arrive from the
+   * server after the panel opens, and without it the preview would keep the
+   * version that had none while the PDF had them.
+   */
+  React.useEffect(() => {
+    if (!showPrintView || !selectedProforma) { setPreviewHtml(""); return; }
+    let cancelled = false;
+    void (async () => {
+      const html = await buildProformaDocument(selectedProforma);
+      if (!cancelled && html) setPreviewHtml(html);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `settings` rather than the template derived from it: the template is
+    // computed further down, and a hook may not reach below itself.
+  }, [showPrintView, selectedProforma, overrideShowBrand, settings, printImages]);
+
   // Status change helper state
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [statusTargetId, setStatusTargetId] = useState<string>("");
@@ -1992,9 +2016,16 @@ export default function ProformasView({
     showSignatures: true,
     showTotals: true,
   };
-  const exportProformaPdf = async (pf: Proforma) => {
+  /**
+   * The proforma as a standalone HTML document, with its assets inlined.
+   *
+   * Split out from the export so the on-screen preview can show *this* rather
+   * than a second, hand-written rendering of the same document — see
+   * DocumentPreview. Everything below builds the file that gets printed.
+   */
+  const buildProformaDocument = async (pf: Proforma): Promise<string | null> => {
     const template = activeTemplate;
-    if (!template) return;
+    if (!template) return null;
     const customerObj = customers.find((c) => c.id === pf.customerId);
     // The document addresses the contact by family name only — see familyNameOnly.
     const contactRecord = pf.contactCustomerId
@@ -2314,7 +2345,7 @@ export default function ProformasView({
         .signatures {
             display: flex;
             justify-content: flex-end;
-            margin-top: 10px;
+            margin-top: 6px;
             text-align: center;
             page-break-inside: avoid;
             break-inside: avoid;
@@ -2565,20 +2596,20 @@ export default function ProformasView({
           template.showSignatures
             ? `
         <div class="signatures">
-            <div class="signature-box" style="width: 215px; border: 1px solid #f1f5f9; border-radius: 10px; padding: 6px 8px; background-color: #fafafa;">
-                <div class="signature-title" style="margin-bottom: 3px; font-size: 9px;">مهر و امضای صادرکننده</div>
-                <div class="signature-name" style="margin-bottom: 4px; font-size: 10px;">${creatorUser ? creatorUser.fullName : template.signatureLabel1}</div>
+            <div class="signature-box" style="width: 178px; border: 1px solid #f1f5f9; border-radius: 8px; padding: 4px 6px; background-color: #fafafa;">
+                <div class="signature-title" style="margin-bottom: 2px; font-size: 8px;">مهر و امضای صادرکننده</div>
+                <div class="signature-name" style="margin-bottom: 2px; font-size: 9px;">${creatorUser ? creatorUser.fullName : template.signatureLabel1}</div>
                 <div style="margin-top: 2px;">
                     ${
                       template.companySealUrl
                         ? `
-                        <div style="display: flex; justify-content: space-evenly; align-items: center; gap: 6px; height: 48px; background-color: #ffffff; border-radius: 8px; border: 1px dashed #cbd5e1; padding: 2px;">
+                        <div style="display: flex; justify-content: space-evenly; align-items: center; gap: 4px; height: 38px; background-color: #ffffff; border-radius: 6px; border: 1px dashed #cbd5e1; padding: 2px;">
                             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1;">
-                                <span style="font-size: 7px; color: #94a3b8; font-weight: bold; margin-bottom: 1px;">امضای صادرکننده</span>
+                                <span style="font-size: 6px; color: #94a3b8; font-weight: bold; margin-bottom: 0;">امضای صادرکننده</span>
                                 ${
                                   creatorUser && creatorUser.signatureImage
                                     ? `
-                                    <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 38px; max-width: 78px; object-fit: contain;" referrerPolicy="no-referrer" />
+                                    <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 30px; max-width: 62px; object-fit: contain;" referrerPolicy="no-referrer" />
                                 `
                                     : `
                                     <span style="font-size: 10px; color: #cbd5e1; font-weight: bold;">فاقد امضا</span>
@@ -2586,18 +2617,18 @@ export default function ProformasView({
                                 }
                             </div>
                             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; border-right: 1px solid #f1f5f9; padding-right: 6px;">
-                                <span style="font-size: 7px; color: #94a3b8; font-weight: bold; margin-bottom: 1px;">مهر شرکت</span>
-                                <img src="${template.companySealUrl}" alt="Company Seal" style="max-height: 38px; max-width: 70px; object-fit: contain; transform: rotate(-3deg);" referrerPolicy="no-referrer" />
+                                <span style="font-size: 6px; color: #94a3b8; font-weight: bold; margin-bottom: 0;">مهر شرکت</span>
+                                <img src="${template.companySealUrl}" alt="Company Seal" style="max-height: 30px; max-width: 56px; object-fit: contain; transform: rotate(-3deg);" referrerPolicy="no-referrer" />
                             </div>
                         </div>
                     `
                         : `
-                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 48px; background-color: #ffffff; border-radius: 8px; border: 1px dashed #cbd5e1; padding: 2px;">
-                            <span style="font-size: 7px; color: #94a3b8; font-weight: bold; margin-bottom: 1px;">امضای صادرکننده</span>
+                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 38px; background-color: #ffffff; border-radius: 6px; border: 1px dashed #cbd5e1; padding: 2px;">
+                            <span style="font-size: 6px; color: #94a3b8; font-weight: bold; margin-bottom: 0;">امضای صادرکننده</span>
                             ${
                               creatorUser && creatorUser.signatureImage
                                 ? `
-                                <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 40px; max-width: 150px; object-fit: contain;" referrerPolicy="no-referrer" />
+                                <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 32px; max-width: 130px; object-fit: contain;" referrerPolicy="no-referrer" />
                             `
                                 : `
                                 <span style="font-size: 10px; color: #cbd5e1; font-weight: bold;">فاقد امضا</span>
@@ -2634,17 +2665,21 @@ export default function ProformasView({
     `;
     // Same as the packing list: the logo, seal, signature and product photos
     // are `/uploads/…` paths that resolve to nothing outside the application.
-    const standalone = await inlineDocumentAssets(htmlContent);
+    return inlineDocumentAssets(htmlContent);
+  };
 
-    /*
-     * Straight to the print dialog, where "Save as PDF" lives.
-     *
-     * This used to download the page as an `.html` file, which the user then
-     * had to find, open and print — four steps for one PDF, and a file left in
-     * Downloads that nobody wanted. The same document is printed directly
-     * instead, by the browser's own engine, so the text in the resulting PDF is
-     * real text rather than a picture of text.
-     */
+  /*
+   * Straight to the print dialog, where "Save as PDF" lives.
+   *
+   * This used to download the page as an `.html` file, which the user then had
+   * to find, open and print — four steps for one PDF, and a file left in
+   * Downloads that nobody wanted. The same document is printed directly
+   * instead, by the browser's own engine, so the text in the resulting PDF is
+   * real text rather than a picture of text.
+   */
+  const exportProformaPdf = async (pf: Proforma) => {
+    const standalone = await buildProformaDocument(pf);
+    if (!standalone) return;
     // The saved file is named after the document, not after the application —
     // «ATA-05-26-C1.pdf», which is what it is filed under everywhere else.
     await printHtmlDocument(standalone, pf.proformaNumber);
@@ -2719,391 +2754,9 @@ export default function ProformasView({
                 بستن پیش‌نمایش
               </button>
             </div>
-            {/* Printable Document Sheet */}
-            <div className="print-sheet space-y-6">
-              {/* Document Header */}
-              <div
-                className="flex flex-col md:flex-row justify-between items-center md:items-start text-center md:text-right gap-4 border-b-2 pb-4"
-                style={{ borderColor: activeTemplate.titleColor }}
-              >
-                {/* Logo Placeholder */}
-                {activeTemplate.showLogo && (
-                  <div className="flex items-center gap-3">
-                    {activeTemplate.logoUrl ? (
-                      <img
-                        src={activeTemplate.logoUrl}
-                        alt={activeTemplate.companyName}
-                        className="w-12 h-12 object-contain rounded-lg border border-slate-200 bg-white"
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 bg-sky-500 text-white flex items-center justify-center font-bold text-xl rounded-lg">
-                        ATA
-                      </div>
-                    )}
-                    <div>
-                      <h4 className="font-bold text-sm text-slate-800">
-                        {activeTemplate.companyName}
-                      </h4>
-                      <p className="text-[9px] text-slate-400">
-                        تامین تجهیزات اتوماسیون و ابزاردقیق
-                      </p>
-                    </div>
-                  </div>
-                )}
-                {/* Title */}
-                <div className="text-center">
-                  <h1
-                    className="text-xl font-extrabold"
-                    style={{ color: activeTemplate.titleColor }}
-                  >
-                    {(activeTemplate.documentTitle || "")
-                      .replace("رسمی", "")
-                      .trim()}
-                  </h1>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    سامانه صدور خودکار Arshia ERP
-                  </p>
-                </div>
-                {/* Doc Specs */}
-                <div className="text-xs space-y-1 text-slate-600 font-mono">
-                  <div>
-                    شماره پیش‌فاکتور:{" "}
-                    <span className="font-bold text-slate-900">
-                      {selectedProforma.proformaNumber}
-                    </span>
-                  </div>
-                  <div>
-                    تاریخ صدور: <span>{selectedProforma.issueDate}</span>
-                  </div>
-                  <div>
-                    تاریخ اعتبار: <span>{selectedProforma.expiryDate}</span>
-                  </div>
-                </div>
-              </div>
-              {/* Buyer details - designed horizontally in a single row */}
-              {(() => {
-                const customerObj = customers.find(
-                  (c) => c.id === selectedProforma.customerId,
-                );
-                return (
-                  <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/20">
-                    <h4 className="font-bold text-xs text-slate-700 pb-1.5 border-b border-dashed border-slate-200 mb-3">
-                      مشخصات خریدار
-                    </h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-                      <div>
-                        <span className="text-slate-400 font-medium block mb-1">
-                          نام خریدار / شرکت:
-                        </span>
-                        <span className="font-bold text-slate-800">
-                          {customerObj?.customerType === "حقیقی" &&
-                          selectedProforma.contactPrefix
-                            ? `${selectedProforma.contactPrefix} `
-                            : ""}
-                          {selectedProforma.customerName}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 font-medium block mb-1">
-                          مخاطب:
-                        </span>
-                        <span className="font-medium text-slate-800">
-                          {customerObj?.customerType === "حقوقی" &&
-                          selectedProforma.contactPrefix
-                            ? `${selectedProforma.contactPrefix} `
-                            : ""}
-                          {selectedProforma.contactName ||
-                            (customerObj
-                              ? `${customerObj.contactName || ""} ${customerObj.contactLastName || ""}`.trim()
-                              : "") ||
-                            "نماینده خریدار"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-              {/* Items Table */}
-              <div className="border border-slate-200 rounded-xl overflow-x-auto">
-                <table className="w-full text-right text-xs border-collapse min-w-[650px]">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
-                      <th className="p-3 text-center w-12">ردیف</th>
-                      <th className="p-3 text-center w-36">تصویر کالا</th>
-                      {/* Name and specs share one column: the name reads as the
-                          heading of its own specification, and the space that
-                          freed goes to the image, which was a 40px thumbnail. */}
-                      <th className="p-3">نوع کالا و مشخصات فنی</th>
-                      <th className="p-3 text-center">تعداد</th>
-                      <th className="p-3 text-center">واحد</th>
-                      {selectedProforma.proformaType !== "TECHNICAL" && (
-                        <>
-                          <th className="p-3 text-left">
-                            بهای واحد ({selectedProforma.currency || "ریال"})
-                          </th>
-                          <th className="p-3 text-left">
-                            بهای کل ({selectedProforma.currency || "ریال"})
-                          </th>
-                        </>
-                      )}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {selectedProforma.items.map((item, index) => {
-                      const prod = products.find(
-                        (p) => p.id === item.productId,
-                      );
-                      // "none" is an explicit choice not to show one.
-                      const imgToRender =
-                        item.selectedImage === "none"
-                          ? undefined
-                          : item.selectedImage
-                            || prod?.images?.[0]
-                            || (item.productId ? printImages[item.productId] : undefined);
-                      return (
-                        <tr key={index} className="hover:bg-slate-50/30">
-                          <td className="p-3 text-center font-mono">
-                            {index + 1}
-                          </td>
-                          <td className="p-3 align-top">
-                            {imgToRender ? (
-                              <img
-                                src={imgToRender}
-                                alt={item.productName}
-                                // `contain`, not `cover`: a valve cropped to a
-                                // square is not a picture of the valve.
-                                className="w-32 h-32 object-contain rounded-lg border border-slate-200 bg-white mx-auto print:w-28 print:h-28"
-                                referrerPolicy="no-referrer"
-                              />
-                            ) : (
-                              <div className="w-32 h-32 rounded-lg border border-dashed border-slate-200 bg-slate-50/60 flex items-center justify-center text-[10px] text-slate-400 mx-auto">
-                                بدون تصویر
-                              </div>
-                            )}
-                          </td>
-                          <td className="p-3 align-top">
-                            <div className="font-bold text-slate-800 pb-1.5 mb-1.5 border-b border-slate-100">
-                              {item.productName}
-                              {overrideShowBrand && item.brand && (
-                                <span className="text-xs text-indigo-600 font-semibold mr-1">
-                                  ({item.brand})
-                                </span>
-                              )}
-                              {item.tagNumber && (
-                                <span className="text-[10px] text-rose-600 font-mono font-bold bg-rose-50 border border-rose-100 px-1 py-0.2 rounded mr-1.5">
-                                  تگ: {item.tagNumber}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-slate-600 whitespace-pre-line leading-relaxed text-left [direction:ltr] text-[11px]">
-                              {item.techSpecs || "-"}
-                            </div>
-                          </td>
-                          <td className="p-3 text-center font-mono">
-                            {item.quantity}
-                            {item.unit ? <span className="text-slate-400 text-[10px] mr-1">{item.unit}</span> : null}
-                          </td>
-                          <td className="p-3 text-center">
-                            {prod?.unit || "عدد"}
-                          </td>
-                          {selectedProforma.proformaType !== "TECHNICAL" && (
-                            <>
-                              <td className="p-3 text-left font-mono">
-                                {formatMoney(item.unitPriceRIYAL)}
-                              </td>
-                              <td className="p-3 text-left font-mono">
-                                {formatMoney(item.totalPriceRIYAL)}
-                              </td>
-                            </>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              {/* Financial Calculation Totals */}
-              <div
-                className={
-                  selectedProforma.proformaType === "TECHNICAL"
-                    ? "grid grid-cols-1"
-                    : "grid grid-cols-1 md:grid-cols-2 gap-4"
-                }
-              >
-                <div className="text-xs p-4 bg-slate-50 rounded-xl border border-slate-150 text-slate-600 space-y-2">
-                  <p className="font-bold text-slate-700 border-b border-slate-200 pb-1.5">
-                    توضیحات و شرایط فروش
-                  </p>
-                  <p className="whitespace-pre-line leading-relaxed text-[11px]">
-                    {selectedProforma.notes}
-                  </p>
-                </div>
-                {selectedProforma.proformaType !== "TECHNICAL" && (
-                  <div className="text-xs p-4 bg-slate-50 rounded-xl border border-slate-150 divide-y divide-slate-200 space-y-2">
-                    <div className="flex justify-between items-center py-1">
-                      <span className="text-slate-500">
-                        جمع ناخالص ردیف‌ها:
-                      </span>
-                      <span className="font-mono font-bold">
-                        {formatCurrency(
-                          selectedProforma.totalAmount,
-                          selectedProforma.currency,
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center py-1">
-                      <span className="text-slate-500">
-                        تخفیف کلی ({selectedProforma.discountPercent}%):
-                      </span>
-                      <span className="font-mono text-red-600 font-semibold">
-                        -
-                        {formatCurrency(
-                          selectedProforma.discountAmount,
-                          selectedProforma.currency,
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center py-1">
-                      <span className="text-slate-500">
-                        مالیات بر ارزش افزوده ({selectedProforma.taxPercent}%):
-                      </span>
-                      <span className="font-mono text-slate-700">
-                        +
-                        {formatCurrency(
-                          selectedProforma.taxAmount,
-                          selectedProforma.currency,
-                        )}
-                      </span>
-                    </div>
-                    <div
-                      className="flex justify-between items-center py-2 text-sm font-bold border-t-2"
-                      style={{ color: activeTemplate.titleColor }}
-                    >
-                      <span>مبلغ قابل پرداخت نهایی:</span>
-                      <span className="font-mono">
-                        {formatCurrency(
-                          selectedProforma.finalAmount,
-                          selectedProforma.currency,
-                        )}
-                      </span>
-                    </div>
-                    <div className="text-left pt-2 font-semibold text-slate-500 text-[10px]">
-                      {(() => {
-                        const cur = selectedProforma.currency || "ریال";
-                        if (cur !== "ریال") {
-                          const engCurrency = mapPersianCurrencyToEnglish(cur);
-                          const rateObj = engCurrency
-                            ? exchangeRates.find(
-                                (r) => r.currency === engCurrency,
-                              )
-                            : undefined;
-                          const rate = rateObj ? rateObj.rateToRIYAL : 1;
-                          const riyalVal = selectedProforma.finalAmount * rate;
-                          const tomanVal = Math.round(riyalVal / 10);
-                          return `نرخ تسعیر روز ${cur}: ${formatMoney(rate)} ریال | معادل: ${formatMoney(riyalVal)} ریال (${formatMoney(tomanVal)} تومان)`;
-                        } else {
-                          return `معادل ریالی نهایی: ${formatToman(selectedProforma.finalAmount)}`;
-                        }
-                      })()}
-                    </div>
-                  </div>
-                )}
-              </div>
-              {/* Signatures */}
-              {activeTemplate.showSignatures &&
-                (() => {
-                  const previewCreatorUser = selectedProforma.creatorId
-                    ? users.find((u) => u.id === selectedProforma.creatorId)
-                    : currentUser;
-                  return (
-                    <div className="flex justify-end pt-12">
-                      <div className="text-center w-80 border border-slate-100 rounded-2xl p-4 bg-slate-50/30">
-                        <p className="text-xs text-slate-400 font-bold mb-1">
-                          مهر و امضای صادرکننده پیش‌فاکتور
-                        </p>
-                        <p className="text-xs font-bold text-slate-700 mb-3">
-                          {previewCreatorUser
-                            ? previewCreatorUser.fullName
-                            : activeTemplate.signatureLabel1}
-                        </p>
-                        {activeTemplate.companySealUrl ? (
-                          <div className="grid grid-cols-2 gap-2 h-24 bg-white/50 rounded-xl border border-slate-100 p-2">
-                            <div className="flex flex-col items-center justify-center border-l border-slate-100">
-                              <span className="text-[9px] text-slate-400 font-bold mb-1">
-                                امضای صادرکننده
-                              </span>
-                              {previewCreatorUser &&
-                              previewCreatorUser.signatureImage ? (
-                                <img
-                                  src={previewCreatorUser.signatureImage}
-                                  alt="Signature"
-                                  className="max-h-14 max-w-full object-contain"
-                                  referrerPolicy="no-referrer"
-                                />
-                              ) : (
-                                <span className="text-[10px] text-slate-300 font-bold">
-                                  فاقد امضا
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex flex-col items-center justify-center">
-                              <span className="text-[9px] text-slate-400 font-bold mb-1">
-                                مهر شرکت
-                              </span>
-                              <img
-                                src={activeTemplate.companySealUrl}
-                                alt="Company Seal"
-                                className="max-h-14 max-w-full object-contain -rotate-3"
-                                referrerPolicy="no-referrer"
-                              />
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center justify-center h-24 bg-white/50 rounded-xl border border-slate-100 p-2">
-                            <span className="text-[9px] text-slate-400 font-bold mb-1">
-                              امضای صادرکننده
-                            </span>
-                            {previewCreatorUser &&
-                            previewCreatorUser.signatureImage ? (
-                              <img
-                                src={previewCreatorUser.signatureImage}
-                                alt="Signature"
-                                className="max-h-16 max-w-full object-contain"
-                                referrerPolicy="no-referrer"
-                              />
-                            ) : (
-                              <span className="text-[10px] text-slate-300 font-bold">
-                                فاقد امضا
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })()}
-              {/* Beautiful Footer displaying email, phone number, and address of the company, and page number */}
-              <div className="border-t border-slate-200 pt-6 mt-12 flex flex-col sm:flex-row justify-between items-center text-[10px] text-slate-500 gap-4">
-                <div className="flex flex-wrap justify-center sm:justify-start gap-y-2 gap-x-6">
-                  <div>
-                    <strong>آدرس شرکت:</strong>{" "}
-                    {activeTemplate.address || "تهران، شرکت ابزار کنترل عرشیا"}
-                  </div>
-                  <div>
-                    <strong>تلفن تماس:</strong>{" "}
-                    <span className="font-mono">{activeTemplate.phone}</span>
-                  </div>
-                  <div>
-                    <strong>پست الکترونیکی:</strong>{" "}
-                    <span className="font-mono">{activeTemplate.email}</span>
-                  </div>
-                </div>
-                <div className="font-semibold text-slate-400 bg-slate-100 px-3 py-1 rounded-full whitespace-nowrap">
-                  صفحه ۱ از ۱
-                </div>
-              </div>
-            </div>
+            {/* The document itself — the same HTML the PDF is made of. */}
+            <DocumentPreview html={previewHtml} />
+
 
             {/* Proforma Global Module Notes & Agreements (Hidden on Print) */}
             <div className="print:hidden mt-8 text-right border-t border-slate-200 pt-8">

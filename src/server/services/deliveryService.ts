@@ -140,6 +140,7 @@ export interface PackingItemInput {
   variantId?: string | null;
   tagNumber?: string | null;
   quantity?: unknown;
+  unit?: string | null;
   packageType?: string | null;
   dimensions?: string | null;
   weight?: unknown;
@@ -175,6 +176,9 @@ function mapPackingItem(row: PackingItemInput): Record<string, unknown> | null {
     variantId: toNullableString(row.variantId, 36),
     tagNumber: toNullableString(row.tagNumber, 100),
     quantity: toNumber(row.quantity, 1),
+    // Held on the line, like the proforma's: a packing list is a historical
+    // document and must keep the unit it was written in.
+    unit: toNullableString(row.unit, 30),
     packageType: toNullableString(row.packageType, 100),
     dimensions: toNullableString(row.dimensions, 100),
     weight: toNumber(row.weight, 0),
@@ -477,6 +481,8 @@ export interface RemainingLine {
   /** The SKU promised, when the product has variants. */
   variantId: string | null;
   productName: string;
+  /** The unit the proforma quoted it in, carried onto the packing line. */
+  unit: string | null;
   tagNumber: string | null;
   promised: number;
   shipped: number;
@@ -501,7 +507,7 @@ export async function getDeliveryRemaining(
         orderBy: { lineNo: "asc" },
         select: {
           productId: true, variantId: true, productName: true, tagNumber: true,
-          quantity: true, supplyMethod: true, status: true,
+          quantity: true, unit: true, supplyMethod: true, status: true,
         },
       },
     },
@@ -529,12 +535,14 @@ export async function getDeliveryRemaining(
       if (existing) {
         existing.promised += Number(item.quantity);
         existing.tagNumber ??= item.tagNumber;
+        existing.unit ??= item.unit;
       } else {
         lines.set(key, {
           key,
           productId: item.productId,
           variantId: item.variantId ?? null,
           productName: item.productName,
+          unit: item.unit,
           tagNumber: item.tagNumber,
           promised: Number(item.quantity),
           shipped: 0,
@@ -551,7 +559,7 @@ export async function getDeliveryRemaining(
         ...(params.excludeDeliveryId ? { id: { not: params.excludeDeliveryId } } : {}),
       },
     },
-    select: { productId: true, variantId: true, itemOrDocName: true, quantity: true },
+    select: { productId: true, variantId: true, itemOrDocName: true, quantity: true, unit: true },
   });
 
   for (const row of shippedRows) {
@@ -564,6 +572,7 @@ export async function getDeliveryRemaining(
       lines.set(key, {
         key, productId: row.productId, variantId: row.variantId,
         productName: row.itemOrDocName,
+        unit: row.unit,
         tagNumber: null, promised: 0, shipped: Number(row.quantity), remaining: 0,
       });
     }

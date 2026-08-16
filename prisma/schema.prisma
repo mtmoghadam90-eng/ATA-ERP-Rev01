@@ -822,6 +822,8 @@ model PackingItem {
   variantId     String? @db.NVarChar(36)
   tagNumber     String? @db.NVarChar(100)
   quantity      Decimal @default(1) @db.Decimal(18, 3)
+  /// عدد | دستگاه | متر | … — from settings.dropdownItems.units, per line.
+  unit          String? @db.NVarChar(30)
   packageType   String? @db.NVarChar(100)
   dimensions    String? @db.NVarChar(100)
   weight        Decimal @default(0) @db.Decimal(18, 3)

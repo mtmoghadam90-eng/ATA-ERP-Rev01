@@ -62,11 +62,29 @@ export function printHtmlDocument(html: string, title?: string): Promise<void> {
     document.body.appendChild(frame);
 
     let restoreTitle = () => {};
+    let cleaned = false;
+    /*
+     * The frame and the title live until the print dialog is finished with
+     * them.
+     *
+     * They used to be torn down a second after `print()` returned, which in
+     * Chrome is while the preview is still open — and the preview reads the
+     * document it is printing when the user finally clicks Save. With the frame
+     * already gone, the file-name box came up **empty** and had to be typed by
+     * hand. So cleanup waits for `afterprint`, with a long fallback for the
+     * browsers that never fire it.
+     */
+    const cleanUp = () => {
+      if (cleaned) return;
+      cleaned = true;
+      frame.remove();
+      restoreTitle();
+    };
     const done = () => {
-      // Left on the page briefly: removing the iframe while the print dialog
-      // still holds it produces a blank sheet in Safari. The title goes back on
-      // the same beat — the dialog has read it by then.
-      setTimeout(() => { frame.remove(); restoreTitle(); }, 1000);
+      window.addEventListener("afterprint", cleanUp, { once: true });
+      frame.contentWindow?.addEventListener("afterprint", cleanUp, { once: true });
+      // Nothing may keep an invisible iframe on the page for ever.
+      setTimeout(cleanUp, 5 * 60 * 1000);
       resolve();
     };
 

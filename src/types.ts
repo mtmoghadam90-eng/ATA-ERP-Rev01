@@ -641,6 +641,8 @@ export interface PackingItem {
   /** The exact SKU shipped. The stock ledger issues against it. */
   variantId?: string;
   quantity: number;
+  /** The unit this line is counted in, from settings.dropdownItems.units. */
+  unit?: string;
   packageType: string; // e.g. کارتن، جعبه چوبی، پالت، کیسه
   dimensions: string; // e.g. 50x40x30 سانتی‌متر
   weight: number; // وزن به کیلوگرم
