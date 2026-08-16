@@ -451,6 +451,12 @@ model Proforma {
   expiryDateJalali  String?  @db.NVarChar(10)
   deliveryDate      DateTime? @db.Date
   deliveryDateJalali String? @db.NVarChar(10)
+  /// The day the document was sent to the customer: stamped when the status
+  /// becomes «ارسال شده», so a follow-up can be scheduled from it. Nothing else
+  /// records *when* a quotation went out — the issue date is when it was
+  /// written, which is not the same thing.
+  sentDate          DateTime? @db.Date
+  sentDateJalali    String?  @db.NVarChar(10)
 
   totalAmount     Decimal @default(0) @db.Decimal(19, 2)
   discountPercent Decimal @default(0) @db.Decimal(9, 4)

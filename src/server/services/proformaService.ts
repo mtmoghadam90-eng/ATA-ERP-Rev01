@@ -39,7 +39,35 @@ export const PROFORMA_FILTERABLE = [
 
 const SEARCH_FIELDS = ["proformaNumber", "notes", "contactPrefix"] as const;
 
-export const PROFORMA_DATE_FIELDS = ["issueDate", "expiryDate", "deliveryDate"] as const;
+export const PROFORMA_DATE_FIELDS = ["issueDate", "expiryDate", "deliveryDate", "sentDate"] as const;
+
+/** The stored status that means the document has gone to the customer. */
+const SENT_STATUS = "ارسال شده";
+
+/**
+ * Stamps the day a proforma was sent, on the transition into «ارسال شده».
+ *
+ * Nothing recorded *when* a quotation went out — the issue date is the day it
+ * was written, and a document drafted on Sunday and sent on Wednesday counted
+ * three days that had not happened. A follow-up scheduled "three days after it
+ * was sent" needs the real day, so the transition writes it.
+ *
+ * The transition, not the state: re-saving a sent proforma must not move the
+ * date forward, or the follow-up would be pushed back by every edit. Sending it
+ * again after taking it back to a draft does re-stamp it, because that is a new
+ * send.
+ */
+export function stampSentDate(
+  data: Record<string, unknown>,
+  previousStatus: string | null | undefined,
+  todayJalali: string,
+): void {
+  const nextStatus = "status" in data ? String(data.status ?? "") : previousStatus ?? "";
+  if (nextStatus !== SENT_STATUS || previousStatus === SENT_STATUS) return;
+  // Only when the save did not set one itself.
+  if (data.sentDateJalali) return;
+  Object.assign(data, expandDateFields({ sentDate: todayJalali }, ["sentDate"]));
+}
 
 /**
  * Proformas have no `ownerUserId` of their own — they belong to a customer and a
@@ -459,12 +487,15 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
     // scrubProductRefs. The link goes, the document is still saved.
     const items = (await scrubProductRefs(tx, input.items)) ?? [];
 
+    const createData: Record<string, unknown> = {
+      ...scalarData(input),
+      ...computeTotals(items, input),
+      creatorUserId: input.creatorUserId ?? user.id,
+    };
+    stampSentDate(createData, null, todayJalali);
+
     const proforma = await tx.proforma.create({
-      data: {
-        ...scalarData(input),
-        ...computeTotals(items, input),
-        creatorUserId: input.creatorUserId ?? user.id,
-      } as Prisma.ProformaUncheckedCreateInput,
+      data: createData as Prisma.ProformaUncheckedCreateInput,
     });
 
     await syncChildren({
@@ -584,6 +615,8 @@ export async function updateProforma(
     if (items !== undefined) {
       Object.assign(data, computeTotals(items, input));
     }
+
+    stampSentDate(data, before?.status, todayJalali);
 
     const proforma = await tx.proforma.update({
       where: { id },

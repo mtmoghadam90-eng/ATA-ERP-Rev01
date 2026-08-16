@@ -2894,7 +2894,7 @@ export default function SettingsView({
                           // from the moment it is chosen, or it would be saved
                           // with nothing to count from.
                           schedule: val === 'time_elapsed'
-                            ? (editingRule.schedule || { subject: 'proforma_issue', days: 5 })
+                            ? (editingRule.schedule || { subject: 'proforma_sent', days: 3 })
                             : undefined,
                           conditions: val === 'time_elapsed'
                             ? [{ field: 'status', operator: 'equals', value: 'ارسال شده' }]
@@ -2962,7 +2962,7 @@ export default function SettingsView({
                           onChange={(e) => setEditingRule({
                             ...editingRule,
                             schedule: {
-                              subject: editingRule.schedule?.subject || 'proforma_issue',
+                              subject: editingRule.schedule?.subject || 'proforma_sent',
                               days: Math.max(0, Number(e.target.value) || 0),
                             },
                           })}
@@ -2972,7 +2972,7 @@ export default function SettingsView({
                       <div className="md:col-span-2">
                         <label className="block text-slate-700 text-xs font-bold mb-2">پس از کدام تاریخ</label>
                         <select
-                          value={editingRule.schedule?.subject || 'proforma_issue'}
+                          value={editingRule.schedule?.subject || 'proforma_sent'}
                           onChange={(e) => setEditingRule({
                             ...editingRule,
                             schedule: {
@@ -3194,7 +3194,7 @@ export default function SettingsView({
                           // A scheduled rule matches against the record itself,
                           // so the fields are that record's own — which record
                           // depends on the date the schedule counts from.
-                          const model = SCHEDULE_SUBJECTS[editingRule.schedule?.subject || 'proforma_issue']?.model;
+                          const model = SCHEDULE_SUBJECTS[editingRule.schedule?.subject || 'proforma_sent']?.model;
                           if (model === 'proforma') {
                             fieldOptions = [
                               { value: 'status', label: 'وضعیت ارسال پیش‌فاکتور' },

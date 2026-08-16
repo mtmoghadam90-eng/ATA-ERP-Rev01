@@ -28,6 +28,7 @@ const PAYLOAD_SELECT: Record<string, Record<string, boolean>> = {
     id: true, proformaNumber: true, status: true, projectId: true, customerId: true,
     currency: true, finalAmount: true, totalAmount: true,
     issueDateJalali: true, expiryDateJalali: true, deliveryDateJalali: true,
+    sentDateJalali: true,
   },
   project: {
     id: true, code: true, name: true, status: true, customerId: true, salesExpert: true,

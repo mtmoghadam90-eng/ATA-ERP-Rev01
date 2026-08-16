@@ -49,6 +49,16 @@ export interface ScheduleSubject {
  * would be a schedule nobody could set up today.
  */
 export const SCHEDULE_SUBJECTS: Record<string, ScheduleSubject> = {
+  /*
+   * The day the quotation went to the customer — the one people actually
+   * schedule from. It is stamped when the status becomes «ارسال شده» (see
+   * proformaService.stampSentDate); the issue date beneath it is the day the
+   * document was written, which is a different day whenever a draft waits.
+   */
+  proforma_sent: {
+    label: "روز پس از ارسال پیش‌فاکتور به کارفرما",
+    model: "proforma", dateField: "sentDateJalali", entityType: "proforma",
+  },
   proforma_issue: {
     label: "روز پس از تاریخ صدور پیش‌فاکتور",
     model: "proforma", dateField: "issueDateJalali", entityType: "proforma",

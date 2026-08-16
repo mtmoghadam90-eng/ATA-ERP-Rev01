@@ -54,6 +54,7 @@ import { describeProformaChanges, proformaChangeSentence } from "../src/server/s
 import {
   SCHEDULE_SUBJECTS, TIME_TRIGGER, dueDay, isDue, scheduledRules, sweepFloor,
 } from "../src/utils/workflowSchedule";
+import { stampSentDate } from "../src/server/services/proformaService";
 import { formatMoney } from "../src/numUtils";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -1098,6 +1099,27 @@ head("Workflow: time-based triggers");
   ];
   eq("only active, scheduled rules with a date this app knows",
     scheduledRules(rules as never[]).map((r: { id: string }) => r.id).join(","), "a");
+
+  // The case people actually ask for: "three days after it went to the
+  // customer". Counting from the issue date would count days a draft spent
+  // waiting, so the sent day is stamped and this is what counts from it.
+  eq("there is a subject for the day the proforma was sent",
+    SCHEDULE_SUBJECTS.proforma_sent?.dateField, "sentDateJalali");
+
+  {
+    const stamped = (data: Record<string, unknown>, previous: string | null) => {
+      stampSentDate(data, previous, "1405/05/24");
+      return data.sentDateJalali ?? null;
+    };
+    eq("sending a draft stamps today",
+      stamped({ status: "ارسال شده" }, "پیش‌نویس"), "1405/05/24");
+    eq("re-saving an already-sent proforma does not move the date",
+      stamped({ status: "ارسال شده" }, "ارسال شده"), null);
+    eq("a save that does not send it stamps nothing",
+      stamped({ status: "پیش‌نویس" }, "پیش‌نویس"), null);
+    eq("a date the save carries itself is left alone",
+      stamped({ status: "ارسال شده", sentDateJalali: "1405/05/20" }, "پیش‌نویس"), "1405/05/20");
+  }
 
   // The editor offers these and the sweep reads the same list; a subject in one
   // and not the other is a rule that can be set up and never fire.
