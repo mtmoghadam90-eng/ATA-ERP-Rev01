@@ -775,11 +775,13 @@ export interface WorkflowRule {
      * src/utils/workflowSchedule.ts.
      */
     | 'time_elapsed';
-  /** Only for `time_elapsed`. */
+  /** Only for `time_elapsed` — see src/utils/workflowSchedule.ts. */
   schedule?: {
     /** A key of SCHEDULE_SUBJECTS: which date, on which kind of record. */
     subject: string;
+    /** Never negative; the side is `direction`. */
     days: number;
+    direction?: 'after' | 'before';
   };
   conditions: {
     field: string; // e.g. 'newOutcome', 'newStatus'

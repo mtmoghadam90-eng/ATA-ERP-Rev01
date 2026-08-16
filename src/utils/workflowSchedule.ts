@@ -1,4 +1,5 @@
 import { addDaysToShamsi, getTodayShamsi } from "../dateUtils";
+import { toPersianDigits } from "../numUtils";
 import { normalizeJalali } from "../server/dates";
 
 /**
@@ -27,12 +28,25 @@ import { normalizeJalali } from "../server/dates";
 export interface WorkflowSchedule {
   /** Which date, on which record — a key of SCHEDULE_SUBJECTS. */
   subject: string;
-  /** How many days after it. Zero means "on the day itself". */
+  /** How many days from it. Zero means "on the day itself". Never negative. */
   days: number;
+  /**
+   * Which side of the date.
+   *
+   * "before" is the reminder half of the feature — three days *before* a
+   * quotation expires, two days before an order is due in — and it is a
+   * direction rather than a negative number of days on purpose: a rule reading
+   * «−۳ روز پس از تاریخ اعتبار» is a puzzle, and a form that accepts a minus
+   * sign invites one to be typed by accident. Absent means "after", which is
+   * what every rule written before this existed meant.
+   */
+  direction?: "after" | "before";
 }
 
+export type ScheduleDirection = "after" | "before";
+
 export interface ScheduleSubject {
-  /** What the settings screen calls it. */
+  /** The date's own name — the sentence around it is built by describeSchedule. */
   label: string;
   /** The Prisma model to sweep. */
   model: "proforma" | "project" | "purchaseOrder" | "packagingDelivery" | "supplierInquiry";
@@ -56,39 +70,39 @@ export const SCHEDULE_SUBJECTS: Record<string, ScheduleSubject> = {
    * document was written, which is a different day whenever a draft waits.
    */
   proforma_sent: {
-    label: "روز پس از ارسال پیش‌فاکتور به کارفرما",
+    label: "ارسال پیش‌فاکتور به کارفرما",
     model: "proforma", dateField: "sentDateJalali", entityType: "proforma",
   },
   proforma_issue: {
-    label: "روز پس از تاریخ صدور پیش‌فاکتور",
+    label: "تاریخ صدور پیش‌فاکتور",
     model: "proforma", dateField: "issueDateJalali", entityType: "proforma",
   },
   proforma_expiry: {
-    label: "روز پس از تاریخ اعتبار پیش‌فاکتور",
+    label: "تاریخ اعتبار پیش‌فاکتور",
     model: "proforma", dateField: "expiryDateJalali", entityType: "proforma",
   },
   proforma_delivery: {
-    label: "روز پس از تاریخ تحویل توافق‌شده پیش‌فاکتور",
+    label: "تاریخ تحویل توافق‌شده پیش‌فاکتور",
     model: "proforma", dateField: "deliveryDateJalali", entityType: "proforma",
   },
   project_creation: {
-    label: "روز پس از تاریخ ایجاد پروژه",
+    label: "تاریخ ایجاد پروژه",
     model: "project", dateField: "creationDateJalali", entityType: "project",
   },
   purchase_order_date: {
-    label: "روز پس از تاریخ سفارش خرید",
+    label: "تاریخ سفارش خرید",
     model: "purchaseOrder", dateField: "orderDateJalali", entityType: "purchaseOrder",
   },
   purchase_order_arrival: {
-    label: "روز پس از تاریخ تحویل مورد انتظار سفارش خرید",
+    label: "تاریخ تحویل مورد انتظار سفارش خرید",
     model: "purchaseOrder", dateField: "expectedDeliveryDateJalali", entityType: "purchaseOrder",
   },
   delivery_date: {
-    label: "روز پس از تاریخ صدور پکینگ‌لیست",
+    label: "تاریخ صدور پکینگ‌لیست",
     model: "packagingDelivery", dateField: "deliveryDateJalali", entityType: "packagingDelivery",
   },
   inquiry_creation: {
-    label: "روز پس از تاریخ ثبت استعلام قیمت",
+    label: "تاریخ ثبت استعلام قیمت",
     model: "supplierInquiry", dateField: "creationDateJalali", entityType: "supplierInquiry",
   },
 };
@@ -122,10 +136,15 @@ export function scheduledRules<T extends SchedulableRule>(rules: T[] | undefined
  * Returns null for a record with no such date — an order with no expected
  * arrival is not overdue, it is unscheduled.
  */
-export function dueDay(baseJalali: string | null | undefined, days: number): string | null {
+export function dueDay(
+  baseJalali: string | null | undefined,
+  days: number,
+  direction: ScheduleDirection = "after",
+): string | null {
   const base = normalizeJalali(baseJalali);
   if (!base) return null;
-  return addDaysToShamsi(base, Math.max(0, Math.trunc(Number(days) || 0)));
+  const offset = Math.max(0, Math.trunc(Number(days) || 0));
+  return addDaysToShamsi(base, direction === "before" ? -offset : offset);
 }
 
 /**
@@ -139,8 +158,9 @@ export function isDue(
   baseJalali: string | null | undefined,
   days: number,
   todayJalali = getTodayShamsi(),
+  direction: ScheduleDirection = "after",
 ): boolean {
-  const due = dueDay(baseJalali, days);
+  const due = dueDay(baseJalali, days, direction);
   const today = normalizeJalali(todayJalali);
   if (!due || !today) return false;
   return normalizeJalali(due)! <= today;
@@ -156,8 +176,35 @@ export function isDue(
  */
 export const SWEEP_WINDOW_DAYS = 45;
 
-/** The earliest base date a sweep will act on, for a rule of `days`. */
-export function sweepFloor(days: number, todayJalali = getTodayShamsi()): string {
-  const total = Math.max(0, Math.trunc(Number(days) || 0)) + SWEEP_WINDOW_DAYS;
-  return addDaysToShamsi(normalizeJalali(todayJalali) ?? todayJalali, -total);
+/**
+ * The band of base dates a sweep has to look at.
+ *
+ * Counting **after** a date, a record is due once its date is far enough in the
+ * past, so the band runs backwards from today. Counting **before** one, the
+ * record is due while its date is still ahead — up to `days` ahead — so the
+ * band has to reach into the future as well, or a rule reminding somebody three
+ * days before an expiry would never see the document it is about.
+ */
+export function sweepRange(
+  days: number,
+  todayJalali = getTodayShamsi(),
+  direction: ScheduleDirection = "after",
+): { from: string; to: string } {
+  const today = normalizeJalali(todayJalali) ?? todayJalali;
+  const offset = Math.max(0, Math.trunc(Number(days) || 0));
+  return direction === "before"
+    ? { from: addDaysToShamsi(today, -SWEEP_WINDOW_DAYS), to: addDaysToShamsi(today, offset) }
+    : { from: addDaysToShamsi(today, -(offset + SWEEP_WINDOW_DAYS)), to: today };
+}
+
+/** The sentence a rule reads as: «۳ روز قبل از تاریخ اعتبار پیش‌فاکتور». */
+export function describeSchedule(schedule: WorkflowSchedule | undefined): string {
+  if (!schedule) return "";
+  const subject = SCHEDULE_SUBJECTS[schedule.subject];
+  if (!subject) return "";
+  const days = Math.max(0, Math.trunc(Number(schedule.days) || 0));
+  const side = schedule.direction === "before" ? "قبل از" : "پس از";
+  return days === 0
+    ? `در روز ${subject.label}`
+    : `${toPersianDigits(days)} روز ${side} ${subject.label}`;
 }

@@ -52,7 +52,7 @@ import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
 import { nextSequence, renderAround } from "../src/server/documentNumbers";
 import { describeProformaChanges, proformaChangeSentence } from "../src/server/services/proformaChanges";
 import {
-  SCHEDULE_SUBJECTS, TIME_TRIGGER, dueDay, isDue, scheduledRules, sweepFloor,
+  SCHEDULE_SUBJECTS, TIME_TRIGGER, describeSchedule, dueDay, isDue, scheduledRules, sweepRange,
 } from "../src/utils/workflowSchedule";
 import { stampSentDate } from "../src/server/services/proformaService";
 import { formatMoney } from "../src/numUtils";
@@ -1089,7 +1089,36 @@ head("Workflow: time-based triggers");
 
   // The sweep does not reach back for ever: a record whose day passed before
   // the rule existed would produce a task about something forgotten a year ago.
-  eq("the sweep looks back a fixed window", sweepFloor(5, "1405/05/29"), "1405/04/10");
+  eq("the sweep looks back a fixed window", sweepRange(5, "1405/05/29").from, "1405/04/10");
+  eq("and no further forward than today", sweepRange(5, "1405/05/29").to, "1405/05/29");
+
+  /*
+   * Counting *before* a date — the reminder half.
+   *
+   * «۳ روز قبل از تاریخ اعتبار» has to fire while the date is still ahead, so
+   * both the due day and the band the sweep looks in run the other way. A
+   * negative number of days is not how it is expressed: `days` stays a count
+   * and the side is its own field, because a rule reading «−۳ روز پس از» is a
+   * puzzle and a form that takes a minus sign collects one by accident.
+   */
+  eq("three days before a date is three days earlier",
+    dueDay("1405/06/23", 3, "before"), "1405/06/20");
+  ok("not due four days before", !isDue("1405/06/23", 3, "1405/06/19", "before"));
+  ok("due on the third day before", isDue("1405/06/23", 3, "1405/06/20", "before"));
+  ok("and still due after the date itself has passed",
+    isDue("1405/06/23", 3, "1405/06/25", "before"));
+  eq("the band reaches into the future, or the record is never even looked at",
+    sweepRange(3, "1405/06/20", "before").to, "1405/06/23");
+
+  eq("a rule reads as a sentence",
+    describeSchedule({ subject: "proforma_expiry", days: 3, direction: "before" }),
+    "۳ روز قبل از تاریخ اعتبار پیش‌فاکتور");
+  eq("and after is the default, for every rule written before this existed",
+    describeSchedule({ subject: "proforma_sent", days: 3 }),
+    "۳ روز پس از ارسال پیش‌فاکتور به کارفرما");
+  eq("zero days is the day itself",
+    describeSchedule({ subject: "proforma_sent", days: 0 }),
+    "در روز ارسال پیش‌فاکتور به کارفرما");
 
   const rules = [
     { id: "a", active: true, triggerType: TIME_TRIGGER, schedule: { subject: "proforma_issue", days: 5 } },

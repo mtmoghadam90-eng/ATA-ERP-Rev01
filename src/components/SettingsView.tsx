@@ -40,7 +40,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { ERPSettings, CustomField, User, Project, AuditLog, WorkflowRule } from '../types';
-import { formatERPNumber, toPersianDigits } from '../numUtils';
+import { formatERPNumber } from '../numUtils';
 import { ApiError, api } from '../api/client';
 import { auditLogsApi } from '../api/auditLogs';
 import { useAuditLogList } from '../api/useAuditLogList';
@@ -49,7 +49,7 @@ import { useEntitySearch } from '../api/useEntitySearch';
 import type { ProjectRow } from '../api/projects';
 import RatesView from './RatesView';
 import { decompressLZW } from '../utils/compress';
-import { SCHEDULE_SUBJECTS } from '../utils/workflowSchedule';
+import { SCHEDULE_SUBJECTS, describeSchedule } from '../utils/workflowSchedule';
 import ConfirmModal from './ConfirmModal';
 import { uploadFile } from '../imageUtils';
 import { REQUIRED_FIELDS_METADATA, DEFAULT_REQUIRED_FIELDS } from '../utils/requiredFields';
@@ -2894,7 +2894,7 @@ export default function SettingsView({
                           // from the moment it is chosen, or it would be saved
                           // with nothing to count from.
                           schedule: val === 'time_elapsed'
-                            ? (editingRule.schedule || { subject: 'proforma_sent', days: 3 })
+                            ? (editingRule.schedule || { subject: 'proforma_sent', days: 3, direction: 'after' as const })
                             : undefined,
                           conditions: val === 'time_elapsed'
                             ? [{ field: 'status', operator: 'equals', value: 'ارسال شده' }]
@@ -2952,42 +2952,65 @@ export default function SettingsView({
                       هر رکوردی که تاریخ سررسیدش فرا رسیده باشد <strong>فقط یک بار</strong> اجرا می‌گردد.
                       شرط‌های پایین همچنان اعمال می‌شوند — مثلاً «وضعیت برابر است با ارسال شده».
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div className="md:col-span-1">
-                        <label className="block text-slate-700 text-xs font-bold mb-2">تعداد روز</label>
-                        <input
-                          type="number"
-                          min={0}
-                          value={editingRule.schedule?.days ?? 5}
-                          onChange={(e) => setEditingRule({
-                            ...editingRule,
-                            schedule: {
-                              subject: editingRule.schedule?.subject || 'proforma_sent',
-                              days: Math.max(0, Number(e.target.value) || 0),
-                            },
-                          })}
-                          className="w-full text-xs md:text-sm border border-slate-200 rounded-xl p-3 focus:outline-none focus:border-sky-500 bg-white text-center font-mono"
-                        />
-                      </div>
-                      <div className="md:col-span-2">
-                        <label className="block text-slate-700 text-xs font-bold mb-2">پس از کدام تاریخ</label>
-                        <select
-                          value={editingRule.schedule?.subject || 'proforma_sent'}
-                          onChange={(e) => setEditingRule({
-                            ...editingRule,
-                            schedule: {
-                              subject: e.target.value,
-                              days: editingRule.schedule?.days ?? 5,
-                            },
-                          })}
-                          className="w-full text-xs md:text-sm border border-slate-200 rounded-xl p-3 focus:outline-none focus:border-sky-500 bg-white"
-                        >
-                          {Object.entries(SCHEDULE_SUBJECTS).map(([key, subject]) => (
-                            <option key={key} value={key}>{subject.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
+                    {(() => {
+                      // One place builds the schedule, so the three controls
+                      // cannot drift apart — and `days` stays a count, with the
+                      // side of the date held separately: «۳ روز قبل از تاریخ
+                      // اعتبار» reads as a rule, «−۳ روز پس از» reads as a bug.
+                      const schedule = editingRule.schedule
+                        || { subject: 'proforma_sent', days: 3, direction: 'after' as const };
+                      const setSchedule = (patch: Partial<typeof schedule>) =>
+                        setEditingRule({ ...editingRule, schedule: { ...schedule, ...patch } });
+
+                      return (
+                        <>
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                            <div className="md:col-span-1">
+                              <label className="block text-slate-700 text-xs font-bold mb-2">تعداد روز</label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={schedule.days}
+                                onChange={(e) => setSchedule({ days: Math.max(0, Number(e.target.value) || 0) })}
+                                className="w-full text-xs md:text-sm border border-slate-200 rounded-xl p-3 focus:outline-none focus:border-sky-500 bg-white text-center font-mono"
+                              />
+                            </div>
+                            <div className="md:col-span-1">
+                              <label className="block text-slate-700 text-xs font-bold mb-2">قبل یا بعد</label>
+                              <select
+                                value={schedule.direction || 'after'}
+                                onChange={(e) => setSchedule({ direction: e.target.value as 'after' | 'before' })}
+                                className="w-full text-xs md:text-sm border border-slate-200 rounded-xl p-3 focus:outline-none focus:border-sky-500 bg-white"
+                              >
+                                <option value="after">پس از</option>
+                                <option value="before">قبل از</option>
+                              </select>
+                            </div>
+                            <div className="md:col-span-2">
+                              <label className="block text-slate-700 text-xs font-bold mb-2">کدام تاریخ</label>
+                              <select
+                                value={schedule.subject}
+                                onChange={(e) => setSchedule({ subject: e.target.value })}
+                                className="w-full text-xs md:text-sm border border-slate-200 rounded-xl p-3 focus:outline-none focus:border-sky-500 bg-white"
+                              >
+                                {Object.entries(SCHEDULE_SUBJECTS).map(([key, subject]) => (
+                                  <option key={key} value={key}>{subject.label}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          <div className="text-xs font-bold text-sky-800 bg-white border border-sky-200 rounded-xl px-3 py-2">
+                            این قانون اجرا می‌شود: {describeSchedule(schedule)}
+                          </div>
+                          {schedule.direction === 'before' && (
+                            <div className="text-[11px] text-slate-500 leading-5">
+                              برای حالت «قبل از»، تاریخ مبنا باید در آینده ثبت شده باشد؛ رکوردی که آن تاریخ را
+                              ندارد اصلاً سررسید نمی‌شود.
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
 
@@ -3611,8 +3634,8 @@ export default function SettingsView({
                       // A scheduled rule is described by its schedule, which is
                       // the only thing that makes one of them distinguishable
                       // from another in a list.
-                      const scheduleLabel = rule.triggerType === 'time_elapsed' && rule.schedule
-                        ? `${toPersianDigits(rule.schedule.days)} ${SCHEDULE_SUBJECTS[rule.schedule.subject]?.label || rule.schedule.subject}`
+                      const scheduleLabel = rule.triggerType === 'time_elapsed'
+                        ? describeSchedule(rule.schedule)
                         : '';
 
                       return (
@@ -3645,7 +3668,7 @@ export default function SettingsView({
                             <div className="bg-slate-50 p-2.5 rounded-lg text-slate-500 text-[11px] border border-slate-100 max-w-2xl leading-relaxed">
                               <span className="font-bold text-sky-600">فرآیند: </span>
                               {scheduleLabel
-                                ? <>پس از <span className="text-slate-800 font-bold">{scheduleLabel}</span>،</>
+                                ? <><span className="text-slate-800 font-bold">{scheduleLabel}</span>،</>
                                 : <>در زمان وقوع <span className="text-slate-800 font-bold">{triggerLabelMap[rule.triggerType] || rule.triggerType}</span>،</>}
                               {rule.conditions && rule.conditions.length > 0 ? (
                                 <>

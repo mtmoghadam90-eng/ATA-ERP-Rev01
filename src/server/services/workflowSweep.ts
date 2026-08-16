@@ -5,7 +5,7 @@ import { getTodayShamsi } from "../../dateUtils";
 import { normalizeJalali } from "../dates";
 import { WorkflowRule, enrichPayload, executeRule } from "./workflowService";
 import {
-  SCHEDULE_SUBJECTS, dueDay, isDue, scheduledRules, sweepFloor,
+  SCHEDULE_SUBJECTS, dueDay, isDue, scheduledRules, sweepRange,
 } from "../../utils/workflowSchedule";
 
 /**
@@ -95,15 +95,18 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
   for (const rule of rules) {
     const subject = SCHEDULE_SUBJECTS[rule.schedule!.subject];
     const days = rule.schedule!.days;
+    const direction = rule.schedule!.direction ?? "after";
     const select = PAYLOAD_SELECT[subject.model];
     if (!select) continue;
 
-    // Only records whose base date is inside the sweep's window: everything
-    // older was due long before the rule existed.
+    // Only base dates inside the sweep's band: far enough back that a record
+    // due long before the rule existed is left alone, and — for a rule that
+    // counts *before* a date — far enough forward to see a date still ahead.
+    const band = sweepRange(days, today, direction);
     const delegate = (db as any)[subject.model];
     const rows: Record<string, unknown>[] = await delegate.findMany({
       where: {
-        [subject.dateField]: { gte: sweepFloor(days, today), not: null },
+        [subject.dateField]: { gte: band.from, lte: band.to, not: null },
       },
       select,
       take: 500,
@@ -111,7 +114,7 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
 
     for (const row of rows) {
       const base = row[subject.dateField] as string | null;
-      if (!isDue(base, days, today)) continue;
+      if (!isDue(base, days, today, direction)) continue;
 
       const entityId = String(row.id);
       // Written first, and the unique index is what decides: two servers, or a
@@ -122,7 +125,7 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
             ruleId: rule.id,
             entityType: subject.entityType,
             entityId,
-            dueDay: dueDay(base, days),
+            dueDay: dueDay(base, days, direction),
           } as Prisma.WorkflowFiringUncheckedCreateInput,
         });
       } catch (err) {
@@ -142,7 +145,7 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
             ...row,
             ruleName: rule.name,
             elapsedDays: days,
-            dueDay: dueDay(base, days),
+            dueDay: dueDay(base, days, direction),
             today,
           },
           subject.entityType,

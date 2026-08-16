@@ -4,6 +4,7 @@ import { loadSettings } from "../settings";
 import { getTodayShamsi, addDaysToShamsi } from "../../dateUtils";
 import { notifyModuleResponsible } from "./notificationService";
 import { expandDateFields } from "../dates";
+import type { WorkflowSchedule } from "../../utils/workflowSchedule";
 
 /**
  * Workflow automation system.
@@ -17,8 +18,8 @@ export interface WorkflowRule {
   name: string;
   active: boolean;
   triggerType: string;
-  /** Set on a time-based rule — see services/workflowSchedule.ts. */
-  schedule?: { subject: string; days: number };
+  /** Set on a time-based rule — see utils/workflowSchedule.ts. */
+  schedule?: WorkflowSchedule;
   conditions: Array<{
     field: string;
     operator: "equals" | "not_equals" | "greater_than" | "less_than";
