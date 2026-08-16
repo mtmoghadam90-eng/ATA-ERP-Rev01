@@ -199,6 +199,7 @@ export interface ProformaItemInput {
   brand?: string | null;
   tagNumber?: string | null;
   quantity?: unknown;
+  unit?: string | null;
   unitPriceRial?: unknown;
   totalPriceRial?: unknown;
   supplyMethod?: string | null;
@@ -259,6 +260,11 @@ function mapItem(row: ProformaItemInput): Record<string, unknown> | null {
     brand: toNullableString(row.brand, 150),
     tagNumber: toNullableString(row.tagNumber, 100),
     quantity,
+    // The unit the line is counted in. Held on the line, not read from the
+    // catalogue at print time: a document says what was quoted, and the
+    // product's unit may be changed afterwards — or the line may not come from
+    // the catalogue at all.
+    unit: toNullableString(row.unit, 30),
     unitPriceRial: unitPrice,
     totalPriceRial: totalPrice,
     supplyMethod: toNullableString(row.supplyMethod, 20),

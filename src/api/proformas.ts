@@ -19,6 +19,7 @@ export interface ProformaItemRow {
   brand: string | null;
   tagNumber: string | null;
   quantity: string;
+  unit: string | null;
   unitPriceRial: string;
   totalPriceRial: string;
   supplyMethod: string | null;

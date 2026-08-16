@@ -1048,6 +1048,7 @@ export default function ProformasView({
         productCode: products[0]?.code || "",
         brand: products[0]?.brand || "",
         quantity: 1,
+        unit: defaultUnitFor(products[0]?.unit),
         unitPriceRIYAL: 0,
         techSpecs: "",
         selectedImage:
@@ -1278,6 +1279,7 @@ export default function ProformasView({
         productCode: (variant?.sku ?? prod?.code) || '',
         brand: prod?.brand || '',
         quantity: line.quantity,
+        unit: defaultUnitFor(prod?.unit),
         unitPriceRIYAL: prod ? getProductOrVariantPriceInProformaCurrency(prod, variant) : 0,
         techSpecs: describeProduct(prod, variant),
         deliveryRange: '۳-۴',
@@ -1350,6 +1352,7 @@ export default function ProformasView({
         productCode: firstProd.code,
         brand: firstProd.brand,
         quantity: qty,
+        unit: defaultUnitFor(firstProd.unit),
         unitPriceRIYAL: 0,
         techSpecs: describeProduct(firstProd),
         selectedImage:
@@ -1557,6 +1560,8 @@ export default function ProformasView({
       brand: prod.brand,
       supplyMethod: prod.supplyType === "ORDER" ? "ORDER" : "INVENTORY",
       quantity: currentQty,
+      // The product's own unit, so picking «متر» cable does not stay «عدد».
+      unit: defaultUnitFor(prod.unit),
       unitPriceRIYAL: basePriceInSelectedCurrency,
       // No variant yet: the stored description alone, plus anything typed.
       techSpecs: describeProduct(prod, undefined, newItems[index].techSpecs),
@@ -1605,6 +1610,20 @@ export default function ProformasView({
   };
 
   // Handle Item fields modifications (generic to support strings or numbers)
+  /*
+   * The unit a line is counted in.
+   *
+   * The list is user-editable (تنظیمات ← لیست‌های بازشو ← واحدهای سنجش), so it
+   * is read from there rather than hardcoded; «عدد» is only the fallback for a
+   * settings record that has none, which is also why every printed document
+   * used to say «عدد» whatever the goods were.
+   */
+  const unitOptions = settings?.dropdownItems?.units?.length
+    ? settings.dropdownItems.units
+    : ["عدد"];
+  /** A catalogue product brings its own unit; anything else starts at the first. */
+  const defaultUnitFor = (unit?: string) => unit || unitOptions[0];
+
   const handleItemFieldChange = (index: number, field: string, value: any) => {
     const newItems = [...items];
     let sanitizedVal = value;
@@ -2065,7 +2084,7 @@ export default function ProformasView({
           </div>
         </td>
         <td style="padding: 10px; text-align: center; font-family: monospace; vertical-align: middle;">${item.quantity}</td>
-        <td style="padding: 10px; text-align: center; vertical-align: middle;">${prod?.unit || "عدد"}</td>
+        <td style="padding: 10px; text-align: center; vertical-align: middle;">${item.unit || prod?.unit || "عدد"}</td>
         ${
           pf.proformaType !== "TECHNICAL"
             ? `
@@ -2883,6 +2902,7 @@ export default function ProformasView({
                           </td>
                           <td className="p-3 text-center font-mono">
                             {item.quantity}
+                            {item.unit ? <span className="text-slate-400 text-[10px] mr-1">{item.unit}</span> : null}
                           </td>
                           <td className="p-3 text-center">
                             {prod?.unit || "عدد"}
@@ -3888,6 +3908,7 @@ export default function ProformasView({
                         </td>
                         <td className="py-3 px-4 text-center font-mono font-bold">
                           {item.quantity}
+                          {item.unit ? <span className="text-slate-400 text-[10px] font-normal mr-1">{item.unit}</span> : null}
                         </td>
                         <td className="py-3 px-4 text-left font-mono text-slate-600">
                           {formatMoney(item.quantity * item.unitPriceRIYAL)}
@@ -4672,12 +4693,12 @@ export default function ProformasView({
                 <div className="hidden md:grid grid-cols-12 gap-3 px-3 py-1 text-slate-400 font-bold text-[10px]">
                   <div
                     className={
-                      proformaType === "TECHNICAL" ? "col-span-9" : "col-span-5"
+                      proformaType === "TECHNICAL" ? "col-span-8" : "col-span-4"
                     }
                   >
                     انتخاب کالا
                   </div>
-                  <div className="col-span-2 text-center">تعداد</div>
+                  <div className="col-span-3 text-center">تعداد و واحد</div>
                   {proformaType !== "TECHNICAL" && (
                     <>
                       <div className="col-span-2 text-left">
@@ -4702,8 +4723,8 @@ export default function ProformasView({
                         <div
                           className={
                             proformaType === "TECHNICAL"
-                              ? "col-span-2 md:col-span-9 w-full min-w-0"
-                              : "col-span-2 md:col-span-5 w-full min-w-0"
+                              ? "col-span-2 md:col-span-8 w-full min-w-0"
+                              : "col-span-2 md:col-span-4 w-full min-w-0"
                           }
                         >
                           <div className="flex flex-col gap-2 w-full min-w-0">
@@ -5015,25 +5036,48 @@ export default function ProformasView({
                             </div>
                           </div>
                         </div>
-                        {/* Quantity */}
-                        <div className="col-span-1 md:col-span-2 flex flex-col gap-1">
+                        {/* Quantity and its unit */}
+                        <div className="col-span-1 md:col-span-3 flex flex-col gap-1">
                           <label className="text-[10px] font-bold text-slate-400 md:hidden block">
-                            تعداد *
+                            تعداد و واحد *
                           </label>
-                          <input
-                            type="number"
-                            min={1}
-                            required
-                            value={item.quantity}
-                            onChange={(e) =>
-                              handleItemFieldChange(
-                                idx,
-                                "quantity",
-                                Number(e.target.value),
-                              )
-                            }
-                            className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-center bg-white"
-                          />
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              min={1}
+                              required
+                              value={item.quantity}
+                              onChange={(e) =>
+                                handleItemFieldChange(
+                                  idx,
+                                  "quantity",
+                                  Number(e.target.value),
+                                )
+                              }
+                              className="w-full min-w-0 flex-1 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-center bg-white"
+                            />
+                            {/* The unit the line is quoted in — «عدد», «متر»,
+                                «ست» … — from the settings list. It is stored on
+                                the line, so the document keeps what it was
+                                quoted in even if the catalogue changes later. */}
+                            <select
+                              value={item.unit || defaultUnitFor()}
+                              onChange={(e) =>
+                                handleItemFieldChange(idx, "unit", e.target.value)
+                              }
+                              title="واحد شمارش"
+                              className="w-20 shrink-0 border border-slate-200 rounded-lg px-1 py-1.5 text-xs bg-white text-center"
+                            >
+                              {/* A line saved under a unit later removed from
+                                  the settings list still shows its own. */}
+                              {(unitOptions.includes(item.unit || "")
+                                ? unitOptions
+                                : [...(item.unit ? [item.unit] : []), ...unitOptions]
+                              ).map((u) => (
+                                <option key={u} value={u}>{u}</option>
+                              ))}
+                            </select>
+                          </div>
                         </div>
                         {proformaType !== "TECHNICAL" && (
                           <>

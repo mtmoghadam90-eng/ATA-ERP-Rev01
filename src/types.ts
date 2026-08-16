@@ -181,6 +181,8 @@ export interface ProformaItem {
   productCode: string;
   brand: string;
   quantity: number;
+  /** The unit this line is counted in, from settings.dropdownItems.units. */
+  unit?: string;
   unitPriceRIYAL: number;
   totalPriceRIYAL: number;
   supplyMethod?: 'INVENTORY' | 'ORDER' | 'NONE';
