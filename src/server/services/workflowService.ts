@@ -12,11 +12,13 @@ import { expandDateFields } from "../dates";
  * Rules can create tasks, send notifications, or perform other automated actions.
  */
 
-interface WorkflowRule {
+export interface WorkflowRule {
   id: string;
   name: string;
   active: boolean;
   triggerType: string;
+  /** Set on a time-based rule — see services/workflowSchedule.ts. */
+  schedule?: { subject: string; days: number };
   conditions: Array<{
     field: string;
     operator: "equals" | "not_equals" | "greater_than" | "less_than";
@@ -94,24 +96,44 @@ export async function processWorkflowRules(
   if (activeRules.length === 0) return;
 
   const db = getDb();
-
-  // Enrich payload with resolved names
   const enrichedPayload = await enrichPayload(payload, triggerType, db);
 
-  // Template replacement helper
-  const replaceTemplateVars = (template: string, data: any): string => {
-    if (!template) return "";
-    return template.replace(/\{{1,2}([^{}]+)\}{1,2}/g, (match, key) => {
-      const k = key.trim();
-      return data[k] !== undefined ? String(data[k]) : match;
-    });
-  };
-
-  // Process each matching rule
   for (const rule of activeRules) {
+    await executeRule(rule, enrichedPayload, user, settings);
+  }
+}
+
+/** Template replacement, shared by both kinds of trigger. */
+function replaceTemplateVars(template: string, data: any): string {
+  if (!template) return "";
+  return template.replace(/\{{1,2}([^{}]+)\}{1,2}/g, (match, key) => {
+    const k = key.trim();
+    return data[k] !== undefined ? String(data[k]) : match;
+  });
+}
+
+/**
+ * One rule against one already-enriched payload.
+ *
+ * Split out of the loop above so a **scheduled** rule can be run the same way:
+ * the time-based sweep decides *which* record is due and hands it here, and
+ * everything past that point — the conditions, the assignee resolution, the
+ * task and the notification — is the one implementation both kinds share. See
+ * services/workflowSchedule.ts.
+ */
+export async function executeRule(
+  rule: WorkflowRule,
+  enrichedPayload: any,
+  user?: AuthUser,
+  loadedSettings?: any,
+): Promise<void> {
+  const db = getDb();
+  const settings = loadedSettings ?? ((await loadSettings()) as any);
+
+  {
     // Check conditions
     let match = true;
-    for (const cond of rule.conditions) {
+    for (const cond of rule.conditions ?? []) {
       const actualValue = enrichedPayload[cond.field];
       if (cond.operator === "equals" && String(actualValue) !== String(cond.value))
         match = false;
@@ -123,7 +145,7 @@ export async function processWorkflowRules(
         match = false;
     }
 
-    if (!match) continue;
+    if (!match) return;
 
     // Execute actions
     for (const action of rule.actions) {
@@ -173,7 +195,7 @@ export async function processWorkflowRules(
             relatedToName: enrichedPayload.projectName || null,
           },
         });
-      } else if (action.type === "send_notification" && action.notificationConfig && user) {
+      } else if (action.type === "send_notification" && action.notificationConfig) {
         const config = action.notificationConfig;
 
         // Routed through the same helper every other notice uses, which finds
@@ -196,7 +218,7 @@ export async function processWorkflowRules(
 /**
  * Enriches payload with resolved names from IDs.
  */
-async function enrichPayload(payload: any, triggerType: string, db: any): Promise<any> {
+export async function enrichPayload(payload: any, triggerType: string, db: any = getDb()): Promise<any> {
   const enriched = { ...payload };
 
   // 1. Resolve Project Info

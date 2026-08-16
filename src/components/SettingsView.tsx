@@ -40,7 +40,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { ERPSettings, CustomField, User, Project, AuditLog, WorkflowRule } from '../types';
-import { formatERPNumber } from '../numUtils';
+import { formatERPNumber, toPersianDigits } from '../numUtils';
 import { ApiError, api } from '../api/client';
 import { auditLogsApi } from '../api/auditLogs';
 import { useAuditLogList } from '../api/useAuditLogList';
@@ -49,6 +49,7 @@ import { useEntitySearch } from '../api/useEntitySearch';
 import type { ProjectRow } from '../api/projects';
 import RatesView from './RatesView';
 import { decompressLZW } from '../utils/compress';
+import { SCHEDULE_SUBJECTS } from '../utils/workflowSchedule';
 import ConfirmModal from './ConfirmModal';
 import { uploadFile } from '../imageUtils';
 import { REQUIRED_FIELDS_METADATA, DEFAULT_REQUIRED_FIELDS } from '../utils/requiredFields';
@@ -2796,6 +2797,27 @@ export default function SettingsView({
                 </p>
               </div>
               {!isRuleFormOpen && (
+                <div className="flex items-center gap-2">
+                {/* Scheduled rules sweep themselves once a day, at the first
+                    sign-in. This is for the person who has just written one and
+                    wants to see it work today. */}
+                <button
+                  onClick={async () => {
+                    try {
+                      const res = await api.post<{ success: boolean; fired: number }>(
+                        '/api/workflows/run-due', {});
+                      alert(res.fired > 0
+                        ? `${res.fired} قانون زمان‌بندی‌شده اجرا شد.`
+                        : 'هیچ قانون زمان‌بندی‌شده‌ای سررسید نشده بود.');
+                    } catch (err) {
+                      alert(err instanceof ApiError ? err.message : 'اجرای قوانین زمان‌بندی‌شده با خطا مواجه شد.');
+                    }
+                  }}
+                  className="border border-slate-200 hover:bg-slate-50 text-slate-600 font-bold py-2 px-4 rounded-xl text-xs md:text-sm flex items-center gap-2 transition-all"
+                  title="قوانین زمان‌بندی‌شده‌ای که سررسیدشان رسیده، همین حالا اجرا می‌شوند"
+                >
+                  اجرای قوانین زمان‌بندی‌شده
+                </button>
                 <button
                   onClick={() => {
                     setEditingRule({
@@ -2827,6 +2849,7 @@ export default function SettingsView({
                   <Plus size={16} />
                   ایجاد قانون جدید
                 </button>
+                </div>
               )}
             </div>
 
@@ -2867,9 +2890,15 @@ export default function SettingsView({
                         setEditingRule({
                           ...editingRule,
                           triggerType: val,
-                          conditions: [
-                            { field: defaultField, operator: 'equals', value: defaultValue }
-                          ]
+                          // A scheduled rule needs a date and a number of days
+                          // from the moment it is chosen, or it would be saved
+                          // with nothing to count from.
+                          schedule: val === 'time_elapsed'
+                            ? (editingRule.schedule || { subject: 'proforma_issue', days: 5 })
+                            : undefined,
+                          conditions: val === 'time_elapsed'
+                            ? [{ field: 'status', operator: 'equals', value: 'ارسال شده' }]
+                            : [{ field: defaultField, operator: 'equals', value: defaultValue }],
                         });
                       }}
                       className="w-full text-xs md:text-sm border border-slate-200 rounded-xl p-3 focus:outline-none focus:border-sky-500 bg-white"
@@ -2908,9 +2937,59 @@ export default function SettingsView({
                         <option value="referral_created">ارجاع کار جدید به پرسنل</option>
                         <option value="referral_status_change">تغییر وضعیت ارجاع کار</option>
                       </optgroup>
+                      <optgroup label="زمان‌بندی (بدون نیاز به رویداد)">
+                        <option value="time_elapsed">گذشت تعداد مشخصی روز از یک تاریخ</option>
+                      </optgroup>
                     </select>
                   </div>
                 </div>
+
+                {/* A time-based rule: which date, and how many days after it. */}
+                {editingRule.triggerType === 'time_elapsed' && (
+                  <div className="border border-sky-200 bg-sky-50/60 rounded-2xl p-4 space-y-3">
+                    <div className="text-[11px] text-slate-600 leading-5">
+                      این قانون با هیچ رویدادی اجرا نمی‌شود؛ هر روز یک بار بررسی می‌شود و برای
+                      هر رکوردی که تاریخ سررسیدش فرا رسیده باشد <strong>فقط یک بار</strong> اجرا می‌گردد.
+                      شرط‌های پایین همچنان اعمال می‌شوند — مثلاً «وضعیت برابر است با ارسال شده».
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="md:col-span-1">
+                        <label className="block text-slate-700 text-xs font-bold mb-2">تعداد روز</label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={editingRule.schedule?.days ?? 5}
+                          onChange={(e) => setEditingRule({
+                            ...editingRule,
+                            schedule: {
+                              subject: editingRule.schedule?.subject || 'proforma_issue',
+                              days: Math.max(0, Number(e.target.value) || 0),
+                            },
+                          })}
+                          className="w-full text-xs md:text-sm border border-slate-200 rounded-xl p-3 focus:outline-none focus:border-sky-500 bg-white text-center font-mono"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-slate-700 text-xs font-bold mb-2">پس از کدام تاریخ</label>
+                        <select
+                          value={editingRule.schedule?.subject || 'proforma_issue'}
+                          onChange={(e) => setEditingRule({
+                            ...editingRule,
+                            schedule: {
+                              subject: e.target.value,
+                              days: editingRule.schedule?.days ?? 5,
+                            },
+                          })}
+                          className="w-full text-xs md:text-sm border border-slate-200 rounded-xl p-3 focus:outline-none focus:border-sky-500 bg-white"
+                        >
+                          {Object.entries(SCHEDULE_SUBJECTS).map(([key, subject]) => (
+                            <option key={key} value={key}>{subject.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Status Switch */}
                 <div className="flex items-center gap-2">
@@ -3111,6 +3190,31 @@ export default function SettingsView({
                             { value: 'oldStatus', label: 'وضعیت قبلی' }
                           ];
                           valueOptions = ['در انتظار اقدام', 'در حال انجام', 'انجام شده', 'لغو شده'];
+                        } else if (editingRule.triggerType === 'time_elapsed') {
+                          // A scheduled rule matches against the record itself,
+                          // so the fields are that record's own — which record
+                          // depends on the date the schedule counts from.
+                          const model = SCHEDULE_SUBJECTS[editingRule.schedule?.subject || 'proforma_issue']?.model;
+                          if (model === 'proforma') {
+                            fieldOptions = [
+                              { value: 'status', label: 'وضعیت ارسال پیش‌فاکتور' },
+                              { value: 'currency', label: 'ارز سند' },
+                              { value: 'finalAmount', label: 'مبلغ نهایی' },
+                            ];
+                            valueOptions = ['پیش‌نویس', 'ارسال شده', 'در انتظار پاسخ مشتری'];
+                          } else if (model === 'project') {
+                            fieldOptions = [{ value: 'status', label: 'وضعیت پروژه' }];
+                            valueOptions = ['جدید', 'در حال مذاکره', 'ارائه پیش‌فاکتور', 'برنده (موفق)', 'باخته', 'لغو شده'];
+                          } else if (model === 'purchaseOrder') {
+                            fieldOptions = [{ value: 'status', label: 'وضعیت سفارش خرید' }];
+                            valueOptions = ['پیش‌نویس', 'ثبت شده', 'در حال تولید', 'حمل شده', 'ترخیص', 'تحویل شده'];
+                          } else if (model === 'supplierInquiry') {
+                            fieldOptions = [{ value: 'isWinner', label: 'آفر برنده است' }];
+                            valueOptions = ['true', 'false'];
+                          } else {
+                            fieldOptions = [{ value: 'actualDeliveryDateJalali', label: 'تاریخ تحویل قطعی' }];
+                            valueOptions = [];
+                          }
                         }
 
                         return (
@@ -3501,8 +3605,15 @@ export default function SettingsView({
                         purchase_order_status_change: 'تغییر وضعیت سفارش خرید',
                         packaging_delivery_created: 'ثبت بسته‌بندی و تحویل',
                         supplier_inquiry_status_change: 'تغییر وضعیت استعلام تامین‌کننده',
-                        after_sales_service_status_change: 'تغییر وضعیت خدمات پس از فروش'
+                        after_sales_service_status_change: 'تغییر وضعیت خدمات پس از فروش',
+                        time_elapsed: 'زمان‌بندی‌شده',
                       };
+                      // A scheduled rule is described by its schedule, which is
+                      // the only thing that makes one of them distinguishable
+                      // from another in a list.
+                      const scheduleLabel = rule.triggerType === 'time_elapsed' && rule.schedule
+                        ? `${toPersianDigits(rule.schedule.days)} ${SCHEDULE_SUBJECTS[rule.schedule.subject]?.label || rule.schedule.subject}`
+                        : '';
 
                       return (
                         <div key={rule.id} className="bg-white p-5 rounded-xl border border-slate-200 hover:border-slate-300 transition-all shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -3519,7 +3630,8 @@ export default function SettingsView({
 
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-1 text-xs text-slate-600">
                               <div>
-                                <span className="font-bold text-slate-500">رویداد:</span> {triggerLabelMap[rule.triggerType] || rule.triggerType}
+                                <span className="font-bold text-slate-500">رویداد:</span>{' '}
+                                {scheduleLabel || triggerLabelMap[rule.triggerType] || rule.triggerType}
                               </div>
                               <div>
                                 <span className="font-bold text-slate-500">تعداد شرط‌ها:</span> {rule.conditions?.length || 0} مورد
@@ -3532,7 +3644,9 @@ export default function SettingsView({
                             {/* Brief execution description */}
                             <div className="bg-slate-50 p-2.5 rounded-lg text-slate-500 text-[11px] border border-slate-100 max-w-2xl leading-relaxed">
                               <span className="font-bold text-sky-600">فرآیند: </span>
-                              در زمان وقوع <span className="text-slate-800 font-bold">{triggerLabelMap[rule.triggerType] || rule.triggerType}</span>،
+                              {scheduleLabel
+                                ? <>پس از <span className="text-slate-800 font-bold">{scheduleLabel}</span>،</>
+                                : <>در زمان وقوع <span className="text-slate-800 font-bold">{triggerLabelMap[rule.triggerType] || rule.triggerType}</span>،</>}
                               {rule.conditions && rule.conditions.length > 0 ? (
                                 <>
                                   {' '}اگر{' '}

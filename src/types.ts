@@ -768,7 +768,19 @@ export interface WorkflowRule {
     | 'task_created'
     | 'task_status_change'
     | 'referral_created'
-    | 'referral_status_change';
+    | 'referral_status_change'
+    /**
+     * No event at all: N days after a date the record already carries.
+     * Configured in `schedule` and swept once a day — see
+     * src/utils/workflowSchedule.ts.
+     */
+    | 'time_elapsed';
+  /** Only for `time_elapsed`. */
+  schedule?: {
+    /** A key of SCHEDULE_SUBJECTS: which date, on which kind of record. */
+    subject: string;
+    days: number;
+  };
   conditions: {
     field: string; // e.g. 'newOutcome', 'newStatus'
     operator: 'equals' | 'not_equals' | 'greater_than' | 'less_than';

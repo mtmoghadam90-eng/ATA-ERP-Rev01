@@ -51,6 +51,9 @@ import { REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
 import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
 import { nextSequence, renderAround } from "../src/server/documentNumbers";
 import { describeProformaChanges, proformaChangeSentence } from "../src/server/services/proformaChanges";
+import {
+  SCHEDULE_SUBJECTS, TIME_TRIGGER, dueDay, isDue, scheduledRules, sweepFloor,
+} from "../src/utils/workflowSchedule";
 import { formatMoney } from "../src/numUtils";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -1058,6 +1061,46 @@ head("Project timeline: what an edit changed");
   eq("a save that changed nothing says exactly that",
     proformaChangeSentence("X-1", describeProformaChanges(base, { ...base })),
     "پیش‌فاکتور شماره X-1 توسط {actor} ویرایش شد (بدون تغییر در اطلاعات اصلی سند).");
+}
+
+/*
+ * Time-based workflow rules.
+ *
+ * Every rule until now fired on something somebody did. The cases that matter
+ * most are the opposite — a quotation sent ten days ago that nobody followed
+ * up — and no event marks those. A scheduled rule counts days from a date the
+ * record already carries; a daily sweep fires it once, and «once» is enforced
+ * by a unique index rather than by remembering.
+ */
+head("Workflow: time-based triggers");
+{
+  eq("the due day is the base date plus the days", dueDay("1405/05/24", 5), "1405/05/29");
+  eq("and it rolls over a month end", dueDay("1405/05/29", 5), "1405/06/03");
+  eq("a record with no such date is not scheduled at all", dueDay(null, 5), null);
+
+  ok("due on the day itself", isDue("1405/05/24", 5, "1405/05/29"));
+  ok("not the day before", !isDue("1405/05/24", 5, "1405/05/28"));
+  ok("and still due long afterwards — the sweep may have been down",
+    isDue("1404/01/01", 5, "1405/05/29"));
+
+  // The sweep does not reach back for ever: a record whose day passed before
+  // the rule existed would produce a task about something forgotten a year ago.
+  eq("the sweep looks back a fixed window", sweepFloor(5, "1405/05/29"), "1405/04/10");
+
+  const rules = [
+    { id: "a", active: true, triggerType: TIME_TRIGGER, schedule: { subject: "proforma_issue", days: 5 } },
+    { id: "b", active: false, triggerType: TIME_TRIGGER, schedule: { subject: "proforma_issue", days: 5 } },
+    { id: "c", active: true, triggerType: "proforma_created" },
+    { id: "d", active: true, triggerType: TIME_TRIGGER, schedule: { subject: "چیزی که وجود ندارد", days: 5 } },
+  ];
+  eq("only active, scheduled rules with a date this app knows",
+    scheduledRules(rules as never[]).map((r: { id: string }) => r.id).join(","), "a");
+
+  // The editor offers these and the sweep reads the same list; a subject in one
+  // and not the other is a rule that can be set up and never fire.
+  ok("every subject names a model and a Jalali column",
+    Object.values(SCHEDULE_SUBJECTS).every((s) => !!s.model && /Jalali$/.test(s.dateField)),
+    Object.entries(SCHEDULE_SUBJECTS).map(([k, v]) => `${k}:${v.dateField}`));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

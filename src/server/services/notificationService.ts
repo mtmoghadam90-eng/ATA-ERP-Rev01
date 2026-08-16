@@ -107,7 +107,13 @@ export async function notifyModuleResponsible(
   module: string,
   title: string,
   description: string,
-  actorUser: AuthUser,
+  /**
+   * Whoever did the thing — omitted when nobody did.
+   *
+   * A scheduled workflow rule fires because a date arrived, not because
+   * somebody acted, and there is no actor to leave out of the recipients.
+   */
+  actorUser: AuthUser | null | undefined,
   projectId?: string | null,
 ): Promise<void> {
   const db = getDb();
@@ -123,7 +129,7 @@ export async function notifyModuleResponsible(
       where: { fullName: responsibleName },
       select: { id: true },
     });
-    if (responsible && responsible.id !== actorUser.id) {
+    if (responsible && responsible.id !== actorUser?.id) {
       targetUserIds.add(responsible.id);
     }
   }
@@ -140,7 +146,7 @@ export async function notifyModuleResponsible(
   });
 
   for (const admin of admins) {
-    if (admin.id === actorUser.id) continue; // Don't notify the actor
+    if (admin.id === actorUser?.id) continue; // Don't notify the actor
 
     const pref = settings?.adminNotificationPreferences?.[admin.id];
     const receiveAll = pref ? pref.receiveAll : true;
@@ -166,7 +172,7 @@ export async function notifyModuleResponsible(
       title,
       description,
       projectId,
-      actorUserId: actorUser.id,
+      actorUserId: actorUser?.id ?? null,
     });
   }
 }

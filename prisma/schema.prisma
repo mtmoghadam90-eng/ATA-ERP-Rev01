@@ -1139,3 +1139,21 @@ model AppSetting {
 
   @@map("app_settings")
 }
+
+/// One firing of a time-based workflow rule, so it fires once and not once a
+/// day. A sweep runs every day and the records it looks at stay due for ever
+/// after their day arrives — without this, a rule that raises a follow-up task
+/// would raise it again every morning. See services/workflowSchedule.ts.
+model WorkflowFiring {
+  id         String   @id @default(uuid()) @db.NVarChar(36)
+  ruleId     String   @db.NVarChar(64)
+  entityType String   @db.NVarChar(40)
+  entityId   String   @db.NVarChar(36)
+  /// The day the rule was due for this record, kept for the audit trail.
+  dueDay     String?  @db.NVarChar(10)
+  firedAt    DateTime @default(now())
+
+  @@unique([ruleId, entityId], map: "workflow_firings_rule_entity_uq")
+  @@index([entityType, entityId])
+  @@map("workflow_firings")
+}

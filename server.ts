@@ -38,6 +38,7 @@ import { registerNotificationRoutes } from "./src/server/routes/notifications";
 import { registerDashboardRoutes } from "./src/server/routes/dashboard";
 import { scrapeRates } from "./src/server/rateSource";
 import { ensureRatesFreshToday } from "./src/server/services/rateRefresh";
+import { ensureWorkflowSweepRanToday, runDueWorkflows } from "./src/server/services/workflowSweep";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 import { authenticateUser, findAuthUser } from "./src/server/services/userService";
 
@@ -356,6 +357,29 @@ async function startServer() {
     res.json(await testConnection(cfg));
   });
 
+  /**
+   * Runs the day's time-based workflow rules now.
+   *
+   * The sweep runs itself once a day at the first sign-in; this is the button
+   * beside the rule editor, so somebody who has just written a rule can see it
+   * work rather than waiting for tomorrow. Firing stays once-per-record either
+   * way — see services/workflowSweep.ts.
+   */
+  app.post("/api/workflows/run-due", async (req, res) => {
+    const u = await requireAuth(req, res);
+    if (!u) return;
+    if (!hasPermission(u, "settings")) {
+      return res.status(403).json({ success: false, error: "اجرای قوانین زمان‌بندی‌شده مجاز نیست." });
+    }
+    try {
+      const fired = await runDueWorkflows();
+      res.json({ success: true, fired });
+    } catch (err) {
+      console.error("[api] POST /api/workflows/run-due:", (err as Error)?.message || err);
+      res.status(500).json({ success: false, error: "اجرای قوانین زمان‌بندی‌شده با خطا مواجه شد." });
+    }
+  });
+
   /** Runs the one-way sync into the SQL Server reporting schema. */
   app.post("/api/report/sql-sync", async (req, res) => {
     const u = await requireAuth(req, res);
@@ -481,6 +505,12 @@ async function startServer() {
          * beginning a second one. It swallows its own failures.
          */
         void ensureRatesFreshToday();
+        /*
+         * And the day's scheduled workflow rules, on the same principle: this
+         * server has no cron, so the first person through the door starts the
+         * sweep. Not awaited — a follow-up task must never hold up a login.
+         */
+        void ensureWorkflowSweepRanToday();
       } else {
         // Increment failed attempts
         const currentU = userLoginAttempts.get(userKey) || { count: 0, lastAttempt: 0 };
