@@ -2038,14 +2038,8 @@ export default function ProformasView({
       ? users.find((u) => u.id === pf.creatorId)
       : currentUser;
     const targetCurrency = pf.currency || "ریال";
-    const engCurrency = mapPersianCurrencyToEnglish(targetCurrency);
-    const currencyObj = engCurrency
-      ? exchangeRates.find((r) => r.currency === engCurrency)
-      : undefined;
-    const currentRate = currencyObj ? currencyObj.rateToRIYAL : 1;
-    const equivalentRiyal =
-      pf.finalAmount * (targetCurrency === "ریال" ? 1 : currentRate);
-    const equivalentToman = Math.round(equivalentRiyal / 10);
+    // The document no longer prints an exchange rate or a rial equivalent, so
+    // nothing here needs today's rate — see the totals panel below.
     /*
      * The price columns are as wide as the longest amount on the document.
      *
@@ -2069,9 +2063,12 @@ export default function ProformasView({
       ]),
     );
     const priceFontPx = amountChars <= 10 ? 12 : amountChars <= 13 ? 11 : 10;
+    // The floor is what gives the money columns their presence: a short figure
+    // in a hairline column next to a very wide specification looked lopsided,
+    // so they keep a decent width even when the amount does not need it.
     const priceColWidth = Math.min(
-      118,
-      Math.max(74, Math.round(amountChars * priceFontPx * 0.6) + 18),
+      128,
+      Math.max(96, Math.round(amountChars * priceFontPx * 0.6) + 18),
     );
 
     const itemsRows = pf.items
@@ -2128,7 +2125,6 @@ export default function ProformasView({
       `;
       })
       .join("");
-    const formattedToman = formatToman(pf.finalAmount);
     const htmlContent = `
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
@@ -2278,8 +2274,11 @@ export default function ProformasView({
             background-color: #f1f5f9;
             color: #475569;
             font-weight: bold;
-            padding: 10px;
+            padding: 10px 6px;
             border-bottom: 1px solid #e2e8f0;
+            /* Headings are centred over their column — the values below keep
+               their own alignment (figures left, text right). */
+            text-align: center;
         }
         .financial-grid {
             display: grid;
@@ -2528,16 +2527,16 @@ export default function ProformasView({
             <table style="table-layout: fixed;">
                 <thead>
                     <tr>
-                        <th style="width: 30px; text-align: center;">ردیف</th>
-                        <th style="width: 106px; text-align: center;">تصویر کالا</th>
+                        <th style="width: 34px;">ردیف</th>
+                        <th style="width: 118px;">تصویر کالا</th>
                         <th>نوع کالا و مشخصات فنی</th>
-                        <th style="text-align: center; width: 44px;">تعداد</th>
-                        <th style="text-align: center; width: 48px;">واحد</th>
+                        <th style="width: 52px;">تعداد</th>
+                        <th style="width: 56px;">واحد</th>
                         ${
                           pf.proformaType !== "TECHNICAL"
                             ? `
-                        <th style="text-align: left; width: ${priceColWidth}px;">بهای واحد (${targetCurrency})</th>
-                        <th style="text-align: left; width: ${priceColWidth}px;">بهای کل (${targetCurrency})</th>
+                        <th style="width: ${priceColWidth}px;">بهای واحد (${targetCurrency})</th>
+                        <th style="width: ${priceColWidth}px;">بهای کل (${targetCurrency})</th>
                         `
                             : ""
                         }
@@ -2574,18 +2573,16 @@ export default function ProformasView({
                     <span>مبلغ قابل پرداخت نهایی:</span>
                     <span class="final-amount-value" style="font-family: monospace;">${formatMoney(pf.finalAmount)} ${targetCurrency}</span>
                 </div>
-                <div style="text-align: left; font-size: 11px; color: #64748b; font-weight: bold; margin-top: 8px; line-height: 1.5;">
-                    ${
-                      targetCurrency !== "ریال"
-                        ? `
-                      نرخ تسعیر روز ${targetCurrency}: ${formatMoney(currentRate)} ریال <br/>
-                      معادل ریالی نهایی: ${formatMoney(equivalentRiyal)} ریال (${formatMoney(equivalentToman)} تومان)
-                    `
-                        : `
-                      معادل ریالی نهایی: ${formattedToman}
-                    `
-                    }
-                </div>
+                <!--
+                    No exchange rate and no rial equivalent.
+
+                    They were printed under the total, and on a document quoted
+                    in a foreign currency that reads as a second price: the rate
+                    is the one of the day the document was produced, the invoice
+                    will settle at the rate of the day the money moves, and a
+                    customer comparing the two numbers is being confused by us.
+                    The payment terms already say which rate governs.
+                -->
             </div>
             `
                 : ""

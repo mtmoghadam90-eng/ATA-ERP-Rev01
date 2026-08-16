@@ -8,6 +8,8 @@ import { toNullableString } from "../childSync";
 import { applyCategoryMilestoneTriggers } from "./milestoneAutomation";
 import { processWorkflowRules } from "./workflowService";
 import { notifyUser } from "./notificationService";
+import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
+import { afterCommit } from "../afterCommit";
 
 /**
  * Project category groups, activities, referrals and module notes.
@@ -692,7 +694,76 @@ export async function addModuleNote(
       authorName: author?.fullName ?? null,
     },
   });
+
+  // A note written on a document belongs on that project's timeline too — the
+  // agreement a salesperson records under a proforma is exactly the kind of
+  // thing somebody reading the project's history needs, and it was visible
+  // only to whoever opened that one document.
+  await afterCommit("module note timeline entry", () =>
+    logNoteOnTimeline(entityType, entityId, trimmed, user));
+
   return { note };
+}
+
+/** Which document a note is on, and where its project's timeline is. */
+const NOTE_SUBJECTS: Record<string, {
+  category: string;
+  find: (id: string) => Promise<{ projectId: string | null; label: string } | null>;
+}> = {
+  proforma: {
+    category: ACTIVITY_CATEGORY.PROFORMAS,
+    find: async (id) => {
+      const row = await getDb().proforma.findUnique({
+        where: { id }, select: { projectId: true, proformaNumber: true },
+      });
+      return row && { projectId: row.projectId, label: `پیش‌فاکتور شماره ${row.proformaNumber}` };
+    },
+  },
+  purchaseOrder: {
+    category: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
+    find: async (id) => {
+      const row = await getDb().purchaseOrder.findUnique({
+        where: { id }, select: { projectId: true, poNumber: true },
+      });
+      return row && { projectId: row.projectId, label: `سفارش خرید شماره ${row.poNumber}` };
+    },
+  },
+  packagingDelivery: {
+    category: ACTIVITY_CATEGORY.DELIVERIES,
+    find: async (id) => {
+      const row = await getDb().packagingDelivery.findUnique({
+        where: { id }, select: { projectId: true, packingListNumber: true },
+      });
+      return row && { projectId: row.projectId, label: `پکینگ‌لیست شماره ${row.packingListNumber}` };
+    },
+  },
+};
+
+async function logNoteOnTimeline(
+  entityType: string,
+  entityId: string,
+  text: string,
+  user: AuthUser,
+): Promise<void> {
+  const subject = NOTE_SUBJECTS[entityType];
+  if (!subject) return;
+
+  const found = await subject.find(entityId);
+  // No project means no timeline to write on, which is the ordinary case for a
+  // document raised outside a job.
+  if (!found?.projectId) return;
+
+  await logProjectFact(
+    {
+      projectId: found.projectId,
+      categoryName: subject.category,
+      sourceType: "NOTE",
+      sourceId: entityId,
+      text: `یادداشت {actor} روی ${found.label}: «${text}»`,
+    },
+    user,
+    getTodayShamsi(),
+  );
 }
 
 export async function deleteModuleNote(
