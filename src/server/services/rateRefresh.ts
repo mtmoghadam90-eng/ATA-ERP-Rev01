@@ -1,18 +1,26 @@
 import { getDb } from "../db";
-import { getTodayShamsi, toShamsiStr } from "../../dateUtils";
 import { RATE_NAMES, scrapeRates } from "../rateSource";
 
 /**
- * Refreshing the stored currency rates once a day, on first use.
+ * Refreshing the stored currency rates, every two hours.
  *
  * Every foreign-priced document — a proforma line, a purchase order's landed
- * cost, a supplier's offer — is valued at the stored rate, and a rate that is
- * a week old prices the whole day's work wrongly without saying so. Until now
- * the only way it moved was somebody remembering to press "refresh" on the
- * settings screen.
+ * cost, a supplier's offer — is valued at the stored rate, and a stale rate
+ * prices the whole day's work wrongly without saying so. Until this existed the
+ * only way it moved was somebody remembering to press "refresh" on the settings
+ * screen.
  *
- * So the first request of the day that needs rates brings them up to date, and
- * every request after that finds them already fresh. Deliberately server-side:
+ * It used to run once per Shamsi day, on the first sign-in. That is not enough
+ * for a currency that moves through the day: a document priced at four in the
+ * afternoon was carrying the morning's number. So the rates are considered
+ * fresh for two hours, and three things ask for them:
+ *
+ *  - a sign-in, which is when the first person of the day arrives;
+ *  - a read of `GET /api/exchange-rates`, which waits a moment for a fresh one;
+ *  - a timer in the server process, so an afternoon with nobody signing in
+ *    still gets the four o'clock rate.
+ *
+ * Deliberately server-side:
  *
  *  - The browser cannot do it. Refreshing rates needs the settings permission,
  *    and the first person through the door in the morning is as likely to be a
@@ -20,24 +28,24 @@ import { RATE_NAMES, scrapeRates } from "../rateSource";
  *  - Several people arrive within the same minute. One in-process promise means
  *    they all wait on the same scrape rather than each starting their own and
  *    hammering tgju four ways.
- *
- * "A day" is the Shamsi day the app itself displays, not 24 hours since the
- * last write: rates are quoted per trading day, and a refresh at 09:00 should
- * not stop tomorrow's 08:00 opening from getting new ones.
  */
+
 
 /** How long a caller will wait before being served the stored rates instead. */
 const WAIT_BUDGET_MS = 6000;
 
+/** How long a stored rate counts as current. */
+export const FRESH_FOR_MS = 2 * 60 * 60 * 1000;
+
 /** After a failed attempt, how long before another caller may try again. */
 const RETRY_AFTER_MS = 30 * 60 * 1000;
 
-/** Sentinel: the stored rates already carried today's date, so nothing was scraped. */
+/** Sentinel: the stored rates were already current, so nothing was scraped. */
 const ALREADY_CURRENT = -1;
 
 export interface RateRefreshState {
-  /** The Shamsi day whose rates are already stored, if any. */
-  freshFor: string | null;
+  /** When the rates were last brought up to date, epoch ms; 0 when never. */
+  lastSuccessAt: number;
   /** When the last attempt gave nothing, epoch ms; 0 when none has. */
   lastFailureAt: number;
   /** Whether a scrape is running right now. */
@@ -47,35 +55,41 @@ export interface RateRefreshState {
 /**
  * Whether this caller should start a scrape, wait on one, or do nothing.
  *
- * Pure, and separate from the work, because the interesting part of a
- * once-a-day job is entirely in these three answers — and the alternative is a
- * test that can only be run by waiting until tomorrow.
+ * Pure, and separate from the work, because the interesting part of a periodic
+ * job is entirely in these three answers — and the alternative is a test that
+ * can only be run by waiting two hours.
  */
 export function refreshDecision(
   state: RateRefreshState,
-  today: string,
   now: number,
+  freshForMs = FRESH_FOR_MS,
   retryAfterMs = RETRY_AFTER_MS,
 ): "skip" | "wait" | "start" {
   if (state.running) return "wait";
-  if (state.freshFor === today) return "skip";
+  if (state.lastSuccessAt > 0 && now - state.lastSuccessAt < freshForMs) return "skip";
   // A failed attempt holds everyone off for a while rather than making every
-  // request of the morning re-scrape two web pages that are not answering.
+  // request re-scrape two web pages that are not answering.
   if (state.lastFailureAt > 0 && now - state.lastFailureAt < retryAfterMs) return "skip";
   return "start";
 }
 
-let freshFor: string | null = null;
+let lastSuccessAt = 0;
 let lastFailureAt = 0;
 let inFlight: Promise<number> | null = null;
 
-/** Whether every stored rate already carries today's date. */
-async function alreadyRefreshedToday(today: string): Promise<boolean> {
+/**
+ * Whether every stored rate is younger than the freshness window.
+ *
+ * Asked of the database rather than only of this process's memory, so a restart
+ * — or a second process — does not re-scrape rates that were fetched minutes
+ * ago. `lastUpdated` is a real timestamp, so this is an age, not a calendar day.
+ */
+async function alreadyFresh(now: number): Promise<boolean> {
   const rows = await getDb().exchangeRate.findMany({ select: { lastUpdated: true } });
   // Nothing stored yet is not "fresh": seeding creates the rows with opening
   // values that were current whenever the seed file was last touched.
   if (rows.length === 0) return false;
-  return rows.every((r) => toShamsiStr(r.lastUpdated) === today);
+  return rows.every((r) => now - new Date(r.lastUpdated).getTime() < FRESH_FOR_MS);
 }
 
 /**
@@ -106,7 +120,7 @@ async function refreshNow(): Promise<number> {
   }
 
   if (failedCurrencies.length > 0) {
-    console.warn(`[rates] daily refresh could not read: ${failedCurrencies.join(", ")}`);
+    console.warn(`[rates] refresh could not read: ${failedCurrencies.join(", ")}`);
   }
   return updated;
 }
@@ -124,12 +138,12 @@ async function refreshNow(): Promise<number> {
  * Never throws. A refresh that cannot happen must not take a working screen
  * down with it — the stored rates are still perfectly usable, just older.
  */
-export async function ensureRatesFreshToday(): Promise<void> {
-  const today = getTodayShamsi();
+export async function ensureRatesFresh(): Promise<void> {
+  const now = Date.now();
 
   try {
     const decision = refreshDecision(
-      { freshFor, lastFailureAt, running: !!inFlight }, today, Date.now());
+      { lastSuccessAt, lastFailureAt, running: !!inFlight }, now);
     if (decision === "skip") return;
 
     if (decision === "start") {
@@ -141,20 +155,20 @@ export async function ensureRatesFreshToday(): Promise<void> {
        * both see no run in progress and both start one.
        */
       inFlight = (async () => {
-        // Somebody's manual refresh, or a restart part-way through the day.
-        if (await alreadyRefreshedToday(today)) return ALREADY_CURRENT;
+        // Somebody's manual refresh, or a restart inside the window.
+        if (await alreadyFresh(now)) return ALREADY_CURRENT;
         return refreshNow();
       })()
         .then((updated) => {
           if (updated === ALREADY_CURRENT) {
-            freshFor = today;
+            lastSuccessAt = now;
           } else if (updated > 0) {
             // Marked done only when something actually moved. A scrape that
-            // read nothing leaves the day open for a later retry, or one bad
-            // minute at 08:00 would freeze the rates until tomorrow.
-            freshFor = today;
+            // read nothing leaves the window open for a retry, or one bad
+            // minute would freeze the rates for the next two hours.
+            lastSuccessAt = Date.now();
             lastFailureAt = 0;
-            console.log(`[rates] daily refresh updated ${updated} currencies`);
+            console.log(`[rates] refresh updated ${updated} currencies`);
           } else {
             lastFailureAt = Date.now();
           }
@@ -162,7 +176,7 @@ export async function ensureRatesFreshToday(): Promise<void> {
         })
         .catch((err) => {
           lastFailureAt = Date.now();
-          console.warn("[rates] daily refresh failed:", (err as Error)?.message ?? err);
+          console.warn("[rates] refresh failed:", (err as Error)?.message ?? err);
           return 0;
         })
         .finally(() => { inFlight = null; });
@@ -178,6 +192,6 @@ export async function ensureRatesFreshToday(): Promise<void> {
     ]);
     if (timer) clearTimeout(timer);
   } catch (err) {
-    console.warn("[rates] daily refresh check failed:", (err as Error)?.message ?? err);
+    console.warn("[rates] refresh check failed:", (err as Error)?.message ?? err);
   }
 }

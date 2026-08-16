@@ -37,7 +37,7 @@ import { registerActivityRoutes } from "./src/server/routes/activities";
 import { registerNotificationRoutes } from "./src/server/routes/notifications";
 import { registerDashboardRoutes } from "./src/server/routes/dashboard";
 import { scrapeRates } from "./src/server/rateSource";
-import { ensureRatesFreshToday } from "./src/server/services/rateRefresh";
+import { ensureRatesFresh } from "./src/server/services/rateRefresh";
 import { ensureWorkflowSweepRanToday, runDueWorkflows } from "./src/server/services/workflowSweep";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 import { authenticateUser, findAuthUser } from "./src/server/services/userService";
@@ -504,7 +504,7 @@ async function startServer() {
          * normally finished; that request waits on the same run rather than
          * beginning a second one. It swallows its own failures.
          */
-        void ensureRatesFreshToday();
+        void ensureRatesFresh();
         /*
          * And the day's scheduled workflow rules, on the same principle: this
          * server has no cron, so the first person through the door starts the
@@ -617,11 +617,28 @@ async function startServer() {
     void reportSchemaState();
   });
 
+  /*
+   * The rates, on a clock of their own.
+   *
+   * A sign-in and a read of the rates screen both ask for a refresh, but an
+   * afternoon in which nobody does either would leave every document priced at
+   * whatever the morning said. The tick is more frequent than the two-hour
+   * freshness window on purpose: `ensureRatesFresh` is a no-op until the window
+   * is up, so a restart at any point in the day still lands on the schedule
+   * rather than starting a new one.
+   */
+  const RATE_TICK_MS = 30 * 60 * 1000;
+  const rateTimer = setInterval(() => { void ensureRatesFresh(); }, RATE_TICK_MS);
+  // Nothing here should hold the process open on its own.
+  rateTimer.unref?.();
+  void ensureRatesFresh();
+
   // Close the SQL Server pool on shutdown. A deploy restart kills this process
   // while connections are open; releasing them lets the new process bind them
   // immediately instead of waiting for the server to time them out.
   const shutdown = (signal: string) => {
     console.log(`${signal} received, shutting down.`);
+    clearInterval(rateTimer);
     server.close(() => {
       disconnectDb().finally(() => process.exit(0));
     });

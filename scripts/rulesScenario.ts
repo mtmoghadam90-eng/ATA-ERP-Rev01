@@ -45,7 +45,7 @@ import { ACTIVITY_CATEGORY, canonicalCategoryName, sameCategory } from "../src/u
 import { packableLines, outstandingFor } from "../src/utils/packingAllocation";
 import { importStageDurations } from "../src/utils/importTimeline";
 import { parseMilestoneRules } from "../src/server/services/milestoneAutomation";
-import { refreshDecision, type RateRefreshState } from "../src/server/services/rateRefresh";
+import { FRESH_FOR_MS, refreshDecision, type RateRefreshState } from "../src/server/services/rateRefresh";
 import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
 import { REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
 import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
@@ -587,38 +587,41 @@ ok("two different categories still do not match",
   !sameCategory(ACTIVITY_CATEGORY.PROFORMAS, ACTIVITY_CATEGORY.DELIVERIES));
 
 /*
- * Refreshing the currency rates once a day, on first use.
+ * Refreshing the currency rates every two hours.
  *
- * Every foreign-priced document is valued at the stored rate, so the rate that
- * is a week old prices the day's work wrongly and says nothing. The scheduling
- * is the whole of the feature, and the alternative to testing it here is a test
- * that can only be run by waiting until tomorrow.
+ * Every foreign-priced document is valued at the stored rate, so a stale rate
+ * prices the day's work wrongly and says nothing. It used to refresh once per
+ * Shamsi day, which left a document priced at four in the afternoon carrying
+ * the morning's number. The scheduling is the whole of the feature, and the
+ * alternative to testing it here is a test that can only be run by waiting two
+ * hours.
  */
-head("Exchange rates: the once-a-day refresh");
+head("Exchange rates: the two-hourly refresh");
 
 const HOUR = 60 * 60 * 1000;
 const decide = (state: Partial<RateRefreshState>, now = 10 * HOUR) =>
   refreshDecision(
-    { freshFor: null, lastFailureAt: 0, running: false, ...state }, "1405/05/20", now, 30 * 60 * 1000);
+    { lastSuccessAt: 0, lastFailureAt: 0, running: false, ...state },
+    now, FRESH_FOR_MS, 30 * 60 * 1000);
 
-eq("the first caller of the day starts the fetch", decide({}), "start");
-eq("everyone after it does nothing", decide({ freshFor: "1405/05/20" }), "skip");
+eq("the first caller starts the fetch", decide({}), "start");
+eq("a caller a minute later does nothing", decide({ lastSuccessAt: 10 * HOUR - 60_000 }), "skip");
+eq("nor does one an hour and a half later",
+  decide({ lastSuccessAt: 10 * HOUR - 1.5 * HOUR }), "skip");
+eq("two hours on, the rates are refetched",
+  decide({ lastSuccessAt: 10 * HOUR - 2 * HOUR }), "start");
 eq("a caller arriving mid-fetch waits on the same one", decide({ running: true }), "wait");
 eq("a run in progress outranks a recent failure, rather than being skipped past",
   decide({ running: true, lastFailureAt: 10 * HOUR - 60_000 }), "wait");
 
-// Yesterday's success does not count for today: rates are quoted per trading
-// day, so a refresh at 09:00 must not stop tomorrow's 08:00 opening.
-eq("yesterday's refresh does not satisfy today", decide({ freshFor: "1405/05/19" }), "start");
-
-// A failure holds callers off for a while — but never for the rest of the day,
-// or one bad minute at 08:00 would freeze the rates until tomorrow.
+// A failure holds callers off for a while — but for less than the freshness
+// window, or one bad minute would cost the whole two hours.
 eq("right after a failure, callers are held off",
   decide({ lastFailureAt: 10 * HOUR - 60_000 }), "skip");
 eq("an hour later, someone tries again",
   decide({ lastFailureAt: 10 * HOUR - HOUR }), "start");
-eq("but a day already marked fresh still wins over a stale failure",
-  decide({ freshFor: "1405/05/20", lastFailureAt: 10 * HOUR - HOUR }), "skip");
+eq("but rates fetched minutes ago still win over a stale failure",
+  decide({ lastSuccessAt: 10 * HOUR - 60_000, lastFailureAt: 10 * HOUR - HOUR }), "skip");
 
 /*
  * A warehouse-arrival date means the order arrived.

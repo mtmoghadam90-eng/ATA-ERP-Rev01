@@ -8,7 +8,7 @@ import {
   getAuditLog, getSettings, listAuditLogs, listExchangeRates,
   purgeAuditLogs, purgeBusinessData, recordAudit, saveSettings, trimAuditLogs, upsertExchangeRate,
 } from "../services/adminService";
-import { ensureRatesFreshToday } from "../services/rateRefresh";
+import { ensureRatesFresh } from "../services/rateRefresh";
 
 /** Settings, exchange rates and the audit log. */
 
@@ -61,10 +61,10 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
        * Waited on here — unlike at login, where it is only started — because
        * this is the call a pricing screen makes and its answer is what a
        * document will be valued at. The wait is bounded; see
-       * `ensureRatesFreshToday`. It never throws: older rates are still
+       * `ensureRatesFresh`. It never throws: older rates are still
        * usable, and a scrape that fails must not take the screen with it.
        */
-      await ensureRatesFreshToday();
+      await ensureRatesFresh();
       res.json({ success: true, rates: await listExchangeRates() });
     } catch (err) {
       sendError(res, err, "GET /api/exchange-rates");

@@ -2116,8 +2116,10 @@ export default function ProformasView({
         ${
           pf.proformaType !== "TECHNICAL"
             ? `
-        <td style="padding: 10px 6px; text-align: left; font-family: monospace; font-size: ${priceFontPx}px; vertical-align: middle; white-space: nowrap;">${formatMoney(item.unitPriceRIYAL)}</td>
-        <td style="padding: 10px 6px; text-align: left; font-family: monospace; font-size: ${priceFontPx}px; vertical-align: middle; white-space: nowrap;">${formatMoney(item.totalPriceRIYAL)}</td>
+        <!-- Bold: the figures are what the reader is looking for, and beside a
+             block of specifications they were the lightest thing on the row. -->
+        <td style="padding: 10px 6px; text-align: left; font-family: monospace; font-size: ${priceFontPx}px; font-weight: bold; color: #0f172a; vertical-align: middle; white-space: nowrap;">${formatMoney(item.unitPriceRIYAL)}</td>
+        <td style="padding: 10px 6px; text-align: left; font-family: monospace; font-size: ${priceFontPx}px; font-weight: bold; color: #0f172a; vertical-align: middle; white-space: nowrap;">${formatMoney(item.totalPriceRIYAL)}</td>
         `
             : ""
         }
@@ -2571,7 +2573,7 @@ export default function ProformasView({
                 </div>
                 <div class="totals-row final-amount">
                     <span>مبلغ قابل پرداخت نهایی:</span>
-                    <span class="final-amount-value" style="font-family: monospace;">${formatMoney(pf.finalAmount)} ${targetCurrency}</span>
+                    <span class="final-amount-value" style="font-family: monospace; font-weight: bold;">${formatMoney(pf.finalAmount)} ${targetCurrency}</span>
                 </div>
                 <!--
                     No exchange rate and no rial equivalent.
