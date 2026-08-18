@@ -3,7 +3,7 @@
 برنامه یک **کپی گزارش‌گیری** از داده‌ها را در جدول‌های تخت SQL Server می‌نویسد و Power BI به همان وصل می‌شود. خودِ برنامه روی داده‌ی عملیاتی خودش کار می‌کند و دست‌نخورده می‌ماند.
 
 ```
-برنامه (database.json)  ──[ همگام‌سازی یک‌طرفه ]──▶  SQL Server: schema rpt  ◀──  Power BI
+برنامه (SQL Server: ata_erp)  ──[ همگام‌سازی یک‌طرفه ]──▶  SQL Server: ata_erp_reporting / schema rpt  ◀──  Power BI
 ```
 
 چرا این معماری: گزارش‌گیری هیچ‌وقت روی سرعت یا پایداری برنامه اثر نمی‌گذارد، و Power BI کانکتور بومی SQL Server را می‌گیرد (رابطه‌ها، DAX، refresh زمان‌بندی‌شده).
@@ -55,10 +55,10 @@ ERP_SQL_PASSWORD=رمزی که بالا ساختید
 
 > `.env` در `.gitignore` است و روی گیت‌هاب نمی‌رود.
 
-بررسی اتصال:
+بررسی اتصال (این سه مسیر احراز هویت‌شده‌اند و دسترسی «تنظیمات» می‌خواهند؛ از مرورگرِ لاگین‌کرده بازشان کنید، نه با curl خالی):
 
-```bash
-curl http://localhost:3000/api/report/sql-test
+```
+http://localhost:3000/api/report/sql-test
 ```
 
 ---
@@ -71,16 +71,16 @@ curl http://localhost:3000/api/report/sql-test
 npm run sync:report
 ```
 
-**یا از طریق API:**
+**یا از طریق API** (نیازمند نشست کاربر با دسترسی «تنظیمات»):
 
-```bash
-curl -X POST http://localhost:3000/api/report/sql-sync
+```
+POST http://localhost:3000/api/report/sql-sync
 ```
 
-**پیش‌نمایش بدون اتصال به دیتابیس** (برای دیدن مدل و تعداد ردیف‌ها):
+**پیش‌نمایش بدون اتصال به دیتابیس گزارش‌گیری** (برای دیدن مدل و تعداد ردیف‌ها):
 
-```bash
-curl http://localhost:3000/api/report/preview
+```
+http://localhost:3000/api/report/preview
 ```
 
 ### زمان‌بندی خودکار (Windows Task Scheduler)
