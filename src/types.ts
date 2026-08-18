@@ -628,6 +628,19 @@ export interface User {
   };
 }
 
+/**
+ * Screens with no permission flag of their own — access is decided by another
+ * module's flag instead. Mirrors `KEY_PERMISSION` in `src/server/auth.ts`
+ * (erp_after_sales_services -> packagingDelivery, erp_supplier_inquiries ->
+ * suppliers), which is what actually gates the API. Without this, an admin
+ * revoking `suppliers` or `packagingDelivery` for a user leaves these two menu
+ * items visible while their data 403s.
+ */
+export const SCREEN_PERMISSION_ALIAS: Partial<Record<string, keyof User['permissions']>> = {
+  afterSalesServices: 'packagingDelivery',
+  supplierInquiries: 'suppliers',
+};
+
 
 
 
