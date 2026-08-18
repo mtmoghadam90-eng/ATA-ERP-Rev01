@@ -16,7 +16,7 @@ import {
   Wrench,
   ArrowLeftRight
 } from 'lucide-react';
-import { User } from '../types';
+import { User, SCREEN_PERMISSION_ALIAS } from '../types';
 
 interface SidebarProps {
   activeTab: string;
@@ -86,7 +86,10 @@ export default function Sidebar({
   // Filter menu items dynamically according to the logged-in user's active permissions
   const allowedMenuItems = orderedMenuItems.filter(item => {
     if (!currentUser) return true;
-    if (currentUser.permissions && currentUser.permissions[item.id as keyof typeof currentUser.permissions] === false) {
+    // Some screens (after-sales, supplier inquiries) have no flag of their
+    // own and defer to another module's — see SCREEN_PERMISSION_ALIAS.
+    const permissionKey = SCREEN_PERMISSION_ALIAS[item.id] ?? item.id;
+    if (currentUser.permissions && currentUser.permissions[permissionKey as keyof typeof currentUser.permissions] === false) {
       return false;
     }
     return true;

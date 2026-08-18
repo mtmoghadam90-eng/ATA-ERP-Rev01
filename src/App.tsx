@@ -26,7 +26,7 @@ import ProjectConfirmationUploadModal from './components/ProjectConfirmationUplo
 import { projectsApi } from './api/projects';
 import { useWonProjectWatch } from './api/useWonProjectWatch';
 import { detailToProject, projectToWriteInput } from './api/projectAdapter';
-import { Project } from './types';
+import { Project, SCREEN_PERMISSION_ALIAS } from './types';
 import { useSidebarBadges } from './api/useSidebarBadges';
 import { tasksApi, taskToWriteInput } from './api/tasks';
 import { useCategoryCompletion } from './api/useCategoryCompletion';
@@ -340,8 +340,10 @@ export default function App() {
   }
 
   const renderActiveView = () => {
-    // Granular Module Permission Check
-    const hasPermission = store.currentUser && (!store.currentUser.permissions || store.currentUser.permissions[activeView as keyof typeof store.currentUser.permissions] !== false);
+    // Granular Module Permission Check — some screens have no flag of their
+    // own and defer to another module's (see SCREEN_PERMISSION_ALIAS).
+    const permissionKey = (SCREEN_PERMISSION_ALIAS[activeView] ?? activeView) as keyof typeof store.currentUser.permissions;
+    const hasPermission = store.currentUser && (!store.currentUser.permissions || store.currentUser.permissions[permissionKey] !== false);
     if (!hasPermission) {
       return (
         <div className="bg-white rounded-2xl border border-slate-100 p-8 text-center max-w-lg mx-auto my-12 shadow-sm space-y-4 text-right" dir="rtl">
