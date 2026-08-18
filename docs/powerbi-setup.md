@@ -149,6 +149,8 @@ http://localhost:3000/api/report/preview
 - `supplier_inquiry_items.total_foreign` و `total_riyal` از پیش محاسبه شده‌اند.
 - `custom_values` (فیلدهای سفارشی هر ماژول) به‌صورت متن JSON منتقل می‌شود؛ در صورت نیاز در Power Query بازش کنید.
 - **رمز کاربران هرگز منتقل نمی‌شود** — جدول `users` فقط نام، نقش و سمت دارد.
+- `proformas.sent_date` روزی است که پیش‌فاکتور برای کارفرما ارسال شده (نه تاریخ صدور)؛ برای گزارش «زمان پاسخ مشتری» و «پیش‌فاکتورهای بی‌پیگیری» از همین ستون بشمارید.
+- `proforma_items.unit_of_measure` و `packaging_delivery_items.unit_of_measure` واحد شمارش هر ردیف‌اند («عدد»، «متر»، «ست»)؛ کنارشان `unit_price_riyal` بهای واحد است، نه واحد شمارش.
 
 ---
 

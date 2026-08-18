@@ -275,6 +275,7 @@ export async function readSqlCollections(): Promise<StoreCollections> {
         brand: i.brand,
         tagNumber: i.tagNumber,
         quantity: num(i.quantity),
+        unit: i.unit,
         unitPriceRIYAL: num(i.unitPriceRial),
         totalPriceRIYAL: num(i.totalPriceRial),
         supplyMethod: i.supplyMethod,
@@ -308,6 +309,9 @@ export async function readSqlCollections(): Promise<StoreCollections> {
         issueDate: pf.issueDateJalali,
         expiryDate: pf.expiryDateJalali,
         deliveryDate: pf.deliveryDateJalali,
+        // The day it actually went to the customer, which is what a
+        // response-time report has to count from — see proformaService.
+        sentDate: pf.sentDateJalali,
         totalAmount: num(pf.totalAmount),
         discountPercent: num(pf.discountPercent),
         discountAmount: num(pf.discountAmount),
@@ -472,6 +476,7 @@ export async function readSqlCollections(): Promise<StoreCollections> {
         productId: i.productId,
         tagNumber: i.tagNumber,
         quantity: num(i.quantity),
+        unit: i.unit,
         packageType: i.packageType,
         dimensions: i.dimensions,
         weight: num(i.weight),
