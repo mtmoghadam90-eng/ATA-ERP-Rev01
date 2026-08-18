@@ -224,7 +224,7 @@ export default function SupplierInquiriesView({
    * prompt would have nothing to close.
    */
   const promptCloseInquiryCategory = (
-    inquiry: { projectId: string; id: string },
+    inquiry: { projectId: string | null; id: string },
     what: string,
   ) => {
     if (!categoryCompletion || !inquiry.projectId) return;
@@ -616,7 +616,7 @@ export default function SupplierInquiriesView({
                                 <h3 className="text-sm font-extrabold text-slate-800">{inq.supplierName}</h3>
                                 {selectedProjectId === 'all' && (
                                   <span className="text-[10px] bg-sky-50 text-sky-600 px-2 py-0.5 rounded font-bold block w-fit mt-1">
-                                    پروژه: {projects.find(p => p.id === inq.projectId)?.name || 'نامشخص'}
+                                    پروژه: {inq.projectId ? (projects.find(p => p.id === inq.projectId)?.name || 'نامشخص') : 'خرید انباری (بدون پروژه)'}
                                   </span>
                                 )}
                                 {inq.offerConfirmed && (
@@ -907,7 +907,7 @@ export default function SupplierInquiriesView({
                                   <span>{inq.supplierName}</span>
                                   {selectedProjectId === 'all' && (
                                     <span className="text-[10px] text-sky-600 block">
-                                      پروژه: {projects.find(p => p.id === inq.projectId)?.name || 'نامشخص'}
+                                      پروژه: {inq.projectId ? (projects.find(p => p.id === inq.projectId)?.name || 'نامشخص') : 'خرید انباری (بدون پروژه)'}
                                     </span>
                                   )}
                                   {inq.isWinner && <span className="text-[9px] text-amber-600 block">★ انتخاب شده</span>}
@@ -1227,7 +1227,7 @@ function InquiryFormInner({
   onSubmit
 }: InquiryFormInnerProps) {
   const [projectId, setProjectId] = useState<string>(() => {
-    if (editingInquiry) return editingInquiry.projectId;
+    if (editingInquiry) return editingInquiry.projectId || '';
     return selectedProjectId === 'all' ? '' : selectedProjectId;
   });
   const [supplierId, setSupplierId] = useState<string>(editingInquiry?.supplierId || '');
@@ -1439,10 +1439,6 @@ function InquiryFormInner({
       alert('فیلد "تأمین‌کننده" الزامی است.');
       return;
     }
-    if (!projectId) {
-      alert("لطفاً یک پروژه را انتخاب نمایید.");
-      return;
-    }
     if (!supplierId) {
       alert("لطفاً یک تأمین‌کننده را انتخاب نمایید.");
       return;
@@ -1454,7 +1450,7 @@ function InquiryFormInner({
 
     onSubmit(
       {
-        projectId: projectId,
+        projectId: projectId || null,
         supplierId: supplierId,
         items: items.map(item => ({
           ...item,
@@ -1493,14 +1489,15 @@ function InquiryFormInner({
             onSearchChange={projectPicker.setTerm}
             loading={projectPicker.loading}
             placeholder="-- انتخاب پروژه --"
-            required
+            required={isFieldRequired(settings, 'supplierInquiries', 'projectId')}
             disabled={editingInquiry !== null} // Lock project on edit
             className="text-xs"
             // The current value has to be an option or the locked field renders
             // blank — the picker's matches hold whatever was last searched for,
             // not necessarily this record's project.
             options={dedupeOptions([
-              ...(editingInquiry
+              { value: '', label: 'خرید انباری (بدون پروژه)' },
+              ...(editingInquiry?.projectId
                 ? [{ value: editingInquiry.projectId, label: editingInquiry.projectName || 'پروژه انتخاب‌شده' }]
                 : []),
               ...(selectedProject

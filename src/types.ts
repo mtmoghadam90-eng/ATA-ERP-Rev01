@@ -856,7 +856,8 @@ export interface SupplierInquiryItem {
 
 export interface SupplierInquiry {
   id: string;
-  projectId: string;
+  /** Null for a general/warehouse purchase inquiry — no job to attach to. */
+  projectId: string | null;
   projectName?: string;
   supplierId: string;
   supplierName: string;

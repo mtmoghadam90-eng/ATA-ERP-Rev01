@@ -323,7 +323,7 @@ async function reconcileStock(
   const po = await tx.purchaseOrder.findUnique({
     where: { id: purchaseOrderId },
     select: {
-      id: true, poNumber: true, status: true,
+      id: true, poNumber: true, status: true, projectId: true,
       items: { select: { productId: true, variantId: true, quantity: true } },
     },
   });
@@ -374,16 +374,20 @@ async function reconcileStock(
       notes: `رسید انبار سفارش خرید ${po.poNumber}`,
       occurredAtJalali: todayJalali,
       /*
-       * The ledger, but not what may be sold.
+       * The ledger, but not always what may be sold.
        *
-       * A foreign order is placed against work that has already been won, so
-       * these goods were sold before they were bought. They arrive, sit in the
-       * warehouse and leave on that job's packing list — the ledger records
-       * both movements, and at no point were they free for anyone to quote. A
-       * salesperson who saw them as available would promise the same units
-       * twice.
+       * An order placed against a project is against work that has already
+       * been won, so those goods were sold before they were bought — they
+       * arrive, sit in the warehouse and leave on that job's packing list,
+       * and at no point were they free for anyone to quote. A salesperson
+       * who saw them as available would promise the same units twice, so
+       * project orders leave the available level untouched.
+       *
+       * An order with no project is a general/warehouse purchase — nothing
+       * has claimed these units, so receiving them should make them
+       * quotable like any other stock.
        */
-      affectsAvailable: false,
+      affectsAvailable: !po.projectId,
     });
     movements++;
   }

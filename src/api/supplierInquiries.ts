@@ -44,7 +44,7 @@ export interface InquiryStepRow {
 
 export interface InquiryRow {
   id: string;
-  projectId: string;
+  projectId: string | null;
   supplierId: string;
   isWinner: boolean;
   winnerDateJalali: string | null;
@@ -65,7 +65,7 @@ export interface InquiryRow {
 }
 
 export interface InquiryWriteInput {
-  projectId?: string;
+  projectId?: string | null;
   supplierId?: string;
   isWinner?: boolean;
   offerConfirmed?: boolean;

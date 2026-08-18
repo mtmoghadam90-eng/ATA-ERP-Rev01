@@ -237,7 +237,8 @@ export const DEFAULT_REQUIRED_FIELDS: Record<string, Record<string, boolean>> = 
     priority: false,
   },
   supplierInquiries: {
-    projectId: true,
+    // A general/warehouse purchase inquiry has no project to attach to.
+    projectId: false,
     supplierId: true,
   },
   purchaseOrders: {
