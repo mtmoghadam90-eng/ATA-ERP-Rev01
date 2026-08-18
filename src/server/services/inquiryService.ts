@@ -177,7 +177,7 @@ export interface InquiryInitialStepInput {
 }
 
 export interface InquiryInput {
-  projectId?: string;
+  projectId?: string | null;
   supplierId?: string;
   isWinner?: boolean;
   offerConfirmed?: boolean;
@@ -218,7 +218,7 @@ function scalarData(input: InquiryInput): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const set = (key: string, value: unknown) => { if (value !== undefined) out[key] = value; };
 
-  if ("projectId" in input) set("projectId", input.projectId);
+  if ("projectId" in input) set("projectId", toNullableString(input.projectId, 36));
   if ("supplierId" in input) set("supplierId", input.supplierId);
   if ("isWinner" in input) set("isWinner", !!input.isWinner);
   if ("offerConfirmed" in input) set("offerConfirmed", !!input.offerConfirmed);
@@ -437,7 +437,7 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
     await notifyModuleResponsible(
       "inquiries",
       "ثبت استعلام جدید",
-      `استعلام جدید ثبت شد برای پروژه`,
+      inquiry.projectId ? `استعلام جدید ثبت شد برای پروژه` : `استعلام جدید ثبت شد (خرید انبار، بدون پروژه)`,
       user,
       inquiry.projectId,
     );
@@ -448,7 +448,9 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
         action: "CREATE",
         module: "استعلام از تامین‌کنندگان",
         entityId: inquiry.id,
-        description: `ایجاد استعلام جدید برای پروژه: ${inquiry.projectId}`,
+        description: inquiry.projectId
+          ? `ایجاد استعلام جدید برای پروژه: ${inquiry.projectId}`
+          : `ایجاد استعلام جدید (خرید انبار، بدون پروژه)`,
         afterState: inquiry,
       },
       user,
@@ -550,7 +552,9 @@ export async function updateInquiry(
         action: "UPDATE",
         module: "استعلام از تامین‌کنندگان",
         entityId: id,
-        description: `ویرایش استعلام برای پروژه: ${inquiry.projectId}`,
+        description: inquiry.projectId
+          ? `ویرایش استعلام برای پروژه: ${inquiry.projectId}`
+          : `ویرایش استعلام (خرید انبار، بدون پروژه)`,
         beforeState: beforeAudit,
         afterState: inquiry,
       },
@@ -750,7 +754,9 @@ export async function deleteInquiry(
       action: "DELETE",
       module: "استعلام از تامین‌کنندگان",
       entityId: id,
-      description: `حذف استعلام برای پروژه: ${existing.projectId}`,
+      description: existing.projectId
+        ? `حذف استعلام برای پروژه: ${existing.projectId}`
+        : `حذف استعلام (خرید انبار، بدون پروژه)`,
       beforeState: existing,
     },
     user,

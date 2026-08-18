@@ -75,10 +75,7 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
     if (refuseCostWrite(res, user)) return;
     try {
       const input = pickInput(req.body);
-      if (!input.projectId) {
-        res.status(400).json({ success: false, error: "انتخاب پروژه الزامی است." });
-        return;
-      }
+      // No project means a general/warehouse purchase inquiry — allowed.
       if (!input.supplierId) {
         res.status(400).json({ success: false, error: "انتخاب تأمین‌کننده الزامی است." });
         return;
