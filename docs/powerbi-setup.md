@@ -65,9 +65,10 @@ http://localhost:3000/api/report/sql-test
 
 ## گام ۳ — اجرای همگام‌سازی
 
-**دستی از خط فرمان:**
+**دستی از خط فرمان** (روی سرور):
 
-```bash
+```
+cd /d E:\Apps\ATA-ERP-Rev01
 npm run sync:report
 ```
 
@@ -87,7 +88,13 @@ http://localhost:3000/api/report/preview
 
 یک Basic Task بسازید:
 - **Program:** `cmd.exe`
-- **Arguments:** `/c cd /d D:\ATA-ERP-Rev01 && npm run sync:report >> logs\sync.log 2>&1`
+- **Arguments:** `/c cd /d E:\Apps\ATA-ERP-Rev01 && npm run sync:report >> logs\sync.log 2>&1`
+- **Start in:** `E:\Apps\ATA-ERP-Rev01` — بدون این، اسکریپت فایل `.env` را پیدا نمی‌کند
+
+> مسیر برنامه **روی سرور** `E:\Apps\ATA-ERP-Rev01` است (کامپیوتر توسعه `D:\ATA-ERP-Rev01` است — این دو را با هم اشتباه نگیرید).
+> روی این سرور از قبل تسکی به نام `ATA-ERP-ReportSync` وجود دارد که همین کار را با صدا زدن مستقیم Node انجام می‌دهد
+> (`E:\nodejs\node.exe node_modules\tsx\dist\cli.mjs scripts\sync-reporting.ts`) — که به PATH وابسته نیست و شکل بهتری است.
+> تسک دومی نسازید.
 - **Trigger:** روزانه، یا هر ۱ ساعت
 
 هر اجرا محتوای جدول‌ها را **کامل جایگزین** می‌کند و همه در یک تراکنش انجام می‌شود؛ پس اجرای ناموفق هیچ‌وقت داده‌ی نیمه‌کاره باقی نمی‌گذارد.
