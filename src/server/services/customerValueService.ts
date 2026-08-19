@@ -41,9 +41,8 @@ import {
  * authority, so a cancelled document whose lines still read «برنده» is not a
  * sale here any more than it is anywhere else in the system.
  *
- * The line's own date is the proforma's issue date. There is no "won on" stamp
- * in the schema, and inventing one now would be null for every document already
- * in the database — useless exactly where the history matters most.
+ * A sale's date is the day it was **approved**, not the day it was quoted —
+ * see `saleDateOf`.
  */
 const SALE_SELECT = {
   id: true, customerId: true, status: true, isCancelled: true, currency: true,
@@ -51,6 +50,8 @@ const SALE_SELECT = {
   discountPercent: true, discountAmount: true, taxPercent: true, taxAmount: true,
   extraCosts: true, historicalExchangeRate: true,
   issueDate: true, issueDateJalali: true,
+  // The approval date lives on the project, not the quotation — see saleDateOf.
+  project: { select: { winningDate: true } },
   items: {
     select: {
       id: true, productId: true, variantId: true, productName: true,
@@ -89,6 +90,25 @@ function toFinanceShape(row: SaleRow): never {
       supplyMethod: item.supplyMethod ?? undefined,
     })),
   } as never;
+}
+
+/**
+ * The day a sale happened: the project's approval date («تاریخ تایید (ابلاغ
+ * قرارداد)»), which is what `winningDate` holds.
+ *
+ * Not the proforma's issue date. A quotation written in Farvardin and approved
+ * in Mehr is a Mehr sale — using the issue date would count it in the wrong
+ * evaluation period and, worse, make a customer look six months staler than
+ * they are. The gap between quoting and winning is routine in this business,
+ * which is exactly why the approval date is recorded separately.
+ *
+ * Falls back to the issue date in the two cases where there is no approval date
+ * to use: a proforma with no project at all, and a project won before that date
+ * was being stamped. The issue date is then the only evidence there is, and a
+ * slightly early date is better than dropping the sale entirely.
+ */
+export function saleDateOf(row: { issueDate: Date; project?: { winningDate: Date | null } | null }): Date {
+  return row.project?.winningDate ?? row.issueDate;
 }
 
 export function isSale(row: SaleRow): boolean {
@@ -352,22 +372,45 @@ export async function collectRawFigures(
     now.getUTCDate(),
   ));
 
-  const [periodSales, everySaleDate] = await Promise.all([
-    db.proforma.findMany({
-      where: { issueDate: { gte: periodStart } },
-      select: SALE_SELECT,
-    }),
-    // Only what recency needs: the date and who it belonged to.
-    db.proforma.findMany({
-      select: {
-        customerId: true, issueDate: true,
-        status: true, isCancelled: true,
-        items: { select: { status: true, supplyMethod: true } },
-      },
-    }),
-  ]);
+  /*
+   * The period cannot be a SQL `where` any more.
+   *
+   * A sale's date is its project's approval date, so filtering on the
+   * proforma's own `issueDate` would take the wrong set — a quotation issued
+   * before the window and approved inside it is a sale in this period, and one
+   * issued inside it but approved later is not. So every candidate is scanned
+   * cheaply first, the effective date decides which are in the period, and only
+   * those are read in full.
+   */
+  const candidates = await db.proforma.findMany({
+    select: {
+      id: true, customerId: true, issueDate: true,
+      status: true, isCancelled: true,
+      project: { select: { winningDate: true } },
+      items: { select: { status: true, supplyMethod: true } },
+    },
+  });
 
-  const sales = periodSales.filter(isSale);
+  const lastPurchase = new Map<string, Date>();
+  const inPeriodIds: string[] = [];
+
+  for (const row of candidates) {
+    const outcome = getProformaOutcome(row);
+    if (outcome !== "تأیید شده (برنده)" && outcome !== "نیمه برنده") continue;
+
+    const soldOn = saleDateOf(row);
+    if (soldOn >= periodStart) inPeriodIds.push(row.id);
+
+    // Recency deliberately looks at every sale, not only the period's.
+    const current = lastPurchase.get(row.customerId);
+    if (!current || soldOn > current) lastPurchase.set(row.customerId, soldOn);
+  }
+
+  const sales = inPeriodIds.length === 0 ? [] : await db.proforma.findMany({
+    where: { id: { in: inPeriodIds } },
+    select: SALE_SELECT,
+  });
+
   const costs = await buildCostLookup(db, sales);
 
   const byCustomer = new Map<string, SaleRow[]>();
@@ -375,14 +418,6 @@ export async function collectRawFigures(
     const list = byCustomer.get(sale.customerId) ?? [];
     list.push(sale);
     byCustomer.set(sale.customerId, list);
-  }
-
-  const lastPurchase = new Map<string, Date>();
-  for (const row of everySaleDate) {
-    const outcome = getProformaOutcome(row);
-    if (outcome !== "تأیید شده (برنده)" && outcome !== "نیمه برنده") continue;
-    const current = lastPurchase.get(row.customerId);
-    if (!current || row.issueDate > current) lastPurchase.set(row.customerId, row.issueDate);
   }
 
   const result = new Map<string, CustomerRawFigures>();
