@@ -1,0 +1,661 @@
+import { Prisma } from "@prisma/client";
+import { getDb } from "../db";
+import { loadSettings } from "../settings";
+import { dateToJalali } from "../dates";
+import { getProformaOutcome } from "../proformaStatus";
+import { getWonItemsCurrencyAmount } from "../../utils/finance";
+import { calculateSellingPrice, PriceCalcInputs } from "../../utils/priceCalculator";
+import {
+  CustomerRank, CustomerValueSettings, PotentialInputs,
+  calculateCVI, calculatePotentialScore, calculateRealizedScore,
+  costToServeScoreOf, determineRank, normalizeCustomerValueSettings,
+  paymentScoreOf, percentileRank, recencyScore,
+} from "../../utils/customerValue";
+
+/**
+ * Customer value: what each customer has been worth, and what they might be.
+ *
+ * The arithmetic itself lives in `src/utils/customerValue.ts` and is pure. This
+ * module is the part that has to know where the numbers come from — which is
+ * where all the judgement is, because this ERP has no invoice table and no cost
+ * column on a sale. See `grossProfitOf` for how cost of goods is recovered.
+ *
+ * **Why everything is recalculated together.** Gross profit and frequency are
+ * scored by *percentile* — a customer's score is their standing among the
+ * others, so one customer's new sale moves everybody else's score. There is no
+ * such thing as recalculating one customer correctly in isolation, and a
+ * function that pretended otherwise would drift a little further from the truth
+ * with every write. `recalculateCustomer` therefore refreshes that customer's
+ * raw figures and then re-scores the whole population; the work is bounded by
+ * the number of customers, not by how often it is called.
+ */
+
+/* ------------------------------ what is a sale --------------------------- */
+
+/**
+ * A sale is a proforma that ended with at least one won line.
+ *
+ * This ERP quotes rather than invoices: the proforma *is* the order once its
+ * lines are marked won. Drafts, sent quotations still being negotiated, lost
+ * and cancelled documents are all excluded — `getProformaOutcome` is the
+ * authority, so a cancelled document whose lines still read «برنده» is not a
+ * sale here any more than it is anywhere else in the system.
+ *
+ * The line's own date is the proforma's issue date. There is no "won on" stamp
+ * in the schema, and inventing one now would be null for every document already
+ * in the database — useless exactly where the history matters most.
+ */
+const SALE_SELECT = {
+  id: true, customerId: true, status: true, isCancelled: true, currency: true,
+  finalAmount: true, totalAmount: true,
+  discountPercent: true, discountAmount: true, taxPercent: true, taxAmount: true,
+  extraCosts: true, historicalExchangeRate: true,
+  issueDate: true, issueDateJalali: true,
+  items: {
+    select: {
+      id: true, productId: true, variantId: true, productName: true,
+      quantity: true, unitPriceRial: true, totalPriceRial: true,
+      status: true, supplyMethod: true,
+    },
+  },
+} satisfies Prisma.ProformaSelect;
+
+type SaleRow = Prisma.ProformaGetPayload<{ select: typeof SALE_SELECT }>;
+
+const money = (value: unknown): number => Number(value ?? 0);
+
+/** The proforma in the shape `src/utils/finance.ts` expects. */
+function toFinanceShape(row: SaleRow): never {
+  return {
+    id: row.id,
+    status: row.status,
+    isCancelled: row.isCancelled,
+    currency: row.currency,
+    totalAmount: money(row.totalAmount),
+    finalAmount: money(row.finalAmount),
+    discountPercent: money(row.discountPercent),
+    discountAmount: money(row.discountAmount),
+    taxPercent: money(row.taxPercent),
+    taxAmount: money(row.taxAmount),
+    extraCosts: money(row.extraCosts),
+    historicalExchangeRate: row.historicalExchangeRate ? money(row.historicalExchangeRate) : undefined,
+    items: row.items.map((item) => ({
+      id: item.id,
+      productName: item.productName,
+      quantity: Number(item.quantity),
+      unitPriceRIYAL: money(item.unitPriceRial),
+      totalPriceRIYAL: money(item.totalPriceRial),
+      status: item.status ?? undefined,
+      supplyMethod: item.supplyMethod ?? undefined,
+    })),
+  } as never;
+}
+
+export function isSale(row: SaleRow): boolean {
+  const outcome = getProformaOutcome(row);
+  return outcome === "تأیید شده (برنده)" || outcome === "نیمه برنده";
+}
+
+/** Revenue of one sale in rial, at the rate stored on the document itself. */
+export function saleRevenueRial(row: SaleRow): number | null {
+  const inCurrency = getWonItemsCurrencyAmount(toFinanceShape(row));
+  const isRial = !row.currency || row.currency === "ریال";
+  if (isRial) return inCurrency;
+
+  const rate = money(row.historicalExchangeRate);
+  // A foreign sale with no stored rate has an unknown rial value, not a zero
+  // one. Guessing at today's rate would restate a historical sale every time
+  // the market moved.
+  return rate > 0 ? inCurrency * rate : null;
+}
+
+/* ------------------------------ cost of goods ---------------------------- */
+
+/**
+ * What the goods on a sale cost us.
+ *
+ * This is the one figure the schema does not simply hold: a proforma line
+ * records what the customer pays and nothing about what we paid. Two sources
+ * are used, best first:
+ *
+ *  1. **The actual purchase.** `PurchaseOrderItem.proformaItemId` links a
+ *     purchase line back to the sale line it was raised for, so where an order
+ *     exists the real cost is known — the line's share of that order's landed
+ *     cost, which already includes freight, customs and remittance.
+ *
+ *  2. **The product's standard landed cost**, from the price calculator stored
+ *     on the product or SKU. This is what the company itself uses to price the
+ *     item, so it is the right fallback for anything sold from stock.
+ *
+ * Anything else — a free-text line, or a product nobody has costed — has no
+ * cost. Such a line's revenue is deliberately **excluded from both sides** of
+ * the margin rather than being treated as pure profit, and the share of revenue
+ * that could be costed is reported as `coverage` so a suspiciously good margin
+ * can be recognised as missing data rather than a triumph.
+ */
+export interface CostLookup {
+  /** proformaItemId -> cost in rial for the whole line. */
+  byProformaItem: Map<string, number>;
+  /** productId/variantId -> standard landed cost per unit, in rial. */
+  standardUnitCost: Map<string, number>;
+}
+
+const variantKey = (productId: string | null, variantId: string | null) =>
+  `${productId ?? ""}|${variantId ?? ""}`;
+
+/** Reads the price-calculator blob and returns the landed cost per unit. */
+export function landedUnitCostFrom(priceCalc: string | null): number | null {
+  if (!priceCalc) return null;
+  let parsed: Partial<PriceCalcInputs> & Record<string, unknown>;
+  try {
+    parsed = JSON.parse(priceCalc) as never;
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+
+  // The calculator's own inputs are stored under `calc*` names on the record.
+  const inputs: PriceCalcInputs = {
+    priceForeign: Number(parsed.calcPriceForeign ?? parsed.priceForeign ?? 0),
+    exchangeRate: Number(parsed.calcExchangeRate ?? parsed.exchangeRate ?? 0),
+    remittanceFee: Number(parsed.calcRemittanceFee ?? parsed.remittanceFee ?? 0),
+    remittancePct: Number(parsed.calcRemittancePct ?? parsed.remittancePct ?? 0),
+    shippingCost: Number(parsed.calcShippingCost ?? parsed.shippingCost ?? 0),
+    otherCostsForeign: Number(parsed.calcOtherCostsForeign ?? parsed.otherCostsForeign ?? 0),
+    customsDutyRIYAL: Number(parsed.calcCustomsDutyRIYAL ?? parsed.customsDutyRIYAL ?? 0),
+    otherCostsRIYAL: Number(parsed.calcOtherCostsRIYAL ?? parsed.otherCostsRIYAL ?? 0),
+    profitPct: Number(parsed.calcProfitPct ?? parsed.profitPct ?? 0),
+    profitRIYAL: Number(parsed.calcProfitRIYAL ?? parsed.profitRIYAL ?? 0),
+    marginType: (parsed.calcMarginType ?? parsed.marginType ?? "PERCENT") as "PERCENT" | "FIXED",
+  };
+
+  // No foreign price and no rate means the calculator was never filled in.
+  if (inputs.priceForeign <= 0 || inputs.exchangeRate <= 0) return null;
+  const landed = calculateSellingPrice(inputs).landedRial;
+  return landed > 0 ? landed : null;
+}
+
+/**
+ * Builds the cost lookups for a set of sales, in two queries.
+ *
+ * Per-line purchase cost is the line's share of its order's landed cost,
+ * apportioned by value — the order's freight and customs belong to every line
+ * on it, not only to the one that happened to be linked.
+ */
+export async function buildCostLookup(
+  db: Prisma.TransactionClient,
+  sales: SaleRow[],
+): Promise<CostLookup> {
+  const byProformaItem = new Map<string, number>();
+  const standardUnitCost = new Map<string, number>();
+
+  const itemIds = sales.flatMap((s) => s.items.map((i) => i.id));
+  const productIds = [...new Set(
+    sales.flatMap((s) => s.items.map((i) => i.productId).filter((id): id is string => !!id)),
+  )];
+
+  if (itemIds.length > 0) {
+    const poLines = await db.purchaseOrderItem.findMany({
+      where: { proformaItemId: { in: itemIds } },
+      select: {
+        proformaItemId: true, totalPriceForeign: true,
+        purchaseOrder: {
+          select: { id: true, landedCostRial: true, totalForeignAmount: true },
+        },
+      },
+    });
+
+    for (const line of poLines) {
+      if (!line.proformaItemId) continue;
+      const order = line.purchaseOrder;
+      const orderTotal = money(order?.totalForeignAmount);
+      const landed = money(order?.landedCostRial);
+      if (orderTotal <= 0 || landed <= 0) continue;
+
+      // This line's share of everything the order cost to land.
+      const share = money(line.totalPriceForeign) / orderTotal;
+      const cost = landed * share;
+      byProformaItem.set(
+        line.proformaItemId,
+        (byProformaItem.get(line.proformaItemId) ?? 0) + cost,
+      );
+    }
+  }
+
+  if (productIds.length > 0) {
+    const products = await db.product.findMany({
+      where: { id: { in: productIds } },
+      select: {
+        id: true, priceCalc: true,
+        variants: { select: { id: true, priceCalc: true } },
+      },
+    });
+    for (const product of products) {
+      const base = landedUnitCostFrom(product.priceCalc);
+      if (base !== null) standardUnitCost.set(variantKey(product.id, null), base);
+      for (const variant of product.variants) {
+        // A SKU's own calculator wins over the parent's when it has one.
+        const own = landedUnitCostFrom(variant.priceCalc) ?? base;
+        if (own !== null) standardUnitCost.set(variantKey(product.id, variant.id), own);
+      }
+    }
+  }
+
+  return { byProformaItem, standardUnitCost };
+}
+
+export interface GrossProfitResult {
+  revenueRial: number;
+  /** Revenue of the lines whose cost is known — the base the margin is over. */
+  costedRevenueRial: number;
+  cogsRial: number;
+  grossProfitRial: number;
+  /** 0..100: how much of the revenue could be costed at all. */
+  coveragePercent: number;
+}
+
+/**
+ * Gross profit across a set of sales.
+ *
+ * Revenue is every won line; cost of goods and therefore profit are only over
+ * the lines that have a cost. That asymmetry is on purpose and is the honest
+ * reading — the alternative, treating an unknown cost as zero, reports the
+ * whole of an uncosted sale as profit and would put the least-documented
+ * customers at the top of the ranking.
+ */
+export function grossProfitOf(sales: SaleRow[], costs: CostLookup): GrossProfitResult {
+  let revenueRial = 0;
+  let costedRevenueRial = 0;
+  let cogsRial = 0;
+
+  for (const sale of sales) {
+    if (!isSale(sale)) continue;
+
+    const saleRevenue = saleRevenueRial(sale);
+    if (saleRevenue === null) continue; // unknown rate: contributes nothing
+    revenueRial += saleRevenue;
+
+    const wonLines = sale.items.filter((i) => i.status === "برنده");
+    // Line revenue is apportioned from the document total, so discounts, tax and
+    // extras already priced into `finalAmount` are reflected per line.
+    const lineGross = wonLines.reduce((sum, i) => sum + money(i.totalPriceRial), 0);
+    if (lineGross <= 0) continue;
+
+    for (const line of wonLines) {
+      const linePortion = money(line.totalPriceRial) / lineGross;
+      const lineRevenue = saleRevenue * linePortion;
+
+      const actual = costs.byProformaItem.get(line.id);
+      let cost: number | null = actual !== undefined ? actual : null;
+
+      if (cost === null && line.productId) {
+        const unit = costs.standardUnitCost.get(variantKey(line.productId, line.variantId))
+          ?? costs.standardUnitCost.get(variantKey(line.productId, null));
+        if (unit !== undefined) cost = unit * Number(line.quantity ?? 0);
+      }
+
+      if (cost === null) continue; // uncosted: out of both sides of the margin
+      costedRevenueRial += lineRevenue;
+      cogsRial += cost;
+    }
+  }
+
+  return {
+    revenueRial: Math.round(revenueRial),
+    costedRevenueRial: Math.round(costedRevenueRial),
+    cogsRial: Math.round(cogsRial),
+    grossProfitRial: Math.round(costedRevenueRial - cogsRial),
+    coveragePercent: revenueRial > 0
+      ? Math.round((costedRevenueRial / revenueRial) * 1000) / 10
+      : 0,
+  };
+}
+
+/* ------------------------------- raw figures ----------------------------- */
+
+export interface CustomerRawFigures {
+  customerId: string;
+  salesRevenueRial: number;
+  grossProfitRial: number;
+  grossMarginPercent: number | null;
+  costCoveragePercent: number;
+  purchaseFrequency: number;
+  lastPurchaseDate: Date | null;
+  daysSinceLastPurchase: number | null;
+  monthsSinceLastPurchase: number | null;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Whole days between two dates, in UTC, so a timezone cannot shift a day. */
+function daysBetween(from: Date, to: Date): number {
+  const a = Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate());
+  const b = Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate());
+  return Math.max(0, Math.round((b - a) / DAY_MS));
+}
+
+/**
+ * The raw figures for every customer, from one pass over the period's sales.
+ *
+ * Recency deliberately looks at **all** sales, not only the evaluation period:
+ * "last bought 3 years ago" is a fact about the customer, and clipping it to the
+ * window would make every dormant customer look equally, recently dormant.
+ */
+export async function collectRawFigures(
+  db: Prisma.TransactionClient,
+  settings: CustomerValueSettings,
+  now: Date,
+): Promise<Map<string, CustomerRawFigures>> {
+  const periodStart = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth() - settings.evaluationPeriodMonths,
+    now.getUTCDate(),
+  ));
+
+  const [periodSales, everySaleDate] = await Promise.all([
+    db.proforma.findMany({
+      where: { issueDate: { gte: periodStart } },
+      select: SALE_SELECT,
+    }),
+    // Only what recency needs: the date and who it belonged to.
+    db.proforma.findMany({
+      select: {
+        customerId: true, issueDate: true,
+        status: true, isCancelled: true,
+        items: { select: { status: true, supplyMethod: true } },
+      },
+    }),
+  ]);
+
+  const sales = periodSales.filter(isSale);
+  const costs = await buildCostLookup(db, sales);
+
+  const byCustomer = new Map<string, SaleRow[]>();
+  for (const sale of sales) {
+    const list = byCustomer.get(sale.customerId) ?? [];
+    list.push(sale);
+    byCustomer.set(sale.customerId, list);
+  }
+
+  const lastPurchase = new Map<string, Date>();
+  for (const row of everySaleDate) {
+    const outcome = getProformaOutcome(row);
+    if (outcome !== "تأیید شده (برنده)" && outcome !== "نیمه برنده") continue;
+    const current = lastPurchase.get(row.customerId);
+    if (!current || row.issueDate > current) lastPurchase.set(row.customerId, row.issueDate);
+  }
+
+  const result = new Map<string, CustomerRawFigures>();
+  const customerIds = new Set([...byCustomer.keys(), ...lastPurchase.keys()]);
+
+  for (const customerId of customerIds) {
+    const mine = byCustomer.get(customerId) ?? [];
+    const profit = grossProfitOf(mine, costs);
+    const last = lastPurchase.get(customerId) ?? null;
+    const days = last ? daysBetween(last, now) : null;
+
+    result.set(customerId, {
+      customerId,
+      salesRevenueRial: profit.revenueRial,
+      grossProfitRial: profit.grossProfitRial,
+      grossMarginPercent: profit.costedRevenueRial > 0
+        ? Math.round((profit.grossProfitRial / profit.costedRevenueRial) * 1000) / 10
+        : null,
+      costCoveragePercent: profit.coveragePercent,
+      // One sale is one purchase, however many lines it carried.
+      purchaseFrequency: mine.length,
+      lastPurchaseDate: last,
+      daysSinceLastPurchase: days,
+      monthsSinceLastPurchase: days === null ? null : days / 30.44,
+    });
+  }
+
+  return result;
+}
+
+/* ----------------------------- the whole pass ---------------------------- */
+
+export async function loadCustomerValueSettings(): Promise<CustomerValueSettings> {
+  const settings = await loadSettings() as { customerValue?: Partial<CustomerValueSettings> } | null;
+  return normalizeCustomerValueSettings(settings?.customerValue);
+}
+
+export interface RecalculationSummary {
+  customers: number;
+  ranked: number;
+  pending: number;
+  calculatedAt: Date;
+}
+
+/**
+ * Recomputes every customer's value metrics.
+ *
+ * One pass, because the percentile scores are only meaningful against the whole
+ * population. Written in batches so a few thousand customers do not become one
+ * enormous transaction — each batch is internally consistent, and a scoreboard
+ * does not need more than that.
+ */
+export async function recalculateAll(now: Date = new Date()): Promise<RecalculationSummary> {
+  const db = getDb();
+  const settings = await loadCustomerValueSettings();
+
+  const customers = await db.customer.findMany({
+    select: {
+      id: true,
+      paymentBehaviour: true, costToServe: true,
+      potentialConsumption: true, potentialCompanySize: true, potentialProjects: true,
+      potentialPortfolioFit: true, potentialRepeatPurchase: true,
+    },
+  });
+
+  const raw = await collectRawFigures(db, settings, now);
+
+  /*
+   * The population the percentiles are measured against: customers with
+   * activity in the period. Including everyone would hand a top-decile gross
+   * profit score to anybody who sold anything at all, simply because most of a
+   * long customer list is dormant at any moment.
+   */
+  const activeProfits: number[] = [];
+  const activeFrequencies: number[] = [];
+  for (const figures of raw.values()) {
+    if (figures.purchaseFrequency > 0) {
+      activeProfits.push(figures.grossProfitRial);
+      activeFrequencies.push(figures.purchaseFrequency);
+    }
+  }
+
+  let ranked = 0;
+  let pending = 0;
+  const rows: Prisma.CustomerValueMetricsUncheckedCreateInput[] = [];
+
+  for (const customer of customers) {
+    const figures = raw.get(customer.id);
+    const hasSales = (figures?.purchaseFrequency ?? 0) > 0;
+
+    const grossProfitScore = hasSales
+      ? percentileRank(figures!.grossProfitRial, activeProfits) : 0;
+    const frequencyScore = hasSales
+      ? percentileRank(figures!.purchaseFrequency, activeFrequencies) : 0;
+    const recency = recencyScore(figures?.monthsSinceLastPurchase ?? null, settings);
+    const payment = paymentScoreOf(customer.paymentBehaviour);
+    const costToServe = costToServeScoreOf(customer.costToServe);
+
+    const components = {
+      grossProfitScore,
+      frequencyScore,
+      recencyScore: recency,
+      paymentScore: payment,
+      costToServeScore: costToServe,
+    };
+
+    const potentialInputs: PotentialInputs = {
+      consumption: customer.potentialConsumption,
+      companySize: customer.potentialCompanySize,
+      projects: customer.potentialProjects,
+      portfolioFit: customer.potentialPortfolioFit,
+      repeatPurchase: customer.potentialRepeatPurchase,
+    };
+
+    const realizedValueScore = calculateRealizedScore(components, settings);
+    const potentialValueScore = calculatePotentialScore(potentialInputs, settings);
+    const rank = determineRank(realizedValueScore, potentialValueScore, settings);
+    if (rank === "PENDING") pending++; else ranked++;
+
+    rows.push({
+      customerId: customer.id,
+      salesRevenueRial: new Prisma.Decimal(figures?.salesRevenueRial ?? 0),
+      grossProfitRial: new Prisma.Decimal(figures?.grossProfitRial ?? 0),
+      grossMarginPercent: figures?.grossMarginPercent ?? null,
+      costCoveragePercent: figures?.costCoveragePercent ?? 0,
+      purchaseFrequency: figures?.purchaseFrequency ?? 0,
+      lastPurchaseDate: figures?.lastPurchaseDate ?? null,
+      lastPurchaseDateJalali: dateToJalali(figures?.lastPurchaseDate ?? null),
+      daysSinceLastPurchase: figures?.daysSinceLastPurchase ?? null,
+      ...components,
+      realizedValueScore,
+      potentialValueScore,
+      customerValueIndex: calculateCVI(realizedValueScore, potentialValueScore),
+      customerValueRank: rank,
+      calculatedAt: now,
+    });
+  }
+
+  const BATCH = 100;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const batch = rows.slice(i, i + BATCH);
+    await db.$transaction(async (tx) => {
+      for (const row of batch) {
+        const { customerId, ...rest } = row;
+        await tx.customerValueMetrics.upsert({
+          where: { customerId },
+          create: row,
+          update: rest,
+        });
+      }
+    });
+  }
+
+  return { customers: rows.length, ranked, pending, calculatedAt: now };
+}
+
+/**
+ * Recalculates after one customer's data changed.
+ *
+ * Deliberately the same whole-population pass: see the note at the top of this
+ * file. Kept as its own name because the call sites read better for it, and so
+ * there is one obvious place to make it incremental if the customer list ever
+ * grows past what a single pass can carry.
+ */
+export async function recalculateCustomer(_customerId: string): Promise<RecalculationSummary> {
+  return recalculateAll();
+}
+
+/* ------------------------- one customer's own card ----------------------- */
+
+export interface CustomerValueDetail {
+  rank: CustomerRank;
+  realizedValueScore: number;
+  potentialValueScore: number | null;
+  customerValueIndex: number | null;
+  calculatedAt: Date | null;
+  components: {
+    grossProfitScore: number;
+    frequencyScore: number;
+    recencyScore: number;
+    paymentScore: number;
+    costToServeScore: number;
+  };
+  raw: {
+    salesRevenueRial: number;
+    grossProfitRial: number;
+    grossMarginPercent: number | null;
+    costCoveragePercent: number;
+    purchaseFrequency: number;
+    lastPurchaseDateJalali: string | null;
+    daysSinceLastPurchase: number | null;
+  };
+  potentialInputs: PotentialInputs;
+}
+
+/** Everything behind one customer's rank, so the card can show its working. */
+export async function getCustomerValueDetail(
+  customerId: string,
+): Promise<CustomerValueDetail | null> {
+  const db = getDb();
+  const customer = await db.customer.findUnique({
+    where: { id: customerId },
+    select: {
+      potentialConsumption: true, potentialCompanySize: true, potentialProjects: true,
+      potentialPortfolioFit: true, potentialRepeatPurchase: true,
+      valueMetrics: true,
+    },
+  });
+  if (!customer) return null;
+
+  const m = customer.valueMetrics;
+  return {
+    rank: (m?.customerValueRank ?? "PENDING") as CustomerRank,
+    realizedValueScore: m?.realizedValueScore ?? 0,
+    potentialValueScore: m?.potentialValueScore ?? null,
+    customerValueIndex: m?.customerValueIndex ?? null,
+    calculatedAt: m?.calculatedAt ?? null,
+    components: {
+      grossProfitScore: m?.grossProfitScore ?? 0,
+      frequencyScore: m?.frequencyScore ?? 0,
+      recencyScore: m?.recencyScore ?? 0,
+      paymentScore: m?.paymentScore ?? 0,
+      costToServeScore: m?.costToServeScore ?? 0,
+    },
+    raw: {
+      salesRevenueRial: Number(m?.salesRevenueRial ?? 0),
+      grossProfitRial: Number(m?.grossProfitRial ?? 0),
+      grossMarginPercent: m?.grossMarginPercent ?? null,
+      costCoveragePercent: m?.costCoveragePercent ?? 0,
+      purchaseFrequency: m?.purchaseFrequency ?? 0,
+      lastPurchaseDateJalali: m?.lastPurchaseDateJalali ?? null,
+      daysSinceLastPurchase: m?.daysSinceLastPurchase ?? null,
+    },
+    potentialInputs: {
+      consumption: customer.potentialConsumption,
+      companySize: customer.potentialCompanySize,
+      projects: customer.potentialProjects,
+      portfolioFit: customer.potentialPortfolioFit,
+      repeatPurchase: customer.potentialRepeatPurchase,
+    },
+  };
+}
+
+/** Rank counts and totals for the dashboard's summary cards. */
+export async function customerValueSummary() {
+  const db = getDb();
+  const [groups, averages] = await Promise.all([
+    db.customerValueMetrics.groupBy({
+      by: ["customerValueRank"],
+      _count: { _all: true },
+      _sum: { grossProfitRial: true },
+    }),
+    db.customerValueMetrics.aggregate({
+      _avg: { realizedValueScore: true, potentialValueScore: true },
+    }),
+  ]);
+
+  return {
+    byRank: groups.map((g) => ({
+      rank: g.customerValueRank,
+      count: g._count._all,
+      grossProfitRial: Number(g._sum.grossProfitRial ?? 0),
+    })),
+    averageRealized: Math.round((averages._avg.realizedValueScore ?? 0) * 10) / 10,
+    averagePotential: Math.round((averages._avg.potentialValueScore ?? 0) * 10) / 10,
+  };
+}
+
+/** One customer's potential-assessment log, newest first. */
+export async function listPotentialHistory(customerId: string) {
+  return getDb().customerPotentialHistory.findMany({
+    where: { customerId },
+    orderBy: { changedAt: "desc" },
+    take: 100,
+  });
+}

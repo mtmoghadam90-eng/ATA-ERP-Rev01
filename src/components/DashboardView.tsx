@@ -23,7 +23,8 @@ import {
   YAxis, 
   CartesianGrid 
 } from 'recharts';
-import { Task, User } from '../types';
+import { Task, User, ERPSettings } from '../types';
+import CustomerValueMatrix from './CustomerValueMatrix';
 import { getTodayShamsi, toShamsiStr } from '../dateUtils';
 import { ApiError } from '../api/client';
 import { useDashboard } from '../api/dashboard';
@@ -45,13 +46,16 @@ import { formatMoney } from '../numUtils';
 interface DashboardViewProps {
   setActiveTab: (tab: string) => void;
   currentUser: User | null;
+  /** Only for the value matrix's quadrant lines, which are the thresholds. */
+  settings?: ERPSettings;
 }
 
 const COLORS = ['#2563eb', '#3b82f6', '#60a5fa', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b'];
 
 export default function DashboardView({
   setActiveTab,
-  currentUser
+  currentUser,
+  settings,
 }: DashboardViewProps) {
 
   // State to filter tasks list between "My Tasks" and "All Tasks"
@@ -702,6 +706,12 @@ export default function DashboardView({
           </div>
         </div>
       </div>
+
+      {/* Customer value: realized against potential, one point per customer. */}
+      <CustomerValueMatrix
+        settings={settings?.customerValue}
+        onOpenCustomer={() => setActiveTab('customers')}
+      />
 
     </div>
   );

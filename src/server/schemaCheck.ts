@@ -39,11 +39,22 @@ export interface SchemaState {
   error?: string;
 }
 
-/** `table.column` for every column the migrations add, in file order. */
+/**
+ * `table.column` for every column the migrations add and have not since
+ * removed, in file order.
+ *
+ * Order is the whole point: a column added by one migration and dropped by a
+ * later one must not be expected, or the health check reports a permanent
+ * fault for a column the schema deliberately no longer has. That is not
+ * hypothetical — the single-axis customer level added in
+ * `20260819000000_customer_level` was dropped again when the two-axis value
+ * ranking replaced it, and without this the database would have looked broken
+ * ever after.
+ */
 function columnsMigrationsCreate(): { table: string; column: string }[] {
   const dir = path.join(process.cwd(), "prisma", "migrations");
-  const wanted: { table: string; column: string }[] = [];
-  const seen = new Set<string>();
+  // Insertion-ordered, so the reported list still follows migration order.
+  const wanted = new Map<string, { table: string; column: string }>();
 
   for (const name of expectedMigrations()) {
     let sql = "";
@@ -57,16 +68,21 @@ function columnsMigrationsCreate(): { table: string; column: string }[] {
     // the schema and the brackets. `ADD CONSTRAINT` is excluded: every foreign
     // key in `0_init` is one, and without the exclusion this reports two dozen
     // tables as missing a column called CONSTRAINT.
-    const pattern =
+    const added =
       /ALTER\s+TABLE\s+(?:\[?dbo\]?\.)?\[?(\w+)\]?\s+ADD\s+(?!CONSTRAINT\b)\[?(\w+)\]?/gi;
-    for (const match of sql.matchAll(pattern)) {
+    for (const match of sql.matchAll(added)) {
       const key = `${match[1]}.${match[2]}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      wanted.push({ table: match[1], column: match[2] });
+      if (!wanted.has(key)) wanted.set(key, { table: match[1], column: match[2] });
+    }
+
+    // A later migration dropping the column cancels the expectation.
+    const dropped =
+      /ALTER\s+TABLE\s+(?:\[?dbo\]?\.)?\[?(\w+)\]?\s+DROP\s+COLUMN\s+\[?(\w+)\]?/gi;
+    for (const match of sql.matchAll(dropped)) {
+      wanted.delete(`${match[1]}.${match[2]}`);
     }
   }
-  return wanted;
+  return [...wanted.values()];
 }
 
 /** Migration directory names, which are exactly the names Prisma records. */

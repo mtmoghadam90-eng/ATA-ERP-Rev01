@@ -17,7 +17,7 @@ import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 import { applyStockDelta } from "./productService";
-import { syncCustomerScore } from "./customerScore";
+import { scheduleCustomerValueRecalculation } from "./customerValueRecalc";
 
 /**
  * Proforma data access.
@@ -515,9 +515,12 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
     }
 
     await syncProjectStatus(tx, proforma.projectId, todayJalali);
-    await syncCustomerScore(tx, proforma.customerId);
     return proforma;
   });
+
+  // A sale changes what every customer's percentile is measured against, so the
+  // whole ranking is refreshed — coalesced, and never in the way of the save.
+  scheduleCustomerValueRecalculation();
 
   // Audit log
   await afterCommit("proforma create", async () => {
@@ -649,17 +652,12 @@ export async function updateProforma(
       await syncProjectStatus(tx, existing.projectId, todayJalali);
     }
 
-    // Same for the customer's level, and for the same reason: a proforma moved
-    // to another customer takes its purchase off the first one's record.
-    await syncCustomerScore(tx, proforma.customerId);
-    if (existing.customerId && existing.customerId !== proforma.customerId) {
-      await syncCustomerScore(tx, existing.customerId);
-    }
-
     const afterLabels = await readLabels(tx, proforma.customerId, proforma.projectId);
 
     return { proforma, before, after, beforeLabels, afterLabels };
   });
+
+  scheduleCustomerValueRecalculation();
 
   if (result) {
     // Both sides carry their lines: the outcome is derived from them, and the
@@ -838,9 +836,9 @@ export async function deleteProforma(
     await tx.proforma.delete({ where: { id } });
     // The project's status was derived partly from this proforma.
     await syncProjectStatus(tx, existing.projectId, todayJalali);
-    // So was the customer's level, if this was one of their purchases.
-    await syncCustomerScore(tx, existing.customerId);
   });
+
+  scheduleCustomerValueRecalculation();
 
   // Audit log
   if (proforma) {
@@ -891,7 +889,7 @@ export async function setItemOutcomes(
   const db = getDb();
   const visibility = visibilityClause(user);
 
-  return db.$transaction(async (tx) => {
+  const outcome = await db.$transaction(async (tx) => {
     const existing = await tx.proforma.findFirst({
       where: visibility ? { AND: [{ id }, visibility] } : { id },
       select: { id: true, projectId: true, customerId: true },
@@ -911,8 +909,10 @@ export async function setItemOutcomes(
     }
 
     await syncProjectStatus(tx, existing.projectId, todayJalali);
-    // Marking lines won or lost is exactly what decides a purchase.
-    await syncCustomerScore(tx, existing.customerId);
     return "ok";
   });
+
+  // Marking lines won or lost is exactly what turns a quotation into a sale.
+  scheduleCustomerValueRecalculation();
+  return outcome;
 }
