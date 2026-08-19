@@ -1,5 +1,7 @@
 import express from "express";
+import archiver from "archiver";
 import { parseListQuery } from "../listing";
+import { resolveUploadPath } from "../uploadsDir";
 import { RouteDeps, sendError } from "./types";
 import { getDb } from "../db";
 import { nextDocumentNumber } from "../documentNumbers";
@@ -10,7 +12,14 @@ import {
 } from "../services/projectService";
 import { DOCUMENT_FOLDERS, listProjectDocuments } from "../services/projectDocuments";
 import { findMissingExchangeRates, summarizeProjectFinance } from "../services/projectFinance";
+import { listSatisfactionLetters } from "../services/satisfactionLetters";
 import { getTodayShamsi } from "../../dateUtils";
+
+/** A zip entry name that cannot climb out of its folder or break the archive. */
+function safeEntryName(name: string): string {
+  const cleaned = name.replace(/[\\/:*?"<>|]/g, "-").replace(/^\.+/, "").trim();
+  return cleaned.slice(0, 150) || "letter";
+}
 
 /**
  * Projects REST API. Follows the customers pattern: paginated reads, a picked
@@ -105,6 +114,96 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
       res.json({ success: true, ...(await findMissingExchangeRates()) });
     } catch (err) {
       sendError(res, err, "GET /api/projects/finance/missing-rates");
+    }
+  });
+
+  /**
+   * Customer satisfaction letters across projects.
+   *
+   * Registered ahead of `/api/projects/:id`, which would otherwise match
+   * "satisfaction-letters" as an id and answer 404.
+   */
+  app.get("/api/projects/satisfaction-letters", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const result = await listSatisfactionLetters(user, req.query);
+      res.json({ success: true, ...result });
+    } catch (err) {
+      sendError(res, err, "GET /api/projects/satisfaction-letters");
+    }
+  });
+
+  /**
+   * The filtered letters as one zip, built from the same query the table ran.
+   *
+   * The filters are re-applied here rather than the client sending a list of
+   * files: a client-supplied path list would be a way to ask this endpoint for
+   * any file on disk. Everything zipped is something this user's own filter
+   * just returned.
+   */
+  app.get("/api/projects/satisfaction-letters/zip", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const { rows } = await listSatisfactionLetters(user, req.query);
+
+      // Resolve every file before a byte of zip is sent: once the response has
+      // started there is no way to answer with an error the browser will show,
+      // and an empty download is indistinguishable from a broken one.
+      const entries: { path: string; name: string }[] = [];
+      // Two letters can genuinely share a name — the same scan filed on two
+      // projects, or one project holding two "رضایت‌نامه.pdf". A zip permits
+      // duplicate entries, but unpacking one silently overwrites the other, so
+      // the second occurrence is numbered instead.
+      const used = new Set<string>();
+      for (const row of rows) {
+        const folder = `${row.code}-${row.name}`.replace(/[\\/:*?"<>|]/g, "-").slice(0, 120);
+        for (const letter of row.letters) {
+          const resolved = resolveUploadPath(letter.url);
+          if (!resolved) continue;
+
+          const base = `${folder}/${safeEntryName(letter.name)}`;
+          let name = base;
+          for (let n = 2; used.has(name); n++) {
+            const dot = base.lastIndexOf(".");
+            name = dot > base.lastIndexOf("/")
+              ? `${base.slice(0, dot)} (${n})${base.slice(dot)}`
+              : `${base} (${n})`;
+          }
+          used.add(name);
+          entries.push({ path: resolved, name });
+        }
+      }
+
+      if (entries.length === 0) {
+        res.status(404).json({ success: false, error: "هیچ فایل قابل دانلودی در این فهرست نیست." });
+        return;
+      }
+
+      const archive = archiver("zip", { zlib: { level: 9 } });
+      // A failure mid-stream cannot become a JSON error — the headers are long
+      // gone — so it is logged and the connection dropped, which is what a
+      // browser reads as a failed download.
+      archive.on("error", (err) => {
+        console.error("satisfaction-letter zip failed:", err);
+        res.destroy();
+      });
+
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="satisfaction-letters.zip"; filename*=UTF-8''${encodeURIComponent("رضایت‌نامه‌ها.zip")}`,
+      );
+      archive.pipe(res);
+      for (const entry of entries) archive.file(entry.path, { name: entry.name });
+      await archive.finalize();
+    } catch (err) {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      sendError(res, err, "GET /api/projects/satisfaction-letters/zip");
     }
   });
 

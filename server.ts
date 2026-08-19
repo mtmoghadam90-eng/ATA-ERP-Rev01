@@ -40,6 +40,7 @@ import { scrapeRates } from "./src/server/rateSource";
 import { ensureRatesFresh } from "./src/server/services/rateRefresh";
 import { ensureWorkflowSweepRanToday, runDueWorkflows } from "./src/server/services/workflowSweep";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
+import { UPLOADS_DIR, ensureUploadsDir } from "./src/server/uploadsDir";
 import { authenticateUser, findAuthUser } from "./src/server/services/userService";
 
 /**
@@ -83,10 +84,7 @@ async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  const UPLOADS_DIR = path.join(process.cwd(), "uploads");
-  if (!fs.existsSync(UPLOADS_DIR)) {
-    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-  }
+  ensureUploadsDir();
 
   // Serve static files from uploads folder
   app.use("/uploads", express.static(UPLOADS_DIR));

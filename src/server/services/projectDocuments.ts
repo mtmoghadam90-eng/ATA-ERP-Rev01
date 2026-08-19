@@ -22,8 +22,21 @@ export const DOCUMENT_FOLDERS = [
   { id: "packaging_delivery", name: "بسته‌بندی و تحویل کالا" },
   { id: "financial_transactions", name: "تراکنش‌های مالی و پرداخت‌ها" },
   { id: "after_sales", name: "خدمات پس از فروش" },
+  { id: "satisfaction_letters", name: "رضایت‌نامه‌ها" },
   { id: "manual_other", name: "سایر مدارک و فایل‌های دستی" },
 ] as const;
+
+/**
+ * The folder a customer satisfaction letter is filed under, and the `kind` tag
+ * that identifies one.
+ *
+ * The tag is what the satisfaction-letter screen actually queries on — a user
+ * may rename the file or move it to another folder, so neither the name nor
+ * the location can stand in for "this is a satisfaction letter". Same reasoning
+ * as `projectConfirmation`.
+ */
+export const SATISFACTION_LETTER_FOLDER = "رضایت‌نامه‌ها";
+export const SATISFACTION_LETTER_KIND = "satisfactionLetter";
 
 const MANUAL_FOLDER = "سایر مدارک و فایل‌های دستی";
 

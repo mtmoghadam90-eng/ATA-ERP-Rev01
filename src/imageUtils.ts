@@ -39,11 +39,21 @@ export async function downloadFileFromServer(url: string, filename: string) {
   }
 }
 
-export async function uploadFile(file: File): Promise<string> {
+/**
+ * Uploads a file and returns the URL it was stored under.
+ *
+ * `folder` files it into a subfolder of `uploads/`. The server sanitizes the
+ * name to `[a-zA-Z0-9_-]`, so it must be **Latin** — a Persian folder name
+ * sanitizes down to an empty string and the file silently lands in the uploads
+ * root instead. The Persian folder names users see (the project documents tab)
+ * are a separate, logical grouping stored on the record, not directories.
+ */
+export async function uploadFile(file: File, folder?: string): Promise<string> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch("/api/upload", {
+  const query = folder ? `?folder=${encodeURIComponent(folder)}` : "";
+  const response = await fetch(`/api/upload${query}`, {
     method: "POST",
     credentials: "same-origin",
     body: formData,
