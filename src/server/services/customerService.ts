@@ -18,10 +18,11 @@ import { processWorkflowRules } from "./workflowService";
 /** Sortable columns, allowlisted so a caller cannot name an arbitrary field. */
 export const CUSTOMER_SORTABLE = [
   "companyName", "customerType", "status", "province", "createdAt", "updatedAt",
+  "customerLevel", "purchaseCount", "purchaseAmountRial", "purchaseItemCount",
 ] as const;
 
 export const CUSTOMER_FILTERABLE = [
-  "status", "customerType", "province", "industry", "city",
+  "status", "customerType", "province", "industry", "city", "customerLevel",
 ] as const;
 
 const SEARCH_FIELDS = [
@@ -147,6 +148,12 @@ const LIST_SELECT = {
   ownerUserId: true,
   createdAt: true,
   customValues: true,
+  // The «سطح مشتری» column, and the totals behind it — stored rather than
+  // derived per read so the grid can filter, sort and export on them.
+  customerLevel: true,
+  purchaseCount: true,
+  purchaseAmountRial: true,
+  purchaseItemCount: true,
   // The grid shows who each customer is linked to. Joined here rather than
   // fetched per row, which would be one request per visible customer.
   linksFrom: {

@@ -17,6 +17,7 @@ import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 import { applyStockDelta } from "./productService";
+import { syncCustomerScore } from "./customerScore";
 
 /**
  * Proforma data access.
@@ -514,6 +515,7 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
     }
 
     await syncProjectStatus(tx, proforma.projectId, todayJalali);
+    await syncCustomerScore(tx, proforma.customerId);
     return proforma;
   });
 
@@ -592,7 +594,7 @@ export async function updateProforma(
   const result = await db.$transaction(async (tx) => {
     const existing = await tx.proforma.findFirst({
       where: visibility ? { AND: [{ id }, visibility] } : { id },
-      select: { id: true, projectId: true, proformaNumber: true },
+      select: { id: true, projectId: true, customerId: true, proformaNumber: true },
     });
     if (!existing) return null;
 
@@ -645,6 +647,13 @@ export async function updateProforma(
     await syncProjectStatus(tx, proforma.projectId, todayJalali);
     if (existing.projectId && existing.projectId !== proforma.projectId) {
       await syncProjectStatus(tx, existing.projectId, todayJalali);
+    }
+
+    // Same for the customer's level, and for the same reason: a proforma moved
+    // to another customer takes its purchase off the first one's record.
+    await syncCustomerScore(tx, proforma.customerId);
+    if (existing.customerId && existing.customerId !== proforma.customerId) {
+      await syncCustomerScore(tx, existing.customerId);
     }
 
     const afterLabels = await readLabels(tx, proforma.customerId, proforma.projectId);
@@ -794,7 +803,7 @@ export async function deleteProforma(
 
   const existing = await db.proforma.findFirst({
     where: visibility ? { AND: [{ id }, visibility] } : { id },
-    select: { id: true, projectId: true, proformaNumber: true },
+    select: { id: true, projectId: true, customerId: true, proformaNumber: true },
   });
   if (!existing) return "forbidden";
 
@@ -829,6 +838,8 @@ export async function deleteProforma(
     await tx.proforma.delete({ where: { id } });
     // The project's status was derived partly from this proforma.
     await syncProjectStatus(tx, existing.projectId, todayJalali);
+    // So was the customer's level, if this was one of their purchases.
+    await syncCustomerScore(tx, existing.customerId);
   });
 
   // Audit log
@@ -883,7 +894,7 @@ export async function setItemOutcomes(
   return db.$transaction(async (tx) => {
     const existing = await tx.proforma.findFirst({
       where: visibility ? { AND: [{ id }, visibility] } : { id },
-      select: { id: true, projectId: true },
+      select: { id: true, projectId: true, customerId: true },
     });
     if (!existing) return "forbidden";
 
@@ -900,6 +911,8 @@ export async function setItemOutcomes(
     }
 
     await syncProjectStatus(tx, existing.projectId, todayJalali);
+    // Marking lines won or lost is exactly what decides a purchase.
+    await syncCustomerScore(tx, existing.customerId);
     return "ok";
   });
 }

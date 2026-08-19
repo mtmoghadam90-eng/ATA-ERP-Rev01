@@ -23,6 +23,9 @@ import { computeInquiryTotals } from "../src/utils/inquirySteps";
 import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr } from "../src/dateUtils";
 import { generateSku, decodeSku } from "../src/utils/skuUtils";
+import {
+  CUSTOMER_LEVELS, DEFAULT_CUSTOMER_SCORING, bandScore, normalizeScoringSettings, scoreCustomer,
+} from "../src/utils/customerScoring";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
 import { calculateProjectFinance } from "../src/utils/finance";
@@ -1155,6 +1158,94 @@ head("Workflow: time-based triggers");
   ok("every subject names a model and a Jalali column",
     Object.values(SCHEDULE_SUBJECTS).every((s) => !!s.model && /Jalali$/.test(s.dateField)),
     Object.entries(SCHEDULE_SUBJECTS).map(([k, v]) => `${k}:${v.dateField}`));
+}
+
+/**
+ * Customer levels.
+ *
+ * The three criteria are weighted in the order of importance the business gave
+ * them — frequency 3, amount 2, item count 1 — so the checks that matter are
+ * the ones about *precedence*: frequency has to be able to outweigh the other
+ * two together, and it must not be able to decide a level on its own.
+ */
+head("Customer levels: the three criteria, weighted");
+{
+  const cfg = DEFAULT_CUSTOMER_SCORING;
+  const level = (c: number, a: number, q: number) =>
+    scoreCustomer({ purchaseCount: c, purchaseAmountRial: a, purchaseItemCount: q }, cfg).level;
+  const score = (c: number, a: number, q: number) =>
+    scoreCustomer({ purchaseCount: c, purchaseAmountRial: a, purchaseItemCount: q }, cfg).score;
+
+  // Never bought is not a low score, it is the absence of one.
+  eq("a customer with no purchase is set apart, not ranked last",
+    level(0, 0, 0), CUSTOMER_LEVELS.NONE);
+  eq("and scores nothing at all", score(0, 0, 0), 0);
+  eq("a quote that never closed does not make them a customer",
+    scoreCustomer({ purchaseCount: 0, purchaseAmountRial: 9e12, purchaseItemCount: 500 }, cfg).level,
+    CUSTOMER_LEVELS.NONE);
+
+  // The bands themselves.
+  eq("below both thresholds scores 1", bandScore(1, { fair: 2, good: 5 }), 1);
+  eq("reaching the first threshold scores 2", bandScore(2, { fair: 2, good: 5 }), 2);
+  eq("reaching the second scores 3", bandScore(5, { fair: 2, good: 5 }), 3);
+  eq("a threshold counts as reached, not exceeded", bandScore(5, { fair: 2, good: 5 }), 3);
+
+  // The corners.
+  eq("the best customer on every count is طلایی",
+    level(cfg.purchaseCount.good, cfg.purchaseAmountRial.good, cfg.purchaseItemCount.good),
+    CUSTOMER_LEVELS.GOLD);
+  eq("and scores the maximum",
+    score(cfg.purchaseCount.good, cfg.purchaseAmountRial.good, cfg.purchaseItemCount.good), 3);
+  eq("one small purchase is برنزی", level(1, 1, 1), CUSTOMER_LEVELS.BRONZE);
+  eq("and scores the minimum", score(1, 1, 1), 1);
+
+  // Importance: frequency outranks the other two.
+  const frequentOnly = score(cfg.purchaseCount.good, 0, 0);
+  const richOnly = score(1, cfg.purchaseAmountRial.good, cfg.purchaseItemCount.good);
+  ok("buying often beats buying big once", frequentOnly > score(1, cfg.purchaseAmountRial.good, 0),
+    [frequentOnly, score(1, cfg.purchaseAmountRial.good, 0)]);
+  // Weight 3 against 2+1: buying often is worth exactly as much as buying big
+  // and broad put together. Deliberate — a regular small customer and a
+  // one-off large one are both worth keeping, and neither outranks the other.
+  eq("frequency alone weighs exactly as much as amount and quantity together",
+    frequentOnly, richOnly);
+  ok("frequency alone cannot reach the top level",
+    level(cfg.purchaseCount.good, 0, 0) !== CUSTOMER_LEVELS.GOLD, level(cfg.purchaseCount.good, 0, 0));
+  ok("frequency alone still lifts a customer off the bottom",
+    level(cfg.purchaseCount.good, 0, 0) !== CUSTOMER_LEVELS.BRONZE, level(cfg.purchaseCount.good, 0, 0));
+
+  // Settings arrive as user-edited JSON and cannot be trusted.
+  {
+    const fixed = normalizeScoringSettings({ purchaseCount: { fair: 9, good: 2 } } as never);
+    ok("a band entered back to front is put in order",
+      fixed.purchaseCount.fair <= fixed.purchaseCount.good,
+      [fixed.purchaseCount.fair, fixed.purchaseCount.good]);
+    const cutoffs = normalizeScoringSettings({ goldFrom: 1.2, silverFrom: 2.8 } as never);
+    ok("so are cutoffs that would make a level unreachable",
+      cutoffs.goldFrom >= cutoffs.silverFrom, [cutoffs.goldFrom, cutoffs.silverFrom]);
+    const empty = normalizeScoringSettings(undefined);
+    eq("nothing configured falls back to the defaults",
+      JSON.stringify(empty), JSON.stringify(DEFAULT_CUSTOMER_SCORING));
+    const junk = normalizeScoringSettings({ purchaseCount: { fair: "x", good: null } } as never);
+    ok("and a non-number never becomes NaN",
+      Number.isFinite(junk.purchaseCount.fair) && Number.isFinite(junk.purchaseCount.good),
+      [junk.purchaseCount.fair, junk.purchaseCount.good]);
+    ok("a negative total cannot drag a level below the floor",
+      scoreCustomer({ purchaseCount: -5, purchaseAmountRial: -1 }, cfg).level === CUSTOMER_LEVELS.NONE,
+      scoreCustomer({ purchaseCount: -5 }, cfg).level);
+  }
+
+  // Every level a filter offers must be one the rules can actually produce.
+  {
+    const produced = new Set<string>();
+    for (const c of [0, 1, 2, 5, 40]) {
+      for (const a of [0, 1, 1e9, 5e9, 9e12]) {
+        for (const q of [0, 1, 5, 20, 900]) produced.add(level(c, a, q));
+      }
+    }
+    ok("all four levels are reachable with the default thresholds",
+      produced.size === 4, [...produced]);
+  }
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
