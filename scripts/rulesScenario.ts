@@ -28,6 +28,7 @@ import {
   costToServeScoreOf, determineRank, isPotentialAssessed, normalizeCustomerValueSettings,
   paymentScoreOf, percentileRank, recencyScore, sumRealizedWeights, validateCustomerValueSettings,
 } from "../src/utils/customerValue";
+import { saleDateOf } from "../src/server/services/customerValueService";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
 import { calculateProjectFinance } from "../src/utils/finance";
@@ -1302,6 +1303,37 @@ head("Customer value: the acceptance scenarios");
 
   eq("9 — a purchase four months ago scores 80", recencyScore(4, S), 80);
   eq("10 — a very expensive customer to serve scores 0", costToServeScoreOf("بسیار زیاد"), 0);
+}
+
+/**
+ * A sale happens on the day it is approved.
+ *
+ * `Project.winningDate` is «تاریخ تایید (ابلاغ قرارداد)». Keying off the
+ * proforma's issue date instead puts a sale in the wrong evaluation period and
+ * makes the customer look as stale as the day they were *quoted* — and the gap
+ * between quoting and winning is months in this business, which is several
+ * recency bands.
+ */
+head("Customer value: the sale date is the approval date");
+{
+  const issued = new Date("2026-03-21");
+  const approved = new Date("2026-09-23");
+
+  eq("the approval date wins over the issue date",
+    saleDateOf({ issueDate: issued, project: { winningDate: approved } }).toISOString().slice(0, 10),
+    "2026-09-23");
+  eq("a proforma with no project falls back to its issue date",
+    saleDateOf({ issueDate: issued, project: null }).toISOString().slice(0, 10), "2026-03-21");
+  eq("so does a project never stamped with one",
+    saleDateOf({ issueDate: issued, project: { winningDate: null } }).toISOString().slice(0, 10), "2026-03-21");
+
+  // The window: a quotation written before it and approved inside it is a sale
+  // in this period, which the issue date alone would miss entirely.
+  const periodStart = new Date(Date.UTC(2025, 11, 1));
+  ok("a sale quoted before the window but approved inside it is in the period",
+    saleDateOf({ issueDate: new Date("2025-06-01"), project: { winningDate: new Date("2026-06-01") } }) >= periodStart);
+  ok("and one approved before the window is not",
+    saleDateOf({ issueDate: new Date("2025-06-01"), project: { winningDate: new Date("2025-07-01") } }) < periodStart);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
