@@ -2,10 +2,10 @@
  * Types & Interfaces for Abzar Tamin Arshia ERP
  */
 
-// The customer level rules live with the scoring itself, so the thresholds and
-// the arithmetic that reads them cannot drift apart.
-export type { CustomerScoringSettings, CustomerLevel } from './utils/customerScoring';
-import type { CustomerScoringSettings, CustomerLevel } from './utils/customerScoring';
+// The customer value rules live with the arithmetic that reads them, so the
+// weights and the formula cannot drift apart.
+export type { CustomerValueSettings, CustomerRank } from './utils/customerValue';
+import type { CustomerValueSettings } from './utils/customerValue';
 
 export interface ModuleNote {
   id: string;
@@ -63,15 +63,20 @@ export interface Customer {
   linkedCustomerIds?: string[];
 
   /**
-   * What this customer has bought, and the internal level it earns them.
-   *
-   * All four are derived from their won proforma lines and written by the
-   * server; a client cannot set them. See `src/utils/customerScoring.ts`.
+   * The manual half of customer value — judgements no sales figure can answer.
+   * The computed half arrives separately as `valueMetrics`.
    */
-  customerLevel?: CustomerLevel;
-  purchaseCount?: number;
-  purchaseAmountRial?: number;
-  purchaseItemCount?: number;
+  potentialConsumption?: number | null;
+  potentialCompanySize?: number | null;
+  potentialProjects?: number | null;
+  potentialPortfolioFit?: number | null;
+  potentialRepeatPurchase?: number | null;
+  potentialValueScore?: number | null;
+  paymentBehaviour?: string | null;
+  /** False while the value is still the migration's placeholder. */
+  paymentReviewed?: boolean;
+  costToServe?: string | null;
+  costToServeReviewed?: boolean;
 
   // Custom Field values
   customValues?: Record<string, any>;
@@ -563,11 +568,11 @@ export interface ERPSettings {
   deliveryChecklistTemplate?: string[];
   workflows?: WorkflowRule[];
   /**
-   * Thresholds behind the customer level column. Editing them changes nobody's
-   * level until a recompute runs, because the level is stored on the row so it
-   * can be filtered and sorted in SQL — see `src/utils/customerScoring.ts`.
+   * Customer value ranking: evaluation period, thresholds, weights and the
+   * recency bands. Editing these changes nobody's rank until a recalculation
+   * runs — the scores are stored so the grid can sort, filter and page on them.
    */
-  customerScoring?: CustomerScoringSettings;
+  customerValue?: CustomerValueSettings;
 }
 
 export interface ProjectReferralResponse {

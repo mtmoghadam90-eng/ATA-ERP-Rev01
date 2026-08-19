@@ -38,8 +38,6 @@ import {
   GripVertical,
   Copy,
   ShieldAlert,
-  Award,
-  Loader2,
 } from 'lucide-react';
 import { ERPSettings, CustomField, User, Project, AuditLog, WorkflowRule } from '../types';
 import { formatERPNumber } from '../numUtils';
@@ -55,9 +53,6 @@ import { SCHEDULE_SUBJECTS, describeSchedule } from '../utils/workflowSchedule';
 import ConfirmModal from './ConfirmModal';
 import { uploadFile } from '../imageUtils';
 import { REQUIRED_FIELDS_METADATA, DEFAULT_REQUIRED_FIELDS } from '../utils/requiredFields';
-import {
-  CUSTOMER_LEVELS, DEFAULT_CUSTOMER_SCORING, normalizeScoringSettings, scoreCustomer,
-} from '../utils/customerScoring';
 
 interface SettingsViewProps {
   settings: ERPSettings;
@@ -111,7 +106,7 @@ export default function SettingsView({
   };
   
   // Tab control
-  const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields' | 'customerScoring'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields'>('general');
 
   // Mandatory / optional fields state
   const [localRequiredFields, setLocalRequiredFields] = useState<Record<string, Record<string, boolean>>>(() => {
@@ -887,18 +882,6 @@ export default function SettingsView({
         </button>
 
         <button
-          onClick={() => setActiveTab('customerScoring')}
-          className={`py-2 px-4 md:py-2.5 md:px-5 text-xs md:text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 rounded-xl border flex-shrink-0 ${
-            activeTab === 'customerScoring'
-              ? 'bg-sky-50 text-sky-600 border-sky-300 shadow-sm shadow-sky-100'
-              : 'bg-white text-slate-500 hover:text-slate-800 hover:bg-slate-50 border-slate-200'
-          }`}
-        >
-          <Award size={16} className="text-amber-500" />
-          سطح‌بندی مشتریان
-        </button>
-
-        <button
           onClick={() => setActiveTab('rates')}
           className={`py-2 px-4 md:py-2.5 md:px-5 text-xs md:text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 rounded-xl border flex-shrink-0 ${
             activeTab === 'rates'
@@ -1009,8 +992,6 @@ export default function SettingsView({
             </div>
           </div>
         </div>
-      ) : activeTab === 'customerScoring' ? (
-        <CustomerScoringPanel settings={settings} updateSettings={updateSettings} />
       ) : activeTab === 'rates' ? (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="mb-6">
@@ -3820,192 +3801,6 @@ export default function SettingsView({
         }
       />
 
-    </div>
-  );
-}
-
-/**
- * The thresholds behind the «سطح مشتری» column.
- *
- * The level is stored on each customer row so the grid can filter, sort, page
- * and export on it — which means editing these numbers changes nobody until the
- * recompute runs. The button is not a convenience; without it the settings and
- * the column disagree. Saving therefore offers it immediately.
- *
- * The preview scores a made-up customer with the live values, using the same
- * function the server does, so the effect of a change is visible before it is
- * applied to anybody.
- */
-function CustomerScoringPanel({
-  settings,
-  updateSettings,
-}: {
-  settings: ERPSettings;
-  updateSettings: (next: ERPSettings) => void;
-}) {
-  const stored = normalizeScoringSettings(settings.customerScoring);
-  const [draft, setDraft] = useState(stored);
-  const [recomputing, setRecomputing] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const setBand = (
-    key: 'purchaseCount' | 'purchaseAmountRial' | 'purchaseItemCount',
-    edge: 'fair' | 'good',
-    value: string,
-  ) => setDraft((d) => ({ ...d, [key]: { ...d[key], [edge]: Number(value) || 0 } }));
-
-  const handleSave = () => {
-    const clean = normalizeScoringSettings(draft);
-    setDraft(clean);
-    updateSettings({ ...settings, customerScoring: clean });
-    setNotice('آستانه‌ها ذخیره شد. برای اعمال روی سطح مشتریان، «بازمحاسبه سطح همه مشتریان» را بزنید.');
-    setError(null);
-  };
-
-  const handleRecompute = async () => {
-    setRecomputing(true);
-    setNotice(null);
-    setError(null);
-    try {
-      const result = await api.post<{ updated: number }>('/api/customers/recompute-levels', {});
-      setNotice(`سطح ${result.updated.toLocaleString('fa-IR')} مشتری بازمحاسبه شد.`);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'بازمحاسبه با خطا مواجه شد.');
-    } finally {
-      setRecomputing(false);
-    }
-  };
-
-  const rows: { key: 'purchaseCount' | 'purchaseAmountRial' | 'purchaseItemCount'; label: string; hint: string; weight: string }[] = [
-    { key: 'purchaseCount', label: 'تکرار خرید', hint: 'تعداد پیش‌فاکتورهایی که دست‌کم یک قلم برنده دارند', weight: '۳ (بیشترین)' },
-    { key: 'purchaseAmountRial', label: 'مبلغ خرید (ریال)', hint: 'ارزش اقلام برنده، به نرخ ثبت‌شده روی همان سند', weight: '۲' },
-    { key: 'purchaseItemCount', label: 'تعداد کالای خرید', hint: 'جمع تعداد اقلام برنده', weight: '۱' },
-  ];
-
-  const sample = scoreCustomer(
-    { purchaseCount: draft.purchaseCount.good, purchaseAmountRial: draft.purchaseAmountRial.good, purchaseItemCount: draft.purchaseItemCount.good },
-    draft,
-  );
-  const midSample = scoreCustomer(
-    { purchaseCount: draft.purchaseCount.fair, purchaseAmountRial: draft.purchaseAmountRial.fair, purchaseItemCount: draft.purchaseItemCount.fair },
-    draft,
-  );
-
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-6">
-      <div>
-        <h3 className="text-lg font-bold text-slate-900">سطح‌بندی مشتریان</h3>
-        <p className="text-slate-500 text-sm mt-1">
-          مشتریان بر اساس خریدهای برنده‌شان امتیاز می‌گیرند و در سه سطح دسته‌بندی می‌شوند. این سطح در ستون «سطح مشتری» ماژول مشتریان دیده می‌شود و قابل فیلتر و خروجی گرفتن است.
-        </p>
-      </div>
-
-      <div className="bg-sky-50/60 border border-sky-100 rounded-xl p-3.5 text-[11px] text-sky-900 leading-relaxed">
-        هر معیار بر اساس دو آستانه‌ی زیر امتیاز ۱، ۲ یا ۳ می‌گیرد؛ سپس میانگین وزنی آن‌ها سطح مشتری را تعیین می‌کند.
-        وزن‌ها به ترتیب اهمیتی است که تعیین کرده‌اید: تکرار خرید ۳، مبلغ ۲ و تعداد کالا ۱.
-        مشتری‌ای که هیچ خرید برنده‌ای ندارد در هیچ‌کدام از سه سطح قرار نمی‌گیرد و با برچسب «{CUSTOMER_LEVELS.NONE}» جدا می‌ماند.
-      </div>
-
-      <div className="space-y-3">
-        {rows.map((row) => (
-          <div key={row.key} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center border border-slate-150 rounded-xl p-3.5">
-            <div className="md:col-span-5">
-              <div className="font-bold text-xs text-slate-700">{row.label}</div>
-              <div className="text-[10px] text-slate-400 mt-0.5">{row.hint}</div>
-              <div className="text-[10px] text-slate-500 mt-1">وزن: <strong>{row.weight}</strong></div>
-            </div>
-            <div className="md:col-span-3">
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">از این مقدار = امتیاز ۲</label>
-              <input
-                type="number" min={0}
-                value={draft[row.key].fair}
-                onChange={(e) => setBand(row.key, 'fair', e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-left focus:outline-none focus:border-sky-500"
-                dir="ltr"
-              />
-            </div>
-            <div className="md:col-span-3">
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">از این مقدار = امتیاز ۳</label>
-              <input
-                type="number" min={0}
-                value={draft[row.key].good}
-                onChange={(e) => setBand(row.key, 'good', e.target.value)}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-left focus:outline-none focus:border-sky-500"
-                dir="ltr"
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="border border-amber-200 bg-amber-50/40 rounded-xl p-3.5">
-          <label className="block text-[11px] font-bold text-amber-800 mb-1.5">
-            امتیاز لازم برای «{CUSTOMER_LEVELS.GOLD}»
-          </label>
-          <input
-            type="number" min={0} max={3} step={0.05}
-            value={draft.goldFrom}
-            onChange={(e) => setDraft({ ...draft, goldFrom: Number(e.target.value) || 0 })}
-            className="w-full border border-amber-200 rounded-lg px-3 py-2 text-xs font-mono text-left focus:outline-none focus:border-amber-500 bg-white"
-            dir="ltr"
-          />
-        </div>
-        <div className="border border-slate-200 bg-slate-50/60 rounded-xl p-3.5">
-          <label className="block text-[11px] font-bold text-slate-600 mb-1.5">
-            امتیاز لازم برای «{CUSTOMER_LEVELS.SILVER}»
-          </label>
-          <input
-            type="number" min={0} max={3} step={0.05}
-            value={draft.silverFrom}
-            onChange={(e) => setDraft({ ...draft, silverFrom: Number(e.target.value) || 0 })}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-left focus:outline-none focus:border-sky-500 bg-white"
-            dir="ltr"
-          />
-        </div>
-      </div>
-
-      <div className="text-[11px] text-slate-600 bg-slate-50 border border-slate-150 rounded-xl p-3.5 space-y-1">
-        <div className="font-bold text-slate-700 mb-1">پیش‌نمایش با همین اعداد:</div>
-        <div>مشتری‌ای که به هر سه آستانه‌ی بالا رسیده باشد: امتیاز <strong dir="ltr">{sample.score}</strong> ← <strong>{sample.level}</strong></div>
-        <div>مشتری‌ای که به هر سه آستانه‌ی میانی رسیده باشد: امتیاز <strong dir="ltr">{midSample.score}</strong> ← <strong>{midSample.level}</strong></div>
-        <div className="text-slate-400 pt-1">امتیاز همیشه بین ۱ تا ۳ است (و صفر برای مشتری بدون خرید).</div>
-      </div>
-
-      {notice && (
-        <div className="p-3 bg-emerald-50 text-emerald-800 border border-emerald-100 rounded-xl text-[11px]">{notice}</div>
-      )}
-      {error && (
-        <div className="p-3 bg-rose-50 text-rose-800 border border-rose-100 rounded-xl text-[11px]">{error}</div>
-      )}
-
-      <div className="flex flex-wrap justify-end gap-2 pt-4 border-t border-slate-100">
-        <button
-          type="button"
-          onClick={() => setDraft(DEFAULT_CUSTOMER_SCORING)}
-          className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
-        >
-          بازگرداندن به پیش‌فرض
-        </button>
-        <button
-          type="button"
-          onClick={handleRecompute}
-          disabled={recomputing}
-          className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5"
-        >
-          {recomputing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-          بازمحاسبه سطح همه مشتریان
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          className="px-5 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5"
-        >
-          <Save size={14} />
-          ذخیره آستانه‌ها
-        </button>
-      </div>
     </div>
   );
 }

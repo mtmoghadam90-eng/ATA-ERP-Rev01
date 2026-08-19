@@ -101,17 +101,31 @@ model Customer {
 
   customValues String? @db.NVarChar(Max)
 
-  /// What this customer has bought, and the level it earns them.
+  /// The manual half of customer value: judgements a person makes, which no
+  /// amount of sales data can answer. The computed half lives in
+  /// `CustomerValueMetrics` — see there for why the two are kept apart.
   ///
-  /// Derived from their won proforma lines and re-derived whenever one changes,
-  /// in the same transaction — the same treatment a project's status gets, and
-  /// for the same reason: the grid filters, sorts, pages and exports on the
-  /// level, none of which works if every reader has to recompute it.
-  /// `customerLevel` is null only until the first recompute has run.
-  purchaseCount      Int      @default(0)
-  purchaseAmountRial Decimal  @default(0) @db.Decimal(19, 2)
-  purchaseItemCount  Decimal  @default(0) @db.Decimal(18, 3)
-  customerLevel      String?  @db.NVarChar(20)
+  /// The five potential parameters are 1..5 and are all-or-nothing: until every
+  /// one is answered the customer is «در انتظار ارزیابی» rather than ranked,
+  /// because an unanswered form is not the same as a low score.
+  potentialConsumption    Int? @db.SmallInt
+  potentialCompanySize    Int? @db.SmallInt
+  potentialProjects       Int? @db.SmallInt
+  potentialPortfolioFit   Int? @db.SmallInt
+  potentialRepeatPurchase Int? @db.SmallInt
+  /// 0..100, derived from the five above and the weights in settings. Stored
+  /// beside its own inputs because it depends on nothing else.
+  potentialValueScore     Float?
+  potentialAssessedAt     DateTime?
+  potentialAssessedBy     String? @db.NVarChar(36)
+
+  /// `reviewed` marks the difference between a value somebody chose and the
+  /// default a migration wrote. Without it a screen cannot honestly say whether
+  /// «معمولی» is a judgement or a placeholder.
+  paymentBehaviour     String?  @db.NVarChar(40)
+  paymentReviewed      Boolean  @default(false)
+  costToServe          String?  @db.NVarChar(40)
+  costToServeReviewed  Boolean  @default(false)
 
   ownerUserId  String? @db.NVarChar(36)
   owner        User?   @relation("CustomerOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -129,6 +143,8 @@ model Customer {
   contactFor   Proforma[]     @relation("ProformaContact")
   transactions Transaction[]
   agreements   CustomerAgreement[]
+  valueMetrics      CustomerValueMetrics?
+  potentialHistory  CustomerPotentialHistory[]
 
   // NOTE: economicCode must be unique only among customers that actually have
   // one. A plain UNIQUE constraint cannot express that in SQL Server, which
@@ -140,8 +156,89 @@ model Customer {
   @@index([mobileNormalized])
   @@index([customerType, status])
   @@index([ownerUserId])
-  @@index([customerLevel])
   @@map("customers")
+}
+
+/// The computed half of customer value, one row per customer.
+///
+/// Kept out of `customers` for two reasons. It is a different kind of data —
+/// every column here is derived and rewritten wholesale by a recalculation,
+/// while `customers` holds what people typed. And it is *globally* derived:
+/// gross profit and frequency are scored by percentile against every other
+/// active customer, so one customer's sale moves everyone else's numbers, and a
+/// recalculation rewrites the whole table. Keeping that churn off the customer
+/// row keeps the customer's own history readable.
+///
+/// Everything is persisted rather than computed per read: the grid sorts,
+/// filters and pages on these columns, and the dashboard plots every customer
+/// at once. Recomputing per row would make both unusable well before a thousand
+/// customers.
+model CustomerValueMetrics {
+  customerId String   @id @db.NVarChar(36)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  /// Raw figures, kept so a score can always be explained rather than trusted.
+  salesRevenueRial   Decimal @default(0) @db.Decimal(19, 2)
+  grossProfitRial    Decimal @default(0) @db.Decimal(19, 2)
+  grossMarginPercent Float?
+  /// Share of the period's revenue whose cost is actually known. Gross profit
+  /// is computed only over lines with a cost, so this says how much of the
+  /// picture the figure above really covers.
+  costCoveragePercent Float  @default(0)
+
+  purchaseFrequency Int @default(0)
+
+  lastPurchaseDate       DateTime? @db.Date
+  lastPurchaseDateJalali String?   @db.NVarChar(10)
+  daysSinceLastPurchase  Int?
+
+  /// The five component scores, 0..100, each kept so the card can show its work.
+  grossProfitScore Float @default(0)
+  frequencyScore   Float @default(0)
+  recencyScore     Float @default(0)
+  paymentScore     Float @default(0)
+  costToServeScore Float @default(0)
+
+  realizedValueScore Float  @default(0)
+  potentialValueScore Float?
+  customerValueIndex  Float?
+  /// A | B | C | D | PENDING
+  customerValueRank   String @default("PENDING") @db.NVarChar(10)
+
+  calculatedAt DateTime @default(now())
+
+  @@index([customerValueRank])
+  @@index([customerValueIndex])
+  @@index([realizedValueScore])
+  @@index([potentialValueScore])
+  @@index([grossProfitRial])
+  @@index([lastPurchaseDate])
+  @@map("customer_value_metrics")
+}
+
+/// Every change to a customer's potential assessment.
+///
+/// Append-only. The point is to be able to see how the company's *opinion* of a
+/// customer moved over time, which is lost the moment the current answers are
+/// overwritten in place.
+model CustomerPotentialHistory {
+  id         String   @id @default(uuid()) @db.NVarChar(36)
+  customerId String   @db.NVarChar(36)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  previousScore Float?
+  newScore      Float?
+  /// The five answers before and after, as JSON — a fixed set of columns would
+  /// have to change every time a parameter is added.
+  previousParams String? @db.NVarChar(Max)
+  newParams      String? @db.NVarChar(Max)
+
+  changedBy     String?  @db.NVarChar(36)
+  changedByName String?  @db.NVarChar(200)
+  changedAt     DateTime @default(now())
+
+  @@index([customerId, changedAt])
+  @@map("customer_potential_history")
 }
 
 /// Individual <-> company relationships (replaces the linkedCustomerIds array).

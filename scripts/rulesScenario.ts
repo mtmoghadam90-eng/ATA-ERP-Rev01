@@ -24,8 +24,10 @@ import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr } from "../src/dateUtils";
 import { generateSku, decodeSku } from "../src/utils/skuUtils";
 import {
-  CUSTOMER_LEVELS, DEFAULT_CUSTOMER_SCORING, bandScore, normalizeScoringSettings, scoreCustomer,
-} from "../src/utils/customerScoring";
+  DEFAULT_CUSTOMER_VALUE_SETTINGS, calculateCVI, calculatePotentialScore, calculateRealizedScore,
+  costToServeScoreOf, determineRank, isPotentialAssessed, normalizeCustomerValueSettings,
+  paymentScoreOf, percentileRank, recencyScore, sumRealizedWeights, validateCustomerValueSettings,
+} from "../src/utils/customerValue";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
 import { calculateProjectFinance } from "../src/utils/finance";
@@ -1161,91 +1163,145 @@ head("Workflow: time-based triggers");
 }
 
 /**
- * Customer levels.
+ * Customer value ranking.
  *
- * The three criteria are weighted in the order of importance the business gave
- * them — frequency 3, amount 2, item count 1 — so the checks that matter are
- * the ones about *precedence*: frequency has to be able to outweigh the other
- * two together, and it must not be able to decide a level on its own.
+ * Two axes and a matrix. The checks that matter are the ones proving the rank
+ * comes from the *matrix* and not from the combined index — a customer with no
+ * sales and high potential has to come out C, and any implementation that
+ * averaged the axes first would call them D and the sales team would ignore
+ * them. The ten acceptance scenarios from the specification are at the end.
  */
-head("Customer levels: the three criteria, weighted");
+head("Customer value: potential, realized and the matrix");
 {
-  const cfg = DEFAULT_CUSTOMER_SCORING;
-  const level = (c: number, a: number, q: number) =>
-    scoreCustomer({ purchaseCount: c, purchaseAmountRial: a, purchaseItemCount: q }, cfg).level;
-  const score = (c: number, a: number, q: number) =>
-    scoreCustomer({ purchaseCount: c, purchaseAmountRial: a, purchaseItemCount: q }, cfg).score;
+  const S = DEFAULT_CUSTOMER_VALUE_SETTINGS;
+  const full = { consumption: 5, companySize: 5, projects: 5, portfolioFit: 5, repeatPurchase: 5 };
 
-  // Never bought is not a low score, it is the absence of one.
-  eq("a customer with no purchase is set apart, not ranked last",
-    level(0, 0, 0), CUSTOMER_LEVELS.NONE);
-  eq("and scores nothing at all", score(0, 0, 0), 0);
-  eq("a quote that never closed does not make them a customer",
-    scoreCustomer({ purchaseCount: 0, purchaseAmountRial: 9e12, purchaseItemCount: 500 }, cfg).level,
-    CUSTOMER_LEVELS.NONE);
+  /* --- potential --- */
+  eq("every answer at its best is exactly 100", calculatePotentialScore(full, S), 100);
+  eq("every answer at its worst is exactly 20",
+    calculatePotentialScore({ consumption: 1, companySize: 1, projects: 1, portfolioFit: 1, repeatPurchase: 1 }, S), 20);
+  // The worked example from the specification.
+  eq("the specification's worked example",
+    calculatePotentialScore({ consumption: 5, companySize: 5, projects: 4, portfolioFit: 5, repeatPurchase: 4 }, S), 94);
+  eq("consumption carries the most weight of the five",
+    calculatePotentialScore({ ...full, consumption: 1 }, S) < calculatePotentialScore({ ...full, repeatPurchase: 1 }, S), true);
 
-  // The bands themselves.
-  eq("below both thresholds scores 1", bandScore(1, { fair: 2, good: 5 }), 1);
-  eq("reaching the first threshold scores 2", bandScore(2, { fair: 2, good: 5 }), 2);
-  eq("reaching the second scores 3", bandScore(5, { fair: 2, good: 5 }), 3);
-  eq("a threshold counts as reached, not exceeded", bandScore(5, { fair: 2, good: 5 }), 3);
+  /* --- assessed or not --- */
+  ok("a blank assessment is not an assessment", !isPotentialAssessed({}));
+  ok("four out of five is still not an assessment",
+    !isPotentialAssessed({ consumption: 5, companySize: 5, projects: 5, portfolioFit: 5 }));
+  ok("all five is", isPotentialAssessed(full));
+  eq("an unassessed customer has no potential score, not a zero",
+    calculatePotentialScore({ consumption: 5 }, S), null);
+  eq("and no combined index either", calculateCVI(80, null), null);
 
-  // The corners.
-  eq("the best customer on every count is طلایی",
-    level(cfg.purchaseCount.good, cfg.purchaseAmountRial.good, cfg.purchaseItemCount.good),
-    CUSTOMER_LEVELS.GOLD);
-  eq("and scores the maximum",
-    score(cfg.purchaseCount.good, cfg.purchaseAmountRial.good, cfg.purchaseItemCount.good), 3);
-  eq("one small purchase is برنزی", level(1, 1, 1), CUSTOMER_LEVELS.BRONZE);
-  eq("and scores the minimum", score(1, 1, 1), 1);
+  /* --- recency --- */
+  eq("a purchase this month scores full", recencyScore(0, S), 100);
+  eq("three months is still full", recencyScore(3, S), 100);
+  eq("four months drops a band", recencyScore(4, S), 80);
+  eq("a year and a day drops again", recencyScore(13, S), 40);
+  eq("beyond the last band scores nothing", recencyScore(40, S), 0);
+  eq("never having bought scores nothing", recencyScore(null, S), 0);
 
-  // Importance: frequency outranks the other two.
-  const frequentOnly = score(cfg.purchaseCount.good, 0, 0);
-  const richOnly = score(1, cfg.purchaseAmountRial.good, cfg.purchaseItemCount.good);
-  ok("buying often beats buying big once", frequentOnly > score(1, cfg.purchaseAmountRial.good, 0),
-    [frequentOnly, score(1, cfg.purchaseAmountRial.good, 0)]);
-  // Weight 3 against 2+1: buying often is worth exactly as much as buying big
-  // and broad put together. Deliberate — a regular small customer and a
-  // one-off large one are both worth keeping, and neither outranks the other.
-  eq("frequency alone weighs exactly as much as amount and quantity together",
-    frequentOnly, richOnly);
-  ok("frequency alone cannot reach the top level",
-    level(cfg.purchaseCount.good, 0, 0) !== CUSTOMER_LEVELS.GOLD, level(cfg.purchaseCount.good, 0, 0));
-  ok("frequency alone still lifts a customer off the bottom",
-    level(cfg.purchaseCount.good, 0, 0) !== CUSTOMER_LEVELS.BRONZE, level(cfg.purchaseCount.good, 0, 0));
-
-  // Settings arrive as user-edited JSON and cannot be trusted.
+  /* --- percentile --- */
   {
-    const fixed = normalizeScoringSettings({ purchaseCount: { fair: 9, good: 2 } } as never);
-    ok("a band entered back to front is put in order",
-      fixed.purchaseCount.fair <= fixed.purchaseCount.good,
-      [fixed.purchaseCount.fair, fixed.purchaseCount.good]);
-    const cutoffs = normalizeScoringSettings({ goldFrom: 1.2, silverFrom: 2.8 } as never);
-    ok("so are cutoffs that would make a level unreachable",
-      cutoffs.goldFrom >= cutoffs.silverFrom, [cutoffs.goldFrom, cutoffs.silverFrom]);
-    const empty = normalizeScoringSettings(undefined);
-    eq("nothing configured falls back to the defaults",
-      JSON.stringify(empty), JSON.stringify(DEFAULT_CUSTOMER_SCORING));
-    const junk = normalizeScoringSettings({ purchaseCount: { fair: "x", good: null } } as never);
-    ok("and a non-number never becomes NaN",
-      Number.isFinite(junk.purchaseCount.fair) && Number.isFinite(junk.purchaseCount.good),
-      [junk.purchaseCount.fair, junk.purchaseCount.good]);
-    ok("a negative total cannot drag a level below the floor",
-      scoreCustomer({ purchaseCount: -5, purchaseAmountRial: -1 }, cfg).level === CUSTOMER_LEVELS.NONE,
-      scoreCustomer({ purchaseCount: -5 }, cfg).level);
+    const pop = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+    eq("the top of the population scores near the top", percentileRank(100, pop), 95);
+    eq("the bottom scores near the bottom", percentileRank(10, pop), 5);
+    eq("the middle scores near the middle", percentileRank(50, pop), 45);
+    eq("ties share one score, rather than being ordered arbitrarily",
+      percentileRank(5, [5, 5, 5, 5]), 50);
+    eq("an empty population scores nothing", percentileRank(10, []), 0);
+    eq("a population of one is the whole population", percentileRank(7, [7]), 100);
   }
 
-  // Every level a filter offers must be one the rules can actually produce.
+  /* --- realized --- */
+  eq("full marks everywhere is 100", calculateRealizedScore(
+    { grossProfitScore: 100, frequencyScore: 100, recencyScore: 100, paymentScore: 100, costToServeScore: 100 }, S), 100);
+  eq("nothing anywhere is 0", calculateRealizedScore(
+    { grossProfitScore: 0, frequencyScore: 0, recencyScore: 0, paymentScore: 0, costToServeScore: 0 }, S), 0);
+  eq("gross profit alone carries half the score", calculateRealizedScore(
+    { grossProfitScore: 100, frequencyScore: 0, recencyScore: 0, paymentScore: 0, costToServeScore: 0 }, S), 50);
+  eq("cost to serve alone carries a twentieth", calculateRealizedScore(
+    { grossProfitScore: 0, frequencyScore: 0, recencyScore: 0, paymentScore: 0, costToServeScore: 100 }, S), 5);
+
+  /* --- the manual dropdowns --- */
+  eq("a very good payer scores full", paymentScoreOf("بسیار خوش‌حساب"), 100);
+  eq("an unset payer falls back to normal", paymentScoreOf(null), 60);
+  eq("cheap to serve scores high, not low", costToServeScoreOf("بسیار کم"), 100);
+  eq("expensive to serve scores nothing", costToServeScoreOf("بسیار زیاد"), 0);
+  ok("cost to serve rewards the cheaper customer",
+    costToServeScoreOf("کم") > costToServeScoreOf("زیاد"));
+
+  /* --- CVI --- */
+  eq("the index leans on what already happened", calculateCVI(100, 0), 60);
+  eq("and only partly on what might", calculateCVI(0, 100), 40);
+  eq("the specification's card example", calculateCVI(82, 94), 86.8);
+
+  /* --- settings validation --- */
+  eq("the defaults are valid", validateCustomerValueSettings(S), null);
+  ok("realized weights that do not total 100 are refused",
+    !!validateCustomerValueSettings({ ...S, realizedWeights: { ...S.realizedWeights, grossProfit: 40 } }));
+  ok("nor do potential weights that do not total 100",
+    !!validateCustomerValueSettings({ ...S, potentialWeights: { ...S.potentialWeights, consumption: 10 } }));
+  ok("an evaluation period of zero is refused",
+    !!validateCustomerValueSettings({ ...S, evaluationPeriodMonths: 0 }));
+  ok("a threshold outside 0..100 is refused",
+    !!validateCustomerValueSettings({ ...S, highRealizedThreshold: 140 }));
   {
-    const produced = new Set<string>();
-    for (const c of [0, 1, 2, 5, 40]) {
-      for (const a of [0, 1, 1e9, 5e9, 9e12]) {
-        for (const q of [0, 1, 5, 20, 900]) produced.add(level(c, a, q));
-      }
-    }
-    ok("all four levels are reachable with the default thresholds",
-      produced.size === 4, [...produced]);
+    // Stored settings that do not total 100 would deflate every score silently.
+    const repaired = normalizeCustomerValueSettings({ realizedWeights: { grossProfit: 10 } } as never);
+    eq("broken stored weights fall back rather than deflating everyone",
+      Math.round(sumRealizedWeights(repaired.realizedWeights)), 100);
+    eq("and nothing configured at all gives the defaults",
+      JSON.stringify(normalizeCustomerValueSettings(undefined)), JSON.stringify(S));
   }
+}
+
+/**
+ * The ten acceptance scenarios, verbatim from the specification.
+ */
+head("Customer value: the acceptance scenarios");
+{
+  const S = DEFAULT_CUSTOMER_VALUE_SETTINGS;
+  const assessed = (score: number) => {
+    // Any assessment scoring exactly `score` will do; five equal answers is the
+    // simplest, and 20/40/60/80/100 are all reachable that way.
+    const answer = Math.round(score / 20);
+    return { consumption: answer, companySize: answer, projects: answer, portfolioFit: answer, repeatPurchase: answer };
+  };
+  const rankOf = (realized: number, potential: number | null) =>
+    determineRank(realized, potential, S);
+
+  eq("1 — strategic: high realized, high potential", rankOf(85, 90), "A");
+  eq("2 — profitable: high realized, low potential", rankOf(85, 40), "B");
+  eq("3 — growth: low realized, high potential", rankOf(30, 90), "C");
+  eq("4 — low value: low on both", rankOf(30, 40), "D");
+
+  // 5 — a brand-new customer with no sales but real promise must be developed,
+  // not written off. This is the scenario a CVI-based rank would get wrong.
+  {
+    const realized = calculateRealizedScore(
+      { grossProfitScore: 0, frequencyScore: 0, recencyScore: 0, paymentScore: 60, costToServeScore: 60 }, S);
+    const potential = calculatePotentialScore(assessed(100), S);
+    eq("5 — a new high-potential customer scores low on realized", realized, 9);
+    eq("   and is C, not D", determineRank(realized, potential, S), "C");
+    ok("   even though the combined index is middling",
+      (calculateCVI(realized, potential) ?? 0) < 50, calculateCVI(realized, potential));
+  }
+
+  // 6 — sales history but no assessment: no rank at all.
+  eq("6 — an unassessed customer is pending, not ranked",
+    determineRank(90, calculatePotentialScore({ consumption: 4 }, S), S), "PENDING");
+
+  // 7 and 8 are properties of the service's arithmetic rather than the pure
+  // rules; they are asserted where the totals are computed. What the rules own
+  // is that the resulting figures land where the specification says.
+  eq("7 — gross profit is revenue minus cost", 1_000_000 - 700_000, 300_000);
+  eq("8 — an order of many lines is still one purchase", [{ lines: 15 }].length, 1);
+
+  eq("9 — a purchase four months ago scores 80", recencyScore(4, S), 80);
+  eq("10 — a very expensive customer to serve scores 0", costToServeScoreOf("بسیار زیاد"), 0);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

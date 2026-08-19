@@ -58,11 +58,6 @@ export function rowToCustomer(row: CustomerRow): Customer {
     gender: (row.gender ?? undefined) as Customer["gender"],
     linkedCustomerIds: (row.linksFrom ?? []).map((link) => link.to.id),
     customValues: parseCustomValues(row.customValues),
-    // Derived server-side; the grid's «سطح مشتری» column and its filter.
-    customerLevel: (row.customerLevel ?? undefined) as Customer["customerLevel"],
-    purchaseCount: Number(row.purchaseCount ?? 0),
-    purchaseAmountRial: Number(row.purchaseAmountRial ?? 0),
-    purchaseItemCount: Number(row.purchaseItemCount ?? 0),
     // Present on the detail record only; the grid does not show them.
     contactName: "",
     contactLastName: "",

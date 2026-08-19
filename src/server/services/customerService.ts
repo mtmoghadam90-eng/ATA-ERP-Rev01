@@ -1,4 +1,8 @@
+import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
+import { afterCommit } from "../afterCommit";
+import { calculatePotentialScore } from "../../utils/customerValue";
+import { loadCustomerValueSettings } from "./customerValueService";
 import {
   ListQuery, ListResult, buildResult, paginationArgs, searchClause,
 } from "../listing";
@@ -18,11 +22,22 @@ import { processWorkflowRules } from "./workflowService";
 /** Sortable columns, allowlisted so a caller cannot name an arbitrary field. */
 export const CUSTOMER_SORTABLE = [
   "companyName", "customerType", "status", "province", "createdAt", "updatedAt",
-  "customerLevel", "purchaseCount", "purchaseAmountRial", "purchaseItemCount",
+] as const;
+
+/**
+ * Sortable columns that live on the metrics table rather than the customer.
+ *
+ * Kept apart because Prisma needs `{ valueMetrics: { field } }` for these, and
+ * an unchecked name would go straight into `orderBy` — so both lists stay
+ * allowlists.
+ */
+export const CUSTOMER_METRIC_SORTABLE = [
+  "customerValueIndex", "realizedValueScore", "potentialValueScore",
+  "grossProfitRial", "purchaseFrequency", "lastPurchaseDate", "customerValueRank",
 ] as const;
 
 export const CUSTOMER_FILTERABLE = [
-  "status", "customerType", "province", "industry", "city", "customerLevel",
+  "status", "customerType", "province", "industry", "city",
 ] as const;
 
 const SEARCH_FIELDS = [
@@ -77,12 +92,101 @@ export function customFieldClause(spec: unknown): Record<string, unknown> | unde
 }
 
 /** Exported so the visibility rules can be asserted without a database. */
+/**
+ * The customer-value filters the grid offers.
+ *
+ * Separate from `CUSTOMER_FILTERABLE` because these are ranges and a relation,
+ * not equality on a column of this table — but they are still an allowlist:
+ * nothing here is built from a caller-supplied field name.
+ */
+export interface CustomerValueFilters {
+  rank?: unknown;
+  minRealized?: unknown;
+  maxRealized?: unknown;
+  minPotential?: unknown;
+  maxPotential?: unknown;
+  minGrossProfit?: unknown;
+  maxGrossProfit?: unknown;
+  /** Only customers whose last purchase is within this many months. */
+  lastPurchaseWithinMonths?: unknown;
+  paymentBehaviour?: unknown;
+  costToServe?: unknown;
+  /** "true" to show only customers whose potential has never been assessed. */
+  notAssessed?: unknown;
+}
+
+const asNumber = (value: unknown): number | undefined => {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const text = String(value).trim();
+  if (!text) return undefined;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const asText = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return text && text !== "all" ? text : undefined;
+};
+
+/** Turns the value filters into a `where` fragment, or nothing. */
+function valueClause(filters: CustomerValueFilters | undefined): Record<string, unknown>[] {
+  if (!filters) return [];
+  const and: Record<string, unknown>[] = [];
+  const metrics: Record<string, unknown> = {};
+
+  const rank = asText(filters.rank);
+  if (rank) metrics.customerValueRank = rank;
+
+  const range = (min: unknown, max: unknown) => {
+    const lo = asNumber(min);
+    const hi = asNumber(max);
+    if (lo === undefined && hi === undefined) return undefined;
+    return { ...(lo !== undefined ? { gte: lo } : {}), ...(hi !== undefined ? { lte: hi } : {}) };
+  };
+
+  const realized = range(filters.minRealized, filters.maxRealized);
+  if (realized) metrics.realizedValueScore = realized;
+  const potential = range(filters.minPotential, filters.maxPotential);
+  if (potential) metrics.potentialValueScore = potential;
+  const profit = range(filters.minGrossProfit, filters.maxGrossProfit);
+  if (profit) metrics.grossProfitRial = profit;
+
+  const months = asNumber(filters.lastPurchaseWithinMonths);
+  if (months !== undefined && months > 0) {
+    const since = new Date();
+    since.setUTCMonth(since.getUTCMonth() - months);
+    metrics.lastPurchaseDate = { gte: since };
+  }
+
+  if (Object.keys(metrics).length > 0) and.push({ valueMetrics: metrics });
+
+  const payment = asText(filters.paymentBehaviour);
+  if (payment) and.push({ paymentBehaviour: payment });
+  const cost = asText(filters.costToServe);
+  if (cost) and.push({ costToServe: cost });
+
+  // "Never assessed" is any of the five parameters being blank — the same
+  // all-or-nothing rule the score itself uses.
+  if (asText(filters.notAssessed) === "true") {
+    and.push({
+      OR: [
+        { potentialConsumption: null }, { potentialCompanySize: null },
+        { potentialProjects: null }, { potentialPortfolioFit: null },
+        { potentialRepeatPurchase: null },
+      ],
+    });
+  }
+
+  return and;
+}
+
 export function buildCustomerWhere(
   q: ListQuery,
   user: AuthUser,
-  extra: { customField?: unknown; linkedTo?: unknown } = {},
+  extra: { customField?: unknown; linkedTo?: unknown; value?: CustomerValueFilters } = {},
 ): Record<string, unknown> {
-  const and: Record<string, unknown>[] = [];
+  const and: Record<string, unknown>[] = [...valueClause(extra.value)];
 
   const visibility = visibilityClause(user);
   if (visibility) and.push(visibility);
@@ -148,27 +252,50 @@ const LIST_SELECT = {
   ownerUserId: true,
   createdAt: true,
   customValues: true,
-  // The «سطح مشتری» column, and the totals behind it — stored rather than
-  // derived per read so the grid can filter, sort and export on them.
-  customerLevel: true,
-  purchaseCount: true,
-  purchaseAmountRial: true,
-  purchaseItemCount: true,
   // The grid shows who each customer is linked to. Joined here rather than
   // fetched per row, which would be one request per visible customer.
   linksFrom: {
     select: { to: { select: { id: true, companyName: true, customerType: true } } },
   },
+  // The manual half of customer value, which the grid shows and the form edits.
+  potentialValueScore: true,
+  paymentBehaviour: true,
+  paymentReviewed: true,
+  costToServe: true,
+  costToServeReviewed: true,
+  // The computed half. A join rather than columns on this row: see the note on
+  // CustomerValueMetrics in the schema.
+  valueMetrics: {
+    select: {
+      customerValueRank: true, customerValueIndex: true,
+      realizedValueScore: true, potentialValueScore: true,
+      grossProfitRial: true, salesRevenueRial: true, grossMarginPercent: true,
+      costCoveragePercent: true, purchaseFrequency: true,
+      lastPurchaseDateJalali: true, daysSinceLastPurchase: true,
+      grossProfitScore: true, frequencyScore: true, recencyScore: true,
+      paymentScore: true, costToServeScore: true,
+      calculatedAt: true,
+    },
+  },
 } as const;
+
+/** Sorting by a metrics column needs the relation, and is allowlisted apart. */
+function customerOrderBy(q: ListQuery): Record<string, unknown> {
+  if (!q.sort) return { createdAt: "desc" };
+  if ((CUSTOMER_METRIC_SORTABLE as readonly string[]).includes(q.sort)) {
+    return { valueMetrics: { [q.sort]: q.order } };
+  }
+  return { [q.sort]: q.order };
+}
 
 export async function listCustomers(
   q: ListQuery,
   user: AuthUser,
-  extra: { customField?: unknown; linkedTo?: unknown } = {},
+  extra: { customField?: unknown; linkedTo?: unknown; value?: CustomerValueFilters } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
   const where = buildCustomerWhere(q, user, extra);
-  const orderBy = q.sort ? { [q.sort]: q.order } : { createdAt: "desc" as const };
+  const orderBy = customerOrderBy(q);
 
   // One round trip for the page, one for the count.
   const [rows, total] = await Promise.all([
@@ -256,6 +383,18 @@ export interface CustomerInput {
   tags?: string | null;
   customValues?: string | null;
   ownerUserId?: string | null;
+
+  /**
+   * The manual half of customer value. The computed half is never writable —
+   * a client that could set its own rank could set it to A.
+   */
+  potentialConsumption?: unknown;
+  potentialCompanySize?: unknown;
+  potentialProjects?: unknown;
+  potentialPortfolioFit?: unknown;
+  potentialRepeatPurchase?: unknown;
+  paymentBehaviour?: string | null;
+  costToServe?: string | null;
 }
 
 const FA_DIGITS = "۰۱۲۳۴۵۶۷۸۹";
@@ -358,11 +497,108 @@ export async function findDuplicateCandidates(
   });
 }
 
+
+/* ------------------------- the manual value fields ----------------------- */
+
+const POTENTIAL_COLUMNS = [
+  "potentialConsumption", "potentialCompanySize", "potentialProjects",
+  "potentialPortfolioFit", "potentialRepeatPurchase",
+] as const;
+
+/** A potential answer is 1..5, or nothing. Anything else is nothing. */
+function potentialAnswer(value: unknown): number | null {
+  if (value === null || value === "") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const rounded = Math.round(n);
+  return rounded >= 1 && rounded <= 5 ? rounded : null;
+}
+
+/**
+ * Normalizes the manual customer-value fields a write carries.
+ *
+ * The five potential answers are coerced to 1..5, the score is **recomputed
+ * here** rather than taken from the request — a client that could post its own
+ * potential score could post 100 — and choosing a payment or cost-to-serve
+ * value marks it reviewed, which is what separates a judgement from the
+ * placeholder the migration wrote.
+ */
+async function applyValueFields(
+  data: Record<string, unknown>,
+  input: Partial<CustomerInput>,
+  before: { [k: string]: unknown } | null,
+  user: AuthUser,
+): Promise<{ potentialChanged: boolean; previousScore: number | null; nextScore: number | null }> {
+  const touched = POTENTIAL_COLUMNS.some((key) => key in input);
+
+  const answers: Record<string, number | null> = {};
+  for (const key of POTENTIAL_COLUMNS) {
+    answers[key] = key in input
+      ? potentialAnswer((input as Record<string, unknown>)[key])
+      : potentialAnswer(before?.[key]);
+    if (key in input) data[key] = answers[key];
+  }
+
+  const settings = await loadCustomerValueSettings();
+  const nextScore = calculatePotentialScore({
+    consumption: answers.potentialConsumption,
+    companySize: answers.potentialCompanySize,
+    projects: answers.potentialProjects,
+    portfolioFit: answers.potentialPortfolioFit,
+    repeatPurchase: answers.potentialRepeatPurchase,
+  }, settings);
+
+  const previousScore = (before?.potentialValueScore as number | null | undefined) ?? null;
+
+  if (touched) {
+    data.potentialValueScore = nextScore;
+    data.potentialAssessedAt = new Date();
+    data.potentialAssessedBy = user.id;
+  }
+
+  if ("paymentBehaviour" in input) data.paymentReviewed = true;
+  if ("costToServe" in input) data.costToServeReviewed = true;
+
+  return { potentialChanged: touched && previousScore !== nextScore, previousScore, nextScore };
+}
+
+/** Appends one entry to the potential-assessment log. Never fails the write. */
+async function logPotentialChange(
+  customerId: string,
+  previousScore: number | null,
+  nextScore: number | null,
+  before: Record<string, unknown> | null,
+  after: Record<string, unknown>,
+  user: AuthUser,
+): Promise<void> {
+  const pick = (source: Record<string, unknown> | null) => {
+    if (!source) return null;
+    const out: Record<string, unknown> = {};
+    for (const key of POTENTIAL_COLUMNS) out[key] = source[key] ?? null;
+    return JSON.stringify(out);
+  };
+
+  await getDb().customerPotentialHistory.create({
+    data: {
+      customerId,
+      previousScore,
+      newScore: nextScore,
+      previousParams: pick(before),
+      newParams: pick(after),
+      changedBy: user.id,
+      changedByName: user.fullName ?? null,
+    },
+  });
+}
+
 export async function createCustomer(input: CustomerInput, user: AuthUser, todayJalali: string) {
   const db = getDb();
+  const data: Record<string, unknown> = { ...input };
+  const potential = await applyValueFields(data, input, null, user);
+
   const customer = await db.customer.create({
     data: {
-      ...input,
+      ...(data as Prisma.CustomerUncheckedCreateInput),
       status: input.status || "فعال",
       mobileNormalized: normalizeMobile(input.mobile),
       // Unassigned records default to their creator, so ownership rules have
@@ -370,6 +606,14 @@ export async function createCustomer(input: CustomerInput, user: AuthUser, today
       ownerUserId: input.ownerUserId ?? user.id,
     },
   });
+
+  // The first assessment is a change of view like any other, and belongs in the
+  // log — otherwise the history starts only at the second opinion.
+  if (potential.potentialChanged) {
+    await afterCommit("customer potential history", () =>
+      logPotentialChange(customer.id, potential.previousScore, potential.nextScore,
+        null, customer as unknown as Record<string, unknown>, user));
+  }
 
   // Audit log
   const label = customer.companyName || `${customer.firstName || ""} ${customer.lastName || ""}`.trim();
@@ -430,8 +674,16 @@ export async function updateCustomer(id: string, input: Partial<CustomerInput>, 
 
   const data: Record<string, unknown> = { ...input };
   if ("mobile" in input) data.mobileNormalized = normalizeMobile(input.mobile);
+  const potential = await applyValueFields(data, input, before as unknown as Record<string, unknown>, user);
 
   const customer = await db.customer.update({ where: { id }, data });
+
+  if (potential.potentialChanged) {
+    await afterCommit("customer potential history", () =>
+      logPotentialChange(id, potential.previousScore, potential.nextScore,
+        before as unknown as Record<string, unknown>,
+        customer as unknown as Record<string, unknown>, user));
+  }
 
   // Audit log
   const label = customer.companyName || `${customer.firstName || ""} ${customer.lastName || ""}`.trim();

@@ -41,6 +41,7 @@ import { ensureRatesFresh } from "./src/server/services/rateRefresh";
 import { ensureWorkflowSweepRanToday, runDueWorkflows } from "./src/server/services/workflowSweep";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 import { UPLOADS_DIR, ensureUploadsDir } from "./src/server/uploadsDir";
+import { recalculateCustomerValueNow } from "./src/server/services/customerValueRecalc";
 import { authenticateUser, findAuthUser } from "./src/server/services/userService";
 
 /**
@@ -631,12 +632,31 @@ async function startServer() {
   rateTimer.unref?.();
   void ensureRatesFresh();
 
+  /*
+   * The customer-value ranking, once a day.
+   *
+   * Writes already schedule a recalculation, so this is the safety net rather
+   * than the mechanism: it catches anything a failed pass dropped, and it moves
+   * every customer's recency on — a customer who bought nothing today is a day
+   * staler than yesterday, and no write happens to say so.
+   */
+  const VALUE_TICK_MS = 24 * 60 * 60 * 1000;
+  const valueTimer = setInterval(
+    () => { void recalculateCustomerValueNow(); },
+    VALUE_TICK_MS,
+  );
+  valueTimer.unref?.();
+  // Not at startup: a deploy restart would otherwise run a full pass while the
+  // first users are signing in. The first tick is a day away, and any sale
+  // before then schedules one anyway.
+
   // Close the SQL Server pool on shutdown. A deploy restart kills this process
   // while connections are open; releasing them lets the new process bind them
   // immediately instead of waiting for the server to time them out.
   const shutdown = (signal: string) => {
     console.log(`${signal} received, shutting down.`);
     clearInterval(rateTimer);
+    clearInterval(valueTimer);
     server.close(() => {
       disconnectDb().finally(() => process.exit(0));
     });

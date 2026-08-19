@@ -2,9 +2,12 @@ import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
 import { hasPermission } from "../auth";
-import { recomputeAllCustomerLevels } from "../services/customerScore";
+import {
+  customerValueSummary, getCustomerValueDetail, listPotentialHistory, recalculateAll,
+} from "../services/customerValueService";
 import {
   CUSTOMER_FILTERABLE,
+  CUSTOMER_METRIC_SORTABLE,
   CUSTOMER_SORTABLE,
   CustomerInput,
   countCustomerReferences,
@@ -42,6 +45,12 @@ const WRITABLE: (keyof CustomerInput)[] = [
   "customerType", "status", "companyName", "firstName", "lastName", "gender",
   "position", "economicCode", "industry", "keyPerson", "phone", "mobile",
   "email", "province", "city", "address", "notes", "tags", "customValues",
+  // The manual half of customer value. Everything computed — the rank, the
+  // scores, the gross profit — is deliberately absent: a client that could set
+  // its own rank could set it to A.
+  "potentialConsumption", "potentialCompanySize", "potentialProjects",
+  "potentialPortfolioFit", "potentialRepeatPurchase",
+  "paymentBehaviour", "costToServe",
 ];
 
 function pickInput(body: unknown): Partial<CustomerInput> {
@@ -62,7 +71,8 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
     try {
       const q = parseListQuery(
         req.query as Record<string, unknown>,
-        CUSTOMER_SORTABLE,
+        // Metric columns live on the joined table; both lists stay allowlists.
+        [...CUSTOMER_SORTABLE, ...CUSTOMER_METRIC_SORTABLE],
         CUSTOMER_FILTERABLE,
       );
       // `customField=<id>:<value>`, repeatable. Kept out of parseListQuery's
@@ -71,6 +81,21 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
       const result = await listCustomers(q, user, {
         customField: req.query.customField,
         linkedTo: req.query.linkedTo,
+        // Ranges and a relation rather than plain equality, so they travel
+        // separately from parseListQuery's column allowlist.
+        value: {
+          rank: req.query.rank,
+          minRealized: req.query.minRealized,
+          maxRealized: req.query.maxRealized,
+          minPotential: req.query.minPotential,
+          maxPotential: req.query.maxPotential,
+          minGrossProfit: req.query.minGrossProfit,
+          maxGrossProfit: req.query.maxGrossProfit,
+          lastPurchaseWithinMonths: req.query.lastPurchaseWithinMonths,
+          paymentBehaviour: req.query.paymentBehaviour,
+          costToServe: req.query.costToServe,
+          notAssessed: req.query.notAssessed,
+        },
       });
       res.json({ success: true, ...result });
     } catch (err) {
@@ -79,18 +104,17 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   /**
-   * Re-levels every customer.
+   * Recomputes every customer's value metrics.
    *
-   * The thresholds live in settings while the level lives on the row, so
-   * editing them changes nobody until this runs. It is also what fills in the
-   * levels the first time, for customers that existed before the column did.
+   * Whole-population by necessity: gross profit and frequency are scored by
+   * percentile, so one customer's sale moves everyone else's standing. Gated on
+   * `settings` rather than `customers` — it rewrites a derived table, which is
+   * an administrative act rather than customer data entry.
    *
-   * Gated on `settings` rather than `customers`: it rewrites a derived column
-   * for the whole table, which is an administrative act, not customer data
-   * entry. Registered ahead of `/api/customers/:id`, which would otherwise
-   * match "recompute-levels" as an id.
+   * Registered ahead of `/api/customers/:id`, which would otherwise match
+   * "recalculate-value" as an id.
    */
-  app.post("/api/customers/recompute-levels", async (req, res) => {
+  app.post("/api/customers/recalculate-value", async (req, res) => {
     const user = await deps.requireAuth(req, res);
     if (!user) return;
     if (!hasPermission(user, "settings")) {
@@ -98,10 +122,49 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
       return;
     }
     try {
-      const result = await recomputeAllCustomerLevels();
-      res.json({ success: true, ...result });
+      // Awaited here, unlike the write triggers: the user pressed a button and
+      // is waiting to be told how many customers were re-ranked.
+      res.json({ success: true, ...(await recalculateAll()) });
     } catch (err) {
-      sendError(res, err, "POST /api/customers/recompute-levels");
+      sendError(res, err, "POST /api/customers/recalculate-value");
+    }
+  });
+
+  /** Rank counts and totals, for the value dashboard's summary cards. */
+  app.get("/api/customers/value-summary", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      res.json({ success: true, summary: await customerValueSummary() });
+    } catch (err) {
+      sendError(res, err, "GET /api/customers/value-summary");
+    }
+  });
+
+  /** Everything behind one customer's rank, so the card can show its working. */
+  app.get("/api/customers/:id/value", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const detail = await getCustomerValueDetail(req.params.id);
+      if (!detail) {
+        res.status(404).json({ success: false, error: "مشتری یافت نشد." });
+        return;
+      }
+      res.json({ success: true, value: detail });
+    } catch (err) {
+      sendError(res, err, "GET /api/customers/:id/value");
+    }
+  });
+
+  /** The potential assessment log: how the company's view of them moved. */
+  app.get("/api/customers/:id/potential-history", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      res.json({ success: true, history: await listPotentialHistory(req.params.id) });
+    } catch (err) {
+      sendError(res, err, "GET /api/customers/:id/potential-history");
     }
   });
 
