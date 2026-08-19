@@ -7,7 +7,7 @@ import {
   FileSpreadsheet, Clock, Sliders, User, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
   Send, CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
   ChevronRight, Loader2, Image as ImageIcon, Maximize2, Minimize2, ArrowLeftRight, Flag, Zap,
-  ExternalLink
+  ExternalLink, Award
 } from 'lucide-react';
 
 import { getTodayShamsi, formatDateTimeToShamsi } from '../dateUtils';
@@ -39,6 +39,7 @@ import type { CustomerRow } from '../api/customers';
 import { productsApi } from '../api/products';
 import { createCustomerWithLinks } from '../api/customerAdapter';
 import { productToWriteInput, detailToProduct } from '../api/productAdapter';
+import SatisfactionLettersModal from './SatisfactionLettersModal';
 
 /**
  * Projects screen.
@@ -189,6 +190,7 @@ export default function ProjectsView({
   const [supplyFilter, setSupplyFilter] = useState("ALL");
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [activePreviewDoc, setActivePreviewDoc] = useState<any>(null);
+  const [showSatisfactionLetters, setShowSatisfactionLetters] = useState(false);
   // The details panel deliberately does NOT re-sync itself from the grid.
   // It used to: on every list refresh it replaced the loaded project with the
   // matching row, which silently swapped a full record for a projection that
@@ -2885,12 +2887,19 @@ export default function ProjectsView({
           <p className="text-slate-500 text-sm mt-1">رهگیری مناقصات، خط لوله فرصت‌های فروش، برآورد ارزش مالی قراردادها و شانس موفقیت آنها</p>
         </div>
         <div className="flex flex-wrap gap-2 w-full md:w-auto">
-          <button 
+          <button
             onClick={handleExportExcel}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-emerald-500/15 flex items-center gap-2"
           >
             <FileSpreadsheet size={16} />
             خروجی اکسل
+          </button>
+          <button
+            onClick={() => setShowSatisfactionLetters(true)}
+            className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-amber-500/15 flex items-center gap-2"
+          >
+            <Award size={16} />
+            ثبت رضایت‌نامه‌ها
           </button>
           <button 
             onClick={handleOpenAdd}
@@ -5459,6 +5468,12 @@ export default function ProjectsView({
           </div>
         </div>
       )}
+
+      <SatisfactionLettersModal
+        isOpen={showSatisfactionLetters}
+        settings={settings}
+        onClose={() => setShowSatisfactionLetters(false)}
+      />
 </div>
   );
 }
