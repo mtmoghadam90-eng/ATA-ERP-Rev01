@@ -376,6 +376,7 @@ export default function App() {
           <DashboardView
             setActiveTab={setActiveView}
             currentUser={store.currentUser}
+            settings={store.settings}
           />
         );
       case 'customers':

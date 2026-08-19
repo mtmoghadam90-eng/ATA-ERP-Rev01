@@ -6,6 +6,7 @@
 // weights and the formula cannot drift apart.
 export type { CustomerValueSettings, CustomerRank } from './utils/customerValue';
 import type { CustomerValueSettings } from './utils/customerValue';
+import type { CustomerValueMetricsRow } from './api/customers';
 
 export interface ModuleNote {
   id: string;
@@ -77,6 +78,8 @@ export interface Customer {
   paymentReviewed?: boolean;
   costToServe?: string | null;
   costToServeReviewed?: boolean;
+  /** The computed half, read-only. Null until a recalculation has run. */
+  valueMetrics?: CustomerValueMetricsRow | null;
 
   // Custom Field values
   customValues?: Record<string, any>;

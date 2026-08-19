@@ -34,10 +34,67 @@ export interface CustomerRow {
   linksFrom: { to: { id: string; companyName: string; customerType: string } }[];
   /** Drives the honorific the proforma form suggests. */
   gender: string | null;
+
+  /* ---- customer value ---- */
+  /** The manual half: what a person judged about this customer. */
+  potentialValueScore: number | null;
+  paymentBehaviour: string | null;
+  paymentReviewed: boolean;
+  costToServe: string | null;
+  costToServeReviewed: boolean;
+  /** The computed half. Null until the first recalculation has run. */
+  valueMetrics: CustomerValueMetricsRow | null;
+}
+
+/** Everything a recalculation writes. Decimals arrive as strings. */
+export interface CustomerValueMetricsRow {
+  customerValueRank: string;
+  customerValueIndex: number | null;
+  realizedValueScore: number;
+  potentialValueScore: number | null;
+  grossProfitRial: string;
+  salesRevenueRial: string;
+  grossMarginPercent: number | null;
+  costCoveragePercent: number;
+  purchaseFrequency: number;
+  lastPurchaseDateJalali: string | null;
+  daysSinceLastPurchase: number | null;
+  grossProfitScore: number;
+  frequencyScore: number;
+  recencyScore: number;
+  paymentScore: number;
+  costToServeScore: number;
+  calculatedAt: string;
+}
+
+export interface CustomerValueDetailRow {
+  rank: string;
+  realizedValueScore: number;
+  potentialValueScore: number | null;
+  customerValueIndex: number | null;
+  calculatedAt: string | null;
+  components: {
+    grossProfitScore: number; frequencyScore: number; recencyScore: number;
+    paymentScore: number; costToServeScore: number;
+  };
+  raw: {
+    salesRevenueRial: number; grossProfitRial: number; grossMarginPercent: number | null;
+    costCoveragePercent: number; purchaseFrequency: number;
+    lastPurchaseDateJalali: string | null; daysSinceLastPurchase: number | null;
+  };
+  potentialInputs: {
+    consumption: number | null; companySize: number | null; projects: number | null;
+    portfolioFit: number | null; repeatPurchase: number | null;
+  };
 }
 
 export interface CustomerDetail extends CustomerRow {
   address: string | null;
+  potentialConsumption: number | null;
+  potentialCompanySize: number | null;
+  potentialProjects: number | null;
+  potentialPortfolioFit: number | null;
+  potentialRepeatPurchase: number | null;
   notes: string | null;
   customValues: string | null;
   mobileNormalized: string | null;
@@ -81,6 +138,18 @@ export interface CustomerWriteInput {
   notes?: string | null;
   tags?: string | null;
   customValues?: string | null;
+
+  /**
+   * The manual half of customer value. The score, rank and every sales-derived
+   * figure are computed server-side and are not writable.
+   */
+  potentialConsumption?: number | null;
+  potentialCompanySize?: number | null;
+  potentialProjects?: number | null;
+  potentialPortfolioFit?: number | null;
+  potentialRepeatPurchase?: number | null;
+  paymentBehaviour?: string | null;
+  costToServe?: string | null;
 }
 
 /** What the duplicate check is given: the record as the form has it so far. */
@@ -189,4 +258,43 @@ export const customersApi = {
   /** Moves every dependent record to `replacementId`, then deletes. */
   removeWithMigration: (id: string, replacementId: string) =>
     api.delete<{ movedTo: string }>(`/api/customers/${id}`, { replaceWith: replacementId }),
+
+  /** Everything behind one customer's rank, for the value card. */
+  value: (id: string) =>
+    api.get<{ value: CustomerValueDetailRow }>(`/api/customers/${id}/value`).then((r) => r.value),
+
+  /** How the company's view of this customer's potential has moved. */
+  potentialHistory: (id: string) =>
+    api.get<{ history: PotentialHistoryRow[] }>(`/api/customers/${id}/potential-history`)
+      .then((r) => r.history),
+
+  /** Rank counts and totals for the value dashboard. */
+  valueSummary: () =>
+    api.get<{ summary: CustomerValueSummary }>("/api/customers/value-summary").then((r) => r.summary),
+
+  /**
+   * Re-ranks every customer.
+   *
+   * Whole-population because the percentile scores are relative; there is no
+   * correct way to recalculate one customer alone.
+   */
+  recalculateValue: () =>
+    api.post<{ customers: number; ranked: number; pending: number }>(
+      "/api/customers/recalculate-value", {}),
 };
+
+export interface PotentialHistoryRow {
+  id: string;
+  previousScore: number | null;
+  newScore: number | null;
+  previousParams: string | null;
+  newParams: string | null;
+  changedByName: string | null;
+  changedAt: string;
+}
+
+export interface CustomerValueSummary {
+  byRank: { rank: string; count: number; grossProfitRial: number }[];
+  averageRealized: number;
+  averagePotential: number;
+}

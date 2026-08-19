@@ -16,6 +16,20 @@ export interface CustomerListFilters {
   industry: string;
   province: string;
   status: string;
+  /* Customer value. Ranges and a relation rather than plain equality, so they
+     travel as their own query parameters. */
+  rank: string;
+  minRealized: string;
+  maxRealized: string;
+  minPotential: string;
+  maxPotential: string;
+  minGrossProfit: string;
+  maxGrossProfit: string;
+  lastPurchaseWithinMonths: string;
+  paymentBehaviour: string;
+  costToServe: string;
+  /** "true" to show only customers whose potential has never been assessed. */
+  notAssessed: string;
   /** fieldId -> value, from the user-defined custom fields. */
   customFields: Record<string, string>;
 }
@@ -25,6 +39,17 @@ const EMPTY_FILTERS: CustomerListFilters = {
   industry: "all",
   province: "all",
   status: "all",
+  rank: "all",
+  minRealized: "",
+  maxRealized: "",
+  minPotential: "",
+  maxPotential: "",
+  minGrossProfit: "",
+  maxGrossProfit: "",
+  lastPurchaseWithinMonths: "",
+  paymentBehaviour: "all",
+  costToServe: "all",
+  notAssessed: "",
   customFields: {},
 };
 
@@ -37,6 +62,17 @@ export function useCustomerList(initialSearch = "") {
       industry: filters.industry,
       province: filters.province,
       status: filters.status,
+      rank: filters.rank,
+      minRealized: filters.minRealized,
+      maxRealized: filters.maxRealized,
+      minPotential: filters.minPotential,
+      maxPotential: filters.maxPotential,
+      minGrossProfit: filters.minGrossProfit,
+      maxGrossProfit: filters.maxGrossProfit,
+      lastPurchaseWithinMonths: filters.lastPurchaseWithinMonths,
+      paymentBehaviour: filters.paymentBehaviour,
+      costToServe: filters.costToServe,
+      notAssessed: filters.notAssessed,
     };
 
     // URLSearchParams cannot express a repeated key through a plain object, so
@@ -80,6 +116,12 @@ export function useCustomerList(initialSearch = "") {
   const hasActiveFilters =
     filters.customerType !== "all" || filters.industry !== "all" ||
     filters.province !== "all" || filters.status !== "all" ||
+    filters.rank !== "all" || filters.paymentBehaviour !== "all" ||
+    filters.costToServe !== "all" ||
+    !!filters.minRealized || !!filters.maxRealized ||
+    !!filters.minPotential || !!filters.maxPotential ||
+    !!filters.minGrossProfit || !!filters.maxGrossProfit ||
+    !!filters.lastPurchaseWithinMonths || !!filters.notAssessed ||
     Object.values(filters.customFields).some(Boolean);
 
   /** The same parameters, for an export that must cover every match. */

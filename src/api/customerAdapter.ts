@@ -58,6 +58,14 @@ export function rowToCustomer(row: CustomerRow): Customer {
     gender: (row.gender ?? undefined) as Customer["gender"],
     linkedCustomerIds: (row.linksFrom ?? []).map((link) => link.to.id),
     customValues: parseCustomValues(row.customValues),
+    // Customer value: the manual half is edited in the form, the computed half
+    // is read-only and arrives from the metrics join.
+    potentialValueScore: row.potentialValueScore ?? null,
+    paymentBehaviour: row.paymentBehaviour ?? null,
+    paymentReviewed: row.paymentReviewed ?? false,
+    costToServe: row.costToServe ?? null,
+    costToServeReviewed: row.costToServeReviewed ?? false,
+    valueMetrics: row.valueMetrics ?? null,
     // Present on the detail record only; the grid does not show them.
     contactName: "",
     contactLastName: "",
@@ -78,6 +86,12 @@ export function detailToCustomer(detail: CustomerDetail): Customer {
     })),
     contactName: detail.customerType === "حقوقی" ? (detail.keyPerson ?? "") : (detail.firstName ?? ""),
     contactLastName: detail.customerType === "حقوقی" ? "" : (detail.lastName ?? ""),
+    // The five answers themselves, which only the detail record carries.
+    potentialConsumption: detail.potentialConsumption ?? null,
+    potentialCompanySize: detail.potentialCompanySize ?? null,
+    potentialProjects: detail.potentialProjects ?? null,
+    potentialPortfolioFit: detail.potentialPortfolioFit ?? null,
+    potentialRepeatPurchase: detail.potentialRepeatPurchase ?? null,
   } as Customer);
 }
 
@@ -173,5 +187,12 @@ export function customerToWriteInput(customer: Partial<Customer>): CustomerWrite
       customer.customValues && Object.keys(customer.customValues).length > 0
         ? JSON.stringify(customer.customValues)
         : null,
+    potentialConsumption: customer.potentialConsumption ?? null,
+    potentialCompanySize: customer.potentialCompanySize ?? null,
+    potentialProjects: customer.potentialProjects ?? null,
+    potentialPortfolioFit: customer.potentialPortfolioFit ?? null,
+    potentialRepeatPurchase: customer.potentialRepeatPurchase ?? null,
+    paymentBehaviour: customer.paymentBehaviour ?? null,
+    costToServe: customer.costToServe ?? null,
   };
 }

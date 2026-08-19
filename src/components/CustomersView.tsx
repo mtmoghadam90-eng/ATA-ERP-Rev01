@@ -20,6 +20,10 @@ import {
 } from 'lucide-react';
 import { Customer, ERPSettings } from '../types';
 import CustomFieldsForm from './CustomFieldsForm';
+import CustomerValueFields from './CustomerValueFields';
+import CustomerValueCard, { RANK_STYLE } from './CustomerValueCard';
+import { formatMoney } from '../numUtils';
+import { COST_TO_SERVE_LEVELS, PAYMENT_BEHAVIOURS, RANK_META } from '../utils/customerValue';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import { exportToCSV } from '../excelUtils';
 import ConfirmModal from './ConfirmModal';
@@ -37,6 +41,63 @@ import DuplicateCustomerModal from './DuplicateCustomerModal';
 import { CustomerReferenceCounts } from '../utils/customerMigration';
 import CustomerDeleteMigrationModal from './CustomerDeleteMigrationModal';
 import { SearchableSelect } from './SearchableSelect';
+
+/**
+ * A header cell that sorts on the server.
+ *
+ * The customer-value figures live on a joined table, so sorting what the
+ * browser holds would order the page rather than the result — the top customer
+ * by CVI could sit on page four and never be seen.
+ */
+function SortableTh({
+  list, field, label,
+}: {
+  list: { sort?: string; order: string; toggleSort: (field: string) => void };
+  field: string;
+  label: string;
+}) {
+  const active = list.sort === field;
+  return (
+    <th className="p-3 whitespace-nowrap">
+      <button
+        type="button"
+        onClick={() => list.toggleSort(field)}
+        className={`flex items-center gap-1 font-bold transition ${
+          active ? 'text-sky-600' : 'text-slate-500 hover:text-slate-700'
+        }`}
+      >
+        {label}
+        <span className="text-[9px]">{active ? (list.order === 'asc' ? '▲' : '▼') : '⇅'}</span>
+      </button>
+    </th>
+  );
+}
+
+/** A min/max pair. Blank means unbounded on that side. */
+function ValueRange({
+  label, min, max, onMin, onMax,
+}: {
+  label: string; min: string; max: string;
+  onMin: (v: string) => void; onMax: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <label className="block font-bold text-slate-500">{label}</label>
+      <div className="flex gap-2">
+        <input
+          type="number" placeholder="از" value={min} onChange={(e) => onMin(e.target.value)}
+          className="w-full border border-slate-200 rounded-lg py-1.5 px-2 bg-white font-mono text-left focus:outline-none focus:ring-1 focus:ring-sky-500"
+          dir="ltr"
+        />
+        <input
+          type="number" placeholder="تا" value={max} onChange={(e) => onMax(e.target.value)}
+          className="w-full border border-slate-200 rounded-lg py-1.5 px-2 bg-white font-mono text-left focus:outline-none focus:ring-1 focus:ring-sky-500"
+          dir="ltr"
+        />
+      </div>
+    </div>
+  );
+}
 
 interface CustomersViewProps {
   industries: string[];
@@ -99,6 +160,9 @@ export default function CustomersView({
 
   // Dynamic Custom Fields State
   const [customValues, setCustomValues] = useState<Record<string, any>>({});
+  /* The manual customer-value answers. Held as one object because they are
+     saved together and the preview reads all of them at once. */
+  const [valueFields, setValueFields] = useState<Record<string, unknown>>({});
 
   // Delete confirm state
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -319,6 +383,9 @@ export default function CustomersView({
     setRelationSearch('');
     resetQuickForm();
     setCustomValues({});
+    // A new customer starts unassessed rather than on the defaults: an
+    // unanswered form must not look like a judgement nobody made.
+    setValueFields({});
     setShowModal(true);
   };
 
@@ -350,6 +417,17 @@ export default function CustomersView({
     setNotes(customer.notes || '');
     setTags(customer.tags || '');
     setModuleAgreements(customer.moduleAgreements || []);
+    setValueFields({
+      consumption: customer.potentialConsumption ?? null,
+      companySize: customer.potentialCompanySize ?? null,
+      projects: customer.potentialProjects ?? null,
+      portfolioFit: customer.potentialPortfolioFit ?? null,
+      repeatPurchase: customer.potentialRepeatPurchase ?? null,
+      paymentBehaviour: customer.paymentBehaviour ?? null,
+      costToServe: customer.costToServe ?? null,
+      paymentReviewed: customer.paymentReviewed ?? false,
+      costToServeReviewed: customer.costToServeReviewed ?? false,
+    });
 
     setCompanyName(customer.companyName || '');
     setEconomicCode(customer.economicCode || '');
@@ -495,6 +573,15 @@ export default function CustomersView({
         notes,
         tags,
         customValues,
+        // The manual customer-value answers. The score and rank are computed
+        // server-side from these; nothing derived is sent.
+        potentialConsumption: (valueFields.consumption ?? null) as number | null,
+        potentialCompanySize: (valueFields.companySize ?? null) as number | null,
+        potentialProjects: (valueFields.projects ?? null) as number | null,
+        potentialPortfolioFit: (valueFields.portfolioFit ?? null) as number | null,
+        potentialRepeatPurchase: (valueFields.repeatPurchase ?? null) as number | null,
+        paymentBehaviour: (valueFields.paymentBehaviour ?? null) as string | null,
+        costToServe: (valueFields.costToServe ?? null) as string | null,
         ...(customerType === 'حقوقی'
           ? { companyName, economicCode, industry, keyPerson }
           : {
@@ -578,7 +665,20 @@ export default function CustomersView({
       'ایمیل',
       'استان',
       'کد اقتصادی / کد ملی',
-      'برچسب‌ها'
+      'برچسب‌ها',
+      'رتبه ارزش',
+      'عنوان رتبه',
+      'شاخص ارزش مشتری (CVI)',
+      'ارزش ایجادشده',
+      'ارزش بالقوه',
+      'سود ناخالص (ریال)',
+      'فروش کل (ریال)',
+      'حاشیه سود ٪',
+      'پوشش بهای تمام‌شده ٪',
+      'تعداد خرید',
+      'آخرین خرید',
+      'وضعیت پرداخت',
+      'هزینه خدمت‌رسانی'
     ];
 
     const rows = data.map(c => [
@@ -591,7 +691,24 @@ export default function CustomersView({
       c.email || '',
       c.province || '',
       c.economicCode || '',
-      c.tags || ''
+      c.tags || '',
+      // The rank and everything behind it, so a filtered export can be checked
+      // against the rule rather than taken on trust.
+      c.valueMetrics?.customerValueRank ?? '',
+      c.valueMetrics?.customerValueRank
+        ? (RANK_META[c.valueMetrics.customerValueRank as 'A']?.title ?? '')
+        : '',
+      c.valueMetrics?.customerValueIndex != null ? String(c.valueMetrics.customerValueIndex) : '',
+      c.valueMetrics?.realizedValueScore != null ? String(c.valueMetrics.realizedValueScore) : '',
+      c.valueMetrics?.potentialValueScore != null ? String(c.valueMetrics.potentialValueScore) : '',
+      c.valueMetrics ? formatMoney(Number(c.valueMetrics.grossProfitRial)) : '',
+      c.valueMetrics ? formatMoney(Number(c.valueMetrics.salesRevenueRial)) : '',
+      c.valueMetrics?.grossMarginPercent != null ? String(c.valueMetrics.grossMarginPercent) : '',
+      c.valueMetrics ? String(c.valueMetrics.costCoveragePercent) : '',
+      c.valueMetrics ? String(c.valueMetrics.purchaseFrequency) : '',
+      c.valueMetrics?.lastPurchaseDateJalali ?? '',
+      c.paymentBehaviour ?? '',
+      c.costToServe ?? ''
     ]);
 
     exportToCSV('گزارش_مشتریان', headers, rows);
@@ -701,6 +818,94 @@ export default function CustomersView({
         </div>
       </div>
 
+      {/* Customer value filters */}
+      <details className="bg-white rounded-xl shadow-sm border border-slate-100">
+        <summary className="px-4 py-3 text-xs font-bold text-slate-700 cursor-pointer select-none flex items-center gap-2">
+          <Filter size={14} className="text-slate-400" />
+          فیلترهای ارزش مشتری
+          {list.filters.rank !== 'all' && (
+            <span className="text-[10px] bg-sky-50 text-sky-700 border border-sky-200 px-2 py-0.5 rounded-full">
+              رتبه {list.filters.rank}
+            </span>
+          )}
+        </summary>
+        <div className="px-4 pb-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
+          <ValueRange
+            label="ارزش ایجادشده (۰ تا ۱۰۰)"
+            min={list.filters.minRealized} max={list.filters.maxRealized}
+            onMin={(v) => list.setFilter('minRealized', v)}
+            onMax={(v) => list.setFilter('maxRealized', v)}
+          />
+          <ValueRange
+            label="ارزش بالقوه (۰ تا ۱۰۰)"
+            min={list.filters.minPotential} max={list.filters.maxPotential}
+            onMin={(v) => list.setFilter('minPotential', v)}
+            onMax={(v) => list.setFilter('maxPotential', v)}
+          />
+          <ValueRange
+            label="سود ناخالص (ریال)"
+            min={list.filters.minGrossProfit} max={list.filters.maxGrossProfit}
+            onMin={(v) => list.setFilter('minGrossProfit', v)}
+            onMax={(v) => list.setFilter('maxGrossProfit', v)}
+          />
+
+          <div className="space-y-1">
+            <label className="block font-bold text-slate-500">آخرین خرید طی</label>
+            <select
+              value={list.filters.lastPurchaseWithinMonths}
+              onChange={(e) => list.setFilter('lastPurchaseWithinMonths', e.target.value)}
+              className="w-full border border-slate-200 rounded-lg py-1.5 px-2 bg-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+            >
+              <option value="">هر زمان</option>
+              <option value="3">۳ ماه گذشته</option>
+              <option value="6">۶ ماه گذشته</option>
+              <option value="12">۱۲ ماه گذشته</option>
+              <option value="24">۲۴ ماه گذشته</option>
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="block font-bold text-slate-500">وضعیت پرداخت</label>
+            <select
+              value={list.filters.paymentBehaviour}
+              onChange={(e) => list.setFilter('paymentBehaviour', e.target.value)}
+              className="w-full border border-slate-200 rounded-lg py-1.5 px-2 bg-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+            >
+              <option value="all">همه</option>
+              {PAYMENT_BEHAVIOURS.map((o) => (
+                <option key={o.value} value={o.value}>{o.value}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="block font-bold text-slate-500">هزینه خدمت‌رسانی</label>
+            <select
+              value={list.filters.costToServe}
+              onChange={(e) => list.setFilter('costToServe', e.target.value)}
+              className="w-full border border-slate-200 rounded-lg py-1.5 px-2 bg-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+            >
+              <option value="all">همه</option>
+              {COST_TO_SERVE_LEVELS.map((o) => (
+                <option key={o.value} value={o.value}>{o.value}</option>
+              ))}
+            </select>
+          </div>
+
+          <label className="flex items-center gap-2 md:col-span-3 pt-1 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={list.filters.notAssessed === 'true'}
+              onChange={(e) => list.setFilter('notAssessed', e.target.checked ? 'true' : '')}
+              className="w-4 h-4 accent-sky-600"
+            />
+            <span className="font-semibold text-slate-600">
+              فقط مشتریانی که ارزیابی پتانسیل‌شان تکمیل نشده
+            </span>
+          </label>
+        </div>
+      </details>
+
       {/* Custom Fields Filter Panel */}
       {(() => {
         const customerCustomFields = (settings?.customFields || []).filter(f => f.module === 'customers');
@@ -776,7 +981,7 @@ export default function CustomersView({
       {/* Customer Table List */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden" id="customers-grid">
         <div className="overflow-x-auto">
-          <table className="w-full text-right border-collapse min-w-[1100px]">
+          <table className="w-full text-right border-collapse min-w-[1900px]">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-xs font-bold">
                 <th className="p-3 text-center w-24">نوع</th>
@@ -787,6 +992,16 @@ export default function CustomersView({
                 <th className="p-3">استان</th>
                 <th className="p-3">برچسب‌ها</th>
                 <th className="p-3">فیلدهای سفارشی</th>
+                {/* Customer value. Every one of these sorts on the server: the
+                    figures live on a joined table, so sorting the page in the
+                    browser would order one page rather than the result. */}
+                <SortableTh list={list} field="customerValueRank" label="رتبه" />
+                <SortableTh list={list} field="customerValueIndex" label="CVI" />
+                <SortableTh list={list} field="realizedValueScore" label="ارزش ایجادشده" />
+                <SortableTh list={list} field="potentialValueScore" label="ارزش بالقوه" />
+                <SortableTh list={list} field="grossProfitRial" label="سود ناخالص" />
+                <SortableTh list={list} field="lastPurchaseDate" label="آخرین خرید" />
+                <SortableTh list={list} field="purchaseFrequency" label="تعداد خرید" />
                 <th className="p-3 text-center w-24">عملیات</th>
               </tr>
               {/* Column Filters Input Row */}
@@ -854,6 +1069,28 @@ export default function CustomersView({
                     className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white"
                   />
                 </th>
+                <th className="p-2"></th>
+                <th className="p-2">
+                  {/* A real server-side filter: rank lives on the metrics table
+                      and the count and the export both have to agree with it. */}
+                  <select
+                    value={list.filters.rank}
+                    onChange={(e) => list.setFilter('rank', e.target.value)}
+                    className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded bg-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+                  >
+                    <option value="all">همه</option>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                    <option value="D">D</option>
+                    <option value="PENDING">ارزیابی‌نشده</option>
+                  </select>
+                </th>
+                <th className="p-2"></th>
+                <th className="p-2"></th>
+                <th className="p-2"></th>
+                <th className="p-2"></th>
+                <th className="p-2"></th>
                 <th className="p-2"></th>
                 <th className="p-2"></th>
               </tr>
@@ -929,6 +1166,33 @@ export default function CustomersView({
                         customFields={settings?.customFields || []}
                         customValues={cust.customValues}
                       />
+                    </td>
+
+                    {/* Customer value — computed server-side, read-only here */}
+                    <td className="p-3">
+                      <span className={`px-2 py-1 rounded-full font-bold text-[10px] border whitespace-nowrap ${RANK_STYLE[cust.valueMetrics?.customerValueRank ?? 'PENDING'] ?? RANK_STYLE.PENDING}`}>
+                        {cust.valueMetrics?.customerValueRank && cust.valueMetrics.customerValueRank !== 'PENDING'
+                          ? `${cust.valueMetrics.customerValueRank} — ${RANK_META[cust.valueMetrics.customerValueRank as 'A'].title}`
+                          : 'ارزیابی‌نشده'}
+                      </span>
+                    </td>
+                    <td className="p-3 font-mono text-slate-700 font-bold" dir="ltr">
+                      {cust.valueMetrics?.customerValueIndex ?? '—'}
+                    </td>
+                    <td className="p-3 font-mono text-slate-600" dir="ltr">
+                      {cust.valueMetrics?.realizedValueScore ?? '—'}
+                    </td>
+                    <td className="p-3 font-mono text-slate-600" dir="ltr">
+                      {cust.valueMetrics?.potentialValueScore ?? '—'}
+                    </td>
+                    <td className="p-3 font-mono text-slate-700 whitespace-nowrap" dir="ltr">
+                      {cust.valueMetrics ? formatMoney(Number(cust.valueMetrics.grossProfitRial)) : '—'}
+                    </td>
+                    <td className="p-3 font-mono text-slate-600 whitespace-nowrap" dir="ltr">
+                      {cust.valueMetrics?.lastPurchaseDateJalali ?? '—'}
+                    </td>
+                    <td className="p-3 font-mono text-slate-600" dir="ltr">
+                      {cust.valueMetrics?.purchaseFrequency ?? 0}
                     </td>
 
                     {/* Actions */}
@@ -1922,6 +2186,34 @@ export default function CustomersView({
                   )}
                 </div>
               </div>
+
+              {/* The computed half, read-only, with its working shown. */}
+              {editingCustomer && <CustomerValueCard customerId={editingCustomer.id} />}
+
+              {/* Customer value — the half a person judges */}
+              <CustomerValueFields
+                values={valueFields as never}
+                settings={settings?.customerValue}
+                onChange={(patch) => setValueFields((current) => {
+                  // The section reports server field names; the preview reads
+                  // the short ones, so both are kept in step here.
+                  const shortNames: Record<string, string> = {
+                    potentialConsumption: 'consumption',
+                    potentialCompanySize: 'companySize',
+                    potentialProjects: 'projects',
+                    potentialPortfolioFit: 'portfolioFit',
+                    potentialRepeatPurchase: 'repeatPurchase',
+                  };
+                  const next = { ...current, ...patch };
+                  for (const [long, short] of Object.entries(shortNames)) {
+                    if (long in patch) next[short] = patch[long];
+                  }
+                  // Choosing a value is the review.
+                  if ('paymentBehaviour' in patch) next.paymentReviewed = true;
+                  if ('costToServe' in patch) next.costToServeReviewed = true;
+                  return next;
+                })}
+              />
 
               {/* Dynamic Custom Fields Section */}
               <CustomFieldsForm

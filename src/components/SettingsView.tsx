@@ -38,6 +38,7 @@ import {
   GripVertical,
   Copy,
   ShieldAlert,
+  Award,
 } from 'lucide-react';
 import { ERPSettings, CustomField, User, Project, AuditLog, WorkflowRule } from '../types';
 import { formatERPNumber } from '../numUtils';
@@ -53,6 +54,7 @@ import { SCHEDULE_SUBJECTS, describeSchedule } from '../utils/workflowSchedule';
 import ConfirmModal from './ConfirmModal';
 import { uploadFile } from '../imageUtils';
 import { REQUIRED_FIELDS_METADATA, DEFAULT_REQUIRED_FIELDS } from '../utils/requiredFields';
+import CustomerValueSettingsPanel from './CustomerValueSettingsPanel';
 
 interface SettingsViewProps {
   settings: ERPSettings;
@@ -106,7 +108,7 @@ export default function SettingsView({
   };
   
   // Tab control
-  const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields' | 'customerValue'>('general');
 
   // Mandatory / optional fields state
   const [localRequiredFields, setLocalRequiredFields] = useState<Record<string, Record<string, boolean>>>(() => {
@@ -882,6 +884,18 @@ export default function SettingsView({
         </button>
 
         <button
+          onClick={() => setActiveTab('customerValue')}
+          className={`py-2 px-4 md:py-2.5 md:px-5 text-xs md:text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 rounded-xl border flex-shrink-0 ${
+            activeTab === 'customerValue'
+              ? 'bg-sky-50 text-sky-600 border-sky-300 shadow-sm shadow-sky-100'
+              : 'bg-white text-slate-500 hover:text-slate-800 hover:bg-slate-50 border-slate-200'
+          }`}
+        >
+          <Award size={16} className="text-amber-500" />
+          رتبه‌بندی ارزش مشتری
+        </button>
+
+        <button
           onClick={() => setActiveTab('rates')}
           className={`py-2 px-4 md:py-2.5 md:px-5 text-xs md:text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 rounded-xl border flex-shrink-0 ${
             activeTab === 'rates'
@@ -992,6 +1006,8 @@ export default function SettingsView({
             </div>
           </div>
         </div>
+      ) : activeTab === 'customerValue' ? (
+        <CustomerValueSettingsPanel settings={settings} updateSettings={updateSettings} />
       ) : activeTab === 'rates' ? (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="mb-6">
