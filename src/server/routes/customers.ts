@@ -1,6 +1,8 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
+import { hasPermission } from "../auth";
+import { recomputeAllCustomerLevels } from "../services/customerScore";
 import {
   CUSTOMER_FILTERABLE,
   CUSTOMER_SORTABLE,
@@ -73,6 +75,33 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "GET /api/customers");
+    }
+  });
+
+  /**
+   * Re-levels every customer.
+   *
+   * The thresholds live in settings while the level lives on the row, so
+   * editing them changes nobody until this runs. It is also what fills in the
+   * levels the first time, for customers that existed before the column did.
+   *
+   * Gated on `settings` rather than `customers`: it rewrites a derived column
+   * for the whole table, which is an administrative act, not customer data
+   * entry. Registered ahead of `/api/customers/:id`, which would otherwise
+   * match "recompute-levels" as an id.
+   */
+  app.post("/api/customers/recompute-levels", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    if (!hasPermission(user, "settings")) {
+      res.status(403).json({ success: false, error: "شما اجازه دسترسی به این بخش را ندارید." });
+      return;
+    }
+    try {
+      const result = await recomputeAllCustomerLevels();
+      res.json({ success: true, ...result });
+    } catch (err) {
+      sendError(res, err, "POST /api/customers/recompute-levels");
     }
   });
 

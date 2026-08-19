@@ -2,6 +2,11 @@
  * Types & Interfaces for Abzar Tamin Arshia ERP
  */
 
+// The customer level rules live with the scoring itself, so the thresholds and
+// the arithmetic that reads them cannot drift apart.
+export type { CustomerScoringSettings, CustomerLevel } from './utils/customerScoring';
+import type { CustomerScoringSettings, CustomerLevel } from './utils/customerScoring';
+
 export interface ModuleNote {
   id: string;
   text: string;
@@ -56,6 +61,17 @@ export interface Customer {
 
   // Relationships (اتصال حقیقی و حقوقی)
   linkedCustomerIds?: string[];
+
+  /**
+   * What this customer has bought, and the internal level it earns them.
+   *
+   * All four are derived from their won proforma lines and written by the
+   * server; a client cannot set them. See `src/utils/customerScoring.ts`.
+   */
+  customerLevel?: CustomerLevel;
+  purchaseCount?: number;
+  purchaseAmountRial?: number;
+  purchaseItemCount?: number;
 
   // Custom Field values
   customValues?: Record<string, any>;
@@ -546,6 +562,12 @@ export interface ERPSettings {
   }>;
   deliveryChecklistTemplate?: string[];
   workflows?: WorkflowRule[];
+  /**
+   * Thresholds behind the customer level column. Editing them changes nobody's
+   * level until a recompute runs, because the level is stored on the row so it
+   * can be filtered and sorted in SQL — see `src/utils/customerScoring.ts`.
+   */
+  customerScoring?: CustomerScoringSettings;
 }
 
 export interface ProjectReferralResponse {

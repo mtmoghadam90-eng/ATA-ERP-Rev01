@@ -1,4 +1,5 @@
 import { ExchangeRate, ERPSettings } from './types';
+import { DEFAULT_CUSTOMER_SCORING } from './utils/customerScoring';
 
 /**
  * What a fresh installation starts with.
@@ -219,6 +220,7 @@ export const DEFAULT_SETTINGS: ERPSettings = {
     ]
   },
   lossReasons: ['قیمت بالا و عدم رقابت', 'زمان تحویل طولانی', 'عدم انطباق مدارک فنی', 'تغییر نیاز مشتری', 'انصراف مشتری از کل پروژه', 'برنده شدن رقیب با برند ارزان‌تر'],
+  customerScoring: DEFAULT_CUSTOMER_SCORING,
   activityCategories: [
     { id: 'act-1', name: 'پیگیری تماس تلفنی', module: 'پیگیری' },
     { id: 'act-2', name: 'جلسه حضوری فنی', module: 'پروژه' },

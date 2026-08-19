@@ -101,6 +101,18 @@ model Customer {
 
   customValues String? @db.NVarChar(Max)
 
+  /// What this customer has bought, and the level it earns them.
+  ///
+  /// Derived from their won proforma lines and re-derived whenever one changes,
+  /// in the same transaction — the same treatment a project's status gets, and
+  /// for the same reason: the grid filters, sorts, pages and exports on the
+  /// level, none of which works if every reader has to recompute it.
+  /// `customerLevel` is null only until the first recompute has run.
+  purchaseCount      Int      @default(0)
+  purchaseAmountRial Decimal  @default(0) @db.Decimal(19, 2)
+  purchaseItemCount  Decimal  @default(0) @db.Decimal(18, 3)
+  customerLevel      String?  @db.NVarChar(20)
+
   ownerUserId  String? @db.NVarChar(36)
   owner        User?   @relation("CustomerOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -128,6 +140,7 @@ model Customer {
   @@index([mobileNormalized])
   @@index([customerType, status])
   @@index([ownerUserId])
+  @@index([customerLevel])
   @@map("customers")
 }
 

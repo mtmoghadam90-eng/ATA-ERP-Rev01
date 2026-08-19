@@ -16,6 +16,8 @@ export interface CustomerListFilters {
   industry: string;
   province: string;
   status: string;
+  /** طلایی | نقره‌ای | برنزی | بدون خرید — the derived level, or "all". */
+  customerLevel: string;
   /** fieldId -> value, from the user-defined custom fields. */
   customFields: Record<string, string>;
 }
@@ -25,6 +27,7 @@ const EMPTY_FILTERS: CustomerListFilters = {
   industry: "all",
   province: "all",
   status: "all",
+  customerLevel: "all",
   customFields: {},
 };
 
@@ -37,6 +40,7 @@ export function useCustomerList(initialSearch = "") {
       industry: filters.industry,
       province: filters.province,
       status: filters.status,
+      customerLevel: filters.customerLevel,
     };
 
     // URLSearchParams cannot express a repeated key through a plain object, so
@@ -80,6 +84,7 @@ export function useCustomerList(initialSearch = "") {
   const hasActiveFilters =
     filters.customerType !== "all" || filters.industry !== "all" ||
     filters.province !== "all" || filters.status !== "all" ||
+    filters.customerLevel !== "all" ||
     Object.values(filters.customFields).some(Boolean);
 
   /** The same parameters, for an export that must cover every match. */

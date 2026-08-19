@@ -34,6 +34,15 @@ export interface CustomerRow {
   linksFrom: { to: { id: string; companyName: string; customerType: string } }[];
   /** Drives the honorific the proforma form suggests. */
   gender: string | null;
+  /**
+   * The internal customer level and the purchase totals behind it, all derived
+   * server-side from won proformas. Decimals arrive as strings, as they do
+   * everywhere else in this API. Null until the first recompute has run.
+   */
+  customerLevel: string | null;
+  purchaseCount: number;
+  purchaseAmountRial: string;
+  purchaseItemCount: string;
 }
 
 export interface CustomerDetail extends CustomerRow {

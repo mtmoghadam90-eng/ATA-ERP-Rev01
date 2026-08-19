@@ -37,6 +37,16 @@ import DuplicateCustomerModal from './DuplicateCustomerModal';
 import { CustomerReferenceCounts } from '../utils/customerMigration';
 import CustomerDeleteMigrationModal from './CustomerDeleteMigrationModal';
 import { SearchableSelect } from './SearchableSelect';
+import { formatMoney } from '../numUtils';
+import { CUSTOMER_LEVELS, CUSTOMER_LEVEL_OPTIONS } from '../utils/customerScoring';
+
+/** How each level is coloured in the grid. Keyed by the level's own name. */
+const LEVEL_BADGE: Record<string, string> = {
+  [CUSTOMER_LEVELS.GOLD]: 'bg-amber-50 text-amber-700 border-amber-200',
+  [CUSTOMER_LEVELS.SILVER]: 'bg-slate-100 text-slate-600 border-slate-300',
+  [CUSTOMER_LEVELS.BRONZE]: 'bg-orange-50 text-orange-800 border-orange-200',
+  [CUSTOMER_LEVELS.NONE]: 'bg-white text-slate-400 border-slate-200',
+};
 
 interface CustomersViewProps {
   industries: string[];
@@ -578,7 +588,11 @@ export default function CustomersView({
       'ایمیل',
       'استان',
       'کد اقتصادی / کد ملی',
-      'برچسب‌ها'
+      'برچسب‌ها',
+      'سطح مشتری',
+      'تعداد خرید',
+      'مبلغ خرید (ریال)',
+      'تعداد کالای خریداری‌شده'
     ];
 
     const rows = data.map(c => [
@@ -591,7 +605,13 @@ export default function CustomersView({
       c.email || '',
       c.province || '',
       c.economicCode || '',
-      c.tags || ''
+      c.tags || '',
+      // The level and the three figures behind it, so a filtered export can be
+      // checked against the rule rather than taken on trust.
+      c.customerLevel || '',
+      String(c.purchaseCount ?? 0),
+      formatMoney(c.purchaseAmountRial ?? 0),
+      String(c.purchaseItemCount ?? 0)
     ]);
 
     exportToCSV('گزارش_مشتریان', headers, rows);
@@ -785,6 +805,7 @@ export default function CustomersView({
                 <th className="p-3">شخص کلیدی</th>
                 <th className="p-3">اطلاعات تماس</th>
                 <th className="p-3">استان</th>
+                <th className="p-3 whitespace-nowrap">سطح مشتری</th>
                 <th className="p-3">برچسب‌ها</th>
                 <th className="p-3">فیلدهای سفارشی</th>
                 <th className="p-3 text-center w-24">عملیات</th>
@@ -844,6 +865,21 @@ export default function CustomersView({
                     onChange={(e) => setColFilters({...colFilters, province: e.target.value})}
                     className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white"
                   />
+                </th>
+                <th className="p-2">
+                  {/* A real server-side filter, not a filter over the page on
+                      screen: the level is a stored column, so the query can do
+                      it and the count and the export stay honest. */}
+                  <select
+                    value={list.filters.customerLevel}
+                    onChange={(e) => list.setFilter('customerLevel', e.target.value)}
+                    className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white"
+                  >
+                    <option value="all">همه سطوح</option>
+                    {CUSTOMER_LEVEL_OPTIONS.map((level) => (
+                      <option key={level} value={level}>{level}</option>
+                    ))}
+                  </select>
                 </th>
                 <th className="p-2">
                   <input
@@ -908,6 +944,20 @@ export default function CustomersView({
                     {/* Province */}
                     <td className="p-3 text-slate-600">
                       {cust.province || '-'}
+                    </td>
+
+                    {/* Customer level — derived server-side from won proformas */}
+                    <td className="p-3 whitespace-nowrap">
+                      <span
+                        className={`px-2.5 py-1 rounded-full font-bold text-[10px] border ${LEVEL_BADGE[cust.customerLevel ?? ''] ?? 'bg-slate-50 text-slate-500 border-slate-200'}`}
+                        title={
+                          cust.customerLevel && cust.customerLevel !== CUSTOMER_LEVELS.NONE
+                            ? `${cust.purchaseCount ?? 0} خرید · ${formatMoney(cust.purchaseAmountRial ?? 0)} ریال · ${cust.purchaseItemCount ?? 0} کالا`
+                            : 'هنوز خرید برنده‌ای ثبت نشده است'
+                        }
+                      >
+                        {cust.customerLevel || '—'}
+                      </span>
                     </td>
 
                     {/* Tags */}
