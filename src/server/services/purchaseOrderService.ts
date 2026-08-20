@@ -251,6 +251,67 @@ export function computeTotals(
   };
 }
 
+/**
+ * Writes each line's share of the order's landed cost onto the line.
+ *
+ * Freight, customs and the remittance fee are entered once for the whole
+ * order, so `unitPriceForeign` is only what the supplier charged — never what
+ * the goods actually cost us. The difference is material on an import: customs
+ * alone routinely moves a line by a fifth.
+ *
+ * Apportioned by value, which is the assumption already baked into every other
+ * figure on this screen.
+ *
+ * Reads the order back from the database rather than taking the caller's word,
+ * and runs after **every** write. That is not belt-and-braces: the costs arrive
+ * over weeks, and customs keyed in a fortnight after the order was placed
+ * changes no line but changes what every line cost. An allocation that only ran
+ * when the lines themselves were edited would leave those figures stale
+ * forever, which is precisely the bug this column exists to end. Same shape as
+ * `reconcileStock` above, and self-correcting for the same reason.
+ *
+ * Lines are left null, not zero, when the order carries no landed cost or no
+ * value to apportion by: zero would read as "these goods were free".
+ */
+async function allocateLandedCost(
+  tx: Prisma.TransactionClient,
+  purchaseOrderId: string,
+): Promise<void> {
+  const po = await tx.purchaseOrder.findUnique({
+    where: { id: purchaseOrderId },
+    select: {
+      landedCostRial: true, totalForeignAmount: true, exchangeRate: true,
+      items: { select: { id: true, quantity: true, totalPriceForeign: true } },
+    },
+  });
+  if (!po) return;
+
+  const orderValue = Number(po.totalForeignAmount ?? 0);
+  const landedRial = Number(po.landedCostRial ?? 0);
+  const rate = Number(po.exchangeRate ?? 0);
+  const costable = orderValue > 0 && landedRial > 0;
+
+  for (const line of po.items) {
+    const quantity = Number(line.quantity ?? 0);
+    if (!costable || quantity <= 0) {
+      await tx.purchaseOrderItem.update({
+        where: { id: line.id },
+        data: { landedUnitCostRial: null, landedUnitCostForeign: null },
+      });
+      continue;
+    }
+
+    const unitRial = (landedRial * (Number(line.totalPriceForeign ?? 0) / orderValue)) / quantity;
+    await tx.purchaseOrderItem.update({
+      where: { id: line.id },
+      data: {
+        landedUnitCostRial: unitRial,
+        landedUnitCostForeign: rate > 0 ? unitRial / rate : null,
+      },
+    });
+  }
+}
+
 function scalarData(input: PurchaseOrderInput): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const set = (key: string, value: unknown) => { if (value !== undefined) out[key] = value; };
@@ -428,6 +489,10 @@ export async function createPurchaseOrder(
       delegate: tx.purchaseOrderItem, parentWhere: { purchaseOrderId: po.id },
       rows: items, map: mapItem,
     });
+
+    // What each line actually cost, landed — read back from what was just
+    // written rather than recomputed from the request.
+    await allocateLandedCost(tx, po.id);
 
     // An order can be entered already received, e.g. when recording history.
     await reconcileStock(tx, po.id, todayJalali);
@@ -643,6 +708,10 @@ export async function updatePurchaseOrder(
         rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapItem,
       });
     }
+
+    // Unconditional: entering customs a fortnight later changes no line and
+    // changes every line's cost.
+    await allocateLandedCost(tx, id);
 
     // Runs on every update: the status may have changed, the lines may have
     // changed, or both, and this settles whichever it was.

@@ -7,6 +7,9 @@
 export type { CustomerValueSettings, CustomerRank } from './utils/customerValue';
 import type { CustomerValueSettings } from './utils/customerValue';
 import type { CustomerValueMetricsRow } from './api/customers';
+// Where a line's cost came from — the rules live with the arithmetic that reads
+// them, so a source cannot be spelled one way here and another there.
+import type { CostSource } from './utils/costOfGoods';
 
 export interface ModuleNote {
   id: string;
@@ -128,6 +131,20 @@ export interface ProductVariant {
   calcProfitPct?: number;
   calcProfitRIYAL?: number;
   calcMarginType?: 'PERCENT' | 'FIXED';
+  /**
+   * How the two figures below were arrived at.
+   *
+   * BREAKDOWN — the default, and what every record written before this existed
+   * has — computes them from the purchase price, freight, customs and margin.
+   * MANUAL is for goods bought locally, quoted by a supplier all-in, or priced
+   * by a rule nobody wants to model: the cost and the selling price are simply
+   * stated, in the item's own currency.
+   */
+  calcMode?: 'BREAKDOWN' | 'MANUAL';
+  /** MANUAL only: the stated landed cost, in `currencyForeign`. */
+  calcManualLandedForeign?: number;
+  /** MANUAL only: the stated selling price, in `currencyForeign`. */
+  calcManualSellingForeign?: number;
 }
 
 export interface ProductConfigRule {
@@ -179,6 +196,20 @@ export interface Product {
   calcProfitPct?: number;
   calcProfitRIYAL?: number;
   calcMarginType?: 'PERCENT' | 'FIXED';
+  /**
+   * How the two figures below were arrived at.
+   *
+   * BREAKDOWN — the default, and what every record written before this existed
+   * has — computes them from the purchase price, freight, customs and margin.
+   * MANUAL is for goods bought locally, quoted by a supplier all-in, or priced
+   * by a rule nobody wants to model: the cost and the selling price are simply
+   * stated, in the item's own currency.
+   */
+  calcMode?: 'BREAKDOWN' | 'MANUAL';
+  /** MANUAL only: the stated landed cost, in `currencyForeign`. */
+  calcManualLandedForeign?: number;
+  /** MANUAL only: the stated selling price, in `currencyForeign`. */
+  calcManualSellingForeign?: number;
 }
 
 export interface Supplier {
@@ -209,6 +240,17 @@ export interface ProformaItem {
   unit?: string;
   unitPriceRIYAL: number;
   totalPriceRIYAL: number;
+  /**
+   * What this line cost us, per unit, in the proforma's own currency — the same
+   * currency `unitPriceRIYAL` is in, whose name is a historical accident.
+   *
+   * Snapshotted onto the line rather than looked up when a report needs it:
+   * re-pricing the product next year must not rewrite last year's profit, and a
+   * free-text line has no product to look anything up from.
+   */
+  unitCost?: number | null;
+  costCurrency?: string | null;
+  costSource?: CostSource | null;
   supplyMethod?: 'INVENTORY' | 'ORDER' | 'NONE';
   status?: 'جاری' | 'برنده' | 'بازنده' | 'لغو شده';
   lossReason?: string;

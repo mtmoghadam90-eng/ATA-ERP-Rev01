@@ -55,6 +55,11 @@ import { createCustomerWithLinks, findServerDuplicates } from "../api/customerAd
 import { productToWriteInput, detailToProduct, rowToProduct } from "../api/productAdapter";
 import { projectToWriteInput, detailToProject } from "../api/projectAdapter";
 import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
+import { calcSeedOf } from "../api/productAdapter";
+import { calculateSellingPrice } from "../utils/priceCalculator";
+import {
+  COST_SOURCES, COST_SOURCE_LABELS, lineNeedsCost, linesMissingCost,
+} from "../utils/costOfGoods";
 import { isPartial } from "../api/partial";
 import { useProformaList } from "../api/useProformaList";
 import { useUserDirectory } from "../api/useUserDirectory";
@@ -762,6 +767,26 @@ export default function ProformasView({
     const target = selectedProformaForItems;
     if (!target) return;
 
+    /*
+     * Refuse before the modal closes, not after.
+     *
+     * Closing first and letting the server reject the save would drop the
+     * outcomes the user just set — they are only in this modal's state — and
+     * leave nothing on screen to correct.
+     */
+    if (target.proformaType !== "TECHNICAL") {
+      const uncosted = linesMissingCost(editingItemsList);
+      if (uncosted.length > 0) {
+        alert(
+          "بهای تمام‌شده برای این ردیف‌ها مشخص نشده است:\n"
+          + uncosted.map((l) => `• ${l.name}`).join("\n")
+          + "\n\nبرای هر ردیف بهای تمام‌شده را وارد کنید،"
+          + " یا اگر این ردیف بهای تمام‌شده‌ای ندارد گزینه «بدون بها» را بزنید.",
+        );
+        return;
+      }
+    }
+
     const before = target.outcomeStatus;
     setShowItemsModal(false);
 
@@ -803,6 +828,30 @@ export default function ProformasView({
               ...item,
               status: st,
               lossReason: st === "بازنده" ? item.lossReason : undefined,
+            }
+          : item,
+      ),
+    );
+  };
+  /**
+   * The cost of one line on the outcome screen.
+   *
+   * Same pairing as the edit form: the figure and its source move together, and
+   * the currency is the document's. The proforma being edited here is the one
+   * behind the modal, so its currency is read from that rather than from the
+   * form state, which belongs to a different document.
+   */
+  const setEditingItemCost = (
+    index: number,
+    patch: Pick<ProformaItem, "unitCost" | "costSource">,
+  ) => {
+    setEditingItemsList(
+      editingItemsList.map((item, idx) =>
+        idx === index
+          ? {
+              ...item,
+              ...patch,
+              costCurrency: selectedProformaForItems?.currency || "ریال",
             }
           : item,
       ),
@@ -1074,6 +1123,7 @@ export default function ProformasView({
         quantity: 1,
         unit: defaultUnitFor(products[0]?.unit),
         unitPriceRIYAL: 0,
+        ...costPatchFor(products[0]),
         techSpecs: "",
         selectedImage:
           products[0]?.images && products[0]?.images.length > 0
@@ -1166,6 +1216,12 @@ export default function ProformasView({
       tagNumber: item.tagNumber,
       quantity: item.quantity,
       unitPriceRIYAL: item.unitPriceRIYAL,
+      // Carried through, not recomputed. This form writes the lines back, so a
+      // cost dropped here is a cost erased from the record — and the figure is
+      // a fact about the sale, not about what the product costs today.
+      unitCost: item.unitCost ?? null,
+      costCurrency: item.costCurrency ?? null,
+      costSource: item.costSource ?? null,
       /*
        * The line's own outcome, and how it is to be supplied.
        *
@@ -1223,18 +1279,24 @@ export default function ProformasView({
     // Automatically set historicalExchangeRate to the current exchange rate
     setHistoricalExchangeRate(newRate);
 
-    const updatedItems = items.map((item) => {
-      // First, convert unit price from prevCurrency back to IRR
-      const priceInRial =
-        item.unitPriceRIYAL * (prevCurrency === "ریال" ? 1 : prevRate);
-      // Then, convert from IRR to the newCurrency
-      const priceInNewCurrency =
-        newCurrency === "ریال" ? priceInRial : priceInRial / newRate;
-      return {
-        ...item,
-        unitPriceRIYAL: Math.round(priceInNewCurrency * 100) / 100,
-      };
-    });
+    // The cost is in the document's currency too, so it converts with the price
+    // — the whole point of holding it that way is that the two stay comparable,
+    // and converting one without the other would turn a 30% margin into
+    // whatever the rate happens to be.
+    const convert = (amount: number) => {
+      const inRial = amount * (prevCurrency === "ریال" ? 1 : prevRate);
+      const inNew = newCurrency === "ریال" ? inRial : inRial / newRate;
+      return Math.round(inNew * 100) / 100;
+    };
+
+    const updatedItems = items.map((item) => ({
+      ...item,
+      unitPriceRIYAL: convert(item.unitPriceRIYAL),
+      unitCost: item.unitCost === null || item.unitCost === undefined
+        ? item.unitCost
+        : convert(item.unitCost),
+      costCurrency: item.costSource ? newCurrency : item.costCurrency,
+    }));
     setItems(updatedItems);
   };
   // Add Item line
@@ -1305,6 +1367,7 @@ export default function ProformasView({
         quantity: line.quantity,
         unit: defaultUnitFor(prod?.unit),
         unitPriceRIYAL: prod ? getProductOrVariantPriceInProformaCurrency(prod, variant) : 0,
+        ...costPatchFor(prod, variant),
         techSpecs: describeProduct(prod, variant),
         deliveryRange: '۳-۴',
         deliveryUnit: 'هفته' as const,
@@ -1378,6 +1441,7 @@ export default function ProformasView({
         quantity: qty,
         unit: defaultUnitFor(firstProd.unit),
         unitPriceRIYAL: 0,
+        ...costPatchFor(firstProd),
         techSpecs: describeProduct(firstProd),
         selectedImage:
           firstProd.images && firstProd.images.length > 0
@@ -1554,6 +1618,66 @@ export default function ProformasView({
     }
   };
 
+  /**
+   * A line's cost, prefilled from the catalogue when the catalogue knows it.
+   *
+   * The same landed cost the price calculator would show, converted into the
+   * proforma's currency by the same rate the price beside it uses. This is a
+   * suggestion, not a fact about the sale: the user can overwrite it, and
+   * whatever ends up on the line is what gets stored — which is the point of
+   * storing it rather than looking it up again later.
+   *
+   * Everything null when the product has no calculator filled in. A blank is an
+   * honest "nobody has said", and the save then asks; a zero would be a claim
+   * that the goods were free.
+   */
+  const costPatchFor = (
+    product?: Product,
+    variant?: ProductVariant,
+  ): Pick<ProformaItem, "unitCost" | "costCurrency" | "costSource"> => {
+    const blank = { unitCost: null, costCurrency: null, costSource: null };
+    if (!product) return blank;
+
+    const calc = calcSeedOf(variant ?? product);
+    const priceForeign = Number(calc.calcPriceForeign) || 0;
+    const rate = Number(calc.calcExchangeRate) || 0;
+    const manual = calc.calcMode === "MANUAL";
+    if (!manual && (priceForeign <= 0 || rate <= 0)) return blank;
+    if (manual && rate <= 0) return blank;
+
+    const landedRial = calculateSellingPrice({
+      mode: calc.calcMode,
+      manualLandedForeign: Number(calc.calcManualLandedForeign) || 0,
+      manualSellingForeign: Number(calc.calcManualSellingForeign) || 0,
+      priceForeign,
+      exchangeRate: rate,
+      remittanceFee: Number(calc.calcRemittanceFee) || 0,
+      remittancePct: Number(calc.calcRemittancePct) || 0,
+      shippingCost: Number(calc.calcShippingCost) || 0,
+      otherCostsForeign: Number(calc.calcOtherCostsForeign) || 0,
+      customsDutyRIYAL: Number(calc.calcCustomsDutyRIYAL) || 0,
+      otherCostsRIYAL: Number(calc.calcOtherCostsRIYAL) || 0,
+      profitPct: Number(calc.calcProfitPct) || 0,
+      profitRIYAL: Number(calc.calcProfitRIYAL) || 0,
+      marginType: calc.calcMarginType || "PERCENT",
+    }).landedRial;
+
+    if (!(landedRial > 0)) return blank;
+
+    const proformaCurrencyEng = mapPersianCurrencyToEnglish(currency || "ریال");
+    const proformaRate = (proformaCurrencyEng
+      ? exchangeRates?.find((r) => r.currency === proformaCurrencyEng)?.rateToRIYAL
+      : 1) || 1;
+
+    return {
+      unitCost: currency === "ریال"
+        ? Math.round(landedRial)
+        : Math.round((landedRial / proformaRate) * 100) / 100,
+      costCurrency: currency || "ریال",
+      costSource: COST_SOURCES.PRICE_CALCULATOR,
+    };
+  };
+
   // Handle Item Select product
   const handleItemProductChange = (index: number, prodId: string) => {
     const prod = products.find((p) => p.id === prodId);
@@ -1587,6 +1711,7 @@ export default function ProformasView({
       // The product's own unit, so picking «متر» cable does not stay «عدد».
       unit: defaultUnitFor(prod.unit),
       unitPriceRIYAL: basePriceInSelectedCurrency,
+      ...costPatchFor(prod),
       // No variant yet: the stored description alone, plus anything typed.
       techSpecs: describeProduct(prod, undefined, newItems[index].techSpecs),
       selectedImage:
@@ -1628,6 +1753,7 @@ export default function ProformasView({
       quantity: currentQty,
       supplyMethod: effectiveSupplyType === "ORDER" ? "ORDER" : "INVENTORY",
       unitPriceRIYAL: variantPrice || item.unitPriceRIYAL,
+      ...costPatchFor(prod, variant),
       techSpecs: newTechSpecs,
     };
     setItems(newItems);
@@ -1647,6 +1773,29 @@ export default function ProformasView({
     : ["عدد"];
   /** A catalogue product brings its own unit; anything else starts at the first. */
   const defaultUnitFor = (unit?: string) => unit || unitOptions[0];
+
+  /**
+   * Setting a line's cost, which is never one field on its own.
+   *
+   * `unitCost` and `costSource` have to move together: a figure with no source
+   * cannot be told apart from the migration's guess, and a source with no figure
+   * is not an answer. `costCurrency` is stamped from the document because that
+   * is what the number is in — the server overwrites it with the same value, and
+   * keeping the form honest about it means the margin shown here is the margin
+   * that gets stored.
+   */
+  const setItemCost = (
+    index: number,
+    patch: Pick<ProformaItem, "unitCost" | "costSource">,
+  ) => {
+    const newItems = [...items];
+    newItems[index] = {
+      ...newItems[index],
+      ...patch,
+      costCurrency: currency || "ریال",
+    };
+    setItems(newItems);
+  };
 
   const handleItemFieldChange = (index: number, field: string, value: any) => {
     const newItems = [...items];
@@ -1754,6 +1903,27 @@ export default function ProformasView({
     if (proformaCodeError) {
       alert(proformaCodeError);
       return;
+    }
+
+    /*
+     * No line leaves here without a cost.
+     *
+     * The server refuses the save too — this is not the guard, it is the one
+     * that can say which lines and let the user fix them without losing the
+     * form. A technical proforma quotes no prices at all, so it has nothing to
+     * cost.
+     */
+    if (proformaType !== "TECHNICAL") {
+      const uncosted = linesMissingCost(formattedItems);
+      if (uncosted.length > 0) {
+        alert(
+          "بهای تمام‌شده برای این ردیف‌ها مشخص نشده است:\n"
+          + uncosted.map((l) => `• ${l.name}`).join("\n")
+          + "\n\nبرای هر ردیف بهای تمام‌شده را وارد کنید،"
+          + " یا اگر این ردیف بهای تمام‌شده‌ای ندارد گزینه «بدون بهای تمام‌شده» را بزنید.",
+        );
+        return;
+      }
     }
 
     if (editingProforma) {
@@ -3532,6 +3702,16 @@ export default function ProformasView({
                       <th className="py-3 px-4 text-left">
                         مبلغ کل ({selectedProformaForItems.currency || "ریال"})
                       </th>
+                      {/*
+                        The cost belongs here, not only on the edit form: this is
+                        the screen where a line becomes a sale, and a line marked
+                        won with no cost is the one that corrupts the customer
+                        ranking. Documents written before the cost existed get
+                        answered here rather than dead-ending on save.
+                      */}
+                      <th className="py-3 px-4 text-center w-44">
+                        بهای تمام‌شده واحد
+                      </th>
                       <th className="py-3 px-4 text-center w-48">
                         وضعیت ردیف کالا
                       </th>
@@ -3564,6 +3744,49 @@ export default function ProformasView({
                         </td>
                         <td className="py-3 px-4 text-left font-mono text-slate-600">
                           {formatMoney(item.quantity * item.unitPriceRIYAL)}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          {(() => {
+                            const noCost = item.costSource === COST_SOURCES.NONE;
+                            return (
+                              <div className="space-y-1">
+                                <input
+                                  type="number"
+                                  value={noCost ? "" : (item.unitCost ?? "")}
+                                  disabled={noCost}
+                                  placeholder="وارد کنید"
+                                  onChange={(e) =>
+                                    setEditingItemCost(idx, {
+                                      unitCost: e.target.value === ""
+                                        ? null
+                                        : Math.max(0, Number(e.target.value)),
+                                      costSource: e.target.value === ""
+                                        ? null
+                                        : COST_SOURCES.MANUAL,
+                                    })
+                                  }
+                                  className={`w-full rounded px-2 py-1 text-xs font-mono text-left bg-white border disabled:bg-slate-100 ${
+                                    lineNeedsCost(item)
+                                      ? "border-amber-300 bg-amber-50/60"
+                                      : "border-slate-200"
+                                  }`}
+                                />
+                                <label className="flex items-center justify-center gap-1 text-[10px] text-slate-500 cursor-pointer select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={noCost}
+                                    onChange={(e) =>
+                                      setEditingItemCost(idx, e.target.checked
+                                        ? { unitCost: 0, costSource: COST_SOURCES.NONE }
+                                        : { unitCost: null, costSource: null })
+                                    }
+                                    className="accent-slate-500"
+                                  />
+                                  بدون بها
+                                </label>
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="py-3 px-4 text-center">
                           <select
@@ -4546,6 +4769,18 @@ export default function ProformasView({
                                     newItems[idx].productName = "";
                                     newItems[idx].productCode = "";
                                     newItems[idx].brand = "";
+                                    // A cost read off the catalogue described
+                                    // the product that just left the line, so it
+                                    // goes with it. An answer somebody typed
+                                    // stays — it was about this line.
+                                    if (
+                                      item.costSource === COST_SOURCES.PRICE_CALCULATOR
+                                      || item.costSource === COST_SOURCES.PURCHASE_ORDER
+                                      || item.costSource === COST_SOURCES.BACKFILL
+                                    ) {
+                                      newItems[idx].unitCost = null;
+                                      newItems[idx].costSource = null;
+                                    }
                                   } else {
                                     // Switch to Select from List
                                     const firstP = products[0];
@@ -4555,24 +4790,9 @@ export default function ProformasView({
                                         firstP.displayName;
                                       newItems[idx].productCode = firstP.code;
                                       newItems[idx].brand = firstP.brand;
-                                      const engCurrency =
-                                        mapPersianCurrencyToEnglish(
-                                          currency || "ریال",
-                                        );
-                                      const rateObj = engCurrency
-                                        ? exchangeRates.find(
-                                            (r) => r.currency === engCurrency,
-                                          )
-                                        : undefined;
-                                      const rate = rateObj
-                                        ? rateObj.rateToRIYAL
-                                        : 1;
-                                      const basePrice =
-                                        currency === "ریال"
-                                          ? firstP.basePriceRIYAL
-                                          : firstP.basePriceRIYAL / rate;
-                                      newItems[idx].unitPriceRIYAL = getProductOrVariantPriceInProformaCurrency(firstP); //
-                                        Math.round(basePrice * 100) / 100;
+                                      newItems[idx].unitPriceRIYAL =
+                                        getProductOrVariantPriceInProformaCurrency(firstP);
+                                      Object.assign(newItems[idx], costPatchFor(firstP));
                                     }
                                   }
                                   setItems(newItems);
@@ -4792,6 +5012,94 @@ export default function ProformasView({
                           </button>
                         </div>
                       </div>
+                      {/*
+                        Every line's cost, on its own row.
+
+                        The grid above is full, and this needs three controls
+                        rather than one: the figure, an explicit "there isn't
+                        one", and what the margin comes out at. A line saved
+                        without any of them is refused — an uncosted sale reads
+                        as pure profit in the customer ranking, which is the
+                        expensive kind of wrong.
+                      */}
+                      {proformaType !== "TECHNICAL" && (() => {
+                        const noCost = item.costSource === COST_SOURCES.NONE;
+                        const missing = lineNeedsCost(item);
+                        const cost = Number(item.unitCost ?? 0);
+                        const revenue = item.quantity * item.unitPriceRIYAL;
+                        const margin = revenue > 0
+                          ? Math.round(((revenue - cost * item.quantity) / revenue) * 1000) / 10
+                          : null;
+
+                        return (
+                          <div
+                            className={`flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 ${
+                              missing
+                                ? "border-amber-300 bg-amber-50/70"
+                                : "border-slate-200 bg-slate-50/70"
+                            }`}
+                          >
+                            <label className="text-[10px] font-bold text-slate-500 shrink-0">
+                              بهای تمام‌شده واحد ({currency})
+                              <span className="text-rose-500"> *</span>
+                            </label>
+                            <input
+                              type="number"
+                              value={noCost ? "" : (item.unitCost ?? "")}
+                              disabled={noCost}
+                              placeholder={noCost ? "—" : "وارد کنید"}
+                              onChange={(e) =>
+                                setItemCost(idx, {
+                                  unitCost: e.target.value === ""
+                                    ? null
+                                    : Math.max(0, Number(e.target.value)),
+                                  costSource: e.target.value === ""
+                                    ? null
+                                    : COST_SOURCES.MANUAL,
+                                })
+                              }
+                              className="w-32 border border-slate-200 rounded-lg px-2 py-1 text-xs font-mono text-left bg-white disabled:bg-slate-100 disabled:text-slate-400"
+                            />
+
+                            <label className="flex items-center gap-1 text-[10px] font-bold text-slate-500 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={noCost}
+                                onChange={(e) =>
+                                  setItemCost(idx, e.target.checked
+                                    ? { unitCost: 0, costSource: COST_SOURCES.NONE }
+                                    : { unitCost: null, costSource: null })
+                                }
+                                className="accent-slate-500"
+                              />
+                              بدون بهای تمام‌شده
+                            </label>
+
+                            {item.costSource && (
+                              <span className="text-[10px] text-slate-400">
+                                ({COST_SOURCE_LABELS[item.costSource]})
+                              </span>
+                            )}
+
+                            {!missing && !noCost && margin !== null && (
+                              <span
+                                className={`text-[10px] font-bold font-mono mr-auto ${
+                                  margin < 0 ? "text-rose-600" : "text-emerald-600"
+                                }`}
+                              >
+                                حاشیه سود: {margin}%
+                              </span>
+                            )}
+
+                            {missing && (
+                              <span className="text-[10px] font-bold text-amber-700 mr-auto">
+                                برای ذخیره، بهای تمام‌شده این ردیف را مشخص کنید.
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
+
                       {/* Technical specifications manual input */}
                       <div className="space-y-1">
                         <div className="flex justify-between items-center">
@@ -5222,33 +5530,11 @@ export default function ProformasView({
           initialForeign = prod.priceForeign;
         }
 
-        const initialValues: Partial<ProductVariant> = variant
-          ? {
-              calcPriceForeign: variant.calcPriceForeign,
-              calcExchangeRate: variant.calcExchangeRate,
-              calcRemittanceFee: variant.calcRemittanceFee,
-              calcRemittancePct: variant.calcRemittancePct,
-              calcShippingCost: variant.calcShippingCost,
-              calcCustomsDutyRIYAL: variant.calcCustomsDutyRIYAL,
-              calcOtherCostsForeign: variant.calcOtherCostsForeign,
-              calcOtherCostsRIYAL: variant.calcOtherCostsRIYAL,
-              calcProfitPct: variant.calcProfitPct,
-              calcProfitRIYAL: variant.calcProfitRIYAL,
-              calcMarginType: variant.calcMarginType,
-            }
-          : {
-              calcPriceForeign: prod.calcPriceForeign,
-              calcExchangeRate: prod.calcExchangeRate,
-              calcRemittanceFee: prod.calcRemittanceFee,
-              calcRemittancePct: prod.calcRemittancePct,
-              calcShippingCost: prod.calcShippingCost,
-              calcCustomsDutyRIYAL: prod.calcCustomsDutyRIYAL,
-              calcOtherCostsForeign: prod.calcOtherCostsForeign,
-              calcOtherCostsRIYAL: prod.calcOtherCostsRIYAL,
-              calcProfitPct: prod.calcProfitPct,
-              calcProfitRIYAL: prod.calcProfitRIYAL,
-              calcMarginType: prod.calcMarginType,
-            };
+        // Both branches of this used to spell out the same eleven calculator
+        // fields, and a field added to one and not the other simply never
+        // reached the modal. One list now, the same one that decides what gets
+        // saved.
+        const initialValues: Partial<ProductVariant> = calcSeedOf(variant ?? prod);
 
         const subtitle = variant
           ? `SKU: ${variant.sku} — ${Object.entries(variant.attributes).map(([k, v]) => `${k}: ${v}`).join(" ، ")}`
@@ -5266,7 +5552,7 @@ export default function ProformasView({
             // re-render of the screen behind the modal does not.
             seedKey={calcModalItemIdx}
             exchangeRates={exchangeRates}
-            onApply={(sellingForeign, sellingRial, details, appliedCurrency) => {
+            onApply={(sellingForeign, sellingRial, details, appliedCurrency, landed) => {
               // Compute unit price in the proforma's currency
               const engCurrency = mapPersianCurrencyToEnglish(currency || "ریال");
               const proformaRateObj = engCurrency
@@ -5274,15 +5560,28 @@ export default function ProformasView({
                 : undefined;
               const proformaRate = proformaRateObj ? proformaRateObj.rateToRIYAL : 1;
 
-              const unitPriceInProformaCurrency = currency === "ریال"
-                ? Math.round(sellingRial)
-                : Math.round((sellingRial / proformaRate) * 100) / 100;
+              const toProformaCurrency = (rial: number) => currency === "ریال"
+                ? Math.round(rial)
+                : Math.round((rial / proformaRate) * 100) / 100;
+
+              const unitPriceInProformaCurrency = toProformaCurrency(sellingRial);
+
+              // The cost the calculator just worked out, converted by the very
+              // same rate as the price beside it — so the margin on this line is
+              // arithmetic between two figures in one currency, whatever the
+              // rate turns out to have been.
+              const unitCostInProformaCurrency = toProformaCurrency(landed.landedRial);
 
               // Update the proforma item
               const newItems = [...items];
               newItems[calcModalItemIdx] = {
                 ...newItems[calcModalItemIdx],
                 unitPriceRIYAL: unitPriceInProformaCurrency,
+                unitCost: unitCostInProformaCurrency,
+                costCurrency: currency || "ریال",
+                costSource: details.calcMode === "MANUAL"
+                  ? COST_SOURCES.MANUAL
+                  : COST_SOURCES.PRICE_CALCULATOR,
               };
               setItems(newItems);
 
@@ -5422,6 +5721,7 @@ export default function ProformasView({
                     if (variant) {
                         newItems[itemIdx].productCode = variant.sku;
                         newItems[itemIdx].unitPriceRIYAL = getProductOrVariantPriceInProformaCurrency(productForItem, variant);
+                        Object.assign(newItems[itemIdx], costPatchFor(productForItem, variant));
                         const effectiveSupplyType = variant.stockLevel === 0 ? "ORDER" : (productForItem.supplyType || "INVENTORY");
                         newItems[itemIdx].supplyMethod = effectiveSupplyType === "ORDER" ? "ORDER" : "INVENTORY";
                     }

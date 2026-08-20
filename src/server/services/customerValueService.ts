@@ -56,6 +56,10 @@ const SALE_SELECT = {
     select: {
       id: true, productId: true, variantId: true, productName: true,
       quantity: true, unitPriceRial: true, totalPriceRial: true,
+      // The cost recorded on the line at the time of sale — the authority, and
+      // the only one of the three sources that cannot be rewritten later by
+      // re-pricing a product or editing a purchase order.
+      unitCost: true, costCurrency: true, costSource: true,
       status: true, supplyMethod: true,
     },
   },
@@ -134,9 +138,14 @@ export function saleRevenueRial(row: SaleRow): number | null {
 /**
  * What the goods on a sale cost us.
  *
- * This is the one figure the schema does not simply hold: a proforma line
- * records what the customer pays and nothing about what we paid. Two sources
- * are used, best first:
+ * Three sources are used, best first:
+ *
+ *  0. **The cost recorded on the line itself** (`unitCost`), in the proforma's
+ *     own currency. Every line saved since the cost fields existed has one, and
+ *     it is the only source that is a *fact about that sale*: the other two are
+ *     read from records that go on changing after the sale is closed, so a
+ *     re-priced product or an edited purchase order would otherwise rewrite
+ *     last year's profit and re-rank customers who bought nothing since.
  *
  *  1. **The actual purchase.** `PurchaseOrderItem.proformaItemId` links a
  *     purchase line back to the sale line it was raised for, so where an order
@@ -176,6 +185,13 @@ export function landedUnitCostFrom(priceCalc: string | null): number | null {
 
   // The calculator's own inputs are stored under `calc*` names on the record.
   const inputs: PriceCalcInputs = {
+    // A product priced by hand states its cost outright. Reading it through the
+    // breakdown instead would answer with whatever the unused freight and
+    // customs fields happened to hold — usually zero, which is the one wrong
+    // answer that never looks wrong.
+    mode: (parsed.calcMode ?? parsed.mode) === "MANUAL" ? "MANUAL" : "BREAKDOWN",
+    manualLandedForeign: Number(parsed.calcManualLandedForeign ?? parsed.manualLandedForeign ?? 0),
+    manualSellingForeign: Number(parsed.calcManualSellingForeign ?? parsed.manualSellingForeign ?? 0),
     priceForeign: Number(parsed.calcPriceForeign ?? parsed.priceForeign ?? 0),
     exchangeRate: Number(parsed.calcExchangeRate ?? parsed.exchangeRate ?? 0),
     remittanceFee: Number(parsed.calcRemittanceFee ?? parsed.remittanceFee ?? 0),
@@ -189,8 +205,12 @@ export function landedUnitCostFrom(priceCalc: string | null): number | null {
     marginType: (parsed.calcMarginType ?? parsed.marginType ?? "PERCENT") as "PERCENT" | "FIXED",
   };
 
-  // No foreign price and no rate means the calculator was never filled in.
-  if (inputs.priceForeign <= 0 || inputs.exchangeRate <= 0) return null;
+  // No rate means nothing can be turned into rial. Under the breakdown a
+  // missing purchase price means the calculator was never filled in at all;
+  // under manual entry there is no purchase price to have, so the stated cost
+  // stands on its own.
+  if (inputs.exchangeRate <= 0) return null;
+  if (inputs.mode !== "MANUAL" && inputs.priceForeign <= 0) return null;
   const landed = calculateSellingPrice(inputs).landedRial;
   return landed > 0 ? landed : null;
 }
@@ -264,6 +284,33 @@ export async function buildCostLookup(
   return { byProformaItem, standardUnitCost };
 }
 
+/**
+ * The cost recorded on a line, in rial, or null if there is none to read.
+ *
+ * `unitCost` is held in the proforma's own currency — deliberately, so that the
+ * margin *percentage* on the document needs no exchange rate at all. Turning it
+ * into rial for the ranking does, and a foreign document with no stored rate
+ * therefore has an unknown rial cost rather than a zero one: the line drops out
+ * of both sides of the margin, exactly as its revenue already does.
+ *
+ * A `NONE` line is a real zero and must survive the null checks around this —
+ * "this line costs nothing" is an answer, and treating it as missing would send
+ * the line down to the purchase-order fallback and cost it twice over.
+ */
+function snapshotCostRial(sale: SaleRow, line: SaleRow["items"][number]): number | null {
+  if (line.unitCost === null || line.unitCost === undefined) return null;
+
+  const perUnit = money(line.unitCost);
+  const quantity = Number(line.quantity ?? 0);
+  const inCurrency = perUnit * quantity;
+  if (inCurrency === 0) return 0;
+
+  if (!sale.currency || sale.currency === "ریال") return inCurrency;
+
+  const rate = money(sale.historicalExchangeRate);
+  return rate > 0 ? inCurrency * rate : null;
+}
+
 export interface GrossProfitResult {
   revenueRial: number;
   /** Revenue of the lines whose cost is known — the base the margin is over. */
@@ -305,8 +352,15 @@ export function grossProfitOf(sales: SaleRow[], costs: CostLookup): GrossProfitR
       const linePortion = money(line.totalPriceRial) / lineGross;
       const lineRevenue = saleRevenue * linePortion;
 
-      const actual = costs.byProformaItem.get(line.id);
-      let cost: number | null = actual !== undefined ? actual : null;
+      // The snapshot first. It is in the document's currency, so it converts
+      // at the document's own stored rate — the same one its revenue used, which
+      // is what keeps the margin internally consistent for that sale.
+      let cost: number | null = snapshotCostRial(sale, line);
+
+      if (cost === null) {
+        const actual = costs.byProformaItem.get(line.id);
+        if (actual !== undefined) cost = actual;
+      }
 
       if (cost === null && line.productId) {
         const unit = costs.standardUnitCost.get(variantKey(line.productId, line.variantId))

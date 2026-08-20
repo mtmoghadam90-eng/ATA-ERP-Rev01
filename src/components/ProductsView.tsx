@@ -38,7 +38,7 @@ import { saveAs } from 'file-saver';
 import { ApiError } from '../api/client';
 import { productsApi, type InventoryMovementEdit, type InventoryMovementRow } from '../api/products';
 import StockMovementEditModal from './StockMovementEditModal';
-import { detailToProduct, productToWriteInput, rowToProduct } from '../api/productAdapter';
+import { calcSeedOf, detailToProduct, productToWriteInput, rowToProduct } from '../api/productAdapter';
 import { useProductList } from '../api/useProductList';
 import { useList } from '../api/useList';
 import { formatMoney } from '../numUtils';
@@ -770,17 +770,10 @@ export default function ProductsView({
         basePriceRIYAL: Number(simplePriceRIYAL) || 0,
         priceForeign: simplePriceForeign ? Number(simplePriceForeign) : undefined,
         currencyForeign: simpleCurrencyForeign,
-        calcPriceForeign: simpleCalcDetails.calcPriceForeign,
-        calcExchangeRate: simpleCalcDetails.calcExchangeRate,
-        calcRemittanceFee: simpleCalcDetails.calcRemittanceFee,
-        calcRemittancePct: simpleCalcDetails.calcRemittancePct,
-        calcShippingCost: simpleCalcDetails.calcShippingCost,
-        calcCustomsDutyRIYAL: simpleCalcDetails.calcCustomsDutyRIYAL,
-        calcOtherCostsForeign: simpleCalcDetails.calcOtherCostsForeign,
-        calcOtherCostsRIYAL: simpleCalcDetails.calcOtherCostsRIYAL,
-        calcProfitPct: simpleCalcDetails.calcProfitPct,
-        calcProfitRIYAL: simpleCalcDetails.calcProfitRIYAL,
-        calcMarginType: simpleCalcDetails.calcMarginType,
+        // One list of calculator fields, shared with what actually gets saved —
+        // spelling them out here is how a new one comes to be collected by the
+        // modal and then dropped on the way to the record.
+        ...calcSeedOf(simpleCalcDetails),
       });
     } else {
       addProduct({
@@ -804,17 +797,10 @@ export default function ProductsView({
         configRules,
         priceForeign: simplePriceForeign ? Number(simplePriceForeign) : undefined,
         currencyForeign: simpleCurrencyForeign,
-        calcPriceForeign: simpleCalcDetails.calcPriceForeign,
-        calcExchangeRate: simpleCalcDetails.calcExchangeRate,
-        calcRemittanceFee: simpleCalcDetails.calcRemittanceFee,
-        calcRemittancePct: simpleCalcDetails.calcRemittancePct,
-        calcShippingCost: simpleCalcDetails.calcShippingCost,
-        calcCustomsDutyRIYAL: simpleCalcDetails.calcCustomsDutyRIYAL,
-        calcOtherCostsForeign: simpleCalcDetails.calcOtherCostsForeign,
-        calcOtherCostsRIYAL: simpleCalcDetails.calcOtherCostsRIYAL,
-        calcProfitPct: simpleCalcDetails.calcProfitPct,
-        calcProfitRIYAL: simpleCalcDetails.calcProfitRIYAL,
-        calcMarginType: simpleCalcDetails.calcMarginType,
+        // One list of calculator fields, shared with what actually gets saved —
+        // spelling them out here is how a new one comes to be collected by the
+        // modal and then dropped on the way to the record.
+        ...calcSeedOf(simpleCalcDetails),
       });
     }
     setShowModal(false);

@@ -643,6 +643,31 @@ model ProformaItem {
   unitPriceRial  Decimal @default(0) @db.Decimal(19, 2)
   totalPriceRial Decimal @default(0) @db.Decimal(19, 2)
 
+  /// What this line cost us, per unit — the home of record for cost of goods.
+  ///
+  /// Snapshotted onto the sale rather than read back from the product, because
+  /// a product's cost changes: pricing it again next year would otherwise
+  /// rewrite last year's profit and every customer's rank. It is also the only
+  /// possible home for a free-text line, which has no product at all.
+  ///
+  /// **In the proforma's own currency**, exactly like `unitPriceRial` above —
+  /// whose name is a historical accident, it too holds the document's currency.
+  /// Keeping cost and price in the same currency makes the margin *percentage*
+  /// independent of the exchange rate, and computable even when the document
+  /// has no stored rate; only the absolute rial figure needs one.
+  ///
+  /// Null means nobody has said yet. Zero with `costSource = NONE` means
+  /// somebody said there is no cost — a service line, or goods the customer
+  /// supplies. The two are deliberately different.
+  unitCost     Decimal? @db.Decimal(19, 4)
+  /// The currency `unitCost` is in, recorded so changing the document's
+  /// currency later is detectable rather than silently mislabelling the figure.
+  costCurrency String?  @db.NVarChar(20)
+  /// PURCHASE_ORDER | PRICE_CALCULATOR | MANUAL | NONE | BACKFILL — how the
+  /// figure was arrived at, so "100% costed" can be told apart from "100%
+  /// guessed".
+  costSource   String?  @db.NVarChar(20)
+
   supplyMethod String? @db.NVarChar(20)
   /// Per-line outcome: جاری | برنده | بازنده | لغو شده
   status       String? @db.NVarChar(30)
@@ -742,6 +767,17 @@ model PurchaseOrderItem {
   quantity            Decimal @default(1) @db.Decimal(18, 3)
   unitPriceForeign    Decimal @default(0) @db.Decimal(19, 4)
   totalPriceForeign   Decimal @default(0) @db.Decimal(19, 4)
+
+  /// What one unit of this line actually cost, landed.
+  ///
+  /// `unitPriceForeign` is only what the supplier charged. Freight, customs and
+  /// the remittance fee are recorded once for the whole order, so a line's real
+  /// cost is its share of the order's landed total, apportioned by value. That
+  /// share used to be recomputed every time anything wanted it and stored
+  /// nowhere; it is written here on every save instead, so a sale can copy a
+  /// figure that will not move under it.
+  landedUnitCostForeign Decimal? @db.Decimal(19, 4)
+  landedUnitCostRial    Decimal? @db.Decimal(19, 2)
 
   proformaItemId   String? @db.NVarChar(36)
   proformaItemName String? @db.NVarChar(400)

@@ -55,13 +55,19 @@ import { parseMilestoneRules } from "../src/server/services/milestoneAutomation"
 import { FRESH_FOR_MS, refreshDecision, type RateRefreshState } from "../src/server/services/rateRefresh";
 import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
 import { REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
+import {
+  COST_SOURCES, convertCost, lineMargin, lineNeedsCost, linesMissingCost, suggestLineCost,
+} from "../src/utils/costOfGoods";
+import { calculateSellingPrice } from "../src/utils/priceCalculator";
 import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
 import { nextSequence, renderAround } from "../src/server/documentNumbers";
 import { describeProformaChanges, proformaChangeSentence } from "../src/server/services/proformaChanges";
 import {
   SCHEDULE_SUBJECTS, TIME_TRIGGER, describeSchedule, dueDay, isDue, scheduledRules, sweepRange,
 } from "../src/utils/workflowSchedule";
-import { stampSentDate } from "../src/server/services/proformaService";
+import {
+  assertLinesCosted, normalizeLineCost, stampSentDate,
+} from "../src/server/services/proformaService";
 import { formatMoney } from "../src/numUtils";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -1381,6 +1387,186 @@ head("Customer value: a rank set by hand");
   eq("and holds even over an unassessed customer",
     resolveRank("PENDING", locked("B")).rank, "B");
 }
+
+/*
+ * Every line on a proforma has to have a cost.
+ *
+ * Gross profit — and through it every customer's rank — is only as honest as
+ * its worst-documented line, and an uncosted line used to be dropped from the
+ * margin entirely, which flattered exactly the sales nobody had bothered to
+ * cost. These are the rules that make a blank impossible to save while keeping
+ * "this line genuinely costs nothing" expressible.
+ */
+head("Cost of goods: no line without a cost");
+{
+  ok("a blank cost has to be answered", lineNeedsCost({ unitCost: null, costSource: null }));
+  ok("so does a missing one", lineNeedsCost({}));
+  ok("and a figure that is not a number", lineNeedsCost({ unitCost: Number.NaN, costSource: "MANUAL" }));
+  ok("a figure somebody typed is an answer", !lineNeedsCost({ unitCost: 1200, costSource: COST_SOURCES.MANUAL }));
+
+  // The distinction NONE exists for. Without it "a service line" and "nobody
+  // has got to this yet" are both an empty box, and the check has to either
+  // block the first or let the second through.
+  ok("a deliberate zero is an answer, not a blank",
+    !lineNeedsCost({ unitCost: 0, costSource: COST_SOURCES.NONE }));
+  ok("while a plain zero with no source is still a blank",
+    lineNeedsCost({ unitCost: null, costSource: null }));
+
+  const lines = [
+    { productName: "شیر پروانه‌ای", unitCost: 100, costSource: COST_SOURCES.MANUAL },
+    { productName: "خدمات نصب", unitCost: 0, costSource: COST_SOURCES.NONE },
+    { productName: "فلومتر", unitCost: null, costSource: null },
+    { unitCost: null, costSource: null },
+  ];
+  const missing = linesMissingCost(lines);
+  eq("only the unanswered lines are reported", missing.length, 2);
+  eq("and each is named so the user can find it", missing[0].name, "فلومتر");
+  eq("a line with no name is reported by its position", missing[1].name, "ردیف 4");
+  eq("with the index the form needs to scroll to it", missing[1].index, 3);
+}
+
+/*
+ * The cost is held in the document's own currency, next to the price.
+ *
+ * That is what makes the margin percentage independent of the exchange rate —
+ * and computable at all for a document whose rate was never recorded.
+ */
+head("Cost of goods: currency and margin");
+{
+  eq("a cost converts between currencies through rial", convertCost(10, 900_000, 90_000), 100);
+  eq("a zero converts to zero without needing a rate", convertCost(0, 0, 0), 0);
+
+  // Never a zero. A zero cost travels all the way into a customer's gross
+  // profit as pure margin, which is the failure this whole feature is about.
+  eq("an unknown rate gives an unknown cost", convertCost(10, 0, 90_000), null);
+  eq("and so does an unknown target rate", convertCost(10, 900_000, 0), null);
+
+  const m = lineMargin(1000, 700, 3);
+  eq("revenue is price times quantity", m.revenue, 3000);
+  eq("cost is cost times quantity", m.cost, 2100);
+  eq("profit is the difference", m.profit, 900);
+  eq("and the margin is a percentage of revenue", m.marginPercent, 30);
+
+  // The same line quoted in a different currency: every figure scales, the
+  // percentage does not. This is the property the storage choice buys.
+  const foreign = lineMargin(1000 / 90_000, 700 / 90_000, 3);
+  eq("the margin is the same whatever the currency", foreign.marginPercent, 30);
+
+  eq("selling below cost is a negative margin", lineMargin(100, 150, 1).marginPercent, -50);
+  eq("a free line has no margin to report", lineMargin(0, 0, 1).marginPercent, null);
+}
+
+/*
+ * What to offer before anybody types. Best evidence wins: what we actually paid
+ * beats what we assume the item costs.
+ */
+head("Cost of goods: the suggested figure");
+{
+  const both = suggestLineCost(
+    { purchaseOrderRial: 900_000, priceCalculatorRial: 500_000 }, 90_000, "یورو",
+  );
+  eq("the purchase order wins over the calculator", both?.costSource, COST_SOURCES.PURCHASE_ORDER);
+  eq("and arrives in the document's currency", both?.unitCost, 10);
+  eq("labelled with it", both?.costCurrency, "یورو");
+
+  const calc = suggestLineCost({ priceCalculatorRial: 450_000 }, 90_000, "یورو");
+  eq("the calculator is the fallback", calc?.costSource, COST_SOURCES.PRICE_CALCULATOR);
+  eq("converted the same way", calc?.unitCost, 5);
+
+  const rial = suggestLineCost({ purchaseOrderRial: 900_000 }, 1, "ریال");
+  eq("a rial document needs no conversion", rial?.unitCost, 900_000);
+
+  eq("neither known means nobody has said",
+    suggestLineCost({}, 90_000, "یورو"), null);
+  eq("and a foreign document with no rate cannot be answered for",
+    suggestLineCost({ purchaseOrderRial: 900_000 }, 0, "یورو"), null);
+}
+
+/*
+ * The calculator's manual mode.
+ *
+ * Not every item is imported. Goods bought locally, or quoted by a supplier
+ * all-in, have a cost that is simply known — and forcing that through a
+ * freight-and-customs breakdown meant inventing figures or leaving the cost
+ * blank, which is how uncosted lines reached the sales history.
+ */
+head("Price calculator: stating the figures instead of deriving them");
+{
+  const manual = calculateSellingPrice({
+    mode: "MANUAL",
+    manualLandedForeign: 80,
+    manualSellingForeign: 100,
+    priceForeign: 999, exchangeRate: 90_000,
+    remittanceFee: 5, remittancePct: 2, shippingCost: 50,
+    otherCostsForeign: 10, customsDutyRIYAL: 1_000_000, otherCostsRIYAL: 500_000,
+    profitPct: 55, profitRIYAL: 0, marginType: "PERCENT",
+  });
+  eq("the stated cost is the cost", manual.landedForeign, 80);
+  eq("the stated price is the price", manual.sellingForeign, 100);
+  eq("the breakdown fields are ignored entirely", manual.remittanceForeign, 0);
+  eq("and both are converted at the given rate", manual.landedRial, 80 * 90_000);
+  eq("so the profit is the difference in rial", manual.profitAmountRial, 20 * 90_000);
+
+  // Everything written before manual mode existed has no `mode` at all, and has
+  // to keep computing exactly as it did.
+  const inputs = {
+    priceForeign: 100, exchangeRate: 90_000,
+    remittanceFee: 0, remittancePct: 0, shippingCost: 0,
+    otherCostsForeign: 0, customsDutyRIYAL: 0, otherCostsRIYAL: 0,
+    profitPct: 50, profitRIYAL: 0, marginType: "PERCENT" as const,
+  };
+  eq("an absent mode still means the breakdown",
+    calculateSellingPrice(inputs).landedForeign,
+    calculateSellingPrice({ ...inputs, mode: "BREAKDOWN" }).landedForeign);
+  eq("which is not what manual mode would have said",
+    calculateSellingPrice({ ...inputs, mode: "MANUAL", manualLandedForeign: 7 }).landedForeign, 7);
+}
+
+
+/*
+ * The server's half of the rule. The form can be bypassed — a script, an old
+ * tab, a hand-made request — so the gate that actually holds is this one.
+ */
+head("Cost of goods: what the server stores and what it refuses");
+{
+  const c = (row: Record<string, unknown>) => normalizeLineCost(row as never, "یورو");
+
+  eq("a typed figure is kept", c({ unitCost: "12.5", costSource: "MANUAL" }).unitCost, 12.5);
+  eq("Persian digits and separator are read too", c({ unitCost: "۱۲٫۵" }).unitCost, 12.5);
+  eq("a figure with no source is somebody typing it", c({ unitCost: 10 }).costSource, COST_SOURCES.MANUAL);
+  eq("an unrecognised source is not stored as itself", c({ unitCost: 10, costSource: "WHATEVER" }).costSource, COST_SOURCES.MANUAL);
+
+  // The currency is the document's, never the client's claim about it: the
+  // figure sits beside a price in that currency, and a line labelled otherwise
+  // makes the margin arithmetic between two different units.
+  eq("the currency is stamped from the document",
+    c({ unitCost: 10, costCurrency: "ریال" }).costCurrency, "یورو");
+
+  eq("a blank stays blank", c({}).unitCost, null);
+  eq("with no source of its own", c({}).costSource, null);
+  eq("a negative cost is not an answer", c({ unitCost: -5 }).unitCost, null);
+  eq("NONE stores a real zero", c({ costSource: "NONE" }).unitCost, 0);
+  eq("and keeps saying so", c({ costSource: "NONE" }).costSource, COST_SOURCES.NONE);
+
+  const threw = (rows: unknown[], type?: string) => {
+    try { assertLinesCosted(rows as never, "ریال", type); return false; } catch { return true; }
+  };
+  ok("a document with an uncosted line is refused",
+    threw([{ productName: "فلومتر" }]));
+  ok("a fully costed one goes through",
+    !threw([{ productName: "فلومتر", unitCost: 10, costSource: "MANUAL" }]));
+  ok("as does one whose line is explicitly free",
+    !threw([{ productName: "خدمات", costSource: "NONE" }]));
+
+  // A nameless row is dropped by the mapper and never stored, so demanding a
+  // cost for one would block a save over a line that does not exist.
+  ok("a nameless row is not a line and is not asked about", !threw([{ quantity: 1 }]));
+
+  // A technical proforma quotes specifications, not prices — there is no cost
+  // to be missing and nowhere in its form to enter one.
+  ok("a technical proforma is exempt", !threw([{ productName: "فلومتر" }], "TECHNICAL"));
+}
+
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
