@@ -1,5 +1,7 @@
 import sql from "mssql";
-import { buildReportingTables, FlatDataset, Row, StoreCollections } from "./flatten";
+import {
+  buildReportingTables, FlatDataset, ReportColumnType, Row, StoreCollections,
+} from "./flatten";
 
 /**
  * One-way sync of the application store into SQL Server reporting tables.
@@ -63,13 +65,20 @@ function toPoolConfig(cfg: SqlSyncConfig): sql.config {
 
 /* ------------------------- schema inference ------------------------- */
 
-type ColType = "nvarchar" | "float" | "bit";
+type ColType = ReportColumnType;
 
-/** Infers each column's type from the data, defaulting to text. */
-function inferColumns(rows: Row[]): Record<string, ColType> {
-  const cols: Record<string, ColType> = {};
+/**
+ * Each column's type: what the dataset declares, else inferred from the data.
+ *
+ * A declared type wins outright and is never degraded by what the rows happen
+ * to hold. Inference is right for a column that is always populated and wrong
+ * for one that can be empty for a whole sync — see `FlatDataset.columnTypes`.
+ */
+function inferColumns(rows: Row[], declared?: Record<string, ColType>): Record<string, ColType> {
+  const cols: Record<string, ColType> = { ...(declared ?? {}) };
   for (const row of rows) {
     for (const [k, v] of Object.entries(row)) {
+      if (declared && k in declared) continue;
       if (v === null || v === undefined) {
         if (!(k in cols)) cols[k] = "nvarchar";
         continue;
@@ -159,7 +168,7 @@ export async function syncToSqlServer(
 
 /** Creates the table if missing, and adds any column that appeared since. */
 async function ensureTable(pool: sql.ConnectionPool, ds: FlatDataset) {
-  const cols = inferColumns(ds.rows);
+  const cols = inferColumns(ds.rows, ds.columnTypes);
   // A table with no rows yet still needs to exist so Power BI sees the model.
   const columnDefs = Object.entries(cols).map(
     ([name, t]) => `${bracket(name)} ${sqlTypeOf(t)} NULL`,
