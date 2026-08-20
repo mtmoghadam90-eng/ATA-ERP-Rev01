@@ -1,5 +1,6 @@
 import { getDb } from "../server/db";
 import { getProformaOutcome } from "../server/proformaStatus";
+import { loadSettings } from "../server/settings";
 import type { StoreCollections } from "./flatten";
 
 /**
@@ -53,7 +54,7 @@ export async function readSqlCollections(): Promise<StoreCollections> {
   const [
     customers, suppliers, users, products, stockLedger, projects,
     proformas, purchaseOrders, transactions, inquiries, tasks,
-    deliveries, services, categoryGroups,
+    deliveries, services, categoryGroups, settings,
   ] = await Promise.all([
     db.customer.findMany({ include: { linksFrom: { select: { toId: true } } } }),
     db.supplier.findMany(),
@@ -126,6 +127,9 @@ export async function readSqlCollections(): Promise<StoreCollections> {
         },
       },
     }),
+    // Not a table but a JSON document: the custom-field definitions live in it,
+    // and they are what turn a `cf-…` key into a column name a person can read.
+    loadSettings(),
   ]);
 
   return {
@@ -170,6 +174,16 @@ export async function readSqlCollections(): Promise<StoreCollections> {
     })),
 
     erp_users: users,
+
+    /*
+     * The custom-field definitions.
+     *
+     * Every module's `customValues` is keyed by a field id, and the label
+     * behind that id lives only here — so without this the export ships a bag
+     * of `cf-1755689000000` keys that mean nothing in Power BI. Settings are a
+     * single JSON row, so this costs one extra read.
+     */
+    erp_custom_fields: settings?.customFields ?? [],
 
     erp_products: products.map((p) => ({
       id: p.id,

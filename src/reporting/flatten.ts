@@ -11,9 +11,25 @@
 
 export type Row = Record<string, string | number | boolean | null>;
 
+/** What a reporting column is stored as. Mirrors `sqlSync`'s own three types. */
+export type ReportColumnType = "nvarchar" | "float" | "bit";
+
 export interface FlatDataset {
   table: string;
   rows: Row[];
+  /**
+   * Column types the loader must not guess at.
+   *
+   * `sqlSync` infers a column's type from the values it sees, which is right for
+   * a table whose every column is always populated — and wrong for one where a
+   * column can be legitimately empty for a whole sync. `custom_field_values` is
+   * exactly that: `value_number` is null unless a *numeric* custom field has
+   * been filled in, so the first sync of a company using only text fields would
+   * create it as NVARCHAR, and every number stored afterwards would arrive in
+   * Power BI as text. Declared types also give an empty table its real columns
+   * instead of a one-column placeholder.
+   */
+  columnTypes?: Record<string, ReportColumnType>;
 }
 
 /* ----------------------------- helpers ----------------------------- */
@@ -41,6 +57,200 @@ const customJson = (v: unknown): string | null => {
 };
 
 const arr = (v: unknown): any[] => (Array.isArray(v) ? v : []);
+
+/* --------------------------- custom fields --------------------------- */
+
+/**
+ * User-defined fields, as two tables Power BI can actually use.
+ *
+ * Every module stores its custom fields as one `customValues` JSON blob keyed by
+ * the field's **id** (`cf-1755689000000`), while the label the user typed lives
+ * somewhere else entirely — in `settings.customFields`, which never reached the
+ * reporting database at all. So the JSON arrived in Power BI as a bag of
+ * meaningless keys, and the report author had to expand it per module and name
+ * every column by hand — again after every new field, and silently wrong if a
+ * field was ever deleted and recreated, because that mints a new id.
+ *
+ * Two tables fix that:
+ *
+ *  - **`custom_fields`** is the dictionary: id, module, the label, the type and
+ *    the choices. It is what makes a key readable.
+ *  - **`custom_field_values`** is every record's values, unpivoted to one row
+ *    per (module, record, field), with the label already denormalized on to it.
+ *    A report needs no JSON parsing and no join to be useful.
+ *
+ * The existing `custom_values` JSON column stays on each module's table. Reports
+ * built against it keep working; this is an addition, not a replacement.
+ */
+
+/** The module keys a custom field may belong to, with their Persian labels. */
+const CUSTOM_FIELD_MODULES: Record<string, string> = {
+  customers: "مشتریان",
+  projects: "پروژه‌ها",
+  products: "کالا/تجهیزات",
+  proformas: "پیش‌فاکتورها",
+  suppliers: "تامین‌کنندگان",
+  purchaseOrders: "سفارشات خرید",
+  transactions: "تراکنش‌های مالی",
+  tasks: "وظایف",
+  packagingDelivery: "بسته‌بندی و تحویل کالا",
+  afterSalesServices: "خدمات پس از فروش",
+};
+
+/**
+ * Which store collection holds each module's records.
+ *
+ * `packagingDelivery` and `afterSalesServices` are listed although neither
+ * carries a `customValues` column today: the settings screen offers both, so a
+ * field can be defined for them, and listing them here means the values appear
+ * in the export the day the column does — rather than the export being the last
+ * thing anybody remembers to update.
+ */
+const CUSTOM_FIELD_SOURCES: Record<string, keyof StoreCollections> = {
+  customers: "erp_customers",
+  projects: "erp_projects",
+  products: "erp_products",
+  proformas: "erp_proformas",
+  suppliers: "erp_suppliers",
+  purchaseOrders: "erp_purchase_orders",
+  transactions: "erp_transactions",
+  tasks: "erp_tasks",
+  packagingDelivery: "erp_packaging_deliveries",
+  afterSalesServices: "erp_after_sales_services",
+};
+
+const FA_DIGITS = "۰۱۲۳۴۵۶۷۸۹";
+const AR_DIGITS = "٠١٢٣٤٥٦٧٨٩";
+
+/**
+ * A custom field's value as a number, or null when it is not one.
+ *
+ * People type Persian digits, and `٫` is the decimal separator — left in place
+ * they make `Number()` return NaN, and a numeric custom field would arrive in
+ * Power BI as an empty measure with no hint why.
+ */
+const customNumber = (v: unknown): number | null => {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v !== "string") return null;
+  const cleaned = v
+    .replace(/[۰-۹]/g, (c) => String(FA_DIGITS.indexOf(c)))
+    .replace(/[٠-٩]/g, (c) => String(AR_DIGITS.indexOf(c)))
+    .replace(/٫/g, ".")
+    .replace(/[,٬،\s]/g, "");
+  if (!cleaned) return null;
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : null;
+};
+
+/** The value as text, whatever its type — the one column that always has it. */
+const customText = (v: unknown): string | null => {
+  if (v === undefined || v === null || v === "") return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  // A file field holds an uploaded path; anything else nested is out of scope
+  // for a report column and is written as JSON rather than dropped.
+  return JSON.stringify(v);
+};
+
+/** Declared, not inferred — a company with no custom fields yet still gets the table. */
+const CUSTOM_FIELDS_COLUMNS: Record<string, ReportColumnType> = {
+  id: "nvarchar",
+  module: "nvarchar",
+  module_label: "nvarchar",
+  name: "nvarchar",
+  field_type: "nvarchar",
+  options: "nvarchar",
+  is_required: "bit",
+};
+
+/**
+ * Declared because two of these are legitimately empty for a whole sync.
+ *
+ * `value_number` holds nothing until somebody fills in a numeric field, and
+ * `value_bool` nothing until a checkbox field exists — so inference would type
+ * them as text and every figure stored later would reach Power BI as a string.
+ */
+const CUSTOM_FIELD_VALUES_COLUMNS: Record<string, ReportColumnType> = {
+  module: "nvarchar",
+  module_label: "nvarchar",
+  record_id: "nvarchar",
+  field_id: "nvarchar",
+  field_name: "nvarchar",
+  field_type: "nvarchar",
+  value_text: "nvarchar",
+  value_number: "float",
+  value_bool: "bit",
+  is_defined: "bit",
+};
+
+export const flattenCustomFields = (fields: any[]): Row[] =>
+  arr(fields).map((f) => ({
+    id: s(f.id),
+    module: s(f.module),
+    module_label: s(CUSTOM_FIELD_MODULES[String(f.module)]) ?? s(f.module),
+    name: s(f.name),
+    field_type: s(f.type),
+    // Joined rather than a child table: a select's choices are a label for the
+    // field, not facts to slice by, and one more table would earn nothing.
+    options: arr(f.options).length > 0 ? arr(f.options).join(" | ") : null,
+    is_required: b(f.required),
+  }));
+
+/**
+ * Every record's custom-field values, one row each.
+ *
+ * `record_id` is the id in that module's own table, so a report relates this to
+ * `products[id]`, `customers[id]` and so on — filtered by `module`, since Power
+ * BI relationships are single-column and one long table serves them all.
+ */
+export const flattenCustomFieldValues = (
+  store: StoreCollections,
+  fields: any[],
+): Row[] => {
+  const byId = new Map<string, any>();
+  for (const field of arr(fields)) {
+    if (field?.id) byId.set(String(field.id), field);
+  }
+
+  const rows: Row[] = [];
+
+  for (const [module, collection] of Object.entries(CUSTOM_FIELD_SOURCES)) {
+    for (const record of arr((store as any)[collection])) {
+      const values = record?.customValues;
+      if (!values || typeof values !== "object" || Array.isArray(values)) continue;
+
+      for (const [fieldId, raw] of Object.entries(values)) {
+        if (raw === undefined || raw === null || raw === "") continue;
+
+        /*
+         * A field deleted from the settings still has its values on every
+         * record that was filled in. The row is kept, with no name and
+         * `is_defined` false: the answer somebody gave is data, and dropping it
+         * because a definition was removed would quietly rewrite history.
+         */
+        const field = byId.get(fieldId);
+        const type = field ? String(field.type) : null;
+
+        rows.push({
+          module,
+          module_label: s(CUSTOM_FIELD_MODULES[module]) ?? module,
+          record_id: s(record.id),
+          field_id: fieldId,
+          field_name: field ? s(field.name) : null,
+          field_type: type,
+          value_text: customText(raw),
+          // Only for fields declared numeric. A text field that happens to hold
+          // "۱۲" is not a measure, and summing it in a report would be wrong.
+          value_number: type === "number" ? customNumber(raw) : null,
+          value_bool: type === "boolean" ? raw === true : null,
+          is_defined: !!field,
+        });
+      }
+    }
+  }
+
+  return rows;
+};
 
 /* ----------------------------- customers ----------------------------- */
 
@@ -697,6 +907,8 @@ export interface StoreCollections {
   erp_after_sales_services?: any[];
   erp_project_category_groups?: any[];
   erp_users?: any[];
+  /** `settings.customFields` — the definitions behind every `customValues` key. */
+  erp_custom_fields?: any[];
 }
 
 /** Builds every reporting table from the store, in dependency-free order. */
@@ -734,5 +946,17 @@ export function buildReportingTables(store: StoreCollections): FlatDataset[] {
 
     { table: "after_sales_services", rows: flattenAfterSalesServices(store.erp_after_sales_services || []) },
     { table: "after_sales_service_items", rows: flattenAfterSalesServiceItems(store.erp_after_sales_services || []) },
+
+    // The user-defined fields: what they are, and what every record answered.
+    {
+      table: "custom_fields",
+      rows: flattenCustomFields(store.erp_custom_fields || []),
+      columnTypes: CUSTOM_FIELDS_COLUMNS,
+    },
+    {
+      table: "custom_field_values",
+      rows: flattenCustomFieldValues(store, store.erp_custom_fields || []),
+      columnTypes: CUSTOM_FIELD_VALUES_COLUMNS,
+    },
   ];
 }

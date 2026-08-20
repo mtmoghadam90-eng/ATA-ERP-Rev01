@@ -30,6 +30,7 @@ import {
   sumRealizedWeights, validateCustomerValueSettings,
 } from "../src/utils/customerValue";
 import { hasEverPurchased, saleDateOf } from "../src/server/services/customerValueService";
+import { buildReportingTables } from "../src/reporting/flatten";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
 import { calculateProjectFinance } from "../src/utils/finance";
@@ -1763,6 +1764,82 @@ head("Customer value: a customer who has never bought");
     eq("a locked manual rank holds over a prospect too", r.rank, "A");
     eq("and what it overrode is still on the record", r.computedRank, "PROSPECT");
   }
+}
+
+/*
+ * Custom fields, as Power BI has to read them.
+ *
+ * Every module stores its custom fields as one JSON blob keyed by the field's
+ * id, while the label the user typed lives in the settings document — which
+ * never reached the reporting database. So the export shipped a bag of
+ * `cf-1755689000000` keys that meant nothing, and the report author named every
+ * column by hand, again after each new field.
+ */
+head("Reporting: the custom-field dictionary and its values");
+{
+  const fields = [
+    { id: "cf-1", module: "products", name: "تقاضای بازار", type: "select",
+      options: ["کم", "متوسط", "خوب"] },
+    { id: "cf-2", module: "products", name: "فروش برآوردی سالانه", type: "number", required: true },
+    { id: "cf-3", module: "products", name: "انبار شود؟", type: "boolean" },
+    { id: "cf-4", module: "customers", name: "کد ناحیه", type: "text" },
+  ];
+  const store = {
+    erp_custom_fields: fields,
+    erp_products: [
+      { id: "p1", code: "FT100", displayName: "فلومتر",
+        customValues: { "cf-1": "متوسط", "cf-2": "۲۰", "cf-3": true, "cf-99": "میراث" } },
+      { id: "p2", displayName: "بدون مقدار", customValues: {} },
+      { id: "p3", displayName: "بدون فیلد" },
+    ],
+    erp_customers: [{ id: "c1", companyName: "پتروشیمی", customValues: { "cf-4": "021" } }],
+    // The settings screen offers this module, but no table carries the column.
+    erp_after_sales_services: [{ id: "a1" }],
+  };
+
+  const tables = buildReportingTables(store as never);
+  const defs = tables.find((t) => t.table === "custom_fields")!;
+  const values = tables.find((t) => t.table === "custom_field_values")!;
+  const byField = (id: string) => values.rows.find((r) => r.field_id === id)!;
+
+  eq("the dictionary carries the readable label", defs.rows[0].name, "تقاضای بازار");
+  eq("and the module in Persian, for a slicer", defs.rows[0].module_label, "کالا/تجهیزات");
+  eq("a select's choices travel with it", defs.rows[0].options, "کم | متوسط | خوب");
+
+  eq("a value lands in value_text whatever its type", byField("cf-1").value_text, "متوسط");
+  // People type Persian digits, and `٫` is the decimal separator. Left alone
+  // they make Number() return NaN, and the measure arrives empty with no hint.
+  eq("a numeric field parses Persian digits", byField("cf-2").value_number, 20);
+  eq("keeping the text exactly as typed", byField("cf-2").value_text, "۲۰");
+  // A text field holding "۱۲" is not a measure; summing it would be wrong.
+  eq("a non-numeric field has no number", byField("cf-1").value_number, null);
+  eq("a checkbox lands in value_bool", byField("cf-3").value_bool, true);
+
+  eq("the label is denormalised on to every value", byField("cf-2").field_name, "فروش برآوردی سالانه");
+  eq("and the record it belongs to is named", byField("cf-1").record_id, "p1");
+  eq("modules share one long table", byField("cf-4").module, "customers");
+
+  // A field deleted from the settings still has answers on every record it was
+  // filled in on. Dropping them because a definition went would rewrite history.
+  eq("an orphaned answer survives", byField("cf-99").value_text, "میراث");
+  eq("flagged as no longer defined", byField("cf-99").is_defined, false);
+  eq("with no label to show for it", byField("cf-99").field_name, null);
+
+  ok("a record with an empty bag contributes nothing",
+    !values.rows.some((r) => r.record_id === "p2"));
+  ok("and so does one with no bag at all",
+    !values.rows.some((r) => r.record_id === "p3"));
+
+  /*
+   * Declared, not inferred. `sqlSync` types a column from the values it sees,
+   * so a first sync with no numeric field would create this as NVARCHAR and
+   * every figure stored afterwards would reach Power BI as text.
+   */
+  eq("value_number is declared FLOAT even when empty",
+    values.columnTypes?.value_number, "float");
+  eq("and value_bool a BIT", values.columnTypes?.value_bool, "bit");
+  ok("the dictionary declares its columns too, so an empty table still has them",
+    Object.keys(defs.columnTypes ?? {}).length > 0);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

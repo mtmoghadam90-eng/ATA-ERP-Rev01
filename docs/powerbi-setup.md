@@ -146,6 +146,8 @@ http://localhost:3000/api/report/preview
 
 **ردیف‌ها (فرزند):** `project_items`, `project_milestones`, `project_activities`, `proforma_items`, `purchase_order_items`, `supplier_inquiry_items`, `supplier_inquiry_steps`, `product_variants`, `inventory_transactions`, `packaging_delivery_items`, `after_sales_service_items`
 
+**فیلدهای سفارشی:** `custom_fields`, `custom_field_values` — ↓ بخش جداگانه پایین‌تر
+
 **سرویس:** `_sync_log` — تعداد ردیف و زمان آخرین همگام‌سازی هر جدول (برای نمایش «آخرین به‌روزرسانی» در داشبورد)
 
 ### نکات مفیدی که در مدل تعبیه شده
@@ -154,10 +156,76 @@ http://localhost:3000/api/report/preview
 - `inventory_transactions.signed_quantity` — ورودی مثبت، خروجی منفی. `SUM` روی آن مستقیماً موجودی خالص می‌دهد.
 - `products.stock_level` موجودی واریانت‌ها را جمع می‌زند، و `is_below_minimum` آماده برای فیلتر کمبود موجودی.
 - `supplier_inquiry_items.total_foreign` و `total_riyal` از پیش محاسبه شده‌اند.
-- `custom_values` (فیلدهای سفارشی هر ماژول) به‌صورت متن JSON منتقل می‌شود؛ در صورت نیاز در Power Query بازش کنید.
+- `custom_values` (فیلدهای سفارشی هر ماژول) به‌صورت متن JSON منتقل می‌شود. **برای گزارش از این ستون استفاده نکنید** — کلیدهایش شناسه‌ی فیلد است و معنایی ندارد؛ به‌جایش دو جدول `custom_fields` و `custom_field_values` را به کار ببرید (بخش پایین). این ستون فقط برای سازگاری با گزارش‌های قدیمی باقی مانده است.
 - **رمز کاربران هرگز منتقل نمی‌شود** — جدول `users` فقط نام، نقش و سمت دارد.
 - `proformas.sent_date` روزی است که پیش‌فاکتور برای کارفرما ارسال شده (نه تاریخ صدور)؛ برای گزارش «زمان پاسخ مشتری» و «پیش‌فاکتورهای بی‌پیگیری» از همین ستون بشمارید.
 - `proforma_items.unit_of_measure` و `packaging_delivery_items.unit_of_measure` واحد شمارش هر ردیف‌اند («عدد»، «متر»، «ست»)؛ کنارشان `unit_price_riyal` بهای واحد است، نه واحد شمارش.
+
+---
+
+## فیلدهای سفارشی
+
+فیلدهایی که خودتان در «تنظیمات ← فیلدهای سفارشی» تعریف می‌کنید، در دو جدول منتقل می‌شوند. دلیل جدا بودنشان این است که برنامه مقدارِ هر فیلد را با **شناسه‌ی** فیلد ذخیره می‌کند (`cf-1755689000000`) و نامی که شما تایپ کرده‌اید جای دیگری نگهداری می‌شود؛ بدون این دو جدول، در Power BI فقط یک مشت شناسه‌ی بی‌معنا می‌دیدید.
+
+### `custom_fields` — فرهنگ فیلدها
+
+| ستون | معنی |
+|---|---|
+| `id` | شناسه‌ی فیلد (`cf-…`) |
+| `module` | کلید ماژول (`products`، `customers`، …) |
+| `module_label` | نام فارسی ماژول — برای Slicer |
+| `name` | همان عنوانی که در تنظیمات نوشته‌اید |
+| `field_type` | `text` \| `textarea` \| `number` \| `select` \| `date` \| `file` \| `boolean` |
+| `options` | گزینه‌های فیلد انتخابی، با ` | ` جدا شده |
+| `is_required` | اجباری بودن فیلد |
+
+### `custom_field_values` — مقدار هر رکورد
+
+هر ردیف یک پاسخ است: یک رکورد، یک فیلد.
+
+| ستون | معنی |
+|---|---|
+| `module` / `module_label` | ماژولی که رکورد در آن است |
+| `record_id` | شناسه‌ی رکورد در جدول همان ماژول |
+| `field_id` | شناسه‌ی فیلد |
+| `field_name` | **نام فیلد، از قبل کنارش گذاشته شده** — برای گزارش نیازی به join با `custom_fields` ندارید |
+| `field_type` | نوع فیلد |
+| `value_text` | مقدار به‌صورت متن — **همیشه پر است**، هر نوعی که فیلد باشد |
+| `value_number` | فقط برای فیلدهای عددی. ارقام فارسی و جداکننده‌ی `٫` تبدیل شده‌اند |
+| `value_bool` | فقط برای فیلدهای بله/خیر |
+| `is_defined` | اگر `false` باشد یعنی فیلد از تنظیمات حذف شده ولی پاسخش روی رکورد مانده |
+
+**تاریخ‌ها** مثل بقیه‌ی گزارش، رشته‌ی شمسی‌اند و در `value_text` می‌آیند.
+
+### چطور در Power BI وصلش کنیم
+
+جدول `custom_field_values` برای همه‌ی ماژول‌ها یکی است، و رابطه در Power BI تک‌ستونی است. پس برای هر ماژول یک رابطه بسازید و با `module` فیلترش کنید:
+
+| از | به | فیلتر لازم |
+|---|---|---|
+| `products.id` | `custom_field_values.record_id` | `module = "products"` |
+| `customers.id` | `custom_field_values.record_id` | `module = "customers"` |
+| `projects.id` | `custom_field_values.record_id` | `module = "projects"` |
+
+اگر فقط یک ماژول برایتان مهم است (مثلاً کالا)، ساده‌ترین راه این است که در Power Query یک کپی از جدول بگیرید، روی `module = "products"` فیلتر کنید، و با Pivot روی `field_name` هر فیلد را به یک ستون تبدیل کنید. آن‌وقت ستون‌هایی با نام فارسی خودتان دارید و **فیلد جدیدی که بعداً تعریف کنید، خودکار به‌عنوان ستون جدید ظاهر می‌شود**.
+
+نمونه‌ی اندازه‌گیری:
+
+```dax
+تقاضای بازار =
+CALCULATE(
+    SELECTEDVALUE(custom_field_values[value_text]),
+    custom_field_values[field_name] = "تقاضای بازار"
+)
+
+فروش برآوردی سالانه =
+CALCULATE(
+    SUM(custom_field_values[value_number]),
+    custom_field_values[field_name] = "فروش برآوردی سالانه"
+)
+```
+
+> **دو ماژول استثنا:** صفحه‌ی تنظیمات اجازه می‌دهد برای «بسته‌بندی و تحویل کالا» و «خدمات پس از فروش» هم فیلد سفارشی بسازید، ولی این دو ماژول ستونی برای نگهداری مقدار ندارند — پس تعریفشان در `custom_fields` می‌آید و هیچ مقداری در `custom_field_values` نخواهند داشت.
 
 ---
 
