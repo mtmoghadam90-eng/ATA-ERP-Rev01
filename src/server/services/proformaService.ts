@@ -18,6 +18,7 @@ import { processWorkflowRules } from "./workflowService";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 import { applyStockDelta } from "./productService";
 import { scheduleCustomerValueRecalculation } from "./customerValueRecalc";
+import { COST_SOURCES, CostSource, LineCost, lineNeedsCost } from "../../utils/costOfGoods";
 
 /**
  * Proforma data access.
@@ -231,6 +232,9 @@ export interface ProformaItemInput {
   unit?: string | null;
   unitPriceRial?: unknown;
   totalPriceRial?: unknown;
+  unitCost?: unknown;
+  costCurrency?: string | null;
+  costSource?: string | null;
   supplyMethod?: string | null;
   status?: string | null;
   lossReason?: string | null;
@@ -271,12 +275,104 @@ export interface ProformaInput {
   items?: ProformaItemInput[];
 }
 
-function mapItem(row: ProformaItemInput): Record<string, unknown> | null {
+/**
+ * What a line's cost column should hold, given what the client sent.
+ *
+ * Cost is the one figure on a line that the server cannot recompute — there is
+ * no formula for what a thing cost us — so unlike the totals beside it, this is
+ * taken from the request. What is *not* taken from the request is the shape:
+ * an unrecognised source, a negative figure or a currency that disagrees with
+ * the document would all corrupt a margin quietly, so each is normalized here.
+ *
+ * A `NONE` line stores a real zero rather than a null. That is the difference
+ * between "this line costs nothing" — a service, or goods the customer supplies
+ * — and "nobody has said yet", and the enforcement at save depends on being
+ * able to tell them apart.
+ */
+export function normalizeLineCost(row: ProformaItemInput, currency: string): LineCost {
+  const source = String(row.costSource ?? "").trim().toUpperCase();
+  const known = (Object.values(COST_SOURCES) as string[]).includes(source)
+    ? (source as CostSource)
+    : null;
+
+  if (known === COST_SOURCES.NONE) {
+    return { unitCost: 0, costCurrency: currency, costSource: COST_SOURCES.NONE };
+  }
+
+  const raw = Number(toNumber(row.unitCost, NaN));
+  if (!Number.isFinite(raw) || raw < 0) {
+    return { unitCost: null, costCurrency: null, costSource: null };
+  }
+
+  return {
+    unitCost: raw,
+    // Always the document's currency, never the client's claim about it: the
+    // figure sits next to a price in that currency, and a line labelled
+    // otherwise would make the margin beside it arithmetic between two
+    // different units.
+    costCurrency: currency,
+    costSource: known ?? COST_SOURCES.MANUAL,
+  };
+}
+
+/**
+ * Refuses a document any of whose lines has no cost.
+ *
+ * The rule the whole feature exists for: a sale with an uncosted line produces
+ * a gross profit that is wrong in a direction nobody notices, because the
+ * missing cost reads as pure margin — and that figure feeds the customer's
+ * rank. Enforcing it here rather than only in the form means it holds for every
+ * caller, including the outcome screen that marks lines won.
+ *
+ * "No cost" means nobody has said. A line explicitly marked `NONE` — a service,
+ * or goods the customer supplies — has been answered and passes.
+ */
+export function assertLinesCosted(
+  items: ProformaItemInput[],
+  currency: string,
+  proformaType: string | null | undefined,
+): void {
+  // A technical proforma quotes specifications, not prices — its lines carry no
+  // money at all, so there is no cost for them to be missing and nowhere in its
+  // form to enter one.
+  if (proformaType === "TECHNICAL") return;
+
+  const missing = items
+    .map((row, index) => ({ row, index }))
+    // Lines without a name are dropped by the mapper and never stored, so
+    // demanding a cost for one would block a save over a row that does not
+    // exist.
+    .filter(({ row }) => toNullableString(row?.productName, 400))
+    .filter(({ row }) => lineNeedsCost(normalizeLineCost(row, currency)))
+    .map(({ row, index }) => toNullableString(row.productName, 400) ?? `ردیف ${index + 1}`);
+
+  if (missing.length === 0) return;
+
+  throw new Error(
+    "بهای تمام‌شده برای این ردیف‌ها مشخص نشده است: "
+    + missing.join("، ")
+    + ". برای هر ردیف بهای تمام‌شده را وارد کنید یا گزینه «بدون بهای تمام‌شده» را انتخاب کنید.",
+  );
+}
+
+/**
+ * Builds the line mapper for one document.
+ *
+ * It takes the document's currency because a line's cost is recorded in that
+ * currency, the same one its price is in — so a line that names no currency of
+ * its own inherits the document's rather than being guessed at later.
+ */
+function itemMapper(currency: string) {
+  return (row: ProformaItemInput) => mapItem(row, currency);
+}
+
+function mapItem(row: ProformaItemInput, currency: string): Record<string, unknown> | null {
   const productName = toNullableString(row?.productName, 400);
   if (!productName) return null;
 
   const quantity = toNumber(row.quantity, 1);
   const unitPrice = toNumber(row.unitPriceRial, 0);
+  const cost = normalizeLineCost(row, currency);
   // Recompute rather than trust the client's arithmetic: a stale or tampered
   // line total would flow straight into the invoice total.
   const totalPrice = quantity * unitPrice;
@@ -296,6 +392,9 @@ function mapItem(row: ProformaItemInput): Record<string, unknown> | null {
     unit: toNullableString(row.unit, 30),
     unitPriceRial: unitPrice,
     totalPriceRial: totalPrice,
+    unitCost: cost.unitCost,
+    costCurrency: cost.costCurrency,
+    costSource: cost.costSource,
     supplyMethod: toNullableString(row.supplyMethod, 20),
     status: toNullableString(row.status, 30),
     lossReason: toNullableString(row.lossReason, 300),
@@ -320,7 +419,9 @@ function computeTotals(
   items: ProformaItemInput[],
   input: ProformaInput,
 ): Record<string, number> {
-  const lines = (items ?? []).map((r) => mapItem(r)).filter(Boolean) as Record<string, unknown>[];
+  const lines = (items ?? [])
+    .map((r) => mapItem(r, String(input.currency ?? "ریال")))
+    .filter(Boolean) as Record<string, unknown>[];
   const totalAmount = lines.reduce((sum, l) => sum + Number(l.totalPriceRial ?? 0), 0);
 
   const discountPercent = toNumber(input.discountPercent, 0);
@@ -488,6 +589,9 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
     // scrubProductRefs. The link goes, the document is still saved.
     const items = (await scrubProductRefs(tx, input.items)) ?? [];
 
+    const createCurrency = String(input.currency ?? "ریال");
+    assertLinesCosted(items, createCurrency, input.proformaType);
+
     const createData: Record<string, unknown> = {
       ...scalarData(input),
       ...computeTotals(items, input),
@@ -501,7 +605,7 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
 
     await syncChildren({
       delegate: tx.proformaItem, parentWhere: { proformaId: proforma.id },
-      rows: items, map: mapItem,
+      rows: items, map: itemMapper(createCurrency),
     });
 
     // Load full proforma with items to reconcile stock
@@ -612,7 +716,15 @@ export async function updateProforma(
 
     const data: Record<string, unknown> = scalarData(input);
 
+    // A partial save need not resend the currency, and a line's cost is
+    // recorded in it — so fall back to what the document already is rather than
+    // to rial, which would relabel every line on this document.
+    const documentCurrency = String(input.currency ?? before?.currency ?? "ریال");
+
     const items = await scrubProductRefs(tx, input.items);
+    if (items !== undefined) {
+      assertLinesCosted(items, documentCurrency, input.proformaType ?? before?.proformaType);
+    }
 
     // Totals depend on the lines, so they can only be recomputed when the lines
     // are part of this request. Otherwise the stored totals already match the
@@ -631,7 +743,7 @@ export async function updateProforma(
     if (items !== undefined) {
       await syncChildren({
         delegate: tx.proformaItem, parentWhere: { proformaId: id },
-        rows: items, map: mapItem,
+        rows: items, map: itemMapper(documentCurrency),
       });
     }
 

@@ -102,6 +102,7 @@ const PRICE_CALC_KEYS = [
   "calcPriceForeign", "calcExchangeRate", "calcRemittanceFee", "calcRemittancePct",
   "calcShippingCost", "calcCustomsDutyRIYAL", "calcOtherCostsForeign",
   "calcOtherCostsRIYAL", "calcProfitPct", "calcProfitRIYAL", "calcMarginType",
+  "calcMode", "calcManualLandedForeign", "calcManualSellingForeign",
 ] as const;
 
 /**
@@ -118,6 +119,25 @@ type UnlistedCalcKey = Exclude<
 >;
 type AssertNever<T extends never> = T;
 export type _EveryCalcFieldIsPersisted = AssertNever<UnlistedCalcKey>;
+
+/**
+ * The calculator's own inputs, read off a product or a SKU.
+ *
+ * The price-calculator modal seeds itself from this. It goes through the same
+ * `PRICE_CALC_KEYS` list that decides what gets *saved*, so a new calculator
+ * field cannot end up persisted but never seeded back — which is how a screen
+ * comes to show a manual price as a computed one the second time it is opened.
+ */
+export function calcSeedOf(
+  source: Partial<Product> | Partial<ProductVariant> | null | undefined,
+): Partial<ProductVariant> {
+  const out: Record<string, unknown> = {};
+  for (const key of PRICE_CALC_KEYS) {
+    const value = (source as Record<string, unknown> | null | undefined)?.[key];
+    if (value !== undefined && value !== null && value !== "") out[key] = value;
+  }
+  return out as Partial<ProductVariant>;
+}
 
 function priceCalcOf(product: Partial<Product>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

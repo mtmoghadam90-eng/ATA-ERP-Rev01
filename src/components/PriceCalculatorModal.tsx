@@ -33,6 +33,15 @@ interface Props {
     sellingRial: number,
     details: Partial<ProductVariant>,
     currency: string,
+    /**
+     * What the item costs, alongside what it sells for.
+     *
+     * The calculator always knew this and used to discard it on apply, so a
+     * proforma line kept the price and lost the cost that produced it — and
+     * gross profit then had to be reconstructed from records that go on
+     * changing. Both figures leave together now.
+     */
+    landed: { landedForeign: number; landedRial: number },
   ) => void;
 }
 
@@ -75,6 +84,9 @@ export default function PriceCalculatorModal({
   const [calcMarginType, setCalcMarginType] = useState<"PERCENT" | "FIXED">(
     "PERCENT",
   );
+  const [calcMode, setCalcMode] = useState<"BREAKDOWN" | "MANUAL">("BREAKDOWN");
+  const [manualLanded, setManualLanded] = useState<string>("0");
+  const [manualSelling, setManualSelling] = useState<string>("0");
 
   /*
    * The inputs are seeded once per opening — not whenever a prop changes
@@ -160,12 +172,28 @@ export default function PriceCalculatorModal({
         : "0",
     );
     setCalcMarginType(initialValues?.calcMarginType || "PERCENT");
+    // Absent means BREAKDOWN: everything priced before manual entry existed was
+    // computed from its costs, and must keep reading that way.
+    setCalcMode(initialValues?.calcMode === "MANUAL" ? "MANUAL" : "BREAKDOWN");
+    setManualLanded(
+      initialValues?.calcManualLandedForeign !== undefined
+        ? String(initialValues.calcManualLandedForeign)
+        : "0",
+    );
+    setManualSelling(
+      initialValues?.calcManualSellingForeign !== undefined
+        ? String(initialValues.calcManualSellingForeign)
+        : String(initialPriceForeign || 0),
+    );
     // Deliberately not `initialValues`/`exchangeRates`/`currency`: see above.
   }, [open, seedKey]);
 
   if (!open) return null;
 
   const result = calculateSellingPrice({
+    mode: calcMode,
+    manualLandedForeign: Number(manualLanded) || 0,
+    manualSellingForeign: Number(manualSelling) || 0,
     priceForeign: Number(calcPriceForeign) || 0,
     exchangeRate: Number(calcExchangeRate) || 0,
     remittanceFee: Number(calcRemittanceFee) || 0,
@@ -208,8 +236,15 @@ export default function PriceCalculatorModal({
         calcProfitPct: profitPct,
         calcProfitRIYAL: Number(calcProfitRIYAL) || 0,
         calcMarginType,
+        calcMode,
+        calcManualLandedForeign: Number(manualLanded) || 0,
+        calcManualSellingForeign: Number(manualSelling) || 0,
       },
       calcCurrency,
+      {
+        landedForeign: Number(result.landedForeign.toFixed(2)),
+        landedRial: result.landedRial,
+      },
     );
     setIsFullscreen(false);
   };
@@ -316,6 +351,92 @@ export default function PriceCalculatorModal({
             </div>
           </div>
 
+          {/*
+            Two ways to reach the same two numbers.
+
+            Not every item is imported. Goods bought locally, or quoted by a
+            supplier all-in, have a cost that is simply known — and forcing that
+            through a freight-and-customs breakdown meant inventing figures, or
+            leaving the cost blank, which is how uncosted lines got into the
+            sales history in the first place.
+          */}
+          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl">
+            {([
+              { id: "BREAKDOWN", label: "محاسبه از روی هزینه‌ها" },
+              { id: "MANUAL", label: "ورود دستی قیمت" },
+            ] as const).map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setCalcMode(option.id)}
+                className={`flex-1 px-3 py-2 rounded-lg text-xs font-bold transition ${
+                  calcMode === option.id
+                    ? "bg-white text-sky-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          {calcMode === "MANUAL" ? (
+            <div className="space-y-3.5 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+              <h4 className="text-xs font-extrabold text-indigo-700 flex items-center gap-1.5 pb-2 border-b border-dashed border-slate-200">
+                <Calculator size={14} />
+                ورود دستی بهای تمام‌شده و قیمت فروش ({calcCurrency})
+              </h4>
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                هر دو مبلغ به {calcCurrency} وارد می‌شود — همان ارزی که کالا با آن
+                فروخته می‌شود. نرخ تسعیر فقط برای نمایش معادل ریالی به کار می‌رود و
+                در درصد سود اثری ندارد.
+              </p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500">
+                    بهای تمام‌شده هر واحد ({calcCurrency})
+                  </label>
+                  <input
+                    type="number"
+                    value={manualLanded}
+                    onChange={(e) => setManualLanded(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-mono text-center outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 bg-white"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500">
+                    قیمت فروش هر واحد ({calcCurrency})
+                  </label>
+                  <input
+                    type="number"
+                    value={manualSelling}
+                    onChange={(e) => setManualSelling(e.target.value)}
+                    className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-mono text-center outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-500">
+                  نرخ تسعیر (ریال به ازای هر {calcCurrency})
+                </label>
+                <input
+                  type="number"
+                  value={calcExchangeRate}
+                  onChange={(e) => setCalcExchangeRate(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-mono text-center outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 bg-white"
+                />
+              </div>
+
+              {Number(manualSelling) > 0 && Number(manualLanded) > Number(manualSelling) && (
+                <p className="text-[10px] font-bold text-rose-600">
+                  بهای تمام‌شده از قیمت فروش بیشتر است — این فروش زیان‌ده ثبت می‌شود.
+                </p>
+              )}
+            </div>
+          ) : (
+          <>
           {/* Form Inputs Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {/* Left Side: Foreign/Origin Costs */}
@@ -588,6 +709,8 @@ export default function PriceCalculatorModal({
               </span>
             </div>
           </div>
+          </>
+          )}
         </div>
 
         {/* Actions Footer */}

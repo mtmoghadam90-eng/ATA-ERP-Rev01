@@ -22,6 +22,10 @@ export interface ProformaItemRow {
   unit: string | null;
   unitPriceRial: string;
   totalPriceRial: string;
+  /** Per unit, in the proforma's currency. Null when nobody has said. */
+  unitCost: string | null;
+  costCurrency: string | null;
+  costSource: string | null;
   supplyMethod: string | null;
   status: string | null;
   lossReason: string | null;

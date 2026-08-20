@@ -161,10 +161,15 @@ export default function TransactionsView({
   const saveProformaRate = async (proformaId: string, rate: number) => {
     try {
       const full = detailToProforma(await proformasApi.get(proformaId));
-      await proformasApi.update(
-        proformaId,
-        proformaToWriteInput({ ...full, historicalExchangeRate: rate }),
-      );
+      const { items: _lines, ...withoutLines } = proformaToWriteInput({
+        ...full,
+        historicalExchangeRate: rate,
+      });
+      // The lines are deliberately not sent. An update that omits them leaves
+      // the stored ones exactly as they are, which is what this screen wants —
+      // and sending them back would put this rate change behind the
+      // cost-of-goods check, on a screen with nowhere to enter a cost.
+      await proformasApi.update(proformaId, withoutLines);
     } catch (err) {
       reportError(err, 'ثبت تغییرات پیش‌فاکتور با خطا مواجه شد.');
     }

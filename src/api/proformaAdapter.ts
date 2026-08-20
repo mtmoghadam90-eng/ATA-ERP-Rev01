@@ -111,6 +111,13 @@ export function detailToProforma(detail: ProformaDetail): Proforma {
       unit: item.unit ?? undefined,
       unitPriceRIYAL: money(item.unitPriceRial),
       totalPriceRIYAL: money(item.totalPriceRial),
+      // Null and zero mean different things here — "nobody has said what this
+      // cost" versus "this deliberately costs nothing" — so an unset cost must
+      // not fall through `money`'s zero default.
+      unitCost: item.unitCost === null || item.unitCost === undefined
+        ? null : money(item.unitCost),
+      costCurrency: item.costCurrency ?? null,
+      costSource: (item.costSource ?? null) as ProformaItem["costSource"],
       supplyMethod: (item.supplyMethod ?? undefined) as ProformaItem["supplyMethod"],
       status: (item.status ?? undefined) as ProformaItem["status"],
       lossReason: item.lossReason ?? undefined,
@@ -168,6 +175,8 @@ export function proformaToWriteInput(proforma: Partial<Proforma>): ProformaWrite
       quantity: item.quantity,
       unit: item.unit || null,
       unitPriceRial: item.unitPriceRIYAL,
+      unitCost: item.unitCost ?? null,
+      costSource: item.costSource ?? null,
       supplyMethod: item.supplyMethod ?? null,
       status: item.status ?? null,
       lossReason: item.lossReason ?? null,

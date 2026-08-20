@@ -1,4 +1,27 @@
+/**
+ * How a price was arrived at.
+ *
+ * `BREAKDOWN` is the original: enter every cost component and the landed cost
+ * falls out. `MANUAL` is for when the components are not known or not worth
+ * typing — the landed cost and the selling price are stated outright.
+ *
+ * Both end at the same two numbers, which is the point: everything downstream
+ * (margin, customer value) reads the landed cost and does not care how it was
+ * reached, only that it is there.
+ */
+export type PriceCalcMode = 'BREAKDOWN' | 'MANUAL';
+
 export interface PriceCalcInputs {
+  /** Defaults to BREAKDOWN, so records written before this existed still work. */
+  mode?: PriceCalcMode;
+  /**
+   * MANUAL only: the landed cost and selling price as stated, **in the
+   * currency `priceForeign` is quoted in** — not forced to rial. Entering a
+   * cost in the same currency as the sale is what keeps the margin percentage
+   * independent of the exchange rate.
+   */
+  manualLandedForeign?: number;
+  manualSellingForeign?: number;
   priceForeign: number;
   exchangeRate: number;
   remittanceFee: number;
@@ -23,6 +46,32 @@ export interface PriceCalcOutputs {
 }
 
 export function calculateSellingPrice(i: PriceCalcInputs): PriceCalcOutputs {
+  /*
+   * Stated outright rather than built up.
+   *
+   * The rate still converts to rial for the figures that must be rial, but it
+   * is not required: with no rate the foreign numbers stand on their own and
+   * the rial ones come out zero, which is honest — an unknown rial value, not
+   * a wrong one.
+   */
+  if (i.mode === 'MANUAL') {
+    const rateManual = Number(i.exchangeRate) || 0;
+    const landedForeignManual = Number(i.manualLandedForeign) || 0;
+    const sellingForeignManual = Number(i.manualSellingForeign) || 0;
+    const landedRialManual = landedForeignManual * rateManual;
+    const sellingRialManual = sellingForeignManual * rateManual;
+
+    return {
+      remittanceForeign: 0,
+      totalForeignCost: landedForeignManual,
+      landedForeign: landedForeignManual,
+      landedRial: landedRialManual,
+      sellingRial: sellingRialManual,
+      sellingForeign: sellingForeignManual,
+      profitAmountRial: sellingRialManual - landedRialManual,
+    };
+  }
+
   const baseOrig = Number(i.priceForeign) || 0;
   const remitPct = Number(i.remittancePct) || 0;
   const remitFee = Number(i.remittanceFee) || 0;
