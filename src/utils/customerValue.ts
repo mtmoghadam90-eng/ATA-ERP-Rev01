@@ -463,6 +463,54 @@ export function determineRank(
   return RANKS.D;
 }
 
+/* ============================ manual override ============================= */
+
+export interface ManualRankState {
+  /** The rank a person set, or null when nobody has. */
+  manualRank?: string | null;
+  /** True when that rank must survive recalculation. */
+  manualRankLocked?: boolean;
+}
+
+export interface ResolvedRank {
+  /** The rank in effect — what the grid filters and sorts on. */
+  rank: CustomerRank;
+  /** What the formula said, kept so an override never hides what it overrode. */
+  computedRank: CustomerRank;
+  rankIsManual: boolean;
+  /**
+   * True when the override has served its purpose and should be dropped.
+   *
+   * An unlocked override means "show this now, and let the evaluation take
+   * back over next time" — so the recalculation that takes back over is
+   * exactly when it stops applying. Leaving it would show a rank the metrics
+   * beside it no longer agree with.
+   */
+  clearsOverride: boolean;
+}
+
+/**
+ * Which rank a customer ends up with, given what the formula computed and what
+ * a person may have set by hand.
+ *
+ * Locked beats the formula; unlocked does not. A `manualRankLocked` with no
+ * rank is not an override — the flag alone must never blank a customer's rank.
+ */
+export function resolveRank(
+  computedRank: CustomerRank,
+  manual: ManualRankState | null | undefined,
+): ResolvedRank {
+  const hasManual = !!manual?.manualRank;
+  const locked = !!manual?.manualRankLocked && hasManual;
+
+  return {
+    rank: (locked ? manual!.manualRank : computedRank) as CustomerRank,
+    computedRank,
+    rankIsManual: locked,
+    clearsOverride: hasManual && !manual?.manualRankLocked,
+  };
+}
+
 /* ============================== the whole thing =========================== */
 
 export interface CustomerValueResult {

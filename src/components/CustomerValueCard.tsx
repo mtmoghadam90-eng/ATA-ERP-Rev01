@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Award, ChevronDown, ChevronUp, Loader2, AlertCircle, TrendingUp, Info } from 'lucide-react';
+import {
+  Award, ChevronDown, ChevronUp, Loader2, AlertCircle, TrendingUp, Info,
+  Pencil, Lock, RotateCcw, X,
+} from 'lucide-react';
 import { customersApi, CustomerValueDetailRow } from '../api/customers';
 import { RANK_META, POTENTIAL_LABELS, POTENTIAL_KEYS } from '../utils/customerValue';
 import { formatMoney } from '../numUtils';
@@ -48,6 +51,13 @@ export default function CustomerValueCard({ customerId }: { customerId: string }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  /* The override editor: which rank was picked, and — the actual question —
+     whether it should survive the next recalculation. */
+  const [editing, setEditing] = useState(false);
+  const [draftRank, setDraftRank] = useState<string>('');
+  const [draftNote, setDraftNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,7 +68,29 @@ export default function CustomerValueCard({ customerId }: { customerId: string }
       .catch((err) => { if (!cancelled) setError(err?.message || 'خواندن ارزش مشتری با خطا مواجه شد.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [customerId]);
+  }, [customerId, reload]);
+
+  /**
+   * Writes the override.
+   *
+   * `mode` is the answer to the question the editor asks, and it is asked
+   * because the two answers mean genuinely different things — see the note on
+   * `setManualRank` on the server.
+   */
+  const applyRank = async (rank: string | null, mode: 'locked' | 'resume') => {
+    setSaving(true);
+    setError(null);
+    try {
+      await customersApi.setRank(customerId, rank, mode, draftNote || null);
+      setEditing(false);
+      setDraftNote('');
+      setReload((n) => n + 1);
+    } catch (err: any) {
+      setError(err?.message || 'ثبت رتبه دستی با خطا مواجه شد.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -132,6 +164,117 @@ export default function CustomerValueCard({ customerId }: { customerId: string }
           <p className="mt-1">{meta.description}</p>
         </div>
 
+        {/* ---- manual override ---- */}
+        {value.rankIsManual && !editing && (
+          <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-[11px] text-violet-900 space-y-1.5">
+            <div className="flex items-center gap-1.5 font-bold">
+              {value.manualRankLocked ? <Lock size={13} /> : <RotateCcw size={13} />}
+              <span>
+                {value.manualRankLocked
+                  ? 'رتبه به‌صورت دستی تعیین و قفل شده است'
+                  : 'رتبه به‌صورت دستی تعیین شده — ارزیابی خودکار ادامه دارد'}
+              </span>
+            </div>
+            <p className="leading-relaxed">
+              {value.manualRankLocked
+                ? 'بازمحاسبه‌ها این رتبه را تغییر نمی‌دهند.'
+                : `در بازمحاسبه بعدی، رتبه محاسبه‌شده (${value.computedRank === 'PENDING' ? 'در انتظار ارزیابی' : value.computedRank}) دوباره جایگزین می‌شود.`}
+            </p>
+            {value.manualRankNote && (
+              <p className="text-violet-700">دلیل: {value.manualRankNote}</p>
+            )}
+            <p className="text-violet-600">
+              رتبه محاسبه‌شده سیستم:{' '}
+              <strong>{value.computedRank === 'PENDING' ? 'در انتظار ارزیابی' : value.computedRank}</strong>
+            </p>
+          </div>
+        )}
+
+        {editing && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-3 text-[11px]">
+            <div className="font-bold text-slate-700">تعیین دستی رتبه</div>
+
+            <div className="flex flex-wrap gap-1.5">
+              {(['A', 'B', 'C', 'D'] as const).map((rank) => (
+                <button
+                  key={rank}
+                  type="button"
+                  onClick={() => setDraftRank(rank)}
+                  className={`px-3 py-1.5 rounded-lg border font-bold transition ${
+                    draftRank === rank
+                      ? RANK_STYLE[rank]
+                      : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+                  }`}
+                >
+                  {rank} — {RANK_META[rank].title}
+                </button>
+              ))}
+            </div>
+
+            <input
+              type="text"
+              value={draftNote}
+              onChange={(e) => setDraftNote(e.target.value)}
+              placeholder="دلیل (اختیاری)"
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[11px] bg-white focus:outline-none focus:border-sky-500"
+            />
+
+            {/* The question. Two buttons rather than a checkbox, because the
+                choice is the decision — not a modifier on a save. */}
+            <div className="space-y-1.5 pt-1 border-t border-slate-200">
+              <p className="text-slate-600 font-semibold">
+                پس از این تغییر، ارزیابی خودکار چه کند؟
+              </p>
+              <button
+                type="button"
+                disabled={!draftRank || saving}
+                onClick={() => applyRank(draftRank, 'resume')}
+                className="w-full text-right px-3 py-2 rounded-lg border border-sky-200 bg-white hover:bg-sky-50 disabled:opacity-50 transition"
+              >
+                <span className="font-bold text-sky-700 flex items-center gap-1.5">
+                  <RotateCcw size={12} /> ارزیابی ادامه پیدا کند
+                </span>
+                <span className="block text-slate-500 mt-0.5">
+                  این رتبه فعلاً نمایش داده می‌شود، ولی بازمحاسبه بعدی دوباره رتبه سیستم را می‌گذارد.
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={!draftRank || saving}
+                onClick={() => applyRank(draftRank, 'locked')}
+                className="w-full text-right px-3 py-2 rounded-lg border border-violet-200 bg-white hover:bg-violet-50 disabled:opacity-50 transition"
+              >
+                <span className="font-bold text-violet-700 flex items-center gap-1.5">
+                  <Lock size={12} /> همیشه همین رتبه حفظ شود
+                </span>
+                <span className="block text-slate-500 mt-0.5">
+                  هیچ بازمحاسبه‌ای این رتبه را تغییر نمی‌دهد تا خودتان آن را بردارید.
+                </span>
+              </button>
+            </div>
+
+            <div className="flex justify-between pt-1">
+              <button
+                type="button"
+                onClick={() => { setEditing(false); setDraftNote(''); }}
+                className="text-slate-500 hover:text-slate-700 font-bold flex items-center gap-1"
+              >
+                <X size={12} /> انصراف
+              </button>
+              {value.rankIsManual && (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => applyRank(null, 'resume')}
+                  className="text-rose-600 hover:text-rose-700 font-bold disabled:opacity-50"
+                >
+                  حذف رتبه دستی و بازگشت به ارزیابی خودکار
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between text-[10px] text-slate-400">
           <span>
             آخرین محاسبه:{' '}
@@ -139,14 +282,26 @@ export default function CustomerValueCard({ customerId }: { customerId: string }
               ? new Date(value.calculatedAt).toLocaleString('fa-IR')
               : 'هنوز محاسبه نشده'}
           </span>
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="flex items-center gap-1 text-sky-600 hover:text-sky-700 font-bold"
-          >
-            {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            {open ? 'بستن جزئیات' : 'مشاهده جزئیات'}
-          </button>
+          <div className="flex items-center gap-3">
+            {!editing && (
+              <button
+                type="button"
+                onClick={() => { setEditing(true); setDraftRank(value.rank === 'PENDING' ? '' : value.rank); }}
+                className="flex items-center gap-1 text-violet-600 hover:text-violet-700 font-bold"
+              >
+                <Pencil size={12} />
+                تعیین دستی رتبه
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="flex items-center gap-1 text-sky-600 hover:text-sky-700 font-bold"
+            >
+              {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              {open ? 'بستن جزئیات' : 'مشاهده جزئیات'}
+            </button>
+          </div>
         </div>
 
         {open && (

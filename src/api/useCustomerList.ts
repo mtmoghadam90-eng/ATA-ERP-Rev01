@@ -32,6 +32,8 @@ export interface CustomerListFilters {
   notAssessed: string;
   /** fieldId -> value, from the user-defined custom fields. */
   customFields: Record<string, string>;
+  /** The grid's per-column header inputs, applied on the server. */
+  columns: Record<string, string>;
 }
 
 const EMPTY_FILTERS: CustomerListFilters = {
@@ -51,6 +53,7 @@ const EMPTY_FILTERS: CustomerListFilters = {
   costToServe: "all",
   notAssessed: "",
   customFields: {},
+  columns: {},
 };
 
 export function useCustomerList(initialSearch = "") {
@@ -83,6 +86,13 @@ export function useCustomerList(initialSearch = "") {
       .map(([fieldId, value]) => `${fieldId}:${value}`);
     if (custom.length > 0) out.customField = custom.join("|");
 
+    // One parameter per column, named so the endpoint's allowlist can match
+    // them. Empty inputs are dropped by buildQuery.
+    for (const [column, value] of Object.entries(filters.columns)) {
+      if (!value) continue;
+      out[`col${column.charAt(0).toUpperCase()}${column.slice(1)}`] = value;
+    }
+
     return out;
   }, [filters]);
 
@@ -105,6 +115,13 @@ export function useCustomerList(initialSearch = "") {
   const setFilter = <K extends keyof CustomerListFilters>(key: K, value: CustomerListFilters[K]) =>
     setFilters((current) => ({ ...current, [key]: value }));
 
+  /** One header input. Debounced by useList like the main search box. */
+  const setColumnFilter = (column: string, value: string) =>
+    setFilters((current) => ({
+      ...current,
+      columns: { ...current.columns, [column]: value },
+    }));
+
   const setCustomFieldFilter = (fieldId: string, value: string) =>
     setFilters((current) => ({
       ...current,
@@ -122,7 +139,8 @@ export function useCustomerList(initialSearch = "") {
     !!filters.minPotential || !!filters.maxPotential ||
     !!filters.minGrossProfit || !!filters.maxGrossProfit ||
     !!filters.lastPurchaseWithinMonths || !!filters.notAssessed ||
-    Object.values(filters.customFields).some(Boolean);
+    Object.values(filters.customFields).some(Boolean) ||
+    Object.values(filters.columns).some(Boolean);
 
   /** The same parameters, for an export that must cover every match. */
   const exportParams = useMemo(
@@ -130,5 +148,8 @@ export function useCustomerList(initialSearch = "") {
     [params, list.search, list.sort, list.order],
   );
 
-  return { ...list, filters, setFilter, setCustomFieldFilter, clearFilters, hasActiveFilters, exportParams };
+  return {
+    ...list, filters, setFilter, setColumnFilter, setCustomFieldFilter,
+    clearFilters, hasActiveFilters, exportParams,
+  };
 }

@@ -4,7 +4,10 @@ import { RouteDeps, sendError } from "./types";
 import { hasPermission } from "../auth";
 import {
   customerValueSummary, getCustomerValueDetail, listPotentialHistory, recalculateAll,
+  setManualRank,
 } from "../services/customerValueService";
+import { logAction } from "../services/auditService";
+import { getTodayShamsi } from "../../dateUtils";
 import {
   CUSTOMER_FILTERABLE,
   CUSTOMER_METRIC_SORTABLE,
@@ -27,7 +30,6 @@ import {
   CustomerCandidate, findCustomerDuplicates, hasHardDuplicate,
 } from "../../utils/customerDuplicates";
 import type { Customer } from "../../types";
-import { getTodayShamsi } from "../../dateUtils";
 
 /**
  * Customers REST API — the reference shape for every other module.
@@ -95,6 +97,16 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
           paymentBehaviour: req.query.paymentBehaviour,
           costToServe: req.query.costToServe,
           notAssessed: req.query.notAssessed,
+        },
+        // The grid's per-column header inputs. Allowlisted by column name.
+        columns: {
+          type: req.query.colType,
+          name: req.query.colName,
+          industry: req.query.colIndustry,
+          keyPerson: req.query.colKeyPerson,
+          contact: req.query.colContact,
+          province: req.query.colProvince,
+          tags: req.query.colTags,
         },
       });
       res.json({ success: true, ...result });
@@ -165,6 +177,58 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
       res.json({ success: true, history: await listPotentialHistory(req.params.id) });
     } catch (err) {
       sendError(res, err, "GET /api/customers/:id/potential-history");
+    }
+  });
+
+  /**
+   * Sets or clears a customer's rank by hand.
+   *
+   * `mode` says what the override means — `locked` to keep it whatever the
+   * figures do, `resume` to show it now and let the evaluation take back over
+   * at the next recalculation. A null rank clears it outright.
+   *
+   * Gated on write access to customers rather than on `settings`: this is a
+   * judgement about one customer, not a change to how everyone is scored.
+   */
+  app.put("/api/customers/:id/rank", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const rawRank = body.rank;
+      const rank = rawRank === null || rawRank === "" ? null : String(rawRank);
+
+      if (rank !== null && !["A", "B", "C", "D"].includes(rank)) {
+        res.status(400).json({ success: false, error: "رتبه انتخاب‌شده معتبر نیست." });
+        return;
+      }
+      const mode = body.mode === "locked" ? "locked" : "resume";
+      const note = typeof body.note === "string" && body.note.trim()
+        ? body.note.trim().slice(0, 400) : null;
+
+      const result = await setManualRank(req.params.id, rank as never, mode, note, user.id);
+      if (!result) {
+        res.status(404).json({ success: false, error: "مشتری یافت نشد." });
+        return;
+      }
+
+      await logAction(
+        {
+          action: "UPDATE",
+          module: "مشتریان",
+          entityId: req.params.id,
+          description: rank === null
+            ? "حذف رتبه دستی مشتری و بازگشت به ارزیابی خودکار"
+            : `تعیین دستی رتبه مشتری: ${rank}` +
+              (mode === "locked" ? " (حفظ دائمی)" : " (ارزیابی خودکار ادامه می‌یابد)"),
+        },
+        user,
+        getTodayShamsi(),
+      );
+
+      res.json({ success: true, ...result });
+    } catch (err) {
+      sendError(res, err, "PUT /api/customers/:id/rank");
     }
   });
 
