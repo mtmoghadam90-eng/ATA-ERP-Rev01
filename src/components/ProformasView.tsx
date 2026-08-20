@@ -57,9 +57,8 @@ import { projectToWriteInput, detailToProject } from "../api/projectAdapter";
 import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
 import { calcSeedOf } from "../api/productAdapter";
 import { canSeeCosts } from "../utils/permissions";
-import { calculateSellingPrice } from "../utils/priceCalculator";
 import {
-  COST_SOURCES, COST_SOURCE_LABELS, lineNeedsCost, linesMissingCost,
+  COST_SOURCES, COST_SOURCE_LABELS, landedUnitCostOf, lineNeedsCost, linesMissingCost,
 } from "../utils/costOfGoods";
 import { isPartial } from "../api/partial";
 import { useProformaList } from "../api/useProformaList";
@@ -1643,31 +1642,15 @@ export default function ProformasView({
     const blank = { unitCost: null, costCurrency: null, costSource: null };
     if (!product) return blank;
 
-    const calc = calcSeedOf(variant ?? product);
-    const priceForeign = Number(calc.calcPriceForeign) || 0;
-    const rate = Number(calc.calcExchangeRate) || 0;
-    const manual = calc.calcMode === "MANUAL";
-    if (!manual && (priceForeign <= 0 || rate <= 0)) return blank;
-    if (manual && rate <= 0) return blank;
-
-    const landedRial = calculateSellingPrice({
-      mode: calc.calcMode,
-      manualLandedForeign: Number(calc.calcManualLandedForeign) || 0,
-      manualSellingForeign: Number(calc.calcManualSellingForeign) || 0,
-      priceForeign,
-      exchangeRate: rate,
-      remittanceFee: Number(calc.calcRemittanceFee) || 0,
-      remittancePct: Number(calc.calcRemittancePct) || 0,
-      shippingCost: Number(calc.calcShippingCost) || 0,
-      otherCostsForeign: Number(calc.calcOtherCostsForeign) || 0,
-      customsDutyRIYAL: Number(calc.calcCustomsDutyRIYAL) || 0,
-      otherCostsRIYAL: Number(calc.calcOtherCostsRIYAL) || 0,
-      profitPct: Number(calc.calcProfitPct) || 0,
-      profitRIYAL: Number(calc.calcProfitRIYAL) || 0,
-      marginType: calc.calcMarginType || "PERCENT",
-    }).landedRial;
-
-    if (!(landedRial > 0)) return blank;
+    // One reader, shared with the server — see `landedUnitCostOf`. The SKU's own
+    // calculator wins and one with none inherits the product's, which this side
+    // used not to do: the same item then offered a figure in a report and an
+    // empty box here.
+    const landedRial = landedUnitCostOf(
+      variant ? calcSeedOf(variant) : null,
+      calcSeedOf(product),
+    );
+    if (landedRial === null) return blank;
 
     const proformaCurrencyEng = mapPersianCurrencyToEnglish(currency || "ریال");
     const proformaRate = (proformaCurrencyEng

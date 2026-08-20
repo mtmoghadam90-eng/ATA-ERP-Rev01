@@ -1,4 +1,6 @@
 import { Prisma } from "@prisma/client";
+import { COST_SOURCES } from "../../utils/costOfGoods";
+import { scheduleCustomerValueRecalculation } from "./customerValueRecalc";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
@@ -22,6 +24,108 @@ import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projec
 
 /** The status at which goods have physically arrived and enter inventory. */
 export const RECEIVED_STATUS = "تحویل شده (رسید انبار)";
+
+/**
+ * Replaces an estimated proforma-line cost with what the goods actually cost.
+ *
+ * A line quoted from the catalogue is costed with the product's *standard*
+ * landed cost — an estimate, marked `PRICE_CALCULATOR`. When the real purchase
+ * lands, that estimate is simply wrong, and nothing used to correct it: gross
+ * profit, and every customer rank built on it, kept the guess for ever.
+ *
+ * Three rules make this safe to run automatically:
+ *
+ *  - **Only an estimate is overwritten.** A figure somebody typed (`MANUAL`) or
+ *    an explicit «بدون بهای تمام‌شده» (`NONE`) is an answer a person gave, and
+ *    is left alone. `PURCHASE_ORDER` is refreshed, because it came from here.
+ *  - **Every received order counts, not just this one.** A line split across two
+ *    purchases has one unit cost: the total landed across them over the total
+ *    quantity. Reading them all is also what makes this idempotent — the same
+ *    save twice writes the same figure.
+ *  - **The proforma's own currency**, since that is what `unitCost` is in and
+ *    what makes the margin beside it arithmetic between like units. A foreign
+ *    proforma with no stored rate cannot be converted into, so it is skipped
+ *    rather than given a rial figure in a euro column.
+ *
+ * Un-receiving does not put the estimate back. Once the real cost is known it
+ * stays known; there is no earlier guess worth restoring.
+ */
+async function pushActualCostToProformaLines(
+  tx: Prisma.TransactionClient,
+  purchaseOrderId: string,
+): Promise<void> {
+  const touched = await tx.purchaseOrderItem.findMany({
+    where: { purchaseOrderId, proformaItemId: { not: null } },
+    select: { proformaItemId: true },
+  });
+  const itemIds = [...new Set(touched.map((r) => r.proformaItemId as string))];
+  if (itemIds.length === 0) return;
+
+  const lines = await tx.proformaItem.findMany({
+    where: { id: { in: itemIds } },
+    select: {
+      id: true, costSource: true,
+      proforma: { select: { currency: true, historicalExchangeRate: true } },
+    },
+  });
+
+  // Every received purchase line pointing at any of them, from any order.
+  const supplying = await tx.purchaseOrderItem.findMany({
+    where: {
+      proformaItemId: { in: itemIds },
+      landedUnitCostRial: { not: null },
+      purchaseOrder: { status: RECEIVED_STATUS },
+    },
+    select: { proformaItemId: true, quantity: true, landedUnitCostRial: true },
+  });
+
+  const totals = new Map<string, { cost: number; quantity: number }>();
+  for (const row of supplying) {
+    const key = row.proformaItemId as string;
+    const quantity = Number(row.quantity ?? 0);
+    if (quantity <= 0) continue;
+    const current = totals.get(key) ?? { cost: 0, quantity: 0 };
+    current.cost += Number(row.landedUnitCostRial ?? 0) * quantity;
+    current.quantity += quantity;
+    totals.set(key, current);
+  }
+
+  for (const line of lines) {
+    const source = line.costSource;
+    const replaceable = source === null
+      || source === COST_SOURCES.PRICE_CALCULATOR
+      || source === COST_SOURCES.BACKFILL
+      || source === COST_SOURCES.PURCHASE_ORDER;
+    if (!replaceable) continue;
+
+    const total = totals.get(line.id);
+    if (!total || total.quantity <= 0) continue;
+
+    const perUnitRial = total.cost / total.quantity;
+    const currency = line.proforma?.currency ?? "ریال";
+    const rate = Number(line.proforma?.historicalExchangeRate ?? 0);
+
+    let unitCost: number;
+    if (currency === "ریال") {
+      unitCost = perUnitRial;
+    } else if (rate > 0) {
+      unitCost = perUnitRial / rate;
+    } else {
+      // Unknown rate: the figure cannot be expressed in this document's
+      // currency, and a rial number in a euro column is worse than the estimate.
+      continue;
+    }
+
+    await tx.proformaItem.update({
+      where: { id: line.id },
+      data: {
+        unitCost,
+        costCurrency: currency,
+        costSource: COST_SOURCES.PURCHASE_ORDER,
+      },
+    });
+  }
+}
 
 /** Ledger tag for movements owned by a purchase order. */
 const STOCK_REFERENCE = "PURCHASE_ORDER";
@@ -497,6 +601,9 @@ export async function createPurchaseOrder(
     // An order can be entered already received, e.g. when recording history.
     await reconcileStock(tx, po.id, todayJalali);
 
+    // What the goods really cost, onto the sale lines that were estimated.
+    await pushActualCostToProformaLines(tx, po.id);
+
     return tx.purchaseOrder.findUnique({ where: { id: po.id }, include: { items: { orderBy: { lineNo: "asc" } } } });
   });
 
@@ -556,6 +663,10 @@ export async function createPurchaseOrder(
     // payment and ready dates already filled in recorded none of them.
     await logPurchaseOrderMilestones(po as unknown as Record<string, unknown>, null, user, todayJalali);
   }
+
+  // Receiving an order rewrites the cost of the sale lines it supplied, so the
+  // gross profit behind every affected customer's rank has moved.
+  scheduleCustomerValueRecalculation();
 
   return po;
 }
@@ -717,6 +828,8 @@ export async function updatePurchaseOrder(
     // changed, or both, and this settles whichever it was.
     await reconcileStock(tx, id, todayJalali);
 
+    await pushActualCostToProformaLines(tx, id);
+
     return tx.purchaseOrder.findUnique({ where: { id }, include: { items: { orderBy: { lineNo: "asc" } } } });
   });
 
@@ -777,6 +890,8 @@ export async function updatePurchaseOrder(
       todayJalali,
     );
   }
+
+  scheduleCustomerValueRecalculation();
 
   return po;
 }
