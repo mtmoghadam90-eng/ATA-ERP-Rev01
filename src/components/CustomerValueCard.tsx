@@ -21,7 +21,23 @@ export const RANK_STYLE: Record<string, string> = {
   C: 'bg-amber-50 text-amber-700 border-amber-200',
   D: 'bg-slate-100 text-slate-600 border-slate-300',
   PENDING: 'bg-white text-slate-400 border-slate-200 border-dashed',
+  // Not a rank, and not a failure either — a lead the sales team is working on.
+  // Coloured rather than greyed, so it reads as a state and not as missing data.
+  PROSPECT: 'bg-violet-50 text-violet-700 border-violet-200 border-dashed',
 };
+
+/**
+ * What the formula said, in words.
+ *
+ * The two non-rank outcomes have to be spelled out — a bare "PROSPECT" or
+ * "PENDING" beside a hand-set A tells the reader nothing about why the override
+ * was needed.
+ */
+function computedLabel(rank: string): string {
+  if (rank === 'PENDING') return RANK_META.PENDING.title;
+  if (rank === 'PROSPECT') return RANK_META.PROSPECT.title;
+  return rank;
+}
 
 /** A 0..100 score as a bar, so the components can be compared at a glance. */
 function ScoreBar({ label, score, weight }: { label: string; score: number; weight: string }) {
@@ -124,6 +140,16 @@ export default function CustomerValueCard({
 
   const meta = RANK_META[value.rank as keyof typeof RANK_META] ?? RANK_META.PENDING;
   const isPending = value.rank === 'PENDING';
+  /**
+   * No confirmed purchase yet, so there is no realized value to report.
+   *
+   * The realized figure and the CVI arrive as 0 and null for these customers —
+   * deliberately, since a score built out of payment and cost-to-serve opinions
+   * about somebody who has never paid an invoice measures nothing. The card
+   * shows them as not-applicable rather than as a low score, which is a
+   * different claim.
+   */
+  const isProspect = value.rank === 'PROSPECT';
   const raw = value.raw;
 
   return (
@@ -139,7 +165,7 @@ export default function CustomerValueCard({
               <span className="text-[10px] text-slate-400 font-medium mr-1.5">Customer Value</span>
             </h4>
             <div className={`inline-flex items-center gap-1.5 mt-1 px-2.5 py-1 rounded-full border font-bold text-[11px] ${RANK_STYLE[value.rank] ?? RANK_STYLE.PENDING}`}>
-              {!isPending && <span className="font-mono">{value.rank}</span>}
+              {!isPending && !isProspect && <span className="font-mono">{value.rank}</span>}
               <span>{meta.title}</span>
             </div>
           </div>
@@ -158,7 +184,7 @@ export default function CustomerValueCard({
           <div className="bg-slate-50 rounded-xl p-3 border border-slate-150">
             <div className="text-[10px] text-slate-500">ارزش ایجادشده — Realized</div>
             <div className="text-base font-bold text-slate-800 font-mono" dir="ltr">
-              {value.realizedValueScore}/100
+              {isProspect ? '—' : `${value.realizedValueScore}/100`}
             </div>
           </div>
           <div className="bg-slate-50 rounded-xl p-3 border border-slate-150">
@@ -172,7 +198,9 @@ export default function CustomerValueCard({
         <div className={`rounded-xl p-3 border text-[11px] leading-relaxed ${
           isPending
             ? 'bg-amber-50 border-amber-100 text-amber-800'
-            : 'bg-sky-50/60 border-sky-100 text-sky-900'
+            : isProspect
+              ? 'bg-violet-50/60 border-violet-100 text-violet-900'
+              : 'bg-sky-50/60 border-sky-100 text-sky-900'
         }`}>
           <span className="font-bold">اقدام پیشنهادی: {meta.action}</span>
           <p className="mt-1">{meta.description}</p>
@@ -192,14 +220,14 @@ export default function CustomerValueCard({
             <p className="leading-relaxed">
               {value.manualRankLocked
                 ? 'بازمحاسبه‌ها این رتبه را تغییر نمی‌دهند.'
-                : `در بازمحاسبه بعدی، رتبه محاسبه‌شده (${value.computedRank === 'PENDING' ? 'در انتظار ارزیابی' : value.computedRank}) دوباره جایگزین می‌شود.`}
+                : `در بازمحاسبه بعدی، رتبه محاسبه‌شده (${computedLabel(value.computedRank)}) دوباره جایگزین می‌شود.`}
             </p>
             {value.manualRankNote && (
               <p className="text-violet-700">دلیل: {value.manualRankNote}</p>
             )}
             <p className="text-violet-600">
               رتبه محاسبه‌شده سیستم:{' '}
-              <strong>{value.computedRank === 'PENDING' ? 'در انتظار ارزیابی' : value.computedRank}</strong>
+              <strong>{computedLabel(value.computedRank)}</strong>
             </p>
           </div>
         )}

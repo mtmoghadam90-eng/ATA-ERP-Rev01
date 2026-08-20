@@ -68,7 +68,14 @@ export default function CustomerValueMatrix({
     ])
       .then(([page, s]) => {
         if (cancelled) return;
-        setRows(page.rows.filter((r) => r.valueMetrics && r.valueMetrics.potentialValueScore !== null));
+        // Ranked customers only. A prospect has a potential score but no
+        // realized one — the y axis would place them at the floor and the
+        // matrix would read "low value" about somebody who has simply not
+        // bought yet. They are counted beneath the plot instead.
+        setRows(page.rows.filter((r) =>
+          r.valueMetrics
+          && r.valueMetrics.potentialValueScore !== null
+          && r.valueMetrics.customerValueRank !== 'PROSPECT'));
         setSummary(s);
       })
       .catch((err) => { if (!cancelled) setError(err?.message || 'خواندن ماتریس ارزش مشتری با خطا مواجه شد.'); })
@@ -112,10 +119,27 @@ export default function CustomerValueMatrix({
         <div>
           <h3 className="text-sm font-bold text-slate-800">ماتریس ارزش مشتری</h3>
           <p className="text-[10px] text-slate-400 mt-0.5">
-            محور افقی: ارزش بالقوه · محور عمودی: ارزش ایجادشده · اندازه دایره: سود ناخالص
+            محور افقی: ارزش بالقوه · محور عمودی: ارزش ایجادشده · اندازه دایره:{' '}
+            {showCosts ? 'سود ناخالص' : 'فروش کل'}
           </p>
         </div>
       </div>
+
+      {/*
+        Prospects are named, not plotted.
+
+        They have a potential score but no realized one, so the y axis would
+        put them on the floor and the matrix would read «کم‌ارزش» about
+        somebody who has simply not bought yet. Saying how many there are keeps
+        them visible without misplacing them.
+      */}
+      {(summary?.prospects ?? 0) > 0 && (
+        <p className="text-[11px] text-violet-800 bg-violet-50 border border-violet-100 rounded-xl px-3 py-2">
+          <strong>{(summary?.prospects ?? 0).toLocaleString('fa-IR')}</strong> مشتری بالقوه
+          هنوز خرید قطعی ندارند و در این ماتریس نمایش داده نمی‌شوند؛ ارزیابی آن‌ها فقط بر پایه
+          ارزش بالقوه است.
+        </p>
+      )}
 
       {/* summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">

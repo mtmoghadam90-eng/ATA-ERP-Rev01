@@ -26,6 +26,19 @@ export const RANKS = {
   D: "D",
   /** Not a rank: the potential assessment has not been filled in yet. */
   PENDING: "PENDING",
+  /**
+   * Not a rank either: this customer has never actually bought anything.
+   *
+   * A/B/C/D is a judgement about a *relationship*, and half of it — realized
+   * value — is a judgement about money that has changed hands. Somebody who has
+   * only ever been quoted has no realized value to measure, so ranking them
+   * puts a verdict on a relationship that has not started: they come out D,
+   * "low value, low priority", which is precisely backwards for a lead the
+   * sales team is working on.
+   *
+   * They still get a potential score, and that is what they are sorted by.
+   */
+  PROSPECT: "PROSPECT",
 } as const;
 
 export type CustomerRank = typeof RANKS[keyof typeof RANKS];
@@ -67,6 +80,12 @@ export const RANK_META: Record<CustomerRank, RankMeta> = {
     title: "در انتظار ارزیابی",
     action: "تکمیل ارزیابی پتانسیل",
     description: "ارزیابی ارزش بالقوه این مشتری هنوز تکمیل نشده است. تا زمانی که هر پنج پارامتر پتانسیل ثبت نشوند رتبه‌ای تعیین نمی‌شود، چون پتانسیل نامعلوم با پتانسیل صفر یکی نیست.",
+  },
+  PROSPECT: {
+    rank: "PROSPECT",
+    title: "مشتری بالقوه",
+    action: "جذب اولین خرید",
+    description: "هنوز هیچ خرید قطعی از این مشتری ثبت نشده است، بنابراین ارزش محقق‌شده‌ای برای سنجش وجود ندارد و رتبه A/B/C/D برایش تعیین نمی‌شود. ارزیابی او فقط بر پایه ارزش بالقوه است؛ با ثبت اولین فروش قطعی، به‌صورت خودکار وارد ماتریس رتبه‌بندی می‌شود.",
   },
 };
 
@@ -449,8 +468,26 @@ export function calculateCVI(
 export function determineRank(
   realizedScore: number,
   potentialScore: number | null | undefined,
+  /**
+   * Whether this customer has ever bought anything — a confirmed sale, not a
+   * quotation, an opportunity or a cancelled order.
+   *
+   * Deliberately a required argument rather than one defaulting to true: the
+   * type-checker then names every call site, and a rule this easy to forget
+   * must not be bypassable by leaving an argument off.
+   *
+   * "Ever", not "in the evaluation period". A customer who last bought three
+   * years ago is *lapsed*, not a prospect — they have a history, their recency
+   * score already says how stale it is, and calling them a prospect would erase
+   * everything they were worth.
+   */
+  hasConfirmedPurchase: boolean,
   settings?: Partial<CustomerValueSettings> | null,
 ): CustomerRank {
+  // Checked first, and before the potential assessment: an unassessed prospect
+  // is still a prospect, and "we have never sold to them" is the more useful
+  // thing to say about them than "somebody has not filled in a form".
+  if (!hasConfirmedPurchase) return RANKS.PROSPECT;
   if (potentialScore === null || potentialScore === undefined) return RANKS.PENDING;
 
   const config = normalizeCustomerValueSettings(settings);
@@ -525,15 +562,34 @@ export interface CustomerValueResult {
 export function evaluateCustomerValue(
   components: RealizedComponents,
   potentialInputs: PotentialInputs | null | undefined,
+  hasConfirmedPurchase: boolean,
   settings?: Partial<CustomerValueSettings> | null,
 ): CustomerValueResult {
-  const realizedScore = calculateRealizedScore(components, settings);
   const potentialScore = calculatePotentialScore(potentialInputs, settings);
+
+  /*
+   * A prospect has realized nothing, and says so.
+   *
+   * Not the computed figure: payment behaviour and cost to serve are manual
+   * judgements worth 15 points between them, so a customer who has never paid
+   * an invoice could otherwise carry a realized score built entirely out of
+   * opinions about how they pay. Zero is the honest reading, and it keeps the
+   * population average from being lifted by people who have bought nothing.
+   *
+   * CVI goes with it. It exists only to order customers *within* a rank, and a
+   * prospect is not in one — they are ordered by potential instead.
+   */
+  const rank = determineRank(
+    calculateRealizedScore(components, settings), potentialScore, hasConfirmedPurchase, settings,
+  );
+  const isProspect = rank === RANKS.PROSPECT;
+  const realizedScore = isProspect ? 0 : calculateRealizedScore(components, settings);
+
   return {
     realizedScore,
     potentialScore,
-    cvi: calculateCVI(realizedScore, potentialScore),
-    rank: determineRank(realizedScore, potentialScore, settings),
+    cvi: isProspect ? null : calculateCVI(realizedScore, potentialScore),
+    rank,
     components,
   };
 }

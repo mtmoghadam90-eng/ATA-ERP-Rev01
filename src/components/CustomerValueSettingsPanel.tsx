@@ -67,7 +67,8 @@ export default function CustomerValueSettingsPanel({
       const r = await customersApi.recalculateValue();
       setNotice(
         `${r.customers.toLocaleString('fa-IR')} مشتری بازمحاسبه شد — ` +
-        `${r.ranked.toLocaleString('fa-IR')} رتبه‌بندی شده و ` +
+        `${r.ranked.toLocaleString('fa-IR')} رتبه‌بندی شده، ` +
+        `${r.prospects.toLocaleString('fa-IR')} مشتری بالقوه (بدون خرید قطعی) و ` +
         `${r.pending.toLocaleString('fa-IR')} در انتظار ارزیابی پتانسیل.`,
       );
     } catch (err) {

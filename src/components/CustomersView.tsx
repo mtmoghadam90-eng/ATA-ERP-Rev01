@@ -102,6 +102,20 @@ function ValueRange({
   );
 }
 
+/**
+ * What a rank reads as, in the grid and in the export.
+ *
+ * Two of the five values are not ranks at all and must not be printed as bare
+ * letters: PENDING means nobody has assessed them, PROSPECT means they have
+ * never bought — and «مشتری بالقوه» is the whole answer for that customer, not
+ * a placeholder for a rank that failed to compute.
+ */
+function rankLabel(rank: string | null | undefined): string {
+  if (!rank || rank === 'PENDING') return 'ارزیابی‌نشده';
+  if (rank === 'PROSPECT') return RANK_META.PROSPECT.title;
+  return `${rank} — ${RANK_META[rank as 'A']?.title ?? ''}`;
+}
+
 interface CustomersViewProps {
   industries: string[];
   settings: ERPSettings;
@@ -714,9 +728,7 @@ export default function CustomersView({
       // against the rule rather than taken on trust.
       c.valueMetrics?.customerValueRank ?? '',
       c.valueMetrics?.rankIsManual ? 'دستی' : 'محاسبه‌شده',
-      c.valueMetrics?.customerValueRank
-        ? (RANK_META[c.valueMetrics.customerValueRank as 'A']?.title ?? '')
-        : '',
+      rankLabel(c.valueMetrics?.customerValueRank),
       c.valueMetrics?.customerValueIndex != null ? String(c.valueMetrics.customerValueIndex) : '',
       c.valueMetrics?.realizedValueScore != null ? String(c.valueMetrics.realizedValueScore) : '',
       c.valueMetrics?.potentialValueScore != null ? String(c.valueMetrics.potentialValueScore) : '',
@@ -1117,6 +1129,7 @@ export default function CustomersView({
                     <option value="B">B</option>
                     <option value="C">C</option>
                     <option value="D">D</option>
+                    <option value="PROSPECT">مشتری بالقوه</option>
                     <option value="PENDING">ارزیابی‌نشده</option>
                   </select>
                 </th>
@@ -1215,16 +1228,19 @@ export default function CustomersView({
                         {/* A hand-set rank is marked, so nobody reads it as
                             something the figures produced. */}
                         {cust.valueMetrics?.rankIsManual && <Pencil size={9} />}
-                        {cust.valueMetrics?.customerValueRank && cust.valueMetrics.customerValueRank !== 'PENDING'
-                          ? `${cust.valueMetrics.customerValueRank} — ${RANK_META[cust.valueMetrics.customerValueRank as 'A'].title}`
-                          : 'ارزیابی‌نشده'}
+                        {rankLabel(cust.valueMetrics?.customerValueRank)}
                       </span>
                     </td>
+                    {/* A prospect has no realized value and no index — they have
+                        never bought. Their potential is the column that means
+                        something, and it is the one they sort by. */}
                     <td className="p-3 font-mono text-slate-700 font-bold" dir="ltr">
                       {cust.valueMetrics?.customerValueIndex ?? '—'}
                     </td>
                     <td className="p-3 font-mono text-slate-600" dir="ltr">
-                      {cust.valueMetrics?.realizedValueScore ?? '—'}
+                      {cust.valueMetrics?.customerValueRank === 'PROSPECT'
+                        ? '—'
+                        : cust.valueMetrics?.realizedValueScore ?? '—'}
                     </td>
                     <td className="p-3 font-mono text-slate-600" dir="ltr">
                       {cust.valueMetrics?.potentialValueScore ?? '—'}
