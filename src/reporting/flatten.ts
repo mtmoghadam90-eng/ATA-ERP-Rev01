@@ -693,6 +693,11 @@ export const flattenProducts = (products: any[]): Row[] =>
       currency_foreign: s(p.currencyForeign),
       description: s(p.description),
       image_count: arr(p.images).length,
+      // What it last really cost, as opposed to the standard it is quoted at.
+      last_purchase_cost_rial: n(p.lastPurchaseCostRial),
+      last_purchase_quantity: n(p.lastPurchaseQuantity),
+      last_purchase_date: s(p.lastPurchaseDate),
+      last_purchase_order: s(p.lastPurchaseOrderNumber),
       custom_values: customJson(p.customValues),
     };
   });

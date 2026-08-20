@@ -19,6 +19,11 @@ export interface ProductVariantRow {
   priceForeign: string | null;
   currencyForeign: string | null;
   priceCalc: string | null;
+  /** What it last actually cost to land. Blanked for users without `costs`. */
+  lastPurchaseCostRial: string | null;
+  lastPurchaseQuantity: string | null;
+  lastPurchaseDateJalali: string | null;
+  lastPurchaseOrderNumber: string | null;
 }
 
 export interface ProductRow {
@@ -53,6 +58,11 @@ export interface ProductDetail extends ProductRow {
   configRules: string | null;
   images: string | null;
   priceCalc: string | null;
+  /** What it last actually cost to land. Blanked for users without `costs`. */
+  lastPurchaseCostRial: string | null;
+  lastPurchaseQuantity: string | null;
+  lastPurchaseDateJalali: string | null;
+  lastPurchaseOrderNumber: string | null;
   updatedAt: string;
   variants: ProductVariantRow[];
 }

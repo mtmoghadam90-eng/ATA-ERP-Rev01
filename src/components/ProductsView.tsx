@@ -25,6 +25,8 @@ import { Product, ProductVariant, ERPSettings, ProductFeature, ProductConfigRule
 import { canSeeCosts } from '../utils/permissions';
 import { toShamsiStr, toGregorianStr } from '../dateUtils';
 import CustomFieldsForm from './CustomFieldsForm';
+import LastPurchasePanel from './LastPurchasePanel';
+import { costDrift, landedUnitCostOf } from '../utils/costOfGoods';
 import ConfirmModal from './ConfirmModal';
 import PriceCalculatorModal from './PriceCalculatorModal';
 import { generateSku, isOptionExcludedByRules, decodeSku, DecodedSkuResult } from '../utils/skuUtils';
@@ -303,6 +305,68 @@ export default function ProductsView({
     setSimpleCurrencyForeign(appliedCurrency);
     setSimpleCalcDetails(details);
     setShowCalculator(false);
+  };
+
+  /**
+   * The exchange rate the simple product's calculator is working in.
+   *
+   * Its own stored rate first, because that is the one the rest of its figures
+   * were entered against; today's rate only when it has none.
+   */
+  const simpleCalcRate = (): number => {
+    const stored = Number(simpleCalcDetails.calcExchangeRate) || 0;
+    if (stored > 0) return stored;
+    const eng = simpleCurrencyForeign === 'دلار' ? 'USD'
+      : simpleCurrencyForeign === 'یورو' ? 'EUR'
+      : simpleCurrencyForeign === 'درهم' ? 'AED'
+      : simpleCurrencyForeign === 'یوان' ? 'CNY' : null;
+    return (eng ? exchangeRates.find(r => r.currency === eng)?.rateToRIYAL : 0) || 0;
+  };
+
+  /**
+   * Adopts the last real purchase cost as this product's standard cost.
+   *
+   * Deliberate, never automatic: a purchase order line carries the freight and
+   * customs of one shipment, so a small urgent delivery is not a fair basis for
+   * every future quotation. The user has the quantity in front of them when they
+   * press it.
+   *
+   * The calculator moves to manual mode, because a single landed figure cannot
+   * be decomposed back into a purchase price, freight and customs — and guessing
+   * at that split would invent numbers nobody entered.
+   *
+   * **The selling price is left exactly where it is.** A supplier's rise is not
+   * automatically the customer's; the panel shows what the stored margin would
+   * imply so the decision is informed, and the decision stays the user's. The
+   * calculator then reports the real margin rather than the intended one, which
+   * is the whole point of knowing the true cost.
+   */
+  const adoptLastPurchaseCost = (costRial: number) => {
+    const rate = simpleCalcRate();
+    if (!(rate > 0)) {
+      alert('برای ثبت بهای تمام‌شده، ابتدا نرخ تسعیر را در محاسبه‌گر قیمت وارد کنید.');
+      return;
+    }
+
+    const currentSellingRial = Number(simplePriceRIYAL) || 0;
+    /*
+     * Four decimals, not two.
+     *
+     * The stored figure is in the item's currency and the panel compares it
+     * back in rial, so the round trip has to survive: at two decimals a
+     * 12,000,000 rial cost adopted at a rate of 90,000 comes back 300 rial
+     * short, and the drift warning the user just acted on never quite clears.
+     * Four is what every other foreign amount in the schema uses.
+     */
+    const toForeign = (rial: number) => Math.round((rial / rate) * 10_000) / 10_000;
+
+    setSimpleCalcDetails(prev => ({
+      ...prev,
+      calcMode: 'MANUAL',
+      calcExchangeRate: rate,
+      calcManualLandedForeign: toForeign(costRial),
+      calcManualSellingForeign: toForeign(currentSellingRial > 0 ? currentSellingRial : costRial),
+    }));
   };
 
   const convertForeignToRialSimple = (priceForeign: number, currency: string) => {
@@ -1428,6 +1492,24 @@ export default function ProductsView({
                           </div>
                         </div>
                       </div>
+
+                      {/*
+                        What it last really cost, beside what we quote it at.
+
+                        Read-only, and never folded into the calculator on its
+                        own: adopting it is the button inside the panel, because
+                        a shipment's freight and customs are not a fair basis for
+                        every future quotation. See LastPurchasePanel.
+                      */}
+                      {showCosts && !hasVariants && (
+                        <div className="md:col-span-12 w-full">
+                          <LastPurchasePanel
+                            item={editingProduct}
+                            calc={simpleCalcDetails as Record<string, unknown>}
+                            onAdopt={(costRial) => adoptLastPurchaseCost(costRial)}
+                          />
+                        </div>
+                      )}
 
                       {/* Calculator Button — cost-derived, so not for everyone */}
                       <div className={`md:col-span-2 w-full ${showCosts ? '' : 'hidden'}`}>
@@ -2624,6 +2706,37 @@ export default function ProductsView({
                                                   className="w-full border border-slate-200 rounded px-2 py-1 text-xs outline-none focus:border-sky-500 font-mono text-left tracking-wider"
                                                   dir="ltr"
                                                 />
+                                                {/*
+                                                  One line, not a panel: this is a
+                                                  table, and a box per SKU would make
+                                                  it unreadable. The full comparison
+                                                  lives on the simple-product form.
+                                                */}
+                                                {showCosts && (() => {
+                                                  const actual = variant.lastPurchaseCostRial;
+                                                  if (actual == null || !(actual > 0)) return null;
+                                                  const drift = costDrift(
+                                                    landedUnitCostOf(variant as unknown as Record<string, unknown>),
+                                                    actual,
+                                                  );
+                                                  return (
+                                                    <div
+                                                      className={`mt-1 text-[9px] font-mono flex items-center gap-1 ${
+                                                        drift?.significant ? 'text-amber-700 font-bold' : 'text-slate-400'
+                                                      }`}
+                                                      dir="ltr"
+                                                      title={`آخرین خرید واقعی${
+                                                        variant.lastPurchaseQuantity ? ` — ${variant.lastPurchaseQuantity} واحد` : ''
+                                                      }${variant.lastPurchaseDate ? ` — ${variant.lastPurchaseDate}` : ''}`}
+                                                    >
+                                                      {drift?.significant && <AlertTriangle size={9} />}
+                                                      <span>{formatMoney(Math.round(actual))}</span>
+                                                      {drift?.significant && (
+                                                        <span>({drift.percent > 0 ? '+' : ''}{drift.percent}%)</span>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })()}
                                               </td>
                                               <td className="py-2 px-3 text-xs text-slate-700 whitespace-nowrap">
                                                 {Object.entries(variant.attributes).map(([k, v]) => `${k}: ${v}`).join(' ، ')}

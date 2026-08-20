@@ -56,6 +56,27 @@ export function rowToProduct(row: ProductRow): Product {
   } as Product);
 }
 
+/**
+ * The last real purchase, on a product or a SKU.
+ *
+ * Arrives blanked for a user without the `costs` permission, so every field is
+ * read defensively; a null here means "not shown to you" just as often as it
+ * means "never bought".
+ */
+function lastPurchaseOf(row: {
+  lastPurchaseCostRial: string | null;
+  lastPurchaseQuantity: string | null;
+  lastPurchaseDateJalali: string | null;
+  lastPurchaseOrderNumber: string | null;
+}) {
+  return {
+    lastPurchaseCostRial: row.lastPurchaseCostRial === null ? null : num(row.lastPurchaseCostRial),
+    lastPurchaseQuantity: row.lastPurchaseQuantity === null ? null : num(row.lastPurchaseQuantity),
+    lastPurchaseDate: row.lastPurchaseDateJalali,
+    lastPurchaseOrderNumber: row.lastPurchaseOrderNumber,
+  };
+}
+
 function variantToClient(v: ProductVariantRow): ProductVariant {
   return {
     id: v.id,
@@ -67,6 +88,7 @@ function variantToClient(v: ProductVariantRow): ProductVariant {
     priceForeign: v.priceForeign ? num(v.priceForeign) : undefined,
     currencyForeign: v.currencyForeign ?? undefined,
     ...parseJson<Record<string, unknown>>(v.priceCalc, {}),
+    ...lastPurchaseOf(v),
   } as unknown as ProductVariant;
 }
 
@@ -78,6 +100,7 @@ export function detailToProduct(detail: ProductDetail): Product {
     features: parseJson(detail.features, [] as Product["features"]),
     configRules: parseJson(detail.configRules, [] as Product["configRules"]),
     images: parseJson(detail.images, [] as string[]),
+    ...lastPurchaseOf(detail),
     variants: (detail.variants ?? []).map(variantToClient),
     // The price calculator's inputs are stored together as one blob and spread
     // back onto the record, which is where the form reads them from.

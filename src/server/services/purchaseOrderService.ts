@@ -26,6 +26,85 @@ import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projec
 export const RECEIVED_STATUS = "تحویل شده (رسید انبار)";
 
 /**
+ * Records what each item on this order last actually cost to land.
+ *
+ * Kept beside the product's price calculator, never written into it. The
+ * calculator holds the *standard* cost the company quotes from; this line's
+ * share of the order's landed total carries the freight and customs of one
+ * shipment, so five units flown in urgently genuinely cost several times what
+ * two hundred by sea do. Adopting one into the other is a decision somebody
+ * makes on the screen, with the quantity in front of them.
+ *
+ * Written from the **most recent received order** for each item rather than
+ * from this one, so re-saving a months-old purchase cannot overwrite a newer
+ * figure, and saving the same order twice writes the same thing. A SKU records
+ * against itself; a product without variants against the product.
+ */
+async function recordLastPurchaseCost(
+  tx: Prisma.TransactionClient,
+  purchaseOrderId: string,
+): Promise<void> {
+  const touched = await tx.purchaseOrderItem.findMany({
+    where: { purchaseOrderId, productId: { not: null } },
+    select: { productId: true, variantId: true },
+  });
+  if (touched.length === 0) return;
+
+  const productIds = [...new Set(touched.map((r) => r.productId as string))];
+
+  // Every received line for those products, newest order first. One pass then
+  // picks the first hit per position, which is that position's latest purchase.
+  const history = await tx.purchaseOrderItem.findMany({
+    where: {
+      productId: { in: productIds },
+      landedUnitCostRial: { not: null },
+      purchaseOrder: { status: RECEIVED_STATUS },
+    },
+    select: {
+      productId: true, variantId: true, quantity: true, landedUnitCostRial: true,
+      purchaseOrder: {
+        select: {
+          id: true, poNumber: true,
+          receivedDate: true, receivedDateJalali: true,
+          orderDate: true, orderDateJalali: true,
+        },
+      },
+    },
+    orderBy: [
+      // An order received but not stamped falls back to when it was placed,
+      // so a missing receipt date cannot push it to the bottom for ever.
+      { purchaseOrder: { receivedDate: "desc" } },
+      { purchaseOrder: { orderDate: "desc" } },
+    ],
+  });
+
+  const latest = new Map<string, typeof history[number]>();
+  for (const row of history) {
+    const key = positionKey(row.productId as string, row.variantId);
+    if (!latest.has(key)) latest.set(key, row);
+  }
+
+  for (const [key, row] of latest) {
+    const [, variantPart] = key.split("|");
+    const po = row.purchaseOrder;
+    const data = {
+      lastPurchaseCostRial: row.landedUnitCostRial,
+      lastPurchaseQuantity: row.quantity,
+      lastPurchaseDate: po?.receivedDate ?? po?.orderDate ?? null,
+      lastPurchaseDateJalali: po?.receivedDateJalali ?? po?.orderDateJalali ?? null,
+      lastPurchaseOrderId: po?.id ?? null,
+      lastPurchaseOrderNumber: po?.poNumber ?? null,
+    };
+
+    if (variantPart) {
+      await tx.productVariant.update({ where: { id: variantPart }, data });
+    } else {
+      await tx.product.update({ where: { id: row.productId as string }, data });
+    }
+  }
+}
+
+/**
  * Replaces an estimated proforma-line cost with what the goods actually cost.
  *
  * A line quoted from the catalogue is costed with the product's *standard*
@@ -601,8 +680,10 @@ export async function createPurchaseOrder(
     // An order can be entered already received, e.g. when recording history.
     await reconcileStock(tx, po.id, todayJalali);
 
-    // What the goods really cost, onto the sale lines that were estimated.
+    // What the goods really cost, onto the sale lines that were estimated —
+    // and beside each item's standard cost, for somebody to look at.
     await pushActualCostToProformaLines(tx, po.id);
+    await recordLastPurchaseCost(tx, po.id);
 
     return tx.purchaseOrder.findUnique({ where: { id: po.id }, include: { items: { orderBy: { lineNo: "asc" } } } });
   });
@@ -829,6 +910,7 @@ export async function updatePurchaseOrder(
     await reconcileStock(tx, id, todayJalali);
 
     await pushActualCostToProformaLines(tx, id);
+    await recordLastPurchaseCost(tx, id);
 
     return tx.purchaseOrder.findUnique({ where: { id }, include: { items: { orderBy: { lineNo: "asc" } } } });
   });
