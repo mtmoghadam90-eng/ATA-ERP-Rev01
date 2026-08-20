@@ -26,7 +26,8 @@ import { generateSku, decodeSku } from "../src/utils/skuUtils";
 import {
   DEFAULT_CUSTOMER_VALUE_SETTINGS, calculateCVI, calculatePotentialScore, calculateRealizedScore,
   costToServeScoreOf, determineRank, isPotentialAssessed, normalizeCustomerValueSettings,
-  paymentScoreOf, percentileRank, recencyScore, sumRealizedWeights, validateCustomerValueSettings,
+  paymentScoreOf, percentileRank, recencyScore, resolveRank, sumRealizedWeights,
+  validateCustomerValueSettings,
 } from "../src/utils/customerValue";
 import { saleDateOf } from "../src/server/services/customerValueService";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
@@ -1334,6 +1335,51 @@ head("Customer value: the sale date is the approval date");
     saleDateOf({ issueDate: new Date("2025-06-01"), project: { winningDate: new Date("2026-06-01") } }) >= periodStart);
   ok("and one approved before the window is not",
     saleDateOf({ issueDate: new Date("2025-06-01"), project: { winningDate: new Date("2025-07-01") } }) < periodStart);
+}
+
+/**
+ * A rank set by hand.
+ *
+ * Overriding a rank means one of two different things and the system cannot
+ * guess which, so the choice is asked for: keep it whatever the figures say, or
+ * correct it for now and let the evaluation take back over. The second is
+ * useless unless the recalculation actually drops it, which is what
+ * `clearsOverride` is for.
+ */
+head("Customer value: a rank set by hand");
+{
+  const locked = (rank: string) => ({ manualRank: rank, manualRankLocked: true });
+  const unlocked = (rank: string) => ({ manualRank: rank, manualRankLocked: false });
+
+  {
+    const r = resolveRank("D", locked("A"));
+    eq("a locked override is the rank the customer gets", r.rank, "A");
+    ok("and is marked as manual", r.rankIsManual);
+    eq("while the computed rank is still recorded beside it", r.computedRank, "D");
+    ok("and the override is kept", !r.clearsOverride);
+  }
+  {
+    const r = resolveRank("D", unlocked("A"));
+    eq("an unlocked override gives way to the formula", r.rank, "D");
+    ok("and stops being called manual", !r.rankIsManual);
+    ok("and is cleared, so it cannot linger past the recalculation", r.clearsOverride);
+  }
+  {
+    const r = resolveRank("A", null);
+    eq("with no override the formula decides", r.rank, "A");
+    ok("nothing is manual", !r.rankIsManual);
+    ok("and there is nothing to clear", !r.clearsOverride);
+  }
+  {
+    // The flag alone must never blank a rank.
+    const r = resolveRank("A", { manualRank: null, manualRankLocked: true });
+    eq("locked with no rank falls back to the formula", r.rank, "A");
+    ok("and is not manual", !r.rankIsManual);
+  }
+  eq("a locked override holds a rank down as well as up",
+    resolveRank("A", locked("D")).rank, "D");
+  eq("and holds even over an unassessed customer",
+    resolveRank("PENDING", locked("B")).rank, "B");
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

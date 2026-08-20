@@ -22,6 +22,7 @@ import { Customer, ERPSettings } from '../types';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomerValueFields from './CustomerValueFields';
 import CustomerValueCard, { RANK_STYLE } from './CustomerValueCard';
+import { Pencil } from 'lucide-react';
 import { formatMoney } from '../numUtils';
 import { COST_TO_SERVE_LEVELS, PAYMENT_BEHAVIOURS, RANK_META } from '../utils/customerValue';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
@@ -155,7 +156,6 @@ export default function CustomersView({
   const [showModal, setShowModal] = useState(false);
   const [isCustomerModalFullscreen, setIsCustomerModalFullscreen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
-  const [colFilters, setColFilters] = useState<Record<string, string>>({});
   const [customFieldFilters, setCustomFieldFilters] = useState<Record<string, string>>({});
 
   // Dynamic Custom Fields State
@@ -667,6 +667,7 @@ export default function CustomersView({
       'کد اقتصادی / کد ملی',
       'برچسب‌ها',
       'رتبه ارزش',
+      'نحوه تعیین رتبه',
       'عنوان رتبه',
       'شاخص ارزش مشتری (CVI)',
       'ارزش ایجادشده',
@@ -695,6 +696,7 @@ export default function CustomersView({
       // The rank and everything behind it, so a filtered export can be checked
       // against the rule rather than taken on trust.
       c.valueMetrics?.customerValueRank ?? '',
+      c.valueMetrics?.rankIsManual ? 'دستی' : 'محاسبه‌شده',
       c.valueMetrics?.customerValueRank
         ? (RANK_META[c.valueMetrics.customerValueRank as 'A']?.title ?? '')
         : '',
@@ -1010,8 +1012,8 @@ export default function CustomersView({
                   <input
                     type="text"
                     placeholder="فیلتر..."
-                    value={colFilters.type || ''}
-                    onChange={(e) => setColFilters({...colFilters, type: e.target.value})}
+                    value={list.filters.columns.type || ''}
+                    onChange={(e) => list.setColumnFilter('type', e.target.value)}
                     className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded text-center focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white"
                   />
                 </th>
@@ -1019,8 +1021,8 @@ export default function CustomersView({
                   <input
                     type="text"
                     placeholder="فیلتر نام..."
-                    value={colFilters.name || ''}
-                    onChange={(e) => setColFilters({...colFilters, name: e.target.value})}
+                    value={list.filters.columns.name || ''}
+                    onChange={(e) => list.setColumnFilter('name', e.target.value)}
                     className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white"
                   />
                 </th>
@@ -1028,8 +1030,8 @@ export default function CustomersView({
                   <input
                     type="text"
                     placeholder="فیلتر حوزه/سمت..."
-                    value={colFilters.industry || ''}
-                    onChange={(e) => setColFilters({...colFilters, industry: e.target.value})}
+                    value={list.filters.columns.industry || ''}
+                    onChange={(e) => list.setColumnFilter('industry', e.target.value)}
                     className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white"
                   />
                 </th>
@@ -1037,8 +1039,8 @@ export default function CustomersView({
                   <input
                     type="text"
                     placeholder="فیلتر شخص..."
-                    value={colFilters.keyPerson || ''}
-                    onChange={(e) => setColFilters({...colFilters, keyPerson: e.target.value})}
+                    value={list.filters.columns.keyPerson || ''}
+                    onChange={(e) => list.setColumnFilter('keyPerson', e.target.value)}
                     className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white"
                   />
                 </th>
@@ -1046,8 +1048,8 @@ export default function CustomersView({
                   <input
                     type="text"
                     placeholder="فیلتر تماس..."
-                    value={colFilters.contact || ''}
-                    onChange={(e) => setColFilters({...colFilters, contact: e.target.value})}
+                    value={list.filters.columns.contact || ''}
+                    onChange={(e) => list.setColumnFilter('contact', e.target.value)}
                     className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white text-left font-mono"
                   />
                 </th>
@@ -1055,8 +1057,8 @@ export default function CustomersView({
                   <input
                     type="text"
                     placeholder="فیلتر استان..."
-                    value={colFilters.province || ''}
-                    onChange={(e) => setColFilters({...colFilters, province: e.target.value})}
+                    value={list.filters.columns.province || ''}
+                    onChange={(e) => list.setColumnFilter('province', e.target.value)}
                     className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white"
                   />
                 </th>
@@ -1064,8 +1066,8 @@ export default function CustomersView({
                   <input
                     type="text"
                     placeholder="فیلتر برچسب..."
-                    value={colFilters.tags || ''}
-                    onChange={(e) => setColFilters({...colFilters, tags: e.target.value})}
+                    value={list.filters.columns.tags || ''}
+                    onChange={(e) => list.setColumnFilter('tags', e.target.value)}
                     className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white"
                   />
                 </th>
@@ -1170,7 +1172,15 @@ export default function CustomersView({
 
                     {/* Customer value — computed server-side, read-only here */}
                     <td className="p-3">
-                      <span className={`px-2 py-1 rounded-full font-bold text-[10px] border whitespace-nowrap ${RANK_STYLE[cust.valueMetrics?.customerValueRank ?? 'PENDING'] ?? RANK_STYLE.PENDING}`}>
+                      <span
+                        className={`px-2 py-1 rounded-full font-bold text-[10px] border whitespace-nowrap inline-flex items-center gap-1 ${RANK_STYLE[cust.valueMetrics?.customerValueRank ?? 'PENDING'] ?? RANK_STYLE.PENDING}`}
+                        title={cust.valueMetrics?.rankIsManual
+                          ? `تعیین دستی — رتبه محاسبه‌شده سیستم: ${cust.valueMetrics.computedRank}`
+                          : undefined}
+                      >
+                        {/* A hand-set rank is marked, so nobody reads it as
+                            something the figures produced. */}
+                        {cust.valueMetrics?.rankIsManual && <Pencil size={9} />}
                         {cust.valueMetrics?.customerValueRank && cust.valueMetrics.customerValueRank !== 'PENDING'
                           ? `${cust.valueMetrics.customerValueRank} — ${RANK_META[cust.valueMetrics.customerValueRank as 'A'].title}`
                           : 'ارزیابی‌نشده'}
@@ -1268,9 +1278,10 @@ export default function CustomersView({
           <div className="text-center bg-white p-12 border-t border-slate-100 w-full">
             <Users className="mx-auto text-slate-300 mb-3" size={48} />
             <p className="text-sm text-slate-500 font-medium">مشتری با مشخصات وارد شده یافت نشد.</p>
-            {Object.values(colFilters).some(Boolean) && (
+            {Object.values(list.filters.columns).some(Boolean) && (
               <button
-                onClick={() => setColFilters({})}
+                onClick={() => Object.keys(list.filters.columns)
+                  .forEach((column) => list.setColumnFilter(column, ''))}
                 className="mt-3 text-xs text-sky-600 hover:underline font-bold"
               >
                 پاک کردن فیلترهای ستونی

@@ -127,6 +127,20 @@ model Customer {
   costToServe          String?  @db.NVarChar(40)
   costToServeReviewed  Boolean  @default(false)
 
+  /// A rank set by hand, overriding the computed one.
+  ///
+  /// `manualRankLocked` is the difference between the two things a person can
+  /// mean by overriding a rank. Locked: this customer is an A whatever the
+  /// figures say, and no recalculation may move them — for the strategic
+  /// account whose worth is not in this year's numbers. Unlocked: correct it
+  /// for now, and let the evaluation take back over at the next
+  /// recalculation, which clears it.
+  manualRank       String?  @db.NVarChar(10)
+  manualRankLocked Boolean  @default(false)
+  manualRankNote   String?  @db.NVarChar(400)
+  manualRankSetAt  DateTime?
+  manualRankSetBy  String?  @db.NVarChar(36)
+
   ownerUserId  String? @db.NVarChar(36)
   owner        User?   @relation("CustomerOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -202,8 +216,15 @@ model CustomerValueMetrics {
   realizedValueScore Float  @default(0)
   potentialValueScore Float?
   customerValueIndex  Float?
-  /// A | B | C | D | PENDING
+  /// The rank in effect: the manual one where a person set it, else the
+  /// computed one. The grid filters and sorts on this, so it has to be the
+  /// single answer to "what rank is this customer".
   customerValueRank   String @default("PENDING") @db.NVarChar(10)
+  /// What the formula said, kept even when a manual rank overrides it — the
+  /// card shows both, so an override never hides what it overrode.
+  computedRank        String @default("PENDING") @db.NVarChar(10)
+  /// True while `customerValueRank` came from a person rather than the rules.
+  rankIsManual        Boolean @default(false)
 
   calculatedAt DateTime @default(now())
 

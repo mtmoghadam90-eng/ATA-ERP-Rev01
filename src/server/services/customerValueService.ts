@@ -9,7 +9,7 @@ import {
   CustomerRank, CustomerValueSettings, PotentialInputs,
   calculateCVI, calculatePotentialScore, calculateRealizedScore,
   costToServeScoreOf, determineRank, normalizeCustomerValueSettings,
-  paymentScoreOf, percentileRank, recencyScore,
+  paymentScoreOf, percentileRank, recencyScore, resolveRank,
 } from "../../utils/customerValue";
 
 /**
@@ -459,6 +459,8 @@ export interface RecalculationSummary {
   customers: number;
   ranked: number;
   pending: number;
+  /** How many kept a manually locked rank rather than the computed one. */
+  lockedManual: number;
   calculatedAt: Date;
 }
 
@@ -480,6 +482,7 @@ export async function recalculateAll(now: Date = new Date()): Promise<Recalculat
       paymentBehaviour: true, costToServe: true,
       potentialConsumption: true, potentialCompanySize: true, potentialProjects: true,
       potentialPortfolioFit: true, potentialRepeatPurchase: true,
+      manualRank: true, manualRankLocked: true,
     },
   });
 
@@ -502,6 +505,9 @@ export async function recalculateAll(now: Date = new Date()): Promise<Recalculat
 
   let ranked = 0;
   let pending = 0;
+  let lockedManual = 0;
+  /** Unlocked overrides, cleared once the evaluation has taken back over. */
+  const resumed: string[] = [];
   const rows: Prisma.CustomerValueMetricsUncheckedCreateInput[] = [];
 
   for (const customer of customers) {
@@ -534,8 +540,23 @@ export async function recalculateAll(now: Date = new Date()): Promise<Recalculat
 
     const realizedValueScore = calculateRealizedScore(components, settings);
     const potentialValueScore = calculatePotentialScore(potentialInputs, settings);
-    const rank = determineRank(realizedValueScore, potentialValueScore, settings);
+    const computedRank = determineRank(realizedValueScore, potentialValueScore, settings);
+
+    /*
+     * A locked manual rank outranks the formula; an unlocked one does not.
+     *
+     * Unlocked means "correct it for now and let the evaluation take back
+     * over", so this pass is exactly the moment it takes back over — the
+     * override is dropped below, in the same transaction that writes the
+     * computed rank, or the customer would keep showing a rank the metrics no
+     * longer agree with.
+     */
+    const resolved = resolveRank(computedRank, customer);
+    const rank = resolved.rank;
+    const useManual = resolved.rankIsManual;
+    if (useManual) lockedManual++;
     if (rank === "PENDING") pending++; else ranked++;
+    if (resolved.clearsOverride) resumed.push(customer.id);
 
     rows.push({
       customerId: customer.id,
@@ -552,6 +573,8 @@ export async function recalculateAll(now: Date = new Date()): Promise<Recalculat
       potentialValueScore,
       customerValueIndex: calculateCVI(realizedValueScore, potentialValueScore),
       customerValueRank: rank,
+      computedRank,
+      rankIsManual: useManual,
       calculatedAt: now,
     });
   }
@@ -571,7 +594,16 @@ export async function recalculateAll(now: Date = new Date()): Promise<Recalculat
     });
   }
 
-  return { customers: rows.length, ranked, pending, calculatedAt: now };
+  // Only now that the computed ranks are written: an override that was never
+  // meant to be permanent has served its purpose and must not linger.
+  if (resumed.length > 0) {
+    await db.customer.updateMany({
+      where: { id: { in: resumed } },
+      data: { manualRank: null, manualRankNote: null },
+    });
+  }
+
+  return { customers: rows.length, ranked, pending, lockedManual, calculatedAt: now };
 }
 
 /**
@@ -590,6 +622,11 @@ export async function recalculateCustomer(_customerId: string): Promise<Recalcul
 
 export interface CustomerValueDetail {
   rank: CustomerRank;
+  /** What the formula said, even when a manual rank is in effect. */
+  computedRank: CustomerRank;
+  rankIsManual: boolean;
+  manualRankLocked: boolean;
+  manualRankNote: string | null;
   realizedValueScore: number;
   potentialValueScore: number | null;
   customerValueIndex: number | null;
@@ -623,6 +660,7 @@ export async function getCustomerValueDetail(
     select: {
       potentialConsumption: true, potentialCompanySize: true, potentialProjects: true,
       potentialPortfolioFit: true, potentialRepeatPurchase: true,
+      manualRank: true, manualRankLocked: true, manualRankNote: true,
       valueMetrics: true,
     },
   });
@@ -631,6 +669,10 @@ export async function getCustomerValueDetail(
   const m = customer.valueMetrics;
   return {
     rank: (m?.customerValueRank ?? "PENDING") as CustomerRank,
+    computedRank: (m?.computedRank ?? "PENDING") as CustomerRank,
+    rankIsManual: m?.rankIsManual ?? !!customer.manualRank,
+    manualRankLocked: customer.manualRankLocked,
+    manualRankNote: customer.manualRankNote,
     realizedValueScore: m?.realizedValueScore ?? 0,
     potentialValueScore: m?.potentialValueScore ?? null,
     customerValueIndex: m?.customerValueIndex ?? null,
@@ -693,4 +735,67 @@ export async function listPotentialHistory(customerId: string) {
     orderBy: { changedAt: "desc" },
     take: 100,
   });
+}
+
+/* ---------------------------- manual rank ------------------------------- */
+
+export type ManualRankMode = "locked" | "resume";
+
+/**
+ * Sets, or clears, a customer's rank by hand.
+ *
+ * `mode` is the whole point of the feature. Overriding a rank means one of two
+ * different things and the system cannot tell which:
+ *
+ *  * `locked` — this customer is this rank whatever the figures say. No
+ *    recalculation will move them. For the strategic account whose worth is not
+ *    in this year's numbers.
+ *  * `resume` — the figures are wrong *today*. Show this rank now, and let the
+ *    automatic evaluation take back over at the next recalculation, which
+ *    clears the override.
+ *
+ * Passing a null rank clears the override outright and hands the customer back
+ * to the formula immediately.
+ *
+ * The effective rank is written straight away rather than waiting for the next
+ * pass — someone who has just set a rank by hand expects to see it.
+ */
+export async function setManualRank(
+  customerId: string,
+  rank: CustomerRank | null,
+  mode: ManualRankMode,
+  note: string | null,
+  userId: string,
+): Promise<{ rank: string; locked: boolean } | null> {
+  const db = getDb();
+  const customer = await db.customer.findUnique({
+    where: { id: customerId },
+    select: { id: true, valueMetrics: { select: { computedRank: true } } },
+  });
+  if (!customer) return null;
+
+  const computed = customer.valueMetrics?.computedRank ?? "PENDING";
+  const locked = rank !== null && mode === "locked";
+
+  await db.$transaction(async (tx) => {
+    await tx.customer.update({
+      where: { id: customerId },
+      data: {
+        manualRank: rank,
+        manualRankLocked: locked,
+        manualRankNote: rank === null ? null : note,
+        manualRankSetAt: rank === null ? null : new Date(),
+        manualRankSetBy: rank === null ? null : userId,
+      },
+    });
+
+    // Clearing hands the customer straight back to the formula.
+    const effective = rank ?? computed;
+    await tx.customerValueMetrics.updateMany({
+      where: { customerId },
+      data: { customerValueRank: effective, rankIsManual: rank !== null },
+    });
+  });
+
+  return { rank: rank ?? computed, locked };
 }

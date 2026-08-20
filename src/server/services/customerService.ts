@@ -99,6 +99,59 @@ export function customFieldClause(spec: unknown): Record<string, unknown> | unde
  * not equality on a column of this table — but they are still an allowlist:
  * nothing here is built from a caller-supplied field name.
  */
+/**
+ * The per-column text filters the grid's header row offers.
+ *
+ * An allowlist keyed by column, not a caller-supplied field name — and each
+ * one goes through `searchClause`, so «کريم» finds «کریم» and Persian digits
+ * match Arabic ones, exactly as the main search box does. Done on the server
+ * because the grid pages: filtering what the browser holds would filter fifty
+ * rows and quietly call it the answer.
+ */
+export interface CustomerColumnFilters {
+  type?: unknown;
+  name?: unknown;
+  industry?: unknown;
+  keyPerson?: unknown;
+  contact?: unknown;
+  province?: unknown;
+  tags?: unknown;
+}
+
+/** Which record fields each header input searches. */
+const COLUMN_FIELDS: Record<keyof CustomerColumnFilters, readonly string[]> = {
+  type: ["customerType"],
+  // The column prints a company name or a person's full name, so it searches
+  // all three rather than only the one the row happens to show.
+  name: ["companyName", "firstName", "lastName"],
+  // Likewise: this column shows the industry for a company and the position
+  // for a person.
+  industry: ["industry", "position"],
+  keyPerson: ["keyPerson"],
+  contact: ["mobile", "phone", "email"],
+  province: ["province", "city"],
+  tags: ["tags"],
+};
+
+function columnClause(filters: CustomerColumnFilters | undefined): Record<string, unknown>[] {
+  if (!filters) return [];
+  const and: Record<string, unknown>[] = [];
+
+  for (const key of Object.keys(COLUMN_FIELDS) as (keyof CustomerColumnFilters)[]) {
+    const raw = filters[key];
+    if (typeof raw !== "string") continue;
+    const term = raw.trim();
+    if (!term) continue;
+
+    const clause = searchClause(term, COLUMN_FIELDS[key]);
+    // Each column narrows further, so they are ANDed while the fields inside
+    // one column are ORed — which is what `searchClause` already returns.
+    if (clause) and.push(clause);
+  }
+
+  return and;
+}
+
 export interface CustomerValueFilters {
   rank?: unknown;
   minRealized?: unknown;
@@ -184,9 +237,15 @@ function valueClause(filters: CustomerValueFilters | undefined): Record<string, 
 export function buildCustomerWhere(
   q: ListQuery,
   user: AuthUser,
-  extra: { customField?: unknown; linkedTo?: unknown; value?: CustomerValueFilters } = {},
+  extra: {
+    customField?: unknown; linkedTo?: unknown;
+    value?: CustomerValueFilters; columns?: CustomerColumnFilters;
+  } = {},
 ): Record<string, unknown> {
-  const and: Record<string, unknown>[] = [...valueClause(extra.value)];
+  const and: Record<string, unknown>[] = [
+    ...valueClause(extra.value),
+    ...columnClause(extra.columns),
+  ];
 
   const visibility = visibilityClause(user);
   if (visibility) and.push(visibility);
@@ -291,7 +350,10 @@ function customerOrderBy(q: ListQuery): Record<string, unknown> {
 export async function listCustomers(
   q: ListQuery,
   user: AuthUser,
-  extra: { customField?: unknown; linkedTo?: unknown; value?: CustomerValueFilters } = {},
+  extra: {
+    customField?: unknown; linkedTo?: unknown;
+    value?: CustomerValueFilters; columns?: CustomerColumnFilters;
+  } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
   const where = buildCustomerWhere(q, user, extra);

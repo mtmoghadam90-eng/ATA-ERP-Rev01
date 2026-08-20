@@ -49,6 +49,8 @@ export interface CustomerRow {
 /** Everything a recalculation writes. Decimals arrive as strings. */
 export interface CustomerValueMetricsRow {
   customerValueRank: string;
+  computedRank: string;
+  rankIsManual: boolean;
   customerValueIndex: number | null;
   realizedValueScore: number;
   potentialValueScore: number | null;
@@ -69,6 +71,11 @@ export interface CustomerValueMetricsRow {
 
 export interface CustomerValueDetailRow {
   rank: string;
+  /** What the formula said, even when a manual rank is in effect. */
+  computedRank: string;
+  rankIsManual: boolean;
+  manualRankLocked: boolean;
+  manualRankNote: string | null;
   realizedValueScore: number;
   potentialValueScore: number | null;
   customerValueIndex: number | null;
@@ -279,8 +286,23 @@ export const customersApi = {
    * correct way to recalculate one customer alone.
    */
   recalculateValue: () =>
-    api.post<{ customers: number; ranked: number; pending: number }>(
+    api.post<{ customers: number; ranked: number; pending: number; lockedManual: number }>(
       "/api/customers/recalculate-value", {}),
+
+  /**
+   * Sets or clears a customer's rank by hand.
+   *
+   * `mode` is what the override means: `locked` keeps it whatever the figures
+   * do; `resume` shows it now and lets the automatic evaluation take back over
+   * at the next recalculation. A null rank clears the override outright.
+   */
+  setRank: (
+    id: string,
+    rank: string | null,
+    mode: "locked" | "resume",
+    note?: string | null,
+  ) => api.put<{ rank: string; locked: boolean }>(
+    `/api/customers/${id}/rank`, { rank, mode, note: note ?? null }),
 };
 
 export interface PotentialHistoryRow {
