@@ -4,7 +4,13 @@ import { downloadFileFromServer } from '../imageUtils';
 import { formatMoney } from '../numUtils';
 
 interface CustomFieldsDetailViewProps {
-  module: 'customers' | 'projects' | 'products' | 'proformas' | 'suppliers' | 'purchaseOrders' | 'transactions' | 'tasks';
+  /**
+   * Taken from `CustomField` rather than spelled out, so this cannot fall
+   * behind the list the settings screen offers — which is how «بسته‌بندی و
+   * تحویل کالا» and «خدمات پس از فروش» came to be offerable there and
+   * unusable here.
+   */
+  module: CustomField['module'];
   customFields: CustomField[];
   customValues?: Record<string, any>;
 }

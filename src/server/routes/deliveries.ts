@@ -18,12 +18,13 @@ const DELIVERY_WRITABLE: (keyof DeliveryInput)[] = [
   "packingListNumber", "projectId", "proformaId", "deliveryDate", "actualDeliveryDate",
   "shippingMethod", "preDeliveryTestNotes", "checklist", "photos", "items",
   "waybillNumber", "driverName", "driverPhone", "vehiclePlate", "trackingCode",
+  "customValues",
 ];
 
 const SERVICE_WRITABLE: (keyof ServiceInput)[] = [
   "projectId", "proformaNumber", "proformaItemName", "itemName", "status",
   "issueDescription", "actionsTaken", "startDate", "endDate", "returnDate",
-  "createdBy", "items",
+  "createdBy", "items", "customValues",
 ];
 
 function pick<T>(body: unknown, keys: (keyof T)[]): T {

@@ -74,6 +74,8 @@ const DELIVERY_LIST_SELECT = {
   actualDeliveryDate: true, actualDeliveryDateJalali: true,
   shippingMethod: true, createdAt: true,
   waybillNumber: true, trackingCode: true, driverName: true,
+  // The grid draws a custom-fields column from this, as every other module does.
+  customValues: true,
   project: { select: { id: true, code: true, name: true } },
   proforma: { select: { id: true, proformaNumber: true } },
   _count: { select: { items: true } },
@@ -163,6 +165,7 @@ export interface DeliveryInput {
   trackingCode?: string | null;
   checklist?: unknown;
   photos?: unknown;
+  customValues?: unknown;
   items?: PackingItemInput[];
 }
 
@@ -205,6 +208,7 @@ function deliveryScalarData(input: DeliveryInput): Record<string, unknown> {
   // travels with the record rather than referring to the current template.
   if ("checklist" in input) set("checklist", toJsonColumn(input.checklist));
   if ("photos" in input) set("photos", toJsonColumn(input.photos));
+  if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
 
   return { ...out, ...expandDateFields(input as Record<string, unknown>, DELIVERY_DATE_FIELDS) };
 }
@@ -681,6 +685,7 @@ const SERVICE_LIST_SELECT = {
   proformaNumber: true, proformaItemName: true,
   startDate: true, startDateJalali: true, endDateJalali: true, returnDateJalali: true,
   createdBy: true, createdAt: true,
+  customValues: true,
   project: { select: { id: true, code: true, name: true } },
   _count: { select: { items: true } },
 } satisfies Prisma.AfterSalesServiceSelect;
@@ -738,6 +743,7 @@ export interface ServiceInput {
   endDate?: string | null;
   returnDate?: string | null;
   createdBy?: string | null;
+  customValues?: unknown;
   items?: ServiceItemInput[];
 }
 
@@ -766,6 +772,7 @@ function serviceScalarData(input: ServiceInput): Record<string, unknown> {
   if ("issueDescription" in input) set("issueDescription", toNullableString(input.issueDescription));
   if ("actionsTaken" in input) set("actionsTaken", toNullableString(input.actionsTaken));
   if ("createdBy" in input) set("createdBy", toNullableString(input.createdBy, 200));
+  if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
 
   return { ...out, ...expandDateFields(input as Record<string, unknown>, SERVICE_DATE_FIELDS) };
 }

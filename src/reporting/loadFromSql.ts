@@ -483,6 +483,7 @@ export async function readSqlCollections(): Promise<StoreCollections> {
       shippingMethod: d.shippingMethod,
       checklist: parseJson<unknown[]>(d.checklist, []),
       photos: parseJson<unknown[]>(d.photos, []),
+      customValues: parseJson(d.customValues, undefined),
       createdAt: d.createdAt,
       items: d.items.map((i) => ({
         id: i.id,
@@ -512,6 +513,7 @@ export async function readSqlCollections(): Promise<StoreCollections> {
       endDate: sv.endDateJalali,
       returnDate: sv.returnDateJalali,
       createdBy: sv.createdBy,
+      customValues: parseJson(sv.customValues, undefined),
       createdAt: sv.createdAt,
       items: sv.items.map((i) => ({
         id: i.id,
