@@ -26,6 +26,8 @@ import {
   Maximize2,
   Minimize2,
   Calculator,
+  Warehouse,
+  CheckCircle2,
   Loader2,
 } from "lucide-react";
 import {
@@ -1671,6 +1673,100 @@ export default function ProformasView({
       costCurrency: currency || "ریال",
       costSource: COST_SOURCES.PRICE_CALCULATOR,
     };
+  };
+
+  /** The line whose price was just published, so the button can say so. */
+  const [publishedPriceIdx, setPublishedPriceIdx] = useState<number | null>(null);
+
+  /**
+   * Puts a line's price into the warehouse, when the user asks for it.
+   *
+   * Deliberately a button and not a side effect of typing. A price on a
+   * proforma is usually specific to that deal — a discount for this customer,
+   * an urgency premium, a bundled figure — so pushing every number typed into a
+   * line back to the catalogue would let one negotiation rewrite the list price
+   * for everybody. The calculator writes back because opening a pricing tool
+   * and pressing «اعمال» is an act of pricing the item; typing in a grid is not.
+   *
+   * What was missing was not the rule but any sign of it: from the user's seat
+   * both are "I set the price of this SKU", and nothing said one propagated and
+   * the other did not.
+   */
+  const publishPriceToWarehouse = async (index: number) => {
+    const item = items[index];
+    const prod = products.find((p) => p.id === item?.productId);
+    if (!item || !prod) return;
+
+    const price = Number(item.unitPriceRIYAL) || 0;
+    if (price <= 0) {
+      alert('ابتدا بهای واحد این ردیف را وارد کنید.');
+      return;
+    }
+
+    const variant = item.variantId ? prod.variants?.find((v) => v.id === item.variantId) : undefined;
+
+    /*
+     * To rial at the document's own rate.
+     *
+     * `historicalExchangeRate` first: it is the rate this proforma is priced at,
+     * so it is what its figures actually mean. Today's rate is the fallback for
+     * a document that never recorded one.
+     */
+    const documentCurrency = currency || 'ریال';
+    const rateFor = (persian: string): number => {
+      if (!persian || persian === 'ریال') return 1;
+      const eng = mapPersianCurrencyToEnglish(persian);
+      return (eng ? exchangeRates?.find((r) => r.currency === eng)?.rateToRIYAL : 0) || 0;
+    };
+    const documentRate = documentCurrency === 'ریال'
+      ? 1
+      : Number(historicalExchangeRate) || rateFor(documentCurrency);
+    if (!(documentRate > 0)) {
+      alert('نرخ تسعیر این پیش‌فاکتور مشخص نیست، بنابراین معادل ریالی قیمت قابل محاسبه نیست.');
+      return;
+    }
+
+    const priceRial = Math.round(price * documentRate);
+
+    // The catalogue's own currency leads — every SKU under a product follows it.
+    const warehouseCurrency = prod.currencyForeign || variant?.currencyForeign || documentCurrency;
+    const priceForWarehouse = priceInWarehouseCurrency(
+      price, priceRial, documentCurrency, warehouseCurrency, rateFor,
+    );
+
+    const target = variant ? `SKU ${variant.sku}` : prod.displayName;
+    const current = variant
+      ? (variant.priceRIYAL ?? 0)
+      : (prod.basePriceRIYAL ?? 0);
+    const confirmed = window.confirm(
+      `قیمت فروش «${target}» در انبار به‌روزرسانی شود؟\n\n`
+      + `قیمت فعلی انبار: ${formatMoney(Math.round(current))} ریال\n`
+      + `قیمت جدید: ${formatMoney(priceRial)} ریال`
+      + (priceForWarehouse === null
+        ? '\n\nنرخ ارز انبار معلوم نیست، پس فقط مبلغ ریالی ثبت می‌شود.'
+        : ` (${formatMoney(priceForWarehouse)} ${warehouseCurrency})`),
+    );
+    if (!confirmed) return;
+
+    // Same shape as the calculator's write: the amount restated in the item's
+    // own currency, and the currency itself restated rather than replaced.
+    const warehousePrice = priceForWarehouse === null
+      ? { currencyForeign: warehouseCurrency }
+      : { priceForeign: priceForWarehouse, currencyForeign: warehouseCurrency };
+
+    const saved = await updateProductById(prod.id, (full) => (variant
+      ? {
+          ...full,
+          currencyForeign: warehouseCurrency,
+          variants: (full.variants || []).map((v) =>
+            v.id === variant.id ? { ...v, priceRIYAL: priceRial, ...warehousePrice } : v,
+          ),
+        }
+      : { ...full, basePriceRIYAL: priceRial, ...warehousePrice }));
+
+    if (!saved) return;
+    setPublishedPriceIdx(index);
+    window.setTimeout(() => setPublishedPriceIdx((n) => (n === index ? null : n)), 2500);
   };
 
   // Handle Item Select product
@@ -4996,6 +5092,31 @@ export default function ProformasView({
                                     title="محاسبه‌گر قیمت فروش"
                                   >
                                     <Calculator size={13} />
+                                  </button>
+                                )}
+                                {/*
+                                  Publishing a typed price is deliberate, and now
+                                  visible. Without it nothing said that the
+                                  calculator writes back to the catalogue and
+                                  typing here does not — see
+                                  `publishPriceToWarehouse`. Not gated on
+                                  `showCosts`: a sale price is what the company
+                                  charges, and the warehouse needs it.
+                                */}
+                                {item.productId && (
+                                  <button
+                                    type="button"
+                                    onClick={() => publishPriceToWarehouse(idx)}
+                                    className={`p-1.5 rounded-lg transition-colors flex items-center justify-center flex-shrink-0 border bg-white ${
+                                      publishedPriceIdx === idx
+                                        ? 'text-emerald-600 border-emerald-200'
+                                        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 border-slate-200'
+                                    }`}
+                                    title="ثبت این قیمت به‌عنوان قیمت فروش کالا در انبار"
+                                  >
+                                    {publishedPriceIdx === idx
+                                      ? <CheckCircle2 size={13} />
+                                      : <Warehouse size={13} />}
                                   </button>
                                 )}
                               </div>
