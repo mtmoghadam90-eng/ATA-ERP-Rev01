@@ -502,6 +502,25 @@ export async function collectRawFigures(
   return result;
 }
 
+/**
+ * Has this customer ever actually bought anything?
+ *
+ * The one question that decides whether they get a rank at all. `lastPurchaseDate`
+ * is set from every confirmed sale ever recorded — `getProformaOutcome` already
+ * excludes quotations, open opportunities and cancelled documents — so null here
+ * means "never".
+ *
+ * Deliberately **not** `purchaseFrequency`, which counts only the evaluation
+ * period. A customer who last bought three years ago is *lapsed*, not a
+ * prospect: they have a history, their recency score already says how stale it
+ * is, and calling them a prospect would throw away everything they were worth.
+ */
+export function hasEverPurchased(
+  figures: Pick<CustomerRawFigures, "lastPurchaseDate"> | null | undefined,
+): boolean {
+  return (figures?.lastPurchaseDate ?? null) !== null;
+}
+
 /* ----------------------------- the whole pass ---------------------------- */
 
 export async function loadCustomerValueSettings(): Promise<CustomerValueSettings> {
@@ -513,6 +532,8 @@ export interface RecalculationSummary {
   customers: number;
   ranked: number;
   pending: number;
+  /** Customers with no confirmed purchase yet — scored on potential only. */
+  prospects: number;
   /** How many kept a manually locked rank rather than the computed one. */
   lockedManual: number;
   calculatedAt: Date;
@@ -559,6 +580,7 @@ export async function recalculateAll(now: Date = new Date()): Promise<Recalculat
 
   let ranked = 0;
   let pending = 0;
+  let prospects = 0;
   let lockedManual = 0;
   /** Unlocked overrides, cleared once the evaluation has taken back over. */
   const resumed: string[] = [];
@@ -592,9 +614,21 @@ export async function recalculateAll(now: Date = new Date()): Promise<Recalculat
       repeatPurchase: customer.potentialRepeatPurchase,
     };
 
-    const realizedValueScore = calculateRealizedScore(components, settings);
+    const hasConfirmedPurchase = hasEverPurchased(figures);
+
     const potentialValueScore = calculatePotentialScore(potentialInputs, settings);
-    const computedRank = determineRank(realizedValueScore, potentialValueScore, settings);
+    const computedRank = determineRank(
+      calculateRealizedScore(components, settings),
+      potentialValueScore,
+      hasConfirmedPurchase,
+      settings,
+    );
+    // A prospect has realized nothing, and the stored figure says so rather
+    // than carrying a score built out of payment and cost-to-serve opinions
+    // about somebody who has never paid an invoice. See evaluateCustomerValue.
+    const realizedValueScore = computedRank === "PROSPECT"
+      ? 0
+      : calculateRealizedScore(components, settings);
 
     /*
      * A locked manual rank outranks the formula; an unlocked one does not.
@@ -609,7 +643,9 @@ export async function recalculateAll(now: Date = new Date()): Promise<Recalculat
     const rank = resolved.rank;
     const useManual = resolved.rankIsManual;
     if (useManual) lockedManual++;
-    if (rank === "PENDING") pending++; else ranked++;
+    if (rank === "PENDING") pending++;
+    else if (rank === "PROSPECT") prospects++;
+    else ranked++;
     if (resolved.clearsOverride) resumed.push(customer.id);
 
     rows.push({
@@ -625,7 +661,10 @@ export async function recalculateAll(now: Date = new Date()): Promise<Recalculat
       ...components,
       realizedValueScore,
       potentialValueScore,
-      customerValueIndex: calculateCVI(realizedValueScore, potentialValueScore),
+      // CVI orders customers within a rank, and a prospect is not in one.
+      customerValueIndex: computedRank === "PROSPECT"
+        ? null
+        : calculateCVI(realizedValueScore, potentialValueScore),
       customerValueRank: rank,
       computedRank,
       rankIsManual: useManual,
@@ -657,7 +696,7 @@ export async function recalculateAll(now: Date = new Date()): Promise<Recalculat
     });
   }
 
-  return { customers: rows.length, ranked, pending, lockedManual, calculatedAt: now };
+  return { customers: rows.length, ranked, pending, prospects, lockedManual, calculatedAt: now };
 }
 
 /**
@@ -767,6 +806,11 @@ export async function customerValueSummary() {
       _sum: { grossProfitRial: true },
     }),
     db.customerValueMetrics.aggregate({
+      // Customers who have never bought are excluded from the averages: their
+      // realized score is a stored zero standing for "not applicable", and
+      // counting it would drag the population average down by however many
+      // leads happen to be on file.
+      where: { customerValueRank: { not: "PROSPECT" } },
       _avg: { realizedValueScore: true, potentialValueScore: true },
     }),
   ]);
@@ -777,6 +821,8 @@ export async function customerValueSummary() {
       count: g._count._all,
       grossProfitRial: Number(g._sum.grossProfitRial ?? 0),
     })),
+    /** Leads with no confirmed purchase — outside the matrix, counted here. */
+    prospects: groups.find((g) => g.customerValueRank === "PROSPECT")?._count._all ?? 0,
     averageRealized: Math.round((averages._avg.realizedValueScore ?? 0) * 10) / 10,
     averagePotential: Math.round((averages._avg.potentialValueScore ?? 0) * 10) / 10,
   };

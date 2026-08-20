@@ -286,8 +286,10 @@ export const customersApi = {
    * correct way to recalculate one customer alone.
    */
   recalculateValue: () =>
-    api.post<{ customers: number; ranked: number; pending: number; lockedManual: number }>(
-      "/api/customers/recalculate-value", {}),
+    api.post<{
+      customers: number; ranked: number; pending: number;
+      prospects: number; lockedManual: number;
+    }>("/api/customers/recalculate-value", {}),
 
   /**
    * Sets or clears a customer's rank by hand.
@@ -317,6 +319,8 @@ export interface PotentialHistoryRow {
 
 export interface CustomerValueSummary {
   byRank: { rank: string; count: number; grossProfitRial: number }[];
+  /** Customers with no confirmed purchase — outside the A/B/C/D matrix. */
+  prospects: number;
   averageRealized: number;
   averagePotential: number;
 }

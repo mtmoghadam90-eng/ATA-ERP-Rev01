@@ -25,11 +25,11 @@ import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregor
 import { generateSku, decodeSku } from "../src/utils/skuUtils";
 import {
   DEFAULT_CUSTOMER_VALUE_SETTINGS, calculateCVI, calculatePotentialScore, calculateRealizedScore,
-  costToServeScoreOf, determineRank, isPotentialAssessed, normalizeCustomerValueSettings,
-  paymentScoreOf, percentileRank, recencyScore, resolveRank, sumRealizedWeights,
-  validateCustomerValueSettings,
+  RANK_META, costToServeScoreOf, determineRank, evaluateCustomerValue, isPotentialAssessed,
+  normalizeCustomerValueSettings, paymentScoreOf, percentileRank, recencyScore, resolveRank,
+  sumRealizedWeights, validateCustomerValueSettings,
 } from "../src/utils/customerValue";
-import { saleDateOf } from "../src/server/services/customerValueService";
+import { hasEverPurchased, saleDateOf } from "../src/server/services/customerValueService";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
 import { calculateProjectFinance } from "../src/utils/finance";
@@ -1378,29 +1378,37 @@ head("Customer value: the acceptance scenarios");
     const answer = Math.round(score / 20);
     return { consumption: answer, companySize: answer, projects: answer, portfolioFit: answer, repeatPurchase: answer };
   };
+  // These scenarios are all about customers who have bought something; the
+  // no-purchase rule has its own section below.
   const rankOf = (realized: number, potential: number | null) =>
-    determineRank(realized, potential, S);
+    determineRank(realized, potential, true, S);
 
   eq("1 — strategic: high realized, high potential", rankOf(85, 90), "A");
   eq("2 — profitable: high realized, low potential", rankOf(85, 40), "B");
   eq("3 — growth: low realized, high potential", rankOf(30, 90), "C");
   eq("4 — low value: low on both", rankOf(30, 40), "D");
 
-  // 5 — a brand-new customer with no sales but real promise must be developed,
-  // not written off. This is the scenario a CVI-based rank would get wrong.
+  // 5 — a customer barely into their first year, with real promise, must be
+  // developed rather than written off. This is the scenario a CVI-based rank
+  // would get wrong: the index is middling, and the matrix still says C.
   {
     const realized = calculateRealizedScore(
       { grossProfitScore: 0, frequencyScore: 0, recencyScore: 0, paymentScore: 60, costToServeScore: 60 }, S);
     const potential = calculatePotentialScore(assessed(100), S);
     eq("5 — a new high-potential customer scores low on realized", realized, 9);
-    eq("   and is C, not D", determineRank(realized, potential, S), "C");
+    eq("   and once they have bought, is C, not D",
+      determineRank(realized, potential, true, S), "C");
     ok("   even though the combined index is middling",
       (calculateCVI(realized, potential) ?? 0) < 50, calculateCVI(realized, potential));
+    // The distinction added later: "hardly anything yet" and "nothing at all"
+    // are not the same customer, and only the first belongs in the matrix.
+    eq("   before their first purchase they are a prospect, not a C",
+      determineRank(realized, potential, false, S), "PROSPECT");
   }
 
   // 6 — sales history but no assessment: no rank at all.
   eq("6 — an unassessed customer is pending, not ranked",
-    determineRank(90, calculatePotentialScore({ consumption: 4 }, S), S), "PENDING");
+    determineRank(90, calculatePotentialScore({ consumption: 4 }, S), true, S), "PENDING");
 
   // 7 and 8 are properties of the service's arithmetic rather than the pure
   // rules; they are asserted where the totals are computed. What the rules own
@@ -1667,6 +1675,95 @@ head("Cost of goods: what the server stores and what it refuses");
   ok("a technical proforma is exempt", !threw([{ productName: "فلومتر" }], "TECHNICAL"));
 }
 
+
+/*
+ * A rank is a verdict on a relationship, and half of it is about money that has
+ * changed hands. Somebody who has only ever been quoted has no realized value
+ * to measure — ranking them anyway puts them at D, "low value, low priority",
+ * which is exactly backwards for a lead the sales team is working on.
+ */
+head("Customer value: a customer who has never bought");
+{
+  const S = DEFAULT_CUSTOMER_VALUE_SETTINGS;
+  // Five answers of the same value, which is the simplest way to reach a given
+  // score. The answers are 1..5, so the reachable scores are 20/40/60/80/100 —
+  // `high` stands in for the specification's "90" and `low` for its "40".
+  const answers = (n: number) => ({
+    consumption: n, companySize: n, projects: n, portfolioFit: n, repeatPurchase: n,
+  });
+  const high = 5;
+  const low = 2;
+  const evaluate = (answer: number, bought: boolean, components = {
+    grossProfitScore: 0, frequencyScore: 0, recencyScore: 0,
+    paymentScore: 100, costToServeScore: 100,
+  }) => evaluateCustomerValue(components, answers(answer), bought, S);
+
+  // The three worked examples from the specification.
+  {
+    const r = evaluate(high, false);
+    eq("high potential, no purchase — not ranked", r.rank, "PROSPECT");
+    eq("and the potential is still there to sort them by", r.potentialScore, 100);
+  }
+  {
+    const r = evaluate(high, true, {
+      grossProfitScore: 35, frequencyScore: 35, recencyScore: 35,
+      paymentScore: 35, costToServeScore: 35,
+    });
+    eq("high potential, one purchase, realized 35 — the matrix decides", r.rank, "C");
+    eq("which is «مشتری قابل توسعه»", RANK_META[r.rank].title, "مشتری قابل توسعه");
+  }
+  eq("low potential, no purchase — still just a prospect", evaluate(low, false).rank, "PROSPECT");
+  eq("and their potential is reported as it is", evaluate(low, false).potentialScore, 40);
+
+  // The rank must not be reachable by having a low potential either: it is the
+  // purchase that decides, not the score.
+  eq("a prospect with no potential assessed is still a prospect",
+    determineRank(0, null, false, S), "PROSPECT");
+  eq("while a customer who has bought and is unassessed is pending",
+    determineRank(0, null, true, S), "PENDING");
+
+  // Realized value is not "low" for a prospect, it is not applicable — and a
+  // score built out of payment and cost-to-serve opinions about somebody who
+  // has never paid an invoice is not a measurement of anything.
+  eq("a prospect's realized value is zero, not an opinion", evaluate(high, false).realizedScore, 0);
+  ok("even though the same components would have scored otherwise",
+    evaluate(high, true).realizedScore > 0, evaluate(high, true).realizedScore);
+  eq("and there is no CVI, which only orders within a rank",
+    evaluate(high, false).cvi, null);
+  ok("a customer who has bought keeps theirs", evaluate(high, true).cvi !== null);
+
+  eq("«مشتری بالقوه» is what the screens show", RANK_META.PROSPECT.title, "مشتری بالقوه");
+
+  // The first confirmed sale moves them into the matrix with no other change.
+  {
+    const before = evaluate(high, false);
+    const after = evaluate(high, true);
+    eq("before the first sale", before.rank, "PROSPECT");
+    ok("after it, a real rank", after.rank === "A" || after.rank === "B"
+      || after.rank === "C" || after.rank === "D", after.rank);
+    eq("with the potential unchanged", after.potentialScore, before.potentialScore);
+  }
+
+  /*
+   * Lapsed is not the same as never, and this is the distinction the whole rule
+   * turns on. A customer who bought three years ago has a history worth
+   * everything it was worth; only their recency score should say it is stale.
+   */
+  ok("never bought — a prospect", !hasEverPurchased({ lastPurchaseDate: null }));
+  ok("nothing recorded at all — also a prospect", !hasEverPurchased(undefined));
+  ok("bought three years ago — lapsed, not a prospect",
+    hasEverPurchased({ lastPurchaseDate: new Date(Date.UTC(2023, 0, 15)) }));
+  ok("bought last week — obviously not a prospect",
+    hasEverPurchased({ lastPurchaseDate: new Date(Date.UTC(2026, 7, 13)) }));
+
+  // An override is a person's deliberate decision and still outranks the rules,
+  // exactly as it does over an unassessed customer.
+  {
+    const r = resolveRank("PROSPECT", { manualRank: "A", manualRankLocked: true });
+    eq("a locked manual rank holds over a prospect too", r.rank, "A");
+    eq("and what it overrode is still on the record", r.computedRank, "PROSPECT");
+  }
+}
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
