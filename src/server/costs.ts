@@ -288,7 +288,7 @@ export function redactProformas<T>(rows: T[], user: AuthUser): T[] {
  * line the user added has none — it keeps a blank cost, which is honest, since
  * this user could not have known one.
  */
-export function preserveLineCosts<T extends { id?: unknown }>(
+export function preserveLineCosts<T extends object>(
   items: T[] | undefined,
   user: AuthUser,
   stored: { id: string; unitCost: unknown; costCurrency: unknown; costSource: unknown }[],
@@ -297,7 +297,14 @@ export function preserveLineCosts<T extends { id?: unknown }>(
 
   const byId = new Map(stored.map((line) => [line.id, line]));
   return items.map((item) => {
-    const previous = typeof item.id === "string" ? byId.get(item.id) : undefined;
+    // Read rather than required by the constraint. `T extends { id?: unknown }`
+    // looks tighter but is a *weak* type — every member optional — so TypeScript
+    // stops inferring T from the argument and checks the caller's object literal
+    // against the constraint itself, rejecting every property the line actually
+    // has. It also guaranteed nothing: an optional `id` may be absent, which is
+    // exactly the case this handles.
+    const lineId = (item as { id?: unknown }).id;
+    const previous = typeof lineId === "string" ? byId.get(lineId) : undefined;
     return {
       ...item,
       unitCost: previous?.unitCost ?? null,
