@@ -20,7 +20,7 @@ import { canSeeCosts } from "./auth";
  *
  * ## What counts as a cost
  *
- * Three places, because between them they answer "what did this item cost us":
+ * Five places, because between them they answer "what did this item cost us":
  *
  *  - **The product price calculator** (`priceCalc`, on the product and on each
  *    variant) — the foreign price, freight, customs and margin that a sale
@@ -32,17 +32,34 @@ import { canSeeCosts } from "./auth";
  *  - **Supplier inquiries** — the offers. An offer is the purchase price before
  *    it becomes one, so leaving these while redacting purchase orders would
  *    hide the answer and publish the working.
+ *  - **Proforma lines** — `unitCost` and its source. Cost used to be
+ *    reconstructed from the purchase order, which was already redacted here, so
+ *    recording it on the sale line would have published on the sales screen
+ *    exactly what the purchasing screen withholds.
+ *  - **Customer gross profit** — the profit, the margin, the coverage and the
+ *    profit percentile on `customer_value_metrics`. Revenue stays: that is what
+ *    the company charges, and the sales team needs it. Profit is revenue minus
+ *    cost, so publishing it beside the revenue publishes the cost by
+ *    subtraction. The **rank** stays too — it is an aggregate of five things and
+ *    reveals no figure — because otherwise the whole feature disappears for the
+ *    people it is for.
  *
  * Redacting one and not the others just moves the leak, which is why they are
  * enforced together from this one file.
  *
  * ## Reads are redacted; writes are refused
  *
- * A user who cannot see these numbers cannot save the documents that carry
- * them. That is not extra strictness, it is the only safe option: their copy of
- * the record has zeros where the money was, and letting them save it would
- * write those zeros back. Products are the exception and stay editable, because
- * there the cost is a single column that can simply be left alone.
+ * A user who cannot see these numbers cannot save the documents that *are*
+ * statements of cost — purchase orders and supplier inquiries. That is not
+ * extra strictness, it is the only safe option: their copy of the record has
+ * blanks where the money was, and letting them save it would write those blanks
+ * back.
+ *
+ * Products and proformas are different, because there the cost is a small part
+ * of a record such a user legitimately edits all day — stock levels,
+ * descriptions, quotations. Those writes go through instead: the cost fields are
+ * dropped from the request and what is stored is put back
+ * (`stripProductCostInput`, `preserveLineCosts`).
  */
 
 /** Product and variant fields that describe cost rather than price. */
@@ -75,6 +92,28 @@ const PURCHASE_ORDER_ITEM_COST_FIELDS = ["unitPriceForeign", "totalPriceForeign"
 const INQUIRY_COST_FIELDS = ["discountPercent", "discountAmount", "financialOfferUrl"] as const;
 
 const INQUIRY_ITEM_COST_FIELDS = ["priceForeign", "priceRial"] as const;
+
+/**
+ * Proforma line columns that say what the goods cost us.
+ *
+ * The source and the currency go with the figure. `costSource` alone would say
+ * «از سفارش خرید» beside a blank, which tells a warehouse account that a
+ * purchase order exists and what kind of evidence it holds.
+ */
+const PROFORMA_ITEM_COST_FIELDS = ["unitCost", "costCurrency", "costSource"] as const;
+
+/**
+ * Customer value columns computed from cost.
+ *
+ * `grossProfitScore` is in here because it is a percentile *of* the profit: it
+ * moves with the figure it is derived from and is shown on the card beside it,
+ * so publishing the score while blanking the amount would leak the ordering of
+ * every customer by margin. `realizedValueScore` and the rank stay — they blend
+ * five components, and no cost can be recovered from them.
+ */
+const CUSTOMER_VALUE_COST_FIELDS = [
+  "grossProfitRial", "grossMarginPercent", "costCoveragePercent", "grossProfitScore",
+] as const;
 
 /**
  * Replaces the named fields with null, in a copy.
@@ -207,5 +246,114 @@ export function stripProductCostInput<T extends object>(
     });
   }
 
+  return out as T;
+}
+
+/**
+ * One proforma, with what its lines cost us removed.
+ *
+ * Unlike a purchase order, a proforma is overwhelmingly *not* about cost — it
+ * is the quotation the customer receives — so this blanks the three line
+ * columns and leaves the document otherwise whole. The write side is
+ * `preserveLineCosts` rather than a refusal for the same reason: sales staff
+ * without this permission write proformas every day.
+ */
+export function redactProforma<T>(row: T, user: AuthUser): T {
+  if (canSeeCosts(user)) return row;
+  if (!row || typeof row !== "object") return row;
+
+  const proforma = { ...(row as Record<string, unknown>) };
+  if (Array.isArray(proforma.items)) {
+    proforma.items = proforma.items.map((item) => blank(item, PROFORMA_ITEM_COST_FIELDS));
+  }
+  return proforma as T;
+}
+
+export function redactProformas<T>(rows: T[], user: AuthUser): T[] {
+  if (canSeeCosts(user)) return rows;
+  return rows.map((row) => redactProforma(row, user));
+}
+
+/**
+ * Puts the stored line costs back into a write from a user who cannot see them.
+ *
+ * Their copy of the document arrived with the costs blanked, and the lines are
+ * replaced wholesale on save — so without this, one edit by a warehouse account
+ * would erase the cost of every line on the document and, through it, the
+ * customer's gross profit.
+ *
+ * Lines are matched by the `id` the client read them under. That id is only a
+ * correlation key: `mapItem` does not store it, and the rows are re-inserted
+ * with fresh ones. An id from another document simply fails to match, and a
+ * line the user added has none — it keeps a blank cost, which is honest, since
+ * this user could not have known one.
+ */
+export function preserveLineCosts<T extends { id?: unknown }>(
+  items: T[] | undefined,
+  user: AuthUser,
+  stored: { id: string; unitCost: unknown; costCurrency: unknown; costSource: unknown }[],
+): T[] | undefined {
+  if (items === undefined || canSeeCosts(user)) return items;
+
+  const byId = new Map(stored.map((line) => [line.id, line]));
+  return items.map((item) => {
+    const previous = typeof item.id === "string" ? byId.get(item.id) : undefined;
+    return {
+      ...item,
+      unitCost: previous?.unitCost ?? null,
+      costCurrency: previous?.costCurrency ?? null,
+      costSource: previous?.costSource ?? null,
+    };
+  });
+}
+
+/** One customer, with the value figures computed from cost removed. */
+export function redactCustomerValue<T>(row: T, user: AuthUser): T {
+  if (canSeeCosts(user)) return row;
+  if (!row || typeof row !== "object") return row;
+
+  const customer = { ...(row as Record<string, unknown>) };
+  if (customer.valueMetrics && typeof customer.valueMetrics === "object") {
+    customer.valueMetrics = blank(customer.valueMetrics, CUSTOMER_VALUE_COST_FIELDS);
+  }
+  return customer as T;
+}
+
+export function redactCustomerValues<T>(rows: T[], user: AuthUser): T[] {
+  if (canSeeCosts(user)) return rows;
+  return rows.map((row) => redactCustomerValue(row, user));
+}
+
+/**
+ * The customer-value card, which returns the figures unwrapped rather than
+ * under a customer.
+ *
+ * Three places, because the card is deliberately a "show its work" view:
+ * `raw` holds the amounts, `components` holds the percentile the profit earned,
+ * and the profit is also summed across ranks on the dashboard.
+ */
+export function redactValueDetail<T>(detail: T, user: AuthUser): T {
+  if (canSeeCosts(user)) return detail;
+  if (!detail || typeof detail !== "object") return detail;
+
+  const out = { ...(detail as Record<string, unknown>) };
+  if (out.raw && typeof out.raw === "object") {
+    out.raw = blank(out.raw, CUSTOMER_VALUE_COST_FIELDS);
+  }
+  if (out.components && typeof out.components === "object") {
+    out.components = blank(out.components, CUSTOMER_VALUE_COST_FIELDS);
+  }
+  return out as T;
+}
+
+/** The value dashboard's per-rank cards, with the profit totals removed. */
+export function redactValueSummary<T>(summary: T, user: AuthUser): T {
+  if (canSeeCosts(user)) return summary;
+  if (!summary || typeof summary !== "object") return summary;
+
+  const out = { ...(summary as Record<string, unknown>) };
+  if (Array.isArray(out.byRank)) {
+    out.byRank = out.byRank.map((row) => blank(row, CUSTOMER_VALUE_COST_FIELDS));
+  }
   return out as T;
 }

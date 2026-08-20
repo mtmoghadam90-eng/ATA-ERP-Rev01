@@ -1,6 +1,7 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
+import { redactCustomerValue, redactCustomerValues, redactValueDetail, redactValueSummary } from "../costs";
 import { hasPermission } from "../auth";
 import {
   customerValueSummary, getCustomerValueDetail, listPotentialHistory, recalculateAll,
@@ -109,7 +110,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
           tags: req.query.colTags,
         },
       });
-      res.json({ success: true, ...result });
+      res.json({ success: true, ...result, rows: redactCustomerValues(result.rows, user) });
     } catch (err) {
       sendError(res, err, "GET /api/customers");
     }
@@ -147,7 +148,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
     const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
-      res.json({ success: true, summary: await customerValueSummary() });
+      res.json({ success: true, summary: redactValueSummary(await customerValueSummary(), user) });
     } catch (err) {
       sendError(res, err, "GET /api/customers/value-summary");
     }
@@ -163,7 +164,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
         res.status(404).json({ success: false, error: "مشتری یافت نشد." });
         return;
       }
-      res.json({ success: true, value: detail });
+      res.json({ success: true, value: redactValueDetail(detail, user) });
     } catch (err) {
       sendError(res, err, "GET /api/customers/:id/value");
     }
@@ -241,7 +242,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
         res.status(404).json({ success: false, error: "مشتری یافت نشد." });
         return;
       }
-      res.json({ success: true, customer });
+      res.json({ success: true, customer: redactCustomerValue(customer, user) });
     } catch (err) {
       sendError(res, err, "GET /api/customers/:id");
     }
@@ -345,7 +346,7 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
         res.status(403).json({ success: false, error: "شما اجازه تغییر این مشتری را ندارید." });
         return;
       }
-      res.json({ success: true, customer });
+      res.json({ success: true, customer: redactCustomerValue(customer, user) });
     } catch (err) {
       sendError(res, err, "PUT /api/customers/:id");
     }
@@ -375,7 +376,10 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
         res.status(404).json({ success: false, error: "مشتری یافت نشد." });
         return;
       }
-      res.json({ success: true, customer: await getCustomer(req.params.id, user) });
+      res.json({
+        success: true,
+        customer: redactCustomerValue(await getCustomer(req.params.id, user), user),
+      });
     } catch (err) {
       sendError(res, err, "PUT /api/customers/:id/links");
     }
@@ -410,7 +414,10 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
         res.status(404).json({ success: false, error: "مشتری یافت نشد." });
         return;
       }
-      res.json({ success: true, customer: await getCustomer(req.params.id, user) });
+      res.json({
+        success: true,
+        customer: redactCustomerValue(await getCustomer(req.params.id, user), user),
+      });
     } catch (err) {
       sendError(res, err, "PUT /api/customers/:id/agreements");
     }

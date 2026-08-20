@@ -4,6 +4,7 @@ import { RouteDeps, sendError } from "./types";
 import { getDb } from "../db";
 import { nextDocumentNumber } from "../documentNumbers";
 import { getTodayShamsi } from "../../dateUtils";
+import { redactProforma } from "../costs";
 import {
   PROFORMA_FILTERABLE, PROFORMA_SORTABLE, ProformaInput,
   countProformaReferences, createProforma, deleteProforma, getProforma,
@@ -64,7 +65,7 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
         res.status(404).json({ success: false, error: "پیش‌فاکتور یافت نشد." });
         return;
       }
-      res.json({ success: true, proforma });
+      res.json({ success: true, proforma: redactProforma(proforma, user) });
     } catch (err) {
       sendError(res, err, "GET /api/proformas/:id");
     }
@@ -122,7 +123,7 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
       // service — so the stamped winning/closing dates use the same clock the
       // rest of the request does.
       const proforma = await createProforma(input, user, getTodayShamsi());
-      res.status(201).json({ success: true, proforma });
+      res.status(201).json({ success: true, proforma: redactProforma(proforma, user) });
     } catch (err) {
       sendError(res, err, "POST /api/proformas");
     }
@@ -137,7 +138,7 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
         res.status(403).json({ success: false, error: "شما اجازه تغییر این پیش‌فاکتور را ندارید." });
         return;
       }
-      res.json({ success: true, proforma });
+      res.json({ success: true, proforma: redactProforma(proforma, user) });
     } catch (err) {
       sendError(res, err, "PUT /api/proformas/:id");
     }
@@ -183,7 +184,10 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
         res.status(404).json({ success: false, error: "یکی از اقلام در این پیش‌فاکتور یافت نشد." });
         return;
       }
-      res.json({ success: true, proforma: await getProforma(req.params.id, user) });
+      res.json({
+        success: true,
+        proforma: redactProforma(await getProforma(req.params.id, user), user),
+      });
     } catch (err) {
       sendError(res, err, "POST /api/proformas/:id/item-outcomes");
     }

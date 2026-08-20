@@ -386,6 +386,7 @@ export default function App() {
           <CustomersView
             industries={store.settings.dropdownItems.industries}
             settings={store.settings}
+            currentUser={store.currentUser}
             initialSearchQuery={selectedCustomerNameForSearch}
             onClearInitialSearchQuery={() => setSelectedCustomerNameForSearch(null)}
           />

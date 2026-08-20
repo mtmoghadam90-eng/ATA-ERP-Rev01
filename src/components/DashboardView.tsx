@@ -24,6 +24,7 @@ import {
   CartesianGrid 
 } from 'recharts';
 import { Task, User, ERPSettings } from '../types';
+import { canSeeCosts } from '../utils/permissions';
 import CustomerValueMatrix from './CustomerValueMatrix';
 import { getTodayShamsi, toShamsiStr } from '../dateUtils';
 import { ApiError } from '../api/client';
@@ -711,6 +712,7 @@ export default function DashboardView({
       <CustomerValueMatrix
         settings={settings?.customerValue}
         onOpenCustomer={() => setActiveTab('customers')}
+        showCosts={canSeeCosts(currentUser)}
       />
 
     </div>

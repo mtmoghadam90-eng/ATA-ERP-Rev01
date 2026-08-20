@@ -35,7 +35,9 @@ import { canonicalizeProvince } from "../src/utils/iranProvinces";
 import { calculateProjectFinance } from "../src/utils/finance";
 import { canSeeCosts } from "../src/server/auth";
 import {
-  redactInquiry, redactProduct, redactPurchaseOrder, stripProductCostInput,
+  preserveLineCosts, redactCustomerValue, redactInquiry, redactProduct,
+  redactPurchaseOrder, redactProforma, redactValueDetail, redactValueSummary,
+  stripProductCostInput,
 } from "../src/server/costs";
 import { describeTransaction } from "../src/server/services/transactionService";
 import { rowToCustomer } from "../src/api/customerAdapter";
@@ -292,6 +294,104 @@ eq("a variant this user just added gets none rather than theirs",
   ).variants as any[])[0].priceCalc, null);
 ok("a buyer's write is passed through untouched",
   stripProductCostInput({ priceCalc: "x" }, buyer).priceCalc === "x");
+
+/*
+ * The two places cost reached once it was recorded on the sale.
+ *
+ * A proforma line's cost is the same number the purchase order carries, so
+ * leaving it on the sales screen would publish there exactly what the
+ * purchasing screen withholds. Customer gross profit is that number again,
+ * summed and subtracted from revenue.
+ */
+const proformaRow = {
+  id: "pf1", proformaNumber: "P-1", currency: "یورو", finalAmount: "300",
+  items: [
+    { id: "pi1", productName: "فلومتر", quantity: "3", unitPriceRial: "100",
+      totalPriceRial: "300", unitCost: "70.0000", costCurrency: "یورو",
+      costSource: "PURCHASE_ORDER" },
+  ],
+};
+const hiddenProforma = redactProforma(proformaRow, storeman);
+eq("the line's cost is gone", hiddenProforma.items[0].unitCost, null);
+eq("and its currency", hiddenProforma.items[0].costCurrency, null);
+// The source alone would say «از سفارش خرید» beside a blank, which tells a
+// warehouse account that a purchase order exists and what evidence it holds.
+eq("and what kind of evidence it was", hiddenProforma.items[0].costSource, null);
+eq("the sale price stays — that is what the customer pays",
+  hiddenProforma.items[0].unitPriceRial, "100");
+eq("so does the document total", hiddenProforma.finalAmount, "300");
+eq("and the buyer sees the cost", redactProforma(proformaRow, buyer).items[0].unitCost, "70.0000");
+eq("redaction does not mutate the row it was given", proformaRow.items[0].unitCost, "70.0000");
+
+// Their copy arrived blanked and the lines are replaced wholesale on save, so
+// without this one edit by a warehouse account erases every line's cost.
+const storedLines = [
+  { id: "pi1", unitCost: "70.0000", costCurrency: "یورو", costSource: "PURCHASE_ORDER" },
+];
+const kept = preserveLineCosts(
+  [{ id: "pi1", productName: "فلومتر", unitCost: null, costSource: null }],
+  storeman, storedLines,
+)!;
+eq("a redacted save puts the stored cost back", kept[0].unitCost, "70.0000");
+eq("with its source", kept[0].costSource, "PURCHASE_ORDER");
+
+const added = preserveLineCosts(
+  [{ productName: "شیر", unitCost: 999, costSource: "MANUAL" }], storeman, storedLines,
+)!;
+eq("a line this user added gets no cost rather than theirs", added[0].unitCost, null);
+
+const foreign = preserveLineCosts(
+  [{ id: "not-this-document", unitCost: 5, costSource: "MANUAL" }], storeman, storedLines,
+)!;
+eq("an id from another document matches nothing", foreign[0].unitCost, null);
+
+ok("a buyer's lines are passed through untouched",
+  preserveLineCosts([{ id: "pi1", unitCost: 5 }], buyer, storedLines)![0].unitCost === 5);
+ok("and an absent line list stays absent — it means 'not edited'",
+  preserveLineCosts(undefined, storeman, storedLines) === undefined);
+
+const customerRow = {
+  id: "c1", companyName: "پتروشیمی آزمون",
+  valueMetrics: {
+    customerValueRank: "A", customerValueIndex: 82, realizedValueScore: 90,
+    salesRevenueRial: "5000000000", grossProfitRial: "1500000000",
+    grossMarginPercent: 30, costCoveragePercent: 100, grossProfitScore: 95,
+    purchaseFrequency: 7,
+  },
+};
+const hiddenCustomer = redactCustomerValue(customerRow, storeman);
+eq("gross profit is gone", hiddenCustomer.valueMetrics.grossProfitRial, null);
+// The same fact stated as a ratio. Blanking one and not the other publishes it.
+eq("and the margin, which is the same fact as a ratio",
+  hiddenCustomer.valueMetrics.grossMarginPercent, null);
+eq("and the coverage", hiddenCustomer.valueMetrics.costCoveragePercent, null);
+// A percentile *of* the profit: it moves with the figure and would leak the
+// ordering of every customer by margin.
+eq("and the profit percentile", hiddenCustomer.valueMetrics.grossProfitScore, null);
+eq("revenue stays — that is what the company charges",
+  hiddenCustomer.valueMetrics.salesRevenueRial, "5000000000");
+eq("and the rank stays: it blends five things and reveals no figure",
+  hiddenCustomer.valueMetrics.customerValueRank, "A");
+eq("as does the realized score built from them",
+  hiddenCustomer.valueMetrics.realizedValueScore, 90);
+eq("a buyer sees the profit", redactCustomerValue(customerRow, buyer).valueMetrics.grossProfitRial, "1500000000");
+
+const detail = {
+  rank: "A",
+  components: { grossProfitScore: 95, frequencyScore: 60, recencyScore: 80 },
+  raw: { salesRevenueRial: 5e9, grossProfitRial: 1.5e9, grossMarginPercent: 30,
+         costCoveragePercent: 100, purchaseFrequency: 7 },
+};
+const hiddenDetail = redactValueDetail(detail, storeman);
+eq("the card's raw profit is gone", hiddenDetail.raw.grossProfitRial, null);
+eq("and its profit bar", hiddenDetail.components.grossProfitScore, null);
+eq("the other bars are untouched", hiddenDetail.components.frequencyScore, 60);
+eq("and the revenue behind them", hiddenDetail.raw.salesRevenueRial, 5e9);
+
+const summary = { byRank: [{ rank: "A", count: 3, grossProfitRial: 9e9 }], averageRealized: 55 };
+eq("the dashboard's per-rank profit total is gone",
+  redactValueSummary(summary, storeman).byRank[0].grossProfitRial, null);
+eq("the count is not", redactValueSummary(summary, storeman).byRank[0].count, 3);
 
 /*
  * The project timeline names documents; it does not quote them.
