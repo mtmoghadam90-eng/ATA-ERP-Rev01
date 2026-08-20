@@ -166,6 +166,10 @@ export function proformaToWriteInput(proforma: Partial<Proforma>): ProformaWrite
     sentRecipients: proforma.sentRecipients,
     customValues: proforma.customValues,
     items: (proforma.items ?? []).map((item) => ({
+      // Sent back as a correlation key, not as a value to store: the server
+      // re-inserts every line with a fresh id. It is how a save by a user who
+      // cannot see costs is matched to the stored line so its cost survives.
+      id: item.id || null,
       productId: item.productId || null,
       variantId: item.variantId || null,
       productName: item.productName,

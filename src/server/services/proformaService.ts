@@ -19,6 +19,8 @@ import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projec
 import { applyStockDelta } from "./productService";
 import { scheduleCustomerValueRecalculation } from "./customerValueRecalc";
 import { COST_SOURCES, CostSource, LineCost, lineNeedsCost } from "../../utils/costOfGoods";
+import { preserveLineCosts } from "../costs";
+import { canSeeCosts } from "../auth";
 
 /**
  * Proforma data access.
@@ -222,6 +224,15 @@ export async function getProforma(id: string, user: AuthUser) {
 /* --------------------------------- writes --------------------------------- */
 
 export interface ProformaItemInput {
+  /**
+   * The id the client read this line under.
+   *
+   * A correlation key, not a stored value: `mapItem` leaves it out, and
+   * `syncChildren` re-inserts every line with a fresh id on each save. It exists
+   * so a save by a user who cannot see costs can be matched back to the stored
+   * line and have its cost put back — see `preserveLineCosts`.
+   */
+  id?: string | null;
   productId?: string | null;
   variantId?: string | null;
   productName?: string;
@@ -587,10 +598,18 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
   const proforma = await db.$transaction(async (tx) => {
     // A line may name a product or SKU that is no longer there — see
     // scrubProductRefs. The link goes, the document is still saved.
-    const items = (await scrubProductRefs(tx, input.items)) ?? [];
+    // A user who cannot see costs sends none — their form has no cost field —
+    // and there is nothing stored yet to put back, so the lines are created
+    // blank. That is honest: this user could not have known the figure. The
+    // check below is skipped for the same reason; demanding a cost from
+    // somebody with no way to enter one would simply lock them out of the
+    // screen.
+    const items = preserveLineCosts(
+      (await scrubProductRefs(tx, input.items)) ?? [], user, [],
+    ) as ProformaItemInput[];
 
     const createCurrency = String(input.currency ?? "ریال");
-    assertLinesCosted(items, createCurrency, input.proformaType);
+    if (canSeeCosts(user)) assertLinesCosted(items, createCurrency, input.proformaType);
 
     const createData: Record<string, unknown> = {
       ...scalarData(input),
@@ -721,8 +740,16 @@ export async function updateProforma(
     // to rial, which would relabel every line on this document.
     const documentCurrency = String(input.currency ?? before?.currency ?? "ریال");
 
-    const items = await scrubProductRefs(tx, input.items);
-    if (items !== undefined) {
+    // Their copy of this document arrived with the costs blanked, and the lines
+    // are replaced wholesale on save — so without putting the stored figures
+    // back, one edit by a warehouse account would erase the cost of every line
+    // and, through it, the customer's gross profit.
+    const items = preserveLineCosts(
+      await scrubProductRefs(tx, input.items),
+      user,
+      before?.items ?? [],
+    );
+    if (items !== undefined && canSeeCosts(user)) {
       assertLinesCosted(items, documentCurrency, input.proformaType ?? before?.proformaType);
     }
 

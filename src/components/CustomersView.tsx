@@ -19,6 +19,8 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { Customer, ERPSettings } from '../types';
+import type { User as AppUser } from '../types';
+import { canSeeCosts } from '../utils/permissions';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomerValueFields from './CustomerValueFields';
 import CustomerValueCard, { RANK_STYLE } from './CustomerValueCard';
@@ -105,6 +107,8 @@ interface CustomersViewProps {
   settings: ERPSettings;
   initialSearchQuery?: string | null;
   onClearInitialSearchQuery?: () => void;
+  /** Decides whether the gross-profit column is shown — see `canSeeCosts`. */
+  currentUser?: AppUser | null;
 }
 
 /**
@@ -121,7 +125,18 @@ export default function CustomersView({
   settings,
   initialSearchQuery,
   onClearInitialSearchQuery,
+  currentUser = null,
 }: CustomersViewProps) {
+  /**
+   * Whether this user may see gross profit.
+   *
+   * Profit is revenue minus cost, so it is a cost figure by subtraction — the
+   * server blanks it for anybody without the flag. This is the courtesy half:
+   * the column, its sort, its filter and its export column all come off rather
+   * than showing a screenful of dashes.
+   */
+  const showCosts = canSeeCosts(currentUser);
+
   const list = useCustomerList(initialSearchQuery ?? '');
   const search = list.search;
   const setSearch = list.setSearch;
@@ -672,10 +687,12 @@ export default function CustomersView({
       'شاخص ارزش مشتری (CVI)',
       'ارزش ایجادشده',
       'ارزش بالقوه',
-      'سود ناخالص (ریال)',
+      // The three cost-derived columns come out together for a user who may not
+      // see them. Dropping only the profit would leave the margin percentage,
+      // which is the same fact stated as a ratio.
+      ...(showCosts ? ['سود ناخالص (ریال)'] : []),
       'فروش کل (ریال)',
-      'حاشیه سود ٪',
-      'پوشش بهای تمام‌شده ٪',
+      ...(showCosts ? ['حاشیه سود ٪', 'پوشش بهای تمام‌شده ٪'] : []),
       'تعداد خرید',
       'آخرین خرید',
       'وضعیت پرداخت',
@@ -703,10 +720,17 @@ export default function CustomersView({
       c.valueMetrics?.customerValueIndex != null ? String(c.valueMetrics.customerValueIndex) : '',
       c.valueMetrics?.realizedValueScore != null ? String(c.valueMetrics.realizedValueScore) : '',
       c.valueMetrics?.potentialValueScore != null ? String(c.valueMetrics.potentialValueScore) : '',
-      c.valueMetrics ? formatMoney(Number(c.valueMetrics.grossProfitRial)) : '',
+      ...(showCosts
+        ? [c.valueMetrics ? formatMoney(Number(c.valueMetrics.grossProfitRial)) : '']
+        : []),
       c.valueMetrics ? formatMoney(Number(c.valueMetrics.salesRevenueRial)) : '',
-      c.valueMetrics?.grossMarginPercent != null ? String(c.valueMetrics.grossMarginPercent) : '',
-      c.valueMetrics ? String(c.valueMetrics.costCoveragePercent) : '',
+      ...(showCosts
+        ? [
+            c.valueMetrics?.grossMarginPercent != null
+              ? String(c.valueMetrics.grossMarginPercent) : '',
+            c.valueMetrics ? String(c.valueMetrics.costCoveragePercent) : '',
+          ]
+        : []),
       c.valueMetrics ? String(c.valueMetrics.purchaseFrequency) : '',
       c.valueMetrics?.lastPurchaseDateJalali ?? '',
       c.paymentBehaviour ?? '',
@@ -844,12 +868,14 @@ export default function CustomersView({
             onMin={(v) => list.setFilter('minPotential', v)}
             onMax={(v) => list.setFilter('maxPotential', v)}
           />
-          <ValueRange
-            label="سود ناخالص (ریال)"
-            min={list.filters.minGrossProfit} max={list.filters.maxGrossProfit}
-            onMin={(v) => list.setFilter('minGrossProfit', v)}
-            onMax={(v) => list.setFilter('maxGrossProfit', v)}
-          />
+          {showCosts && (
+            <ValueRange
+              label="سود ناخالص (ریال)"
+              min={list.filters.minGrossProfit} max={list.filters.maxGrossProfit}
+              onMin={(v) => list.setFilter('minGrossProfit', v)}
+              onMax={(v) => list.setFilter('maxGrossProfit', v)}
+            />
+          )}
 
           <div className="space-y-1">
             <label className="block font-bold text-slate-500">آخرین خرید طی</label>
@@ -1001,7 +1027,13 @@ export default function CustomersView({
                 <SortableTh list={list} field="customerValueIndex" label="CVI" />
                 <SortableTh list={list} field="realizedValueScore" label="ارزش ایجادشده" />
                 <SortableTh list={list} field="potentialValueScore" label="ارزش بالقوه" />
-                <SortableTh list={list} field="grossProfitRial" label="سود ناخالص" />
+                {/* Profit is revenue minus cost, so showing it beside the
+                    revenue publishes the cost by subtraction. The server blanks
+                    the figure for this user either way; this keeps the column
+                    off the screen rather than showing a row of dashes. */}
+                {showCosts && (
+                  <SortableTh list={list} field="grossProfitRial" label="سود ناخالص" />
+                )}
                 <SortableTh list={list} field="lastPurchaseDate" label="آخرین خرید" />
                 <SortableTh list={list} field="purchaseFrequency" label="تعداد خرید" />
                 <th className="p-3 text-center w-24">عملیات</th>
@@ -1094,7 +1126,9 @@ export default function CustomersView({
                 <th className="p-2"></th>
                 <th className="p-2"></th>
                 <th className="p-2"></th>
-                <th className="p-2"></th>
+                {/* One blank per sortable value column above, so the filter row
+                    keeps its alignment when the profit column is withheld. */}
+                {showCosts && <th className="p-2"></th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700 text-xs">
@@ -1195,9 +1229,11 @@ export default function CustomersView({
                     <td className="p-3 font-mono text-slate-600" dir="ltr">
                       {cust.valueMetrics?.potentialValueScore ?? '—'}
                     </td>
-                    <td className="p-3 font-mono text-slate-700 whitespace-nowrap" dir="ltr">
-                      {cust.valueMetrics ? formatMoney(Number(cust.valueMetrics.grossProfitRial)) : '—'}
-                    </td>
+                    {showCosts && (
+                      <td className="p-3 font-mono text-slate-700 whitespace-nowrap" dir="ltr">
+                        {cust.valueMetrics ? formatMoney(Number(cust.valueMetrics.grossProfitRial)) : '—'}
+                      </td>
+                    )}
                     <td className="p-3 font-mono text-slate-600 whitespace-nowrap" dir="ltr">
                       {cust.valueMetrics?.lastPurchaseDateJalali ?? '—'}
                     </td>
@@ -2199,7 +2235,9 @@ export default function CustomersView({
               </div>
 
               {/* The computed half, read-only, with its working shown. */}
-              {editingCustomer && <CustomerValueCard customerId={editingCustomer.id} />}
+              {editingCustomer && (
+                <CustomerValueCard customerId={editingCustomer.id} showCosts={showCosts} />
+              )}
 
               {/* Customer value — the half a person judges */}
               <CustomerValueFields

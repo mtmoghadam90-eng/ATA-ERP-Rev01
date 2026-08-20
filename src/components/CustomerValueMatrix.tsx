@@ -19,12 +19,12 @@ import { formatMoney } from '../numUtils';
  * whatever a library picks for its axes.
  */
 
-/** Bubble radius from gross profit, on a square-root scale. */
-function radiusOf(grossProfit: number, maxGrossProfit: number): number {
-  if (maxGrossProfit <= 0 || grossProfit <= 0) return 4;
+/** Bubble radius from an amount, on a square-root scale. */
+function radiusOf(amount: number, maxAmount: number): number {
+  if (maxAmount <= 0 || amount <= 0) return 4;
   // Area, not radius, should track the amount, or the big customers swamp the
   // picture. Floor of 4 so a small customer is still clickable.
-  return 4 + 12 * Math.sqrt(Math.max(0, grossProfit) / maxGrossProfit);
+  return 4 + 12 * Math.sqrt(Math.max(0, amount) / maxAmount);
 }
 
 const RANK_FILL: Record<string, string> = {
@@ -37,9 +37,19 @@ const RANK_FILL: Record<string, string> = {
 export default function CustomerValueMatrix({
   settings,
   onOpenCustomer,
+  showCosts = true,
 }: {
   settings?: CustomerValueSettings;
   onOpenCustomer?: (customerId: string) => void;
+  /**
+   * False for a user who may not see what the goods cost.
+   *
+   * The server blanks the profit in both responses this reads, so without this
+   * the bubbles would all collapse to the minimum radius and each rank card
+   * would read «0» — a wrong figure rather than a withheld one. Sized by
+   * revenue instead, which this user may see, and the profit line comes off.
+   */
+  showCosts?: boolean;
 }) {
   const config = settings ?? DEFAULT_CUSTOMER_VALUE_SETTINGS;
   const [rows, setRows] = useState<CustomerRow[]>([]);
@@ -66,9 +76,23 @@ export default function CustomerValueMatrix({
     return () => { cancelled = true; };
   }, []);
 
-  const maxGrossProfit = useMemo(
-    () => rows.reduce((max, r) => Math.max(max, Number(r.valueMetrics?.grossProfitRial ?? 0)), 0),
-    [rows],
+  /**
+   * What a bubble's area stands for: profit where it can be shown, revenue
+   * otherwise.
+   *
+   * Not a smaller version of the same picture — a high-revenue, low-margin
+   * customer looks bigger on the revenue plot — but it is an honest one, and
+   * every bubble is measured the same way, which is what the picture is for.
+   */
+  const bubbleAmount = (row: CustomerRow) => Number(
+    (showCosts ? row.valueMetrics?.grossProfitRial : row.valueMetrics?.salesRevenueRial) ?? 0,
+  );
+
+  const maxBubbleAmount = useMemo(
+    () => rows.reduce((max, r) => Math.max(max, bubbleAmount(r)), 0),
+    // `bubbleAmount` closes over `showCosts`, which cannot change without the
+    // signed-in user changing — and that reloads the screen anyway.
+    [rows, showCosts],
   );
 
   const countOf = (rank: string) =>
@@ -103,9 +127,11 @@ export default function CustomerValueMatrix({
             <div className="text-lg font-extrabold text-slate-800">
               {countOf(rank).toLocaleString('fa-IR')}
             </div>
-            <div className="text-[9px] text-slate-400 font-mono" dir="ltr">
-              {formatMoney(profitOf(rank))}
-            </div>
+            {showCosts && (
+              <div className="text-[9px] text-slate-400 font-mono" dir="ltr">
+                {formatMoney(profitOf(rank))}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -159,7 +185,7 @@ export default function CustomerValueMatrix({
 
               {rows.map((row) => {
                 const m = row.valueMetrics!;
-                const r = radiusOf(Number(m.grossProfitRial), maxGrossProfit) / 4;
+                const r = radiusOf(bubbleAmount(row), maxBubbleAmount) / 4;
                 return (
                   <circle
                     key={row.id}
@@ -176,7 +202,9 @@ export default function CustomerValueMatrix({
                       {`ارزش ایجادشده: ${m.realizedValueScore}/100\n`}
                       {`ارزش بالقوه: ${m.potentialValueScore}/100\n`}
                       {`CVI: ${m.customerValueIndex ?? '—'}\n`}
-                      {`سود ناخالص: ${formatMoney(Number(m.grossProfitRial))} ریال`}
+                      {showCosts
+                        ? `سود ناخالص: ${formatMoney(Number(m.grossProfitRial))} ریال`
+                        : `فروش کل: ${formatMoney(Number(m.salesRevenueRial))} ریال`}
                     </title>
                   </circle>
                 );

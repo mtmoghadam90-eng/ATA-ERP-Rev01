@@ -56,6 +56,7 @@ import { productToWriteInput, detailToProduct, rowToProduct } from "../api/produ
 import { projectToWriteInput, detailToProject } from "../api/projectAdapter";
 import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
 import { calcSeedOf } from "../api/productAdapter";
+import { canSeeCosts } from "../utils/permissions";
 import { calculateSellingPrice } from "../utils/priceCalculator";
 import {
   COST_SOURCES, COST_SOURCE_LABELS, lineNeedsCost, linesMissingCost,
@@ -774,7 +775,7 @@ export default function ProformasView({
      * outcomes the user just set — they are only in this modal's state — and
      * leave nothing on screen to correct.
      */
-    if (target.proformaType !== "TECHNICAL") {
+    if (target.proformaType !== "TECHNICAL" && showCosts) {
       const uncosted = linesMissingCost(editingItemsList);
       if (uncosted.length > 0) {
         alert(
@@ -1208,6 +1209,10 @@ export default function ProformasView({
     recipientPicker.setTerm("");
 
     const loadedItems = pf.items.map((item) => ({
+      // The stored id travels with the line. It is what lets the server match
+      // this line back on save — the only way a user who cannot see costs can
+      // edit a document without erasing them.
+      id: item.id,
       productId: item.productId,
       variantId: item.variantId,
       productName: item.productName,
@@ -1775,6 +1780,17 @@ export default function ProformasView({
   const defaultUnitFor = (unit?: string) => unit || unitOptions[0];
 
   /**
+   * Whether this user may see what the goods cost.
+   *
+   * The server already blanks the figures for anybody else, so this is the
+   * courtesy half: without it they would be shown an empty cost box they cannot
+   * fill and a save that refuses over it. The rule itself lives on the server —
+   * hiding a column hides it from the person looking at the screen and from
+   * nobody else.
+   */
+  const showCosts = canSeeCosts(currentUser);
+
+  /**
    * Setting a line's cost, which is never one field on its own.
    *
    * `unitCost` and `costSource` have to move together: a figure with no source
@@ -1913,7 +1929,7 @@ export default function ProformasView({
      * form. A technical proforma quotes no prices at all, so it has nothing to
      * cost.
      */
-    if (proformaType !== "TECHNICAL") {
+    if (proformaType !== "TECHNICAL" && showCosts) {
       const uncosted = linesMissingCost(formattedItems);
       if (uncosted.length > 0) {
         alert(
@@ -3709,9 +3725,11 @@ export default function ProformasView({
                         ranking. Documents written before the cost existed get
                         answered here rather than dead-ending on save.
                       */}
-                      <th className="py-3 px-4 text-center w-44">
-                        بهای تمام‌شده واحد
-                      </th>
+                      {showCosts && (
+                        <th className="py-3 px-4 text-center w-44">
+                          بهای تمام‌شده واحد
+                        </th>
+                      )}
                       <th className="py-3 px-4 text-center w-48">
                         وضعیت ردیف کالا
                       </th>
@@ -3745,6 +3763,7 @@ export default function ProformasView({
                         <td className="py-3 px-4 text-left font-mono text-slate-600">
                           {formatMoney(item.quantity * item.unitPriceRIYAL)}
                         </td>
+                        {showCosts && (
                         <td className="py-3 px-4 text-center">
                           {(() => {
                             const noCost = item.costSource === COST_SOURCES.NONE;
@@ -3788,6 +3807,7 @@ export default function ProformasView({
                             );
                           })()}
                         </td>
+                        )}
                         <td className="py-3 px-4 text-center">
                           <select
                             value={item.status || "جاری"}
@@ -4972,7 +4992,13 @@ export default function ProformasView({
                                   }
                                   className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-left bg-white"
                                 />
-                                {item.productId && (
+                                {/*
+                                  The calculator is a breakdown of what the item
+                                  cost, and the product it seeds from arrives
+                                  blanked for this user anyway — so it would open
+                                  on a row of zeros.
+                                */}
+                                {item.productId && showCosts && (
                                   <button
                                     type="button"
                                     onClick={() => setCalcModalItemIdx(idx)}
@@ -5022,7 +5048,7 @@ export default function ProformasView({
                         as pure profit in the customer ranking, which is the
                         expensive kind of wrong.
                       */}
-                      {proformaType !== "TECHNICAL" && (() => {
+                      {proformaType !== "TECHNICAL" && showCosts && (() => {
                         const noCost = item.costSource === COST_SOURCES.NONE;
                         const missing = lineNeedsCost(item);
                         const cost = Number(item.unitCost ?? 0);

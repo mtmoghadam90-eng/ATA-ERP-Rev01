@@ -46,7 +46,21 @@ function ScoreBar({ label, score, weight }: { label: string; score: number; weig
   );
 }
 
-export default function CustomerValueCard({ customerId }: { customerId: string }) {
+export default function CustomerValueCard({
+  customerId,
+  showCosts = true,
+}: {
+  customerId: string;
+  /**
+   * False for a user who may not see what the goods cost.
+   *
+   * The server has already blanked the profit, the margin, the coverage and the
+   * profit percentile in the response, so this only decides whether the card
+   * draws empty rows or leaves them out. Everything else on it — frequency,
+   * recency, payment, the rank — is unaffected and still worth showing.
+   */
+  showCosts?: boolean;
+}) {
   const [value, setValue] = useState<CustomerValueDetailRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -311,7 +325,13 @@ export default function CustomerValueCard({ customerId }: { customerId: string }
                 <TrendingUp size={13} className="text-emerald-600" />
                 اجزای ارزش ایجادشده
               </h5>
-              <ScoreBar label="سود ناخالص — Gross Profit" score={value.components.grossProfitScore} weight="۵۰٪" />
+              {showCosts && (
+                <ScoreBar
+                  label="سود ناخالص — Gross Profit"
+                  score={value.components.grossProfitScore}
+                  weight="۵۰٪"
+                />
+              )}
               <ScoreBar label="تکرار خرید — Frequency" score={value.components.frequencyScore} weight="۲۰٪" />
               <ScoreBar label="تازگی خرید — Recency" score={value.components.recencyScore} weight="۱۵٪" />
               <ScoreBar label="خوش‌حسابی — Payment" score={value.components.paymentScore} weight="۱۰٪" />
@@ -322,11 +342,15 @@ export default function CustomerValueCard({ customerId }: { customerId: string }
               <h5 className="text-[11px] font-bold text-slate-700">مقادیر خام</h5>
               <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[10px]">
                 <Figure label="فروش کل (ریال)" value={formatMoney(raw.salesRevenueRial)} />
-                <Figure label="سود ناخالص (ریال)" value={formatMoney(raw.grossProfitRial)} />
-                <Figure
-                  label="حاشیه سود ناخالص"
-                  value={raw.grossMarginPercent === null ? '—' : `${raw.grossMarginPercent}٪`}
-                />
+                {showCosts && (
+                  <>
+                    <Figure label="سود ناخالص (ریال)" value={formatMoney(raw.grossProfitRial)} />
+                    <Figure
+                      label="حاشیه سود ناخالص"
+                      value={raw.grossMarginPercent === null ? '—' : `${raw.grossMarginPercent}٪`}
+                    />
+                  </>
+                )}
                 <Figure label="تعداد خرید" value={String(raw.purchaseFrequency)} />
                 <Figure label="آخرین خرید" value={raw.lastPurchaseDateJalali ?? 'بدون سابقه'} />
                 <Figure
@@ -334,7 +358,7 @@ export default function CustomerValueCard({ customerId }: { customerId: string }
                   value={raw.daysSinceLastPurchase === null ? '—' : String(raw.daysSinceLastPurchase)}
                 />
               </dl>
-              {raw.costCoveragePercent < 100 && (
+              {showCosts && raw.costCoveragePercent < 100 && (
                 // Without this the margin looks like a fact rather than a
                 // partial one, and an uncosted catalogue reads as a great year.
                 <p className="text-[10px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5 flex items-start gap-1.5 mt-1.5">
