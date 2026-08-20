@@ -45,6 +45,8 @@ export interface DeliveryRow {
   _count: { items: number };
   /** Units across the list's lines, summed in SQL. */
   totalQuantity: number;
+  /** The grid draws a custom-fields column from these. */
+  customValues: string | null;
 }
 
 export interface DeliveryDetail extends Omit<DeliveryRow, "_count"> {
@@ -71,6 +73,7 @@ export interface DeliveryWriteInput {
   trackingCode?: string | null;
   checklist?: unknown;
   photos?: unknown;
+  customValues?: unknown;
   items?: Record<string, unknown>[];
 }
 
@@ -181,6 +184,7 @@ export function rowToDelivery(row: DeliveryRow): PackagingDelivery {
     itemCount: row._count?.items ?? 0,
     totalQuantity: row.totalQuantity ?? 0,
     photos: [],
+    customValues: parseJson<Record<string, any>>(row.customValues, {}),
     createdAt: row.createdAt,
   };
 }
@@ -228,6 +232,7 @@ export function deliveryToWriteInput(delivery: Partial<PackagingDelivery>): Deli
     trackingCode: delivery.trackingCode ?? null,
     checklist: delivery.checklist,
     photos: delivery.photos,
+    customValues: delivery.customValues,
     items: (delivery.items ?? []).map((item) => ({
       itemOrDocName: item.itemOrDocName,
       productId: item.productId || null,

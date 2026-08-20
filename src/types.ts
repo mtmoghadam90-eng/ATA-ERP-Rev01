@@ -777,6 +777,8 @@ export interface PackagingDelivery {
   totalQuantity?: number;
   photos: string[]; // تصاویر آپلود شده بسته‌بندی و ارسال (base64)
   createdAt: string;
+  /** User-defined fields, keyed by field id — see `settings.customFields`. */
+  customValues?: Record<string, any>;
   moduleNotes?: ModuleNote[];
 }
 
@@ -811,6 +813,8 @@ export interface AfterSalesService {
   createdBy: string;
   items?: AfterSalesServiceItem[];
   notes?: string; // توضیحات کلی خدمت (در گزارش چاپی نمایش داده می‌شود)
+  /** User-defined fields, keyed by field id — see `settings.customFields`. */
+  customValues?: Record<string, any>;
   moduleNotes?: ModuleNote[];
 }
 

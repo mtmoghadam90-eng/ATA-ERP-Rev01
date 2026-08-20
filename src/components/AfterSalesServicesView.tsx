@@ -25,6 +25,8 @@ import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import ModuleNotesSection from './ModuleNotesSection';
+import CustomFieldsForm from './CustomFieldsForm';
+import CustomFieldsDetailView from './CustomFieldsDetailView';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { ApiError } from '../api/client';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
@@ -94,6 +96,8 @@ export default function AfterSalesServicesView({
 
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [selectedProformaNumber, setSelectedProformaNumber] = useState('');
+  /** User-defined fields for this module, keyed by field id. */
+  const [customValues, setCustomValues] = useState<Record<string, any>>({});
   
   // List of multiple items in table
   const [serviceItems, setServiceItems] = useState<AfterSalesServiceItem[]>([]);
@@ -218,6 +222,7 @@ export default function AfterSalesServicesView({
     setSelectedProjectId('');
     setSelectedProformaNumber('');
     setServiceItems([]);
+    setCustomValues({});
     resetItemForm();
   };
 
@@ -240,6 +245,7 @@ export default function AfterSalesServicesView({
       setEditingService(service);
       setSelectedProjectId(service.projectId);
       setSelectedProformaNumber(service.proformaNumber || '');
+      setCustomValues(service.customValues || {});
 
       // Load items or fall back to legacy top-level fields
       if (service.items && service.items.length > 0) {
@@ -401,6 +407,7 @@ export default function AfterSalesServicesView({
       proformaNumber: selectedProformaNumber || undefined,
       items: serviceItems,
       createdBy: currentUser?.fullName || 'سیستم',
+      customValues,
     });
 
     try {
@@ -581,6 +588,15 @@ export default function AfterSalesServicesView({
                     </span>
                   </div>
                 )}
+              </div>
+
+              {/* Whatever this company chose to record about the case. */}
+              <div className="mt-4">
+                <CustomFieldsDetailView
+                  module="afterSalesServices"
+                  customFields={settings?.customFields || []}
+                  customValues={service.customValues}
+                />
               </div>
 
               {service.items && service.items.length > 0 ? (
@@ -992,6 +1008,16 @@ export default function AfterSalesServicesView({
               </div>
 
               {/* بخش ۳: یادداشت‌ها و توافقات پس از فروش (فقط در حالت ویرایش پرونده فعال) */}
+              {/* Dynamic Custom Fields Form Section */}
+              <div className="border-t border-slate-100 pt-5">
+                <CustomFieldsForm
+                  module="afterSalesServices"
+                  customFields={settings?.customFields || []}
+                  customValues={customValues}
+                  onChange={setCustomValues}
+                />
+              </div>
+
               {editingService && (
                 <div className="pt-4 text-right">
                   <ModuleNotesSection

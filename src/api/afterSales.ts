@@ -38,6 +38,8 @@ export interface ServiceRow {
   createdAt: string;
   project: { id: string; code: string; name: string } | null;
   _count: { items: number };
+  /** The grid draws a custom-fields column from these. */
+  customValues: string | null;
 }
 
 export interface ServiceDetail extends Omit<ServiceRow, "_count"> {
@@ -51,6 +53,7 @@ export interface ServiceWriteInput {
   proformaNumber?: string | null;
   proformaItemName?: string | null;
   createdBy?: string | null;
+  customValues?: unknown;
   items?: Record<string, unknown>[];
 }
 
@@ -103,6 +106,17 @@ export const afterSalesApi = {
 /* ------------------------------- adapter ------------------------------- */
 
 /** A row, in the shape the existing table markup expects. */
+/** A JSON text column, back to the value it holds. */
+function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    return (parsed ?? fallback) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export function rowToService(row: ServiceRow): AfterSalesService {
   return {
     id: row.id,
@@ -120,6 +134,7 @@ export function rowToService(row: ServiceRow): AfterSalesService {
     status: row.status as AfterSalesService["status"],
     createdAt: row.createdAt,
     createdBy: row.createdBy ?? "",
+    customValues: parseJson<Record<string, any>>(row.customValues, {}),
     items: [],
   };
 }
@@ -155,6 +170,7 @@ export function serviceToWriteInput(service: Partial<AfterSalesService>): Servic
     proformaNumber: service.proformaNumber || null,
     proformaItemName: service.proformaItemName || null,
     createdBy: service.createdBy || null,
+    customValues: service.customValues,
     items: (service.items ?? []).map((item) => ({
       productId: item.productId || null,
       productName: item.productName,

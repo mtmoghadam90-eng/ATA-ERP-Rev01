@@ -1783,6 +1783,10 @@ head("Reporting: the custom-field dictionary and its values");
     { id: "cf-2", module: "products", name: "فروش برآوردی سالانه", type: "number", required: true },
     { id: "cf-3", module: "products", name: "انبار شود؟", type: "boolean" },
     { id: "cf-4", module: "customers", name: "کد ناحیه", type: "text" },
+    // The two modules the settings screen had always offered and no table
+    // could store — see the migration that gave them a customValues column.
+    { id: "cf-5", module: "packagingDelivery", name: "شماره بارنامه دوم", type: "text" },
+    { id: "cf-6", module: "afterSalesServices", name: "هزینه تعمیر", type: "number" },
   ];
   const store = {
     erp_custom_fields: fields,
@@ -1793,8 +1797,12 @@ head("Reporting: the custom-field dictionary and its values");
       { id: "p3", displayName: "بدون فیلد" },
     ],
     erp_customers: [{ id: "c1", companyName: "پتروشیمی", customValues: { "cf-4": "021" } }],
-    // The settings screen offers this module, but no table carries the column.
-    erp_after_sales_services: [{ id: "a1" }],
+    erp_packaging_deliveries: [
+      { id: "d1", packingListNumber: "PL-1", customValues: { "cf-5": "BL-99" } },
+    ],
+    erp_after_sales_services: [
+      { id: "a1", itemName: "فلومتر", customValues: { "cf-6": "۱۲۵۰۰۰" } },
+    ],
   };
 
   const tables = buildReportingTables(store as never);
@@ -1829,6 +1837,16 @@ head("Reporting: the custom-field dictionary and its values");
     !values.rows.some((r) => r.record_id === "p2"));
   ok("and so does one with no bag at all",
     !values.rows.some((r) => r.record_id === "p3"));
+
+  // All ten modules, not eight. A field for either of these could be defined in
+  // the settings and then filled in nowhere, because no table held the answer.
+  eq("a packing list's custom field is exported", byField("cf-5").field_name, "شماره بارنامه دوم");
+  eq("under its own module", byField("cf-5").module, "packagingDelivery");
+  eq("an after-sales one too", byField("cf-6").module, "afterSalesServices");
+  eq("with its number parsed", byField("cf-6").value_number, 125000);
+  ok("and both modules keep their JSON column, like the other eight",
+    typeof tables.find((t) => t.table === "packaging_deliveries")!.rows[0].custom_values === "string"
+    && typeof tables.find((t) => t.table === "after_sales_services")!.rows[0].custom_values === "string");
 
   /*
    * Declared, not inferred. `sqlSync` types a column from the values it sees,

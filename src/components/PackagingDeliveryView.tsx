@@ -45,6 +45,8 @@ import DeleteActivitiesOption from './DeleteActivitiesOption';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { uploadFile } from '../imageUtils';
 import ModuleNotesSection from './ModuleNotesSection';
+import CustomFieldsForm from './CustomFieldsForm';
+import CustomFieldsDetailView from './CustomFieldsDetailView';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { SearchableSelect } from './SearchableSelect';
 import { ApiError } from '../api/client';
@@ -167,6 +169,8 @@ export default function PackagingDeliveryView({
   const [useItemizedDeliveryDates, setUseItemizedDeliveryDates] = useState<boolean>(false);
   const [shippingMethod, setShippingMethod] = useState<string>(settings.dropdownItems.shippingMethods?.[0] || 'باربری');
   const [preDeliveryTestNotes, setPreDeliveryTestNotes] = useState<string>('');
+  /** User-defined fields for this module, keyed by field id. */
+  const [customValues, setCustomValues] = useState<Record<string, any>>({});
 
   /* How the shipment can be traced. The save has always warned when a courier
      or freight delivery had none of these recorded; there was nowhere to put
@@ -1005,6 +1009,7 @@ ${sheets}
     setPackingItems(delivery.items);
     setChecklist(delivery.checklist);
     setPhotos(delivery.photos || []);
+    setCustomValues(delivery.customValues || {});
 
     const hasItemizedDates = delivery.items?.some(
       item => item.actualDeliveryDate && item.actualDeliveryDate !== delivery.actualDeliveryDate
@@ -1110,6 +1115,7 @@ ${sheets}
       checklist,
       items: cleanItems,
       photos,
+      customValues,
     });
 
     try {
@@ -1171,6 +1177,7 @@ ${sheets}
     setPackingItems([]);
     setChecklist([]);
     setPhotos([]);
+    setCustomValues({});
 
     setActiveTab('list');
   };
@@ -1746,6 +1753,16 @@ ${sheets}
             />
           </div>
 
+          {/* Dynamic Custom Fields Form Section */}
+          <div className="border-t border-slate-100 pt-5">
+            <CustomFieldsForm
+              module="packagingDelivery"
+              customFields={settings?.customFields || []}
+              customValues={customValues}
+              onChange={setCustomValues}
+            />
+          </div>
+
           {/* Packing items manager */}
           <div className="border border-slate-200 rounded-2xl overflow-hidden">
             <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between items-center">
@@ -2284,6 +2301,21 @@ ${sheets}
                     </table>
                   </div>
                 ))}
+              </div>
+
+              {/*
+                The user-defined fields, on screen only.
+
+                Kept out of the print the way the photo gallery is: the packing
+                list is an official document with its own layout, and these are
+                whatever this company decided to record about the shipment.
+              */}
+              <div className="no-print">
+                <CustomFieldsDetailView
+                  module="packagingDelivery"
+                  customFields={settings?.customFields || []}
+                  customValues={selectedDelivery.customValues}
+                />
               </div>
 
               {/* Photo attachments gallery inside details (Hidden on Print) */}

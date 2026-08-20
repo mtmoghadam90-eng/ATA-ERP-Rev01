@@ -100,11 +100,10 @@ const CUSTOM_FIELD_MODULES: Record<string, string> = {
 /**
  * Which store collection holds each module's records.
  *
- * `packagingDelivery` and `afterSalesServices` are listed although neither
- * carries a `customValues` column today: the settings screen offers both, so a
- * field can be defined for them, and listing them here means the values appear
- * in the export the day the column does — rather than the export being the last
- * thing anybody remembers to update.
+ * All ten, and all ten now carry a `customValues` column. The last two got
+ * theirs late: the settings screen had always offered them, so a field could be
+ * defined for «بسته‌بندی و تحویل کالا» or «خدمات پس از فروش» and then never
+ * filled in anywhere, because no table had anywhere to put the answer.
  */
 const CUSTOM_FIELD_SOURCES: Record<string, keyof StoreCollections> = {
   customers: "erp_customers",
@@ -775,6 +774,7 @@ export const flattenPackagingDeliveries = (list: any[]): Row[] =>
     checklist_completed: arr(d.checklist).filter((c: any) => c?.completed).length,
     photo_count: arr(d.photos).length,
     created_at: s(d.createdAt),
+    custom_values: customJson(d.customValues),
   }));
 
 export const flattenPackagingDeliveryItems = (list: any[]): Row[] => {
@@ -819,6 +819,7 @@ export const flattenAfterSalesServices = (list: any[]): Row[] =>
     item_count: arr(a.items).length,
     created_at: s(a.createdAt),
     created_by: s(a.createdBy),
+    custom_values: customJson(a.customValues),
   }));
 
 export const flattenAfterSalesServiceItems = (list: any[]): Row[] => {

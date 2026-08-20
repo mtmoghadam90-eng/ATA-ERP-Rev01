@@ -972,6 +972,11 @@ model PackagingDelivery {
   checklist String? @db.NVarChar(Max)
   photos    String? @db.NVarChar(Max)
 
+  /// User-defined fields, keyed by the field id from `settings.customFields`.
+  /// The settings screen has always offered this module; until the column
+  /// existed a field could be defined for it and never filled in anywhere.
+  customValues String? @db.NVarChar(Max)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1030,6 +1035,10 @@ model AfterSalesService {
   endDateJalali    String?  @db.NVarChar(10)
   returnDate       DateTime? @db.Date
   returnDateJalali String?  @db.NVarChar(10)
+
+  /// User-defined fields, keyed by the field id from `settings.customFields`.
+  /// See the note on PackagingDelivery.customValues.
+  customValues String? @db.NVarChar(Max)
 
   createdBy String?  @db.NVarChar(200)
   createdAt DateTime @default(now())
