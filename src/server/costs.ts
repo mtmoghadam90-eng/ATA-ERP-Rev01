@@ -62,8 +62,20 @@ import { canSeeCosts } from "./auth";
  * (`stripProductCostInput`, `preserveLineCosts`).
  */
 
-/** Product and variant fields that describe cost rather than price. */
-const PRODUCT_COST_FIELDS = ["priceCalc"] as const;
+/**
+ * Product and variant fields that describe cost rather than price.
+ *
+ * `lastPurchase…` is what the company actually paid a supplier — the single
+ * most direct statement of cost in the catalogue, and exactly what the warehouse
+ * must not learn. The order number goes with the figure: knowing which purchase
+ * it came from is enough to look the amount up on the purchasing screen.
+ */
+const PRODUCT_COST_FIELDS = [
+  "priceCalc",
+  "lastPurchaseCostRial", "lastPurchaseQuantity",
+  "lastPurchaseDate", "lastPurchaseDateJalali",
+  "lastPurchaseOrderId", "lastPurchaseOrderNumber",
+] as const;
 
 /** Purchase-order columns that state, or reveal, what was paid. */
 const PURCHASE_ORDER_COST_FIELDS = [

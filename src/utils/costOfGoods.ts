@@ -211,6 +211,84 @@ export function parseCalcFields(priceCalc: unknown): CalcFields | null {
   }
 }
 
+/* --------------------- standard cost versus actual ------------------------ */
+
+/**
+ * How far the standard cost has drifted from what the item last really cost.
+ *
+ * The two are deliberately different numbers. `priceCalc` is the cost the
+ * company *quotes* from — a judgement about a typical purchase — while a
+ * purchase order's per-line landed cost carries the freight and customs of one
+ * shipment. Five units flown in urgently genuinely cost several times what two
+ * hundred by sea do, so a gap is not by itself an error and must never be
+ * corrected automatically.
+ *
+ * What the gap is good for is *noticing*: a standard that has not been revisited
+ * since the supplier put its prices up is quietly costing every quotation.
+ */
+export const COST_DRIFT_THRESHOLD_PERCENT = 15;
+
+export interface CostDrift {
+  /** Signed: positive when the real purchase cost more than the standard. */
+  percent: number;
+  /** True once the gap is worth showing — see the threshold above. */
+  significant: boolean;
+  /** True when the real cost is the higher of the two: quoting too cheap. */
+  underpriced: boolean;
+}
+
+/**
+ * Null when there is nothing to compare — no purchase yet, or no standard.
+ *
+ * A zero standard is treated as "no standard" rather than as a 100% gap: it
+ * means the calculator was never filled in, and reporting infinite drift on an
+ * unpriced item would bury the real cases.
+ */
+export function costDrift(
+  standardRial: number | null | undefined,
+  actualRial: number | null | undefined,
+): CostDrift | null {
+  const standard = Number(standardRial);
+  const actual = Number(actualRial);
+  if (!Number.isFinite(standard) || !Number.isFinite(actual)) return null;
+  if (standard <= 0 || actual <= 0) return null;
+
+  const percent = Math.round(((actual - standard) / standard) * 1000) / 10;
+  return {
+    percent,
+    significant: Math.abs(percent) >= COST_DRIFT_THRESHOLD_PERCENT,
+    underpriced: percent > 0,
+  };
+}
+
+/**
+ * The selling price the stored margin implies for a given cost.
+ *
+ * Offered when somebody adopts a real purchase cost into the standard, so the
+ * consequence is visible before they accept it — never applied on its own. A
+ * price is a commercial decision: a supplier's 20% rise does not automatically
+ * mean a 20% rise to the customer, and plenty of items are priced to the market
+ * rather than off a margin.
+ */
+export function sellingPriceFor(
+  costRial: number,
+  marginType: "PERCENT" | "FIXED" | undefined,
+  profitPercent: number | null | undefined,
+  profitRial: number | null | undefined,
+): number | null {
+  const cost = Number(costRial);
+  if (!Number.isFinite(cost) || cost <= 0) return null;
+
+  if (marginType === "FIXED") {
+    const fixed = Number(profitRial);
+    return Number.isFinite(fixed) && fixed !== 0 ? Math.round(cost + fixed) : null;
+  }
+
+  const percent = Number(profitPercent);
+  if (!Number.isFinite(percent) || percent <= 0) return null;
+  return Math.round(cost * (1 + percent / 100));
+}
+
 /* ------------------------------- margin ----------------------------------- */
 
 export interface LineMargin {

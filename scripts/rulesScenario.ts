@@ -60,7 +60,8 @@ import { FRESH_FOR_MS, refreshDecision, type RateRefreshState } from "../src/ser
 import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
 import { REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
 import {
-  COST_SOURCES, convertCost, landedUnitCostOf, lineMargin, lineNeedsCost, linesMissingCost,
+  COST_DRIFT_THRESHOLD_PERCENT, COST_SOURCES, convertCost, costDrift, landedUnitCostOf,
+  lineMargin, lineNeedsCost, linesMissingCost, sellingPriceFor,
 } from "../src/utils/costOfGoods";
 import { calculateSellingPrice } from "../src/utils/priceCalculator";
 import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
@@ -2001,6 +2002,74 @@ head("Proforma outcome: the server and the client agree");
     getProformaOutcome({ status: "ارسال شده", isCancelled: false,
       items: [{ status: "بازنده" }, { status: "لغو شده" }] } as never),
     "لغو شده");
+}
+
+
+/*
+ * The standard cost and the last real purchase are two different numbers.
+ *
+ * `priceCalc` is what the company quotes from — a judgement about a typical
+ * purchase. A purchase order's per-line landed cost carries the freight and
+ * customs of one shipment, so five units flown in urgently genuinely cost
+ * several times what two hundred by sea do. A gap is therefore not an error,
+ * and must never be closed automatically; it is worth *noticing*, because a
+ * standard nobody has revisited since the supplier put its prices up is quietly
+ * costing every quotation.
+ */
+head("Cost of goods: standard versus what we actually paid");
+{
+  eq("a real purchase above the standard is reported as such",
+    costDrift(100, 130)?.percent, 30);
+  eq("and below it as negative", costDrift(100, 80)?.percent, -20);
+  ok("30% is worth showing", costDrift(100, 130)?.significant === true);
+  ok("2% is not", costDrift(100, 102)?.significant === false);
+  ok("paying more than we assumed is the direction that costs money",
+    costDrift(100, 130)?.underpriced === true);
+  ok("and paying less is not", costDrift(100, 80)?.underpriced === false);
+  eq(`the threshold is ${COST_DRIFT_THRESHOLD_PERCENT}%`,
+    costDrift(100, 100 + COST_DRIFT_THRESHOLD_PERCENT)?.significant, true);
+
+  // An unpriced item would otherwise report infinite drift and bury the real
+  // cases; a zero standard means the calculator was never filled in.
+  eq("no standard means nothing to compare", costDrift(0, 130), null);
+  eq("no purchase either", costDrift(100, 0), null);
+  eq("and a missing figure is not a comparison", costDrift(null, 130), null);
+
+  // Offered so the consequence of adopting a cost is visible — never applied on
+  // its own. A supplier's rise is not automatically the customer's.
+  eq("the stored percentage margin implies a price",
+    sellingPriceFor(100_000, "PERCENT", 50, 0), 150_000);
+  eq("a fixed margin adds instead of multiplying",
+    sellingPriceFor(100_000, "FIXED", 0, 40_000), 140_000);
+  eq("no margin recorded means no suggestion",
+    sellingPriceFor(100_000, "PERCENT", 0, 0), null);
+  eq("and no cost means none either", sellingPriceFor(0, "PERCENT", 50, 0), null);
+
+  /*
+   * Adopting a real cost has to survive the round trip.
+   *
+   * The figure is stored in the item's own currency and read back in rial, so
+   * the precision of that division decides whether the warning the user just
+   * acted on actually clears. At two decimals a 12,000,000 rial cost at a rate
+   * of 90,000 comes back 300 rial short and the drift never quite closes; four
+   * — what every other foreign amount uses — leaves 3.
+   */
+  {
+    const rate = 90_000;
+    const actual = 12_000_000;
+    const toForeign = (rial: number) => Math.round((rial / rate) * 10_000) / 10_000;
+    const adopted = {
+      calcMode: "MANUAL",
+      calcExchangeRate: rate,
+      calcManualLandedForeign: toForeign(actual),
+      calcManualSellingForeign: toForeign(13_500_000),
+    };
+    const readBack = landedUnitCostOf(adopted)!;
+    ok("an adopted cost reads back as itself", Math.abs(readBack - actual) < 10, readBack);
+    eq("so the drift it was adopted to close is gone",
+      costDrift(readBack, actual)?.percent, 0);
+    ok("and stops being worth showing", costDrift(readBack, actual)?.significant === false);
+  }
 }
 
 

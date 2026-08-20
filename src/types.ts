@@ -145,6 +145,21 @@ export interface ProductVariant {
   calcManualLandedForeign?: number;
   /** MANUAL only: the stated selling price, in `currencyForeign`. */
   calcManualSellingForeign?: number;
+  /**
+   * What this item last actually cost to land, from a received purchase order.
+   *
+   * Read-only here: written only by a purchase-order receipt, never by the
+   * product form. Deliberately separate from the price calculator, which holds
+   * the *standard* cost the company quotes from — a line's share of an order's
+   * landed total carries the freight and customs of that shipment, so a small
+   * urgent delivery is not a fair basis for every future quotation.
+   */
+  lastPurchaseCostRial?: number | null;
+  /** Units that purchase was for — the context that says how representative it is. */
+  lastPurchaseQuantity?: number | null;
+  lastPurchaseDate?: string | null;
+  lastPurchaseOrderNumber?: string | null;
+
 }
 
 export interface ProductConfigRule {
@@ -210,6 +225,21 @@ export interface Product {
   calcManualLandedForeign?: number;
   /** MANUAL only: the stated selling price, in `currencyForeign`. */
   calcManualSellingForeign?: number;
+  /**
+   * What this item last actually cost to land, from a received purchase order.
+   *
+   * Read-only here: written only by a purchase-order receipt, never by the
+   * product form. Deliberately separate from the price calculator, which holds
+   * the *standard* cost the company quotes from — a line's share of an order's
+   * landed total carries the freight and customs of that shipment, so a small
+   * urgent delivery is not a fair basis for every future quotation.
+   */
+  lastPurchaseCostRial?: number | null;
+  /** Units that purchase was for — the context that says how representative it is. */
+  lastPurchaseQuantity?: number | null;
+  lastPurchaseDate?: string | null;
+  lastPurchaseOrderNumber?: string | null;
+
 }
 
 export interface Supplier {

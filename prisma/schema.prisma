@@ -339,6 +339,28 @@ model Product {
   priceForeign  Decimal? @db.Decimal(19, 4)
   currencyForeign String? @db.NVarChar(20)
 
+  /// What this item last actually cost to land, from a received purchase order.
+  ///
+  /// A *record of fact*, kept apart from `priceCalc` — which is the standard
+  /// cost the company quotes from, and a judgement. They are deliberately not
+  /// the same number: a line's share of an order's landed cost carries the
+  /// freight and customs of **that shipment**, so five units flown in urgently
+  /// cost several times what two hundred by sea do. Writing that straight into
+  /// the standard would price every future quotation off one unusual delivery.
+  ///
+  /// So this is shown *beside* the calculator, with the quantity it came from,
+  /// and adopting it into the standard is a button somebody presses.
+  lastPurchaseCostRial   Decimal?  @db.Decimal(19, 2)
+  /// How many units that purchase was for — the context that says whether the
+  /// figure above is representative.
+  lastPurchaseQuantity   Decimal?  @db.Decimal(18, 3)
+  lastPurchaseDate       DateTime? @db.Date
+  lastPurchaseDateJalali String?   @db.NVarChar(10)
+  /// Which order it came from. A plain column: the order may later be deleted,
+  /// and the figure it produced is still the last thing we actually paid.
+  lastPurchaseOrderId    String?   @db.NVarChar(36)
+  lastPurchaseOrderNumber String?  @db.NVarChar(60)
+
   /// Configuration that only travels with this product: features, option lists,
   /// configRules, image paths and the price-calculator inputs.
   features      String? @db.NVarChar(Max)
@@ -379,6 +401,28 @@ model ProductVariant {
   priceForeign  Decimal? @db.Decimal(19, 4)
   currencyForeign String? @db.NVarChar(20)
   priceCalc     String? @db.NVarChar(Max)
+
+  /// What this item last actually cost to land, from a received purchase order.
+  ///
+  /// A *record of fact*, kept apart from `priceCalc` — which is the standard
+  /// cost the company quotes from, and a judgement. They are deliberately not
+  /// the same number: a line's share of an order's landed cost carries the
+  /// freight and customs of **that shipment**, so five units flown in urgently
+  /// cost several times what two hundred by sea do. Writing that straight into
+  /// the standard would price every future quotation off one unusual delivery.
+  ///
+  /// So this is shown *beside* the calculator, with the quantity it came from,
+  /// and adopting it into the standard is a button somebody presses.
+  lastPurchaseCostRial   Decimal?  @db.Decimal(19, 2)
+  /// How many units that purchase was for — the context that says whether the
+  /// figure above is representative.
+  lastPurchaseQuantity   Decimal?  @db.Decimal(18, 3)
+  lastPurchaseDate       DateTime? @db.Date
+  lastPurchaseDateJalali String?   @db.NVarChar(10)
+  /// Which order it came from. A plain column: the order may later be deleted,
+  /// and the figure it produced is still the last thing we actually paid.
+  lastPurchaseOrderId    String?   @db.NVarChar(36)
+  lastPurchaseOrderNumber String?  @db.NVarChar(60)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

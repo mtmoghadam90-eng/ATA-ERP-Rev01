@@ -203,6 +203,11 @@ export async function readSqlCollections(): Promise<StoreCollections> {
       priceForeign: num(p.priceForeign),
       currencyForeign: p.currencyForeign,
       images: parseJson<string[]>(p.images, []),
+      lastPurchaseCostRial: num(p.lastPurchaseCostRial),
+      lastPurchaseQuantity: num(p.lastPurchaseQuantity),
+      // The Shamsi string, like every other date in the export.
+      lastPurchaseDate: p.lastPurchaseDateJalali,
+      lastPurchaseOrderNumber: p.lastPurchaseOrderNumber,
       customValues: parseJson(p.customValues, undefined),
       variants: p.variants.map((v) => ({
         id: v.id,
