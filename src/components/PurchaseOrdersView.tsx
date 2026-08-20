@@ -699,12 +699,39 @@ export default function PurchaseOrdersView({
     const lines = pf.items ?? [];
     if (lines.length === 0) return;
 
-    const rate = exchangeRateInput || 1;
+    const orderRate = exchangeRateInput || 1;
+    /*
+     * The proforma's own currency is not necessarily rial — `unitPriceRIYAL`
+     * and `unitCost` are both in whatever currency the document was written in,
+     * the name being a historical accident. So both figures go through that
+     * document's stored rate to reach rial, and then through the order's rate
+     * to reach the currency being ordered in. Reading either as rial put a euro
+     * figure into a dollar order whenever the quotation was foreign.
+     */
+    const proformaRate = pf.currency === 'ریال'
+      ? 1
+      : Number(pf.historicalExchangeRate || 0);
+
     setItems(lines.map((line, idx) => {
-      // The rial price the customer was quoted, back into the order's currency.
-      // A starting point the buyer corrects against the supplier's offer, not a
-      // figure anyone should trust — but nearer than the flat 100 it replaced.
-      const unitPrice = line.unitPriceRIYAL ? Number((line.unitPriceRIYAL / rate).toFixed(2)) : 0;
+      /*
+       * What we expect to pay, not what we charge.
+       *
+       * The line now carries the cost it was quoted at, so that is the buyer's
+       * starting point. It used to be seeded from the selling price, which is
+       * the same figure inflated by the whole margin — a buyer who did not
+       * correct it recorded a purchase at the retail price. The selling price
+       * remains the fallback for a line written before costs were recorded.
+       */
+      const inProformaCurrency = line.unitCost != null && Number(line.unitCost) > 0
+        ? Number(line.unitCost)
+        : line.unitPriceRIYAL;
+
+      // Without the quotation's rate a foreign document cannot be converted
+      // honestly, and a wrong starting figure is worse than an empty one.
+      const canConvert = pf.currency === 'ریال' || proformaRate > 0;
+      const unitPrice = inProformaCurrency && canConvert
+        ? Number(((inProformaCurrency * proformaRate) / orderRate).toFixed(2))
+        : 0;
       return {
         id: `poi-${Date.now()}-${idx}`,
         productId: line.productId || 'generic',

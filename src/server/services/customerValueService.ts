@@ -4,7 +4,7 @@ import { loadSettings } from "../settings";
 import { dateToJalali } from "../dates";
 import { getProformaOutcome } from "../proformaStatus";
 import { getWonItemsCurrencyAmount } from "../../utils/finance";
-import { calculateSellingPrice, PriceCalcInputs } from "../../utils/priceCalculator";
+import { landedUnitCostOf, parseCalcFields } from "../../utils/costOfGoods";
 import {
   CustomerRank, CustomerValueSettings, PotentialInputs,
   calculateCVI, calculatePotentialScore, calculateRealizedScore,
@@ -172,47 +172,19 @@ export interface CostLookup {
 const variantKey = (productId: string | null, variantId: string | null) =>
   `${productId ?? ""}|${variantId ?? ""}`;
 
-/** Reads the price-calculator blob and returns the landed cost per unit. */
-export function landedUnitCostFrom(priceCalc: string | null): number | null {
-  if (!priceCalc) return null;
-  let parsed: Partial<PriceCalcInputs> & Record<string, unknown>;
-  try {
-    parsed = JSON.parse(priceCalc) as never;
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object") return null;
-
-  // The calculator's own inputs are stored under `calc*` names on the record.
-  const inputs: PriceCalcInputs = {
-    // A product priced by hand states its cost outright. Reading it through the
-    // breakdown instead would answer with whatever the unused freight and
-    // customs fields happened to hold — usually zero, which is the one wrong
-    // answer that never looks wrong.
-    mode: (parsed.calcMode ?? parsed.mode) === "MANUAL" ? "MANUAL" : "BREAKDOWN",
-    manualLandedForeign: Number(parsed.calcManualLandedForeign ?? parsed.manualLandedForeign ?? 0),
-    manualSellingForeign: Number(parsed.calcManualSellingForeign ?? parsed.manualSellingForeign ?? 0),
-    priceForeign: Number(parsed.calcPriceForeign ?? parsed.priceForeign ?? 0),
-    exchangeRate: Number(parsed.calcExchangeRate ?? parsed.exchangeRate ?? 0),
-    remittanceFee: Number(parsed.calcRemittanceFee ?? parsed.remittanceFee ?? 0),
-    remittancePct: Number(parsed.calcRemittancePct ?? parsed.remittancePct ?? 0),
-    shippingCost: Number(parsed.calcShippingCost ?? parsed.shippingCost ?? 0),
-    otherCostsForeign: Number(parsed.calcOtherCostsForeign ?? parsed.otherCostsForeign ?? 0),
-    customsDutyRIYAL: Number(parsed.calcCustomsDutyRIYAL ?? parsed.customsDutyRIYAL ?? 0),
-    otherCostsRIYAL: Number(parsed.calcOtherCostsRIYAL ?? parsed.otherCostsRIYAL ?? 0),
-    profitPct: Number(parsed.calcProfitPct ?? parsed.profitPct ?? 0),
-    profitRIYAL: Number(parsed.calcProfitRIYAL ?? parsed.profitRIYAL ?? 0),
-    marginType: (parsed.calcMarginType ?? parsed.marginType ?? "PERCENT") as "PERCENT" | "FIXED",
-  };
-
-  // No rate means nothing can be turned into rial. Under the breakdown a
-  // missing purchase price means the calculator was never filled in at all;
-  // under manual entry there is no purchase price to have, so the stated cost
-  // stands on its own.
-  if (inputs.exchangeRate <= 0) return null;
-  if (inputs.mode !== "MANUAL" && inputs.priceForeign <= 0) return null;
-  const landed = calculateSellingPrice(inputs).landedRial;
-  return landed > 0 ? landed : null;
+/**
+ * The standard landed cost of a product or SKU, from its stored calculator.
+ *
+ * A thin wrapper over the shared reader in `costOfGoods`, kept exported because
+ * the value it produces is one of this module's three cost sources. The rule
+ * itself lives with the rest of the cost arithmetic so the proforma form and
+ * this cannot answer differently for the same item — which they did.
+ */
+export function landedUnitCostFrom(
+  priceCalc: string | null,
+  parentPriceCalc?: string | null,
+): number | null {
+  return landedUnitCostOf(parseCalcFields(priceCalc), parseCalcFields(parentPriceCalc));
 }
 
 /**
@@ -274,8 +246,8 @@ export async function buildCostLookup(
       const base = landedUnitCostFrom(product.priceCalc);
       if (base !== null) standardUnitCost.set(variantKey(product.id, null), base);
       for (const variant of product.variants) {
-        // A SKU's own calculator wins over the parent's when it has one.
-        const own = landedUnitCostFrom(variant.priceCalc) ?? base;
+        // A SKU's own calculator wins; one with none inherits the product's.
+        const own = landedUnitCostFrom(variant.priceCalc, product.priceCalc);
         if (own !== null) standardUnitCost.set(variantKey(product.id, variant.id), own);
       }
     }

@@ -19,6 +19,7 @@
 
 /** The same storyline, over the rules that decide the derived figures. */
 import { getProformaOutcome, getWonItems, deriveProjectStatus, statusWithoutProformas } from "../src/server/proformaStatus";
+import { getProformaOutcomeStatus } from "../src/useERPStore";
 import { computeInquiryTotals } from "../src/utils/inquirySteps";
 import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr } from "../src/dateUtils";
@@ -59,7 +60,7 @@ import { FRESH_FOR_MS, refreshDecision, type RateRefreshState } from "../src/ser
 import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
 import { REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
 import {
-  COST_SOURCES, convertCost, lineMargin, lineNeedsCost, linesMissingCost, suggestLineCost,
+  COST_SOURCES, convertCost, landedUnitCostOf, lineMargin, lineNeedsCost, linesMissingCost,
 } from "../src/utils/costOfGoods";
 import { calculateSellingPrice } from "../src/utils/priceCalculator";
 import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
@@ -1566,32 +1567,6 @@ head("Cost of goods: currency and margin");
 }
 
 /*
- * What to offer before anybody types. Best evidence wins: what we actually paid
- * beats what we assume the item costs.
- */
-head("Cost of goods: the suggested figure");
-{
-  const both = suggestLineCost(
-    { purchaseOrderRial: 900_000, priceCalculatorRial: 500_000 }, 90_000, "یورو",
-  );
-  eq("the purchase order wins over the calculator", both?.costSource, COST_SOURCES.PURCHASE_ORDER);
-  eq("and arrives in the document's currency", both?.unitCost, 10);
-  eq("labelled with it", both?.costCurrency, "یورو");
-
-  const calc = suggestLineCost({ priceCalculatorRial: 450_000 }, 90_000, "یورو");
-  eq("the calculator is the fallback", calc?.costSource, COST_SOURCES.PRICE_CALCULATOR);
-  eq("converted the same way", calc?.unitCost, 5);
-
-  const rial = suggestLineCost({ purchaseOrderRial: 900_000 }, 1, "ریال");
-  eq("a rial document needs no conversion", rial?.unitCost, 900_000);
-
-  eq("neither known means nobody has said",
-    suggestLineCost({}, 90_000, "یورو"), null);
-  eq("and a foreign document with no rate cannot be answered for",
-    suggestLineCost({ purchaseOrderRial: 900_000 }, 0, "یورو"), null);
-}
-
-/*
  * The calculator's manual mode.
  *
  * Not every item is imported. Goods bought locally, or quoted by a supplier
@@ -1859,6 +1834,175 @@ head("Reporting: the custom-field dictionary and its values");
   ok("the dictionary declares its columns too, so an empty table still has them",
     Object.keys(defs.columnTypes ?? {}).length > 0);
 }
+
+/*
+ * One reader for "what does this item cost to land".
+ *
+ * It was written twice, once on each side — the proforma form worked out a
+ * line's suggested cost and the customer-value service worked out the same
+ * figure for its fallback — and the two had already drifted.
+ */
+head("Cost of goods: reading a product's calculator");
+{
+  const breakdown = {
+    calcPriceForeign: 100, calcExchangeRate: 90_000,
+    calcRemittanceFee: 0, calcRemittancePct: 0, calcShippingCost: 0,
+    calcOtherCostsForeign: 0, calcCustomsDutyRIYAL: 0, calcOtherCostsRIYAL: 0,
+    calcProfitPct: 50, calcMarginType: "PERCENT",
+  };
+
+  eq("a filled-in calculator gives the landed cost in rial",
+    landedUnitCostOf(breakdown), 100 * 90_000);
+  eq("an empty one gives nothing at all", landedUnitCostOf({}), null);
+  eq("and so does a missing one", landedUnitCostOf(null), null);
+  // Without a rate nothing can be turned into rial, and a zero here would
+  // travel into a customer's gross profit as pure margin.
+  eq("no exchange rate means no answer",
+    landedUnitCostOf({ ...breakdown, calcExchangeRate: 0 }), null);
+
+  // The drift this consolidation fixes: the server inherited the product's
+  // calculator for a SKU that has none, and the form did not — so the same item
+  // offered a figure in a report and an empty box on the proforma.
+  eq("a SKU with no calculator of its own inherits the product's",
+    landedUnitCostOf({}, breakdown), 100 * 90_000);
+  eq("but its own figures win when it has them",
+    landedUnitCostOf({ ...breakdown, calcPriceForeign: 70 }, breakdown), 70 * 90_000);
+
+  // Manual mode states the cost outright; reading it through the breakdown
+  // would answer with whatever the unused freight fields happened to hold.
+  eq("a manually priced item states its cost",
+    landedUnitCostOf({ calcMode: "MANUAL", calcManualLandedForeign: 80, calcExchangeRate: 90_000 }),
+    80 * 90_000);
+  // Under manual entry there is no purchase price to be missing.
+  eq("with no purchase price needed",
+    landedUnitCostOf({ calcMode: "MANUAL", calcManualLandedForeign: 80, calcExchangeRate: 90_000, calcPriceForeign: 0 }),
+    80 * 90_000);
+
+  // Both spellings, because the reporting export and older blobs use the bare
+  // names while a product and a SKU use the `calc…` ones.
+  eq("the bare field names read the same",
+    landedUnitCostOf({ priceForeign: 100, exchangeRate: 90_000, marginType: "PERCENT" }),
+    100 * 90_000);
+}
+
+/*
+ * Which costs an actual purchase is allowed to overwrite.
+ *
+ * A line quoted from the catalogue carries the product's *standard* landed cost
+ * — an estimate. When the real purchase lands, nothing used to correct it, so
+ * gross profit and every rank built on it kept the guess for ever. It is now
+ * corrected on receipt, but only where the stored figure was never a person's
+ * answer.
+ */
+head("Cost of goods: what a real purchase may overwrite");
+{
+  // The rule as the service applies it, kept here so the intent is pinned even
+  // though the write itself needs a database.
+  const replaceable = (source: string | null) =>
+    source === null
+    || source === COST_SOURCES.PRICE_CALCULATOR
+    || source === COST_SOURCES.BACKFILL
+    || source === COST_SOURCES.PURCHASE_ORDER;
+
+  ok("an unanswered line takes the real cost", replaceable(null));
+  ok("so does a catalogue estimate", replaceable(COST_SOURCES.PRICE_CALCULATOR));
+  ok("and the migration's guess", replaceable(COST_SOURCES.BACKFILL));
+  // Refreshed rather than frozen: it came from here, and the order may be edited.
+  ok("an earlier purchase figure is refreshed", replaceable(COST_SOURCES.PURCHASE_ORDER));
+
+  // The two a person gave. Overwriting either would silently discard a decision.
+  ok("a figure somebody typed is never overwritten", !replaceable(COST_SOURCES.MANUAL));
+  ok("nor is an explicit «بدون بهای تمام‌شده»", !replaceable(COST_SOURCES.NONE));
+
+  // A line split across two purchases has one unit cost: the total landed over
+  // the total quantity. Reading every received order is also what makes the
+  // push idempotent.
+  const blended = (rows: { quantity: number; landedUnitCostRial: number }[]) => {
+    const cost = rows.reduce((sum, r) => sum + r.landedUnitCostRial * r.quantity, 0);
+    const quantity = rows.reduce((sum, r) => sum + r.quantity, 0);
+    return quantity > 0 ? cost / quantity : null;
+  };
+  eq("two purchases for one line blend by quantity",
+    blended([
+      { quantity: 3, landedUnitCostRial: 100 },
+      { quantity: 1, landedUnitCostRial: 200 },
+    ]), 125);
+  eq("one purchase is just its own cost",
+    blended([{ quantity: 4, landedUnitCostRial: 90 }]), 90);
+  eq("nothing received yet leaves it alone", blended([]), null);
+}
+
+
+/*
+ * The outcome rule exists twice, and the two copies must never disagree.
+ *
+ * `src/server/proformaStatus.ts` is the authority; `getProformaOutcomeStatus`
+ * in `useERPStore.ts` is a client copy kept only so a grid can colour a row
+ * without asking the server. Nothing related them but a comment saying "change
+ * both or neither", which is exactly the kind of instruction that gets missed.
+ *
+ * Rather than assert the expected answer twice, this runs both over every
+ * combination and asserts they agree — so a change to either side that the
+ * other did not get fails here, whatever the new rule turns out to be.
+ */
+head("Proforma outcome: the server and the client agree");
+{
+  const ITEM_STATUSES = [undefined, "جاری", "برنده", "بازنده", "لغو شده"] as const;
+  const DOC_STATUSES = ["پیش‌نویس", "ارسال شده", "جاری", "تأیید شده (برنده)", "باخته"] as const;
+
+  let compared = 0;
+  const disagreed: string[] = [];
+
+  const check = (pf: any) => {
+    compared++;
+    const server = getProformaOutcome(pf);
+    const client = getProformaOutcomeStatus(pf);
+    if (server !== client) {
+      disagreed.push(`${JSON.stringify(pf)} → server=${server} client=${client}`);
+    }
+  };
+
+  for (const status of DOC_STATUSES) {
+    for (const isCancelled of [false, true]) {
+      // No lines at all: the document's own status is the whole answer.
+      check({ status, isCancelled, items: [] });
+      check({ status, isCancelled });
+
+      // One line, then every ordered pair — enough to reach every branch,
+      // including the "all closed, some cancelled" tie-break.
+      for (const a of ITEM_STATUSES) {
+        check({ status, isCancelled, items: [{ status: a }] });
+        for (const b of ITEM_STATUSES) {
+          check({ status, isCancelled, items: [{ status: a }, { status: b }] });
+        }
+      }
+      // Three lines mixing won, lost and cancelled — the part-won cases.
+      check({ status, isCancelled, items: [{ status: "برنده" }, { status: "بازنده" }, { status: "لغو شده" }] });
+      check({ status, isCancelled, items: [{ status: "برنده" }, { status: "جاری" }, { status: "بازنده" }] });
+    }
+  }
+
+  ok(`both copies agree across all ${compared} combinations`, disagreed.length === 0,
+    disagreed.slice(0, 3));
+
+  // A couple of anchors, so a change that breaks both copies the same way is
+  // still caught rather than silently agreed upon.
+  eq("all won is won",
+    getProformaOutcome({ status: "ارسال شده", isCancelled: false, items: [{ status: "برنده" }] } as never),
+    "تأیید شده (برنده)");
+  eq("some won and some not is part-won",
+    getProformaOutcome({ status: "ارسال شده", isCancelled: false,
+      items: [{ status: "برنده" }, { status: "بازنده" }] } as never),
+    "نیمه برنده");
+  eq("a cancelled document is cancelled whatever its lines say",
+    getProformaOutcome({ status: "ارسال شده", isCancelled: true, items: [{ status: "برنده" }] } as never),
+    "لغو شده");
+  eq("everything closed with one cancelled reads as cancelled",
+    getProformaOutcome({ status: "ارسال شده", isCancelled: false,
+      items: [{ status: "بازنده" }, { status: "لغو شده" }] } as never),
+    "لغو شده");
+}
+
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

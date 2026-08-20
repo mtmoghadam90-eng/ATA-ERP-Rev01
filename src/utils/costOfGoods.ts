@@ -24,6 +24,8 @@
  * recorded — only the absolute rial figure needs a rate.
  */
 
+import { PriceCalcInputs, PriceCalcMode, calculateSellingPrice } from "./priceCalculator";
+
 /** How a line's cost was arrived at. Ordered best-evidence first. */
 export const COST_SOURCES = {
   /** Apportioned from the purchase order that actually fulfilled this line. */
@@ -122,57 +124,91 @@ export function convertCost(
   return (value * from) / to;
 }
 
-/* --------------------------- picking a default ---------------------------- */
-
-export interface CostCandidates {
-  /** Landed unit cost from the purchase order fulfilling this line, in rial. */
-  purchaseOrderRial?: number | null;
-  /** Landed unit cost from the product's or SKU's calculator, in rial. */
-  priceCalculatorRial?: number | null;
-}
+/* ------------------------ reading the calculator -------------------------- */
 
 /**
- * The cost to offer for a line, before anybody types anything.
+ * The calculator's stored inputs, under either spelling.
  *
- * Best evidence wins: what we actually paid beats what we assume an item costs.
- * Returns null when neither is known, which is the case the user has to answer.
- *
- * `documentRate` is the proforma's own exchange rate — how many rial one unit
- * of its currency is worth — because the answer is expressed in that currency.
- * A rial document passes 1.
+ * A product and a SKU keep them as `calc…` fields; the reporting export and a
+ * few older blobs use the bare names. Both are read so neither shape has to be
+ * normalized before this can answer.
  */
-export function suggestLineCost(
-  candidates: CostCandidates,
-  documentRate: number | null | undefined,
-  documentCurrency: string,
-): LineCost | null {
-  const rate = Number(documentRate ?? 0) || (documentCurrency === "ریال" ? 1 : 0);
+export type CalcFields = Record<string, unknown>;
 
-  const fromOrder = Number(candidates.purchaseOrderRial ?? NaN);
-  if (Number.isFinite(fromOrder) && fromOrder > 0) {
-    const converted = convertCost(fromOrder, 1, rate);
-    if (converted !== null) {
-      return {
-        unitCost: converted,
-        costCurrency: documentCurrency,
-        costSource: COST_SOURCES.PURCHASE_ORDER,
-      };
-    }
+const pick = (calc: CalcFields, name: string): unknown =>
+  calc[`calc${name[0].toUpperCase()}${name.slice(1)}`] ?? calc[name];
+
+const num = (calc: CalcFields, name: string): number => Number(pick(calc, name) ?? 0);
+
+/**
+ * What a product or SKU costs to land, per unit, in rial — or null if nobody
+ * has filled its calculator in.
+ *
+ * **The single reader.** This was written twice, once on each side: the proforma
+ * form worked out a line's suggested cost, and the customer-value service
+ * worked out the same figure for its fallback. They had already drifted — the
+ * server fell back to the parent product's calculator for a SKU that has none
+ * of its own and the client did not, so the same item offered a cost in a report
+ * and a blank box on the form.
+ *
+ * `own` is the SKU's calculator and `parent` the product's. A SKU with its own
+ * figures wins; one with none inherits, because that is what a SKU without its
+ * own pricing means.
+ */
+export function landedUnitCostOf(
+  own: CalcFields | null | undefined,
+  parent?: CalcFields | null,
+): number | null {
+  return landedFromOne(own) ?? landedFromOne(parent);
+}
+
+function landedFromOne(calc: CalcFields | null | undefined): number | null {
+  if (!calc || typeof calc !== "object") return null;
+
+  const mode = (pick(calc, "mode") === "MANUAL" ? "MANUAL" : "BREAKDOWN") as PriceCalcMode;
+  const inputs: PriceCalcInputs = {
+    // An item priced by hand states its cost outright. Reading it through the
+    // breakdown instead would answer with whatever the unused freight and
+    // customs fields happened to hold — usually zero, which is the one wrong
+    // answer that never looks wrong.
+    mode,
+    manualLandedForeign: num(calc, "manualLandedForeign"),
+    manualSellingForeign: num(calc, "manualSellingForeign"),
+    priceForeign: num(calc, "priceForeign"),
+    exchangeRate: num(calc, "exchangeRate"),
+    remittanceFee: num(calc, "remittanceFee"),
+    remittancePct: num(calc, "remittancePct"),
+    shippingCost: num(calc, "shippingCost"),
+    otherCostsForeign: num(calc, "otherCostsForeign"),
+    customsDutyRIYAL: num(calc, "customsDutyRIYAL"),
+    otherCostsRIYAL: num(calc, "otherCostsRIYAL"),
+    profitPct: num(calc, "profitPct"),
+    profitRIYAL: num(calc, "profitRIYAL"),
+    marginType: (pick(calc, "marginType") ?? "PERCENT") as "PERCENT" | "FIXED",
+  };
+
+  // No rate means nothing can be turned into rial. Under the breakdown a
+  // missing purchase price means the calculator was never filled in at all;
+  // under manual entry there is no purchase price to have, so the stated cost
+  // stands on its own.
+  if (inputs.exchangeRate <= 0) return null;
+  if (mode !== "MANUAL" && inputs.priceForeign <= 0) return null;
+
+  const landed = calculateSellingPrice(inputs).landedRial;
+  return landed > 0 ? landed : null;
+}
+
+/** Parses a stored `priceCalc` JSON column. Null for anything unreadable. */
+export function parseCalcFields(priceCalc: unknown): CalcFields | null {
+  if (!priceCalc) return null;
+  if (typeof priceCalc === "object") return priceCalc as CalcFields;
+  if (typeof priceCalc !== "string") return null;
+  try {
+    const parsed = JSON.parse(priceCalc);
+    return parsed && typeof parsed === "object" ? (parsed as CalcFields) : null;
+  } catch {
+    return null;
   }
-
-  const fromCalc = Number(candidates.priceCalculatorRial ?? NaN);
-  if (Number.isFinite(fromCalc) && fromCalc > 0) {
-    const converted = convertCost(fromCalc, 1, rate);
-    if (converted !== null) {
-      return {
-        unitCost: converted,
-        costCurrency: documentCurrency,
-        costSource: COST_SOURCES.PRICE_CALCULATOR,
-      };
-    }
-  }
-
-  return null;
 }
 
 /* ------------------------------- margin ----------------------------------- */
