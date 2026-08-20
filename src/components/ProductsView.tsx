@@ -25,7 +25,6 @@ import { Product, ProductVariant, ERPSettings, ProductFeature, ProductConfigRule
 import { canSeeCosts } from '../utils/permissions';
 import { toShamsiStr, toGregorianStr } from '../dateUtils';
 import CustomFieldsForm from './CustomFieldsForm';
-import CustomFieldsDetailView from './CustomFieldsDetailView';
 import ConfirmModal from './ConfirmModal';
 import PriceCalculatorModal from './PriceCalculatorModal';
 import { generateSku, isOptionExcludedByRules, decodeSku, DecodedSkuResult } from '../utils/skuUtils';
@@ -960,13 +959,12 @@ export default function ProductsView({
                             )}
                           </div>
 
-                          <div className="mt-1">
-                            <CustomFieldsDetailView
-                              module="products"
-                              customFields={settings?.customFields || []}
-                              customValues={p.customValues}
-                            />
-                          </div>
+                          {/* The custom fields are deliberately not drawn here.
+                              A catalogue row is scanned, not read: with several
+                              fields filled in, each one became its own labelled
+                              box and a row grew taller than the screen. They are
+                              edited in the form, and exported to the reporting
+                              database, which is where they get used. */}
                         </div>
                       </div>
                     </td>
