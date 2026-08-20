@@ -78,6 +78,7 @@ import type { DuplicateMatch } from "../utils/customerDuplicates";
 import DuplicateCustomerModal from "./DuplicateCustomerModal";
 import PriceCalculatorModal from "./PriceCalculatorModal";
 import { generateSku, getCombinedFeaturePrice, findVariantByAttributes } from "../utils/skuUtils";
+import { priceInWarehouseCurrency } from "../utils/finance";
 import type { useCategoryCompletion } from "../api/useCategoryCompletion";
 
 // Helper functions for dynamic delivery time notes generation
@@ -1577,7 +1578,13 @@ export default function ProformasView({
     // 1. If variant is specified, look at variant price
     if (variant) {
       if (variant.priceForeign) {
-        const variantCurrencyEng = mapPersianCurrencyToEnglish(variant.currencyForeign || "یورو");
+        // A SKU follows its product's currency; its own column is a copy. So a
+        // SKU that has none is read in the product's, not in a hardcoded euro —
+        // which priced every unstamped SKU of a dollar product as if it were in
+        // euros, quietly and only in the foreign column.
+        const variantCurrencyEng = mapPersianCurrencyToEnglish(
+          variant.currencyForeign || product.currencyForeign || "یورو",
+        );
         const variantRateObj = variantCurrencyEng
           ? exchangeRates?.find((r) => r.currency === variantCurrencyEng)
           : undefined;
@@ -5529,7 +5536,10 @@ export default function ProformasView({
         const variant = item.variantId ? prod.variants?.find(v => v.id === item.variantId) : undefined;
 
         // Determine the initial foreign price
-        const modalCurrency: string = variant?.currencyForeign || prod.currencyForeign || (currency && currency !== "ریال" ? currency : "یورو");
+        // The product's currency leads — every SKU under it follows, so the
+        // calculator opens in the currency the figures will be stored in.
+        const modalCurrency: string = prod.currencyForeign || variant?.currencyForeign
+          || (currency && currency !== "ریال" ? currency : "یورو");
         let initialForeign = 0;
         if (variant?.priceForeign !== undefined) {
           initialForeign = variant.priceForeign;
@@ -5594,19 +5604,65 @@ export default function ProformasView({
               };
               setItems(newItems);
 
+              /*
+               * Back to the warehouse — in the warehouse's own currency.
+               *
+               * A catalogue item has **one** reference currency and every SKU
+               * under it follows: changing it on the product form rewrites all
+               * of them. The calculator, though, can be run in any currency —
+               * often the proforma's — and this used to write its figure and
+               * its currency straight onto one SKU. That left that SKU out of
+               * step with its product and its siblings, and since the product
+               * form reads the *product's* currency, the number then displayed
+               * as if it were in a currency it was never in. The rial stayed
+               * right, which is exactly why it went unnoticed.
+               *
+               * So the amount is converted into the item's own currency first,
+               * and the currency itself is restated rather than replaced —
+               * which also repairs a SKU that had already drifted.
+               */
+              const rateFor = (persian: string): number => {
+                if (!persian || persian === "ریال") return 1;
+                const eng = mapPersianCurrencyToEnglish(persian);
+                return (eng ? exchangeRates?.find(r => r.currency === eng)?.rateToRIYAL : 0) || 0;
+              };
+
+              // The product's currency leads: it is what every SKU follows.
+              const warehouseCurrency =
+                prod.currencyForeign || variant?.currencyForeign || appliedCurrency;
+
+              /*
+               * Only the rial when the conversion cannot be made honestly.
+               *
+               * An unknown rate means the foreign figure cannot be stated in
+               * this item's currency at all, and writing the calculator's
+               * number under the wrong label is the bug being fixed. The rial
+               * price is still exact, so it is written and the stored foreign
+               * figure is left for somebody to correct.
+               */
+              const priceForWarehouse = priceInWarehouseCurrency(
+                sellingForeign, sellingRial, appliedCurrency, warehouseCurrency, rateFor,
+              );
+
+              const warehousePrice = priceForWarehouse === null
+                ? { currencyForeign: warehouseCurrency }
+                : { priceForeign: priceForWarehouse, currencyForeign: warehouseCurrency };
+
               // Persist to the variant (or product if no variant). The
               // mutation runs against the loaded record, not the picker
               // projection this screen holds.
               if (variant) {
                 void updateProductById(prod.id, (full) => ({
                   ...full,
+                  // A SKU cannot carry a currency of its own, so the product's
+                  // is restated here too — that is what the SKU now follows.
+                  currencyForeign: warehouseCurrency,
                   variants: (full.variants || []).map((v) =>
                     v.id === variant.id
                       ? {
                           ...v,
-                          priceForeign: sellingForeign,
                           priceRIYAL: Math.round(sellingRial),
-                          currencyForeign: appliedCurrency,
+                          ...warehousePrice,
                           ...details,
                         }
                       : v,
@@ -5615,9 +5671,8 @@ export default function ProformasView({
               } else {
                 void updateProductById(prod.id, (full) => ({
                   ...full,
-                  priceForeign: sellingForeign,
                   basePriceRIYAL: Math.round(sellingRial),
-                  currencyForeign: appliedCurrency,
+                  ...warehousePrice,
                   ...details,
                 }));
               }

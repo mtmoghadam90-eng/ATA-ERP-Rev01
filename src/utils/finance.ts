@@ -27,6 +27,41 @@ export const mapCurrencyToEnglish = (persian: string | undefined): 'USD' | 'EUR'
 };
 
 // Helper to determine proforma literal status self-contained
+/**
+ * A price agreed in one currency, restated in the currency the warehouse keeps.
+ *
+ * A catalogue item has **one** reference currency and every SKU under it
+ * follows — changing it on the product form rewrites all of them. The price
+ * calculator, though, can be run in any currency, often the proforma's. Writing
+ * its figure and its currency straight onto a SKU left that SKU out of step
+ * with its product, and because the product form reads the *product's*
+ * currency, the number then displayed as if it were in a currency it was never
+ * in: 150 dollars stored against a euro product read back as 15,000,000 rial
+ * instead of the 13,500,000 actually agreed. The rial column stayed correct,
+ * which is precisely why it went unnoticed.
+ *
+ * Returns null for the foreign figure when the conversion cannot be made
+ * honestly — an unknown rate means the amount cannot be stated in this item's
+ * currency at all, and writing the original number under the wrong label is the
+ * bug itself. The rial price is exact either way, so the caller writes that and
+ * leaves the stored foreign figure for somebody to correct.
+ */
+export function priceInWarehouseCurrency(
+  sellingForeign: number,
+  sellingRial: number,
+  appliedCurrency: string,
+  warehouseCurrency: string,
+  rateOf: (currency: string) => number,
+): number | null {
+  // Already in the right currency: use the figure as entered rather than
+  // sending it on a needless round trip through rial.
+  if (warehouseCurrency === appliedCurrency) return sellingForeign;
+
+  const rate = rateOf(warehouseCurrency);
+  if (!(rate > 0)) return null;
+  return Math.round((sellingRial / rate) * 100) / 100;
+}
+
 export const getProformaLiteralStatus = (pf: Proforma): 'پیش‌نویس' | 'ارسال شده' | 'تأیید شده (برنده)' | 'لغو شده' | 'باخته' | 'نیمه برنده' | 'جاری' => {
   if (pf.isCancelled) return "لغو شده";
 

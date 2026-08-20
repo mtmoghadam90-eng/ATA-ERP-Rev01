@@ -34,7 +34,7 @@ import { hasEverPurchased, saleDateOf } from "../src/server/services/customerVal
 import { buildReportingTables } from "../src/reporting/flatten";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
-import { calculateProjectFinance } from "../src/utils/finance";
+import { calculateProjectFinance, priceInWarehouseCurrency } from "../src/utils/finance";
 import { canSeeCosts } from "../src/server/auth";
 import {
   preserveLineCosts, redactCustomerValue, redactInquiry, redactProduct,
@@ -2070,6 +2070,45 @@ head("Cost of goods: standard versus what we actually paid");
       costDrift(readBack, actual)?.percent, 0);
     ok("and stops being worth showing", costDrift(readBack, actual)?.significant === false);
   }
+}
+
+
+/*
+ * A catalogue item has one currency, and every SKU under it follows.
+ *
+ * The price calculator can be run in any currency — usually the proforma's —
+ * and its result used to be written onto the SKU together with *its* currency.
+ * That left the SKU out of step with its product, and since the product form
+ * reads the product's currency, the number then displayed as if it were in a
+ * currency it was never in. The rial column stayed right, which is exactly why
+ * it went unnoticed.
+ */
+head("Warehouse price: stated in the currency the item is kept in");
+{
+  const rates: Record<string, number> = { "یورو": 100_000, "دلار": 90_000 };
+  const rateOf = (c: string) => (c === "ریال" ? 1 : rates[c] ?? 0);
+
+  // 150 dollars agreed on the proforma, for an item the warehouse keeps in euros.
+  const sellingForeign = 150;
+  const sellingRial = 150 * rates["دلار"];  // 13,500,000
+
+  const stored = priceInWarehouseCurrency(sellingForeign, sellingRial, "دلار", "یورو", rateOf);
+  eq("the amount is restated in the item's own currency", stored, 135);
+  eq("so reading it back gives the rial actually agreed",
+    (stored ?? 0) * rates["یورو"], sellingRial);
+  // What the bug did: the dollar figure read under the product's euro label.
+  ok("which the unconverted figure did not",
+    sellingForeign * rates["یورو"] !== sellingRial, sellingForeign * rates["یورو"]);
+
+  eq("a matching currency is written exactly as entered",
+    priceInWarehouseCurrency(sellingForeign, sellingRial, "دلار", "دلار", rateOf), 150);
+
+  // An unknown rate cannot state the amount in this currency at all, and the
+  // original number under the wrong label is the bug itself.
+  eq("an unconvertible currency writes no foreign figure",
+    priceInWarehouseCurrency(sellingForeign, sellingRial, "دلار", "روبل", rateOf), null);
+  eq("a rial item needs no rate", 
+    priceInWarehouseCurrency(sellingForeign, sellingRial, "دلار", "ریال", rateOf), sellingRial);
 }
 
 
