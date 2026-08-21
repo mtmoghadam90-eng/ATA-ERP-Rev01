@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  AlertCircle, CheckCircle2, Clock, Loader2, MessageSquare, Plus, RotateCcw,
-  Send, Settings as SettingsIcon, Trash2, X, XCircle,
+  AlertCircle, CheckCircle2, Clock, Copy, Loader2, MessageSquare, Plus, RotateCcw,
+  Send, Settings as SettingsIcon, Trash2, Users, X, XCircle,
 } from 'lucide-react';
 import type { ERPSettings, User } from '../types';
 import { ApiError } from '../api/client';
 import {
-  MessageRow, MessageTemplateRow, ProviderSummary, messagingApi,
+  BaleChatRow, MessageRow, MessageTemplateRow, ProviderSummary, messagingApi,
 } from '../api/messaging';
 import {
   ALL_CHANNELS, CHANNELS, CHANNEL_LABELS, Channel, MESSAGE_STATUS, STATUS_LABELS,
@@ -564,6 +564,8 @@ function Providers({
   const [drafts, setDrafts] = useState<Record<string, Record<string, unknown>>>({});
   const [testTo, setTestTo] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  /** Bale's recent chats, once somebody has asked for them. */
+  const [chats, setChats] = useState<BaleChatRow[] | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -590,6 +592,34 @@ function Providers({
       onNotice('تنظیمات ذخیره شد.');
     } catch (err) {
       onError(err, 'ذخیره تنظیمات ممکن نشد.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /**
+   * Asks Bale who has written to the bot lately.
+   *
+   * The numeric chat id is the only thing Bale will send to, and it exists
+   * nowhere a person can look it up: not on the customer's phone, not in this
+   * database, not derivable from their number. This is the one place it can be
+   * read, so the setup is «ask the customer to message the bot, then press
+   * this».
+   */
+  const loadChats = async (row: ProviderSummary) => {
+    setBusy(row.channel);
+    try {
+      const result = await messagingApi.providerChats(row.channel);
+      if (!result.ok) {
+        onError(new ApiError(result.error ?? 'خواندن گفتگوهای بله ممکن نشد.', 400), '');
+        return;
+      }
+      setChats(result.chats);
+      if (result.chats.length === 0) {
+        onNotice('هیچ گفتگوی تازه‌ای پیدا نشد. از مخاطب بخواهید یک پیام به ربات بفرستد و دوباره امتحان کنید.');
+      }
+    } catch (err) {
+      onError(err, 'خواندن گفتگوهای بله ممکن نشد.');
     } finally {
       setBusy(null);
     }
@@ -696,6 +726,66 @@ function Providers({
               ))}
             </div>
 
+            {/*
+              Bale addresses a person by a number, and the number is invisible
+              to everyone involved until the bot has been written to. Saying so
+              here — beside the credentials, where somebody is already setting
+              this up — is the difference between a field people fill in and one
+              they guess a phone number into.
+            */}
+            {row.channel === CHANNELS.BALE && (
+              <div className="space-y-2 rounded-xl bg-amber-50/60 border border-amber-100 p-3">
+                <p className="text-[11px] text-amber-800 leading-6">
+                  بله فقط با «شناسه عددی گفتگو» پیام می‌فرستد، نه با شماره موبایل.
+                  مخاطب باید یک بار به ربات شرکت پیام بدهد تا این شناسه ساخته شود؛
+                  سپس آن را از فهرست زیر بردارید و در پرونده مشتری ثبت کنید.
+                </p>
+                <button
+                  type="button"
+                  disabled={busy === row.channel}
+                  onClick={() => void loadChats(row)}
+                  className="px-3 py-1.5 border border-amber-200 bg-white rounded-lg text-[11px] font-bold text-amber-800 hover:bg-amber-50 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {busy === row.channel ? <Loader2 size={12} className="animate-spin" /> : <Users size={12} />}
+                  گفتگوهای اخیر ربات
+                </button>
+
+                {chats !== null && (
+                  chats.length === 0 ? (
+                    <p className="text-[10px] text-amber-700">
+                      گفتگویی پیدا نشد. از مخاطب بخواهید یک پیام به ربات بفرستد و دوباره امتحان کنید.
+                    </p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {chats.map((chat) => (
+                        <li
+                          key={chat.id}
+                          className="flex items-center justify-between gap-2 bg-white border border-amber-100 rounded-lg px-2.5 py-1.5"
+                        >
+                          <span className="text-[11px] font-bold text-slate-700 truncate">{chat.name}</span>
+                          <span className="flex items-center gap-1.5">
+                            <code className="text-[11px] font-mono text-slate-500" dir="ltr">{chat.id}</code>
+                            <button
+                              type="button"
+                              title="کپی شناسه"
+                              onClick={() => {
+                                void navigator.clipboard?.writeText(chat.id);
+                                setTestTo((t) => ({ ...t, [row.channel]: chat.id }));
+                                onNotice('شناسه گفتگو کپی شد.');
+                              }}
+                              className="p-1 rounded text-slate-400 hover:text-sky-600 hover:bg-sky-50"
+                            >
+                              <Copy size={12} />
+                            </button>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                )}
+              </div>
+            )}
+
             <div className="flex flex-wrap items-end gap-2 pt-2 border-t border-slate-100">
               <button
                 type="button"
@@ -712,7 +802,11 @@ function Providers({
                   type="text"
                   value={testTo[row.channel] ?? ''}
                   onChange={(e) => setTestTo((t) => ({ ...t, [row.channel]: e.target.value }))}
-                  placeholder={row.channel === CHANNELS.EMAIL ? 'name@example.com' : '09121234567'}
+                  placeholder={
+                    row.channel === CHANNELS.EMAIL ? 'name@example.com'
+                      : row.channel === CHANNELS.BALE ? 'شناسه عددی گفتگو'
+                        : '09121234567'
+                  }
                   dir="ltr"
                   className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-mono text-left"
                 />
