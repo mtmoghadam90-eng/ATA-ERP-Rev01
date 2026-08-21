@@ -330,8 +330,83 @@ export interface EmailConfig {
   password?: string;
   fromAddress?: string;
   fromName?: string;
-  /** Self-signed certificates are common on in-house mail servers. */
+  /**
+   * Send anyway when the server's TLS certificate cannot be trusted.
+   *
+   * Named for the in-house case it was written for, but it covers the one that
+   * actually turns up here: shared hosting, where the mail server answers on
+   * the company's own domain while the certificate was issued to the *host's*
+   * domain. The name is kept because it is what is already stored.
+   */
   allowSelfSigned?: boolean;
+}
+
+/**
+ * An SMTP failure, as a sentence that names the remedy.
+ *
+ * Node reports these accurately and uselessly: "Hostname/IP does not match
+ * certificate's altnames" is exactly what happened and tells the person who
+ * typed the server address in nothing about what to do — and there are only
+ * ever two answers, so this says both. Same reasoning as `baleFailure`.
+ */
+function emailFailure(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const code = String((err as { code?: unknown })?.code ?? "");
+  const text = raw.toLowerCase();
+
+  if (text.includes("altnames") || code === "ERR_TLS_CERT_ALTNAME_INVALID") {
+    const host = /host:\s*(\S+?)\.?\s+is not/i.exec(raw)?.[1];
+    // "altnames:" appears twice in Node's message — the list follows the last
+    // one, so the greedy prefix is what picks the right occurrence.
+    const names = /.*altnames:\s*(.+)$/i.exec(raw)?.[1]
+      ?.split(",")
+      .map((n) => n.trim().replace(/^(DNS|IP Address):/i, ""))
+      .filter(Boolean)
+      .join("، ");
+    return [
+      `گواهی امنیتی سرور ایمیل به نام${host ? ` «${host}»` : "ی که وارد کرده‌اید"} صادر نشده است`,
+      names ? ` (گواهی متعلق به ${names} است).` : ".",
+      " یا همان نامی را که روی گواهی هست به عنوان آدرس سرور وارد کنید (معمولاً نام سرور شرکت میزبان)،",
+      " یا گزینه «پذیرش گواهی نامعتبر سرور» را در همین صفحه فعال کنید.",
+    ].join("");
+  }
+
+  if (text.includes("self signed") || text.includes("self-signed")
+    || text.includes("unable to verify the first certificate")
+    || text.includes("unable to verify leaf signature")) {
+    return "گواهی امنیتی سرور ایمیل قابل تایید نیست (خودامضا یا بدون مرجع معتبر). اگر سرور داخلی شرکت است، گزینه «پذیرش گواهی نامعتبر سرور» را فعال کنید.";
+  }
+
+  if (text.includes("certificate has expired") || code === "CERT_HAS_EXPIRED") {
+    return "گواهی امنیتی سرور ایمیل منقضی شده است. آن را تمدید کنید یا گزینه «پذیرش گواهی نامعتبر سرور» را فعال کنید.";
+  }
+
+  if (code === "EAUTH" || text.includes("authentication failed")
+    || text.includes("invalid login") || text.includes("535")) {
+    return "نام کاربری یا رمز عبور ایمیل پذیرفته نشد.";
+  }
+
+  if (text.includes("wrong version number") || text.includes("ssl routines")) {
+    return "ارتباط امن با این پورت برقرار نشد. برای پورت ۴۶۵ باید «اتصال امن مستقیم (SSL)» فعال باشد و برای پورت ۵۸۷ غیرفعال.";
+  }
+
+  if (code === "ECONNREFUSED" || text.includes("econnrefused")) {
+    return "سرور ایمیل اتصال را نپذیرفت. آدرس سرور و پورت را بررسی کنید.";
+  }
+
+  if (code === "ETIMEDOUT" || text.includes("timeout") || text.includes("etimedout")) {
+    return "سرور ایمیل در مهلت مقرر پاسخ نداد. ممکن است پورت روی شبکه بسته باشد.";
+  }
+
+  if (code === "EDNS" || text.includes("getaddrinfo") || text.includes("enotfound")) {
+    return "آدرس سرور ایمیل پیدا نشد. املای آن را بررسی کنید.";
+  }
+
+  if (code === "EENVELOPE") {
+    return "سرور ایمیل آدرس فرستنده یا گیرنده را نپذیرفت.";
+  }
+
+  return describe(err);
 }
 
 export async function sendEmail(config: EmailConfig, message: OutgoingMessage): Promise<SendResult> {
@@ -348,8 +423,15 @@ export async function sendEmail(config: EmailConfig, message: OutgoingMessage): 
     const transport = nodemailer.createTransport({
       host: config.host,
       port: config.port || 587,
-      // 465 is implicit TLS; everything else starts plain and upgrades.
-      secure: config.secure ?? (config.port === 465),
+      /*
+       * 465 is implicit TLS; everything else starts plain and upgrades.
+       *
+       * An explicit `false` does not switch that off, deliberately: the switch
+       * on the settings screen stores one, and a port of 465 with implicit TLS
+       * turned off is not a configuration anybody wants — it is somebody having
+       * ticked the box and unticked it again.
+       */
+      secure: config.secure === true || Number(config.port) === 465,
       auth: config.user ? { user: config.user, pass: config.password || "" } : undefined,
       connectionTimeout: TIMEOUT_MS,
       greetingTimeout: TIMEOUT_MS,
@@ -368,7 +450,7 @@ export async function sendEmail(config: EmailConfig, message: OutgoingMessage): 
 
     return { ok: true, providerMessageId: info.messageId ?? null };
   } catch (err) {
-    return { ok: false, error: describe(err) };
+    return { ok: false, error: emailFailure(err) };
   }
 }
 

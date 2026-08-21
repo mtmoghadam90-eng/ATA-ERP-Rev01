@@ -46,7 +46,16 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
   CANCELLED: <X size={11} />,
 };
 
-/** The non-secret fields each channel needs, and how to label them. */
+/**
+ * The non-secret fields each channel needs, and how to label them.
+ *
+ * `type: 'checkbox'` draws a switch rather than a box — the two TLS settings
+ * are booleans and existed in the configuration from the start, but nothing
+ * drew them, so the only way to reach them was a hand-written database row.
+ * That is what left a company on shared hosting stuck: their mail server
+ * answers on their own domain while the certificate belongs to the host's, and
+ * the one switch that gets past it was unreachable.
+ */
 const PROVIDER_FIELDS: Record<Channel, { key: string; label: string; type?: string; hint?: string }[]> = {
   SMS: [
     { key: 'username', label: 'نام کاربری پنل' },
@@ -60,6 +69,18 @@ const PROVIDER_FIELDS: Record<Channel, { key: string; label: string; type?: stri
     { key: 'user', label: 'نام کاربری' },
     { key: 'fromAddress', label: 'ایمیل فرستنده' },
     { key: 'fromName', label: 'نام فرستنده' },
+    {
+      key: 'secure',
+      label: 'اتصال امن مستقیم (SSL)',
+      type: 'checkbox',
+      hint: 'برای پورت ۴۶۵. اگر تیک نخورده باشد و پورت ۴۶۵ باشد، خودکار فعال می‌شود؛ پورت ۵۸۷ اتصال را بعداً ارتقا می‌دهد و به این گزینه نیاز ندارد.',
+    },
+    {
+      key: 'allowSelfSigned',
+      label: 'پذیرش گواهی نامعتبر سرور',
+      type: 'checkbox',
+      hint: 'وقتی نام سرور با گواهی امنیتی آن هم‌خوانی ندارد (میزبانی اشتراکی) یا گواهی خودامضاست. فقط برای سروری که به آن اطمینان دارید.',
+    },
   ],
 };
 
@@ -686,17 +707,31 @@ function Providers({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {PROVIDER_FIELDS[row.channel].map((field) => (
                 <div key={field.key} className="space-y-1">
-                  <label className="text-[11px] font-bold text-slate-600">{field.label}</label>
-                  <input
-                    type={field.type ?? 'text'}
-                    value={String(draft[field.key] ?? row.config[field.key] ?? '')}
-                    onChange={(e) => setField(
-                      field.key,
-                      field.type === 'number' ? Number(e.target.value) || null : e.target.value,
-                    )}
-                    dir="ltr"
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-left"
-                  />
+                  {field.type === 'checkbox' ? (
+                    <label className="flex items-start gap-2 text-[11px] font-bold text-slate-600 cursor-pointer pt-5">
+                      <input
+                        type="checkbox"
+                        checked={!!(draft[field.key] ?? row.config[field.key] ?? false)}
+                        onChange={(e) => setField(field.key, e.target.checked)}
+                        className="accent-sky-500 mt-0.5"
+                      />
+                      {field.label}
+                    </label>
+                  ) : (
+                    <>
+                      <label className="text-[11px] font-bold text-slate-600">{field.label}</label>
+                      <input
+                        type={field.type ?? 'text'}
+                        value={String(draft[field.key] ?? row.config[field.key] ?? '')}
+                        onChange={(e) => setField(
+                          field.key,
+                          field.type === 'number' ? Number(e.target.value) || null : e.target.value,
+                        )}
+                        dir="ltr"
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-left"
+                      />
+                    </>
+                  )}
                   {field.hint && <p className="text-[10px] text-slate-400">{field.hint}</p>}
                 </div>
               ))}
