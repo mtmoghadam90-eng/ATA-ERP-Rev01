@@ -36,6 +36,8 @@ import { registerAdminRoutes } from "./src/server/routes/admin";
 import { registerActivityRoutes } from "./src/server/routes/activities";
 import { registerNotificationRoutes } from "./src/server/routes/notifications";
 import { registerDashboardRoutes } from "./src/server/routes/dashboard";
+import { registerMessagingRoutes } from "./src/server/routes/messaging";
+import { processQueue } from "./src/server/services/messaging/messageService";
 import { scrapeRates } from "./src/server/rateSource";
 import { ensureRatesFresh } from "./src/server/services/rateRefresh";
 import { ensureWorkflowSweepRanToday, runDueWorkflows } from "./src/server/services/workflowSweep";
@@ -319,6 +321,7 @@ async function startServer() {
   registerActivityRoutes(app, routeDeps);
   registerNotificationRoutes(app, routeDeps);
   registerDashboardRoutes(app, routeDeps);
+registerMessagingRoutes(app, routeDeps);
 
   /** Who am I? Lets the client restore its session on reload. */
   app.get("/api/me", async (req, res) => {
@@ -640,6 +643,22 @@ async function startServer() {
    * every customer's recency on — a customer who bought nothing today is a day
    * staler than yesterday, and no write happens to say so.
    */
+  /*
+   * The message outbox, every minute.
+   *
+   * Nothing is sent inline — a message is written to the queue and this picks
+   * it up — which is what makes scheduling, quiet hours and retries possible at
+   * all: each of them is only a `scheduledAt` in the future. A minute is fine
+   * for a queue whose whole point is that the message was never urgent enough
+   * to block the request that produced it.
+   *
+   * `processQueue` refuses to overlap with itself, so a slow provider delays
+   * the batch rather than letting the next tick send the same rows twice.
+   */
+  const MESSAGE_TICK_MS = 60 * 1000;
+  const messageTimer = setInterval(() => { void processQueue(); }, MESSAGE_TICK_MS);
+  messageTimer.unref?.();
+
   const VALUE_TICK_MS = 24 * 60 * 60 * 1000;
   const valueTimer = setInterval(
     () => { void recalculateCustomerValueNow(); },
@@ -657,6 +676,7 @@ async function startServer() {
     console.log(`${signal} received, shutting down.`);
     clearInterval(rateTimer);
     clearInterval(valueTimer);
+    clearInterval(messageTimer);
     server.close(() => {
       disconnectDb().finally(() => process.exit(0));
     });

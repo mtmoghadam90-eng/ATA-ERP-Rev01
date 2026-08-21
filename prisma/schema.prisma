@@ -32,35 +32,37 @@ datasource db {
   provider = "sqlserver"
 }
 
-/* ============================ people & access ============================ */
+/**
+ * ============================ people & access ============================
+ */
 
 model User {
-  id           String  @id @default(uuid()) @db.NVarChar(36)
-  username     String  @unique @db.NVarChar(100)
-  passwordHash String  @db.NVarChar(200)
-  fullName     String  @db.NVarChar(200)
-  role         String  @default("user") @db.NVarChar(30)
-  isSystemAdmin Boolean @default(false)
-  position     String? @db.NVarChar(150)
+  id             String  @id @default(uuid()) @db.NVarChar(36)
+  username       String  @unique @db.NVarChar(100)
+  passwordHash   String  @db.NVarChar(200)
+  fullName       String  @db.NVarChar(200)
+  role           String  @default("user") @db.NVarChar(30)
+  isSystemAdmin  Boolean @default(false)
+  position       String? @db.NVarChar(150)
   signatureImage String? @db.NVarChar(500)
-  isActive     Boolean @default(true)
+  isActive       Boolean @default(true)
 
   /// Module permissions, e.g. { "customers": true, "transactions": false }
-  permissions  String? @db.NVarChar(Max)
+  permissions String? @db.NVarChar(Max)
 
   /// Bumped to invalidate every session cookie already issued to this user.
-  sessionEpoch Int     @default(0)
+  sessionEpoch Int @default(0)
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  ownedCustomers  Customer[]        @relation("CustomerOwner")
-  ownedProjects   Project[]         @relation("ProjectOwner")
-  createdProformas Proforma[]       @relation("ProformaCreator")
-  auditLogs       AuditLog[]
-  activities      ProjectActivity[]
-  assignedReferrals ProjectReferral[] @relation("ReferralAssignee")
-  raisedReferrals   ProjectReferral[] @relation("ReferralAuthor")
+  ownedCustomers    Customer[]           @relation("CustomerOwner")
+  ownedProjects     Project[]            @relation("ProjectOwner")
+  createdProformas  Proforma[]           @relation("ProformaCreator")
+  auditLogs         AuditLog[]
+  activities        ProjectActivity[]
+  assignedReferrals ProjectReferral[]    @relation("ReferralAssignee")
+  raisedReferrals   ProjectReferral[]    @relation("ReferralAuthor")
   referralMessages  ReferralMessage[]
   notifications     ModuleNotification[]
   readReceipts      ReadReceipt[]
@@ -69,32 +71,34 @@ model User {
   @@map("users")
 }
 
-/* ================================ customers ============================== */
+/**
+ * ================================ customers ==============================
+ */
 
 model Customer {
-  id           String  @id @default(uuid()) @db.NVarChar(36)
-  customerType String  @db.NVarChar(20) // حقیقی | حقوقی
-  status       String  @default("فعال") @db.NVarChar(20)
+  id           String @id @default(uuid()) @db.NVarChar(36)
+  customerType String @db.NVarChar(20) // حقیقی | حقوقی
+  status       String @default("فعال") @db.NVarChar(20)
 
   /// Legal name, or the computed full name for an individual.
-  companyName  String  @db.NVarChar(300)
-  firstName    String? @db.NVarChar(150)
-  lastName     String? @db.NVarChar(150)
-  gender       String? @db.NVarChar(10)
-  position     String? @db.NVarChar(150)
+  companyName String  @db.NVarChar(300)
+  firstName   String? @db.NVarChar(150)
+  lastName    String? @db.NVarChar(150)
+  gender      String? @db.NVarChar(10)
+  position    String? @db.NVarChar(150)
 
   economicCode String? @db.NVarChar(50)
   industry     String? @db.NVarChar(150)
   keyPerson    String? @db.NVarChar(200)
 
-  phone        String? @db.NVarChar(50)
-  mobile       String? @db.NVarChar(50)
-  email        String? @db.NVarChar(200)
-  province     String? @db.NVarChar(100)
-  city         String? @db.NVarChar(100)
-  address      String? @db.NVarChar(Max)
-  notes        String? @db.NVarChar(Max)
-  tags         String? @db.NVarChar(500)
+  phone    String? @db.NVarChar(50)
+  mobile   String? @db.NVarChar(50)
+  email    String? @db.NVarChar(200)
+  province String? @db.NVarChar(100)
+  city     String? @db.NVarChar(100)
+  address  String? @db.NVarChar(Max)
+  notes    String? @db.NVarChar(Max)
+  tags     String? @db.NVarChar(500)
 
   /// Normalized for duplicate detection (fa digits -> ascii, +98 stripped).
   mobileNormalized String? @db.NVarChar(30)
@@ -108,24 +112,24 @@ model Customer {
   /// The five potential parameters are 1..5 and are all-or-nothing: until every
   /// one is answered the customer is «در انتظار ارزیابی» rather than ranked,
   /// because an unanswered form is not the same as a low score.
-  potentialConsumption    Int? @db.SmallInt
-  potentialCompanySize    Int? @db.SmallInt
-  potentialProjects       Int? @db.SmallInt
-  potentialPortfolioFit   Int? @db.SmallInt
-  potentialRepeatPurchase Int? @db.SmallInt
+  potentialConsumption    Int?      @db.SmallInt
+  potentialCompanySize    Int?      @db.SmallInt
+  potentialProjects       Int?      @db.SmallInt
+  potentialPortfolioFit   Int?      @db.SmallInt
+  potentialRepeatPurchase Int?      @db.SmallInt
   /// 0..100, derived from the five above and the weights in settings. Stored
   /// beside its own inputs because it depends on nothing else.
   potentialValueScore     Float?
   potentialAssessedAt     DateTime?
-  potentialAssessedBy     String? @db.NVarChar(36)
+  potentialAssessedBy     String?   @db.NVarChar(36)
 
   /// `reviewed` marks the difference between a value somebody chose and the
   /// default a migration wrote. Without it a screen cannot honestly say whether
   /// «معمولی» is a judgement or a placeholder.
-  paymentBehaviour     String?  @db.NVarChar(40)
-  paymentReviewed      Boolean  @default(false)
-  costToServe          String?  @db.NVarChar(40)
-  costToServeReviewed  Boolean  @default(false)
+  paymentBehaviour    String? @db.NVarChar(40)
+  paymentReviewed     Boolean @default(false)
+  costToServe         String? @db.NVarChar(40)
+  costToServeReviewed Boolean @default(false)
 
   /// A rank set by hand, overriding the computed one.
   ///
@@ -135,30 +139,38 @@ model Customer {
   /// account whose worth is not in this year's numbers. Unlocked: correct it
   /// for now, and let the evaluation take back over at the next
   /// recalculation, which clears it.
-  manualRank       String?  @db.NVarChar(10)
-  manualRankLocked Boolean  @default(false)
-  manualRankNote   String?  @db.NVarChar(400)
+  manualRank       String?   @db.NVarChar(10)
+  manualRankLocked Boolean   @default(false)
+  manualRankNote   String?   @db.NVarChar(400)
   manualRankSetAt  DateTime?
-  manualRankSetBy  String?  @db.NVarChar(36)
+  manualRankSetBy  String?   @db.NVarChar(36)
 
-  ownerUserId  String? @db.NVarChar(36)
-  owner        User?   @relation("CustomerOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  ownerUserId String? @db.NVarChar(36)
+  owner       User?   @relation("CustomerOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  linksFrom    CustomerLink[] @relation("LinkFrom")
-  linksTo      CustomerLink[] @relation("LinkTo")
-  projects     Project[]      @relation("ProjectCustomer")
-  endUserOf    Project[]      @relation("ProjectEndUser")
-  financialFor Project[]      @relation("ProjectFinancialContact")
-  technicalFor Project[]      @relation("ProjectTechnicalContact")
-  proformas    Proforma[]     @relation("ProformaCustomer")
-  contactFor   Proforma[]     @relation("ProformaContact")
-  transactions Transaction[]
-  agreements   CustomerAgreement[]
-  valueMetrics      CustomerValueMetrics?
-  potentialHistory  CustomerPotentialHistory[]
+  linksFrom        CustomerLink[]             @relation("LinkFrom")
+  linksTo          CustomerLink[]             @relation("LinkTo")
+  projects         Project[]                  @relation("ProjectCustomer")
+  endUserOf        Project[]                  @relation("ProjectEndUser")
+  financialFor     Project[]                  @relation("ProjectFinancialContact")
+  technicalFor     Project[]                  @relation("ProjectTechnicalContact")
+  proformas        Proforma[]                 @relation("ProformaCustomer")
+  contactFor       Proforma[]                 @relation("ProformaContact")
+  transactions     Transaction[]
+  agreements       CustomerAgreement[]
+  valueMetrics     CustomerValueMetrics?
+  potentialHistory CustomerPotentialHistory[]
+  /// Asked us not to send them messages. Checked before every send, manual or
+  /// automated: a company that keeps texting somebody who opted out through a
+  /// different door has not honoured the opt-out at all.
+  doNotContact     Boolean                    @default(false)
+  /// Their chat id on Bale, if they have given us one.
+  baleChatId       String?                    @db.NVarChar(60)
+
+  messages Message[]
 
   // NOTE: economicCode must be unique only among customers that actually have
   // one. A plain UNIQUE constraint cannot express that in SQL Server, which
@@ -192,13 +204,13 @@ model CustomerValueMetrics {
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   /// Raw figures, kept so a score can always be explained rather than trusted.
-  salesRevenueRial   Decimal @default(0) @db.Decimal(19, 2)
-  grossProfitRial    Decimal @default(0) @db.Decimal(19, 2)
-  grossMarginPercent Float?
+  salesRevenueRial    Decimal @default(0) @db.Decimal(19, 2)
+  grossProfitRial     Decimal @default(0) @db.Decimal(19, 2)
+  grossMarginPercent  Float?
   /// Share of the period's revenue whose cost is actually known. Gross profit
   /// is computed only over lines with a cost, so this says how much of the
   /// picture the figure above really covers.
-  costCoveragePercent Float  @default(0)
+  costCoveragePercent Float   @default(0)
 
   purchaseFrequency Int @default(0)
 
@@ -213,16 +225,16 @@ model CustomerValueMetrics {
   paymentScore     Float @default(0)
   costToServeScore Float @default(0)
 
-  realizedValueScore Float  @default(0)
+  realizedValueScore  Float   @default(0)
   potentialValueScore Float?
   customerValueIndex  Float?
   /// The rank in effect: the manual one where a person set it, else the
   /// computed one. The grid filters and sorts on this, so it has to be the
   /// single answer to "what rank is this customer".
-  customerValueRank   String @default("PENDING") @db.NVarChar(10)
+  customerValueRank   String  @default("PENDING") @db.NVarChar(10)
   /// What the formula said, kept even when a manual rank overrides it — the
   /// card shows both, so an override never hides what it overrode.
-  computedRank        String @default("PENDING") @db.NVarChar(10)
+  computedRank        String  @default("PENDING") @db.NVarChar(10)
   /// True while `customerValueRank` came from a person rather than the rules.
   rankIsManual        Boolean @default(false)
 
@@ -247,8 +259,8 @@ model CustomerPotentialHistory {
   customerId String   @db.NVarChar(36)
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  previousScore Float?
-  newScore      Float?
+  previousScore  Float?
+  newScore       Float?
   /// The five answers before and after, as JSON — a fixed set of columns would
   /// have to change every time a parameter is added.
   previousParams String? @db.NVarChar(Max)
@@ -264,8 +276,8 @@ model CustomerPotentialHistory {
 
 /// Individual <-> company relationships (replaces the linkedCustomerIds array).
 model CustomerLink {
-  fromId String @db.NVarChar(36)
-  toId   String @db.NVarChar(36)
+  fromId String   @db.NVarChar(36)
+  toId   String   @db.NVarChar(36)
   from   Customer @relation("LinkFrom", fields: [fromId], references: [id], onDelete: Cascade)
   to     Customer @relation("LinkTo", fields: [toId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -287,7 +299,9 @@ model CustomerAgreement {
   @@map("customer_agreements")
 }
 
-/* ================================ suppliers ============================== */
+/**
+ * ================================ suppliers ==============================
+ */
 
 model Supplier {
   id           String  @id @default(uuid()) @db.NVarChar(36)
@@ -317,27 +331,29 @@ model Supplier {
   @@map("suppliers")
 }
 
-/* ============================ products & stock =========================== */
+/**
+ * ============================ products & stock ===========================
+ */
 
 model Product {
-  id            String  @id @default(uuid()) @db.NVarChar(36)
-  code          String  @unique @db.NVarChar(60)
-  name          String  @db.NVarChar(300)
-  displayName   String  @db.NVarChar(300)
-  category      String? @db.NVarChar(150)
-  brand         String? @db.NVarChar(150)
-  modelNumber   String? @db.NVarChar(150)
-  unit          String? @db.NVarChar(50)
-  description   String? @db.NVarChar(Max)
-  supplyType    String  @default("INVENTORY") @db.NVarChar(20)
+  id          String  @id @default(uuid()) @db.NVarChar(36)
+  code        String  @unique @db.NVarChar(60)
+  name        String  @db.NVarChar(300)
+  displayName String  @db.NVarChar(300)
+  category    String? @db.NVarChar(150)
+  brand       String? @db.NVarChar(150)
+  modelNumber String? @db.NVarChar(150)
+  unit        String? @db.NVarChar(50)
+  description String? @db.NVarChar(Max)
+  supplyType  String  @default("INVENTORY") @db.NVarChar(20)
 
   hasVariants   Boolean @default(false)
   stockLevel    Decimal @default(0) @db.Decimal(18, 3)
   minStockLevel Decimal @default(0) @db.Decimal(18, 3)
 
-  basePriceRial Decimal? @db.Decimal(19, 2)
-  priceForeign  Decimal? @db.Decimal(19, 4)
-  currencyForeign String? @db.NVarChar(20)
+  basePriceRial   Decimal? @db.Decimal(19, 2)
+  priceForeign    Decimal? @db.Decimal(19, 4)
+  currencyForeign String?  @db.NVarChar(20)
 
   /// What this item last actually cost to land, from a received purchase order.
   ///
@@ -350,24 +366,24 @@ model Product {
   ///
   /// So this is shown *beside* the calculator, with the quantity it came from,
   /// and adopting it into the standard is a button somebody presses.
-  lastPurchaseCostRial   Decimal?  @db.Decimal(19, 2)
+  lastPurchaseCostRial    Decimal?  @db.Decimal(19, 2)
   /// How many units that purchase was for — the context that says whether the
   /// figure above is representative.
-  lastPurchaseQuantity   Decimal?  @db.Decimal(18, 3)
-  lastPurchaseDate       DateTime? @db.Date
-  lastPurchaseDateJalali String?   @db.NVarChar(10)
+  lastPurchaseQuantity    Decimal?  @db.Decimal(18, 3)
+  lastPurchaseDate        DateTime? @db.Date
+  lastPurchaseDateJalali  String?   @db.NVarChar(10)
   /// Which order it came from. A plain column: the order may later be deleted,
   /// and the figure it produced is still the last thing we actually paid.
-  lastPurchaseOrderId    String?   @db.NVarChar(36)
-  lastPurchaseOrderNumber String?  @db.NVarChar(60)
+  lastPurchaseOrderId     String?   @db.NVarChar(36)
+  lastPurchaseOrderNumber String?   @db.NVarChar(60)
 
   /// Configuration that only travels with this product: features, option lists,
   /// configRules, image paths and the price-calculator inputs.
-  features      String? @db.NVarChar(Max)
-  configRules   String? @db.NVarChar(Max)
-  images        String? @db.NVarChar(Max)
-  priceCalc     String? @db.NVarChar(Max)
-  customValues  String? @db.NVarChar(Max)
+  features     String? @db.NVarChar(Max)
+  configRules  String? @db.NVarChar(Max)
+  images       String? @db.NVarChar(Max)
+  priceCalc    String? @db.NVarChar(Max)
+  customValues String? @db.NVarChar(Max)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -391,16 +407,16 @@ model ProductVariant {
   productId String  @db.NVarChar(36)
   product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  sku       String  @db.NVarChar(120)
+  sku        String  @db.NVarChar(120)
   /// featureName -> optionValue for this combination.
   attributes String? @db.NVarChar(Max)
 
-  stockLevel    Decimal @default(0) @db.Decimal(18, 3)
-  minStockLevel Decimal @default(0) @db.Decimal(18, 3)
-  priceRial     Decimal? @db.Decimal(19, 2)
-  priceForeign  Decimal? @db.Decimal(19, 4)
-  currencyForeign String? @db.NVarChar(20)
-  priceCalc     String? @db.NVarChar(Max)
+  stockLevel      Decimal  @default(0) @db.Decimal(18, 3)
+  minStockLevel   Decimal  @default(0) @db.Decimal(18, 3)
+  priceRial       Decimal? @db.Decimal(19, 2)
+  priceForeign    Decimal? @db.Decimal(19, 4)
+  currencyForeign String?  @db.NVarChar(20)
+  priceCalc       String?  @db.NVarChar(Max)
 
   /// What this item last actually cost to land, from a received purchase order.
   ///
@@ -413,16 +429,16 @@ model ProductVariant {
   ///
   /// So this is shown *beside* the calculator, with the quantity it came from,
   /// and adopting it into the standard is a button somebody presses.
-  lastPurchaseCostRial   Decimal?  @db.Decimal(19, 2)
+  lastPurchaseCostRial    Decimal?  @db.Decimal(19, 2)
   /// How many units that purchase was for — the context that says whether the
   /// figure above is representative.
-  lastPurchaseQuantity   Decimal?  @db.Decimal(18, 3)
-  lastPurchaseDate       DateTime? @db.Date
-  lastPurchaseDateJalali String?   @db.NVarChar(10)
+  lastPurchaseQuantity    Decimal?  @db.Decimal(18, 3)
+  lastPurchaseDate        DateTime? @db.Date
+  lastPurchaseDateJalali  String?   @db.NVarChar(10)
   /// Which order it came from. A plain column: the order may later be deleted,
   /// and the figure it produced is still the last thing we actually paid.
-  lastPurchaseOrderId    String?   @db.NVarChar(36)
-  lastPurchaseOrderNumber String?  @db.NVarChar(60)
+  lastPurchaseOrderId     String?   @db.NVarChar(36)
+  lastPurchaseOrderNumber String?   @db.NVarChar(60)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -438,17 +454,17 @@ model ProductVariant {
 }
 
 model InventoryTransaction {
-  id        String   @id @default(uuid()) @db.NVarChar(36)
-  productId String   @db.NVarChar(36)
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  variantId String?  @db.NVarChar(36)
+  id        String          @id @default(uuid()) @db.NVarChar(36)
+  productId String          @db.NVarChar(36)
+  product   Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantId String?         @db.NVarChar(36)
   variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   occurredAt       DateTime @db.Date
   occurredAtJalali String?  @db.NVarChar(10)
 
-  type      String   @db.NVarChar(5) // IN | OUT
-  quantity  Decimal  @db.Decimal(18, 3)
+  type           String  @db.NVarChar(5) // IN | OUT
+  quantity       Decimal @db.Decimal(18, 3)
   /// quantity signed by direction, so SUM() gives net stock movement directly.
   signedQuantity Decimal @db.Decimal(18, 3)
 
@@ -470,76 +486,87 @@ model InventoryTransaction {
   @@map("inventory_transactions")
 }
 
-/* ================================ projects =============================== */
+/**
+ * ================================ projects ===============================
+ */
 
 model Project {
-  id         String  @id @default(uuid()) @db.NVarChar(36)
-  code       String  @unique @db.NVarChar(60)
-  name       String  @db.NVarChar(400)
+  id   String @id @default(uuid()) @db.NVarChar(36)
+  code String @unique @db.NVarChar(60)
+  name String @db.NVarChar(400)
 
-  customerId String  @db.NVarChar(36)
+  customerId String   @db.NVarChar(36)
   customer   Customer @relation("ProjectCustomer", fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  status     String  @db.NVarChar(50)
-  lossReason String? @db.NVarChar(300)
+  status      String  @db.NVarChar(50)
+  lossReason  String? @db.NVarChar(300)
   description String? @db.NVarChar(Max)
 
-  creationDate        DateTime @db.Date
-  creationDateJalali  String?  @db.NVarChar(10)
-  opportunityDate     DateTime? @db.Date
-  opportunityDateJalali String? @db.NVarChar(10)
-  expectedCloseDate   DateTime? @db.Date
-  expectedCloseDateJalali String? @db.NVarChar(10)
-  winningDate         DateTime? @db.Date
-  winningDateJalali   String?  @db.NVarChar(10)
-  agreedDeliveryDate  DateTime? @db.Date
-  agreedDeliveryDateJalali String? @db.NVarChar(10)
-  closingDate         DateTime? @db.Date
-  closingDateJalali   String?  @db.NVarChar(10)
+  creationDate             DateTime  @db.Date
+  creationDateJalali       String?   @db.NVarChar(10)
+  opportunityDate          DateTime? @db.Date
+  opportunityDateJalali    String?   @db.NVarChar(10)
+  expectedCloseDate        DateTime? @db.Date
+  expectedCloseDateJalali  String?   @db.NVarChar(10)
+  winningDate              DateTime? @db.Date
+  winningDateJalali        String?   @db.NVarChar(10)
+  agreedDeliveryDate       DateTime? @db.Date
+  agreedDeliveryDateJalali String?   @db.NVarChar(10)
+  closingDate              DateTime? @db.Date
+  closingDateJalali        String?   @db.NVarChar(10)
 
   estimatedValueRial Decimal? @db.Decimal(19, 2)
   probabilityPercent Int?
 
-  marketingChannel    String? @db.NVarChar(150)
-  leadQuality         String? @db.NVarChar(100)
-  referrerName        String? @db.NVarChar(200)
-  communicationMethod String? @db.NVarChar(100)
+  marketingChannel      String? @db.NVarChar(150)
+  leadQuality           String? @db.NVarChar(100)
+  referrerName          String? @db.NVarChar(200)
+  communicationMethod   String? @db.NVarChar(100)
   customerInquiryNumber String? @db.NVarChar(100)
 
   /// String fields for simple text values (not FK references)
-  salesExpert         String? @db.NVarChar(200)
-  financialContact    String? @db.NVarChar(200)
-  technicalContact    String? @db.NVarChar(200)
-  endUser             String? @db.NVarChar(200)
+  salesExpert      String? @db.NVarChar(200)
+  financialContact String? @db.NVarChar(200)
+  technicalContact String? @db.NVarChar(200)
+  endUser          String? @db.NVarChar(200)
 
   /// Real references, so "only my projects" can be enforced in the database.
-  ownerUserId         String? @db.NVarChar(36)
-  owner               User?   @relation("ProjectOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  endUserCustomerId   String? @db.NVarChar(36)
-  endUserCustomer     Customer? @relation("ProjectEndUser", fields: [endUserCustomerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  financialContactId  String? @db.NVarChar(36)
+  ownerUserId              String?   @db.NVarChar(36)
+  owner                    User?     @relation("ProjectOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  endUserCustomerId        String?   @db.NVarChar(36)
+  endUserCustomer          Customer? @relation("ProjectEndUser", fields: [endUserCustomerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  financialContactId       String?   @db.NVarChar(36)
   financialContactCustomer Customer? @relation("ProjectFinancialContact", fields: [financialContactId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  technicalContactId  String? @db.NVarChar(36)
+  technicalContactId       String?   @db.NVarChar(36)
   technicalContactCustomer Customer? @relation("ProjectTechnicalContact", fields: [technicalContactId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   /// Uploaded document metadata (paths only, never file bytes).
-  attachments      String? @db.NVarChar(Max)
-  manualDocuments  String? @db.NVarChar(Max)
-  milestoneRules   String? @db.NVarChar(Max)
-  customValues     String? @db.NVarChar(Max)
+  attachments     String? @db.NVarChar(Max)
+  manualDocuments String? @db.NVarChar(Max)
+  milestoneRules  String? @db.NVarChar(Max)
+  customValues    String? @db.NVarChar(Max)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  items          ProjectItem[]
-  milestones     ProjectMilestone[]
-  proformas      Proforma[]
-  purchaseOrders PurchaseOrder[]
-  transactions   Transaction[]
-  inquiries      SupplierInquiry[]
-  deliveries     PackagingDelivery[]
-  services       AfterSalesService[]
-  categoryGroups ProjectCategoryGroup[]
+  items              ProjectItem[]
+  milestones         ProjectMilestone[]
+  proformas          Proforma[]
+  purchaseOrders     PurchaseOrder[]
+  transactions       Transaction[]
+  inquiries          SupplierInquiry[]
+  deliveries         PackagingDelivery[]
+  services           AfterSalesService[]
+  categoryGroups     ProjectCategoryGroup[]
+  /// Who to write to about this job, and how.
+  ///
+  /// The contact is one of the customer's linked individuals; the channel is
+  /// what they prefer. Both optional — a project that says nothing falls back
+  /// to the customer's own details, which is what most jobs want.
+  messagingContactId String?                @db.NVarChar(36)
+  messagingChannel   String?                @db.NVarChar(20)
+
+  messages Message[]
 
   @@index([customerId])
   @@index([status])
@@ -583,13 +610,13 @@ model ProjectMilestone {
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   lineNo    Int
 
-  name        String  @db.NVarChar(300)
-  isCompleted Boolean @default(false)
-  completedAt DateTime? @db.Date
-  completedAtJalali String? @db.NVarChar(10)
-  dueDate     DateTime? @db.Date
-  dueDateJalali String? @db.NVarChar(10)
-  notes       String? @db.NVarChar(Max)
+  name              String    @db.NVarChar(300)
+  isCompleted       Boolean   @default(false)
+  completedAt       DateTime? @db.Date
+  completedAtJalali String?   @db.NVarChar(10)
+  dueDate           DateTime? @db.Date
+  dueDateJalali     String?   @db.NVarChar(10)
+  notes             String?   @db.NVarChar(Max)
 
   triggerType         String? @db.NVarChar(30)
   triggerCategoryName String? @db.NVarChar(200)
@@ -598,7 +625,9 @@ model ProjectMilestone {
   @@map("project_milestones")
 }
 
-/* ================================ proformas ============================== */
+/**
+ * ================================ proformas ==============================
+ */
 
 model Proforma {
   id             String @id @default(uuid()) @db.NVarChar(36)
@@ -620,26 +649,26 @@ model Proforma {
   lossReason  String? @db.NVarChar(300)
   currency    String  @default("ریال") @db.NVarChar(20)
 
-  issueDate         DateTime @db.Date
-  issueDateJalali   String?  @db.NVarChar(10)
-  expiryDate        DateTime? @db.Date
-  expiryDateJalali  String?  @db.NVarChar(10)
-  deliveryDate      DateTime? @db.Date
-  deliveryDateJalali String? @db.NVarChar(10)
+  issueDate          DateTime  @db.Date
+  issueDateJalali    String?   @db.NVarChar(10)
+  expiryDate         DateTime? @db.Date
+  expiryDateJalali   String?   @db.NVarChar(10)
+  deliveryDate       DateTime? @db.Date
+  deliveryDateJalali String?   @db.NVarChar(10)
   /// The day the document was sent to the customer: stamped when the status
   /// becomes «ارسال شده», so a follow-up can be scheduled from it. Nothing else
   /// records *when* a quotation went out — the issue date is when it was
   /// written, which is not the same thing.
-  sentDate          DateTime? @db.Date
-  sentDateJalali    String?  @db.NVarChar(10)
+  sentDate           DateTime? @db.Date
+  sentDateJalali     String?   @db.NVarChar(10)
 
-  totalAmount     Decimal @default(0) @db.Decimal(19, 2)
-  discountPercent Decimal @default(0) @db.Decimal(9, 4)
-  discountAmount  Decimal @default(0) @db.Decimal(19, 2)
-  taxPercent      Decimal @default(0) @db.Decimal(9, 4)
-  taxAmount       Decimal @default(0) @db.Decimal(19, 2)
-  extraCosts      Decimal @default(0) @db.Decimal(19, 2)
-  finalAmount     Decimal @default(0) @db.Decimal(19, 2)
+  totalAmount            Decimal  @default(0) @db.Decimal(19, 2)
+  discountPercent        Decimal  @default(0) @db.Decimal(9, 4)
+  discountAmount         Decimal  @default(0) @db.Decimal(19, 2)
+  taxPercent             Decimal  @default(0) @db.Decimal(9, 4)
+  taxAmount              Decimal  @default(0) @db.Decimal(19, 2)
+  extraCosts             Decimal  @default(0) @db.Decimal(19, 2)
+  finalAmount            Decimal  @default(0) @db.Decimal(19, 2)
   historicalExchangeRate Decimal? @db.Decimal(19, 4)
 
   notes          String? @db.NVarChar(Max)
@@ -671,9 +700,9 @@ model ProformaItem {
   proforma   Proforma @relation(fields: [proformaId], references: [id], onDelete: Cascade)
   lineNo     Int
 
-  productId String?  @db.NVarChar(36)
-  product   Product? @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  variantId String?  @db.NVarChar(36)
+  productId String?         @db.NVarChar(36)
+  product   Product?        @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variantId String?         @db.NVarChar(36)
   variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   productName String  @db.NVarChar(400)
@@ -733,7 +762,9 @@ model ProformaItem {
   @@map("proforma_items")
 }
 
-/* ============================= purchase orders =========================== */
+/**
+ * ============================= purchase orders ===========================
+ */
 
 model PurchaseOrder {
   id       String @id @default(uuid()) @db.NVarChar(36)
@@ -752,20 +783,20 @@ model PurchaseOrder {
   currency     String  @default("دلار") @db.NVarChar(20)
   exchangeRate Decimal @default(1) @db.Decimal(19, 4)
 
-  orderDate               DateTime @db.Date
-  orderDateJalali         String?  @db.NVarChar(10)
-  expectedDeliveryDate    DateTime? @db.Date
-  expectedDeliveryDateJalali String? @db.NVarChar(10)
-  paymentDate             DateTime? @db.Date
-  paymentDateJalali       String?  @db.NVarChar(10)
-  goodsReadyDate          DateTime? @db.Date
-  goodsReadyDateJalali    String?  @db.NVarChar(10)
-  shipmentDate            DateTime? @db.Date
-  shipmentDateJalali      String?  @db.NVarChar(10)
-  clearanceDate           DateTime? @db.Date
-  clearanceDateJalali     String?  @db.NVarChar(10)
-  receivedDate            DateTime? @db.Date
-  receivedDateJalali      String?  @db.NVarChar(10)
+  orderDate                  DateTime  @db.Date
+  orderDateJalali            String?   @db.NVarChar(10)
+  expectedDeliveryDate       DateTime? @db.Date
+  expectedDeliveryDateJalali String?   @db.NVarChar(10)
+  paymentDate                DateTime? @db.Date
+  paymentDateJalali          String?   @db.NVarChar(10)
+  goodsReadyDate             DateTime? @db.Date
+  goodsReadyDateJalali       String?   @db.NVarChar(10)
+  shipmentDate               DateTime? @db.Date
+  shipmentDateJalali         String?   @db.NVarChar(10)
+  clearanceDate              DateTime? @db.Date
+  clearanceDateJalali        String?   @db.NVarChar(10)
+  receivedDate               DateTime? @db.Date
+  receivedDateJalali         String?   @db.NVarChar(10)
 
   totalForeignAmount   Decimal @default(0) @db.Decimal(19, 4)
   shippingCostRial     Decimal @default(0) @db.Decimal(19, 2)
@@ -798,9 +829,9 @@ model PurchaseOrderItem {
   purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
   lineNo          Int
 
-  productId String?  @db.NVarChar(36)
-  product   Product? @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  variantId String?  @db.NVarChar(36)
+  productId String?         @db.NVarChar(36)
+  product   Product?        @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variantId String?         @db.NVarChar(36)
   variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   productName String  @db.NVarChar(400)
@@ -808,9 +839,9 @@ model PurchaseOrderItem {
   brand       String? @db.NVarChar(150)
   tagNumber   String? @db.NVarChar(100)
 
-  quantity            Decimal @default(1) @db.Decimal(18, 3)
-  unitPriceForeign    Decimal @default(0) @db.Decimal(19, 4)
-  totalPriceForeign   Decimal @default(0) @db.Decimal(19, 4)
+  quantity          Decimal @default(1) @db.Decimal(18, 3)
+  unitPriceForeign  Decimal @default(0) @db.Decimal(19, 4)
+  totalPriceForeign Decimal @default(0) @db.Decimal(19, 4)
 
   /// What one unit of this line actually cost, landed.
   ///
@@ -832,7 +863,9 @@ model PurchaseOrderItem {
   @@map("purchase_order_items")
 }
 
-/* =============================== transactions ============================ */
+/**
+ * =============================== transactions ============================
+ */
 
 model Transaction {
   id             String @id @default(uuid()) @db.NVarChar(36)
@@ -845,15 +878,15 @@ model Transaction {
   occurredAt       DateTime @db.Date
   occurredAtJalali String?  @db.NVarChar(10)
 
-  customerId String?   @db.NVarChar(36)
-  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  supplierId String?   @db.NVarChar(36)
-  supplier   Supplier? @relation(fields: [supplierId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  projectId  String?   @db.NVarChar(36)
-  project    Project?  @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  proformaId String?   @db.NVarChar(36)
-  proforma   Proforma? @relation(fields: [proformaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  purchaseOrderId String?      @db.NVarChar(36)
+  customerId      String?        @db.NVarChar(36)
+  customer        Customer?      @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  supplierId      String?        @db.NVarChar(36)
+  supplier        Supplier?      @relation(fields: [supplierId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  projectId       String?        @db.NVarChar(36)
+  project         Project?       @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  proformaId      String?        @db.NVarChar(36)
+  proforma        Proforma?      @relation(fields: [proformaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchaseOrderId String?        @db.NVarChar(36)
   purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   /// Free-text counterparty, used when no customer/supplier record applies.
@@ -881,7 +914,9 @@ model Transaction {
   @@map("transactions")
 }
 
-/* =========================== supplier inquiries ========================== */
+/**
+ * =========================== supplier inquiries ==========================
+ */
 
 model SupplierInquiry {
   id String @id @default(uuid()) @db.NVarChar(36)
@@ -893,13 +928,13 @@ model SupplierInquiry {
   supplierId String   @db.NVarChar(36)
   supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  isWinner   Boolean   @default(false)
-  winnerDate DateTime? @db.Date
-  winnerDateJalali String? @db.NVarChar(10)
+  isWinner         Boolean   @default(false)
+  winnerDate       DateTime? @db.Date
+  winnerDateJalali String?   @db.NVarChar(10)
 
-  offerConfirmed     Boolean   @default(false)
-  offerConfirmedDate DateTime? @db.Date
-  offerConfirmedDateJalali String? @db.NVarChar(10)
+  offerConfirmed           Boolean   @default(false)
+  offerConfirmedDate       DateTime? @db.Date
+  offerConfirmedDateJalali String?   @db.NVarChar(10)
 
   creationDate       DateTime @db.Date
   creationDateJalali String?  @db.NVarChar(10)
@@ -941,9 +976,9 @@ model SupplierInquiryItem {
   /// it is priced before anyone decides to carry it. A line that does name a
   /// product carries its SKU too, so an offer for a specific configuration is
   /// unambiguous when it becomes a purchase order.
-  productId String?  @db.NVarChar(36)
-  product   Product? @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  variantId String?  @db.NVarChar(36)
+  productId String?         @db.NVarChar(36)
+  product   Product?        @relation(fields: [productId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  variantId String?         @db.NVarChar(36)
   variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   name         String  @db.NVarChar(400)
@@ -968,12 +1003,12 @@ model SupplierInquiryStep {
   inquiry   SupplierInquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
   stepNo    Int
 
-  title       String  @db.NVarChar(300)
-  occurredAt  DateTime
-  occurredAtJalali String? @db.NVarChar(10)
-  method      String? @db.NVarChar(50)
-  recipientName String? @db.NVarChar(200)
-  notes       String? @db.NVarChar(Max)
+  title            String   @db.NVarChar(300)
+  occurredAt       DateTime
+  occurredAtJalali String?  @db.NVarChar(10)
+  method           String?  @db.NVarChar(50)
+  recipientName    String?  @db.NVarChar(200)
+  notes            String?  @db.NVarChar(Max)
 
   /// Recorded automatically by the workflow engine rather than typed by a user.
   isAuto  Boolean @default(false)
@@ -983,7 +1018,9 @@ model SupplierInquiryStep {
   @@map("supplier_inquiry_steps")
 }
 
-/* ========================= packaging & after-sales ======================= */
+/**
+ * ========================= packaging & after-sales =======================
+ */
 
 model PackagingDelivery {
   id                String @id @default(uuid()) @db.NVarChar(36)
@@ -995,10 +1032,10 @@ model PackagingDelivery {
   proformaId String?   @db.NVarChar(36)
   proforma   Proforma? @relation(fields: [proformaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  deliveryDate             DateTime @db.Date
-  deliveryDateJalali       String?  @db.NVarChar(10)
+  deliveryDate             DateTime  @db.Date
+  deliveryDateJalali       String?   @db.NVarChar(10)
   actualDeliveryDate       DateTime? @db.Date
-  actualDeliveryDateJalali String?  @db.NVarChar(10)
+  actualDeliveryDateJalali String?   @db.NVarChar(10)
 
   shippingMethod       String? @db.NVarChar(100)
   preDeliveryTestNotes String? @db.NVarChar(Max)
@@ -1053,7 +1090,7 @@ model PackingItem {
   boxNumber     String? @db.NVarChar(50)
 
   actualDeliveryDate       DateTime? @db.Date
-  actualDeliveryDateJalali String? @db.NVarChar(10)
+  actualDeliveryDateJalali String?   @db.NVarChar(10)
 
   @@index([deliveryId])
   @@map("packing_items")
@@ -1073,12 +1110,12 @@ model AfterSalesService {
   issueDescription String? @db.NVarChar(Max)
   actionsTaken     String? @db.NVarChar(Max)
 
-  startDate        DateTime @db.Date
-  startDateJalali  String?  @db.NVarChar(10)
+  startDate        DateTime  @db.Date
+  startDateJalali  String?   @db.NVarChar(10)
   endDate          DateTime? @db.Date
-  endDateJalali    String?  @db.NVarChar(10)
+  endDateJalali    String?   @db.NVarChar(10)
   returnDate       DateTime? @db.Date
-  returnDateJalali String?  @db.NVarChar(10)
+  returnDateJalali String?   @db.NVarChar(10)
 
   /// User-defined fields, keyed by the field id from `settings.customFields`.
   /// See the note on PackagingDelivery.customValues.
@@ -1118,7 +1155,9 @@ model AfterSalesServiceItem {
   @@map("after_sales_service_items")
 }
 
-/* ====================== project activity & referrals ===================== */
+/**
+ * ====================== project activity & referrals =====================
+ */
 
 model ProjectCategoryGroup {
   id        String  @id @default(uuid()) @db.NVarChar(36)
@@ -1223,11 +1262,13 @@ model ReferralMessage {
   @@map("referral_messages")
 }
 
-/* ================================== tasks ================================ */
+/**
+ * ================================== tasks ================================
+ */
 
 model Task {
-  id          String @id @default(uuid()) @db.NVarChar(36)
-  title       String @db.NVarChar(400)
+  id          String  @id @default(uuid()) @db.NVarChar(36)
+  title       String  @db.NVarChar(400)
   description String? @db.NVarChar(Max)
 
   relatedToType String? @db.NVarChar(50)
@@ -1243,10 +1284,10 @@ model Task {
   assignedToUserId String? @db.NVarChar(36)
   assignedToName   String? @db.NVarChar(200)
 
-  reminderEnabled Boolean @default(false)
-  reminderDate    DateTime? @db.Date
-  reminderDateJalali String? @db.NVarChar(10)
-  reminderTime    String? @db.NVarChar(5)
+  reminderEnabled    Boolean   @default(false)
+  reminderDate       DateTime? @db.Date
+  reminderDateJalali String?   @db.NVarChar(10)
+  reminderTime       String?   @db.NVarChar(5)
 
   customValues String? @db.NVarChar(Max)
 
@@ -1259,7 +1300,9 @@ model Task {
   @@map("tasks")
 }
 
-/* ========================= notes, audit, reference ======================= */
+/**
+ * ========================= notes, audit, reference =======================
+ */
 
 /// Free-form notes attachable to several record types (proforma, PO, project,
 /// packing list, service). One table with a discriminator rather than five.
@@ -1383,4 +1426,127 @@ model WorkflowFiring {
   @@unique([ruleId, entityId], map: "workflow_firings_rule_entity_uq")
   @@index([entityType, entityId])
   @@map("workflow_firings")
+}
+
+/**
+ * ============================== messaging ===============================
+ */
+
+/// One row per channel: how to reach the provider that sends it.
+///
+/// `config` holds credentials and is **never returned to a client** — the route
+/// answers with a masked summary instead, the same rule `passwordHash` follows.
+/// A save merges into what is stored, so leaving a secret field blank keeps the
+/// existing one rather than erasing it.
+model MessageProvider {
+  /// SMS | BALE | EMAIL — the channel is the identity, so there is exactly one
+  /// configuration per channel and no way to end up with two competing rows.
+  channel String @id @db.NVarChar(20)
+
+  active Boolean @default(false)
+  /// JSON. Secrets live in here and never leave the server.
+  config String? @db.NVarChar(Max)
+
+  /// The last test send, so the settings screen can say whether it works.
+  lastTestAt    DateTime?
+  lastTestOk    Boolean?
+  lastTestError String?   @db.NVarChar(Max)
+
+  updatedAt DateTime @updatedAt
+
+  @@map("message_providers")
+}
+
+/// A reusable message body with `{{placeholders}}`.
+model MessageTemplate {
+  id   String @id @default(uuid()) @db.NVarChar(36)
+  name String @db.NVarChar(200)
+
+  /// SMS | BALE | EMAIL — a template is written for a channel, because 70
+  /// characters of Persian and an email body are not the same piece of writing.
+  channel String @db.NVarChar(20)
+
+  /// Email only; ignored by the other two.
+  subject String? @db.NVarChar(400)
+  body    String  @db.NVarChar(Max)
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+
+  @@index([channel])
+  @@map("message_templates")
+}
+
+/// The outbox: every message this system has sent or means to send.
+///
+/// Manual sends and automated ones land in the same table on purpose — there is
+/// then one place that answers "what have we sent this customer", which is the
+/// question people actually ask.
+model Message {
+  id String @id @default(uuid()) @db.NVarChar(36)
+
+  channel       String  @db.NVarChar(20)
+  /// Phone number, Bale chat id or email address — whichever the channel needs.
+  recipient     String  @db.NVarChar(400)
+  recipientName String? @db.NVarChar(200)
+
+  subject String? @db.NVarChar(400)
+  body    String  @db.NVarChar(Max)
+
+  /// QUEUED | SENT | FAILED | CANCELLED
+  status String @db.NVarChar(20)
+
+  /// When it may go. A message scheduled for later, or held out of quiet hours,
+  /// simply has this in the future — there is no separate "held" state to get
+  /// out of step with the clock.
+  scheduledAt       DateTime
+  scheduledAtJalali String?   @db.NVarChar(10)
+  sentAt            DateTime?
+  sentAtJalali      String?   @db.NVarChar(10)
+
+  attempts          Int     @default(0)
+  lastError         String? @db.NVarChar(Max)
+  /// Whatever the provider called it, for chasing a message up with them.
+  providerMessageId String? @db.NVarChar(200)
+
+  /// True when the message was never really sent: the queue ran, the row was
+  /// written, the provider was not called. For trying a new rule out safely.
+  dryRun Boolean @default(false)
+
+  /**
+   * ----------------------------- provenance -----------------------------
+   */
+
+  customerId String?   @db.NVarChar(36)
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  projectId String?  @db.NVarChar(36)
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  templateId String?          @db.NVarChar(36)
+  template   MessageTemplate? @relation(fields: [templateId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  /// Which automation produced it, or null when a person sent it by hand.
+  workflowRuleId   String? @db.NVarChar(60)
+  workflowRuleName String? @db.NVarChar(200)
+
+  /// The record the trigger was about, for a message that belongs to neither a
+  /// customer nor a project — a purchase order, say.
+  entityType String? @db.NVarChar(40)
+  entityId   String? @db.NVarChar(36)
+
+  createdByUserId String? @db.NVarChar(36)
+  createdByName   String? @db.NVarChar(200)
+
+  createdAt DateTime @default(now())
+
+  @@index([status, scheduledAt])
+  @@index([customerId])
+  @@index([projectId])
+  @@index([createdAt])
+  @@map("messages")
 }

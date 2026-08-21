@@ -35,6 +35,10 @@ import { buildReportingTables } from "../src/reporting/flatten";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
 import { calculateProjectFinance, priceInWarehouseCurrency } from "../src/utils/finance";
+import {
+  CHANNELS, isWithinQuietHours, nextAllowedSendTime, renderTemplate, resolveRecipient,
+  retryDelayMs, shouldRetry, smsLength, templateVariables,
+} from "../src/utils/messaging";
 import { canSeeCosts } from "../src/server/auth";
 import {
   preserveLineCosts, redactCustomerValue, redactInquiry, redactProduct,
@@ -2109,6 +2113,146 @@ head("Warehouse price: stated in the currency the item is kept in");
     priceInWarehouseCurrency(sellingForeign, sellingRial, "دلار", "روبل", rateOf), null);
   eq("a rial item needs no rate", 
     priceInWarehouseCurrency(sellingForeign, sellingRial, "دلار", "ریال", rateOf), sellingRial);
+}
+
+
+/*
+ * Messaging: the rules between "a workflow matched" and "a message went".
+ *
+ * The automation half is not here because it already existed — sending is a
+ * third kind of *action* on the workflow engine, sharing its triggers, its
+ * conditions and its once-per-record firing log. What is new is the arithmetic
+ * and the guardrails, and that is what this covers.
+ */
+head("Messaging: what a text message costs to send");
+{
+  // Persian is outside GSM-7, so it goes as UCS-2: 70 in one part, 67 each
+  // once it splits, because the rest of that space carries the reassembly
+  // header. This is on the screen because it is money — three characters over
+  // the line doubles the bill, every send, and nothing else would say so.
+  eq("70 Persian characters is one part", smsLength("ا".repeat(70)).parts, 1);
+  eq("71 is two", smsLength("ا".repeat(71)).parts, 2);
+  eq("and 134 still two", smsLength("ا".repeat(134)).parts, 2);
+  eq("135 is three", smsLength("ا".repeat(135)).parts, 3);
+  ok("Persian forces the unicode allowance", smsLength("سلام").unicode);
+
+  eq("plain Latin gets 160", smsLength("a".repeat(160)).parts, 1);
+  eq("161 splits", smsLength("a".repeat(161)).parts, 2);
+  ok("and is not unicode", !smsLength("a".repeat(10)).unicode);
+  // One Persian letter in an English template drops the whole message to 70.
+  eq("a single Persian letter halves the allowance",
+    smsLength("a".repeat(100) + "ا").parts, 2);
+
+  eq("an empty body costs nothing", smsLength("").parts, 0);
+  eq("and reports the full allowance as remaining", smsLength("").remaining, 160);
+  eq("a full single part has none left", smsLength("ا".repeat(70)).remaining, 0);
+}
+
+head("Messaging: filling a template");
+{
+  const values = { customerName: "پتروشیمی آزمون", projectCode: "ATA-1405-001" };
+  eq("double braces are filled",
+    renderTemplate("سلام {{customerName}}", values), "سلام پتروشیمی آزمون");
+  eq("single braces too",
+    renderTemplate("پروژه {projectCode}", values), "پروژه ATA-1405-001");
+  eq("spacing inside the braces is tolerated",
+    renderTemplate("{{ customerName }}", values), "پتروشیمی آزمون");
+
+  /*
+   * An unknown placeholder is left as written, not blanked.
+   *
+   * «سلام {{customerNam}}» is obviously a broken template and gets fixed;
+   * «سلام » looks like a customer with no name and gets sent to somebody.
+   */
+  eq("a misspelt placeholder stays visible",
+    renderTemplate("سلام {{customerNam}}", values), "سلام {{customerNam}}");
+  eq("and so does one whose value is empty",
+    renderTemplate("سلام {{customerName}}", { customerName: "" }), "سلام {{customerName}}");
+
+  eq("the editor can list what a template needs",
+    templateVariables("{{a}} و {{b}} و {{a}}").join(","), "a,b");
+}
+
+head("Messaging: quiet hours");
+{
+  const at = (h: number, m = 0) => new Date(2026, 7, 20, h, m, 0, 0);
+  const night = { from: "22:00", to: "08:00" };
+
+  // A window that wraps midnight is two ranges; the naive comparison gets it
+  // backwards and would send at 3am while holding messages all afternoon.
+  ok("23:00 is inside a wrapping window", isWithinQuietHours(at(23), night));
+  ok("03:00 is too", isWithinQuietHours(at(3), night));
+  ok("14:00 is not", !isWithinQuietHours(at(14), night));
+  ok("08:00 exactly is allowed — the window has closed", !isWithinQuietHours(at(8), night));
+  ok("22:00 exactly is not", isWithinQuietHours(at(22), night));
+
+  const lunch = { from: "12:00", to: "13:00" };
+  ok("a same-day window works too", isWithinQuietHours(at(12, 30), lunch));
+  ok("and lets the afternoon through", !isWithinQuietHours(at(13, 30), lunch));
+
+  ok("no window configured holds nothing", !isWithinQuietHours(at(3), { from: null, to: null }));
+  ok("nor does an unparseable one", !isWithinQuietHours(at(3), { from: "بیست", to: "هشت" }));
+
+  // Held, never dropped: the message waits for the window to open.
+  eq("a 3am message waits until 08:00",
+    nextAllowedSendTime(at(3), night).getHours(), 8);
+  eq("on the same day", nextAllowedSendTime(at(3), night).getDate(), 20);
+  eq("an 11pm message waits until the next morning",
+    nextAllowedSendTime(at(23), night).getDate(), 21);
+  eq("also at 08:00", nextAllowedSendTime(at(23), night).getHours(), 8);
+  eq("an afternoon message is not delayed at all",
+    nextAllowedSendTime(at(14), night).getHours(), 14);
+}
+
+head("Messaging: retries");
+{
+  // The failures worth retrying are transient — a timeout, a gateway restart, a
+  // rate limit. Hammering a provider that is refusing us gets an account blocked.
+  eq("the first retry waits a minute", retryDelayMs(1), 60_000);
+  eq("the second five", retryDelayMs(2), 5 * 60_000);
+  eq("the third fifteen", retryDelayMs(3), 15 * 60_000);
+  eq("and it stops growing there", retryDelayMs(9), 15 * 60_000);
+
+  ok("three attempts in, there is another left", shouldRetry(3));
+  ok("four is the end of it", !shouldRetry(4));
+}
+
+head("Messaging: who the message goes to");
+{
+  const contact = { name: "آقای احمدی", mobile: "09121234567", email: "a@b.com" };
+  const customer = { name: "پتروشیمی آزمون", mobile: "09339876543", email: "info@petro.com" };
+
+  eq("the named contact is preferred",
+    resolveRecipient([contact, customer], CHANNELS.SMS).recipient?.address, "09121234567");
+  eq("the channel decides which detail is used",
+    resolveRecipient([contact, customer], CHANNELS.EMAIL).recipient?.address, "a@b.com");
+  eq("and the customer is the fallback",
+    resolveRecipient([null, customer], CHANNELS.SMS).recipient?.address, "09339876543");
+  // A contact who lacks the detail this channel needs falls through.
+  eq("a contact with no chat id gives way to one who has",
+    resolveRecipient([contact, { ...customer, baleChatId: "555" }], CHANNELS.BALE)
+      .recipient?.address, "555");
+
+  /*
+   * An opt-out on the person you meant to write to stops the message.
+   *
+   * Not "try the next one". Falling through to the company's own number when
+   * the individual has opted out is how a business keeps texting somebody who
+   * asked it to stop, through a different door.
+   */
+  eq("an opted-out contact stops the send",
+    resolveRecipient([{ ...contact, doNotContact: true }, customer], CHANNELS.SMS).problem,
+    "OPTED_OUT");
+  eq("with no recipient at all",
+    resolveRecipient([{ ...contact, doNotContact: true }, customer], CHANNELS.SMS).recipient,
+    null);
+
+  eq("nobody named is its own answer",
+    resolveRecipient([], CHANNELS.SMS).problem, "NO_CONTACT");
+  eq("a channel nobody has the details for says so",
+    resolveRecipient([{ name: "بی‌شماره" }], CHANNELS.SMS).problem, "NO_ADDRESS");
+  eq("and an unknown channel is refused before anything else",
+    resolveRecipient([contact], "FAX" as never).problem, "NO_CHANNEL");
 }
 
 

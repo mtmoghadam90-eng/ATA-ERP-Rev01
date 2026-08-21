@@ -4,7 +4,8 @@ import { loadSettings } from "../settings";
 import { getTodayShamsi, addDaysToShamsi } from "../../dateUtils";
 import { notifyModuleResponsible } from "./notificationService";
 import { expandDateFields } from "../dates";
-import type { WorkflowSchedule } from "../../utils/workflowSchedule";
+import { isChannel, renderTemplate } from "../../utils/messaging";
+import { queueForCustomer } from "./messaging/messageService";
 
 /**
  * Workflow automation system.
@@ -13,34 +14,17 @@ import type { WorkflowSchedule } from "../../utils/workflowSchedule";
  * Rules can create tasks, send notifications, or perform other automated actions.
  */
 
-export interface WorkflowRule {
-  id: string;
-  name: string;
-  active: boolean;
-  triggerType: string;
-  /** Set on a time-based rule — see utils/workflowSchedule.ts. */
-  schedule?: WorkflowSchedule;
-  conditions: Array<{
-    field: string;
-    operator: "equals" | "not_equals" | "greater_than" | "less_than";
-    value: string | number;
-  }>;
-  actions: Array<{
-    type: "create_task" | "send_notification";
-    taskConfig?: {
-      titleTemplate: string;
-      descTemplate: string;
-      assignedTo: string;
-      priority: string;
-      dueDaysOffset: number;
-    };
-    notificationConfig?: {
-      module: string;
-      titleTemplate: string;
-      descTemplate: string;
-    };
-  }>;
-}
+/**
+ * The rule shape, from `src/types.ts`.
+ *
+ * Re-exported rather than redeclared. This file used to carry its own copy, and
+ * a copy is how an action type gets added to one and not the other: the editor
+ * would offer «ارسال پیام» and the engine would silently skip it, because the
+ * engine's own definition said no such action existed.
+ */
+export type { WorkflowRule } from "../../types";
+import type { WorkflowRule } from "../../types";
+
 
 /**
  * Turns whatever a rule names an assignee into the pair the task table stores.
@@ -196,6 +180,79 @@ export async function executeRule(
             relatedToName: enrichedPayload.projectName || null,
           },
         });
+      } else if (action.type === "send_message" && action.messageConfig) {
+        const config = action.messageConfig;
+
+        /*
+         * The template is read here, not in the rule.
+         *
+         * A rule stores the template's id so that editing the wording in one
+         * place changes every rule that uses it — which is the entire reason
+         * templates exist. A body written into the rule itself is the fallback
+         * for a one-off.
+         */
+        const template = config.templateId
+          ? await db.messageTemplate.findUnique({ where: { id: config.templateId } })
+          : null;
+
+        const body = renderTemplate(
+          config.bodyTemplate || template?.body || "",
+          enrichedPayload,
+        ).trim();
+
+        if (body) {
+          /*
+           * When it should arrive.
+           *
+           * `delayDays` moves the day and `sendAtTime` sets the hour on
+           * whichever day it lands, so "three days before the expiry, at nine
+           * in the morning" is two fields rather than a cron expression. Quiet
+           * hours are applied after this by the queue, so a rule that asks for
+           * an unsociable hour is held rather than obeyed.
+           */
+          const when = new Date();
+          if (Number(config.delayDays) > 0) {
+            when.setDate(when.getDate() + Number(config.delayDays));
+          }
+          const at = /^(\d{1,2}):(\d{2})$/.exec(String(config.sendAtTime ?? "").trim());
+          if (at) when.setHours(Number(at[1]), Number(at[2]), 0, 0);
+
+          const outcome = await queueForCustomer({
+            customerId: enrichedPayload.customerId ?? null,
+            projectId: enrichedPayload.projectId ?? null,
+            channel: isChannel(config.channel) ? config.channel : null,
+            subject: renderTemplate(
+              config.subjectTemplate || template?.subject || "",
+              enrichedPayload,
+            ) || null,
+            body,
+            scheduledAt: when,
+            templateId: template?.id ?? null,
+            workflowRuleId: rule.id,
+            workflowRuleName: rule.name,
+            entityType: enrichedPayload.entityType ?? null,
+            entityId: enrichedPayload.entityId ?? enrichedPayload.id ?? null,
+            createdByName: `اتوماسیون: ${rule.name}`,
+          });
+
+          /*
+           * A rule that cannot reach anybody is worth knowing about.
+           *
+           * "This customer has no mobile number" or "they opted out" is a fact
+           * about the data, and a rule that silently does nothing is the kind
+           * of automation people stop trusting. It goes to whoever is
+           * responsible for the module rather than to a log nobody reads.
+           */
+          if (!outcome.queued && outcome.reason) {
+            await notifyModuleResponsible(
+              "پیام‌ها",
+              `پیام خودکار ارسال نشد: ${rule.name}`,
+              outcome.reason,
+              user,
+              enrichedPayload.projectId || null,
+            );
+          }
+        }
       } else if (action.type === "send_notification" && action.notificationConfig) {
         const config = action.notificationConfig;
 
