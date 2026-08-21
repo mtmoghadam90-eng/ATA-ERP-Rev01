@@ -34,6 +34,7 @@ import React, { useState } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import PriceCalculatorModal from "../src/components/PriceCalculatorModal";
+import MessagingView from "../src/components/MessagingView";
 import type { ExchangeRate } from "../src/types";
 
 let pass = 0;
@@ -102,6 +103,81 @@ if (priceInput) {
 }
 
 act(() => { root.unmount(); });
+
+/*
+ * A screen that loads its own data, under a parent that re-renders.
+ *
+ * The second bug of the same family, and the more expensive one. The messaging
+ * tabs list their `onError` prop among the dependencies of the `useCallback`
+ * that fetches — right, in itself. But the parent built that callback inline,
+ * so every render of the parent produced a new one, so `load` was new, so the
+ * effect watching it fired again.
+ *
+ * The parent here is `App`, which re-renders whenever the sidebar badge poll
+ * comes back (a minute) and on every live-data change event (any write, from
+ * anywhere). So the screen refetched over and over, scrolling back to the top
+ * each time — which is exactly how it was reported.
+ *
+ * Nothing about this is visible to the type-checker or the rules tests: every
+ * value is correct and every hook is called in order. It needs a render, and a
+ * parent with a life of its own.
+ */
+head("Messaging: a parent re-render does not refetch the screen");
+
+{
+  let calls = 0;
+  const g2 = globalThis as unknown as Record<string, unknown>;
+  const realFetch = g2.fetch;
+
+  g2.fetch = async () => {
+    calls++;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, rows: [], total: 0, page: 1, pageSize: 50, totalPages: 1, summary: {}, templates: [], providers: [] }),
+      text: async () => "{}",
+    } as unknown as Response;
+  };
+
+  let bumpParent = () => {};
+
+  /** Behaves like App: it re-renders on its own, for reasons of its own. */
+  function Host() {
+    const [, setTick] = useState(0);
+    bumpParent = () => setTick((n) => n + 1);
+    return React.createElement(MessagingView, {
+      settings: { customFields: [] } as never,
+      currentUser: { id: "u1", permissions: { settings: true } } as never,
+    });
+  }
+
+  const host2 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root2 = createRoot(host2);
+
+  const settle = async () => {
+    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  await act(async () => { root2.render(React.createElement(Host)); });
+  await settle();
+  const afterMount = calls;
+  ok("the screen loaded once on mount", afterMount > 0, afterMount);
+
+  // The sidebar badges come back; somebody saves a record somewhere; a list
+  // revalidates. None of it is about this screen, and none of it may make it
+  // fetch again and jump back to the top.
+  for (let i = 0; i < 5; i++) {
+    await act(async () => { bumpParent(); });
+    await settle();
+  }
+
+  ok("and did not reload when the parent re-rendered",
+    calls === afterMount, { afterMount, afterFiveRenders: calls });
+
+  act(() => { root2.unmount(); });
+  g2.fetch = realFetch;
+}
+
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
