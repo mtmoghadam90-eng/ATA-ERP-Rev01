@@ -84,6 +84,18 @@ export interface Customer {
   /** The computed half, read-only. Null until a recalculation has run. */
   valueMetrics?: CustomerValueMetricsRow | null;
 
+  /**
+   * Asked us not to send them messages.
+   *
+   * Checked before every send, manual or automated. An opt-out on the contact a
+   * project names stops the message rather than falling through to the
+   * company's own number — falling through is how a business keeps texting
+   * somebody who asked it to stop, through a different door.
+   */
+  doNotContact?: boolean;
+  /** Their chat id on Bale, if they have given us one. */
+  baleChatId?: string;
+
   // Custom Field values
   customValues?: Record<string, any>;
 
@@ -463,6 +475,10 @@ export interface Project {
     priority: 'پایین' | 'متوسط' | 'بالا' | 'فوری';
     dueDaysOffset?: number;
   }[];
+  /** Who to write to about this job, and how — see the messaging module. */
+  messagingContactId?: string;
+  messagingChannel?: 'SMS' | 'BALE' | 'EMAIL';
+
 }
 
 export interface Transaction {

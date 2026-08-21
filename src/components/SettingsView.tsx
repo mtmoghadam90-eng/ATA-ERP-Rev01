@@ -3403,6 +3403,16 @@ export default function SettingsView({
                                           dueDaysOffset: 3
                                         }
                                       };
+                                    } else if (e.target.value === 'send_message') {
+                                      updatedActs[actIdx] = {
+                                        id: updatedActs[actIdx].id,
+                                        type: 'send_message',
+                                        messageConfig: {
+                                          bodyTemplate: '{customerName} عزیز، وضعیت پروژه {projectName} به {newStatus} تغییر کرد.',
+                                          delayDays: 0,
+                                          sendAtTime: '09:00',
+                                        }
+                                      };
                                     } else {
                                       updatedActs[actIdx] = {
                                         id: updatedActs[actIdx].id,
@@ -3420,6 +3430,7 @@ export default function SettingsView({
                                 >
                                   <option value="create_task">ایجاد وظیفه جدید (تسک)</option>
                                   <option value="send_notification">ارسال اعلان درون‌برنامه‌ای</option>
+                                  <option value="send_message">ارسال پیام به مشتری (پیامک/بله/ایمیل)</option>
                                 </select>
                               </div>
 
@@ -3541,6 +3552,94 @@ export default function SettingsView({
                                       setEditingRule({ ...editingRule, actions: updatedActs });
                                     }}
                                     className="w-full border border-slate-200 rounded-lg p-2.5 bg-white text-left font-mono"
+                                    dir="ltr"
+                                  />
+                                </div>
+                              </div>
+                            )}
+
+                            {/*
+                              Sending a customer a message.
+
+                              A third kind of action on this same engine, not a
+                              second engine: the trigger, the conditions and the
+                              once-per-record firing log above are shared with
+                              the other two. The message itself goes into the
+                              outbox, where quiet hours and retries apply to it
+                              like any other.
+                            */}
+                            {act.type === 'send_message' && act.messageConfig && (
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="md:col-span-3">
+                                  <label className="block text-slate-600 text-[11px] font-bold mb-1">
+                                    متن پیام
+                                  </label>
+                                  <textarea
+                                    value={act.messageConfig.bodyTemplate ?? ''}
+                                    onChange={(e) => {
+                                      const updatedActs = [...editingRule.actions];
+                                      updatedActs[actIdx].messageConfig!.bodyTemplate = e.target.value;
+                                      setEditingRule({ ...editingRule, actions: updatedActs });
+                                    }}
+                                    rows={3}
+                                    placeholder="{customerName} عزیز، سفارش پروژه {projectName} وارد مرحله ترخیص گمرک شد."
+                                    className="w-full border border-slate-200 rounded-lg p-2.5 bg-white leading-relaxed"
+                                  />
+                                  <p className="text-[10px] text-slate-400 mt-1">
+                                    متغیرها: {'{customerName}'} · {'{projectName}'} · {'{projectCode}'} · {'{newStatus}'}
+                                  </p>
+                                </div>
+
+                                <div>
+                                  <label className="block text-slate-600 text-[11px] font-bold mb-1">روش ارسال</label>
+                                  <select
+                                    value={act.messageConfig.channel ?? ''}
+                                    onChange={(e) => {
+                                      const updatedActs = [...editingRule.actions];
+                                      updatedActs[actIdx].messageConfig!.channel =
+                                        (e.target.value || undefined) as 'SMS' | 'BALE' | 'EMAIL' | undefined;
+                                      setEditingRule({ ...editingRule, actions: updatedActs });
+                                    }}
+                                    className="w-full border border-slate-200 rounded-lg p-2.5 bg-white"
+                                  >
+                                    {/* The project's own preference, which is what most rules want. */}
+                                    <option value="">روش ترجیحی پروژه</option>
+                                    <option value="SMS">پیامک</option>
+                                    <option value="BALE">بله</option>
+                                    <option value="EMAIL">ایمیل</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="block text-slate-600 text-[11px] font-bold mb-1">
+                                    با چند روز تأخیر
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={act.messageConfig.delayDays ?? 0}
+                                    onChange={(e) => {
+                                      const updatedActs = [...editingRule.actions];
+                                      updatedActs[actIdx].messageConfig!.delayDays = Math.max(0, Number(e.target.value) || 0);
+                                      setEditingRule({ ...editingRule, actions: updatedActs });
+                                    }}
+                                    className="w-full border border-slate-200 rounded-lg p-2.5 bg-white font-mono text-center"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-slate-600 text-[11px] font-bold mb-1">
+                                    ساعت ارسال
+                                  </label>
+                                  <input
+                                    type="time"
+                                    value={act.messageConfig.sendAtTime ?? ''}
+                                    onChange={(e) => {
+                                      const updatedActs = [...editingRule.actions];
+                                      updatedActs[actIdx].messageConfig!.sendAtTime = e.target.value;
+                                      setEditingRule({ ...editingRule, actions: updatedActs });
+                                    }}
+                                    className="w-full border border-slate-200 rounded-lg p-2.5 bg-white font-mono text-center"
                                     dir="ltr"
                                   />
                                 </div>

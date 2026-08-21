@@ -213,6 +213,9 @@ export default function CustomersView({
   const [address, setAddress] = useState('');
   const [notes, setNotes] = useState('');
   const [tags, setTags] = useState('');
+  /** Messaging: has this customer asked us not to write to them, and their Bale id. */
+  const [doNotContact, setDoNotContact] = useState(false);
+  const [baleChatId, setBaleChatId] = useState('');
   const [moduleAgreements, setModuleAgreements] = useState<{id: string; moduleName: string; text: string; createdAt: string;}[]>([]);
 
   // Legal-specific (مشتری حقوقی)
@@ -396,6 +399,8 @@ export default function CustomersView({
     setAddress('');
     setNotes('');
     setTags('');
+    setDoNotContact(false);
+    setBaleChatId('');
     setModuleAgreements([]);
 
     setCompanyName('');
@@ -445,6 +450,8 @@ export default function CustomersView({
     setAddress(customer.address || '');
     setNotes(customer.notes || '');
     setTags(customer.tags || '');
+    setDoNotContact(customer.doNotContact === true);
+    setBaleChatId(customer.baleChatId || '');
     setModuleAgreements(customer.moduleAgreements || []);
     setValueFields({
       consumption: customer.potentialConsumption ?? null,
@@ -601,6 +608,8 @@ export default function CustomersView({
         address,
         notes,
         tags,
+        doNotContact,
+        baleChatId: baleChatId.trim() || undefined,
         customValues,
         // The manual customer-value answers. The score and rank are computed
         // server-side from these; nothing derived is sent.
@@ -1738,6 +1747,49 @@ export default function CustomersView({
                     placeholder="برچسب‌ها را با کاما جدا کنید (مثال: کارفرما، خوش‌حساب، EPC)"
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
                   />
+                </div>
+
+                {/*
+                  Messaging preferences.
+
+                  The opt-out is checked before every send, manual or automated,
+                  and an opt-out on the contact a project names stops the
+                  message rather than falling through to the company's own
+                  number — falling through is how a business keeps writing to
+                  somebody who asked it to stop, through a different door.
+                */}
+                <div className="space-y-3 md:col-span-2 border border-slate-200 bg-slate-50/60 rounded-xl p-4">
+                  <label className="text-xs font-bold text-slate-700">تنظیمات ارسال پیام</label>
+
+                  <label className="flex items-start gap-2 text-xs text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={doNotContact}
+                      onChange={(e) => setDoNotContact(e.target.checked)}
+                      className="accent-rose-500 mt-0.5"
+                    />
+                    <span>
+                      <span className="font-bold text-rose-700">این مخاطب دریافت پیام را لغو کرده است</span>
+                      <span className="block text-[10px] text-slate-500 mt-0.5">
+                        با فعال بودن این گزینه، هیچ پیامی — دستی یا خودکار — برای این مخاطب ارسال نمی‌شود.
+                      </span>
+                    </span>
+                  </label>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-slate-600">شناسه گفتگو در بله</label>
+                    <input
+                      type="text"
+                      value={baleChatId}
+                      onChange={(e) => setBaleChatId(e.target.value)}
+                      dir="ltr"
+                      placeholder="برای ارسال در بله لازم است"
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono text-left focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none"
+                    />
+                    <p className="text-[10px] text-slate-400">
+                      مخاطب باید ابتدا گفتگو با ربات شرکت را در بله شروع کند تا این شناسه ساخته شود.
+                    </p>
+                  </div>
                 </div>
 
                 {/* توافقات خاص و یادآور خودکار (تفکیک شده بر اساس ماژول) */}

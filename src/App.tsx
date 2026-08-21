@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
+import MessagingView from './components/MessagingView';
 import DashboardView from './components/DashboardView';
 import CustomersView from './components/CustomersView';
 import ProductsView from './components/ProductsView';
@@ -357,6 +358,7 @@ export default function App() {
               activeView === 'settings' ? 'تنظیمات سیستم' : 
               activeView === 'transactions' ? 'دریافت و پرداخت ریالی' :
               
+              activeView === 'messaging' ? 'ارسال پیام' :
               activeView === 'packagingDelivery' ? 'بسته‌بندی و تحویل کالا' :
               activeView === 'afterSalesServices' ? 'خدمات پس از فروش' :
 
@@ -476,6 +478,13 @@ export default function App() {
         return (
           // Reads its own data from the API, scoped by assignment.
           <TasksView
+            settings={store.settings}
+            currentUser={store.currentUser}
+          />
+        );
+      case 'messaging':
+        return (
+          <MessagingView
             settings={store.settings}
             currentUser={store.currentUser}
           />

@@ -2144,8 +2144,8 @@ head("Messaging: what a text message costs to send");
     smsLength("a".repeat(100) + "ا").parts, 2);
 
   eq("an empty body costs nothing", smsLength("").parts, 0);
-  eq("and reports the full allowance as remaining", smsLength("").remaining, 160);
-  eq("a full single part has none left", smsLength("ا".repeat(70)).remaining, 0);
+  eq("and reports the full allowance as remaining", smsLength("").charactersLeft, 160);
+  eq("a full single part has none left", smsLength("ا".repeat(70)).charactersLeft, 0);
 }
 
 head("Messaging: filling a template");

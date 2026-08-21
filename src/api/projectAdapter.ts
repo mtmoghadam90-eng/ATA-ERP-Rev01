@@ -44,6 +44,8 @@ export function rowToProject(row: ProjectRow): Project {
     marketingChannel: row.marketingChannel ?? undefined,
     leadQuality: row.leadQuality ?? undefined,
     salesExpert: row.salesExpert ?? undefined,
+    messagingContactId: row.messagingContactId ?? undefined,
+    messagingChannel: (row.messagingChannel ?? undefined) as Project["messagingChannel"],
     // Printed on the row or written into the Excel export, and none of it used
     // to arrive — the row adapter stopped at the pipeline figures.
     lossReason: row.lossReason ?? undefined,
@@ -77,6 +79,8 @@ export function detailToProject(detail: ProjectDetail): Project {
     customerInquiryNumber: detail.customerInquiryNumber ?? undefined,
     referrerName: detail.referrerName ?? undefined,
     salesExpert: detail.salesExpert ?? undefined,
+    messagingContactId: detail.messagingContactId ?? undefined,
+    messagingChannel: (detail.messagingChannel ?? undefined) as Project["messagingChannel"],
     // The view shows names; the record stores both string fields and FK ids
     /*
      * The linked customer's *current* name wins over the stored text.
@@ -156,6 +160,8 @@ export function projectToWriteInput(
     communicationMethod: project.communicationMethod ?? null,
     customerInquiryNumber: project.customerInquiryNumber ?? null,
     salesExpert: project.salesExpert ?? null,
+    messagingContactId: project.messagingContactId ?? null,
+    messagingChannel: project.messagingChannel ?? null,
     financialContact: project.financialContact ?? null,
     technicalContact: project.technicalContact ?? null,
     endUser: project.endUser ?? null,

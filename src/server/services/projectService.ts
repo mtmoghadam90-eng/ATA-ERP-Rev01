@@ -118,6 +118,8 @@ const LIST_SELECT = {
   marketingChannel: true,
   leadQuality: true,
   salesExpert: true,
+  messagingContactId: true,
+  messagingChannel: true,
   ownerUserId: true,
   createdAt: true,
   // Printed on the grid row or in the Excel export, and none of it used to
@@ -310,6 +312,9 @@ export interface ProjectScalarInput {
   communicationMethod?: string | null;
   customerInquiryNumber?: string | null;
   salesExpert?: string | null;
+  /** Who to write to about this job, and how — see the messaging module. */
+  messagingContactId?: string | null;
+  messagingChannel?: string | null;
   financialContact?: string | null;
   technicalContact?: string | null;
   endUser?: string | null;
@@ -362,6 +367,8 @@ function scalarData(input: ProjectInput): Record<string, unknown> {
   if ("communicationMethod" in input) set("communicationMethod", toNullableString(input.communicationMethod, 100));
   if ("customerInquiryNumber" in input) set("customerInquiryNumber", toNullableString(input.customerInquiryNumber, 100));
   if ("salesExpert" in input) set("salesExpert", toNullableString(input.salesExpert, 200));
+  if ("messagingContactId" in input) set("messagingContactId", toNullableString(input.messagingContactId, 36));
+  if ("messagingChannel" in input) set("messagingChannel", toNullableString(input.messagingChannel, 20));
   if ("financialContact" in input) set("financialContact", toNullableString(input.financialContact, 200));
   if ("technicalContact" in input) set("technicalContact", toNullableString(input.technicalContact, 200));
   if ("endUser" in input) set("endUser", toNullableString(input.endUser, 200));
