@@ -113,6 +113,7 @@ export const KEY_PERMISSION: Record<string, string | null> = {
   erp_packaging_deliveries: "packagingDelivery",
   erp_after_sales_services: "packagingDelivery",
   erp_project_category_groups: "projects",
+  erp_messaging: "messaging",
   // Readable by everyone (as a name directory — see toUserDirectory); writing is
   // gated separately by USERS_WRITE_PERMISSION.
   erp_users: null,

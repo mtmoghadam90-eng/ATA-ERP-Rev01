@@ -84,6 +84,18 @@ export interface Customer {
   /** The computed half, read-only. Null until a recalculation has run. */
   valueMetrics?: CustomerValueMetricsRow | null;
 
+  /**
+   * Asked us not to send them messages.
+   *
+   * Checked before every send, manual or automated. An opt-out on the contact a
+   * project names stops the message rather than falling through to the
+   * company's own number — falling through is how a business keeps texting
+   * somebody who asked it to stop, through a different door.
+   */
+  doNotContact?: boolean;
+  /** Their chat id on Bale, if they have given us one. */
+  baleChatId?: string;
+
   // Custom Field values
   customValues?: Record<string, any>;
 
@@ -463,6 +475,10 @@ export interface Project {
     priority: 'پایین' | 'متوسط' | 'بالا' | 'فوری';
     dueDaysOffset?: number;
   }[];
+  /** Who to write to about this job, and how — see the messaging module. */
+  messagingContactId?: string;
+  messagingChannel?: 'SMS' | 'BALE' | 'EMAIL';
+
 }
 
 export interface Transaction {
@@ -718,6 +734,8 @@ export interface User {
     settings: boolean;
     users: boolean;
     packagingDelivery?: boolean;
+    /** The messaging module: templates, the outbox, and sending by hand. */
+    messaging?: boolean;
     /**
      * Not a screen — the only flag here that is not.
      *
@@ -909,7 +927,7 @@ export interface WorkflowRule {
   }[];
   actions: {
     id: string;
-    type: 'create_task' | 'send_notification';
+    type: 'create_task' | 'send_notification' | 'send_message';
     taskConfig?: {
       titleTemplate: string;
       descTemplate: string;
@@ -921,6 +939,30 @@ export interface WorkflowRule {
       titleTemplate: string;
       descTemplate: string;
       module: string;
+    };
+    /**
+     * Writes a message to the customer into the outbox.
+     *
+     * A third kind of *action* on the engine that already exists, not a second
+     * engine: the twenty-one event triggers, the time-based one, the conditions
+     * and the once-per-record firing log are all shared with the other two
+     * action types, so «هر وقت وضعیت سفارش به ترخیص گمرک رسید به مشتری خبر بده»
+     * is a rule rather than any new code.
+     */
+    messageConfig?: {
+      /** A saved template, or a body written into the rule itself. */
+      templateId?: string;
+      bodyTemplate?: string;
+      subjectTemplate?: string;
+      /**
+       * Absent means "whatever the project prefers" — which is the setting on
+       * the project form, and the answer most rules want.
+       */
+      channel?: 'SMS' | 'BALE' | 'EMAIL';
+      /** Days to wait before it goes out. Negative is not meaningful here. */
+      delayDays?: number;
+      /** "HH:MM" — the hour it should arrive at, on whichever day it lands. */
+      sendAtTime?: string;
     };
   }[];
 }

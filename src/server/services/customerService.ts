@@ -303,6 +303,8 @@ const LIST_SELECT = {
   province: true,
   city: true,
   tags: true,
+  doNotContact: true,
+  baleChatId: true,
   // The proforma form derives the honorific from it, so it cannot wait for the
   // detail record — the form has only a row when the buyer is chosen.
   gender: true,
@@ -444,6 +446,9 @@ export interface CustomerInput {
   notes?: string | null;
   tags?: string | null;
   customValues?: string | null;
+  /** Asked us not to send them messages — see the messaging module. */
+  doNotContact?: boolean;
+  baleChatId?: string | null;
   ownerUserId?: string | null;
 
   /**

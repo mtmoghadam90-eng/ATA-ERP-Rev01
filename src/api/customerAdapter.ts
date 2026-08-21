@@ -47,6 +47,8 @@ export function rowToCustomer(row: CustomerRow): Customer {
     province: row.province ?? undefined,
     city: row.city ?? undefined,
     tags: row.tags ?? undefined,
+    doNotContact: row.doNotContact ?? false,
+    baleChatId: row.baleChatId ?? undefined,
     // The grid has a column for each of these — «حوزه فعالیت / سمت» shows the
     // position for a natural person, and «شخص کلیدی» the contact of a company.
     // Both were read straight off the row and neither was mapped here, so both
@@ -183,6 +185,8 @@ export function customerToWriteInput(customer: Partial<Customer>): CustomerWrite
     address: customer.address ?? null,
     notes: customer.notes ?? null,
     tags: customer.tags ?? null,
+    doNotContact: customer.doNotContact ?? false,
+    baleChatId: customer.baleChatId ?? null,
     customValues:
       customer.customValues && Object.keys(customer.customValues).length > 0
         ? JSON.stringify(customer.customValues)

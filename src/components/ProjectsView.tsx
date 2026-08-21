@@ -25,6 +25,7 @@ import { getCodeError, cleanCode } from '../utils/documentCodes';
 import ConfirmModal from './ConfirmModal';
 import QuickAddModal from './QuickAddModal';
 import { SearchableSelect } from './SearchableSelect';
+import { ALL_CHANNELS, CHANNEL_LABELS } from '../utils/messaging';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { Project, Customer, Product, ERPSettings, User as UserType } from '../types';
 import { ApiError } from '../api/client';
@@ -257,6 +258,9 @@ export default function ProjectsView({
   const [itemsNeeded, setItemsNeeded] = useState<any[]>([]);
   const [lossReason, setLossReason] = useState("");
   const [salesExpert, setSalesExpert] = useState("");
+  /** Who to write to about this job, and how — see the messaging module. */
+  const [messagingContactId, setMessagingContactId] = useState("");
+  const [messagingChannel, setMessagingChannel] = useState("");
   const [marketingChannel, setMarketingChannel] = useState("");
   const [leadQuality, setLeadQuality] = useState("متوسط");
   const [referrerName, setReferrerName] = useState("");
@@ -650,6 +654,8 @@ export default function ProjectsView({
     // Whoever is opening the form is nearly always the expert on the
     // opportunity; it stays editable for the times they are not.
     setSalesExpert(currentUser?.fullName || "");
+    setMessagingContactId("");
+    setMessagingChannel("");
     // The first configured choice, not a literal: a literal the list does not
     // offer makes the select show its first option while the form saves the
     // literal — the value shown and the value stored then disagree.
@@ -704,6 +710,8 @@ export default function ProjectsView({
     setItemsNeeded(proj.itemsNeeded || []);
     setLossReason(proj.lossReason || "");
     setSalesExpert(proj.salesExpert || "");
+    setMessagingContactId(proj.messagingContactId || "");
+    setMessagingChannel(proj.messagingChannel || "");
     setMarketingChannel(proj.marketingChannel || "تماس مستقیم");
     setLeadQuality(proj.leadQuality || "متوسط");
     setReferrerName(proj.referrerName || "");
@@ -767,6 +775,8 @@ export default function ProjectsView({
       lossReason: status === "باخته" ? lossReason : void 0,
       // New Fields
       salesExpert,
+      messagingContactId: messagingContactId || undefined,
+      messagingChannel: (messagingChannel || undefined) as Project["messagingChannel"],
       marketingChannel,
       leadQuality,
       referrerName,
@@ -3501,6 +3511,47 @@ export default function ProjectsView({
                       <option value="">-- انتخاب کارشناس فروش --</option>
                       {users.map(u => (
                         <option key={u.id} value={u.fullName}>{u.fullName}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/*
+                    Who to write to about this job, and how.
+
+                    Both optional: a project that says nothing falls back to the
+                    customer's own details, which is what most jobs want. Naming
+                    a contact matters when the buyer is a company and the person
+                    following the shipment is one individual inside it.
+                  */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500">گیرنده پیام‌های این پروژه</label>
+                    <select
+                      value={messagingContactId}
+                      onChange={(e) => setMessagingContactId(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
+                    >
+                      <option value="">-- خود مشتری --</option>
+                      {(customers.find(c => c.id === customerId)?.linkedCustomerIds || [])
+                        .map(id => customers.find(c => c.id === id))
+                        .filter(Boolean)
+                        .map(person => (
+                          <option key={person!.id} value={person!.id}>
+                            {`${person!.firstName || ''} ${person!.lastName || ''}`.trim() || person!.companyName}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500">روش ارسال ترجیحی</label>
+                    <select
+                      value={messagingChannel}
+                      onChange={(e) => setMessagingChannel(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
+                    >
+                      <option value="">-- پیش‌فرض (پیامک) --</option>
+                      {ALL_CHANNELS.map(c => (
+                        <option key={c} value={c}>{CHANNEL_LABELS[c]}</option>
                       ))}
                     </select>
                   </div>

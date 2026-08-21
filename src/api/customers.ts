@@ -10,6 +10,9 @@ import { ListResponse, api } from "./client";
  */
 
 export interface CustomerRow {
+  /** Opt-out and Bale chat id — see the messaging module. */
+  doNotContact: boolean;
+  baleChatId: string | null;
   id: string;
   customerType: string;
   status: string;
@@ -126,6 +129,8 @@ export interface CustomerReferences {
 }
 
 export interface CustomerWriteInput {
+  doNotContact?: boolean;
+  baleChatId?: string | null;
   customerType: string;
   companyName: string;
   status?: string;

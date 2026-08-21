@@ -48,6 +48,7 @@ const WRITABLE: (keyof CustomerInput)[] = [
   "customerType", "status", "companyName", "firstName", "lastName", "gender",
   "position", "economicCode", "industry", "keyPerson", "phone", "mobile",
   "email", "province", "city", "address", "notes", "tags", "customValues",
+  "doNotContact", "baleChatId",
   // The manual half of customer value. Everything computed — the rank, the
   // scores, the gross profit — is deliberately absent: a client that could set
   // its own rank could set it to A.

@@ -92,6 +92,9 @@ export interface ProjectDocument {
 }
 
 export interface ProjectRow {
+  /** Who to write to about this job, and how — see the messaging module. */
+  messagingContactId: string | null;
+  messagingChannel: string | null;
   id: string;
   code: string;
   name: string;
@@ -190,6 +193,8 @@ export interface ProjectReferences {
 }
 
 export interface ProjectWriteInput {
+  messagingContactId?: string | null;
+  messagingChannel?: string | null;
   code?: string;
   name?: string;
   customerId?: string;

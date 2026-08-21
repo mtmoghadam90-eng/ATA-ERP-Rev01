@@ -14,7 +14,8 @@ import {
   ShieldCheck,
   Boxes,
   Wrench,
-  ArrowLeftRight
+  ArrowLeftRight,
+  MessageSquare
 } from 'lucide-react';
 import { User, SCREEN_PERMISSION_ALIAS } from '../types';
 
@@ -66,6 +67,7 @@ export default function Sidebar({
     { id: 'afterSalesServices', name: 'خدمات پس از فروش', icon: Wrench },
     { id: 'transactions', name: 'دریافت و پرداخت ریالی', icon: ArrowDownLeft },
     { id: 'tasks', name: 'وظایف و پیگیری', icon: CheckSquare, badge: taskCount > 0 ? String(taskCount) : null, badgeColor: 'bg-sky-500 text-white' },
+    { id: 'messaging', name: 'ارسال پیام', icon: MessageSquare },
     { id: 'referrals', name: 'کارتابل ارجاعات کار', icon: Inbox, badge: referralsCount > 0 ? String(referralsCount) : null, badgeColor: 'bg-amber-500 text-slate-900 font-extrabold animate-pulse' },
     { id: 'users', name: 'مدیریت کاربران', icon: ShieldCheck },
         { id: 'settings', name: 'تنظیمات سیستم', icon: SettingsIcon },

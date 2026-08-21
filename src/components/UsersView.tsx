@@ -85,6 +85,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     transactions: true,
     tasks: true,
     referrals: true,
+    messaging: true,
     settings: false,
     users: false,
     // Off unless granted. Unlike the module flags this one hides fields rather
@@ -105,6 +106,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     { id: 'transactions', name: 'دریافت و پرداخت ریالی', desc: 'تراکنش‌های بانکی، تنخواه‌ها و مطالبات مالی' },
     { id: 'tasks', name: 'وظایف و پیگیری', desc: 'پیگیری امور محوله و وظایف پرسنل ابزار دقیق' },
     { id: 'referrals', name: 'کارتابل ارجاعات کار', desc: 'کارتابل ارجاعات فنی و تسک‌های جاری ارشیا' },
+    { id: 'messaging', name: 'ارسال پیام', desc: 'قالب‌های پیام، صف و سوابق ارسال پیامک، بله و ایمیل. تنظیمات درگاه‌ها جداگانه با دسترسی «تنظیمات سیستم» کنترل می‌شود.' },
     { id: 'settings', name: 'تنظیمات سیستم', desc: 'تغییر الگوهای پیش‌فاکتور، فیلدهای دلخواه و تنظیمات عمومی' },
     { id: 'users', name: 'مدیریت کاربران', desc: 'تعریف پرسنل، تغییر رمز عبور و تنظیم سطح دسترسی ماژول‌ها' },
     // Not a screen: it governs fields inside modules the user already has.
@@ -126,6 +128,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
         transactions: true,
         tasks: true,
         referrals: true,
+        messaging: true,
         settings: true,
         users: true,
         costs: true,
@@ -160,6 +163,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
       transactions: false,
       tasks: true,
       referrals: true,
+      messaging: true,
       settings: false,
       users: false,
       costs: false,
@@ -214,6 +218,10 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
       // Absent means denied for this one (see canSeeCosts), so the box has to
       // show unticked rather than inheriting whatever spread produced.
       costs: user.permissions?.costs === true,
+      // A module flag, so absent means granted — the same reading the route
+      // guard uses. An account written before this module existed keeps
+      // working rather than losing a screen it never knew it had.
+      messaging: user.permissions?.messaging !== false,
     });
     setShowPassword(false);
     setShowEditModal(true);
