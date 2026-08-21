@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useExchangeRates } from '../api/exchangeRates';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { inlineDocumentAssets } from '../utils/inlineAssets';
+import { namePrefixFor } from '../utils/honorific';
 import {
   Plus,
   Search,
@@ -4120,13 +4121,7 @@ export default function ProformasView({
                           selectedCust &&
                           selectedCust.customerType === "حقیقی"
                         ) {
-                          if (selectedCust.gender === "مرد") {
-                            setContactPrefix("جناب آقای مهندس");
-                          } else if (selectedCust.gender === "زن") {
-                            setContactPrefix("سرکار خانم مهندس");
-                          } else {
-                            setContactPrefix("");
-                          }
+                          setContactPrefix(namePrefixFor(selectedCust.gender));
                         } else {
                           setContactPrefix("");
                         }
@@ -4238,13 +4233,7 @@ export default function ProformasView({
                                 (c) => c.id === newContactId,
                               );
                               if (selectedContact) {
-                                if (selectedContact.gender === "مرد") {
-                                  setContactPrefix("جناب آقای مهندس");
-                                } else if (selectedContact.gender === "زن") {
-                                  setContactPrefix("سرکار خانم مهندس");
-                                } else {
-                                  setContactPrefix("");
-                                }
+                                setContactPrefix(namePrefixFor(selectedContact.gender));
                               } else {
                                 setContactPrefix("");
                               }
@@ -6651,13 +6640,7 @@ export default function ProformasView({
                   }
                 } else if (isQuickAddingContact) {
                   setContactCustomerId(newEntity.id);
-                  if (newEntity.gender === "مرد") {
-                    setContactPrefix("جناب آقای مهندس");
-                  } else if (newEntity.gender === "زن") {
-                    setContactPrefix("سرکار خانم مهندس");
-                  } else {
-                    setContactPrefix("");
-                  }
+                  setContactPrefix(namePrefixFor(newEntity.gender));
                   void linkCustomerTo(
                     customers.find((c) => c.id === customerId),
                     newEntity.id,

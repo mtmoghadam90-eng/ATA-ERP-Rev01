@@ -5,7 +5,7 @@ import { getTodayShamsi, addDaysToShamsi } from "../../dateUtils";
 import { notifyModuleResponsible } from "./notificationService";
 import { expandDateFields } from "../dates";
 import { isChannel, renderTemplate } from "../../utils/messaging";
-import { queueForCustomer } from "./messaging/messageService";
+import { messageVariables, queueForCustomer } from "./messaging/messageService";
 
 /**
  * Workflow automation system.
@@ -195,9 +195,31 @@ export async function executeRule(
           ? await db.messageTemplate.findUnique({ where: { id: config.templateId } })
           : null;
 
+        /*
+         * The trigger's own values, over the ones any message can use.
+         *
+         * A rule's payload knows what just happened — the new status, the
+         * proforma number — and knows nothing about how the customer is
+         * addressed. Without the merge, a template written on the messaging
+         * screen and attached to a rule ships «{namePrefix}» to the customer:
+         * `renderTemplate` leaves a placeholder standing when no key backs it,
+         * which is right, and there was no key. The payload wins where the two
+         * overlap, since it is closer to the event.
+         */
+        const values: Record<string, unknown> = await messageVariables(
+          enrichedPayload.customerId ?? null,
+          enrichedPayload.projectId ?? null,
+        );
+        // Only what the payload actually has. A plain spread would let a key
+        // present-but-empty on the payload blank out the resolved value, and
+        // `renderTemplate` substitutes a present key however empty it is.
+        for (const [key, value] of Object.entries(enrichedPayload)) {
+          if (value !== undefined && value !== null && value !== "") values[key] = value;
+        }
+
         const body = renderTemplate(
           config.bodyTemplate || template?.body || "",
-          enrichedPayload,
+          values,
         ).trim();
 
         if (body) {
@@ -223,7 +245,7 @@ export async function executeRule(
             channel: isChannel(config.channel) ? config.channel : null,
             subject: renderTemplate(
               config.subjectTemplate || template?.subject || "",
-              enrichedPayload,
+              values,
             ) || null,
             body,
             scheduledAt: when,

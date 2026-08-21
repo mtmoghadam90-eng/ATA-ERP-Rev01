@@ -9,8 +9,9 @@ import {
   BaleChatRow, MessageRow, MessageTemplateRow, ProviderSummary, messagingApi,
 } from '../api/messaging';
 import {
-  ALL_CHANNELS, CHANNELS, CHANNEL_LABELS, Channel, MESSAGE_STATUS, STATUS_LABELS,
-  isChannel, smsLength, templateVariables,
+  ALL_CHANNELS, CHANNELS, CHANNEL_LABELS, Channel, MESSAGE_STATUS, MESSAGE_VARIABLES,
+  SAMPLE_VARIABLE_VALUES, STATUS_LABELS, isChannel, renderTemplate, smsLength,
+  templateVariables,
 } from '../utils/messaging';
 
 
@@ -402,8 +403,20 @@ function Templates({
   };
 
   const channel = isChannel(editing?.channel) ? editing.channel : CHANNELS.SMS;
-  const length = smsLength(editing?.body);
   const used = templateVariables(editing?.body);
+
+  /*
+   * The message as the customer will read it.
+   *
+   * Rendered against the sample values, which is also what the part counter
+   * measures — counting the template instead misprices every send, and always
+   * downwards where it matters: «{{customerName}}» is eighteen characters and
+   * «شرکت پتروشیمی نمونه» is nineteen, so the template that looked like one SMS
+   * goes out as two.
+   */
+  const bodyPreview = renderTemplate(editing?.body, SAMPLE_VARIABLE_VALUES);
+  const subjectPreview = renderTemplate(editing?.subject, SAMPLE_VARIABLE_VALUES);
+  const length = smsLength(bodyPreview);
 
   return (
     <div className="space-y-4">
@@ -527,11 +540,56 @@ function Templates({
                 </div>
               )}
 
-              <div className="text-[10px] text-slate-500 bg-slate-50 border border-slate-150 rounded-lg px-2 py-1.5 space-y-1">
-                <div className="font-bold">متغیرهای در دسترس:</div>
-                <div className="font-mono text-slate-600" dir="ltr">
-                  customerName · contactName · projectCode · projectName · projectStatus · companyName · today
+              {/*
+                The message as the customer will read it, so the spacing, the
+                honorific and the length are visible before it is saved rather
+                than after it has been sent.
+              */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-600">
+                  پیش‌نمایش (با مقادیر نمونه)
+                </label>
+                <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2.5 space-y-1">
+                  {channel === CHANNELS.EMAIL && (
+                    <div className="text-[11px] text-emerald-900 border-b border-emerald-100 pb-1.5">
+                      <span className="font-bold">موضوع: </span>
+                      {subjectPreview || <span className="text-emerald-700/60">—</span>}
+                    </div>
+                  )}
+                  <div className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap">
+                    {bodyPreview || <span className="text-slate-400">هنوز متنی نوشته نشده است.</span>}
+                  </div>
                 </div>
+              </div>
+
+              {/*
+                Drawn from the same list the server fills in, rather than typed
+                out here — that is how `namePrefix` came to exist without the
+                people writing templates ever being told about it.
+              */}
+              <div className="text-[10px] text-slate-500 bg-slate-50 border border-slate-150 rounded-lg px-2 py-2 space-y-1.5">
+                <div className="font-bold">متغیرهای در دسترس (برای درج، روی هرکدام کلیک کنید):</div>
+                <div className="flex flex-wrap gap-1">
+                  {MESSAGE_VARIABLES.map((variable) => (
+                    <button
+                      key={variable.key}
+                      type="button"
+                      title={variable.label}
+                      onClick={() => setEditing((current) => (current
+                        ? { ...current, body: `${current.body ?? ''}{{${variable.key}}}` }
+                        : current))}
+                      className="font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 text-slate-600 hover:border-sky-300 hover:text-sky-700"
+                      dir="ltr"
+                    >
+                      {variable.key}
+                    </button>
+                  ))}
+                </div>
+                <p>
+                  «پیشوند نام» برای مرد «جناب آقای مهندس» و برای زن «سرکار خانم مهندس» است و
+                  برای شرکت یا مشتری بدون جنسیت خالی می‌ماند؛ در آن حالت از «addressee» استفاده
+                  کنید تا فاصله‌ی اضافی در متن نیفتد.
+                </p>
                 {used.length > 0 && (
                   <div>
                     این قالب استفاده می‌کند از:{' '}
