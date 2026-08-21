@@ -82,15 +82,29 @@ export default function MessagingView({ settings, currentUser = null }: Props) {
   const canConfigure = !!currentUser?.isSystemAdmin
     || currentUser?.permissions?.settings === true;
 
-  const report = (err: unknown, fallback: string) => {
+  /*
+   * Stable identities, and this is load-bearing rather than tidiness.
+   *
+   * Both are handed to the tabs below, which list them among the dependencies
+   * of the `useCallback` that loads their data — so a new function on every
+   * render meant a new `load` on every render, and the `useEffect` watching
+   * `load` fired again. One failed request then set the error banner, which
+   * re-rendered this component, which rebuilt these, which reloaded, which
+   * failed: the screen refetched in a loop and jumped back to the top each
+   * time, which is exactly what it looked like from the outside.
+   *
+   * `useCallback` with no dependencies is correct here because the only things
+   * they close over are state setters, whose identities React guarantees.
+   */
+  const report = useCallback((err: unknown, fallback: string) => {
     setError(err instanceof ApiError ? err.message : fallback);
     if (!(err instanceof ApiError)) console.error(fallback, err);
-  };
+  }, []);
 
-  const flash = (text: string) => {
+  const flash = useCallback((text: string) => {
     setNotice(text);
     window.setTimeout(() => setNotice((n) => (n === text ? null : n)), 4000);
-  };
+  }, []);
 
   return (
     <div className="space-y-5" dir="rtl">
