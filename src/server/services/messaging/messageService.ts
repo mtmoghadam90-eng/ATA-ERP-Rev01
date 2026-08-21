@@ -10,6 +10,7 @@ import {
   nextAllowedSendTime, renderTemplate, resolveRecipient, retryDelayMs, shouldRetry,
 } from "../../../utils/messaging";
 import { BaleChatsResult, BaleConfig, baleRecentChats, sendThrough } from "./drivers";
+import { addresseeOf, namePrefixFor } from "../../../utils/honorific";
 
 /**
  * Sending a customer a message: the queue, and everything around it.
@@ -723,11 +724,20 @@ export async function messageVariables(
   values.companyName = settings?.companyInfo?.name ?? "";
   values.today = getTodayShamsi();
 
+  /*
+   * Whoever the message is actually addressed to, which is not always the
+   * customer: a project may name a contact, and `queueForCustomer` sends to
+   * them. The text has to agree with the envelope — «جناب آقای مهندس رضایی»
+   * arriving on somebody else's phone is worse than no honorific at all.
+   */
+  let addressee: { firstName?: string | null; lastName?: string | null; companyName?: string | null; gender?: string | null } | null = null;
+
   if (projectId) {
     const project = await db.project.findUnique({
       where: { id: projectId },
       select: {
         code: true, name: true, status: true, customerId: true,
+        messagingContactId: true,
         customer: { select: { companyName: true } },
       },
     });
@@ -737,19 +747,39 @@ export async function messageVariables(
       values.projectStatus = project.status;
       values.customerName = project.customer?.companyName ?? "";
       if (!customerId) customerId = project.customerId;
+
+      if (project.messagingContactId) {
+        addressee = await db.customer.findUnique({
+          where: { id: project.messagingContactId },
+          select: { companyName: true, firstName: true, lastName: true, gender: true },
+        });
+      }
     }
   }
 
   if (customerId) {
     const customer = await db.customer.findUnique({
       where: { id: customerId },
-      select: { companyName: true, firstName: true, lastName: true },
+      select: { companyName: true, firstName: true, lastName: true, gender: true },
     });
     if (customer) {
       const person = `${customer.firstName ?? ""} ${customer.lastName ?? ""}`.trim();
       values.customerName = customer.companyName || person;
-      values.contactName = person || customer.companyName;
+      if (!addressee) addressee = customer;
     }
+  }
+
+  if (addressee) {
+    const person = `${addressee.firstName ?? ""} ${addressee.lastName ?? ""}`.trim();
+    const name = person || addressee.companyName || "";
+    values.contactName = name;
+    /*
+     * Blank for a company and for a person whose gender was never recorded,
+     * which is most of the list — hence `addressee`, where the two are joined
+     * with the space in between only when there is something on both sides.
+     */
+    values.namePrefix = namePrefixFor(addressee.gender);
+    values.addressee = addresseeOf(addressee.gender, name);
   }
 
   return values;

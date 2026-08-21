@@ -36,9 +36,11 @@ import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
 import { calculateProjectFinance, priceInWarehouseCurrency } from "../src/utils/finance";
 import {
-  CHANNELS, isBaleChatId, isWithinQuietHours, looksLikeMobile, nextAllowedSendTime,
-  renderTemplate, resolveRecipient, retryDelayMs, shouldRetry, smsLength, templateVariables,
+  CHANNELS, MESSAGE_VARIABLES, SAMPLE_VARIABLE_VALUES, isBaleChatId, isWithinQuietHours,
+  looksLikeMobile, nextAllowedSendTime, renderTemplate, resolveRecipient, retryDelayMs,
+  shouldRetry, smsLength, templateVariables,
 } from "../src/utils/messaging";
+import { addresseeOf, namePrefixFor } from "../src/utils/honorific";
 import { canSeeCosts } from "../src/server/auth";
 import {
   preserveLineCosts, redactCustomerValue, redactInquiry, redactProduct,
@@ -2159,15 +2161,19 @@ head("Messaging: filling a template");
     renderTemplate("{{ customerName }}", values), "پتروشیمی آزمون");
 
   /*
-   * An unknown placeholder is left as written, not blanked.
+   * A placeholder with no key behind it is left as written, not blanked.
    *
    * «سلام {{customerNam}}» is obviously a broken template and gets fixed;
    * «سلام » looks like a customer with no name and gets sent to somebody.
+   *
+   * A key that *is* there and is empty is the opposite case and is substituted:
+   * a company has no honorific, and «{namePrefix}» standing in the text is the
+   * placeholder itself reaching the customer. Presence, not truthiness.
    */
   eq("a misspelt placeholder stays visible",
     renderTemplate("سلام {{customerNam}}", values), "سلام {{customerNam}}");
-  eq("and so does one whose value is empty",
-    renderTemplate("سلام {{customerName}}", { customerName: "" }), "سلام {{customerName}}");
+  eq("but a value that is deliberately empty is filled in as empty",
+    renderTemplate("سلام {{customerName}}", { customerName: "" }), "سلام ");
 
   eq("the editor can list what a template needs",
     templateVariables("{{a}} و {{b}} و {{a}}").join(","), "a,b");
@@ -2280,6 +2286,71 @@ head("Messaging: who the message goes to");
   ok("so is 9… without the leading zero", looksLikeMobile("9121234567"));
   ok("and +98…, spaces and dashes included", looksLikeMobile("+98 912-123-4567"));
   ok("a chat id is not mistaken for one", !looksLikeMobile("1234567890"));
+}
+
+
+head("How a customer is addressed");
+{
+  eq("a man gets the company's usual honorific", namePrefixFor("مرد"), "جناب آقای مهندس");
+  eq("a woman gets hers", namePrefixFor("زن"), "سرکار خانم مهندس");
+  eq("a company has none", namePrefixFor(""), "");
+  eq("nor does somebody whose gender was never filled in", namePrefixFor("نامشخص"), "");
+  eq("and null is not a man", namePrefixFor(null), "");
+
+  eq("the name is joined to the honorific with one space",
+    addresseeOf("مرد", "رضایی"), "جناب آقای مهندس رضایی");
+  /*
+   * The reason `addressee` exists at all: most of the list is companies, and
+   * «{namePrefix} {customerName}» leaves a leading space in front of every one
+   * of their names.
+   */
+  eq("a company is addressed by its name alone, with no stray space",
+    addresseeOf("", "شرکت پتروشیمی نمونه"), "شرکت پتروشیمی نمونه");
+  eq("and an honorific with nobody to attach it to is nothing",
+    addresseeOf("مرد", ""), "جناب آقای مهندس");
+}
+
+
+head("Template variables: the palette and the values agree");
+{
+  /*
+   * The screen used to list the variable names by hand, so a value the server
+   * started providing was invisible to whoever was writing templates. Read both
+   * sides and compare, in both directions.
+   */
+  const service = readFileSync(
+    "src/server/services/messaging/messageService.ts", "utf-8");
+  const start = service.indexOf("export async function messageVariables");
+  const body = service.slice(start, service.indexOf("\n}", start));
+  const filled = new Set(
+    [...body.matchAll(/values\.([A-Za-z][A-Za-z0-9]*)\s*=/g)].map((m) => m[1]));
+  const offered = new Set(MESSAGE_VARIABLES.map((v) => v.key));
+
+  const notOffered = [...filled].filter((k) => !offered.has(k));
+  const notFilled = [...offered].filter((k) => !filled.has(k));
+
+  ok("every value the server fills in is offered on the screen",
+    notOffered.length === 0, notOffered);
+  ok("and every name the screen offers is one the server fills in",
+    notFilled.length === 0, notFilled);
+  ok("the check found the variables at all", filled.size >= 5, [...filled]);
+
+  ok("every variable carries a sample for the preview",
+    MESSAGE_VARIABLES.every((v) => v.sample.trim() !== "" && v.label.trim() !== ""));
+
+  /*
+   * A key that is present and empty is substituted; a key that is absent is
+   * left standing. That distinction is what lets a company's blank honorific
+   * render as nothing instead of putting «{namePrefix}» in front of a customer.
+   */
+  eq("a blank value renders as blank",
+    renderTemplate("{namePrefix} {customerName} عزیز", { namePrefix: "", customerName: "شرکت الف" }),
+    " شرکت الف عزیز");
+  eq("a misspelled name is left standing so it is obvious",
+    renderTemplate("سلام {customerNam}", { customerName: "علی" }), "سلام {customerNam}");
+  eq("and the preview renders the whole palette",
+    renderTemplate("{addressee} عزیز، پروژه {projectCode}", SAMPLE_VARIABLE_VALUES),
+    "جناب آقای مهندس رضایی عزیز، پروژه PRJ-1405-018");
 }
 
 
