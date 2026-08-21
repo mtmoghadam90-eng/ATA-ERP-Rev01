@@ -9,7 +9,7 @@ import {
   CHANNELS, Channel, MAX_SEND_ATTEMPTS, MESSAGE_STATUS, QuietHours, isChannel,
   nextAllowedSendTime, renderTemplate, resolveRecipient, retryDelayMs, shouldRetry,
 } from "../../../utils/messaging";
-import { sendThrough } from "./drivers";
+import { BaleChatsResult, BaleConfig, baleRecentChats, sendThrough } from "./drivers";
 
 /**
  * Sending a customer a message: the queue, and everything around it.
@@ -191,6 +191,24 @@ export async function testProvider(
   });
 
   return { ok: result.ok, error: result.error };
+}
+
+/**
+ * The chats a channel's bot has recently heard from.
+ *
+ * Only Bale has one: its `chat_id` is a number the customer cannot read off
+ * their own screen and that we cannot derive from anything we already store, so
+ * without this the field on the customer form is unfillable in practice. The
+ * other channels address a person by something they already know about
+ * themselves, and answer with an empty list.
+ */
+export async function providerChats(channel: Channel): Promise<BaleChatsResult> {
+  if (channel !== CHANNELS.BALE) return { ok: true, chats: [] };
+
+  const provider = await providerConfig(channel);
+  if (!provider) return { ok: false, chats: [], error: "تنظیمات بله هنوز ثبت نشده است." };
+
+  return baleRecentChats(provider.config as BaleConfig);
 }
 
 /* ------------------------------- templates ------------------------------- */

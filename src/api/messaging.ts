@@ -22,6 +22,12 @@ export interface ProviderSummary {
   lastTestError: string | null;
 }
 
+export interface BaleChatRow {
+  id: string;
+  name: string;
+  type: string;
+}
+
 export interface MessageTemplateRow {
   id: string;
   name: string;
@@ -86,6 +92,17 @@ export const messagingApi = {
   testProvider: (channel: string, recipient: string, body?: string) =>
     api.post<{ ok: boolean; error?: string }>(
       `/api/messaging/providers/${channel}/test`, { recipient, body },
+    ),
+
+  /**
+   * The chats a bot has recently heard from, with their numeric ids.
+   *
+   * Bale only. Its `chat_id` is a number the customer cannot read off their own
+   * screen, so this is the only way the field on the customer form gets filled.
+   */
+  providerChats: (channel: string) =>
+    api.get<{ ok: boolean; chats: BaleChatRow[]; error?: string }>(
+      `/api/messaging/providers/${channel}/chats`,
     ),
 
   /* templates */

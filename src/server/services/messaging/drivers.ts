@@ -1,5 +1,5 @@
 import nodemailer from "nodemailer";
-import { CHANNELS, Channel } from "../../../utils/messaging";
+import { CHANNELS, Channel, isBaleChatId, looksLikeMobile } from "../../../utils/messaging";
 
 /**
  * The three ways a message actually leaves this building.
@@ -164,6 +164,32 @@ export interface BaleConfig {
 }
 
 /**
+ * Bale's own words, turned into something the reader can act on.
+ *
+ * The API answers in English with the terse `description` Telegram uses, and
+ * relaying it puts a sentence on the screen that names no remedy: "no such
+ * group or user" is true, but what it means here is that nobody has ever
+ * started this conversation, and only the customer can.
+ */
+function baleFailure(description: string, status: number): string {
+  const text = description.toLowerCase();
+
+  if (text.includes("no such group or user") || text.includes("chat not found")) {
+    return "بله این گفتگو را نمی‌شناسد. شناسه گفتگو باید عدد باشد و مخاطب باید یک بار به ربات شرکت در بله پیام داده باشد؛ شماره موبایل در بله کار نمی‌کند.";
+  }
+  if (text.includes("bot can't initiate conversation") || text.includes("bot was blocked")) {
+    return "ربات اجازه پیام دادن به این مخاطب را ندارد. مخاطب باید ابتدا گفتگو با ربات را شروع کند یا ربات را از حالت مسدود خارج کند.";
+  }
+  if (status === 401 || text.includes("unauthorized")) {
+    return "توکن ربات بله پذیرفته نشد. توکن را دوباره از BotFather بگیرید و ثبت کنید.";
+  }
+  if (text.includes("too many requests")) {
+    return "بله فعلاً پیام بیشتری نمی‌پذیرد (محدودیت تعداد). کمی بعد دوباره تلاش می‌شود.";
+  }
+  return `ارسال در بله ناموفق بود: ${description || `پاسخ ${status}`}`;
+}
+
+/**
  * Bale's bot API mirrors Telegram's, down to the method names, so this is a
  * `sendMessage` call with a chat id. The customer has to have started a
  * conversation with the bot first — that is what produces the chat id stored
@@ -176,6 +202,20 @@ export async function sendBale(config: BaleConfig, message: OutgoingMessage): Pr
 
   const chatId = String(message.recipient ?? "").trim();
   if (!chatId) return { ok: false, error: "شناسه گفتگوی بله برای این مخاطب ثبت نشده است." };
+
+  /*
+   * Refused here rather than sent and refused there, because the answer that
+   * comes back names the value as unknown instead of naming it as the wrong
+   * kind of thing — and a phone number is the mistake everybody makes first.
+   */
+  if (!isBaleChatId(chatId)) {
+    return {
+      ok: false,
+      error: looksLikeMobile(chatId)
+        ? `«${chatId}» شماره موبایل است و بله با شماره پیام نمی‌فرستد. شناسه عددی گفتگو لازم است؛ آن را از فهرست «گفتگوهای اخیر» در تنظیمات بله بردارید.`
+        : `شناسه گفتگوی بله «${chatId}» معتبر نیست. یک شناسه عددی (مانند 1234567890) یا نام کانال با @ لازم است.`,
+    };
+  }
 
   try {
     const response = await fetchWithTimeout(
@@ -192,13 +232,91 @@ export async function sendBale(config: BaleConfig, message: OutgoingMessage): Pr
       | null;
 
     if (!response.ok || !payload?.ok) {
-      const reason = payload?.description || `پاسخ ${response.status}`;
-      return { ok: false, error: `ارسال در بله ناموفق بود: ${reason}` };
+      return { ok: false, error: baleFailure(String(payload?.description ?? ""), response.status) };
     }
 
     return { ok: true, providerMessageId: String(payload.result?.message_id ?? "") || null };
   } catch (err) {
     return { ok: false, error: describe(err) };
+  }
+}
+
+/** One chat the bot has heard from, as the settings screen lists it. */
+export interface BaleChat {
+  id: string;
+  name: string;
+  /** "private", "group", "channel" — Bale's own word for it. */
+  type: string;
+}
+
+/**
+ * The same shape every driver answers in: an outcome and a sentence, never a
+ * throw. A bot token that has been revoked is an ordinary thing for this to
+ * find, and the person who typed it in is the one who needs to read about it.
+ */
+export interface BaleChatsResult {
+  ok: boolean;
+  chats: BaleChat[];
+  error?: string;
+}
+
+/**
+ * The chats the bot has recently heard from, with their numeric ids.
+ *
+ * This exists because the id is otherwise unobtainable: it is not the person's
+ * phone number, they cannot read it off their own screen, and the bot cannot
+ * write to them until somebody has typed it in here. `getUpdates` is the one
+ * place Bale hands it over, so the person setting this up asks the customer to
+ * message the bot and then picks them out of this list.
+ *
+ * No `offset` is sent, so the updates are read and not consumed — the same
+ * chat keeps appearing until Bale ages it out, which is what makes the list
+ * useful more than once.
+ */
+export async function baleRecentChats(config: BaleConfig): Promise<BaleChatsResult> {
+  if (!config.botToken) return { ok: false, chats: [], error: "توکن ربات بله ثبت نشده است." };
+
+  try {
+    const response = await fetchWithTimeout(
+      `https://tapi.bale.ai/bot${config.botToken}/getUpdates?limit=100`,
+      { method: "GET" },
+    );
+
+    const payload = await response.json().catch(() => null) as
+      | { ok?: boolean; description?: string; result?: unknown }
+      | null;
+
+    if (!response.ok || !payload?.ok) {
+      return {
+        ok: false,
+        chats: [],
+        error: baleFailure(String(payload?.description ?? ""), response.status),
+      };
+    }
+
+    const updates = Array.isArray(payload.result) ? payload.result : [];
+    // Newest first, and one row per chat however many messages it sent.
+    const seen = new Map<string, BaleChat>();
+    for (const update of [...updates].reverse()) {
+      const chat = (update as { message?: { chat?: Record<string, unknown> } })?.message?.chat;
+      const id = chat?.id;
+      if (id === undefined || id === null) continue;
+      const key = String(id);
+      if (seen.has(key)) continue;
+
+      const name = [chat?.title, chat?.first_name, chat?.last_name]
+        .map((part) => String(part ?? "").trim())
+        .filter(Boolean)
+        .join(" ")
+        || String(chat?.username ?? "").trim()
+        || "بدون نام";
+
+      seen.set(key, { id: key, name, type: String(chat?.type ?? "private") });
+    }
+
+    return { ok: true, chats: [...seen.values()] };
+  } catch (err) {
+    return { ok: false, chats: [], error: describe(err) };
   }
 }
 

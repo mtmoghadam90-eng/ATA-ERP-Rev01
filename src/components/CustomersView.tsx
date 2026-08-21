@@ -1783,11 +1783,13 @@ export default function CustomersView({
                       value={baleChatId}
                       onChange={(e) => setBaleChatId(e.target.value)}
                       dir="ltr"
-                      placeholder="برای ارسال در بله لازم است"
+                      placeholder="شناسه عددی، مثلاً 1234567890"
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono text-left focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none"
                     />
                     <p className="text-[10px] text-slate-400">
-                      مخاطب باید ابتدا گفتگو با ربات شرکت را در بله شروع کند تا این شناسه ساخته شود.
+                      بله با شماره موبایل پیام نمی‌فرستد؛ یک شناسه عددی لازم است.
+                      مخاطب باید ابتدا یک پیام به ربات شرکت بدهد، سپس شناسه را از
+                      «تنظیمات درگاه‌ها ← بله ← گفتگوهای اخیر ربات» در ماژول ارسال پیام بردارید.
                     </p>
                   </div>
                 </div>

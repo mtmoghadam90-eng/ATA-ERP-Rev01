@@ -36,8 +36,8 @@ import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
 import { calculateProjectFinance, priceInWarehouseCurrency } from "../src/utils/finance";
 import {
-  CHANNELS, isWithinQuietHours, nextAllowedSendTime, renderTemplate, resolveRecipient,
-  retryDelayMs, shouldRetry, smsLength, templateVariables,
+  CHANNELS, isBaleChatId, isWithinQuietHours, looksLikeMobile, nextAllowedSendTime,
+  renderTemplate, resolveRecipient, retryDelayMs, shouldRetry, smsLength, templateVariables,
 } from "../src/utils/messaging";
 import { canSeeCosts } from "../src/server/auth";
 import {
@@ -2253,6 +2253,33 @@ head("Messaging: who the message goes to");
     resolveRecipient([{ name: "بی‌شماره" }], CHANNELS.SMS).problem, "NO_ADDRESS");
   eq("and an unknown channel is refused before anything else",
     resolveRecipient([contact], "FAX" as never).problem, "NO_CHANNEL");
+
+  /*
+   * What Bale will deliver to.
+   *
+   * The failure this pins is a real one: a mobile number was entered as a Bale
+   * chat id — the obvious thing to do, since every other channel addresses the
+   * person by something they know about themselves — and Bale answered "no such
+   * group or user", which names the value as unknown rather than as the wrong
+   * kind of thing.
+   */
+  ok("a numeric chat id is accepted", isBaleChatId("1234567890"));
+  ok("a group's negative id too", isBaleChatId("-1001234567890"));
+  ok("and a public channel by name", isBaleChatId("@ata_channel"));
+  ok("spaces around it do not matter", isBaleChatId("  1234567890  "));
+  ok("a mobile number is not a chat id", !isBaleChatId("09121234567"));
+  ok("nor is one written internationally", !isBaleChatId("+989121234567"));
+  ok("nor 0098…", !isBaleChatId("00989121234567"));
+  // The same number with the zero dropped is indistinguishable from an account
+  // id, so it goes through and Bale is left to answer for it.
+  ok("but a bare 9… is allowed through", isBaleChatId("9121234567"));
+  ok("an empty field is not one either", !isBaleChatId(""));
+  ok("and neither is an email address", !isBaleChatId("a@b.com"));
+
+  ok("09… is recognised as a mobile", looksLikeMobile("09121234567"));
+  ok("so is 9… without the leading zero", looksLikeMobile("9121234567"));
+  ok("and +98…, spaces and dashes included", looksLikeMobile("+98 912-123-4567"));
+  ok("a chat id is not mistaken for one", !looksLikeMobile("1234567890"));
 }
 
 

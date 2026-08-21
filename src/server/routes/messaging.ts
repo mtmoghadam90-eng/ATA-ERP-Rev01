@@ -7,7 +7,7 @@ import {
   MESSAGE_FILTERABLE, MESSAGE_SORTABLE, ManualSendInput, TemplateInput,
   cancelMessage, createTemplate, deleteTemplate, listMessages, listProviders,
   listTemplates, messageSummary, messageVariables, processQueue, retryMessage,
-  saveProvider, sendManual, testProvider, updateTemplate,
+  providerChats, saveProvider, sendManual, testProvider, updateTemplate,
 } from "../services/messaging/messageService";
 
 /**
@@ -118,6 +118,30 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "POST /api/messaging/providers/:channel/test");
+    }
+  });
+
+  /**
+   * The chats the bot has recently heard from, so their numeric ids can be
+   * copied onto a customer.
+   *
+   * Bale addresses a person by a number they cannot read off their own screen
+   * and that nothing here can derive, so without this the customer's Bale field
+   * is unfillable in practice. Administration, hence `settings`: it reads
+   * through the bot's credentials.
+   */
+  app.get("/api/messaging/providers/:channel/chats", async (req, res) => {
+    const user = await requireSettings(req, res);
+    if (!user) return;
+    try {
+      const channel = req.params.channel;
+      if (!isChannel(channel)) {
+        res.status(400).json({ success: false, error: "روش ارسال نامعتبر است." });
+        return;
+      }
+      res.json({ success: true, ...(await providerChats(channel)) });
+    } catch (err) {
+      sendError(res, err, "GET /api/messaging/providers/:channel/chats");
     }
   });
 
