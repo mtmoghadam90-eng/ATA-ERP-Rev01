@@ -80,7 +80,10 @@ import { getCodeError, cleanCode } from "../utils/documentCodes";
 import type { DuplicateMatch } from "../utils/customerDuplicates";
 import DuplicateCustomerModal from "./DuplicateCustomerModal";
 import PriceCalculatorModal from "./PriceCalculatorModal";
-import { generateSku, getCombinedFeaturePrice, findVariantByAttributes } from "../utils/skuUtils";
+import { getCombinedFeaturePrice } from "../utils/skuUtils";
+import ProductConfiguratorModal from "./ProductConfiguratorModal";
+import { attributesFromSelections, mergeSpecText, specLinesFrom } from "../utils/productConfig";
+import { ensureVariantForAttributes, updateProductById as applyProductChange } from "../api/productVariants";
 import { priceInWarehouseCurrency } from "../utils/finance";
 import type { useCategoryCompletion } from "../api/useCategoryCompletion";
 
@@ -380,12 +383,9 @@ export default function ProformasView({
     mutate: (full: Product) => Product,
   ): Promise<Product | null> => {
     try {
-      const full = detailToProduct(await productsApi.get(productId));
-      const saved = await productsApi.update(productId, productToWriteInput(mutate(full)));
-      // Returned, because ids are the server's: a variant created here gets its
-      // id assigned on insert, and a caller that used the one it made up would
-      // put a reference to nothing on a proforma line.
-      return detailToProduct(saved);
+      // One implementation, shared with the supplier-inquiry form; this wrapper
+      // only adds the error reporting this screen wants.
+      return await applyProductChange(productId, mutate);
     } catch (err) {
       reportError(err, 'ثبت تغییرات کالا با خطا مواجه شد.');
       return null;
@@ -5833,81 +5833,26 @@ export default function ProformasView({
             return null;
 
           const handleConfirmConfig = async () => {
-            const configParts = [];
-            let matchedVariantId: string | undefined = undefined;
+            const attributes = attributesFromSelections(prod.features, configSelections);
 
-            for (const feature of prod.features!) {
-              const selected = configSelections[feature.id] || [];
-              if (selected.length > 0) {
-                configParts.push(`${feature.name}: ${selected.join("، ")}`);
-              }
-            }
-
-            // Build attributes if each feature has exactly one value (a single, identifiable combination)
-            const singleValuePerFeature = (prod.features || []).every(f => (configSelections[f.id] || []).length === 1);
-            const canIdentifyCombination = singleValuePerFeature && (prod.features || []).length > 0;
-            let attributesForVariant: Record<string, string> | undefined = undefined;
-            if (canIdentifyCombination) {
-              attributesForVariant = {};
-              for (const f of prod.features!) {
-                attributesForVariant[f.name] = configSelections[f.id][0];
-              }
-            }
-
-            if (prod.hasVariants && prod.variants && attributesForVariant) {
-              const match = findVariantByAttributes(prod.variants, attributesForVariant);
-              if (match) matchedVariantId = match.id;
-            }
-
-            // Auto-create SKU when combination is identifiable but not in inventory
             let productForItem = prod;
-            if (attributesForVariant && !matchedVariantId) {
-              const targetCurrency = prod.currencyForeign || "یورو";
-              const calculatedFob = getCombinedFeaturePrice(prod.features || [], attributesForVariant);
-              const newSku = generateSku(prod.code || "SKU", prod.features || [], attributesForVariant);
-              const newVariant: ProductVariant = {
-                // Provisional only. The id below is the one that gets stored.
-                id: "",
-                sku: newSku,
-                attributes: attributesForVariant,
-                stockLevel: 0,
-                minStockLevel: 0,
-                priceForeign: calculatedFob > 0 ? calculatedFob : undefined,
-                currencyForeign: targetCurrency,
-              };
-              // Append to the stored variants, not to this screen's copy — the
-              // row carries variants but not config rules or the price
-              // calculator, so the record has to be reloaded to add to it.
-              //
-              // Awaited, and the id read back from what was saved: a SKU's id is
-              // assigned by the database on insert. A made-up `var-<timestamp>`
-              // used to go onto the line instead, and since the line's variant
-              // is a real foreign key the whole proforma then failed to save —
-              // with the foreign-key message, which reads as "this record
-              // cannot be deleted" and explains nothing.
-              const saved = await updateProductById(prod.id, (full) => ({
-                ...full,
-                hasVariants: true,
-                variants: [...(full.variants || []), newVariant],
-              }));
-              const storedVariant = saved?.variants?.find((v) => v.sku === newSku);
-              if (saved && storedVariant) {
-                productForItem = saved;
-                matchedVariantId = storedVariant.id;
-              }
+            let matchedVariantId: string | null = null;
+            try {
+              const ensured = await ensureVariantForAttributes(prod, attributes);
+              productForItem = ensured.product;
+              matchedVariantId = ensured.variantId;
+            } catch (err) {
               // The SKU could not be stored: the line keeps its specifications
-              // and its manual price, and simply carries no SKU link.
+              // and its manual price, and simply carries no SKU link. Refusing
+              // the user's configuration over a catalogue write would be worse.
+              reportError(err, 'ثبت SKU جدید در انبار با خطا مواجه شد.');
             }
 
-            let currentSpecs = item.techSpecs || "";
-            const featureNames = prod.features?.map(f => f.name) || [];
-            const filteredLines = currentSpecs.split('\n').filter(line => {
-                const trimmedLine = line.trim();
-                if (trimmedLine.startsWith('مشخصات:')) return false;
-                return !featureNames.some(fn => trimmedLine.startsWith(`${fn}:`));
-            });
-
-            const newTechSpecs = [...filteredLines, ...configParts].filter(Boolean).join('\n');
+            const newTechSpecs = mergeSpecText(
+              item.techSpecs,
+              prod.features,
+              specLinesFrom(prod.features, configSelections),
+            );
 
             // Applied to the rows as they are *now*: storing the SKU is a round
             // trip to the server, and the user may have typed on another line
@@ -5938,189 +5883,22 @@ export default function ProformasView({
           };
 
           return (
-            /*
-              Bounded to the viewport and scrolled inside.
-              
-              This panel had a width and no height: a product with a handful of
-              features and a dozen options each grew it straight past the bottom
-              of the screen, taking the تایید and انصراف buttons with it and
-              leaving nothing to scroll. The overlay scrolls, the body scrolls,
-              and the header and footer stay put.
-            */
-            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-start sm:items-center justify-center z-50 p-2 sm:p-4 overflow-y-auto">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg sm:max-w-2xl border border-slate-100 overflow-hidden my-auto flex flex-col max-h-[calc(100vh-1rem)] sm:max-h-[calc(100vh-2rem)]">
-                <div className="px-4 sm:px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
-                  <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                    <Settings size={18} className="text-sky-600" />
-                    پیکربندی ویژگی‌های کالا
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={() => setShowConfigModal(null)}
-                    className="p-1 hover:bg-slate-200 text-slate-500 rounded-lg transition"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-
-                <div className="p-4 sm:p-6 space-y-5 overflow-y-auto flex-1">
-                  <div className="bg-sky-50 text-sky-800 p-3 rounded-lg text-xs leading-relaxed border border-sky-100 mb-4">
-                    در این بخش می‌توانید مقادیر ویژگی‌های تعریف شده برای محصول{" "}
-                    <span className="font-bold">{prod.displayName}</span> را
-                    انتخاب کنید. پس از تایید، مقادیر انتخاب شده به متن مشخصات
-                    فنی ردیف اضافه خواهند شد.
-                  </div>
-
-                  {(() => {
-                    // Helper function to prune cascading selections based on configRules
-                    const getPrunedSelections = (selections: Record<string, string[]>) => {
-                      if (!prod.configRules || prod.configRules.length === 0) return selections;
-                      let current = { ...selections };
-                      let loop = true;
-                      let iterations = 0;
-                      while (loop && iterations < 10) {
-                        loop = false;
-                        iterations++;
-                        for (const rule of prod.configRules) {
-                          if (!rule.active) continue;
-                          
-                          // Evaluate conditions
-                          const allConditionsMet = rule.conditions.every(cond => {
-                            const f = prod.features?.find(feat => feat.name === cond.featureName);
-                            if (!f) return false;
-                            const selectedVals = current[f.id] || [];
-                            return selectedVals.some(v => cond.values.includes(v));
-                          });
-                          
-                          if (allConditionsMet) {
-                            for (const act of rule.actions) {
-                              const f = prod.features?.find(feat => feat.name === act.featureName);
-                              if (f) {
-                                const selectedVals = current[f.id] || [];
-                                const nextVals = selectedVals.filter(v => !act.values.includes(v));
-                                if (nextVals.length !== selectedVals.length) {
-                                  current[f.id] = nextVals;
-                                  loop = true; // repeat because changes occurred
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                      return current;
-                    };
-
-                    // Check if a specific feature option is currently excluded
-                    const checkIsOptionExcluded = (featName: string, optionVal: string) => {
-                      if (!prod.configRules || prod.configRules.length === 0) return false;
-                      for (const rule of prod.configRules) {
-                        if (!rule.active) continue;
-                        
-                        const allConditionsMet = rule.conditions.every(cond => {
-                          const f = prod.features?.find(feat => feat.name === cond.featureName);
-                          if (!f) return false;
-                          const selectedVals = configSelections[f.id] || [];
-                          return selectedVals.some(v => cond.values.includes(v));
-                        });
-                        
-                        if (allConditionsMet) {
-                          const hasExclusion = rule.actions.some(act => act.featureName === featName && act.values.includes(optionVal));
-                          if (hasExclusion) return true;
-                        }
-                      }
-                      return false;
-                    };
-
-                    return prod.features.map((feature) => (
-                      <div
-                        key={feature.id}
-                        className="space-y-2 border border-slate-100 rounded-lg p-3"
-                      >
-                        <label className="text-sm font-bold text-slate-700">
-                          {feature.name}
-                        </label>
-                        {/* One column on a phone, two once there is room: a
-                            feature with a dozen sizes was a very long list. */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 mt-2">
-                          {feature.options.map((opt) => {
-                            const isSelected = (
-                              configSelections[feature.id] || []
-                            ).includes(opt.value);
-                            const isExcluded = checkIsOptionExcluded(feature.name, opt.value);
-                            
-                            return (
-                              <label
-                                key={opt.id}
-                                className={`flex items-center gap-2 select-none ${
-                                  isExcluded 
-                                    ? "opacity-40 cursor-not-allowed" 
-                                    : "cursor-pointer group"
-                                }`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected && !isExcluded}
-                                  disabled={isExcluded}
-                                  onChange={(e) => {
-                                    let nextSelections = { ...configSelections };
-                                    const current = nextSelections[feature.id] || [];
-                                    if (e.target.checked) {
-                                      nextSelections[feature.id] = [...current, opt.value];
-                                    } else {
-                                      nextSelections[feature.id] = current.filter(
-                                        (v) => v !== opt.value,
-                                      );
-                                    }
-                                    
-                                    // Cascading prune of any newly restricted options
-                                    nextSelections = getPrunedSelections(nextSelections);
-                                    setConfigSelections(nextSelections);
-                                  }}
-                                  className={`w-4 h-4 rounded border-slate-300 focus:ring-sky-500 ${
-                                    isExcluded 
-                                      ? "text-slate-300 cursor-not-allowed" 
-                                      : "text-sky-600 cursor-pointer"
-                                  }`}
-                                />
-                                <span className={`text-sm ${
-                                  isExcluded 
-                                    ? "text-slate-400 line-through" 
-                                    : "text-slate-600 group-hover:text-slate-900 font-medium"
-                                }`}>
-                                  {opt.value}
-                                </span>
-                                {isExcluded && (
-                                  <span className="text-[10px] bg-amber-50 text-amber-600 border border-amber-200 px-1.5 py-0.5 rounded font-bold mr-auto">
-                                    غیرمجاز طبق شروط
-                                  </span>
-                                )}
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ));
-                  })()}
-                </div>
-
-                <div className="p-4 border-t border-slate-100 bg-slate-50 flex flex-wrap justify-end gap-3 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setShowConfigModal(null)}
-                    className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg text-sm font-medium transition"
-                  >
-                    انصراف
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmConfig}
-                    className="flex-1 sm:flex-none px-6 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-bold shadow-sm transition"
-                  >
-                    تایید و افزودن به مشخصات فنی
-                  </button>
-                </div>
-              </div>
-            </div>
+            <ProductConfiguratorModal
+              product={prod}
+              selections={configSelections}
+              onSelectionsChange={setConfigSelections}
+              onCancel={() => setShowConfigModal(null)}
+              onConfirm={() => void handleConfirmConfig()}
+              confirmLabel="تایید و افزودن به مشخصات فنی"
+              intro={(
+                <>
+                  در این بخش می‌توانید مقادیر ویژگی‌های تعریف شده برای محصول{" "}
+                  <span className="font-bold">{prod.displayName}</span> را
+                  انتخاب کنید. پس از تایید، مقادیر انتخاب شده به متن مشخصات
+                  فنی ردیف اضافه شده و SKU متناظر انتخاب — و در صورت نبود، ساخته — می‌شود.
+                </>
+              )}
+            />
           );
         })()}
 
