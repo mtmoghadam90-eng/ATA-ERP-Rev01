@@ -206,6 +206,49 @@ export async function listActivities(
   return buildResult(rows as unknown as Record<string, unknown>[], total, q);
 }
 
+/**
+ * How many project groups use each activity category, in one query.
+ *
+ * The settings screen shows a «در حال استفاده» column for every category, and
+ * asking per row would be one request per category on every render. The
+ * per-category endpoint stays for the delete check, which needs the count for
+ * exactly one.
+ */
+export async function categoryUsage(): Promise<Record<string, number>> {
+  const rows = await getDb().projectCategoryGroup.groupBy({
+    by: ["categoryId"],
+    _count: { _all: true },
+  });
+  const out: Record<string, number> = {};
+  for (const row of rows) out[row.categoryId] = row._count._all;
+  return out;
+}
+
+/**
+ * Renames a category everywhere it has already been used.
+ *
+ * `ProjectCategoryGroup.categoryName` is denormalised so a project's history
+ * stays readable when a category is removed from the settings — but that also
+ * means a rename that only touched the settings would leave every existing
+ * project showing the old wording, and the two would disagree for good. A
+ * rename is a correction, so it follows.
+ *
+ * The activity entries themselves are untouched: they record what somebody
+ * did, not what the category was called.
+ */
+export async function renameCategory(
+  categoryId: string,
+  name: string,
+): Promise<{ updated: number }> {
+  const clean = toNullableString(name, 200);
+  if (!clean) return { updated: 0 };
+  const result = await getDb().projectCategoryGroup.updateMany({
+    where: { categoryId },
+    data: { categoryName: clean },
+  });
+  return { updated: result.count };
+}
+
 export interface ActivityInput {
   groupId?: string;
   text?: string;

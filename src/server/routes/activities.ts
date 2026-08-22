@@ -1,9 +1,10 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
+import { hasPermission } from "../auth";
 import { getDb } from "../db";
 import {
-  ACTIVITY_SORTABLE, REFERRAL_FILTERABLE, REFERRAL_SORTABLE,
+  ACTIVITY_SORTABLE, REFERRAL_FILTERABLE, REFERRAL_SORTABLE, categoryUsage, renameCategory,
   addActivity, addModuleNote, addReferralMessage, deleteActivity, deleteCategoryGroup,
   deleteModuleNote,
   listActivities, listCategoryGroups, listModuleNotes, listReferrals,
@@ -34,6 +35,45 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
    * to answer that by scanning every category group it held — which is not
    * something the browser has any more.
    */
+  /**
+   * The same question for every category at once.
+   *
+   * Registered before the `:categoryId` route below so "usage" is not matched
+   * as a category id. The settings screen draws a column from this; asking per
+   * row would be one request per category on every render.
+   */
+  app.get("/api/activity-categories/usage", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      res.json({ success: true, usage: await categoryUsage() });
+    } catch (err) {
+      sendError(res, err, "GET /api/activity-categories/usage");
+    }
+  });
+
+  /**
+   * Renames a category, including everywhere it has already been used.
+   *
+   * Administration, so `settings` — the same flag that guards editing the
+   * category list in the first place.
+   */
+  app.put("/api/activity-categories/:categoryId", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    if (!hasPermission(user, "settings")) return denied(res);
+    try {
+      const name = (req.body as { name?: unknown })?.name;
+      if (typeof name !== "string" || !name.trim()) {
+        res.status(400).json({ success: false, error: "نام دسته‌بندی الزامی است." });
+        return;
+      }
+      res.json({ success: true, ...(await renameCategory(req.params.categoryId, name)) });
+    } catch (err) {
+      sendError(res, err, "PUT /api/activity-categories/:categoryId");
+    }
+  });
+
   app.get("/api/activity-categories/:categoryId/usage", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;

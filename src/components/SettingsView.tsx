@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 
 import { 
   Settings, 
@@ -26,6 +26,7 @@ import {
   Copy,
   ShieldAlert,
   Award,
+  X
 } from 'lucide-react';
 import { ERPSettings, CustomField, User, Project, AuditLog, WorkflowRule } from '../types';
 import { APP_MODULES, DEFAULT_MODULE_ORDER } from '../appModules';
@@ -413,6 +414,71 @@ export default function SettingsView({
         }
       });
     }
+  };
+
+  /*
+   * How many projects use each activity category.
+   *
+   * The «وضعیت استفاده» column was hardcoded to «بدون استفاده» — a literal
+   * `const isUsed = false` — so every category read as unused and the delete
+   * button looked available on all of them. The count comes from the server in
+   * one request, because it is a count across every project and this screen
+   * holds none of them.
+   */
+  const [categoryUsage, setCategoryUsage] = useState<Record<string, number>>({});
+
+  const refreshCategoryUsage = useCallback(async () => {
+    try {
+      const result = await api.get<{ usage: Record<string, number> }>(
+        '/api/activity-categories/usage');
+      setCategoryUsage(result.usage ?? {});
+    } catch {
+      // An unreadable count must not make the tab unusable; it reads as unused,
+      // and the delete still asks the server before it does anything.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'activityCategories') void refreshCategoryUsage();
+  }, [activeTab, refreshCategoryUsage]);
+
+  /** The category being renamed, and the text so far. */
+  const [renamingCategoryId, setRenamingCategoryId] = useState<string | null>(null);
+  const [renamingCategoryName, setRenamingCategoryName] = useState('');
+
+  /**
+   * Renames a category, in the settings and in every project already using it.
+   *
+   * Both, deliberately: `categoryName` is denormalised onto each project group
+   * so history survives a category being removed, and a rename that only
+   * touched the settings would leave every existing project showing the old
+   * wording for good.
+   */
+  const handleRenameCategory = async (catId: string) => {
+    const name = renamingCategoryName.trim();
+    if (!name) return;
+
+    const clash = (settings.activityCategories || []).some(
+      (c) => c.id !== catId && c.name.trim().toLowerCase() === name.toLowerCase());
+    if (clash) {
+      alert('دسته‌بندی دیگری با همین نام وجود دارد.');
+      return;
+    }
+
+    try {
+      await api.put(`/api/activity-categories/${catId}`, { name });
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'ویرایش نام دسته‌بندی با خطا مواجه شد.');
+      return;
+    }
+
+    updateSettings({
+      ...settings,
+      activityCategories: (settings.activityCategories || []).map(
+        (c) => (c.id === catId ? { ...c, name } : c)),
+    });
+    setRenamingCategoryId(null);
+    setRenamingCategoryName('');
   };
 
   const handleAddCategory = (e: React.FormEvent) => {
@@ -1861,12 +1927,67 @@ export default function SettingsView({
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {(settings.activityCategories || []).map((cat, idx) => {
-                      // Usage is checked against the server when a delete is attempted.
-                      const isUsed = false;
+                      const usedIn = categoryUsage[cat.id] ?? 0;
+                      const isUsed = usedIn > 0;
+                      const isRenaming = renamingCategoryId === cat.id;
                       return (
                         <tr key={cat.id} className="hover:bg-white transition bg-white/40">
                           <td className="py-3 px-4 font-mono text-slate-400">{idx + 1}</td>
-                          <td className="py-3 px-4 font-semibold text-slate-800">{cat.name}</td>
+                          <td className="py-3 px-4 font-semibold text-slate-800">
+                            {/*
+                              Renamable whatever its usage. The new wording
+                              follows into every project already using it — the
+                              name is stored on each group so history survives a
+                              category being removed, and leaving those behind
+                              would make the two disagree for good.
+                            */}
+                            {isRenaming ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="text"
+                                  autoFocus
+                                  value={renamingCategoryName}
+                                  onChange={(e) => setRenamingCategoryName(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') void handleRenameCategory(cat.id);
+                                    if (e.key === 'Escape') setRenamingCategoryId(null);
+                                  }}
+                                  className="flex-1 border border-sky-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-sky-500 text-right"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRenameCategory(cat.id)}
+                                  className="p-1 rounded text-emerald-600 hover:bg-emerald-50"
+                                  title="ذخیره نام"
+                                >
+                                  <Check size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setRenamingCategoryId(null)}
+                                  className="p-1 rounded text-slate-400 hover:bg-slate-100"
+                                  title="انصراف"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="flex items-center gap-1.5">
+                                {cat.name}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setRenamingCategoryId(cat.id);
+                                    setRenamingCategoryName(cat.name);
+                                  }}
+                                  className="p-1 rounded text-slate-400 hover:text-sky-600 hover:bg-sky-50"
+                                  title="ویرایش نام دسته‌بندی"
+                                >
+                                  <Edit2 size={12} />
+                                </button>
+                              </span>
+                            )}
+                          </td>
                           <td className="py-3 px-4">
                             <select
                               className="bg-slate-50 border border-slate-200 text-slate-700 text-xs rounded-lg px-2 py-1 outline-none focus:border-sky-500 bg-white"
@@ -1887,7 +2008,7 @@ export default function SettingsView({
                           <td className="py-3 px-4">
                             {isUsed ? (
                               <span className="text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-bold text-[10px]">
-                                استفاده شده (غیرقابل حذف)
+                                در {usedIn.toLocaleString('fa-IR')} پروژه (غیرقابل حذف)
                               </span>
                             ) : (
                               <span className="text-slate-400 font-medium">بدون استفاده</span>
@@ -1925,14 +2046,63 @@ export default function SettingsView({
               {/* Mobile View */}
               <div className="md:hidden space-y-4">
                 {(settings.activityCategories || []).map((cat, idx) => {
-                  // Usage is checked against the server when a delete is attempted.
-                      const isUsed = false;
+                  const usedIn = categoryUsage[cat.id] ?? 0;
+                  const isUsed = usedIn > 0;
+                  const isRenaming = renamingCategoryId === cat.id;
                   return (
                     <div key={`mob-${cat.id}`} className="bg-white rounded-xl border border-slate-200 p-4 space-y-4 shadow-sm relative">
                       <div className="flex items-start justify-between">
-                        <div className="space-y-1">
+                        <div className="space-y-1 flex-1 min-w-0">
                           <span className="text-slate-400 font-mono text-[10px]">ردیف {idx + 1}</span>
-                          <h4 className="font-bold text-slate-800 text-sm">{cat.name}</h4>
+                          {isRenaming ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                autoFocus
+                                value={renamingCategoryName}
+                                onChange={(e) => setRenamingCategoryName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') void handleRenameCategory(cat.id);
+                                  if (e.key === 'Escape') setRenamingCategoryId(null);
+                                }}
+                                className="flex-1 border border-sky-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-sky-500 text-right"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void handleRenameCategory(cat.id)}
+                                className="p-1 rounded text-emerald-600 hover:bg-emerald-50"
+                              >
+                                <Check size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRenamingCategoryId(null)}
+                                className="p-1 rounded text-slate-400 hover:bg-slate-100"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ) : (
+                            <h4 className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                              {cat.name}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRenamingCategoryId(cat.id);
+                                  setRenamingCategoryName(cat.name);
+                                }}
+                                className="p-1 rounded text-slate-400 hover:text-sky-600 hover:bg-sky-50"
+                                title="ویرایش نام دسته‌بندی"
+                              >
+                                <Edit2 size={12} />
+                              </button>
+                            </h4>
+                          )}
+                          {isUsed && (
+                            <span className="inline-block text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-bold text-[10px]">
+                              در {usedIn.toLocaleString('fa-IR')} پروژه (غیرقابل حذف)
+                            </span>
+                          )}
                         </div>
                         <button
                           type="button"
