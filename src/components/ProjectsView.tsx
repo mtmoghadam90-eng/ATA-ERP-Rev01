@@ -261,6 +261,7 @@ export default function ProjectsView({
   /** Who to write to about this job, and how — see the messaging module. */
   const [messagingContactId, setMessagingContactId] = useState("");
   const [messagingChannel, setMessagingChannel] = useState("");
+  const [suppressAutoMessages, setSuppressAutoMessages] = useState(false);
   const [marketingChannel, setMarketingChannel] = useState("");
   const [leadQuality, setLeadQuality] = useState("متوسط");
   const [referrerName, setReferrerName] = useState("");
@@ -711,6 +712,7 @@ export default function ProjectsView({
     setLossReason(proj.lossReason || "");
     setSalesExpert(proj.salesExpert || "");
     setMessagingContactId(proj.messagingContactId || "");
+    setSuppressAutoMessages(proj.suppressAutoMessages === true);
     setMessagingChannel(proj.messagingChannel || "");
     setMarketingChannel(proj.marketingChannel || "تماس مستقیم");
     setLeadQuality(proj.leadQuality || "متوسط");
@@ -776,6 +778,7 @@ export default function ProjectsView({
       // New Fields
       salesExpert,
       messagingContactId: messagingContactId || undefined,
+      suppressAutoMessages,
       messagingChannel: (messagingChannel || undefined) as Project["messagingChannel"],
       marketingChannel,
       leadQuality,
@@ -3531,15 +3534,40 @@ export default function ProjectsView({
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                     >
                       <option value="">-- خود مشتری --</option>
-                      {(customers.find(c => c.id === customerId)?.linkedCustomerIds || [])
-                        .map(id => customers.find(c => c.id === id))
-                        .filter(Boolean)
-                        .map(person => (
-                          <option key={person!.id} value={person!.id}>
-                            {`${person!.firstName || ''} ${person!.lastName || ''}`.trim() || person!.companyName}
-                          </option>
-                        ))}
+                      {/*
+                        The people linked to the chosen customer, from the same
+                        picker the financial and technical contact fields use —
+                        it asks the server for `linkedTo=<customer>` and
+                        `customerType=حقیقی`.
+
+                        This field used to look the ids up in `customers`, which
+                        holds the twenty-five rows matching whatever is typed in
+                        the customer box. A company's own people are almost
+                        never among them, so the list came up empty however many
+                        contacts the company had.
+                      */}
+                      {linkedContacts.map(person => (
+                        <option key={person.id} value={person.id}>
+                          {`${person.firstName || ''} ${person.lastName || ''}`.trim() || person.companyName}
+                          {person.position ? ` — ${person.position}` : ''}
+                        </option>
+                      ))}
+                      {/*
+                        Whoever is already stored stays in the list even if the
+                        link has since been removed. A select that silently
+                        drops its own value shows the first option instead and
+                        saves that on the next save.
+                      */}
+                      {messagingContactId && !linkedContacts.some(c => c.id === messagingContactId) && (
+                        <option value={messagingContactId}>مخاطب ثبت‌شده</option>
+                      )}
                     </select>
+                    {customerId && linkedContacts.length === 0 && (
+                      <p className="text-[10px] text-slate-400">
+                        شخص حقیقی‌ای به این مشتری لینک نشده است. افراد را در پرونده‌ی مشتری،
+                        بخش «مخاطبین مرتبط» اضافه کنید.
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-1.5">
@@ -3554,6 +3582,40 @@ export default function ProjectsView({
                         <option key={c} value={c}>{CHANNEL_LABELS[c]}</option>
                       ))}
                     </select>
+                  </div>
+
+                  {/*
+                    One job outside the company-wide rules.
+
+                    The alternatives were disabling the rule for everybody or
+                    setting the customer's own opt-out, which silences them on
+                    every other project too. Deliberately does not stop a person
+                    writing to them by hand: this exempts the project from the
+                    automation, it does not mark the customer as unreachable.
+                  */}
+                  <div className="space-y-1.5 md:col-span-2">
+                    <label className={`flex items-start gap-2.5 rounded-xl border p-3 cursor-pointer ${
+                      suppressAutoMessages
+                        ? 'border-amber-200 bg-amber-50'
+                        : 'border-slate-200 bg-slate-50/60'
+                    }`}>
+                      <input
+                        type="checkbox"
+                        checked={suppressAutoMessages}
+                        onChange={(e) => setSuppressAutoMessages(e.target.checked)}
+                        className="accent-amber-500 mt-0.5"
+                      />
+                      <span className="text-[11px] leading-6">
+                        <span className="font-bold text-slate-800">
+                          این پروژه نیاز به ارسال پیام خودکار ندارد
+                        </span>
+                        <span className="block text-slate-500">
+                          قوانین اتوماسیون برای این پروژه اجرا نمی‌شوند. ارسال دستی پیام از
+                          ماژول «ارسال پیام» همچنان ممکن است؛ برای قطع کامل ارتباط با یک مشتری،
+                          گزینه «لغو دریافت پیام» در پرونده‌ی خود مشتری را بزنید.
+                        </span>
+                      </span>
+                    </label>
                   </div>
 
                   {/* Customer Inquiry Number */}

@@ -45,6 +45,7 @@ export function rowToProject(row: ProjectRow): Project {
     leadQuality: row.leadQuality ?? undefined,
     salesExpert: row.salesExpert ?? undefined,
     messagingContactId: row.messagingContactId ?? undefined,
+    suppressAutoMessages: row.suppressAutoMessages === true,
     messagingChannel: (row.messagingChannel ?? undefined) as Project["messagingChannel"],
     // Printed on the row or written into the Excel export, and none of it used
     // to arrive — the row adapter stopped at the pipeline figures.
@@ -80,6 +81,7 @@ export function detailToProject(detail: ProjectDetail): Project {
     referrerName: detail.referrerName ?? undefined,
     salesExpert: detail.salesExpert ?? undefined,
     messagingContactId: detail.messagingContactId ?? undefined,
+    suppressAutoMessages: detail.suppressAutoMessages === true,
     messagingChannel: (detail.messagingChannel ?? undefined) as Project["messagingChannel"],
     // The view shows names; the record stores both string fields and FK ids
     /*

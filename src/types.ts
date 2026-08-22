@@ -478,6 +478,16 @@ export interface Project {
   /** Who to write to about this job, and how — see the messaging module. */
   messagingContactId?: string;
   messagingChannel?: 'SMS' | 'BALE' | 'EMAIL';
+  /**
+   * Automation leaves this job alone.
+   *
+   * The workflow rules are written once for the whole company, and a job
+   * now and then has to sit outside them. Manual sends still go out: this
+   * exempts one project from the rules, it does not silence it. The
+   * customer's own `doNotContact` is the other thing and stops everything,
+   * on every project.
+   */
+  suppressAutoMessages?: boolean;
 
 }
 
