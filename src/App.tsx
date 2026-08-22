@@ -484,6 +484,7 @@ export default function App() {
         return (
           <MessagingView
             settings={store.settings}
+            onUpdateSettings={store.updateSettings}
             currentUser={store.currentUser}
           />
         );

@@ -615,6 +615,28 @@ export interface ProformaTemplate {
 }
 
 export interface ERPSettings {
+  /**
+   * How the messaging module behaves, as opposed to which providers it uses.
+   *
+   * Provider credentials are rows in `message_providers` and never leave the
+   * server; these three are ordinary settings and are edited on the same tab.
+   * The server reads them through `loadMessagingSettings`.
+   */
+  messaging?: {
+    /**
+     * A window messages are not delivered in, "HH:MM" to "HH:MM". It may wrap
+     * midnight (22:00–08:00 is the useful case). A message due inside it is
+     * held until the window opens, never dropped.
+     */
+    quietHours?: { from?: string | null; to?: string | null };
+    /**
+     * Queue every message and show it in the outbox, but never call a
+     * provider. For trying a new rule out without texting a customer.
+     */
+    dryRun?: boolean;
+    /** Attempts before a message is given up on. */
+    maxAttempts?: number;
+  };
   showProductBrandInDocuments?: boolean;
   customFields: CustomField[];
   proformaTemplates: ProformaTemplate[];

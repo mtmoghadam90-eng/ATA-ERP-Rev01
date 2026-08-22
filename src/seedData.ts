@@ -229,6 +229,16 @@ export const DEFAULT_SETTINGS: ERPSettings = {
     { id: 'act-4', name: 'درخواست پشتیبانی فنی سازنده', module: 'پروژه' }
   ],
   sidebarModuleOrder: [...DEFAULT_MODULE_ORDER],
+  /*
+   * No quiet window and live sending, which is what an installation that has
+   * just configured a provider wants. Dry run is the switch somebody turns on
+   * deliberately while trying a rule out.
+   */
+  messaging: {
+    quietHours: { from: null, to: null },
+    dryRun: false,
+    maxAttempts: 4,
+  },
   deliveryChecklistTemplate: [
     'بررسی ظاهری کالا و اصالت برند کالاها',
     'کنترل تطابق شماره سریال با گواهی کالیبراسیون و مدارک فنی',

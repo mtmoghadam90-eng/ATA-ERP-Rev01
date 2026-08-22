@@ -483,6 +483,30 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
       const attempts = message.attempts + 1;
 
       /*
+       * A dry run never reaches a provider, so it must not require one either.
+       *
+       * The check below used to come first, which meant somebody turning dry
+       * run on to try a rule out before a panel had been bought got «این روش
+       * ارسال غیرفعال است» — a complaint about the one thing the switch exists
+       * to avoid needing.
+       */
+      if (message.dryRun) {
+        await db.message.update({
+          where: { id: message.id },
+          data: {
+            status: MESSAGE_STATUS.SENT,
+            attempts,
+            sentAt: now,
+            sentAtJalali: toShamsiStr(now),
+            providerMessageId: "DRY-RUN",
+            lastError: null,
+          },
+        });
+        sent++;
+        continue;
+      }
+
+      /*
        * A channel that is switched off is a decision, not a failure to retry.
        *
        * Retrying it for three days would fill the outbox with red rows that say
@@ -501,13 +525,11 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
         continue;
       }
 
-      const result = message.dryRun
-        ? { ok: true, providerMessageId: "DRY-RUN" as string | null, error: undefined }
-        : await sendThrough(channel, provider.config, {
-            recipient: message.recipient,
-            subject: message.subject,
-            body: message.body,
-          });
+      const result = await sendThrough(channel, provider.config, {
+        recipient: message.recipient,
+        subject: message.subject,
+        body: message.body,
+      });
 
       if (result.ok) {
         await db.message.update({

@@ -28,6 +28,8 @@ import {
 
 interface Props {
   settings: ERPSettings;
+  /** Absent means the behaviour panel is read-only — nothing to save with. */
+  onUpdateSettings?: (next: ERPSettings) => void;
   currentUser?: User | null;
 }
 
@@ -90,7 +92,7 @@ const SECRET_LABELS: Record<string, string> = {
   botToken: 'توکن ربات',
 };
 
-export default function MessagingView({ settings, currentUser = null }: Props) {
+export default function MessagingView({ settings, onUpdateSettings, currentUser = null }: Props) {
   const [tab, setTab] = useState<Tab>('outbox');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -178,7 +180,16 @@ export default function MessagingView({ settings, currentUser = null }: Props) {
 
       {tab === 'outbox' && <Outbox onError={report} onNotice={flash} />}
       {tab === 'templates' && <Templates settings={settings} onError={report} onNotice={flash} />}
-      {tab === 'providers' && canConfigure && <Providers onError={report} onNotice={flash} />}
+      {tab === 'providers' && canConfigure && (
+        <>
+          <SendingBehaviour
+            settings={settings}
+            onUpdateSettings={onUpdateSettings}
+            onNotice={flash}
+          />
+          <Providers onError={report} onNotice={flash} />
+        </>
+      )}
     </div>
   );
 }
@@ -630,6 +641,131 @@ function Templates({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ---------------------------- sending behaviour --------------------------- */
+
+/**
+ * The three switches that decide *how* messages go out, as opposed to *which*
+ * provider carries them.
+ *
+ * They were read by the server from the start and set by nothing: `dryRun`,
+ * the quiet window and the retry limit lived in `settings.messaging`, which no
+ * screen ever wrote. A dry-run switch nobody can find is a dry-run switch
+ * nobody can use, which is exactly what happened.
+ */
+function SendingBehaviour({
+  settings, onUpdateSettings, onNotice,
+}: {
+  settings: ERPSettings;
+  onUpdateSettings?: (next: ERPSettings) => void;
+  onNotice: (t: string) => void;
+}) {
+  const messaging = settings.messaging ?? {};
+  const dryRun = messaging.dryRun === true;
+  const quietFrom = messaging.quietHours?.from ?? '';
+  const quietTo = messaging.quietHours?.to ?? '';
+  const maxAttempts = Number(messaging.maxAttempts) > 0 ? Number(messaging.maxAttempts) : 4;
+
+  const patch = (change: Partial<NonNullable<ERPSettings['messaging']>>, notice: string) => {
+    if (!onUpdateSettings) return;
+    onUpdateSettings({
+      ...settings,
+      messaging: { quietHours: { from: quietFrom || null, to: quietTo || null }, dryRun, maxAttempts, ...change },
+    });
+    onNotice(notice);
+  };
+
+  return (
+    <div className="border border-slate-150 rounded-2xl p-4 bg-white space-y-3">
+      <h3 className="font-bold text-sm text-slate-800">رفتار ارسال</h3>
+
+      {/*
+        The switch the whole panel exists for. It is described by what it does
+        to a message rather than by its name: "dry run" means nothing to
+        somebody deciding whether it is safe to turn a new rule on.
+      */}
+      <label className={`flex items-start gap-2.5 rounded-xl border p-3 cursor-pointer ${
+        dryRun ? 'border-amber-200 bg-amber-50' : 'border-slate-150 bg-slate-50/60'
+      }`}>
+        <input
+          type="checkbox"
+          checked={dryRun}
+          disabled={!onUpdateSettings}
+          onChange={(e) => patch(
+            { dryRun: e.target.checked },
+            e.target.checked ? 'حالت آزمایشی روشن شد؛ هیچ پیامی واقعاً ارسال نمی‌شود.' : 'حالت آزمایشی خاموش شد؛ پیام‌ها واقعاً ارسال می‌شوند.',
+          )}
+          className="accent-amber-500 mt-0.5"
+        />
+        <span className="text-[11px] leading-6">
+          <span className="font-bold text-slate-800">حالت آزمایشی (بدون ارسال واقعی)</span>
+          <span className="block text-slate-500">
+            پیام‌ها مثل همیشه ساخته می‌شوند و در «صندوق خروجی» با برچسب «آزمایشی» و وضعیت
+            «ارسال شده» دیده می‌شوند، اما هیچ‌چیز به پنل پیامک، بله یا ایمیل فرستاده نمی‌شود و
+            هزینه‌ای هم ندارد. برای امتحان کردن یک قانون خودکار تازه: روشنش کنید، کاری که قانون
+            به آن حساس است را انجام دهید، متن ساخته‌شده را در صندوق خروجی ببینید و بعد خاموشش کنید.
+          </span>
+          {dryRun && (
+            <span className="block mt-1 font-bold text-amber-800">
+              الان روشن است — تا خاموش نشود هیچ پیامی به دست مشتری نمی‌رسد.
+            </span>
+          )}
+        </span>
+      </label>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="space-y-1">
+          <label className="text-[11px] font-bold text-slate-600">شروع ساعات سکوت</label>
+          <input
+            type="time"
+            value={quietFrom}
+            disabled={!onUpdateSettings}
+            onChange={(e) => patch(
+              { quietHours: { from: e.target.value || null, to: quietTo || null } },
+              'ساعات سکوت ذخیره شد.',
+            )}
+            dir="ltr"
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-center"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] font-bold text-slate-600">پایان ساعات سکوت</label>
+          <input
+            type="time"
+            value={quietTo}
+            disabled={!onUpdateSettings}
+            onChange={(e) => patch(
+              { quietHours: { from: quietFrom || null, to: e.target.value || null } },
+              'ساعات سکوت ذخیره شد.',
+            )}
+            dir="ltr"
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-center"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[11px] font-bold text-slate-600">حداکثر تلاش برای ارسال</label>
+          <input
+            type="number"
+            min={1}
+            max={10}
+            value={maxAttempts}
+            disabled={!onUpdateSettings}
+            onChange={(e) => patch(
+              { maxAttempts: Math.min(10, Math.max(1, Number(e.target.value) || 1)) },
+              'تعداد تلاش ذخیره شد.',
+            )}
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-center"
+          />
+        </div>
+      </div>
+      <p className="text-[10px] text-slate-400 leading-5">
+        در ساعات سکوت پیام حذف نمی‌شود؛ تا باز شدن پنجره نگه داشته می‌شود و زمان واقعی ارسالش
+        در صندوق خروجی نوشته می‌شود. بازه می‌تواند از نیمه‌شب رد شود (مثلاً ۲۲:۰۰ تا ۰۸:۰۰).
+        هر دو خانه را خالی بگذارید تا ساعات سکوتی در کار نباشد.
+      </p>
     </div>
   );
 }
