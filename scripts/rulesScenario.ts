@@ -2367,6 +2367,41 @@ head("Template variables: the palette and the values agree");
 }
 
 
+head("Activity category settings: usage is asked, not assumed");
+{
+  /*
+   * The «وضعیت استفاده» column was a literal `const isUsed = false`, so every
+   * category read as unused, the delete button looked available on all of them,
+   * and the refusal only arrived after the click. The count now comes from the
+   * server.
+   */
+  const screen = readFileSync("src/components/SettingsView.tsx", "utf-8");
+  // Comment lines dropped first, or the note explaining the old bug matches it.
+  const code = screen.split("\n")
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join("\n");
+  ok("the used flag is not hardcoded",
+    !/const\s+isUsed\s*=\s*(false|true)\b/.test(code));
+  ok("it is read from the counts the server sends",
+    screen.includes("categoryUsage[cat.id]"));
+  ok("and both the table and the cards read the same source",
+    (screen.match(/categoryUsage\[cat\.id\]/g) ?? []).length >= 2);
+
+  ok("a category can be renamed", screen.includes("handleRenameCategory"));
+
+  /*
+   * A rename has to follow into the projects already using the category:
+   * `categoryName` is denormalised onto each group so history survives the
+   * category being deleted, and a settings-only rename would leave every
+   * existing project showing the old wording for good.
+   */
+  const service = readFileSync("src/server/services/activityService.ts", "utf-8");
+  ok("and the rename reaches the groups that already use it",
+    /renameCategory[\s\S]{0,600}updateMany\([\s\S]{0,200}categoryName/.test(service));
+  ok("the bulk usage count is one query, not one per category",
+    /categoryUsage[\s\S]{0,400}groupBy/.test(service));
+}
+
 head("Activity attachments: a list, with the old single file still readable");
 {
   const files = [
