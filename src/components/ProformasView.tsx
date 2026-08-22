@@ -597,15 +597,36 @@ export default function ProformasView({
     return () => { cancelled = true; };
   }, [initialPrintDocId]);
 
-  // Expand Project sections state
+  /*
+   * Which project groups are open.
+   *
+   * A group with no entry here is **closed**: the screen opens on the list of
+   * jobs rather than on every proforma of every job at once, which is a page
+   * that has to be scrolled past before anything can be found.
+   *
+   * The one exception is while something is being searched for. A search that
+   * answers with a column of closed headers looks like it found nothing, so a
+   * term in the box opens the groups that survived the filter — and an explicit
+   * click still wins over both defaults, which is why the stored value is
+   * checked first and `??` rather than `||` reads it.
+   */
   const [expandedProjects, setExpandedProjects] = useState<
     Record<string, boolean>
   >({});
+
+  const isProjectExpanded = (projId: string): boolean =>
+    expandedProjects[projId] ?? search.trim() !== "";
+
   const toggleProjectExpand = (projId: string) => {
-    setExpandedProjects((prev) => ({
-      ...prev,
-      [projId]: prev[projId] === false ? true : false,
-    }));
+    const next = !isProjectExpanded(projId);
+    setExpandedProjects((prev) => ({ ...prev, [projId]: next }));
+  };
+
+  /** Opens or closes every group at once, whatever each one is doing now. */
+  const setAllProjectsExpanded = (open: boolean) => {
+    setExpandedProjects(
+      Object.fromEntries(projectIdsOrdered.map((id) => [id, open])),
+    );
   };
   // Item status modal helpers
   /**
@@ -3002,6 +3023,32 @@ export default function ProformasView({
           </select>
         </div>
       </div>
+      {/*
+        Open and close everything at once.
+
+        The groups start closed, so the screen opens on the list of jobs rather
+        than on every proforma of every job — and somebody who does want the
+        whole page should not have to click sixteen headers to get it.
+      */}
+      {projectIdsOrdered.length > 0 && (
+        <div className="flex items-center gap-2 -mb-1">
+          <button
+            type="button"
+            onClick={() => setAllProjectsExpanded(true)}
+            className="px-2.5 py-1 text-[11px] font-bold text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 transition"
+          >
+            باز کردن همه
+          </button>
+          <button
+            type="button"
+            onClick={() => setAllProjectsExpanded(false)}
+            className="px-2.5 py-1 text-[11px] font-bold text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 transition"
+          >
+            بستن همه
+          </button>
+        </div>
+      )}
+
       {/* Grouped by Project Accordions */}
       <div className="space-y-4">
         {projectIdsOrdered.map((pId) => {
@@ -3009,7 +3056,7 @@ export default function ProformasView({
           if (!pfs || pfs.length === 0) return null;
           const isNoProject = pId === "no-project";
           const project = isNoProject ? null : getProjectDetails(pId);
-          const isExpanded = expandedProjects[pId] !== false; // default to true
+          const isExpanded = isProjectExpanded(pId);
           return (
             <div
               key={pId}
