@@ -82,6 +82,8 @@ import DuplicateCustomerModal from "./DuplicateCustomerModal";
 import PriceCalculatorModal from "./PriceCalculatorModal";
 import { getCombinedFeaturePrice } from "../utils/skuUtils";
 import ProductConfiguratorModal from "./ProductConfiguratorModal";
+import RichTextField from "./RichTextField";
+import { renderRichText } from "../utils/richText";
 import { attributesFromSelections, mergeSpecText, specLinesFrom } from "../utils/productConfig";
 import { ensureVariantForAttributes, updateProductById as applyProductChange } from "../api/productVariants";
 import { priceInWarehouseCurrency } from "../utils/finance";
@@ -2411,7 +2413,7 @@ export default function ProformasView({
             ${item.productName}${overrideShowBrand && item.brand ? ` <span style="color: #4f46e5; font-size: 11px;">(${item.brand})</span>` : ""}${item.tagNumber ? ` <span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 1px 5px; border-radius: 4px;">تگ: ${item.tagNumber}</span>` : ""}
           </div>
           <div style="font-size: 11px; color: #475569; white-space: pre-line; line-height: 1.5; text-align: left; direction: ltr;">
-            ${item.techSpecs || "-"}
+            ${item.techSpecs ? renderRichText(item.techSpecs) : "-"}
           </div>
         </td>
         <td style="padding: 10px; text-align: center; font-family: monospace; vertical-align: middle;">${item.quantity}</td>
@@ -5265,15 +5267,18 @@ export default function ProformasView({
                           </label>
 
                         </div>
-                        <textarea
+                        {/*
+                          Plain text with markers, not stored HTML: the
+                          configurator reads this field line by line, and it is
+                          interpolated into the printed document — where
+                          `renderRichText` escapes it first, which also closes
+                          the hole a stray «<» in a tolerance used to open.
+                        */}
+                        <RichTextField
                           rows={2}
                           value={item.techSpecs || ""}
-                          onChange={(e) =>
-                            handleItemFieldChange(
-                              idx,
-                              "techSpecs",
-                              e.target.value,
-                            )
+                          onChange={(next) =>
+                            handleItemFieldChange(idx, "techSpecs", next)
                           }
                           placeholder="مثال: سایز: ۲ اینچ، کلاس فشاری: PN16، متریال بدنه: WCB، خروجی: 4-20mA..."
                           className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none text-left [direction:ltr] bg-white leading-relaxed"
