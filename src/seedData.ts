@@ -1,3 +1,4 @@
+import { DEFAULT_MODULE_ORDER } from './appModules';
 import { ExchangeRate, ERPSettings } from './types';
 import { DEFAULT_CUSTOMER_VALUE_SETTINGS } from './utils/customerValue';
 
@@ -227,22 +228,7 @@ export const DEFAULT_SETTINGS: ERPSettings = {
     { id: 'act-3', name: 'بررسی اوراق مناقصه', module: 'پروژه' },
     { id: 'act-4', name: 'درخواست پشتیبانی فنی سازنده', module: 'پروژه' }
   ],
-  sidebarModuleOrder: [
-    'dashboard',
-    'customers',
-    'projects',
-    'proformas',
-    'products',
-    'suppliers',
-    'supplierInquiries',
-    'purchaseOrders',
-    'packagingDelivery',
-    'transactions',
-    'tasks',
-    'referrals',
-    'users',
-    'settings'
-  ],
+  sidebarModuleOrder: [...DEFAULT_MODULE_ORDER],
   deliveryChecklistTemplate: [
     'بررسی ظاهری کالا و اصالت برند کالاها',
     'کنترل تطابق شماره سریال با گواهی کالیبراسیون و مدارک فنی',
