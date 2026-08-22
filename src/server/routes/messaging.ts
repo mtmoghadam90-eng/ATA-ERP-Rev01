@@ -147,9 +147,24 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
 
   /* ------------------------------ templates ----------------------------- */
 
+  /**
+   * Readable by whoever administers the system as well as by the messaging
+   * module's own users.
+   *
+   * The workflow rule editor lives in the settings screen and now picks a
+   * template rather than carrying its own text; somebody configuring
+   * automation without the messaging permission would otherwise be shown an
+   * empty list and no way to fill it. Reading a template's wording is not a
+   * privilege worth separating from `settings`, which already edits the rules
+   * that send it.
+   */
   app.get("/api/messaging/templates", async (req, res) => {
-    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireAuth(req, res);
     if (!user) return;
+    if (!hasPermission(user, "messaging") && !hasPermission(user, "settings")) {
+      res.status(403).json({ success: false, error: "شما اجازه دسترسی به این بخش را ندارید." });
+      return;
+    }
     try {
       res.json({ success: true, templates: await listTemplates() });
     } catch (err) {

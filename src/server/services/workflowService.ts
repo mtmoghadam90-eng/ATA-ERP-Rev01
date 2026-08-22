@@ -217,8 +217,18 @@ export async function executeRule(
           if (value !== undefined && value !== null && value !== "") values[key] = value;
         }
 
+        /*
+         * The template wins over anything written into the rule.
+         *
+         * It used to be the other way round, from when a rule could only carry
+         * its own text. Templates are now written in one place — the messaging
+         * module — and picked here, so a rule that still carries the older
+         * inline text falls back to it and a rule that names a template gets
+         * the wording whoever edits that template decides on. Two editable
+         * copies of the same message is how the two come to disagree.
+         */
         const body = renderTemplate(
-          config.bodyTemplate || template?.body || "",
+          template?.body || config.bodyTemplate || "",
           values,
         ).trim();
 
@@ -244,7 +254,7 @@ export async function executeRule(
             projectId: enrichedPayload.projectId ?? null,
             channel: isChannel(config.channel) ? config.channel : null,
             subject: renderTemplate(
-              config.subjectTemplate || template?.subject || "",
+              template?.subject || config.subjectTemplate || "",
               values,
             ) || null,
             body,

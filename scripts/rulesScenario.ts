@@ -2356,6 +2356,38 @@ head("Template variables: the palette and the values agree");
 }
 
 
+head("Message templates live in one place");
+{
+  /*
+   * A rule used to carry its own wording *and* be able to name a template, so
+   * the same message was editable in two screens and the two drifted apart —
+   * which is the whole reason templates exist. The rule editor now picks one;
+   * inline text survives only as a fallback for rules saved before that.
+   */
+  const editor = readFileSync("src/components/SettingsView.tsx", "utf-8");
+  ok("the rule editor offers no box to type a message into",
+    !/messageConfig!\.bodyTemplate\s*=\s*e\.target\.value/.test(editor));
+  ok("and picks a template instead",
+    /messageConfig!\.templateId\s*=\s*e\.target\.value/.test(editor));
+
+  const engine = readFileSync("src/server/services/workflowService.ts", "utf-8");
+  ok("the engine prefers the template over anything left on the rule",
+    engine.includes("template?.body || config.bodyTemplate"));
+  ok("and the subject the same way",
+    engine.includes("template?.subject || config.subjectTemplate"));
+
+  /*
+   * The three settings the server reads. They were read from the start and
+   * written by nothing, so the dry-run switch existed and could not be found.
+   */
+  const messagingDefaults = DEFAULT_SETTINGS.messaging;
+  ok("a fresh installation has the messaging behaviour settings",
+    !!messagingDefaults && messagingDefaults.dryRun === false
+    && Number(messagingDefaults.maxAttempts) > 0);
+  const screen = readFileSync("src/components/MessagingView.tsx", "utf-8");
+  ok("and a screen writes them", screen.includes("dryRun: e.target.checked"));
+}
+
 head("Modules: one catalogue, and everything reads it");
 {
   /*

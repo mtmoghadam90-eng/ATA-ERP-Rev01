@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { 
   Settings, 
@@ -30,6 +30,8 @@ import {
 import { ERPSettings, CustomField, User, Project, AuditLog, WorkflowRule } from '../types';
 import { APP_MODULES, DEFAULT_MODULE_ORDER } from '../appModules';
 import { MODULE_ICONS } from './moduleIcons';
+import { MessageTemplateRow, messagingApi } from '../api/messaging';
+import { CHANNEL_LABELS, Channel } from '../utils/messaging';
 import { formatERPNumber } from '../numUtils';
 import { ApiError, api } from '../api/client';
 import { auditLogsApi } from '../api/auditLogs';
@@ -113,6 +115,70 @@ export default function SettingsView({
   // Workflow builder states
   const [editingRule, setEditingRule] = useState<WorkflowRule | null>(null);
   const [isRuleFormOpen, setIsRuleFormOpen] = useState(false);
+
+  /*
+   * The message templates, read once so a rule can pick one.
+   *
+   * A rule used to carry its own wording, which meant the same message was
+   * editable in two places and the two drifted. The templates are authored in
+   * the messaging module; this screen only refers to them.
+   *
+   * Loaded on mount with no dependencies, deliberately: this component
+   * re-renders on every settings change, and an effect that depends on
+   * anything rebuilt per render is how the provider screen came to refetch in
+   * a loop.
+   */
+  const [messageTemplates, setMessageTemplates] = useState<MessageTemplateRow[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    messagingApi.templates()
+      .then((rows) => { if (!cancelled) setMessageTemplates(rows); })
+      // A user without either permission simply gets no list; the rule editor
+      // says where templates come from, which is the useful thing to show.
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
+  /**
+   * Turns a rule's own leftover text into a real template and points the rule
+   * at it.
+   *
+   * The one gesture that ends the split for a rule written before templates
+   * were pickable, without anybody having to retype the wording into the
+   * messaging module and then find this rule again.
+   */
+  const convertActionTextToTemplate = async (actIdx: number) => {
+    if (!editingRule) return;
+    const action = editingRule.actions[actIdx];
+    const text = action?.messageConfig?.bodyTemplate?.trim();
+    if (!text) return;
+
+    try {
+      const created = await messagingApi.createTemplate({
+        name: `${editingRule.name} — متن قانون`,
+        channel: action.messageConfig?.channel ?? 'SMS',
+        subject: action.messageConfig?.subjectTemplate ?? null,
+        body: text,
+        active: true,
+      });
+      setMessageTemplates((rows) => [...rows, created]);
+
+      const updatedActs = [...editingRule.actions];
+      updatedActs[actIdx] = {
+        ...updatedActs[actIdx],
+        messageConfig: {
+          ...updatedActs[actIdx].messageConfig,
+          templateId: created.id,
+          bodyTemplate: undefined,
+          subjectTemplate: undefined,
+        },
+      };
+      setEditingRule({ ...editingRule, actions: updatedActs });
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'ساخت قالب از متن این قانون ممکن نشد.');
+    }
+  };
 
   // Audit log filters
   /* The audit log is paged and filtered by the server. This panel used to
@@ -431,6 +497,20 @@ export default function SettingsView({
     if (!editingRule) return;
     if (!editingRule.name.trim()) {
       alert('لطفاً نام قانون را وارد کنید.');
+      return;
+    }
+
+    /*
+     * A message action with nothing to say does nothing at all — the engine
+     * renders an empty body and skips the send without a word. Refusing the
+     * save is the only place that can be noticed.
+     */
+    const speechless = editingRule.actions.some((a) =>
+      a.type === 'send_message'
+      && !a.messageConfig?.templateId
+      && !a.messageConfig?.bodyTemplate?.trim());
+    if (speechless) {
+      alert('برای اقدام «ارسال پیام» باید یک قالب انتخاب کنید. قالب‌ها در ماژول ارسال پیام ساخته می‌شوند.');
       return;
     }
     
@@ -3536,24 +3616,86 @@ export default function SettingsView({
                             */}
                             {act.type === 'send_message' && act.messageConfig && (
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div className="md:col-span-3">
+                                {/*
+                                  A rule picks a template; it does not carry its
+                                  own wording. There used to be a textarea here,
+                                  so the same message existed in two editable
+                                  places and the two drifted apart — which is
+                                  the whole reason templates exist.
+                                */}
+                                <div className="md:col-span-3 space-y-1">
                                   <label className="block text-slate-600 text-[11px] font-bold mb-1">
-                                    متن پیام
+                                    قالب پیام <span className="text-red-500">*</span>
                                   </label>
-                                  <textarea
-                                    value={act.messageConfig.bodyTemplate ?? ''}
+                                  <select
+                                    value={act.messageConfig.templateId ?? ''}
                                     onChange={(e) => {
                                       const updatedActs = [...editingRule.actions];
-                                      updatedActs[actIdx].messageConfig!.bodyTemplate = e.target.value;
+                                      updatedActs[actIdx].messageConfig!.templateId = e.target.value || undefined;
+                                      // Choosing a template retires any wording
+                                      // the rule was still carrying, so there is
+                                      // never a second copy to wonder about.
+                                      if (e.target.value) {
+                                        updatedActs[actIdx].messageConfig!.bodyTemplate = undefined;
+                                        updatedActs[actIdx].messageConfig!.subjectTemplate = undefined;
+                                      }
                                       setEditingRule({ ...editingRule, actions: updatedActs });
                                     }}
-                                    rows={3}
-                                    placeholder="{customerName} عزیز، سفارش پروژه {projectName} وارد مرحله ترخیص گمرک شد."
-                                    className="w-full border border-slate-200 rounded-lg p-2.5 bg-white leading-relaxed"
-                                  />
-                                  <p className="text-[10px] text-slate-400 mt-1">
-                                    متغیرها: {'{customerName}'} · {'{projectName}'} · {'{projectCode}'} · {'{newStatus}'}
-                                  </p>
+                                    className="w-full border border-slate-200 rounded-lg p-2.5 bg-white"
+                                  >
+                                    <option value="">— قالبی انتخاب نشده —</option>
+                                    {messageTemplates.map((t) => (
+                                      <option key={t.id} value={t.id}>
+                                        {t.name} ({CHANNEL_LABELS[t.channel as Channel] ?? t.channel})
+                                        {t.active ? '' : ' — غیرفعال'}
+                                      </option>
+                                    ))}
+                                  </select>
+
+                                  {(() => {
+                                    const chosen = messageTemplates.find(
+                                      (t) => t.id === act.messageConfig?.templateId);
+                                    if (chosen) {
+                                      return (
+                                        <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-[11px] text-slate-700 leading-relaxed whitespace-pre-wrap">
+                                          {chosen.body}
+                                        </div>
+                                      );
+                                    }
+                                    return (
+                                      <p className="text-[10px] text-slate-400">
+                                        متن و متغیرهای قالب‌ها در ماژول «ارسال پیام» ← زبانه «قالب‌ها»
+                                        تعریف و ویرایش می‌شوند. هر تغییری آنجا، روی همه‌ی قوانینی که از
+                                        آن قالب استفاده می‌کنند اعمال می‌شود.
+                                      </p>
+                                    );
+                                  })()}
+
+                                  {/*
+                                    A rule saved before templates were pickable
+                                    still carries its own text. It keeps working
+                                    — the server falls back to it — but it is
+                                    shown for what it is, with the one button
+                                    that ends the split.
+                                  */}
+                                  {act.messageConfig.bodyTemplate && (
+                                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 space-y-2">
+                                      <p className="text-[10px] font-bold text-amber-800">
+                                        این قانون هنوز متن اختصاصی خودش را دارد (مربوط به قبل از
+                                        یکپارچه شدن قالب‌ها). تا وقتی قالبی انتخاب نشود، همین متن ارسال می‌شود.
+                                      </p>
+                                      <p className="text-[11px] text-slate-700 whitespace-pre-wrap leading-relaxed">
+                                        {act.messageConfig.bodyTemplate}
+                                      </p>
+                                      <button
+                                        type="button"
+                                        onClick={() => void convertActionTextToTemplate(actIdx)}
+                                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[11px] font-bold"
+                                      >
+                                        ذخیره به عنوان قالب و استفاده از آن
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
 
                                 <div>
