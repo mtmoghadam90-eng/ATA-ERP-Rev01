@@ -37,6 +37,9 @@ import { useProjectList } from '../api/useProjectList';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { useEntitySearch } from '../api/useEntitySearch';
 import type { CustomerRow } from '../api/customers';
+import {
+  ActivityAttachment, MAX_ACTIVITY_ATTACHMENTS, normalizeAttachments,
+} from '../utils/attachments';
 import { productsApi } from '../api/products';
 import { createCustomerWithLinks } from '../api/customerAdapter';
 import { productToWriteInput, detailToProduct } from '../api/productAdapter';
@@ -143,6 +146,57 @@ export default function ProjectsView({
   const [editingProject, setEditingProject] = useState<any>(null);
   const [editingActivityId, setEditingActivityId] = useState<any>(null);
   const [editingActivityText, setEditingActivityText] = useState("");
+  /** The whole list while an entry is being edited — files added and removed. */
+  const [editingActivityFiles, setEditingActivityFiles] = useState<ActivityAttachment[]>([]);
+  /** Set while a chosen file is on its way to the server. */
+  const [uploadingActivityFiles, setUploadingActivityFiles] = useState(false);
+
+  /**
+   * Uploads what the user picked and hands back the attachments.
+   *
+   * One shared by the add form and the edit form, because they now do the same
+   * thing and a second copy is how the size limit comes to differ between them.
+   */
+  const uploadActivityFiles = async (
+    fileList: FileList | null,
+    existing: ActivityAttachment[],
+  ): Promise<ActivityAttachment[] | null> => {
+    const files = Array.from(fileList ?? []);
+    if (files.length === 0) return null;
+    if (existing.length + files.length > MAX_ACTIVITY_ATTACHMENTS) {
+      alert(`حداکثر ${MAX_ACTIVITY_ATTACHMENTS} فایل برای هر فعالیت قابل ثبت است.`);
+      return null;
+    }
+    const oversized = files.find(
+      (f) => f.size > 2 * 1024 * 1024 && !f.type.startsWith('image/'),
+    );
+    if (oversized) {
+      alert(`حداکثر حجم مجاز برای فایل‌های غیرتصویری ۲ مگابایت می‌باشد: ${oversized.name}`);
+      return null;
+    }
+
+    setUploadingActivityFiles(true);
+    try {
+      // Sequential rather than parallel: the uploads share one disk and one
+      // sharp pipeline on the server, and ten at once on a phone connection is
+      // how the whole batch times out instead of the last one.
+      const added: ActivityAttachment[] = [];
+      for (const file of files) {
+        const url = await uploadFile(file);
+        added.push({
+          name: file.name,
+          size: `${Math.max(1, Math.round(file.size / 1024))} KB`,
+          url,
+        });
+      }
+      return normalizeAttachments([...existing, ...added]);
+    } catch {
+      alert('بارگذاری فایل با خطا مواجه شد.');
+      return null;
+    } finally {
+      setUploadingActivityFiles(false);
+    }
+  };
   const [quickAddType, setQuickAddType] = useState<any>(null);
   const [quickAddCustomerTarget, setQuickAddCustomerTarget] = useState<any>(null);
   const [quickAddProductIndex, setQuickAddProductIndex] = useState<any>(null);
@@ -5033,24 +5087,19 @@ export default function ProjectsView({
                                             )}
                                           </div>
                                           <div className="flex items-center gap-2">
-                                            {act.attachment && (
-                                              act.attachment.content ? (
-                                                <a
-                                                  href={act.attachment.content}
-                                                  download={act.attachment.name}
-                                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-100 hover:bg-sky-200 border border-sky-200 text-sky-800 text-[9px] font-bold transition mr-1"
-                                                  title="دانلود فایل پیوست"
-                                                >
-                                                  <Paperclip size={10} />
-                                                  {act.attachment.name} ({act.attachment.size})
-                                                </a>
-                                              ) : (
-                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-50 border border-sky-100 text-sky-700 text-[9px] font-bold mr-1">
-                                                  <Paperclip size={10} />
-                                                  {act.attachment.name} ({act.attachment.size})
-                                                </span>
-                                              )
-                                            )}
+                                            {/* Every file on the entry, not just the first. */}
+                                            {editingActivityId !== act.id && act.attachments.map((file) => (
+                                              <a
+                                                key={file.url}
+                                                href={file.url}
+                                                download={file.name}
+                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-100 hover:bg-sky-200 border border-sky-200 text-sky-800 text-[9px] font-bold transition mr-1"
+                                                title="دانلود فایل پیوست"
+                                              >
+                                                <Paperclip size={10} />
+                                                {file.name}{file.size ? ` (${file.size})` : ''}
+                                              </a>
+                                            ))}
 
                                             {/* Edit & Delete Action Buttons */}
                                             <div className="flex items-center gap-1 bg-slate-100/60 p-0.5 rounded border border-slate-200/40">
@@ -5059,6 +5108,7 @@ export default function ProjectsView({
                                                 onClick={() => {
                                                   setEditingActivityId(act.id);
                                                   setEditingActivityText(act.text);
+                                                  setEditingActivityFiles(act.attachments);
                                                 }}
                                                 className="text-slate-400 hover:text-sky-600 transition p-1 hover:bg-white rounded"
                                                 title="ویرایش"
@@ -5088,15 +5138,68 @@ export default function ProjectsView({
                                               rows={2}
                                               dir="rtl"
                                             />
+
+                                            {/*
+                                              The files, editable here as well.
+                                              The list is sent whole on save, so
+                                              a removal is a removal — and the
+                                              server treats an absent list as
+                                              "not edited", never as "empty".
+                                            */}
+                                            <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                                              <label className="cursor-pointer bg-white border border-slate-200 px-2 py-1 rounded hover:bg-slate-50 transition font-bold text-slate-600 flex items-center gap-1">
+                                                <Paperclip size={10} className="text-slate-400" />
+                                                <span>{uploadingActivityFiles ? 'در حال بارگذاری…' : 'افزودن فایل'}</span>
+                                                <input
+                                                  type="file"
+                                                  multiple
+                                                  className="hidden"
+                                                  onChange={async (e) => {
+                                                    const picked = e.target.files;
+                                                    const next = await uploadActivityFiles(picked, editingActivityFiles);
+                                                    if (e.target) e.target.value = '';
+                                                    if (next) setEditingActivityFiles(next);
+                                                  }}
+                                                />
+                                              </label>
+                                              {editingActivityFiles.map((file) => (
+                                                <span
+                                                  key={file.url}
+                                                  className="text-sky-700 font-bold bg-sky-50 px-2 py-1 rounded flex items-center gap-1 border border-sky-100"
+                                                >
+                                                  {file.name}
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => setEditingActivityFiles(
+                                                      (prev) => prev.filter((f) => f.url !== file.url),
+                                                    )}
+                                                    className="text-rose-500 hover:text-rose-700 font-bold text-xs"
+                                                    title="حذف این فایل از فعالیت"
+                                                  >
+                                                    ×
+                                                  </button>
+                                                </span>
+                                              ))}
+                                              {editingActivityFiles.length === 0 && (
+                                                <span className="text-slate-400">فایلی پیوست نشده است.</span>
+                                              )}
+                                            </div>
+
                                             <div className="flex gap-2 justify-end">
                                               <button
                                                 type="button"
+                                                disabled={uploadingActivityFiles}
                                                 onClick={() => {
                                                   if (editingActivityText.trim() && selectedProjectForActivities) {
-                                                    activityFeed.updateActivity(act.id, editingActivityText.trim())
+                                                    activityFeed.updateActivity(
+                                                      act.id,
+                                                      editingActivityText.trim(),
+                                                      editingActivityFiles,
+                                                    )
                                                       .catch((err) => reportActivityError(err, 'ویرایش فعالیت با خطا مواجه شد.'));
                                                     setEditingActivityId(null);
                                                     setEditingActivityText('');
+                                                    setEditingActivityFiles([]);
                                                   }
                                                 }}
                                                 className="px-2 py-1 bg-sky-600 hover:bg-sky-700 text-white rounded font-bold text-[10px] flex items-center gap-1 transition"
@@ -5109,6 +5212,7 @@ export default function ProjectsView({
                                                 onClick={() => {
                                                   setEditingActivityId(null);
                                                   setEditingActivityText('');
+                                                  setEditingActivityFiles([]);
                                                 }}
                                                 className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-bold text-[10px] flex items-center gap-1 transition"
                                               >
@@ -5209,45 +5313,57 @@ export default function ProjectsView({
                                         <div className="flex items-center gap-2">
                                           <label className="cursor-pointer bg-white border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-50 transition font-bold text-slate-600 flex items-center gap-1">
                                             <Paperclip size={12} className="text-slate-400" />
-                                            <span>پیوست فایل (تصویر یا سند)</span>
+                                            <span>
+                                              {uploadingActivityFiles
+                                                ? 'در حال بارگذاری…'
+                                                : 'پیوست فایل (چند فایل هم‌زمان)'}
+                                            </span>
+                                            {/*
+                                              `multiple`, and the chosen files are
+                                              added to what is already there
+                                              rather than replacing it — picking
+                                              two now and one more in a moment is
+                                              how people actually do this.
+                                            */}
                                             <input
                                               type="file"
+                                              multiple
                                               className="hidden"
                                               onChange={async (e) => {
-                                                const file = e.target.files?.[0];
+                                                const picked = e.target.files;
+                                                const current = newActivityAttachment[group.id] ?? [];
+                                                const next = await uploadActivityFiles(picked, current);
+                                                // Cleared after the upload, not
+                                                // before: reading `e.target.files`
+                                                // once it has been reset gives an
+                                                // empty list.
                                                 if (e.target) e.target.value = '';
-                                                if (!file) return;
-                                                if (file.size > 2 * 1024 * 1024 && !file.type.startsWith('image/')) {
-                                                  alert('حداکثر حجم مجاز برای فایل‌های غیرتصویری ۲ مگابایت می‌باشد.');
-                                                  return;
-                                                }
-                                                try {
-                                                  // Attachments are hosted files now, not inline data URLs — the
-                                                  // server stores the URL, not the bytes.
-                                                  const url = await uploadFile(file);
-                                                  const sizeStr = `${Math.max(1, Math.round(file.size / 1024))} KB`;
-                                                  setNewActivityAttachment(prev => ({
-                                                    ...prev,
-                                                    [group.id]: { name: file.name, size: sizeStr, url }
-                                                  }));
-                                                } catch {
-                                                  alert('بارگذاری فایل با خطا مواجه شد.');
+                                                if (next) {
+                                                  setNewActivityAttachment(prev => ({ ...prev, [group.id]: next }));
                                                 }
                                               }}
                                             />
                                           </label>
-                                          {newActivityAttachment[group.id] && (
-                                            <span className="text-sky-700 font-bold bg-sky-50 px-2 py-1 rounded flex items-center gap-1 border border-sky-100">
-                                              {newActivityAttachment[group.id]?.name}
-                                              <button 
-                                                type="button" 
-                                                onClick={() => setNewActivityAttachment(prev => ({ ...prev, [group.id]: null }))}
+                                          {(newActivityAttachment[group.id] ?? []).map((file: ActivityAttachment) => (
+                                            <span
+                                              key={file.url}
+                                              className="text-sky-700 font-bold bg-sky-50 px-2 py-1 rounded flex items-center gap-1 border border-sky-100"
+                                            >
+                                              {file.name}
+                                              <button
+                                                type="button"
+                                                onClick={() => setNewActivityAttachment(prev => ({
+                                                  ...prev,
+                                                  [group.id]: (prev[group.id] ?? []).filter(
+                                                    (f: ActivityAttachment) => f.url !== file.url,
+                                                  ),
+                                                }))}
                                                 className="text-rose-500 hover:text-rose-700 font-bold text-xs"
                                               >
                                                 ×
                                               </button>
                                             </span>
-                                          )}
+                                          ))}
                                         </div>
 
                                         {/* Referral toggle */}
@@ -5311,9 +5427,10 @@ export default function ProjectsView({
                                           type="button"
                                           onClick={async () => {
                                             const text = newActivityText[group.id] || '';
-                                            const attachmentData = newActivityAttachment[group.id] || null;
+                                            const attachmentData: ActivityAttachment[] =
+                                              newActivityAttachment[group.id] ?? [];
 
-                                            if (!text.trim() && !attachmentData) {
+                                            if (!text.trim() && attachmentData.length === 0) {
                                               alert('لطفاً ابتدا شرح فعالیت یا پیوست را وارد کنید.');
                                               return;
                                             }
@@ -5343,15 +5460,13 @@ export default function ProjectsView({
                                             try {
                                               await activityFeed.addActivity(group.id, {
                                                 text: text.trim(),
-                                                attachmentName: attachmentData?.name ?? null,
-                                                attachmentSize: attachmentData?.size ?? null,
-                                                attachmentUrl: attachmentData?.url ?? null,
+                                                attachments: attachmentData,
                                                 referral: referralInput,
                                               });
 
                                               // Reset forms
                                               setNewActivityText(prev => ({ ...prev, [group.id]: '' }));
-                                              setNewActivityAttachment(prev => ({ ...prev, [group.id]: null }));
+                                              setNewActivityAttachment(prev => ({ ...prev, [group.id]: [] }));
                                               setReferralEnabled(prev => ({ ...prev, [group.id]: false }));
                                               setReferralAssignedTo(prev => ({ ...prev, [group.id]: '' }));
                                               setReferralAction(prev => ({ ...prev, [group.id]: '' }));

@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { ActivityAttachment, attachmentColumns, normalizeAttachments } from "../../utils/attachments";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
@@ -208,6 +209,11 @@ export async function listActivities(
 export interface ActivityInput {
   groupId?: string;
   text?: string;
+  /**
+   * Every file on the entry. The three fields below are the older shape, one
+   * file, and are still accepted so nothing that sends them breaks.
+   */
+  attachments?: ActivityAttachment[];
   attachmentName?: string | null;
   attachmentSize?: string | null;
   attachmentUrl?: string | null;
@@ -217,6 +223,21 @@ export interface ActivityInput {
     assignedToName?: string | null;
     actionRequired?: string;
   };
+}
+
+/**
+ * The files an input carries, whichever shape it used.
+ *
+ * A list wins over the single-file fields; a caller that sends only the old
+ * three still works, which is what keeps the referral reply path — which has
+ * not moved to lists — sending what it always sent.
+ */
+function attachmentsOf(input: ActivityInput): ActivityAttachment[] {
+  const list = normalizeAttachments(input.attachments);
+  if (list.length > 0) return list;
+  return normalizeAttachments([
+    { name: input.attachmentName, size: input.attachmentSize, url: input.attachmentUrl },
+  ]);
 }
 
 /**
@@ -250,9 +271,7 @@ export async function addActivity(
         authorUserId: user.id,
         // Kept alongside the FK so the history stays readable if the account goes.
         authorName: author?.fullName ?? null,
-        attachmentName: toNullableString(input.attachmentName, 300),
-        attachmentSize: toNullableString(input.attachmentSize, 50),
-        attachmentUrl: toNullableString(input.attachmentUrl, 500),
+        ...attachmentColumns(attachmentsOf(input)),
       } as Prisma.ProjectActivityUncheckedCreateInput,
     });
 
@@ -324,6 +343,12 @@ export async function updateActivity(
   id: string,
   text: string,
   user: AuthUser,
+  /**
+   * The files the entry should now have. Absent means "not edited" — the same
+   * rule the line-item grids follow, and for the same reason: a caller that
+   * only renames the text must not silently drop what is attached to it.
+   */
+  attachments?: ActivityAttachment[] | undefined,
 ): Promise<"forbidden" | "not-found" | "invalid" | { activity: unknown }> {
   const db = getDb();
   const trimmed = toNullableString(text);
@@ -336,7 +361,15 @@ export async function updateActivity(
   if (!activity) return "not-found";
   if (activity.authorUserId !== user.id && !user.isSystemAdmin) return "forbidden";
 
-  await db.projectActivity.update({ where: { id }, data: { text: trimmed } });
+  await db.projectActivity.update({
+    where: { id },
+    data: {
+      text: trimmed,
+      ...(attachments === undefined
+        ? {}
+        : attachmentColumns(normalizeAttachments(attachments))),
+    },
+  });
   return {
     activity: await db.projectActivity.findUnique({
       where: { id },

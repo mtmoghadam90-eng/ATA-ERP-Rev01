@@ -1,5 +1,6 @@
 import { ListResponse, api } from "./client";
 import type { calculateProjectFinance } from "../utils/finance";
+import type { ActivityAttachment } from "../utils/attachments";
 
 /**
  * Project endpoints.
@@ -267,9 +268,12 @@ export interface ActivityRow {
   text: string;
   authorUserId: string | null;
   authorName: string | null;
+  /** The first attachment, in the three columns that always held it. */
   attachmentName: string | null;
   attachmentSize: string | null;
   attachmentUrl: string | null;
+  /** Every attachment, as stored JSON. Null on rows written before it. */
+  attachments: string | null;
   /**
    * The record this entry is about — a proforma, a packing list, an inquiry.
    *
@@ -391,14 +395,20 @@ export const projectsApi = {
   addActivity: (body: {
     groupId: string;
     text: string;
-    attachmentName?: string | null;
-    attachmentSize?: string | null;
-    attachmentUrl?: string | null;
+    attachments?: ActivityAttachment[];
     referral?: { assignedToUserId?: string | null; assignedToName?: string | null; actionRequired?: string };
   }) => api.post<{ activity: ActivityRow }>("/api/activities", body).then((r) => r.activity),
 
-  updateActivity: (id: string, text: string) =>
-    api.put<{ activity: ActivityRow }>(`/api/activities/${id}`, { text }).then((r) => r.activity),
+  /**
+   * `attachments` absent means "not edited"; present means "this is the whole
+   * list". Conflating the two would detach every file from an entry whose text
+   * somebody corrected.
+   */
+  updateActivity: (id: string, text: string, attachments?: ActivityAttachment[]) =>
+    api.put<{ activity: ActivityRow }>(
+      `/api/activities/${id}`,
+      attachments === undefined ? { text } : { text, attachments },
+    ).then((r) => r.activity),
 
   deleteActivity: (id: string) => api.delete<Record<string, never>>(`/api/activities/${id}`),
 };
