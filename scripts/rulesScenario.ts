@@ -47,6 +47,9 @@ import {
   selectionsFromSpecText, specLinesFrom,
 } from "../src/utils/productConfig";
 import { renderRichText, stripRichMarks, toggleMark } from "../src/utils/richText";
+import {
+  generateDeliveryNotes, getDeliverySummary, updateNotesWithDelivery,
+} from "../src/utils/deliveryNotes";
 import { DEFAULT_SETTINGS } from "../src/seedData";
 import { canSeeCosts } from "../src/server/auth";
 import {
@@ -2422,6 +2425,44 @@ head("Rich text: markers in, safe HTML out");
   eq("and it is read back past the markers",
     JSON.stringify(selectionsFromSpecText(features, "جنس بدنه: **استیل 316**")),
     JSON.stringify({ f1: ["استیل 316"] }));
+}
+
+head("Delivery section inside a formattable notes block");
+{
+  const items = [{ deliveryRange: "3-4", deliveryUnit: "هفته", deliveryType: "کاری", deliveryPostfix: "پس از تایید" }];
+  const section = generateDeliveryNotes(items);
+
+  ok("the section names itself", section.startsWith("زمان تحویل:"));
+  eq("empty notes become the section alone", updateNotesWithDelivery("", items), section);
+
+  const withNotes = updateNotesWithDelivery("اعتبار: ۳۰ روز", items);
+  ok("existing notes are kept above it", withNotes.startsWith("اعتبار: ۳۰ روز"));
+  eq("and only one section exists",
+    withNotes.split("زمان تحویل:").length - 1, 1);
+
+  /*
+   * The rule this file exists to hold. The notes are formattable text now, and
+   * this function finds its own section by the words at the start of a line —
+   * so somebody bolding the heading must not hide it, or every later change to
+   * a delivery date appends a second section below the first.
+   */
+  const bolded = "اعتبار: ۳۰ روز\n\n**زمان تحویل:**\n۲ هفته کاری پس از تایید";
+  const rewritten = updateNotesWithDelivery(bolded, items);
+  eq("a bolded heading is still recognised as the section",
+    rewritten.split("زمان تحویل:").length - 1, 1);
+  ok("the notes above it survive", rewritten.startsWith("اعتبار: ۳۰ روز"));
+  ok("and the old figures are gone", !rewritten.includes("۲ هفته کاری"));
+
+  /* Formatting elsewhere in the notes is left exactly as written. */
+  const decorated = "==فوری==\nزمان تحویل:\n۲ هفته کاری پس از تایید\n\n__گارانتی__: ۱۲ ماه";
+  const after = updateNotesWithDelivery(decorated, items);
+  ok("a highlight above the section is untouched", after.includes("==فوری=="));
+  ok("and an underline below it too", after.includes("__گارانتی__: ۱۲ ماه"));
+
+  eq("one delivery for every line reads as one line",
+    getDeliverySummary(items), "3-4 هفته کاری");
+  ok("and differing lines say so",
+    getDeliverySummary([...items, { deliveryRange: "8-9" }]).includes("ردیف‌های دیگر متفاوت"));
 }
 
 head("Product configurator: selections in, SKU and specifications out");

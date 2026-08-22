@@ -28,10 +28,16 @@ interface Props {
   className?: string;
   /** LTR by default: these are Latin specifications. */
   dir?: 'rtl' | 'ltr';
+  /**
+   * Passed through to the textarea, so a field the settings screen has marked
+   * required is still enforced by the browser — wrapping a control in a
+   * component is exactly how that quietly stops happening.
+   */
+  required?: boolean;
 }
 
 export default function RichTextField({
-  value, onChange, rows = 2, placeholder, className = '', dir = 'ltr',
+  value, onChange, rows = 2, placeholder, className = '', dir = 'ltr', required = false,
 }: Props) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
 
@@ -87,6 +93,7 @@ export default function RichTextField({
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
+        required={required}
         className={className}
       />
 
