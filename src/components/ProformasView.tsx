@@ -2174,36 +2174,66 @@ export default function ProformasView({
     setOverrideShowBrand(!!settings.showProductBrandInDocuments);
     setShowPrintView(true);
   };
-  const handleCopyProforma = (pf: Proforma) => {
-    const copiedItems: ProformaItem[] = pf.items.map((item, i) => ({
+  /**
+   * Copies a proforma into a new draft.
+   *
+   * The grid hands this a row, and a row carries each line's name, quantity and
+   * status and nothing else — no price, no cost, no product id, no technical
+   * specification. So the copy came out with empty lines, and the first thing
+   * to notice was the cost check refusing the save: «بهای تمام‌شده برای این
+   * ردیف‌ها مشخص نشده است», about lines whose cost had been filled in perfectly
+   * well on the document being copied.
+   *
+   * `assertComplete` could not catch this one. It fires on a record spread into
+   * a write payload, and this builds a fresh object literal, so the `__partial`
+   * marker never reached it. The full record is fetched first, exactly as
+   * `handleOpenPrint` above does.
+   */
+  const handleCopyProforma = async (pf: Proforma) => {
+    let full = pf;
+    if (isPartial(pf)) {
+      try {
+        full = detailToProforma(await proformasApi.get(pf.id));
+      } catch (err) {
+        reportError(err, 'بارگذاری پیش‌فاکتور برای کپی با خطا مواجه شد.');
+        return;
+      }
+    }
+
+    const copiedItems: ProformaItem[] = full.items.map((item, i) => ({
       ...item,
       id: `pfi-${Date.now()}-${i}`,
       status: "جاری",
       lossReason: undefined,
     }));
     addProforma({
-      proformaType: pf.proformaType || "FINANCIAL",
-      customerId: pf.customerId,
-      customerName: pf.customerName,
-      contactCustomerId: pf.contactCustomerId,
-      contactName: pf.contactName,
-      contactPrefix: pf.contactPrefix,
-      projectId: pf.projectId,
-      projectName: pf.projectName,
-      issueDate: pf.issueDate,
-      expiryDate: pf.expiryDate,
-      deliveryDate: pf.deliveryDate,
+      proformaType: full.proformaType || "FINANCIAL",
+      customerId: full.customerId,
+      customerName: full.customerName,
+      contactCustomerId: full.contactCustomerId,
+      contactName: full.contactName,
+      contactPrefix: full.contactPrefix,
+      projectId: full.projectId,
+      projectName: full.projectName,
+      issueDate: full.issueDate,
+      expiryDate: full.expiryDate,
+      deliveryDate: full.deliveryDate,
       status: "پیش‌نویس",
-      currency: pf.currency || "ریال",
+      currency: full.currency || "ریال",
       items: copiedItems,
-      totalAmount: pf.totalAmount,
-      discountPercent: pf.discountPercent,
-      discountAmount: pf.discountAmount,
-      taxPercent: pf.taxPercent,
-      taxAmount: pf.taxAmount,
-      finalAmount: pf.finalAmount,
-      notes: pf.notes,
-      customValues: pf.customValues ? { ...pf.customValues } : undefined,
+      totalAmount: full.totalAmount,
+      discountPercent: full.discountPercent,
+      discountAmount: full.discountAmount,
+      taxPercent: full.taxPercent,
+      taxAmount: full.taxAmount,
+      finalAmount: full.finalAmount,
+      // Both come only with the detail record, and both belong to the
+      // prices being copied: a document re-priced at today's rate against
+      // yesterday's figures is not a copy of anything.
+      extraCosts: full.extraCosts,
+      historicalExchangeRate: full.historicalExchangeRate,
+      notes: full.notes,
+      customValues: full.customValues ? { ...full.customValues } : undefined,
     });
   };
   // Filter proformas
@@ -3392,7 +3422,7 @@ export default function ProformasView({
                                       <Edit size={15} />
                                     </button>
                                     <button
-                                      onClick={() => handleCopyProforma(pf)}
+                                      onClick={() => void handleCopyProforma(pf)}
                                       className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-md transition"
                                       title="کپی"
                                     >
