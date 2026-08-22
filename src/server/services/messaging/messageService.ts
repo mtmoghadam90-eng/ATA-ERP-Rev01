@@ -361,15 +361,40 @@ export interface AddressedSendInput {
 
 export async function queueForCustomer(
   input: AddressedSendInput,
-): Promise<{ queued: boolean; reason?: string; messageId?: string }> {
+): Promise<{ queued: boolean; reason?: string; suppressed?: boolean; messageId?: string }> {
   const db = getDb();
 
   const project = input.projectId
     ? await db.project.findUnique({
         where: { id: input.projectId },
-        select: { id: true, customerId: true, messagingContactId: true, messagingChannel: true },
+        select: {
+          id: true, customerId: true, messagingContactId: true, messagingChannel: true,
+          suppressAutoMessages: true,
+        },
       })
     : null;
+
+  /*
+   * A project the rules are told to leave alone.
+   *
+   * Only the rules: `workflowRuleId` is what marks a message as automated, and
+   * a person writing to this customer by hand is making a decision the switch
+   * has nothing to say about. The customer's own `doNotContact` is the other
+   * thing — it stops everything, everywhere, because it is the customer's
+   * choice rather than ours.
+   *
+   * `suppressed` rather than a plain refusal so the engine can tell "nobody
+   * could be reached" from "we were asked not to": the first is worth a notice
+   * to whoever owns the module, and the second would be a notice every single
+   * time somebody exercised the setting.
+   */
+  if (input.workflowRuleId && project?.suppressAutoMessages) {
+    return {
+      queued: false,
+      suppressed: true,
+      reason: "ارسال پیام خودکار برای این پروژه غیرفعال است.",
+    };
+  }
 
   const customerId = input.customerId ?? project?.customerId ?? null;
   if (!customerId) return { queued: false, reason: "مشتری این پیام مشخص نیست." };

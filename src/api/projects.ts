@@ -95,6 +95,7 @@ export interface ProjectRow {
   /** Who to write to about this job, and how — see the messaging module. */
   messagingContactId: string | null;
   messagingChannel: string | null;
+  suppressAutoMessages: boolean;
   id: string;
   code: string;
   name: string;
@@ -195,6 +196,7 @@ export interface ProjectReferences {
 export interface ProjectWriteInput {
   messagingContactId?: string | null;
   messagingChannel?: string | null;
+  suppressAutoMessages?: boolean;
   code?: string;
   name?: string;
   customerId?: string;

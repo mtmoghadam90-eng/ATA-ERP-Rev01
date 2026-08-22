@@ -275,7 +275,10 @@ export async function executeRule(
            * of automation people stop trusting. It goes to whoever is
            * responsible for the module rather than to a log nobody reads.
            */
-          if (!outcome.queued && outcome.reason) {
+          // `suppressed` is somebody having deliberately exempted this project,
+          // which is not news — telling the module owner about it every time
+          // would train them to ignore the notices that matter.
+          if (!outcome.queued && outcome.reason && !outcome.suppressed) {
             await notifyModuleResponsible(
               "پیام‌ها",
               `پیام خودکار ارسال نشد: ${rule.name}`,

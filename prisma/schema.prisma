@@ -565,6 +565,9 @@ model Project {
   /// to the customer's own details, which is what most jobs want.
   messagingContactId String?                @db.NVarChar(36)
   messagingChannel   String?                @db.NVarChar(20)
+  /// Automation leaves this job alone. Manual sends still go out — the point is
+  /// to exempt one project from company-wide rules, not to silence it.
+  suppressAutoMessages Boolean              @default(false)
 
   messages Message[]
 

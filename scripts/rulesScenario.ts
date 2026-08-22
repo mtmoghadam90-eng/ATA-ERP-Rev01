@@ -2386,6 +2386,22 @@ head("Message templates live in one place");
     && Number(messagingDefaults.maxAttempts) > 0);
   const screen = readFileSync("src/components/MessagingView.tsx", "utf-8");
   ok("and a screen writes them", screen.includes("dryRun: e.target.checked"));
+
+  /*
+   * A project may be exempted from the rules, and only from the rules.
+   *
+   * `workflowRuleId` is what marks a message as automated; dropping it from the
+   * condition would turn a per-project exemption into a per-project gag order,
+   * so somebody writing to that customer by hand would silently send nothing.
+   */
+  const queue = readFileSync("src/server/services/messaging/messageService.ts", "utf-8");
+  ok("the project exemption applies to automated messages only",
+    /input\.workflowRuleId\s*&&\s*project\?\.suppressAutoMessages/.test(queue));
+  ok("and it is reported as suppressed rather than as a failure",
+    queue.includes("suppressed: true"));
+  ok("so the engine does not raise a notice about it",
+    readFileSync("src/server/services/workflowService.ts", "utf-8")
+      .includes("!outcome.suppressed"));
 }
 
 head("Modules: one catalogue, and everything reads it");

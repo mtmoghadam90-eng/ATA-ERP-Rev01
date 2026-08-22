@@ -39,7 +39,7 @@ const WRITABLE: (keyof ProjectInput)[] = [
   "creationDate", "opportunityDate", "expectedCloseDate",
   "winningDate", "agreedDeliveryDate", "closingDate",
   "items", "milestones",
-  "messagingContactId", "messagingChannel",
+  "messagingContactId", "messagingChannel", "suppressAutoMessages",
 ];
 
 function pickInput(body: unknown): ProjectInput {
