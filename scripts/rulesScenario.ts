@@ -2356,6 +2356,34 @@ head("Template variables: the palette and the values agree");
 }
 
 
+head("A list row is never the source of a new record");
+{
+  /*
+   * Copying a proforma built the new document from the *row* the grid holds,
+   * which carries each line's name, quantity and status and nothing else. The
+   * copy came out with empty lines and the save was refused by the cost check —
+   * about lines whose cost had been filled in perfectly well on the document
+   * being copied.
+   *
+   * `assertComplete` cannot see this shape. It fires on a record spread into a
+   * write payload, and a handler that builds a fresh object literal never hands
+   * it the `__partial` marker, so the guard has nothing to refuse. The handler
+   * has to load the detail record itself, which is what this pins.
+   */
+  const view = readFileSync("src/components/ProformasView.tsx", "utf-8");
+  const start = view.indexOf("const handleCopyProforma");
+  const body = view.slice(start, view.indexOf("addProforma({", start));
+  ok("copying a proforma loads the whole record first",
+    start > 0 && body.includes("isPartial(") && body.includes("proformasApi.get("));
+
+  // The same guard on the other handler the grid calls with a row, which had
+  // it already and is the pattern the copy now follows.
+  const printStart = view.indexOf("const handleOpenPrint");
+  ok("and so does opening the print preview",
+    printStart > 0
+    && view.slice(printStart, printStart + 600).includes("isPartial("));
+}
+
 head("Message templates live in one place");
 {
   /*
