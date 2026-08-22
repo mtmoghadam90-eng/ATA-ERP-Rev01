@@ -35,6 +35,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import PriceCalculatorModal from "../src/components/PriceCalculatorModal";
 import MessagingView from "../src/components/MessagingView";
+import ProductConfiguratorModal from "../src/components/ProductConfiguratorModal";
+import type { Product } from "../src/types";
 import type { ExchangeRate } from "../src/types";
 
 let pass = 0;
@@ -178,6 +180,84 @@ head("Messaging: a parent re-render does not refetch the screen");
   g2.fetch = realFetch;
 }
 
+
+head("Product configurator: the catalogue's rules are enforced as you tick");
+
+/*
+ * The configurator moved out of the proforma form so the supplier-inquiry form
+ * could use the same one. What a type-check cannot see is whether the config
+ * rules still fire: they are a loop over the product's own `configRules`, run
+ * on every change, and getting them wrong offers combinations the catalogue
+ * forbids — quietly, and only on some products.
+ */
+{
+  const product = {
+    id: "p1",
+    displayName: "فلومتر",
+    code: "FM",
+    features: [
+      { id: "f1", name: "جنس بدنه", options: [
+        { id: "o1", value: "استیل 316" }, { id: "o2", value: "استیل 304" }] },
+      { id: "f2", name: "سایز", options: [
+        { id: "o3", value: "1 اینچ" }, { id: "o4", value: "8 اینچ" }] },
+    ],
+    // 316 rules out the 8 inch body.
+    configRules: [{
+      id: "r1",
+      active: true,
+      conditions: [{ featureName: "جنس بدنه", values: ["استیل 316"] }],
+      actions: [{ featureName: "سایز", values: ["8 اینچ"] }],
+    }],
+  } as unknown as Product;
+
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+
+  let selections: Record<string, string[]> = {};
+  let confirmed = 0;
+
+  const Screen = () => {
+    const [current, setCurrent] = useState<Record<string, string[]>>({});
+    selections = current;
+    return React.createElement(ProductConfiguratorModal, {
+      product,
+      selections: current,
+      onSelectionsChange: setCurrent,
+      onCancel: () => undefined,
+      onConfirm: () => { confirmed++; },
+      confirmLabel: "تایید",
+      intro: "",
+    });
+  };
+
+  act(() => { root.render(React.createElement(Screen)); });
+
+  const boxes = () => [...document.querySelectorAll("input[type=checkbox]")];
+  ok("every option is drawn", boxes().length === 4, boxes().length);
+
+  // Tick the 8 inch size, then the 316 body that forbids it.
+  act(() => { handlers(boxes()[3]).onChange?.({ target: { checked: true } }); });
+  ok("the size is selected", (selections.f2 ?? []).includes("8 اینچ"), selections);
+
+  act(() => { handlers(boxes()[0]).onChange?.({ target: { checked: true } }); });
+  ok("choosing 316 drops the size the rule forbids",
+    (selections.f2 ?? []).length === 0, selections);
+  ok("and leaves the body it was chosen with",
+    (selections.f1 ?? []).includes("استیل 316"), selections);
+
+  const forbidden = boxes()[3] as HTMLInputElement;
+  ok("the forbidden option is disabled rather than merely unticked",
+    forbidden.disabled === true);
+
+  const buttons = [...document.querySelectorAll("button")];
+  const confirm = buttons.find((b) => b.textContent?.includes("تایید")) as HTMLElement;
+  act(() => { confirm.click(); });
+  ok("confirming reaches the caller", confirmed === 1, confirmed);
+
+  act(() => { root.unmount(); });
+  host.remove();
+}
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {

@@ -24,7 +24,8 @@ import {
   Globe,
   Coins,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Settings
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { 
@@ -32,6 +33,7 @@ import {
   Supplier, 
   SupplierInquiry, 
   SupplierInquiryItem,
+  Product,
   ExchangeRate,
   ERPSettings,
   // Aliased: `User` here is the lucide icon.
@@ -59,6 +61,14 @@ import type { ProductRow } from '../api/products';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import CostAccessNotice from './CostAccessNotice';
 import { canSeeCosts } from '../utils/permissions';
+import ProductConfiguratorModal from './ProductConfiguratorModal';
+import {
+  ConfigSelections, attributesFromSelections, mergeSpecText,
+  selectionsFromAttributes, selectionsFromSpecText, specLinesFrom,
+} from '../utils/productConfig';
+import { ensureVariantForAttributes } from '../api/productVariants';
+import { detailToProduct } from '../api/productAdapter';
+import { productsApi } from '../api/products';
 
 /**
  * Supplier inquiries screen.
@@ -1355,6 +1365,82 @@ function InquiryFormInner({
    * before anyone decides to carry it, so a line with no product behind it is
    * the normal case and not an incomplete one.
    */
+  /*
+   * The product configurator, for a line that names a catalogue item.
+   *
+   * The same modal the proforma form uses. An inquiry is where the exact
+   * configuration is usually settled — it is what the supplier is being asked
+   * to price — so leaving the SKU to be chosen later, on the quotation, means
+   * the offer and the document it becomes describe two different things.
+   *
+   * The full record is fetched on opening: `catalogue` holds search rows, whose
+   * `configRules` are empty, and a configurator that cannot see the rules
+   * offers combinations the catalogue forbids.
+   */
+  const [configFor, setConfigFor] = useState<{ index: number; product: Product } | null>(null);
+  const [configSelections, setConfigSelections] = useState<ConfigSelections>({});
+  const [configBusy, setConfigBusy] = useState(false);
+  const [configError, setConfigError] = useState('');
+
+  const openConfigurator = async (index: number) => {
+    const item = items[index];
+    if (!item?.productId) return;
+    setConfigError('');
+    try {
+      const full = detailToProduct(await productsApi.get(item.productId));
+      if (!full.features || full.features.length === 0) {
+        setConfigError('برای این کالا ویژگی قابل تنظیمی در انبار تعریف نشده است.');
+        return;
+      }
+      // Seeded from the SKU already on the line when there is one, and from
+      // whatever the configurator wrote into the notes otherwise.
+      const variant = item.variantId
+        ? full.variants?.find(v => v.id === item.variantId)
+        : undefined;
+      setConfigSelections(variant
+        ? selectionsFromAttributes(full.features, variant.attributes)
+        : selectionsFromSpecText(full.features, item.notes));
+      setConfigFor({ index, product: full });
+    } catch (err) {
+      setConfigError(err instanceof ApiError ? err.message : 'بارگذاری اطلاعات کالا با خطا مواجه شد.');
+    }
+  };
+
+  const confirmConfigurator = async () => {
+    if (!configFor) return;
+    const { index, product } = configFor;
+    setConfigBusy(true);
+
+    let variantId: string | null = null;
+    let stored = product;
+    try {
+      const ensured = await ensureVariantForAttributes(
+        product,
+        attributesFromSelections(product.features, configSelections),
+      );
+      stored = ensured.product;
+      variantId = ensured.variantId;
+    } catch (err) {
+      // The line keeps the configuration it describes and simply carries no SKU
+      // link. Losing the user's selections over a catalogue write would be
+      // worse than an inquiry that names no SKU — which is the normal case.
+      setConfigError(err instanceof ApiError ? err.message : 'ثبت SKU جدید در انبار با خطا مواجه شد.');
+    }
+
+    const lines = specLinesFrom(product.features, configSelections);
+    const sku = variantId ? stored.variants?.find(v => v.id === variantId)?.sku : undefined;
+
+    setItems(prev => prev.map((it, i) => (i === index ? {
+      ...it,
+      notes: mergeSpecText(it.notes, product.features, lines),
+      variantId: variantId ?? undefined,
+      partNumber: sku ?? it.partNumber,
+    } : it)));
+
+    setConfigBusy(false);
+    setConfigFor(null);
+  };
+
   const handleItemProductChange = (idx: number, productId: string) => {
     const product = productId ? catalogue.find(p => p.id === productId) : undefined;
     setItems(prev => prev.map((item, i) => {
@@ -1683,21 +1769,39 @@ function InquiryFormInner({
                       const linked = item.productId
                         ? catalogue.find(p => p.id === item.productId)
                         : undefined;
-                      const skus = linked?.variants ?? [];
-                      if (skus.length === 0) return null;
+                      if (!linked) return null;
+                      const skus = linked.variants ?? [];
                       return (
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <span className="text-[9px] text-slate-500 whitespace-nowrap">SKU:</span>
-                          <select
-                            value={item.variantId || ''}
-                            onChange={(e) => handleItemVariantChange(index, e.target.value)}
-                            className="w-full border border-slate-200 rounded-md px-1.5 py-0.5 text-[9px] bg-sky-50 text-sky-800 text-right"
+                        <div className="space-y-1 mt-1">
+                          {skus.length > 0 && (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-slate-500 whitespace-nowrap">SKU:</span>
+                              <select
+                                value={item.variantId || ''}
+                                onChange={(e) => handleItemVariantChange(index, e.target.value)}
+                                className="w-full border border-slate-200 rounded-md px-1.5 py-0.5 text-[9px] bg-sky-50 text-sky-800 text-right"
+                              >
+                                <option value="">-- کل کالا (بدون تفکیک SKU) --</option>
+                                {skus.map(v => (
+                                  <option key={v.id} value={v.id}>{v.sku}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+                          {/*
+                            Offered for any warehouse line, not only one whose
+                            product already has SKUs — a configuration that has
+                            never been quoted before has none, and creating it
+                            here is the point.
+                          */}
+                          <button
+                            type="button"
+                            onClick={() => void openConfigurator(index)}
+                            className="w-full text-[9px] bg-sky-50 text-sky-700 hover:bg-sky-100 border border-sky-100 px-2 py-1 rounded font-bold flex items-center justify-center gap-1 transition"
                           >
-                            <option value="">-- کل کالا (بدون تفکیک SKU) --</option>
-                            {skus.map(v => (
-                              <option key={v.id} value={v.id}>{v.sku}</option>
-                            ))}
-                          </select>
+                            <Settings size={10} />
+                            کانفیگ کالا و انتخاب SKU
+                          </button>
                         </div>
                       );
                     })()}
@@ -1789,6 +1893,33 @@ function InquiryFormInner({
           </table>
         </div>
       </div>
+
+      {configError && (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
+          {configError}
+        </div>
+      )}
+
+      {configFor && (
+        <ProductConfiguratorModal
+          product={configFor.product}
+          selections={configSelections}
+          onSelectionsChange={setConfigSelections}
+          onCancel={() => setConfigFor(null)}
+          onConfirm={() => void confirmConfigurator()}
+          confirmLabel="تایید و ثبت SKU روی ردیف"
+          busy={configBusy}
+          intro={(
+            <>
+              ویژگی‌های کالای <span className="font-bold">{configFor.product.displayName}</span> را
+              انتخاب کنید. با تایید، SKU متناظر پیدا می‌شود و اگر در انبار نباشد ساخته و روی این
+              ردیف ثبت می‌شود؛ مقادیر انتخاب‌شده هم به توضیحات ردیف اضافه می‌شوند.
+              اگر برای یک ویژگی بیش از یک مقدار انتخاب کنید، متن مشخصات نوشته می‌شود اما SKU ساخته
+              نمی‌شود — چون آن ترکیب یک کالا را مشخص نمی‌کند.
+            </>
+          )}
+        />
+      )}
 
       {/* Offer total, and the discounts on it */}
       {(() => {

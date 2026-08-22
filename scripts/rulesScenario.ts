@@ -42,6 +42,10 @@ import {
 } from "../src/utils/messaging";
 import { addresseeOf, namePrefixFor } from "../src/utils/honorific";
 import { APP_MODULES, DEFAULT_MODULE_ORDER } from "../src/appModules";
+import {
+  attributesFromSelections, mergeSpecText, selectionsFromAttributes,
+  selectionsFromSpecText, specLinesFrom,
+} from "../src/utils/productConfig";
 import { DEFAULT_SETTINGS } from "../src/seedData";
 import { canSeeCosts } from "../src/server/auth";
 import {
@@ -2355,6 +2359,71 @@ head("Template variables: the palette and the values agree");
     "جناب آقای مهندس رضایی عزیز، پروژه PRJ-1405-018");
 }
 
+
+head("Product configurator: selections in, SKU and specifications out");
+{
+  const features = [
+    { id: "f1", name: "جنس بدنه", options: [
+      { id: "o1", value: "استیل 316" }, { id: "o2", value: "استیل 304" }] },
+    { id: "f2", name: "سایز", options: [
+      { id: "o3", value: "1 اینچ" }, { id: "o4", value: "2 اینچ" }] },
+  ];
+
+  const one = { f1: ["استیل 316"], f2: ["2 اینچ"] };
+  eq("one value per feature identifies a SKU",
+    JSON.stringify(attributesFromSelections(features, one)),
+    JSON.stringify({ "جنس بدنه": "استیل 316", "سایز": "2 اینچ" }));
+
+  /*
+   * Two values on a feature is a legitimate thing to ask a supplier — «either
+   * 316 or 304» — but it describes two products and a SKU is one. It has to
+   * produce specification text and no SKU, rather than a wrong SKU.
+   */
+  eq("two values on one feature identify nothing",
+    attributesFromSelections(features, { f1: ["استیل 316", "استیل 304"], f2: ["2 اینچ"] }), null);
+  eq("and so does leaving a feature blank",
+    attributesFromSelections(features, { f1: ["استیل 316"] }), null);
+  eq("a product with no features identifies nothing", attributesFromSelections([], one), null);
+
+  eq("every ticked feature becomes a line",
+    specLinesFrom(features, { f1: ["استیل 316", "استیل 304"], f2: ["2 اینچ"] }).join(" | "),
+    "جنس بدنه: استیل 316، استیل 304 | سایز: 2 اینچ");
+  eq("and a feature with nothing ticked does not",
+    specLinesFrom(features, { f2: ["2 اینچ"] }).join(" | "), "سایز: 2 اینچ");
+
+  /*
+   * The text is editable, so the merge is keyed on the feature names rather
+   * than on a marker: a note somebody typed in the middle of it survives, and
+   * reconfiguring replaces the old values instead of stacking a second set.
+   */
+  const existing = "مشخصات:\nجنس بدنه: استیل 304\nتحویل فوری لازم است\nسایز: 1 اینچ";
+  eq("reconfiguring replaces the old values and keeps the typed note",
+    mergeSpecText(existing, features, specLinesFrom(features, one)),
+    "تحویل فوری لازم است\nجنس بدنه: استیل 316\nسایز: 2 اینچ");
+  eq("free text with no feature lines is left alone",
+    mergeSpecText("قیمت بدون احتساب حمل", features, []), "قیمت بدون احتساب حمل");
+
+  eq("the configurator reopens on what it wrote",
+    JSON.stringify(selectionsFromSpecText(features, "جنس بدنه: استیل 316\nسایز: 2 اینچ")),
+    JSON.stringify(one));
+  eq("and on a stored SKU's own attributes",
+    JSON.stringify(selectionsFromAttributes(features, { "جنس بدنه": "استیل 316", "سایز": "2 اینچ" })),
+    JSON.stringify(one));
+
+  /* One configurator, used by both forms — not a second copy that drifts. */
+  for (const file of [
+    "src/components/ProformasView.tsx",
+    "src/components/SupplierInquiriesView.tsx",
+  ]) {
+    const src = readFileSync(file, "utf-8");
+    ok(`${file} uses the shared configurator`, src.includes("ProductConfiguratorModal"));
+    ok(`${file} creates a SKU through the shared helper`,
+      src.includes("ensureVariantForAttributes"));
+    // The bug that made this a rule: a made-up id on a real foreign key.
+    ok(`${file} invents no variant id`,
+      !/variantId\s*[:=]\s*`?var-\$\{Date\.now/.test(src));
+  }
+}
 
 head("A list row is never the source of a new record");
 {
