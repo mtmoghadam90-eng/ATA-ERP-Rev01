@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { ActivityAttachment } from "../utils/attachments";
 import { useRevalidate } from "./liveData";
 import type { ProjectCategoryGroup } from "../types";
 import { getTodayShamsi } from "../dateUtils";
@@ -19,9 +20,7 @@ import { groupToView } from "./activityAdapter";
  */
 
 export interface ActivityAttachmentInput {
-  attachmentName?: string | null;
-  attachmentSize?: string | null;
-  attachmentUrl?: string | null;
+  attachments?: ActivityAttachment[];
 }
 
 export interface ActivityReferralInput {
@@ -46,7 +45,7 @@ export interface ProjectActivitiesApi {
   completeGroup: (group: ProjectCategoryGroup) => Promise<void>;
   resumeGroup: (group: ProjectCategoryGroup) => Promise<void>;
   addActivity: (groupId: string, input: AddActivityInput) => Promise<void>;
-  updateActivity: (id: string, text: string) => Promise<void>;
+  updateActivity: (id: string, text: string, attachments?: ActivityAttachment[]) => Promise<void>;
   deleteActivity: (id: string) => Promise<void>;
 }
 
@@ -144,9 +143,7 @@ export function useProjectActivities(projectId: string | null | undefined): Proj
     await projectsApi.addActivity({
       groupId,
       text: input.text,
-      attachmentName: input.attachmentName ?? null,
-      attachmentSize: input.attachmentSize ?? null,
-      attachmentUrl: input.attachmentUrl ?? null,
+      attachments: input.attachments ?? [],
       referral: input.referral
         ? {
             assignedToUserId: input.referral.assignedToUserId ?? null,
@@ -158,8 +155,10 @@ export function useProjectActivities(projectId: string | null | undefined): Proj
     refresh();
   }, [refresh]);
 
-  const updateActivity = useCallback(async (id: string, text: string) => {
-    await projectsApi.updateActivity(id, text);
+  const updateActivity = useCallback(async (
+    id: string, text: string, attachments?: ActivityAttachment[],
+  ) => {
+    await projectsApi.updateActivity(id, text, attachments);
     refresh();
   }, [refresh]);
 

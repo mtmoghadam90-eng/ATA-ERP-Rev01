@@ -10,6 +10,7 @@ import type {
   ActivityRow,
   CategoryGroupRow,
 } from "./projects";
+import { parseAttachments } from "../utils/attachments";
 
 /**
  * Translation between the activity/referral API and the `ProjectCategoryGroup`
@@ -58,12 +59,21 @@ function referralToView(ref: ActivityReferralRow): ProjectReferral {
 }
 
 function activityToView(act: ActivityRow): ProjectActivity {
+  /*
+   * The JSON column when it has anything, the three original columns
+   * otherwise — never both, since the first entry of the list *is* what those
+   * columns hold and reading both would show the first file twice.
+   */
+  const attachments = parseAttachments(act.attachments, {
+    name: act.attachmentName, size: act.attachmentSize, url: act.attachmentUrl,
+  });
   return {
     id: act.id,
     text: act.text,
     createdAt: act.createdAt,
     createdBy: act.authorName ?? undefined,
     attachment: toAttachment(act.attachmentName, act.attachmentSize, act.attachmentUrl),
+    attachments,
     referral: act.referral ? referralToView(act.referral) : null,
   };
 }

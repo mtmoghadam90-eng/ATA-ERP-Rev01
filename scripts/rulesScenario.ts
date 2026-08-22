@@ -48,6 +48,9 @@ import {
 } from "../src/utils/productConfig";
 import { renderRichText, stripRichMarks, toggleMark } from "../src/utils/richText";
 import {
+  MAX_ACTIVITY_ATTACHMENTS, attachmentColumns, normalizeAttachments, parseAttachments,
+} from "../src/utils/attachments";
+import {
   generateDeliveryNotes, getDeliverySummary, updateNotesWithDelivery,
 } from "../src/utils/deliveryNotes";
 import { DEFAULT_SETTINGS } from "../src/seedData";
@@ -2363,6 +2366,63 @@ head("Template variables: the palette and the values agree");
     "جناب آقای مهندس رضایی عزیز، پروژه PRJ-1405-018");
 }
 
+
+head("Activity attachments: a list, with the old single file still readable");
+{
+  const files = [
+    { name: "catalogue.pdf", size: "340 KB", url: "/uploads/a.pdf" },
+    { name: "plate.jpg", size: "80 KB", url: "/uploads/b.jpg" },
+  ];
+
+  eq("a list survives normalisation", normalizeAttachments(files).length, 2);
+  eq("an entry with no url is dropped — the name points at nothing",
+    normalizeAttachments([...files, { name: "x", size: "1 KB" }]).length, 2);
+  eq("the same file picked twice is one",
+    normalizeAttachments([...files, files[0]]).length, 2);
+  eq("a file with no name is named after its url",
+    normalizeAttachments([{ url: "/uploads/c.pdf" }])[0].name, "c.pdf");
+  eq("nothing at all is an empty list", normalizeAttachments(null).length, 0);
+  ok("and the count is capped",
+    normalizeAttachments(Array.from({ length: 40 }, (_, i) => ({ url: `/u/${i}` })))
+      .length === MAX_ACTIVITY_ATTACHMENTS);
+
+  /*
+   * Two sources with a precedence. The three original columns hold the *first*
+   * file, so reading both would show it twice; the JSON wins whenever it has
+   * anything, and only a row written before that column existed falls back.
+   */
+  const cols = attachmentColumns(files);
+  eq("the first file is mirrored into the old columns", cols.attachmentName, "catalogue.pdf");
+  eq("and the whole list into the new one",
+    parseAttachments(cols.attachments, {
+      name: cols.attachmentName, size: cols.attachmentSize, url: cols.attachmentUrl,
+    }).length, 2);
+  ok("the first file is not read twice",
+    parseAttachments(cols.attachments, {
+      name: cols.attachmentName, size: cols.attachmentSize, url: cols.attachmentUrl,
+    }).filter((f) => f.url === "/uploads/a.pdf").length === 1);
+
+  eq("a row from before the column reads its three columns",
+    parseAttachments(null, { name: "old.pdf", size: "1 KB", url: "/uploads/old.pdf" })[0].name,
+    "old.pdf");
+  eq("a row with neither has nothing",
+    parseAttachments(null, { name: null, size: null, url: null }).length, 0);
+  // A broken value must not make the whole feed unreadable.
+  eq("unparseable JSON falls back rather than throwing",
+    parseAttachments("{not json", { name: "old.pdf", size: "", url: "/uploads/old.pdf" }).length, 1);
+
+  eq("an empty list clears the columns too", attachmentColumns([]).attachmentName, null);
+  eq("and stores no JSON", attachmentColumns([]).attachments, null);
+
+  /*
+   * Absent means "not edited", present means "this is the whole list".
+   * Conflating them detaches every file from an entry whose text was corrected
+   * — the same rule the line-item grids follow.
+   */
+  const routes = readFileSync("src/server/routes/activities.ts", "utf-8");
+  ok("the edit route tells an absent list from an empty one",
+    /"attachments" in body \? normalizeAttachments\(body\.attachments\) : undefined/.test(routes));
+}
 
 head("Rich text: markers in, safe HTML out");
 {

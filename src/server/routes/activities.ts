@@ -10,6 +10,7 @@ import {
   reassignReferral,
   setReferralStatus, updateActivity, upsertCategoryGroup,
 } from "../services/activityService";
+import { normalizeAttachments } from "../../utils/attachments";
 
 /**
  * Project activity, referrals and module notes.
@@ -126,6 +127,9 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
       const outcome = await addActivity({
         groupId: typeof body.groupId === "string" ? body.groupId : undefined,
         text: typeof body.text === "string" ? body.text : undefined,
+        // Normalised in the service, not here: an entry with no URL points at
+        // nothing and must not reach the database whichever route sent it.
+        attachments: normalizeAttachments(body.attachments),
         attachmentName: typeof body.attachmentName === "string" ? body.attachmentName : null,
         attachmentSize: typeof body.attachmentSize === "string" ? body.attachmentSize : null,
         attachmentUrl: typeof body.attachmentUrl === "string" ? body.attachmentUrl : null,
@@ -157,8 +161,21 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const text = (req.body as { text?: unknown })?.text;
-      const outcome = await updateActivity(req.params.id, typeof text === "string" ? text : "", user);
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const text = body.text;
+      /*
+       * Absent means "not edited", present means "this is the whole list".
+       *
+       * The same rule the line-item grids follow: conflating the two is how a
+       * partial save wipes what it never sent, and here it would silently
+       * detach every file from an entry whose text somebody corrected.
+       */
+      const outcome = await updateActivity(
+        req.params.id,
+        typeof text === "string" ? text : "",
+        user,
+        "attachments" in body ? normalizeAttachments(body.attachments) : undefined,
+      );
       if (outcome === "forbidden") return denied(res, "فقط نویسنده می‌تواند این فعالیت را ویرایش کند.");
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "فعالیت یافت نشد." });

@@ -1198,9 +1198,14 @@ model ProjectActivity {
   /// Kept alongside the FK so history stays readable if a user is removed.
   authorName   String? @db.NVarChar(200)
 
+  /// The first attachment, kept in its own columns so everything that already
+  /// reads them — the Power BI export among them — still works.
   attachmentName String? @db.NVarChar(300)
   attachmentSize String? @db.NVarChar(50)
   attachmentUrl  String? @db.NVarChar(500)
+  /// Every attachment, as `[{name, size, url}]`. The columns above are the
+  /// first entry; a row written before this column existed has only them.
+  attachments    String? @db.NVarChar(Max)
 
   /// The record whose life this entry describes — a proforma, a packing list,
   /// an inquiry. Deliberately not a foreign key: it points at six different

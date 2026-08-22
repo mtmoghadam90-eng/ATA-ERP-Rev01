@@ -698,6 +698,8 @@ export interface ERPSettings {
   customerValue?: CustomerValueSettings;
 }
 
+import type { ActivityAttachment } from './utils/attachments';
+
 export interface ProjectReferralResponse {
   id?: string;
   text: string;
@@ -722,7 +724,10 @@ export interface ProjectActivity {
   text: string;
   createdAt: string;
   createdBy?: string;
+  /** The first attachment, kept so older markup and readers still work. */
   attachment: { name: string; size: string; content?: string } | null;
+  /** Every attachment on the entry, in the order they were added. */
+  attachments: ActivityAttachment[];
   referral: ProjectReferral | null;
 }
 
