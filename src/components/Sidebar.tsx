@@ -1,22 +1,6 @@
 import { useState } from 'react';
-import { 
-  LayoutDashboard, 
-  Users, 
-  Briefcase, 
-  FileText, 
-  Package, 
-  Truck, 
-  ShoppingCart, 
-  ArrowDownLeft, 
-  CheckSquare, 
-  Settings as SettingsIcon,
-  Inbox,
-  ShieldCheck,
-  Boxes,
-  Wrench,
-  ArrowLeftRight,
-  MessageSquare
-} from 'lucide-react';
+import { APP_MODULES } from '../appModules';
+import { MODULE_ICONS } from './moduleIcons';
 import { User, SCREEN_PERMISSION_ALIAS } from '../types';
 
 interface SidebarProps {
@@ -54,24 +38,29 @@ export default function Sidebar({
   const isOpen = propIsOpen !== undefined ? propIsOpen : internalIsOpen;
   const setIsOpen = propSetIsOpen !== undefined ? propSetIsOpen : setInternalIsOpen;
 
-  const menuItems = [
-    { id: 'dashboard', name: 'داشبورد', icon: LayoutDashboard },
-    { id: 'customers', name: 'مشتریان', icon: Users },
-    { id: 'projects', name: 'پروژه‌ها (فرصت‌ها)', icon: Briefcase },
-    { id: 'proformas', name: 'پیش‌فاکتورها', icon: FileText },
-    { id: 'products', name: 'کالا و انبار', icon: Package },
-    { id: 'suppliers', name: 'تأمین‌کنندگان', icon: Truck },
-    { id: 'supplierInquiries', name: 'استعلام قیمت تأمین‌کنندگان', icon: ArrowLeftRight },
-    { id: 'purchaseOrders', name: 'سفارشات خرید خارجی', icon: ShoppingCart },
-    { id: 'packagingDelivery', name: 'بسته‌بندی و تحویل کالا', icon: Boxes },
-    { id: 'afterSalesServices', name: 'خدمات پس از فروش', icon: Wrench },
-    { id: 'transactions', name: 'دریافت و پرداخت ریالی', icon: ArrowDownLeft },
-    { id: 'tasks', name: 'وظایف و پیگیری', icon: CheckSquare, badge: taskCount > 0 ? String(taskCount) : null, badgeColor: 'bg-sky-500 text-white' },
-    { id: 'messaging', name: 'ارسال پیام', icon: MessageSquare },
-    { id: 'referrals', name: 'کارتابل ارجاعات کار', icon: Inbox, badge: referralsCount > 0 ? String(referralsCount) : null, badgeColor: 'bg-amber-500 text-slate-900 font-extrabold animate-pulse' },
-    { id: 'users', name: 'مدیریت کاربران', icon: ShieldCheck },
-        { id: 'settings', name: 'تنظیمات سیستم', icon: SettingsIcon },
-  ];
+  /*
+   * Built from the one catalogue, with only the badges added here — those are
+   * live counts and belong to the sidebar, while the list of modules belongs to
+   * everything that has to agree about it.
+   */
+  const BADGES: Record<string, { badge: string | null; badgeColor: string }> = {
+    tasks: {
+      badge: taskCount > 0 ? String(taskCount) : null,
+      badgeColor: 'bg-sky-500 text-white',
+    },
+    referrals: {
+      badge: referralsCount > 0 ? String(referralsCount) : null,
+      badgeColor: 'bg-amber-500 text-slate-900 font-extrabold animate-pulse',
+    },
+  };
+
+  const menuItems = APP_MODULES.map((module) => ({
+    id: module.id,
+    name: module.name,
+    icon: MODULE_ICONS[module.id],
+    badge: BADGES[module.id]?.badge ?? null,
+    badgeColor: BADGES[module.id]?.badgeColor,
+  }));
 
   // Sort menu items based on custom order if configured
   const orderedMenuItems = [...menuItems];

@@ -28,6 +28,7 @@ import { projectsApi } from './api/projects';
 import { useWonProjectWatch } from './api/useWonProjectWatch';
 import { detailToProject, projectToWriteInput } from './api/projectAdapter';
 import { Project, SCREEN_PERMISSION_ALIAS } from './types';
+import { APP_MODULES } from './appModules';
 import { useSidebarBadges } from './api/useSidebarBadges';
 import { tasksApi, taskToWriteInput } from './api/tasks';
 import { useCategoryCompletion } from './api/useCategoryCompletion';
@@ -353,16 +354,13 @@ export default function App() {
           </div>
           <h2 className="text-lg font-bold text-slate-800">عدم دسترسی به ماژول</h2>
           <p className="text-sm text-slate-500 leading-relaxed">
+            {/*
+              Named from the module catalogue rather than a chain of
+              comparisons — that chain covered six of the sixteen modules and
+              showed the raw id for the rest.
+            */}
             حساب کاربری شما اجازه دسترسی به ماژول «{
-              activeView === 'users' ? 'مدیریت کاربران' : 
-              activeView === 'settings' ? 'تنظیمات سیستم' : 
-              activeView === 'transactions' ? 'دریافت و پرداخت ریالی' :
-              
-              activeView === 'messaging' ? 'ارسال پیام' :
-              activeView === 'packagingDelivery' ? 'بسته‌بندی و تحویل کالا' :
-              activeView === 'afterSalesServices' ? 'خدمات پس از فروش' :
-
-              activeView
+              APP_MODULES.find((m) => m.id === activeView)?.name ?? activeView
             }» را ندارد.
             لطفاً در صورت نیاز به این بخش، با مدیریت ارشد سیستم (محمد توکل مقدم) هماهنگ فرمایید.
           </p>

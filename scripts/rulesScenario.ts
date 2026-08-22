@@ -41,6 +41,8 @@ import {
   shouldRetry, smsLength, templateVariables,
 } from "../src/utils/messaging";
 import { addresseeOf, namePrefixFor } from "../src/utils/honorific";
+import { APP_MODULES, DEFAULT_MODULE_ORDER } from "../src/appModules";
+import { DEFAULT_SETTINGS } from "../src/seedData";
 import { canSeeCosts } from "../src/server/auth";
 import {
   preserveLineCosts, redactCustomerValue, redactInquiry, redactProduct,
@@ -2351,6 +2353,57 @@ head("Template variables: the palette and the values agree");
   eq("and the preview renders the whole palette",
     renderTemplate("{addressee} عزیز، پروژه {projectCode}", SAMPLE_VARIABLE_VALUES),
     "جناب آقای مهندس رضایی عزیز، پروژه PRJ-1405-018");
+}
+
+
+head("Modules: one catalogue, and everything reads it");
+{
+  /*
+   * The messaging module was added to the sidebar and to nothing else, so it
+   * appeared in the menu and could not be reordered: the settings tab kept its
+   * own copy of the module list and rendered nothing for an id that copy had
+   * never heard of. There is one catalogue now, the icon map is a
+   * `Record<AppModuleId, …>` so the type-checker refuses a module without one,
+   * and what is left is the two lists nothing can type-check — the screens
+   * behind the ids, and the copies that used to exist.
+   */
+  const ids = APP_MODULES.map((m) => m.id);
+
+  ok("no module is listed twice", new Set(ids).size === ids.length);
+  ok("every module has a name and a description",
+    APP_MODULES.every((m) => m.name.trim() !== "" && m.description.trim() !== ""));
+  eq("a fresh installation starts in the catalogue's order",
+    (DEFAULT_SETTINGS.sidebarModuleOrder ?? []).join(","), DEFAULT_MODULE_ORDER.join(","));
+
+  /* Every module in the menu has a screen behind it, and the other way round. */
+  const app = readFileSync("src/App.tsx", "utf-8");
+  const switchStart = app.indexOf("switch (activeView) {");
+  const routed = new Set(
+    [...app.slice(switchStart, app.indexOf("default:", switchStart))
+      .matchAll(/case '([A-Za-z]+)':/g)].map((m) => m[1]));
+
+  const noScreen = ids.filter((id) => !routed.has(id));
+  const noMenu = [...routed].filter((id) => !ids.includes(id as never));
+  ok("every module in the catalogue has a screen in App.tsx", noScreen.length === 0, noScreen);
+  ok("and every screen App.tsx routes to is in the catalogue", noMenu.length === 0, noMenu);
+  ok("the check found the routes at all", routed.size >= 10, [...routed]);
+
+  /*
+   * The copies are gone and must stay gone. Both screens now map over
+   * `APP_MODULES`; a hand-written array of sidebar modules in either is the
+   * shape that caused this, whatever it ends up being called.
+   *
+   * `dashboard` is what identifies such a list. The settings screen has other,
+   * legitimate module lists — which modules carry custom fields, which have
+   * validatable fields — and those are a different and smaller set: no
+   * dashboard, no users, no settings screen itself.
+   */
+  for (const file of ["src/components/Sidebar.tsx", "src/components/SettingsView.tsx"]) {
+    const src = readFileSync(file, "utf-8");
+    ok(`${file} builds its module list from the catalogue`, src.includes("APP_MODULES"));
+    ok(`${file} keeps no copy of the sidebar list`,
+      !/id:\s*['"]dashboard['"]/.test(src));
+  }
 }
 
 

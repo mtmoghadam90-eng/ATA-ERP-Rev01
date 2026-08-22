@@ -3,37 +3,24 @@ import React, { useState } from 'react';
 import { 
   Settings, 
   Building, 
-  FileText, 
   Save, 
   RefreshCw,
   Sliders,
   CheckCircle2,
   FileCheck,
-  ShieldCheck,
   Lock,
   Plus,
   Trash2,
   Edit2,
   Check,
   XCircle,
-  LayoutDashboard,
-  Users,
-  Briefcase,
-  Package,
-  Truck,
-  ArrowLeftRight,
-  ShoppingCart,
-  ArrowDownLeft,
   TrendingUp,
   CheckSquare,
-  Inbox,
   ArrowUp,
   ArrowDown,
   Menu,
   UserCog,
   Bell,
-  Boxes,
-  Wrench,
   History,
   GripVertical,
   Copy,
@@ -41,6 +28,8 @@ import {
   Award,
 } from 'lucide-react';
 import { ERPSettings, CustomField, User, Project, AuditLog, WorkflowRule } from '../types';
+import { APP_MODULES, DEFAULT_MODULE_ORDER } from '../appModules';
+import { MODULE_ICONS } from './moduleIcons';
 import { formatERPNumber } from '../numUtils';
 import { ApiError, api } from '../api/client';
 import { auditLogsApi } from '../api/auditLogs';
@@ -2072,24 +2061,7 @@ export default function SettingsView({
                   if (confirm('آیا مایلید ترتیب منو به حالت پیش‌فرض سیستم بازگردد؟')) {
                     updateSettings({
                       ...settings,
-                      sidebarModuleOrder: [
-                        'dashboard',
-                        'customers',
-                        'projects',
-                        'proformas',
-                        'products',
-                        'suppliers',
-                        'supplierInquiries',
-                        'purchaseOrders',
-                        'packagingDelivery',
-                        'afterSalesServices',
-                        'transactions',
-                        
-                        'tasks',
-                        'referrals',
-                        'users',
-                        'settings'
-                      ]
+                      sidebarModuleOrder: [...DEFAULT_MODULE_ORDER]
                     });
                   }
                 }}
@@ -2101,24 +2073,18 @@ export default function SettingsView({
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {(() => {
-                const ALL_MODULES = [
-                  { id: 'dashboard', name: 'داشبورد', desc: 'خلاصه وضعیت، آمارهای کلیدی و نمودارهای سریع سیستم', icon: LayoutDashboard },
-                  { id: 'customers', name: 'مشتریان', desc: 'مدیریت پرونده‌های خریداران حقیقی و حقوقی و ارتباطات آن‌ها', icon: Users },
-                  { id: 'projects', name: 'پروژه‌ها (فرصت‌ها)', desc: 'کنترل فازها، فعالیت‌ها و ارجاعات مربوط به هر فرصت تجاری', icon: Briefcase },
-                  { id: 'proformas', name: 'پیش‌فاکتورها', desc: 'صدور و پیگیری پیشنهادهای مالی فنی برای مشتریان', icon: FileText },
-                  { id: 'products', name: 'کالاها و تجهیزات', desc: 'انبارداری، موجودی کالاها و ابزار دقیق شرکت', icon: Package },
-                  { id: 'suppliers', name: 'تأمین‌کنندگان', desc: 'مدیریت وندورها و سازندگان داخلی و خارجی کالا', icon: Truck },
-                  { id: 'supplierInquiries', name: 'استعلام قیمت تأمین‌کنندگان', desc: 'ثبت و پیگیری استعلام قیمت از همکاران و وندورهای خارجی', icon: ArrowLeftRight },
-                  { id: 'purchaseOrders', name: 'سفارشات خرید خارجی', desc: 'پیگیری مراحل پروفرمای خرید، حمل و ترخیص گمرکی', icon: ShoppingCart },
-                  { id: 'packagingDelivery', name: 'بسته‌بندی و تحویل کالا', desc: 'مدیریت پکینگ‌لیست‌ها و تحویل محموله‌ها به مشتری', icon: Boxes },
-                  { id: 'afterSalesServices', name: 'خدمات پس از فروش', desc: 'رسیدگی به درخواست‌ها و پشتیبانی پس از فروش و گارانتی', icon: Wrench },
-                  { id: 'transactions', name: 'دریافت و پرداخت ریالی', desc: 'ثبت و کنترل تراکنش‌های مالی ریالی و صندوق شرکت', icon: ArrowDownLeft },
-                
-                  { id: 'tasks', name: 'وظایف و پیگیری', desc: 'مدیریت کارها، ددلاین‌ها و پیگیری‌های پرسنل فروش و فنی', icon: CheckSquare },
-                  { id: 'referrals', name: 'کارتابل ارجاعات کار', desc: 'صندوق ورودی ارجاع امور فنی و بازرگانی پروژه‌ها بین همکاران', icon: Inbox },
-                  { id: 'users', name: 'مدیریت کاربران', desc: 'تعریف پرسنل، نقش‌ها و تنظیمات دسترسی به هر ماژول', icon: ShieldCheck },
-                  { id: 'settings', name: 'تنظیمات سیستم', desc: 'شخصی‌سازی فیلدها، دسته‌بندی‌ها و قالب‌های اسناد رسمی', icon: Settings },
-                ];
+                /*
+                  One catalogue, shared with the sidebar. This tab used to keep
+                  its own copy and looked each stored id up in it, so a module
+                  the copy had never heard of — messaging — rendered as nothing
+                  and could not be moved.
+                */
+                const ALL_MODULES = APP_MODULES.map((m) => ({
+                  id: m.id,
+                  name: m.name,
+                  desc: m.description,
+                  icon: MODULE_ICONS[m.id],
+                }));
 
                 const currentOrder = [...(settings.sidebarModuleOrder || [])];
                 ALL_MODULES.forEach(m => {
