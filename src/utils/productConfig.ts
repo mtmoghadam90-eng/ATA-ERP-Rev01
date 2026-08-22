@@ -1,4 +1,5 @@
 import type { ProductFeature } from "../types";
+import { stripRichMarks } from "./richText";
 
 /**
  * Turning a set of ticked feature options into the two things a line needs: the
@@ -65,7 +66,11 @@ export function mergeSpecText(
   const kept = String(existing ?? "")
     .split("\n")
     .filter((line) => {
-      const trimmed = line.trim();
+      // Compared without the formatting markers: somebody may have bolded a
+      // feature name, and «**جنس بدنه**: …» would then not be recognised as the
+      // configurator's own line — so reconfiguring would leave the old one
+      // behind and append a second.
+      const trimmed = stripRichMarks(line).trim();
       if (trimmed.startsWith("مشخصات:")) return false;
       return !names.some((name) => trimmed.startsWith(`${name}: `));
     });
@@ -81,7 +86,9 @@ export function selectionsFromSpecText(
   text: string | undefined,
 ): ConfigSelections {
   const selections: ConfigSelections = {};
-  const lines = String(text ?? "").split("\n");
+  // Read past any formatting the user applied, for the same reason the merge
+  // above does: the value is «استیل 316», not «**استیل 316**».
+  const lines = String(text ?? "").split("\n").map((l) => stripRichMarks(l));
   for (const feature of features ?? []) {
     const prefix = `${feature.name}: `;
     const line = lines.find((l) => l.trim().startsWith(prefix));

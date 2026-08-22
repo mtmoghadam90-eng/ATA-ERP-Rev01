@@ -36,6 +36,7 @@ import { createRoot } from "react-dom/client";
 import PriceCalculatorModal from "../src/components/PriceCalculatorModal";
 import MessagingView from "../src/components/MessagingView";
 import ProductConfiguratorModal from "../src/components/ProductConfiguratorModal";
+import RichTextField from "../src/components/RichTextField";
 import type { Product } from "../src/types";
 import type { ExchangeRate } from "../src/types";
 
@@ -254,6 +255,49 @@ head("Product configurator: the catalogue's rules are enforced as you tick");
   const confirm = buttons.find((b) => b.textContent?.includes("تایید")) as HTMLElement;
   act(() => { confirm.click(); });
   ok("confirming reaches the caller", confirmed === 1, confirmed);
+
+  act(() => { root.unmount(); });
+  host.remove();
+}
+
+head("Rich text field: the toolbar formats what is selected");
+
+/*
+ * The arithmetic is covered by `test:rules`; what needs a render is the wiring
+ * — a toolbar button that reads the textarea's own selection, and does not
+ * steal the focus before it can. `onMouseDown` preventing default is the part
+ * that is easy to drop and impossible to notice in a type-check.
+ */
+{
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+
+  let text = "size 2 inch";
+  const Screen = () => {
+    const [value, setValue] = useState("size 2 inch");
+    text = value;
+    return React.createElement(RichTextField, { value, onChange: setValue });
+  };
+
+  act(() => { root.render(React.createElement(Screen)); });
+
+  const area = document.querySelector("textarea") as HTMLTextAreaElement;
+  ok("the field renders a plain textarea", !!area);
+  ok("with a button per mark",
+    document.querySelectorAll("button").length === 4,
+    document.querySelectorAll("button").length);
+
+  // Select "size" the way a user would, then press the first button (bold).
+  area.selectionStart = 0;
+  area.selectionEnd = 4;
+  const bold = document.querySelectorAll("button")[0] as HTMLElement;
+  act(() => { bold.click(); });
+  ok("the selected words are wrapped", text === "**size** 2 inch", text);
+
+  // The preview only appears once something is actually formatted.
+  const preview = host.querySelector("strong");
+  ok("and the preview shows it in bold", preview?.textContent === "size", preview?.textContent);
 
   act(() => { root.unmount(); });
   host.remove();

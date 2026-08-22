@@ -46,6 +46,7 @@ import {
   attributesFromSelections, mergeSpecText, selectionsFromAttributes,
   selectionsFromSpecText, specLinesFrom,
 } from "../src/utils/productConfig";
+import { renderRichText, stripRichMarks, toggleMark } from "../src/utils/richText";
 import { DEFAULT_SETTINGS } from "../src/seedData";
 import { canSeeCosts } from "../src/server/auth";
 import {
@@ -2359,6 +2360,69 @@ head("Template variables: the palette and the values agree");
     "جناب آقای مهندس رضایی عزیز، پروژه PRJ-1405-018");
 }
 
+
+head("Rich text: markers in, safe HTML out");
+{
+  eq("bold becomes a tag",
+    renderRichText("متریال: **WCB**"), "متریال: <strong>WCB</strong>");
+  ok("highlight paints a background",
+    renderRichText("==فوری==").includes("background-color"));
+  /* Underline is read before italic, or `__` is two empty italic runs. */
+  ok("underline is not read as two italics",
+    renderRichText("__PN16__").includes("text-decoration: underline"));
+  eq("italic still works on its own",
+    renderRichText("_note_"), "<em>note</em>");
+
+  /*
+   * The field is interpolated straight into the printed document. Escaping
+   * first is what stops a tolerance or a size from breaking the page — and it
+   * has to happen *before* the markers, or an escaped tag could be reassembled.
+   */
+  eq("angle brackets are escaped, not printed as markup",
+    renderRichText("<script>alert(1)</script>"),
+    "&lt;script&gt;alert(1)&lt;/script&gt;");
+  eq("and an ampersand survives as text", renderRichText("A & B"), "A &amp; B");
+  ok("bold around escaped text still formats",
+    renderRichText("**<2 mm>**") === "<strong>&lt;2 mm&gt;</strong>");
+
+  // An unclosed marker formats nothing rather than swallowing what follows.
+  eq("an unclosed marker is left alone", renderRichText("**WCB"), "**WCB");
+  eq("and a marker never spans a line break",
+    renderRichText("**A\nB**"), "**A\nB**");
+
+  eq("newlines are untouched — the page sets pre-line",
+    renderRichText("a\nb"), "a\nb");
+
+  eq("stripping gives the words back",
+    stripRichMarks("متریال: **WCB** و ==فوری=="), "متریال: WCB و فوری");
+
+  /* The toolbar wraps, unwraps, and puts the caret back. */
+  const wrapped = toggleMark("size 2 inch", 0, 4, "**");
+  eq("wrapping the selection", wrapped.text, "**size** 2 inch");
+  eq("and the selection still covers the same words",
+    wrapped.text.slice(wrapped.selectionStart, wrapped.selectionEnd), "size");
+
+  eq("pressing again with the markers inside the selection removes them",
+    toggleMark("**size** 2 inch", 0, 8, "**").text, "size 2 inch");
+  eq("and with the markers just outside it, which is what a double-click gives",
+    toggleMark("**size** 2 inch", 2, 6, "**").text, "size 2 inch");
+
+  const empty = toggleMark("", 0, 0, "==");
+  eq("with nothing selected it drops a pair in", empty.text, "====");
+  eq("with the caret between them", empty.selectionStart, 2);
+
+  /*
+   * The configurator has to recognise its own lines after somebody has bolded
+   * one, or reconfiguring leaves the old line behind and appends a second.
+   */
+  const features = [{ id: "f1", name: "جنس بدنه", options: [{ id: "o1", value: "استیل 316" }] }];
+  eq("a bolded feature line is still the configurator's line",
+    mergeSpecText("**جنس بدنه**: استیل 304", features, ["جنس بدنه: استیل 316"]),
+    "جنس بدنه: استیل 316");
+  eq("and it is read back past the markers",
+    JSON.stringify(selectionsFromSpecText(features, "جنس بدنه: **استیل 316**")),
+    JSON.stringify({ f1: ["استیل 316"] }));
+}
 
 head("Product configurator: selections in, SKU and specifications out");
 {
