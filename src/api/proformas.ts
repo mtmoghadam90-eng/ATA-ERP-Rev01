@@ -53,6 +53,8 @@ export interface ProformaRow {
   expiryDateJalali: string | null;
   totalAmount: string;
   finalAmount: string;
+  /** The rate the document was priced at; a receipt's settlement rate starts here. */
+  historicalExchangeRate: string | null;
   creatorUserId: string | null;
   createdAt: string;
   customer: { id: string; companyName: string; customerType: string } | null;

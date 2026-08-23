@@ -141,6 +141,11 @@ const LIST_SELECT = {
   expiryDateJalali: true,
   totalAmount: true,
   finalAmount: true,
+  // The rate the document was priced at. On the row because the transactions
+  // screen fills a receipt's settlement rate from the proforma being paid, and
+  // a picker only ever holds rows — reading it off one that did not carry the
+  // column meant the box was filled with nothing, every time.
+  historicalExchangeRate: true,
   creatorUserId: true,
   createdAt: true,
   customer: { select: { id: true, companyName: true, customerType: true } },

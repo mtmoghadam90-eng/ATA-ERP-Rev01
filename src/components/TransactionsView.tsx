@@ -54,6 +54,7 @@ import { proformasApi } from '../api/proformas';
 import { createCustomerWithLinks, findServerDuplicates } from '../api/customerAdapter';
 import { projectToWriteInput, detailToProject } from '../api/projectAdapter';
 import { detailToProforma, proformaToWriteInput } from '../api/proformaAdapter';
+import NumberField from './NumberField';
 
 /**
  * Transactions ledger and the per-project financial position.
@@ -308,9 +309,22 @@ export default function TransactionsView({
   // New Connected Financial Fields
   const [proformaId, setProformaId] = useState('');
   const [exchangeRate, setExchangeRate] = useState<number>(0);
+  /**
+   * Whether the settlement rate on screen was typed rather than filled in.
+   *
+   * Picking a proforma offers its historical rate; a rate the user entered is
+   * their own decision about this settlement and survives a change of proforma.
+   */
+  const [rateTouched, setRateTouched] = useState(false);
   const [amountForeign, setAmountForeign] = useState<number>(0);
   const [isDirectForeign, setIsDirectForeign] = useState<boolean>(false);
   const [status, setStatus] = useState<Transaction['status']>('تأیید شده');
+  /**
+   * Legacy only: the reversal documents a previous version of this screen could
+   * produce. Nothing issues one any more — a mistake is edited or deleted — but
+   * an existing pair must keep behaving as it did, so the flag is still read off
+   * a stored document and still exempts it from the overpayment check.
+   */
   const [reversalOfTransactionId, setReversalOfTransactionId] = useState('');
 
   /** Pickers, searched on the server and idle while the form is closed. */
@@ -398,16 +412,18 @@ export default function TransactionsView({
   const [referenceNumber, setReferenceNumber] = useState('');
   const [notes, setNotes] = useState('');
 
-  // Calculations
-  const totalReceived = transactions
-    .filter(t => t.type === 'دریافت')
-    .reduce((sum, t) => sum + t.amountRIYAL, 0);
-
-  const totalPaid = transactions
-    .filter(t => t.type === 'پرداخت')
-    .reduce((sum, t) => sum + t.amountRIYAL, 0);
-
-  const netBalance = totalReceived - totalPaid;
+  /*
+   * The ledger's totals, from the server.
+   *
+   * They were summed from `transactions` — the page in hand — over every
+   * status, so the three cards showed the total of fifty rows rather than of
+   * the ledger, and counted drafts and cancelled documents as money. The
+   * endpoint totals the same query in SQL and leaves out the statuses that are
+   * not money; `useTransactionList` has been fetching it all along.
+   */
+  const totalReceived = Number(list.summary?.receivedRial ?? 0);
+  const totalPaid = Number(list.summary?.paidRial ?? 0);
+  const netBalance = Number(list.summary?.balanceRial ?? 0);
 
   const [activeViewTab, setActiveViewTab] = useState<'transactions' | 'projectsSummary' | 'incompleteData'>('transactions');
   const [expandedProjectId, setExpandedProjectId] = useState<string | null>(null);
@@ -539,6 +555,7 @@ export default function TransactionsView({
     setCustomValues({});
     setProformaId('');
     setExchangeRate(0);
+    setRateTouched(false);
     setAmountForeign(0);
     setIsDirectForeign(false);
     setStatus('تأیید شده');
@@ -597,6 +614,8 @@ export default function TransactionsView({
     // Connected Financial fields loading
     setProformaId(tr.proformaId || '');
     setExchangeRate(tr.exchangeRate || 0);
+    // An existing document's rate is a decision already made.
+    setRateTouched(!!tr.exchangeRate);
     setAmountForeign(tr.amountForeign || 0);
     setIsDirectForeign(tr.isDirectForeign || false);
     setStatus(tr.status || 'تأیید شده');
@@ -649,6 +668,20 @@ export default function TransactionsView({
       return;
     }
 
+    /*
+     * Checked here rather than with a `required` attribute.
+     *
+     * The rial box is a `NumberField` — a text input, because `type="number"`
+     * cannot hold a decimal being typed — so the browser enforces nothing for
+     * it, and "0" is not empty in any case. A control that draws the asterisk
+     * and is not an `<input required>` needs its own check in the submit
+     * handler, or the switch in settings does nothing.
+     */
+    if (isFieldRequired(settings, 'transactions', 'amountRIYAL') && amountRIYAL <= 0) {
+      alert('مبلغ ریالی (یا معادل ریالی) الزامی است.');
+      return;
+    }
+
     // 10. نرخ تبدیل برای ارزی
     if (amountForeign > 0 && (!exchangeRate || exchangeRate <= 0)) {
       alert('برای دریافت ارزی، وارد کردن نرخ تسویه (حتی 1 برای دریافت مستقیم) الزامی است.');
@@ -661,20 +694,21 @@ export default function TransactionsView({
       return;
     }
 
-    // 13 & 15. Validation for editing
+    /*
+     * A confirmed document's amount is editable, and that is the whole point.
+     *
+     * This refused any edit whose amount differed and told the user to issue a
+     * reversal instead — a document the screen has no way to issue. Worse, it
+     * fired when nothing had changed: a stored transaction with no foreign
+     * amount carries `undefined` while the form holds `0`, so the comparison
+     * was true on every single edit of every confirmed document, and the
+     * message blamed a figure the user had not touched. The correction for a
+     * wrong figure is the right figure; the audit log keeps both.
+     */
     if (editingTransaction) {
       if (editingTransaction.status === 'لغو شده' || editingTransaction.status === 'برگشت شده') {
         alert('تراکنش لغو شده یا برگشت شده قابل ویرایش نیست.');
         return;
-      }
-      
-      // Prevent changing amount on existing confirmed transaction unless it's just a status update
-      // Actually, if we want to be strict, only allow status changes
-      if (editingTransaction.amountRIYAL !== amountRIYAL || editingTransaction.amountForeign !== amountForeign) {
-         if (editingTransaction.status === 'تأیید شده') {
-             alert('امکان تغییر مبلغ برای تراکنش تأیید شده وجود ندارد. در صورت نیاز باید تراکنش را ابطال یا برگشت وجه ثبت کنید.');
-             return;
-         }
       }
     }
 
@@ -1861,22 +1895,21 @@ export default function TransactionsView({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'transactions', 'amountRIYAL', 'مبلغ ریالی (یا معادل ریالی)')}</label>
-                    <input
-                      type="number"
-                      required={isFieldRequired(settings, 'transactions', 'amountRIYAL')}
+                    {/* Money, so NumberField: see src/utils/numberInput.ts. */}
+                    <NumberField
+                      min={0}
                       value={amountRIYAL}
-                      onChange={(e) => setAmountRIYAL(Number(e.target.value))}
+                      onChange={setAmountRIYAL}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono text-left"
                     />
                   </div>
                   
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">مبلغ ارزی (در صورت وجود)</label>
-                    <input
-                      type="number"
+                    <NumberField
+                      min={0}
                       value={amountForeign}
-                      onChange={(e) => {
-                        const val = Number(e.target.value);
+                      onChange={(val) => {
                         setAmountForeign(val);
                         if (exchangeRate > 0) {
                           setAmountRIYAL(val * exchangeRate);
@@ -1890,17 +1923,16 @@ export default function TransactionsView({
                     <>
                       <div className="space-y-1.5">
                         <label className="text-xs font-semibold text-slate-500">نرخ تبدیل / تسویه *</label>
-                        <input
-                          type="number"
+                        <NumberField
+                          min={0}
                           value={exchangeRate}
-                          onChange={(e) => {
-                            const val = Number(e.target.value);
+                          onChange={(val) => {
                             setExchangeRate(val);
+                            setRateTouched(true);
                             if (amountForeign > 0) {
                               setAmountRIYAL(amountForeign * val);
                             }
                           }}
-                          required={amountForeign > 0}
                           className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono text-left"
                         />
                       </div>
@@ -1983,12 +2015,23 @@ export default function TransactionsView({
                       value={proformaId}
                       onChange={(val) => {
                         setProformaId(val);
-                        // Automatically initialize currency details if proforma is foreign
+                        /*
+                         * The settlement rate starts at the rate the proforma
+                         * was priced at.
+                         *
+                         * It always came out empty: the picker holds list rows
+                         * and the row did not carry `historicalExchangeRate`,
+                         * so this read `undefined` and wrote 0 every time. The
+                         * column is on the row now. Picking a proforma is an
+                         * explicit act, so it fills the box — unless the user
+                         * has typed a rate for this document themselves, which
+                         * is a settlement rate of their own and not ours to
+                         * overwrite.
+                         */
                         const pf = proformas.find(p => p.id === val);
+                        if (rateTouched) return;
                         if (pf && pf.currency && pf.currency !== 'ریال') {
-                          if (!exchangeRate || exchangeRate === 0) {
-                            setExchangeRate(pf.historicalExchangeRate || 0);
-                          }
+                          setExchangeRate(pf.historicalExchangeRate || 0);
                         }
                       }}
                       onSearchChange={proformaPicker.setTerm}
@@ -2096,7 +2139,11 @@ export default function TransactionsView({
           setAlsoRemoveActivities(false);
         }}
         title="حذف سند مالی"
-        message={`آیا از حذف سند حسابداری "${transactionToDeleteDoc}" اطمینان دارید؟ این عمل قابل بازیابی نیست.`}
+        message={
+          `سند «${transactionToDeleteDoc}» حذف شود؟`
+          + ' مبلغ آن از مانده صندوق و از مانده پروژه‌ی مرتبط برداشته می‌شود.'
+          + ' این کار قابل بازگشت نیست، ولی سند حذف‌شده با تمام جزئیاتش در «سابقه اقدامات» باقی می‌ماند.'
+        }
       >
         <DeleteActivitiesOption
           checked={alsoRemoveActivities}

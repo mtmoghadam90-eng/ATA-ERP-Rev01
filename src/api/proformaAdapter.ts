@@ -59,6 +59,10 @@ export function rowToProforma(row: ProformaRow): Proforma {
     currency: row.currency as Proforma["currency"],
     totalAmount: money(row.totalAmount),
     finalAmount: money(row.finalAmount),
+    // The rate the document was priced at. On the row so a picker can offer it
+    // — the transactions screen fills a receipt's settlement rate from it.
+    historicalExchangeRate: row.historicalExchangeRate
+      ? money(row.historicalExchangeRate) : undefined,
     creatorId: row.creatorUserId ?? undefined,
     // Printed on the card, and none of it used to arrive: how the proforma was
     // sent and to whom, why a lost one was lost, and the custom-field column.

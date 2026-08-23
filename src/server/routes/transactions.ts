@@ -7,7 +7,7 @@ import { nextDocumentNumber } from "../documentNumbers";
 import {
   TRANSACTION_FILTERABLE, TRANSACTION_SORTABLE, TransactionInput,
   createTransaction, deleteTransaction, getTransaction, listTransactions,
-  reverseTransaction, transactionSummary, updateTransaction,
+  transactionSummary, updateTransaction,
 } from "../services/transactionService";
 
 const WRITABLE: (keyof TransactionInput)[] = [
@@ -47,7 +47,7 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
     }
   });
 
-  /** Totals for the same filters as the list — confirmed entries only. */
+  /** Totals for the same filters as the list; drafts and cancelled ones aside. */
   app.get("/api/transactions/summary", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
@@ -152,80 +152,9 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
         res.status(404).json({ success: false, error: "تراکنش یافت نشد." });
         return;
       }
-      if (outcome === "frozen") {
-        res.status(409).json({
-          success: false,
-          code: "FROZEN",
-          error: "سند ابطال‌شده یا سند ابطال قابل ویرایش نیست.",
-        });
-        return;
-      }
       res.json({ success: true, transaction: outcome.transaction });
     } catch (err) {
       sendError(res, err, "PUT /api/transactions/:id");
-    }
-  });
-
-  /** Corrects a confirmed entry with an opposite one, keeping both visible. */
-  app.post("/api/transactions/:id/reverse", async (req, res) => {
-    const user = await deps.requireKeyAccess(req, res, KEY, "write");
-    if (!user) return;
-    try {
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      let documentNumber = typeof body.documentNumber === "string" ? body.documentNumber.trim() : "";
-
-      // Generated when the caller does not name one — and a caller rarely
-      // should. A reversal is the system's own correcting entry, issued because
-      // a confirmed transaction may not be edited or deleted; asking whoever
-      // pressed the button to invent its number is asking them to do the
-      // application's bookkeeping.
-      if (!documentNumber) {
-        const db = getDb();
-        const original = await db.transaction.findUnique({
-          where: { id: req.params.id },
-          select: {
-            type: true,
-            customer: { select: { companyName: true } },
-            supplier: { select: { name: true } },
-            project: { select: { code: true } },
-          },
-        });
-        if (!original) {
-          res.status(404).json({ success: false, error: "تراکنش یافت نشد." });
-          return;
-        }
-        documentNumber = await nextDocumentNumber({
-          formatKey: "transactionFormat", startSeqKey: "transactionStartSeq",
-          fallbackFormat: "TR-{TYPE}-{YYYY}{MM}-{SEQ:3}",
-          existing: async (prefix) => (await db.transaction.findMany({
-            where: { documentNumber: { startsWith: prefix } },
-            select: { documentNumber: true },
-          })).map((r) => r.documentNumber),
-          taken: async (v) => !!(await db.transaction.findUnique({
-            where: { documentNumber: v }, select: { id: true },
-          })),
-          context: {
-            transactionType: original.type as "دریافت" | "پرداخت",
-            customerName: original.customer?.companyName,
-            supplierName: original.supplier?.name,
-            projectCode: original.project?.code,
-          },
-        });
-      }
-
-      const outcome = await reverseTransaction(req.params.id, documentNumber, user, getTodayShamsi());
-      if (outcome === "forbidden") return denied(res);
-      if (outcome === "not-found") {
-        res.status(404).json({ success: false, error: "تراکنش یافت نشد." });
-        return;
-      }
-      if (outcome === "already-reversed") {
-        res.status(409).json({ success: false, code: "ALREADY_REVERSED", error: "این سند قبلاً ابطال شده است." });
-        return;
-      }
-      res.status(201).json({ success: true, reversal: outcome.reversal });
-    } catch (err) {
-      sendError(res, err, "POST /api/transactions/:id/reverse");
     }
   });
 
@@ -243,14 +172,6 @@ export function registerTransactionRoutes(app: express.Express, deps: RouteDeps)
       if (outcome === "forbidden") return denied(res);
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "تراکنش یافت نشد." });
-        return;
-      }
-      if (outcome === "confirmed") {
-        res.status(409).json({
-          success: false,
-          code: "MUST_REVERSE",
-          error: "سند تأییدشده حذف نمی‌شود؛ برای اصلاح باید سند ابطال صادر شود.",
-        });
         return;
       }
       res.json({ success: true });

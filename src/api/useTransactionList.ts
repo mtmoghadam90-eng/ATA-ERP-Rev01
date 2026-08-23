@@ -64,6 +64,14 @@ export function useTransactionList(initialSearch = "") {
   const [summary, setSummary] = useState<TransactionSummary | null>(null);
   const paramsKey = JSON.stringify(params);
 
+  /*
+   * `list.rows` is the dependency, not `list.total`.
+   *
+   * The count is unchanged by the edit that matters most here — correcting an
+   * amount — so totals keyed on it stayed at the old figures until something
+   * else happened to move the row count. `rows` is a fresh array after every
+   * fetch, so this re-asks whenever the ledger has actually been re-read.
+   */
   useEffect(() => {
     let cancelled = false;
     transactionsApi
@@ -72,7 +80,7 @@ export function useTransactionList(initialSearch = "") {
       // A failed total should leave the figure blank, not break the ledger.
       .catch(() => { if (!cancelled) setSummary(null); });
     return () => { cancelled = true; };
-  }, [paramsKey, list.search, list.total]);
+  }, [paramsKey, list.search, list.rows]);
 
   const setFilter = <K extends keyof TransactionListFilters>(key: K, value: TransactionListFilters[K]) =>
     setFilters((current) => ({ ...current, [key]: value }));

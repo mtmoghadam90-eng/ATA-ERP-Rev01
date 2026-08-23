@@ -5,10 +5,10 @@ import type { Transaction } from "../types";
 /**
  * Transaction endpoints.
  *
- * Money that has been recorded is never edited into a different shape or
- * deleted — a confirmed entry is corrected by a reversing entry that points back
- * at it, and both stay visible. That is why `remove` only works on a draft, and
- * why there is a `reverse` here at all.
+ * A document entered by mistake is edited or deleted. There used to be a
+ * `reverse` here instead, and the screen never grew a button for it — so a
+ * confirmed document could be neither corrected nor removed. The audit log
+ * keeps the before and after of both operations, which is where the trail is.
  */
 
 export interface TransactionRow {
@@ -85,10 +85,7 @@ export const transactionsApi = {
   get: (id: string) =>
     api.get<{ transaction: TransactionDetail }>(`/api/transactions/${id}`).then((r) => r.transaction),
 
-  /**
-   * Totals for the same filters as the list, over confirmed and reversed
-   * entries — both halves of a correction count, so the pair cancels.
-   */
+  /** Totals for the same filters as the list; drafts and cancelled ones aside. */
   summary: (query: Record<string, string | number | undefined>) =>
     api.get<{ summary: TransactionSummary }>("/api/transactions/summary", query)
       .then((r) => r.summary),
@@ -97,17 +94,10 @@ export const transactionsApi = {
     api.post<{ transaction: TransactionDetail }>("/api/transactions", input)
       .then((r) => r.transaction),
 
-  /** Throws with code FROZEN for a reversed entry or a reversal. */
   update: (id: string, input: TransactionWriteInput) =>
     api.put<{ transaction: TransactionDetail }>(`/api/transactions/${id}`, input)
       .then((r) => r.transaction),
 
-  /** Corrects a confirmed entry with an opposite one, keeping both visible. */
-  reverse: (id: string, documentNumber: string) =>
-    api.post<{ reversal: TransactionDetail }>(`/api/transactions/${id}/reverse`, { documentNumber })
-      .then((r) => r.reversal),
-
-  /** Only a draft. A confirmed entry throws with code MUST_REVERSE. */
   /**
    * `removeActivities` also deletes the automatic project-timeline entries this
    * record produced, and any category group they leave empty. Omitted, the
@@ -202,7 +192,10 @@ export function detailToTransaction(detail: TransactionDetail): Transaction {
  *
  * The rial amount is sent, but the server derives it from the foreign amount and
  * the document's rate whenever both are present — so an entry cannot claim a
- * rial figure inconsistent with its own currency.
+ * rial figure inconsistent with its own currency. A foreign amount of zero is
+ * sent as null rather than 0: zero is a figure, «there is no foreign amount» is
+ * not, and storing the first for the second is what made a plain rial receipt
+ * look like a foreign one with an unknown rate.
  */
 export function transactionToWriteInput(tx: Partial<Transaction>): TransactionWriteInput {
   assertComplete(tx, "تراکنش");
@@ -220,8 +213,8 @@ export function transactionToWriteInput(tx: Partial<Transaction>): TransactionWr
     purchaseOrderId: (t.purchaseOrderId as string) ?? null,
     partyName: (t.partyName as string) ?? null,
     amountRial: t.amountRIYAL,
-    amountForeign: t.amountForeign,
-    exchangeRate: t.exchangeRate,
+    amountForeign: Number(t.amountForeign) > 0 ? t.amountForeign : null,
+    exchangeRate: Number(t.exchangeRate) > 0 ? t.exchangeRate : null,
     isDirectForeign: t.isDirectForeign as boolean,
     paymentType: tx.paymentType,
     referenceNumber: (t.referenceNumber as string) ?? null,
