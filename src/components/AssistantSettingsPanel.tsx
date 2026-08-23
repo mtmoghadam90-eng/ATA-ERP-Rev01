@@ -4,6 +4,7 @@ import type { ERPSettings } from '../types';
 import { ApiError } from '../api/client';
 import { assistantApi } from '../api/assistant';
 import { PROPOSAL_TTL_MINUTES } from '../utils/assistantActions';
+import NumberField from './NumberField';
 
 /**
  * The assistant's settings.
@@ -215,39 +216,39 @@ export default function AssistantSettingsPanel({ settings, updateSettings }: Pro
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
           <div>
             <label className={label}>خلاقیت (Temperature)</label>
-            <input
-              type="number" min={0} max={2} step={0.1}
+            <NumberField
+              min={0} max={2}
               value={assistant.temperature ?? 0}
-              onChange={(e) => patch({ temperature: Number(e.target.value) })}
+              onChange={(temperature) => patch({ temperature })}
               className={`${field} text-center font-mono`}
             />
             <p className="text-[10px] text-slate-400 mt-1">برای سوال‌های عددی صفر بگذارید.</p>
           </div>
           <div>
             <label className={label}>حداکثر طول پاسخ</label>
-            <input
-              type="number" min={256} max={32000} step={100}
+            <NumberField
+              integer min={256} max={32000}
               value={assistant.maxTokens ?? 2000}
-              onChange={(e) => patch({ maxTokens: Number(e.target.value) })}
+              onChange={(maxTokens) => patch({ maxTokens })}
               className={`${field} text-center font-mono`}
             />
           </div>
           <div>
             <label className={label}>سقف مراحل جستجو</label>
-            <input
-              type="number" min={1} max={30}
+            <NumberField
+              integer min={1} max={30}
               value={assistant.maxToolCalls ?? 12}
-              onChange={(e) => patch({ maxToolCalls: Number(e.target.value) })}
+              onChange={(maxToolCalls) => patch({ maxToolCalls })}
               className={`${field} text-center font-mono`}
             />
             <p className="text-[10px] text-slate-400 mt-1">هر مرحله یک بار خواندن داده است.</p>
           </div>
           <div>
             <label className={label}>مهلت پاسخ (ثانیه)</label>
-            <input
-              type="number" min={5} max={300}
+            <NumberField
+              integer min={5} max={300}
               value={assistant.timeoutSeconds ?? 60}
-              onChange={(e) => patch({ timeoutSeconds: Number(e.target.value) })}
+              onChange={(timeoutSeconds) => patch({ timeoutSeconds })}
               className={`${field} text-center font-mono`}
             />
           </div>
