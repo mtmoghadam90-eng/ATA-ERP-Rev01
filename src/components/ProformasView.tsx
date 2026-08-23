@@ -88,6 +88,7 @@ import { getDeliverySummary, updateNotesWithDelivery } from "../utils/deliveryNo
 import { attributesFromSelections, mergeSpecText, specLinesFrom } from "../utils/productConfig";
 import { ensureVariantForAttributes, updateProductById as applyProductChange } from "../api/productVariants";
 import { priceInWarehouseCurrency } from "../utils/finance";
+import { computeProformaTotals } from "../utils/proformaTotals";
 import type { useCategoryCompletion } from "../api/useCategoryCompletion";
 
 // Helper functions for dynamic delivery time notes generation
@@ -1829,15 +1830,24 @@ export default function ProformasView({
     };
     setItems(newItems);
   };
-  // Calculate totals for Form (now calculated entirely in selected currency!)
-  const subTotal = items.reduce(
-    (sum, item) => sum + item.quantity * item.unitPriceRIYAL,
-    0,
-  );
-  const discountAmount = Math.round(subTotal * (discountPercent / 100));
-  const afterDiscount = subTotal - discountAmount;
-  const taxAmount = Math.round(afterDiscount * (taxPercent / 100));
-  const finalAmount = afterDiscount + taxAmount;
+  /*
+   * The document's money, from the one rule the server also runs.
+   *
+   * These four figures used to be worked out here and again, differently, on
+   * the server: this side rounded the discount and the tax, that side did not,
+   * so what was approved on screen as «۹۶۸ دلار» was stored and printed as
+   * 968.22. Two calculations of one thing is how the form and the document come
+   * to disagree — see `src/utils/proformaTotals.ts`.
+   */
+  const formTotals = computeProformaTotals({
+    lineTotals: items.map((item) => item.quantity * item.unitPriceRIYAL),
+    discountPercent,
+    taxPercent,
+  });
+  const subTotal = formTotals.totalAmount;
+  const discountAmount = formTotals.discountAmount;
+  const taxAmount = formTotals.taxAmount;
+  const finalAmount = formTotals.finalAmount;
   // Handle Save (Add / Update)
   const handleSaveProforma = (e: React.FormEvent) => {
     e.preventDefault();

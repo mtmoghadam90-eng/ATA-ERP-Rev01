@@ -16,6 +16,7 @@ export function safeDivide(num: number, denom: number): number {
   return num / denom;
 }
 import { Proforma, Transaction, ExchangeRate, Project } from '../types';
+import { roundMoney } from './proformaTotals';
 
 // Helper to map Persian currency names to English codes
 export const mapCurrencyToEnglish = (persian: string | undefined): 'USD' | 'EUR' | 'AED' | 'CNY' | 'IRR' => {
@@ -153,7 +154,18 @@ export const getWonItemsCurrencyAmount = (pf: Proforma): number => {
     }
   }
 
-  return wonItemsCurrencySumRaw - discountAmount + taxAmount + extraCosts;
+  /*
+   * Rounded the same way the document's own totals are.
+   *
+   * This is a partly-won proforma, so the discount, tax and extras are a share
+   * of the document's rather than the document's own figures — different
+   * arithmetic, but the same rule about what a money figure looks like. Left
+   * unrounded, a نیمه‌برنده sale came out with fractions the invoice never had.
+   */
+  return wonItemsCurrencySumRaw
+    - roundMoney(discountAmount)
+    + roundMoney(taxAmount)
+    + roundMoney(extraCosts);
 };
 
 export interface ProformaFinanceReport {
