@@ -848,7 +848,15 @@ export default function SettingsView({
     return (
       <div className="space-y-2 bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-slate-300 transition-colors">
         <label className="text-xs font-semibold text-slate-700 block">{label}</label>
-        <div className="flex flex-col md:flex-row gap-3">
+        {/*
+          Side by side only on a wide page, not from `md` up.
+
+          These cards sit in a three-column grid from `lg`, so at 1180px the
+          column is ~340px while the breakpoint says "plenty of room": the
+          pattern box was coming out 47px wide. A breakpoint is about the
+          window, and this element is nowhere near that wide.
+        */}
+        <div className="flex flex-col xl:flex-row gap-3">
           <div className="flex-1 space-y-1">
             <span className="text-[10px] text-slate-500 block">فرمت الگو</span>
             <input

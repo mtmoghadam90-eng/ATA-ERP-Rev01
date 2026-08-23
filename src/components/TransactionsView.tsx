@@ -1664,7 +1664,7 @@ export default function TransactionsView({
             </div>
 
             <form onSubmit={handleSave} className="p-4 sm:p-6 space-y-4 text-right overflow-y-auto flex-1">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
                 {/* Transaction Type */}
                 <div className="space-y-1.5 sm:col-span-2">
                   <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'transactions', 'type', 'نوع تراکنش مالی')}</label>
@@ -1852,8 +1852,13 @@ export default function TransactionsView({
                   </div>
                 )}
 
-                {/* Financial Amounts */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/*
+                  Bottom-aligned, because two of these labels wrap and one does
+                  not: «مبلغ ریالی (یا معادل ریالی)» takes two lines while its
+                  neighbour takes one, and the taller cell pushed its own box
+                  down so the row stopped reading as a row.
+                */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'transactions', 'amountRIYAL', 'مبلغ ریالی (یا معادل ریالی)')}</label>
                     <input
