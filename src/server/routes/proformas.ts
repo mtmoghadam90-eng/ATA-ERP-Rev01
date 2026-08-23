@@ -1,8 +1,7 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
-import { getDb } from "../db";
-import { nextDocumentNumber } from "../documentNumbers";
+import { nextProformaNumber } from "../documentNumberSpecs";
 import { getTodayShamsi } from "../../dateUtils";
 import { redactProforma } from "../costs";
 import {
@@ -98,24 +97,8 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
 
       // Blank means "make one up" — see documentNumbers.ts.
       if (!input.proformaNumber || !String(input.proformaNumber).trim()) {
-        const db = getDb();
-        const [project, customer] = await Promise.all([
-          input.projectId
-            ? db.project.findUnique({ where: { id: input.projectId }, select: { code: true } })
-            : Promise.resolve(null),
-          db.customer.findUnique({ where: { id: input.customerId }, select: { companyName: true } }),
-        ]);
-        input.proformaNumber = await nextDocumentNumber({
-          formatKey: "proformaFormat", startSeqKey: "proformaStartSeq",
-          fallbackFormat: "QT-{PROJECT}-{SEQ:2}",
-          existing: async (prefix) => (await db.proforma.findMany({
-            where: { proformaNumber: { startsWith: prefix } },
-            select: { proformaNumber: true },
-          })).map((r) => r.proformaNumber),
-          taken: async (v) => !!(await db.proforma.findUnique({
-            where: { proformaNumber: v }, select: { id: true },
-          })),
-          context: { projectCode: project?.code, customerName: customer?.companyName },
+        input.proformaNumber = await nextProformaNumber({
+          projectId: input.projectId, customerId: input.customerId,
         });
       }
 

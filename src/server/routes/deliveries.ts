@@ -1,8 +1,7 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
-import { getDb } from "../db";
-import { nextDocumentNumber } from "../documentNumbers";
+import { nextPackingListNumber } from "../documentNumberSpecs";
 import {
   DELIVERY_FILTERABLE, DELIVERY_SORTABLE, DeliveryInput,
   SERVICE_FILTERABLE, SERVICE_SORTABLE, ServiceInput,
@@ -111,22 +110,7 @@ export function registerDeliveryRoutes(app: express.Express, deps: RouteDeps): v
       // Blank means "make one up", which the form says and only the server can
       // honour — the browser sees one page of existing numbers, not all of them.
       if (!input.packingListNumber || !String(input.packingListNumber).trim()) {
-        const db = getDb();
-        const project = await db.project.findUnique({
-          where: { id: input.projectId }, select: { code: true },
-        });
-        input.packingListNumber = await nextDocumentNumber({
-          formatKey: "packingListFormat", startSeqKey: "packingListStartSeq",
-          fallbackFormat: "PL-{PROJECT}-{SEQ:3}",
-          existing: async (prefix) => (await db.packagingDelivery.findMany({
-            where: { packingListNumber: { startsWith: prefix } },
-            select: { packingListNumber: true },
-          })).map((r) => r.packingListNumber),
-          taken: async (v) => !!(await db.packagingDelivery.findUnique({
-            where: { packingListNumber: v }, select: { id: true },
-          })),
-          context: { projectCode: project?.code ?? "GEN" },
-        });
+        input.packingListNumber = await nextPackingListNumber(input.projectId);
       }
       const delivery = await createDelivery(input, user, getTodayShamsi());
       if (!delivery) return denied(res);

@@ -119,6 +119,14 @@ export function buildSystemPrompt(input: {
   userName: string;
   canSeeCosts: boolean;
   actionsAllowed: boolean;
+  /**
+   * What this user may actually be offered, by label.
+   *
+   * Empty with `actionsAllowed` on means the switch is on and this account has
+   * no module it may write to — a different sentence from "the feature is off",
+   * and telling the model the wrong one makes it promise something it cannot do.
+   */
+  actions: { name: string; label: string }[];
   extra: string;
 }): string {
   const lines: string[] = [
@@ -143,13 +151,30 @@ export function buildSystemPrompt(input: {
     );
   }
 
-  lines.push(
-    input.actionsAllowed
-      ? "- برای کارهایی که داده را تغییر می‌دهند، فقط پیشنهاد ثبت می‌دهی؛ چیزی تا"
-        + " تایید کاربر نوشته نمی‌شود. پیش از پیشنهاد، جزئیات را کامل بپرس."
-      : "- تو فقط می‌توانی اطلاعات را بخوانی و تحلیل کنی. اگر کاربر خواست چیزی ثبت"
-        + " کنی، بگو این قابلیت در تنظیمات فعال نشده است.",
-  );
+  if (!input.actionsAllowed) {
+    lines.push(
+      "- تو فقط می‌توانی اطلاعات را بخوانی و تحلیل کنی. اگر کاربر خواست چیزی ثبت"
+      + " کنی، بگو این قابلیت در تنظیمات فعال نشده است.",
+    );
+  } else if (input.actions.length === 0) {
+    lines.push(
+      "- ثبت خودکار فعال است اما این کاربر به هیچ ماژول قابل‌نوشتنی دسترسی ندارد."
+      + " اگر خواست چیزی ثبت کنی، بگو دسترسی لازم را ندارد.",
+    );
+  } else {
+    lines.push(
+      "",
+      "ثبت اطلاعات:",
+      `- می‌توانی این کارها را «پیشنهاد» بدهی: ${input.actions.map((a) => a.label).join("، ")}.`,
+      "- تو هیچ‌وقت چیزی را مستقیم ثبت نمی‌کنی. ابزارهای ثبت فقط یک پیشنهاد آماده"
+      + " می‌کنند و خلاصه‌اش برای تایید به کاربر نشان داده می‌شود؛ تا کاربر دکمه‌ی"
+      + " تایید را نزند هیچ چیزی در سامانه ثبت نمی‌شود.",
+      "- پیش از ساختن پیشنهاد، هر چیزی را که نمی‌دانی بپرس؛ هیچ مبلغ، تعداد، تاریخ"
+      + " یا نامی را حدس نزن. شناسه‌ها را با ابزارهای جستجو پیدا کن، نساز.",
+      "- بعد از ساختن پیشنهاد، فقط کوتاه بگو خلاصه آماده است و منتظر تایید بماند؛"
+      + " همان ابزار را دوباره صدا نزن.",
+    );
+  }
 
   const extra = input.extra.trim();
   if (extra) lines.push("", "دستورالعمل اختصاصی این شرکت:", extra);

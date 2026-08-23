@@ -1,4 +1,7 @@
 import { api } from "./client";
+import type { AssistantProposal } from "../utils/assistantActions";
+
+export type { AssistantProposal } from "../utils/assistantActions";
 
 /**
  * The dashboard assistant.
@@ -29,6 +32,8 @@ export interface AssistantAnswer {
   reply?: string;
   error?: string;
   steps?: AssistantStep[];
+  /** Writes the assistant has prepared. Nothing is stored until confirmed. */
+  proposals?: AssistantProposal[];
   usage?: { promptTokens: number; completionTokens: number };
 }
 
@@ -46,6 +51,7 @@ export interface AssistantConfigResponse {
   };
   apiKeyHint: string | null;
   tools: { name: string; description: string }[];
+  actions: { name: string; label: string; permissionKey: string; resource: string }[];
 }
 
 export const assistantApi = {
@@ -53,6 +59,18 @@ export const assistantApi = {
 
   ask: (messages: { role: "user" | "assistant"; content: string }[]) =>
     api.post<AssistantAnswer>("/api/assistant/chat", { messages }),
+
+  /*
+   * Confirming sends an id and nothing else.
+   *
+   * The prepared payload stayed on the server precisely so the record written
+   * is the one summarised on screen, and not whatever the browser last held.
+   */
+  confirmAction: (id: string) =>
+    api.post<{ proposal: AssistantProposal }>(`/api/assistant/actions/${id}/confirm`, {}),
+
+  cancelAction: (id: string) =>
+    api.post<{ proposal: AssistantProposal }>(`/api/assistant/actions/${id}/cancel`, {}),
 
   /* settings */
   config: () => api.get<AssistantConfigResponse>("/api/assistant/config"),
