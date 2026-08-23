@@ -91,6 +91,7 @@ import { detailToPurchaseOrder, purchaseOrderToWriteInput, rowToPurchaseOrder } 
 import { rowToTask } from "../src/api/tasks";
 import { samePermissions } from "../src/server/services/userService";
 import { buildCustomerWhere } from "../src/server/services/customerService";
+import { buildTransactionWhere } from "../src/server/services/transactionService";
 import { ACTIVITY_CATEGORY, canonicalCategoryName, sameCategory } from "../src/utils/activityCategories";
 import { packableLines, outstandingFor } from "../src/utils/packingAllocation";
 import { importStageDurations } from "../src/utils/importTimeline";
@@ -2495,6 +2496,52 @@ head("Assistant: configuration, and what it is told before it answers");
   });
   ok("actions on but nothing writable is its own message",
     nothingWritable.includes("دسترسی لازم را ندارد"));
+}
+
+head("Searching the ledger: it has to reach the project");
+{
+  /*
+   * The «تراکنش‌ها» button on the project summary puts a project into the
+   * ledger's search box, and the search read only the document's own columns —
+   * so it answered "no results" for a project that plainly had transactions.
+   * `partyName` is often null too, since the grid falls back to the joined
+   * customer or supplier name.
+   */
+  const where = buildTransactionWhere({
+    search: "ATA-05-19", filters: {}, page: 1, pageSize: 50,
+    sort: undefined, order: "desc",
+  } as never) as { AND?: { OR?: Record<string, unknown>[] }[] };
+
+  const clauses = where.AND?.[0]?.OR ?? [];
+  const targets = new Set(clauses.map((c) => Object.keys(c)[0]));
+
+  ok("the document's own number is searched", targets.has("documentNumber"));
+  ok("and the party name written on it", targets.has("partyName"));
+  /* The four the button and the grid actually depend on. */
+  ok("the linked project is searched", targets.has("project"));
+  ok("the customer behind it too", targets.has("customer"));
+  ok("and the supplier", targets.has("supplier"));
+  ok("and the proforma being paid", targets.has("proforma"));
+
+  const projectClauses = clauses.filter((c) => "project" in c)
+    .map((c) => JSON.stringify(c));
+  ok("by code, which is unique",
+    projectClauses.some((c) => c.includes('"code"')));
+  ok("and by name, for anyone typing one by hand",
+    projectClauses.some((c) => c.includes('"name"')));
+
+  eq("an empty search filters nothing",
+    JSON.stringify(buildTransactionWhere({
+      search: "", filters: {}, page: 1, pageSize: 50, sort: undefined, order: "desc",
+    } as never)), "{}");
+
+  /*
+   * The button sends the code rather than the name: three projects on the
+   * screen it sits on are called «فلومتر توربینی», and a code is unique.
+   */
+  ok("the project's transactions button searches by code",
+    readFileSync("src/components/TransactionsView.tsx", "utf-8")
+      .includes("setSearch(p.code || p.name)"));
 }
 
 head("Proforma totals: the form and the document agree");

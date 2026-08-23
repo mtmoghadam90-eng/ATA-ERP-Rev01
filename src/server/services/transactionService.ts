@@ -1,6 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
-import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
+import {
+  ListQuery, ListResult, buildResult, paginationArgs, searchVariants,
+} from "../listing";
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { toJsonColumn, toNullableString, toNumber } from "../childSync";
@@ -38,6 +40,37 @@ export const TRANSACTION_FILTERABLE = [
 
 const SEARCH_FIELDS = ["documentNumber", "referenceNumber", "partyName", "notes"] as const;
 
+/**
+ * Searching the ledger reaches the project and the counterparty, not only the
+ * document's own columns.
+ *
+ * Every row on this screen shows a project and a party alongside the document
+ * number, and the «تراکنش‌ها» button on the project summary puts a project into
+ * the search box — so a search that could only see `documentNumber`,
+ * `referenceNumber`, `partyName` and `notes` answered "no results" for a
+ * project that plainly had transactions. `partyName` in particular is often
+ * null: the grid falls back to the joined customer or supplier name, so
+ * searching had nothing to match even for the party.
+ *
+ * The project **code** is what the button sends, because codes are unique and
+ * two projects may reasonably be called the same thing.
+ */
+function transactionSearchClause(term: string): Record<string, unknown> | undefined {
+  const variants = searchVariants(term);
+  if (variants.length === 0) return undefined;
+
+  const OR: Record<string, unknown>[] = [];
+  for (const v of variants) {
+    for (const field of SEARCH_FIELDS) OR.push({ [field]: { contains: v } });
+    OR.push({ project: { is: { code: { contains: v } } } });
+    OR.push({ project: { is: { name: { contains: v } } } });
+    OR.push({ customer: { is: { companyName: { contains: v } } } });
+    OR.push({ supplier: { is: { name: { contains: v } } } });
+    OR.push({ proforma: { is: { proformaNumber: { contains: v } } } });
+  }
+  return { OR };
+}
+
 export const TRANSACTION_DATE_FIELDS = ["occurredAt"] as const;
 
 function allowed(user: AuthUser): boolean {
@@ -50,7 +83,7 @@ export function buildTransactionWhere(
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
 
-  const search = searchClause(q.search, SEARCH_FIELDS);
+  const search = transactionSearchClause(q.search);
   if (search) and.push(search);
 
   for (const [field, value] of Object.entries(q.filters)) {

@@ -1032,7 +1032,7 @@ export default function TransactionsView({
               <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
               <input
                 type="text"
-                placeholder="جستجو در شماره سند حسابداری، نام مخاطب یا شماره مرجع تراکنش..."
+                placeholder="جستجو در شماره سند، کد یا نام پروژه، نام مخاطب، شماره پیش‌فاکتور یا کد مرجع..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pr-10 pl-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition text-right"
@@ -1386,12 +1386,24 @@ export default function TransactionsView({
                             <div className="flex items-center gap-1.5 justify-center">
                               <button
                                 onClick={() => {
-                                  setSearch(p.name);
+                                  /*
+                                   * The code, not the name.
+                                   *
+                                   * Two projects may reasonably be called the
+                                   * same thing — «فلومتر توربینی» appears three
+                                   * times on this very screen — while a code is
+                                   * unique, so it is the term that finds this
+                                   * project's documents and only this
+                                   * project's. (The search also had to be
+                                   * taught to look at the project at all; it
+                                   * only ever read the document's own columns.)
+                                   */
+                                  setSearch(p.code || p.name);
                                   setSelectedType('all');
                                   setActiveViewTab('transactions');
                                 }}
                                 className="px-2 py-1 bg-sky-50 hover:bg-sky-100 text-sky-600 rounded text-[10px] font-bold transition flex items-center gap-1"
-                                title="مشاهده تمام تراکنش‌های ثبت شده برای این پروژه"
+                                title={`مشاهده تراکنش‌های پروژه ${p.code || p.name}`}
                               >
                                 <RefreshCw size={10} />
                                 تراکنش‌ها
