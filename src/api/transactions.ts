@@ -37,13 +37,14 @@ export interface TransactionRow {
   customer: { id: string; companyName: string } | null;
   supplier: { id: string; name: string } | null;
   project: { id: string; code: string; name: string } | null;
+  /** Joined, so the grid never has to look the number up in a picker's matches. */
+  proforma: { id: string; proformaNumber: string; currency: string } | null;
   /** The grid draws a custom-fields column from these. */
   customValues: string | null;
 }
 
 export interface TransactionDetail extends TransactionRow {
   notes: string | null;
-  proforma: { id: string; proformaNumber: string } | null;
   purchaseOrder: { id: string; poNumber: string } | null;
 }
 
@@ -171,6 +172,10 @@ export function rowToTransaction(row: TransactionRow): Transaction {
     isDirectForeign: row.isDirectForeign,
     paymentType: row.paymentType as Transaction["paymentType"],
     referenceNumber: row.referenceNumber ?? undefined,
+    // From the row itself. The grid used to resolve these out of the proforma
+    // picker's matches, which hold whatever was last searched for.
+    proformaNumber: row.proforma?.proformaNumber ?? undefined,
+    proformaCurrency: row.proforma?.currency ?? undefined,
     reversalOfTransactionId: row.reversalOfTransactionId ?? undefined,
     // The grid draws a custom-fields column from these.
     customValues: parseJson<Record<string, unknown>>(row.customValues, {}),
@@ -182,7 +187,6 @@ export function detailToTransaction(detail: TransactionDetail): Transaction {
   return markComplete({
     ...rowToTransaction(detail),
     notes: detail.notes ?? "",
-    proformaNumber: detail.proforma?.proformaNumber,
     poNumber: detail.purchaseOrder?.poNumber,
   } as unknown as Transaction);
 }
