@@ -784,11 +784,21 @@ export default function TransactionsView({
       const projSummary = computedProjectSummaries.find(p => p.id === projectId);
       if (projSummary) {
         const currentSales = projSummary.salesAmount || 0;
-        // Calculate other payments excluding the one we are editing
-        const otherPayments = transactions
-          .filter(t => t.id !== editingTransaction?.id && t.projectId === projectId && t.type === 'دریافت' && t.status !== 'لغو شده')
-          .reduce((sum, t) => sum + t.amountRIYAL, 0);
-        const newTotal = otherPayments + amountRIYAL;
+        /*
+         * What the project has already received, from the server's own figure.
+         *
+         * This summed the receipts on the page in hand, which is one page of
+         * the ledger — so on a project whose earlier receipts had scrolled off,
+         * the warning simply never appeared. `paidAmount` is computed over the
+         * project's whole history; the document being edited is taken back out
+         * of it, since its new amount is about to be added.
+         */
+        const alreadyReceived = projSummary.paidAmount || 0;
+        const ownPreviousAmount = editingTransaction && editingTransaction.projectId === projectId
+          && editingTransaction.type === 'دریافت'
+          ? editingTransaction.amountRIYAL
+          : 0;
+        const newTotal = alreadyReceived - ownPreviousAmount + amountRIYAL;
         if (currentSales > 0 && newTotal > currentSales) {
           const overAmount = newTotal - currentSales;
           const confirmProceed = window.confirm(
