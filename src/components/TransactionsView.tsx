@@ -309,13 +309,6 @@ export default function TransactionsView({
   // New Connected Financial Fields
   const [proformaId, setProformaId] = useState('');
   const [exchangeRate, setExchangeRate] = useState<number>(0);
-  /**
-   * Whether the settlement rate on screen was typed rather than filled in.
-   *
-   * Picking a proforma offers its historical rate; a rate the user entered is
-   * their own decision about this settlement and survives a change of proforma.
-   */
-  const [rateTouched, setRateTouched] = useState(false);
   const [amountForeign, setAmountForeign] = useState<number>(0);
   const [isDirectForeign, setIsDirectForeign] = useState<boolean>(false);
   const [status, setStatus] = useState<Transaction['status']>('تأیید شده');
@@ -439,6 +432,39 @@ export default function TransactionsView({
   // Searched and filtered by the same query that produced them.
   const filteredProjectSummaries = computedProjectSummaries;
 
+  /* ---------------- the settlement rate on the form ---------------- */
+
+  const selectedProforma = proformas.find(p => p.id === proformaId);
+  /** Whether this receipt settles a debt denominated in something other than rial. */
+  const proformaIsForeign = !!selectedProforma?.currency && selectedProforma.currency !== 'ریال';
+
+  /** What is still owed on the selected proforma, in its own currency. */
+  const outstandingForeign = proformaIsForeign
+    ? (computedProjectSummaries
+        .find(p => p.id === selectedProforma?.projectId)
+        ?.summary.proformas.find(r => r.proformaId === proformaId)
+        ?.remainingAmountForeign ?? 0)
+    : 0;
+
+  /*
+   * The rate at which this rial amount settles the outstanding balance exactly.
+   *
+   * This is the figure that makes the books come out right, and it is almost
+   * never the proforma's historical rate: the difference between the two *is*
+   * the realized exchange gain or loss. Kept to four decimal places, which is
+   * what the column stores — rounded to the whole rial it leaves a few hundred
+   * rial stranded as a phantom overpayment.
+   */
+  const impliedSettlementRate = proformaIsForeign && outstandingForeign > 0 && amountRIYAL > 0
+    ? Math.round((amountRIYAL / outstandingForeign) * 10_000) / 10_000
+    : null;
+
+  /** The exchange difference this receipt would realize at the entered rate. */
+  const realizedByThisReceipt =
+    proformaIsForeign && exchangeRate > 0 && amountRIYAL > 0 && selectedProforma?.historicalExchangeRate
+      ? amountRIYAL - (amountRIYAL / exchangeRate) * selectedProforma.historicalExchangeRate
+      : null;
+
   // Totals across the page in hand. A null anywhere makes the total unknowable
   // rather than merely smaller: a foreign sale with no stored rate cannot be
   // valued at all, and adding zero for it would understate the figure.
@@ -555,7 +581,6 @@ export default function TransactionsView({
     setCustomValues({});
     setProformaId('');
     setExchangeRate(0);
-    setRateTouched(false);
     setAmountForeign(0);
     setIsDirectForeign(false);
     setStatus('تأیید شده');
@@ -614,8 +639,6 @@ export default function TransactionsView({
     // Connected Financial fields loading
     setProformaId(tr.proformaId || '');
     setExchangeRate(tr.exchangeRate || 0);
-    // An existing document's rate is a decision already made.
-    setRateTouched(!!tr.exchangeRate);
     setAmountForeign(tr.amountForeign || 0);
     setIsDirectForeign(tr.isDirectForeign || false);
     setStatus(tr.status || 'تأیید شده');
@@ -685,6 +708,22 @@ export default function TransactionsView({
     // 10. نرخ تبدیل برای ارزی
     if (amountForeign > 0 && (!exchangeRate || exchangeRate <= 0)) {
       alert('برای دریافت ارزی، وارد کردن نرخ تسویه (حتی 1 برای دریافت مستقیم) الزامی است.');
+      return;
+    }
+
+    /*
+     * A rial receipt against a foreign invoice needs a rate too.
+     *
+     * Without one the payment settles nothing: the whole amount is left as an
+     * unallocated balance, the invoice stays open, and the exchange difference
+     * — which is the reason the rial figure differs from the invoice's rial
+     * value in the first place — is never recognised.
+     */
+    if (proformaIsForeign && (!exchangeRate || exchangeRate <= 0)) {
+      alert(
+        'این پیش‌فاکتور ارزی است. نرخ تسویه (نرخ ارز در روز پرداخت) را وارد کنید'
+        + ' یا یکی از دو گزینه‌ی زیر کادر نرخ را بزنید.',
+      );
       return;
     }
 
@@ -1929,24 +1968,88 @@ export default function TransactionsView({
                     />
                   </div>
                   
-                  {amountForeign > 0 && (
+                  {/*
+                    The rate is asked for whenever the debt is in another
+                    currency, not only when a foreign figure is typed.
+
+                    It used to appear only alongside a foreign amount, so for a
+                    rial receipt against a dollar proforma — the ordinary case
+                    here — there was nowhere to say at what rate the money
+                    settled the invoice, and the figure that decides the whole
+                    exchange gain could not be entered at all.
+                  */}
+                  {(amountForeign > 0 || proformaIsForeign) && (
                     <>
                       <div className="space-y-1.5">
-                        <label className="text-xs font-semibold text-slate-500">نرخ تبدیل / تسویه *</label>
+                        <label className="text-xs font-semibold text-slate-500">
+                          نرخ تسویه (نرخ ارز در روز پرداخت) *
+                        </label>
                         <NumberField
                           min={0}
                           value={exchangeRate}
                           onChange={(val) => {
                             setExchangeRate(val);
-                            setRateTouched(true);
                             if (amountForeign > 0) {
                               setAmountRIYAL(amountForeign * val);
                             }
                           }}
                           className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono text-left"
                         />
+
+                        {/*
+                          Two rates, and the difference between them is the
+                          whole point. The historical one is what the invoice
+                          was priced at; the implied one is what this payment
+                          actually settles it at, and the gap between them is
+                          the realized exchange gain or loss. Filling the box
+                          with the historical rate — which this form used to do
+                          — makes every rial paid above the invoice's rial value
+                          look like an overpayment sitting on account.
+                        */}
+                        {proformaIsForeign && (
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                            {impliedSettlementRate !== null && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setExchangeRate(impliedSettlementRate);
+                                }}
+                                className="text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                                title="نرخی که این مبلغ، مانده پیش‌فاکتور را دقیقاً تسویه می‌کند"
+                              >
+                                تسویه کامل: {formatMoney(impliedSettlementRate)}
+                              </button>
+                            )}
+                            {!!selectedProforma?.historicalExchangeRate && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setExchangeRate(selectedProforma.historicalExchangeRate!);
+                                }}
+                                className="text-[10px] font-bold px-2 py-1 rounded-lg bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100"
+                                title="همان نرخی که پیش‌فاکتور با آن قیمت‌گذاری شده است"
+                              >
+                                نرخ تاریخی پیش‌فاکتور: {formatMoney(selectedProforma.historicalExchangeRate)}
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        {realizedByThisReceipt !== null && Math.abs(realizedByThisReceipt) >= 1 && (
+                          <p className={`text-[10px] leading-5 pt-1 ${
+                            realizedByThisReceipt >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                          }`}>
+                            {realizedByThisReceipt >= 0 ? 'سود' : 'زیان'} تسعیر این سند با این نرخ:{' '}
+                            <span className="font-mono font-bold">
+                              {formatMoney(Math.abs(realizedByThisReceipt))}
+                            </span>{' '}
+                            ریال
+                          </p>
+                        )}
                       </div>
                       
+                      {/* Only meaningful when a foreign figure was actually entered. */}
+                      {amountForeign > 0 && (
                       <div className="space-y-1.5 flex items-end">
                         <label className="flex items-center gap-2 text-sm font-semibold text-slate-600 bg-slate-50 p-2 rounded-lg border border-slate-100 w-full cursor-pointer h-[38px]">
                           <input
@@ -1958,6 +2061,7 @@ export default function TransactionsView({
                           <span>دریافت مستقیم ارزی است</span>
                         </label>
                       </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -2026,23 +2130,22 @@ export default function TransactionsView({
                       onChange={(val) => {
                         setProformaId(val);
                         /*
-                         * The settlement rate starts at the rate the proforma
-                         * was priced at.
+                         * The rate box is deliberately *not* filled in here.
                          *
-                         * It always came out empty: the picker holds list rows
-                         * and the row did not carry `historicalExchangeRate`,
-                         * so this read `undefined` and wrote 0 every time. The
-                         * column is on the row now. Picking a proforma is an
-                         * explicit act, so it fills the box — unless the user
-                         * has typed a rate for this document themselves, which
-                         * is a settlement rate of their own and not ours to
-                         * overwrite.
+                         * It briefly was, with the proforma's historical rate,
+                         * and that is the one rate it must not be: the
+                         * settlement rate is the rate on the day the money
+                         * arrived, and the difference between the two is the
+                         * realized exchange gain. Prefilling the historical one
+                         * made every rial paid above the invoice's rial value
+                         * read as an overpayment sitting on account — a real
+                         * 100,454,200 gain filed under «مبالغ تخصیص‌نیافته»
+                         * while the gain column said zero.
+                         *
+                         * Both rates are offered as one-click buttons under the
+                         * field instead, with what each would realize spelled
+                         * out, so the choice is made rather than assumed.
                          */
-                        const pf = proformas.find(p => p.id === val);
-                        if (rateTouched) return;
-                        if (pf && pf.currency && pf.currency !== 'ریال') {
-                          setExchangeRate(pf.historicalExchangeRate || 0);
-                        }
                       }}
                       onSearchChange={proformaPicker.setTerm}
                       loading={proformaPicker.loading}
