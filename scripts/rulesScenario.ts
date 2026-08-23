@@ -63,6 +63,9 @@ import {
   scopeAllowsMethod, tokenRefusalReason, visiblePrefix,
 } from "../src/utils/apiTokens";
 import {
+  clampNumber, isPartialNumber, parseDecimalInput, toLatinDigits,
+} from "../src/utils/numberInput";
+import {
   generateDeliveryNotes, getDeliverySummary, updateNotesWithDelivery,
 } from "../src/utils/deliveryNotes";
 import { DEFAULT_SETTINGS } from "../src/seedData";
@@ -2577,6 +2580,65 @@ head("Assistant actions: prepared, never written");
     ok(`${route} does not keep its own numbering rule`,
       !read(route).includes("nextDocumentNumber("));
   }
+}
+
+head("Typing a number: half of one is not a decision");
+{
+  eq("a whole number reads back", parseDecimalInput("12"), 12);
+  eq("and a decimal one", parseDecimalInput("0.7"), 0.7);
+  eq("a leading point is fine", parseDecimalInput(".5"), 0.5);
+  eq("so is a negative", parseDecimalInput("-3.25"), -3.25);
+  eq("thousands separators are ignored", parseDecimalInput("12,500"), 12500);
+
+  /*
+   * The whole point. A box being typed into passes through «0.», and reading
+   * that as a number is how «0.7» became 0 and «2.5%» became 25% — the browser
+   * reports an incomplete number as the empty string, `Number("")` is 0, and
+   * the controlled value snaps back over what was typed.
+   */
+  eq("a trailing point is not a number yet", parseDecimalInput("0."), null);
+  eq("nor is a lone minus", parseDecimalInput("-"), null);
+  eq("nor an empty box", parseDecimalInput(""), null);
+  eq("and neither is a lone point", parseDecimalInput("."), null);
+
+  /* `Number` accepts several things nobody typed on purpose. */
+  eq("hex is not a figure somebody typed", parseDecimalInput("0x10"), null);
+  eq("neither is Infinity", parseDecimalInput("Infinity"), null);
+  eq("nor a number with words after it", parseDecimalInput("12abc"), null);
+
+  eq("Persian digits are the same digits", parseDecimalInput("۱۲۳"), 123);
+  eq("and the Persian decimal separator is a decimal point",
+    parseDecimalInput("۱۲٫۵"), 12.5);
+  eq("Arabic-Indic digits too", parseDecimalInput("٤٢"), 42);
+  eq("the Persian thousands separator is dropped", toLatinDigits("۱٬۲۰۰"), "1200");
+
+  ok("a half-typed decimal is still a plausible start", isPartialNumber("0."));
+  ok("and an empty box is", isPartialNumber(""));
+  ok("but letters are not", !isPartialNumber("abc"));
+
+  eq("a figure over the cap is brought back to it", clampNumber(500, 1, 30), 30);
+  eq("and one under the floor up to it", clampNumber(0, 256, 32000), 256);
+  eq("one inside is left alone", clampNumber(12, 1, 30), 12);
+
+  /*
+   * `type="number"` is the control that cannot hold a decimal being typed, so
+   * the fields that take one must not use it.
+   */
+  // Comments are stripped first: these files *explain* why `type="number"` is
+  // the wrong control, and an earlier check of this shape failed on its own
+  // description of the bug it was guarding against.
+  const codeOf = (file: string) => readFileSync(file, "utf-8")
+    .split("\n")
+    .filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line))
+    .join("\n");
+  for (const file of [
+    "src/components/AssistantSettingsPanel.tsx",
+    "src/components/NumberField.tsx",
+  ]) {
+    ok(`${file} does not use a number input`, !codeOf(file).includes('type="number"'));
+  }
+  ok("the supplier discount fields do not either",
+    !/type="number"[^>]*step="0\.01"/.test(codeOf("src/components/SupplierInquiriesView.tsx")));
 }
 
 head("API tokens: one API, one permission model");

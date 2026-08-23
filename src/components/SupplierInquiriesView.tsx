@@ -60,6 +60,7 @@ import type { SupplierRow } from '../api/suppliers';
 import type { ProductRow } from '../api/products';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import CostAccessNotice from './CostAccessNotice';
+import NumberField from './NumberField';
 import { canSeeCosts } from '../utils/permissions';
 import ProductConfiguratorModal from './ProductConfiguratorModal';
 import {
@@ -1934,12 +1935,10 @@ function InquiryFormInner({
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1.5">تخفیف درصدی (٪)</label>
-                <input
-                  type="number" min={0} max={100} step="0.01" value={discountPercent}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setDiscountPercent(Number.isFinite(v) ? Math.min(Math.max(v, 0), 100) : 0);
-                  }}
+                {/* Text, not type="number": «2.5» is unreachable in one. */}
+                <NumberField
+                  min={0} max={100} value={discountPercent}
+                  onChange={setDiscountPercent}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-sky-500 bg-white text-sm font-bold"
                   placeholder="۰"
                 />
@@ -1948,12 +1947,9 @@ function InquiryFormInner({
                 <label className="text-xs font-bold text-slate-700 block mb-1.5">
                   تخفیف مبلغی ({unit})
                 </label>
-                <input
-                  type="number" min={0} step="0.01" value={discountAmount}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    setDiscountAmount(Number.isFinite(v) && v > 0 ? v : 0);
-                  }}
+                <NumberField
+                  min={0} value={discountAmount}
+                  onChange={setDiscountAmount}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-sky-500 bg-white text-sm font-bold"
                   placeholder="۰"
                 />

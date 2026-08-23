@@ -41,6 +41,7 @@ import MessagingView from "../src/components/MessagingView";
 import ProductConfiguratorModal from "../src/components/ProductConfiguratorModal";
 import RichTextField from "../src/components/RichTextField";
 import AssistantPanel from "../src/components/AssistantPanel";
+import NumberField from "../src/components/NumberField";
 import type { Product } from "../src/types";
 import type { ExchangeRate } from "../src/types";
 
@@ -401,6 +402,80 @@ head("Assistant: a proposed write waits for the button");
   act(() => { root4.unmount(); });
   host4.remove();
   g3.fetch = realFetch;
+}
+
+/*
+ * The decimal that could not be typed.
+ *
+ * «خلاقیت» would not hold 0.7, and the same control was on the supplier
+ * discount, where the same keystrokes turn 2.5% into 25%. Nothing about it is
+ * visible to a type or to a pure rule: every value is a valid number and the
+ * component is correct in isolation. It is the browser's own sanitisation of
+ * `type="number"` that eats the decimal point, so it needs a render and one
+ * keystroke at a time.
+ */
+head("Number field: a decimal can be typed one keystroke at a time");
+
+{
+  let stored = 0;
+  let rerenderScreen = () => {};
+
+  function Wrapper() {
+    const [value, setValue] = useState(0);
+    const [, setTick] = useState(0);
+    rerenderScreen = () => setTick((n) => n + 1);
+    stored = value;
+    return React.createElement(NumberField, {
+      value, onChange: setValue, min: 0, max: 2,
+    });
+  }
+
+  const host5 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root5 = createRoot(host5);
+  act(() => { root5.render(React.createElement(Wrapper)); });
+
+  const box = host5.querySelector("input") as HTMLInputElement;
+  ok("the field rendered", !!box);
+  ok("and it is not a number input", box.getAttribute("type") === "text", box.getAttribute("type"));
+
+  /*
+   * Typed through the DOM node, not around it.
+   *
+   * jsdom implements the same value sanitisation the browsers do — assigning
+   * "0." to an `<input type="number">` leaves it holding "" — and that
+   * sanitisation *is* the bug. Handing the handler a made-up `{value}` would
+   * skip the one step under test.
+   */
+  const type = (text: string) => act(() => {
+    box.value = text;
+    handlers(box).onChange?.({ target: box });
+  });
+
+  // One keystroke at a time, exactly as a person types 0.7.
+  type("0");
+  type("0.");
+  ok("the decimal point survives the keystroke", box.value === "0.", box.value);
+  ok("and nothing was written for half a number", stored === 0, stored);
+  type("0.7");
+  ok("the finished figure reaches the caller", stored === 0.7, stored);
+  ok("and the box still reads what was typed", box.value === "0.7", box.value);
+
+  /* The screen behind a settings tab re-renders constantly; it must not reset. */
+  act(() => { rerenderScreen(); });
+  ok("a parent re-render does not wipe the field", box.value === "0.7", box.value);
+
+  // Persian digits are the same figure.
+  type("۱٫۵");
+  ok("a Persian decimal is read as one", stored === 1.5, stored);
+
+  // Over the cap: written clamped, and the box catches up on blur.
+  type("9");
+  ok("a figure over the cap is stored at the cap", stored === 2, stored);
+  act(() => { (handlers(box) as { onBlur?: (e: unknown) => void }).onBlur?.({}); });
+  ok("and the box says so once you leave it", box.value === "2", box.value);
+
+  act(() => { root5.unmount(); });
+  host5.remove();
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
