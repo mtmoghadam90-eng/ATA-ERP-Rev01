@@ -216,13 +216,42 @@ export default function AssistantSettingsPanel({ settings, updateSettings }: Pro
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
           <div>
             <label className={label}>خلاقیت (Temperature)</label>
-            <NumberField
-              min={0} max={2}
-              value={assistant.temperature ?? 0}
-              onChange={(temperature) => patch({ temperature })}
-              className={`${field} text-center font-mono`}
-            />
-            <p className="text-[10px] text-slate-400 mt-1">برای سوال‌های عددی صفر بگذارید.</p>
+            {/*
+              «پیش‌فرض مدل» is a real option, not a placeholder for zero. The
+              reasoning models accept only their own default and answer 400 to
+              any explicit value, so a control that could only ever produce a
+              number made those models unusable.
+            */}
+            {assistant.temperature === null || assistant.temperature === undefined ? (
+              <button
+                type="button"
+                onClick={() => patch({ temperature: 0 })}
+                className={`${field} text-center text-slate-500 hover:border-sky-400`}
+              >
+                پیش‌فرض مدل
+              </button>
+            ) : (
+              <NumberField
+                min={0} max={2}
+                value={assistant.temperature}
+                onChange={(temperature) => patch({ temperature })}
+                className={`${field} text-center font-mono`}
+              />
+            )}
+            <p className="text-[10px] text-slate-400 mt-1">
+              برای سوال‌های عددی صفر بگذارید.{' '}
+              {assistant.temperature === null || assistant.temperature === undefined ? (
+                'روی کادر بزنید تا عدد بگذارید.'
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => patch({ temperature: null })}
+                  className="text-sky-600 hover:underline font-bold"
+                >
+                  سپردن به مدل
+                </button>
+              )}
+            </p>
           </div>
           <div>
             <label className={label}>حداکثر طول پاسخ</label>

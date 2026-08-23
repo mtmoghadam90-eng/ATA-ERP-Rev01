@@ -640,7 +640,8 @@ export interface ERPSettings {
     model?: string;
     /** House instructions, added to the built-in ones rather than replacing them. */
     systemPrompt?: string;
-    temperature?: number;
+    /** null (or absent) leaves it to the model, which some models insist on. */
+    temperature?: number | null;
     maxTokens?: number;
     /** Rounds of tool calls one question may take. */
     maxToolCalls?: number;

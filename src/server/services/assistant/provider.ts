@@ -12,6 +12,8 @@
  * a company behind a filtered connection, not an exception.
  */
 
+import { DroppableParameter, unsupportedParameterFrom } from "../../../utils/assistant";
+
 export interface ChatToolDefinition {
   name: string;
   description: string;
@@ -97,46 +99,94 @@ export interface ChatRequest {
   model: string;
   messages: ChatMessage[];
   tools?: ChatToolDefinition[];
-  temperature: number;
+  /** null leaves it to the model — see `AssistantConfig.temperature`. */
+  temperature?: number | null;
   maxTokens: number;
   timeoutSeconds: number;
+}
+
+/**
+ * The request body, minus whatever the provider has already refused.
+ *
+ * `temperature` is left out when it is null, and `max_tokens` is sent under the
+ * name the o-series models renamed it to once they have said they do not know
+ * the old one. Dropping the cap altogether is deliberately not an option: it is
+ * the only thing standing between a confused model and a bill.
+ */
+function buildBody(request: ChatRequest, dropped: Set<DroppableParameter>): string {
+  const sendTemperature = typeof request.temperature === "number"
+    && !dropped.has("temperature");
+  const renamedTokenCap = dropped.has("max_tokens");
+
+  return JSON.stringify({
+    model: request.model,
+    ...(sendTemperature ? { temperature: request.temperature } : {}),
+    ...(renamedTokenCap
+      ? { max_completion_tokens: request.maxTokens }
+      : { max_tokens: request.maxTokens }),
+    messages: request.messages.map(toWire),
+    ...(request.tools?.length
+      ? {
+          tools: request.tools.map((tool) => ({
+            type: "function",
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters,
+            },
+          })),
+          tool_choice: "auto",
+        }
+      : {}),
+  });
 }
 
 export async function chat(request: ChatRequest): Promise<ChatResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), request.timeoutSeconds * 1000);
 
+  /*
+   * What this provider has told us it will not accept.
+   *
+   * A model that refuses an explicit temperature, or that has renamed the token
+   * cap, answers 400 with a message naming the field. Sending the request again
+   * without it is a far better answer than handing the user a provider error
+   * about a setting they had no way to guess at. Each field is dropped at most
+   * once, so a provider that keeps refusing is reported rather than retried
+   * forever.
+   */
+  const dropped = new Set<DroppableParameter>();
+
   try {
-    const response = await fetch(`${request.baseUrl}/chat/completions`, {
+    let response = await fetch(`${request.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${request.apiKey}`,
       },
       signal: controller.signal,
-      body: JSON.stringify({
-        model: request.model,
-        temperature: request.temperature,
-        max_tokens: request.maxTokens,
-        messages: request.messages.map(toWire),
-        ...(request.tools?.length
-          ? {
-              tools: request.tools.map((tool) => ({
-                type: "function",
-                function: {
-                  name: tool.name,
-                  description: tool.description,
-                  parameters: tool.parameters,
-                },
-              })),
-              tool_choice: "auto",
-            }
-          : {}),
-      }),
+      body: buildBody(request, dropped),
     });
 
-    const text = await response.text();
-    if (!response.ok) return { ok: false, error: describeFailure(response.status, text) };
+    let text = await response.text();
+
+    while (!response.ok) {
+      const refused = unsupportedParameterFrom(response.status, text);
+      if (!refused || dropped.has(refused)) {
+        return { ok: false, error: describeFailure(response.status, text) };
+      }
+      dropped.add(refused);
+      response = await fetch(`${request.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${request.apiKey}`,
+        },
+        signal: controller.signal,
+        body: buildBody(request, dropped),
+      });
+      text = await response.text();
+    }
 
     let payload: {
       choices?: { message?: { content?: unknown; tool_calls?: WireToolCall[] } }[];
