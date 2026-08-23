@@ -517,6 +517,15 @@ export interface Transaction {
   notes: string;
   customValues?: Record<string, any>;
   proformaId?: string; // پیش‌فاکتور مرتبط
+  /**
+   * The linked proforma's number and currency, joined by the server.
+   *
+   * The grid used to look these up in whatever the proforma picker happened to
+   * be holding, so a document showed «پ.ف: ناشناس» unless its proforma was in
+   * the picker's current matches — which meant only the one just saved.
+   */
+  proformaNumber?: string;
+  proformaCurrency?: string;
   exchangeRate?: number; // نرخ تسویه یا نرخ توافقی برای این دریافت
   amountForeign?: number; // مقدار ارز اصلی تسویه‌شده یا دریافت‌شده
   isDirectForeign?: boolean; // آیا دریافت مستقیم ارز بوده است؟

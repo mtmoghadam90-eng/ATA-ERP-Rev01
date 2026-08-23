@@ -107,6 +107,16 @@ const LIST_SELECT = {
   customer: { select: { id: true, companyName: true } },
   supplier: { select: { id: true, name: true } },
   project: { select: { id: true, code: true, name: true } },
+  /*
+   * The proforma comes down with the row, like the other three.
+   *
+   * The grid prints «پ.ف: …» and the incomplete-rates tab decides whether a
+   * receipt needs a settlement rate from the proforma's currency, and both were
+   * looking the id up in whatever the *picker* was holding — so a document read
+   * «ناشناس» unless its proforma happened to be among the picker's current
+   * search matches, which in practice meant only the one just saved.
+   */
+  proforma: { select: { id: true, proformaNumber: true, currency: true } },
 } satisfies Prisma.TransactionSelect;
 
 export async function listTransactions(

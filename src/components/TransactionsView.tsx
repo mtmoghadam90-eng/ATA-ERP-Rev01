@@ -499,8 +499,14 @@ export default function TransactionsView({
 
   const incompleteTransactions = transactions.filter(t => {
     if (t.type !== 'دریافت' || t.status === 'لغو شده' || t.status === 'پیش‌نویس' || !t.proformaId) return false;
-    const linkedPf = proformas.find(pf => pf.id === t.proformaId);
-    if (!linkedPf || linkedPf.currency === 'ریال') return false;
+    /*
+     * The currency comes down with the row.
+     *
+     * This looked the proforma up in the picker's matches, so a receipt whose
+     * proforma was not among them was silently dropped from this tab — the one
+     * screen whose whole job is to list what is missing.
+     */
+    if (!t.proformaCurrency || t.proformaCurrency === 'ریال') return false;
     return !t.exchangeRate || t.exchangeRate <= 0;
   });
 
@@ -807,12 +813,27 @@ export default function TransactionsView({
     let resolvedCustomerId: string | undefined = undefined;
     let resolvedSupplierId: string | undefined = undefined;
 
+    /*
+     * The party's name, or nothing — never «ناشناس».
+     *
+     * These read the customer and supplier *pickers*, which hold whatever was
+     * last searched for; a name that is not among the current matches used to
+     * be stored as «مشتری ناشناس», permanently, on a document whose customer
+     * was perfectly well known. An empty name is the honest answer: the row
+     * carries the customer id, the server joins the name, and the grid reads
+     * the joined one. A typed party is different — that name exists nowhere
+     * else, so it is stored.
+     */
     if (partyType === 'customer') {
       resolvedCustomerId = customerId;
-      resolvedPartyName = customers.find(c => c.id === customerId)?.companyName || 'مشتری ناشناس';
+      resolvedPartyName = customers.find(c => c.id === customerId)?.companyName
+        || editingTransaction?.partyName
+        || '';
     } else if (partyType === 'supplier') {
       resolvedSupplierId = supplierId;
-      resolvedPartyName = suppliers.find(s => s.id === supplierId)?.name || 'تأمین‌کننده ناشناس';
+      resolvedPartyName = suppliers.find(s => s.id === supplierId)?.name
+        || editingTransaction?.partyName
+        || '';
     } else {
       resolvedPartyName = partyNameManual || 'متفرقه';
     }
@@ -895,7 +916,9 @@ export default function TransactionsView({
       // to be sent instead, which the write mapper does not read — so a party
       // typed by hand ("متفرقه") was never saved at all, and the grid had
       // nothing to show for it.
-      partyName: resolvedPartyName,
+      // Empty means «take it from the linked customer or supplier», which the
+              // row already joins; `toNullableString` stores it as NULL.
+              partyName: resolvedPartyName || null,
       projectId: projectId || undefined,
       amountRIYAL,
       date,
@@ -1097,7 +1120,7 @@ export default function TransactionsView({
                           <div>{partyName}</div>
                           <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
                             {t.projectName && <span className="text-[10px] text-slate-400 font-normal">پروژه: {t.projectName}</span>}
-                            {t.proformaId && <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold">پ.ف: {proformas.find(p => p.id === t.proformaId)?.proformaNumber || 'ناشناس'}</span>}
+                            {t.proformaId && <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-bold">پ.ف: {t.proformaNumber || 'ناشناس'}</span>}
                             {t.receiptType && (
                               <span className="px-1.5 py-0.5 bg-sky-50 text-sky-700 text-[10px] rounded font-bold border border-sky-100">
                                 {t.receiptType}
@@ -1670,14 +1693,13 @@ export default function TransactionsView({
                 <tbody className="divide-y divide-slate-100">
                   {incompleteTransactions.map(t => {
                     const rateVal = editingSettlementRates[t.id] ?? '';
-                    const linkedPf = proformas.find(pf => pf.id === t.proformaId);
                     return (
                       <tr key={t.id} className="hover:bg-slate-50/50">
                         <td className="p-3">
                           <div className="font-bold text-slate-800">{t.documentNumber}</div>
                           <div className="text-[10px] text-slate-400 mt-0.5">{t.date}</div>
                         </td>
-                        <td className="p-3 font-bold text-slate-700">{linkedPf?.proformaNumber || 'ناشناس'}</td>
+                        <td className="p-3 font-bold text-slate-700">{t.proformaNumber || 'ناشناس'}</td>
                         <td className="p-3 text-slate-600">{t.projectName}</td>
                         <td className="p-3 text-slate-600">{t.customerName}</td>
                         <td className="p-3 text-left font-mono text-slate-700">{formatMoney(t.amountRIYAL)}</td>

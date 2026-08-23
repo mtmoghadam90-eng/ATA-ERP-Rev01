@@ -2498,6 +2498,58 @@ head("Assistant: configuration, and what it is told before it answers");
     nothingWritable.includes("دسترسی لازم را ندارد"));
 }
 
+head("The ledger names things from the row, not from a picker");
+{
+  /*
+   * «پ.ف: ناشناس» on a document whose proforma was recorded perfectly well.
+   *
+   * The grid resolved the number by looking the id up in the proforma
+   * *picker's* current matches — whatever was last searched for — so a document
+   * was named only while its proforma happened to be loaded, which in practice
+   * meant only the one just saved. Saving a second one renamed the first to
+   * «ناشناس». The row carries the proforma now.
+   */
+  const row = {
+    id: "t1", documentNumber: "TR-RC-0506-001", type: "دریافت", receiptType: "تسویه",
+    status: "تأیید شده", occurredAt: null, occurredAtJalali: "1405/06/01",
+    customerId: "c1", supplierId: null, projectId: "p1", proformaId: "pf1",
+    purchaseOrderId: null, partyName: null,
+    amountRial: "1911025600", amountForeign: null, exchangeRate: "1973751.4201",
+    isDirectForeign: false, paymentType: "حواله بانکی", referenceNumber: "73472",
+    reversalOfTransactionId: null, createdAt: "", customValues: null,
+    customer: { id: "c1", companyName: "صنعت سبز طبرستان" },
+    supplier: null,
+    project: { id: "p1", code: "ATA-05-19", name: "فلومتر خط رفلاکس" },
+    proforma: { id: "pf1", proformaNumber: "ATA-05-19-C1", currency: "دلار" },
+  };
+
+  const tx = rowToTransaction(row as never) as unknown as Record<string, unknown>;
+  eq("the proforma number comes down with the row", tx.proformaNumber, "ATA-05-19-C1");
+  /*
+   * And its currency, which is what decides whether a receipt is missing a
+   * settlement rate — that whole tab silently skipped any document whose
+   * proforma was not in the picker.
+   */
+  eq("so does its currency", tx.proformaCurrency, "دلار");
+  /* A null party name falls back to the joined customer, never to «ناشناس». */
+  eq("a blank party name reads as the customer", tx.partyName, "صنعت سبز طبرستان");
+
+  const unlinked = rowToTransaction(
+    { ...row, proforma: null, proformaId: null } as never,
+  ) as unknown as Record<string, unknown>;
+  eq("a document with no proforma says nothing about one", unlinked.proformaNumber, undefined);
+
+  const readSrc = (file: string) => readFileSync(file, "utf-8");
+  const view = readSrc("src/components/TransactionsView.tsx");
+  ok("the grid no longer hunts the picker for a proforma number",
+    !/proformas\.find\(pf?f? => pf?f?\.id === t\.proformaId\)/.test(view));
+  ok("and «ناشناس» is never stored as somebody's name",
+    !view.includes("'مشتری ناشناس'") && !view.includes("'تأمین‌کننده ناشناس'"));
+  ok("the server joins the proforma onto the list row",
+    readSrc("src/server/services/transactionService.ts")
+      .includes("proforma: { select: { id: true, proformaNumber: true, currency: true } }"));
+}
+
 head("Searching the ledger: it has to reach the project");
 {
   /*
