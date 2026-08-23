@@ -92,6 +92,8 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     // than screens, so a new account should not learn what the company pays
     // just because nobody thought about it.
     costs: false,
+    // Same reasoning, more so: the assistant reads across every module at once.
+    assistant: false,
   });
 
   // Module Persian names and descriptions
@@ -109,6 +111,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     { id: 'messaging', name: 'ارسال پیام', desc: 'قالب‌های پیام، صف و سوابق ارسال پیامک، بله و ایمیل. تنظیمات درگاه‌ها جداگانه با دسترسی «تنظیمات سیستم» کنترل می‌شود.' },
     { id: 'settings', name: 'تنظیمات سیستم', desc: 'تغییر الگوهای پیش‌فاکتور، فیلدهای دلخواه و تنظیمات عمومی' },
     { id: 'users', name: 'مدیریت کاربران', desc: 'تعریف پرسنل، تغییر رمز عبور و تنظیم سطح دسترسی ماژول‌ها' },
+    { id: 'assistant', name: 'دستیار هوشمند', desc: 'پنل پرسش و پاسخ هوش مصنوعی در داشبورد. جداگانه از دسترسی داشبورد کنترل می‌شود؛ می‌توانید داشبورد را بدهید و این را ندهید. دستیار فقط همان داده‌هایی را می‌بیند که خود کاربر اجازه دیدنش را دارد.' },
     // Not a screen: it governs fields inside modules the user already has.
     { id: 'costs', name: 'مشاهده بهای خرید', desc: 'دیدن قیمت تمام شده: ماشین‌حساب قیمت کالا، هزینه‌های سفارش خرید و مبالغ آفر تأمین‌کنندگان. بدون این دسترسی، این اعداد نمایش داده نمی‌شوند و سفارش خرید و استعلام قابل ذخیره نیست.' },
   ];
@@ -132,6 +135,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
         settings: true,
         users: true,
         costs: true,
+        assistant: true,
       });
     }
   };
@@ -167,6 +171,9 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
       settings: false,
       users: false,
       costs: false,
+      // Off for a new account: it reads across every module at once, so it is
+      // granted deliberately rather than inherited from a template.
+      assistant: false,
     });
     setShowPassword(false);
     setShowAddModal(true);
@@ -222,6 +229,9 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
       // guard uses. An account written before this module existed keeps
       // working rather than losing a screen it never knew it had.
       messaging: user.permissions?.messaging !== false,
+      // Read strictly, like `costs`: an absent flag denies. An account written
+      // before the assistant existed must not silently gain it.
+      assistant: user.permissions?.assistant === true,
     });
     setShowPassword(false);
     setShowEditModal(true);

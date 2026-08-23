@@ -626,6 +626,29 @@ export interface ProformaTemplate {
 
 export interface ERPSettings {
   /**
+   * The dashboard assistant.
+   *
+   * Everything except the API key, which is a row in `assistant_credentials`
+   * and never reaches a browser — the settings document is loaded whole by
+   * every signed-in user. `resolveAssistantConfig` in `src/utils/assistant.ts`
+   * fills in and bounds every field.
+   */
+  assistant?: {
+    enabled?: boolean;
+    /** Base URL up to and including `/v1`; OpenAI-compatible. */
+    baseUrl?: string;
+    model?: string;
+    /** House instructions, added to the built-in ones rather than replacing them. */
+    systemPrompt?: string;
+    temperature?: number;
+    maxTokens?: number;
+    /** Rounds of tool calls one question may take. */
+    maxToolCalls?: number;
+    timeoutSeconds?: number;
+    /** Whether it may propose actions that change data. Nothing is written unconfirmed. */
+    allowActions?: boolean;
+  };
+  /**
    * How the messaging module behaves, as opposed to which providers it uses.
    *
    * Provider credentials are rows in `message_providers` and never leave the
@@ -773,6 +796,16 @@ export interface User {
     packagingDelivery?: boolean;
     /** The messaging module: templates, the outbox, and sending by hand. */
     messaging?: boolean;
+    /**
+     * The assistant on the dashboard.
+     *
+     * Its own flag, and read **strictly** — an absent value denies, unlike every
+     * other key here. The assistant can read every figure its user is allowed to
+     * see, all at once and in one place, and that is not the same decision as
+     * «may open the front page»: somebody can have the dashboard and not this.
+     * A system administrator always has it.
+     */
+    assistant?: boolean;
     /**
      * Not a screen — the only flag here that is not.
      *
