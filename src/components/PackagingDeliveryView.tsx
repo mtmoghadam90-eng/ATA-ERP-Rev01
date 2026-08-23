@@ -1699,7 +1699,7 @@ ${sheets}
               <Truck size={15} className="text-sky-500" />
               اطلاعات حمل و پیگیری
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 items-end">
               <input
                 type="text"
                 value={waybillNumber}
@@ -1962,7 +1962,7 @@ ${sheets}
                 )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
-                  <div className="space-y-1">
+                  <div className="space-y-1 lg:col-span-2">
                     <label className="text-[10px] font-bold text-slate-500 block">نام کالا یا مستندات (مثال: شناسنامه گارانتی)</label>
                     <input
                       type="text"
@@ -1973,7 +1973,7 @@ ${sheets}
                       className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none read-only:bg-slate-100 read-only:text-slate-500"
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2 lg:col-span-2">
                     <div className="space-y-1">
                       <label className="text-[10px] font-bold text-slate-500 block">تعداد</label>
                       <input
@@ -1996,7 +1996,16 @@ ${sheets}
                       </select>
                     </div>
                   </div>
-                  <div className="grid grid-cols-5 gap-1.5 items-end">
+                  {/*
+                    Two of the four columns, and the button moved to its own
+                    line below.
+
+                    This cell is five fields — three dimensions, a weight and a
+                    box number — and it was sharing a quarter of the row with
+                    them: at 1440px that is 39px per box, and 26px on a laptop.
+                    Nothing else about the form moves.
+                  */}
+                  <div className="grid grid-cols-5 gap-1.5 items-end md:col-span-2 lg:col-span-4">
                     <div className="col-span-3 space-y-1">
                       <label className="text-[10px] font-bold text-slate-500 block">ابعاد (طولxعرضxارتفاع) به سانتی‌متر</label>
                       <div className="flex gap-1 items-center" dir="ltr">
@@ -2046,11 +2055,11 @@ ${sheets}
                       />
                     </div>
                   </div>
-                  <div>
+                  <div className="md:col-span-2 lg:col-span-4 flex justify-end">
                     <button
                       type="button"
                       onClick={handleAddCustomItem}
-                      className="w-full bg-slate-700 text-white rounded-lg py-2 text-xs font-bold transition hover:bg-slate-800 flex items-center justify-center gap-1 shrink-0"
+                      className="w-full md:w-auto bg-slate-700 text-white rounded-lg px-6 py-2 text-xs font-bold transition hover:bg-slate-800 flex items-center justify-center gap-1 shrink-0"
                     >
                       <Plus size={14} />
                       افزودن به لیست عدل‌بندی

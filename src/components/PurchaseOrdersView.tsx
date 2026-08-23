@@ -1638,7 +1638,7 @@ export default function PurchaseOrdersView({
             <form onSubmit={handleSavePO} className={`p-6 space-y-6 overflow-y-auto ${isCreateModalFullscreen ? 'max-h-[calc(100vh-140px)] flex-1' : 'max-h-[80vh]'}`}>
               
               {/* Top Row Fields */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
                 
                 {/* Project Linked */}
                 <div className="space-y-1.5 w-full min-w-0">
