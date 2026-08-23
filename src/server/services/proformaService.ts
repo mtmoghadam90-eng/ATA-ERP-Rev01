@@ -18,6 +18,7 @@ import { processWorkflowRules } from "./workflowService";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 import { applyStockDelta } from "./productService";
 import { scheduleCustomerValueRecalculation } from "./customerValueRecalc";
+import { ProformaTotals, computeProformaTotals } from "../../utils/proformaTotals";
 import { COST_SOURCES, CostSource, LineCost, lineNeedsCost } from "../../utils/costOfGoods";
 import { preserveLineCosts } from "../costs";
 import { canSeeCosts } from "../auth";
@@ -434,35 +435,26 @@ function mapItem(row: ProformaItemInput, currency: string): Record<string, unkno
 function computeTotals(
   items: ProformaItemInput[],
   input: ProformaInput,
-): Record<string, number> {
+): ProformaTotals {
   const lines = (items ?? [])
     .map((r) => mapItem(r, String(input.currency ?? "ریال")))
     .filter(Boolean) as Record<string, unknown>[];
-  const totalAmount = lines.reduce((sum, l) => sum + Number(l.totalPriceRial ?? 0), 0);
 
-  const discountPercent = toNumber(input.discountPercent, 0);
-  // A percentage takes precedence; an explicit amount is the manual override.
-  const discountAmount = discountPercent > 0
-    ? (totalAmount * discountPercent) / 100
-    : toNumber(input.discountAmount, 0);
-
-  const afterDiscount = totalAmount - discountAmount;
-  const taxPercent = toNumber(input.taxPercent, 0);
-  const taxAmount = taxPercent > 0
-    ? (afterDiscount * taxPercent) / 100
-    : toNumber(input.taxAmount, 0);
-
-  const extraCosts = toNumber(input.extraCosts, 0);
-
-  return {
-    totalAmount,
-    discountPercent,
-    discountAmount,
-    taxPercent,
-    taxAmount,
-    extraCosts,
-    finalAmount: afterDiscount + taxAmount + extraCosts,
-  };
+  /*
+   * The same arithmetic the form ran before the user pressed save.
+   *
+   * It used to be a second copy that did not round, so a document approved on
+   * screen as «۹۶۸ دلار» was stored — and printed, and settled against — as
+   * 968.22. See `src/utils/proformaTotals.ts`.
+   */
+  return computeProformaTotals({
+    lineTotals: lines.map((l) => Number(l.totalPriceRial ?? 0)),
+    discountPercent: input.discountPercent,
+    discountAmount: input.discountAmount,
+    taxPercent: input.taxPercent,
+    taxAmount: input.taxAmount,
+    extraCosts: input.extraCosts,
+  });
 }
 
 function scalarData(input: ProformaInput): Record<string, unknown> {

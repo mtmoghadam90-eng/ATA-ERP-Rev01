@@ -34,6 +34,7 @@ import { hasEverPurchased, saleDateOf } from "../src/server/services/customerVal
 import { buildReportingTables } from "../src/reporting/flatten";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
+import { computeProformaTotals, roundMoney } from "../src/utils/proformaTotals";
 import {
   calculateProformaFinance, calculateProjectFinance, priceInWarehouseCurrency,
 } from "../src/utils/finance";
@@ -2494,6 +2495,71 @@ head("Assistant: configuration, and what it is told before it answers");
   });
   ok("actions on but nothing writable is its own message",
     nothingWritable.includes("دسترسی لازم را ندارد"));
+}
+
+head("Proforma totals: the form and the document agree");
+{
+  /*
+   * The document from the report, with its real figures: 978 dollars of lines,
+   * 10% off, 10% VAT. The form showed 978 / 98 / 88 / 968 and the server stored
+   * 968.22, so the printed invoice quoted a price nobody had approved.
+   */
+  const totals = computeProformaTotals({
+    lineTotals: [978], discountPercent: 10, taxPercent: 10,
+  });
+
+  eq("the lines add up as they are", totals.totalAmount, 978);
+  eq("the discount is a whole figure", totals.discountAmount, 98);
+  eq("so is the tax", totals.taxAmount, 88);
+  eq("and the total is what the form showed", totals.finalAmount, 968);
+  /* The number the document used to carry. */
+  ok("which is not the unrounded arithmetic", totals.finalAmount !== 968.22);
+
+  /* The total is built from the rounded parts, so the document adds up. */
+  eq("sub − discount + tax is the printed total",
+    totals.totalAmount - totals.discountAmount + totals.taxAmount, totals.finalAmount);
+
+  /*
+   * Line totals are deliberately *not* rounded: a line has to read quantity ×
+   * unit price, and the lines have to sum to the subtotal printed under them.
+   * Only the figures a percentage derives are rounded.
+   */
+  const fractional = computeProformaTotals({
+    lineTotals: [12.5, 12.5, 12.5], discountPercent: 0, taxPercent: 0,
+  });
+  eq("three lines of 12.5 still sum to 37.5", fractional.totalAmount, 37.5);
+
+  /* A typed amount is the override, and is rounded like a computed one. */
+  const manual = computeProformaTotals({
+    lineTotals: [1000], discountAmount: 33.4, taxAmount: 66.6,
+  });
+  eq("a manual discount is rounded", manual.discountAmount, 33);
+  eq("and a manual tax", manual.taxAmount, 67);
+  eq("a percentage still beats a typed amount",
+    computeProformaTotals({ lineTotals: [1000], discountPercent: 10, discountAmount: 999 })
+      .discountAmount, 100);
+
+  eq("half a unit rounds up", roundMoney(0.5), 1);
+  eq("and nonsense is zero", roundMoney(Number.NaN), 0);
+
+  /*
+   * One rule, both sides. Two implementations of the same arithmetic is how the
+   * form and the document came to disagree in the first place, so neither may
+   * grow its own again.
+   */
+  const readSrc = (file: string) => readFileSync(file, "utf-8");
+  for (const file of [
+    "src/components/ProformasView.tsx",
+    "src/server/services/proformaService.ts",
+  ]) {
+    ok(`${file} computes the totals through the shared rule`,
+      readSrc(file).includes("computeProformaTotals("));
+    ok(`${file} keeps no discount arithmetic of its own`,
+      !/discountAmount\s*=\s*[^;]*discountPercent\s*\/\s*100/.test(readSrc(file)));
+  }
+  /* And the printed document reads the stored figures rather than recomputing. */
+  ok("the printed totals come from the record",
+    readSrc("src/components/ProformasView.tsx").includes("formatMoney(pf.finalAmount)"));
 }
 
 head("Exchange difference: paying more rial is not overpaying");
