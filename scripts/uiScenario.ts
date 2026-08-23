@@ -29,6 +29,9 @@ const g = globalThis as unknown as Record<string, unknown>;
 g.window = dom.window;
 g.document = dom.window.document;
 g.IS_REACT_ACT_ENVIRONMENT = true;
+// jsdom has no layout, so it implements no scrolling. Screens that keep a
+// conversation pinned to the bottom call this on mount.
+dom.window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() {};
 
 import React, { useState } from "react";
 import { act } from "react";
@@ -37,6 +40,7 @@ import PriceCalculatorModal from "../src/components/PriceCalculatorModal";
 import MessagingView from "../src/components/MessagingView";
 import ProductConfiguratorModal from "../src/components/ProductConfiguratorModal";
 import RichTextField from "../src/components/RichTextField";
+import AssistantPanel from "../src/components/AssistantPanel";
 import type { Product } from "../src/types";
 import type { ExchangeRate } from "../src/types";
 
@@ -301,6 +305,102 @@ head("Rich text field: the toolbar formats what is selected");
 
   act(() => { root.unmount(); });
   host.remove();
+}
+
+/*
+ * The confirm card, and the promise behind it.
+ *
+ * The whole feature rests on one behaviour that no type and no pure rule can
+ * see: when the assistant proposes a write, the browser must show it and must
+ * not call anything until a person presses the button. Rendering is the only
+ * way to ask that question — a mistake here would be a proforma issued by a
+ * sentence.
+ */
+head("Assistant: a proposed write waits for the button");
+
+{
+  const g3 = globalThis as unknown as Record<string, unknown>;
+  const realFetch = g3.fetch;
+  const posted: string[] = [];
+
+  const proposal = {
+    id: "p-1",
+    action: "propose_proforma",
+    title: "صدور پیش‌فاکتور (پیش‌نویس)",
+    lines: [{ label: "مشتری", value: "فولاد مبارکه" }],
+    warnings: ["پیش‌فاکتور به‌صورت پیش‌نویس ثبت می‌شود."],
+    status: "pending",
+    createdAt: new Date().toISOString(),
+  };
+
+  g3.fetch = async (url: unknown, init?: unknown) => {
+    const path = String(url);
+    const method = (init as { method?: string } | undefined)?.method ?? "GET";
+    if (method !== "GET") posted.push(path);
+
+    const body = path.includes("/api/assistant/status")
+      ? { success: true, allowed: true, enabled: true, configured: true, actionsAllowed: true }
+      : path.includes("/confirm")
+        ? { success: true, proposal: { ...proposal, status: "confirmed", resultLabel: "پیش‌فاکتور QT-1" } }
+        : { success: true, ok: true, reply: "خلاصه آماده است.", proposals: [proposal] };
+
+    return {
+      ok: true, status: 200,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    } as unknown as Response;
+  };
+
+  const host4 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root4 = createRoot(host4);
+  const settle4 = async () => {
+    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  await act(async () => { root4.render(React.createElement(AssistantPanel)); });
+  await settle4();
+
+  const box = host4.querySelector("textarea") as HTMLTextAreaElement | null;
+  ok("the panel rendered for a permitted user", !!box);
+
+  const buttonsIn = () => [...host4.querySelectorAll("button")] as HTMLElement[];
+  const byText = (text: string) =>
+    buttonsIn().find((b) => (b.textContent ?? "").trim() === text);
+
+  if (box) {
+    act(() => { handlers(box).onChange?.({ target: { value: "برای فولاد مبارکه پیش‌فاکتور بزن" } }); });
+    const send = byText("بپرس");
+    ok("the send button is there", !!send);
+    await act(async () => { send?.click(); });
+    await settle4();
+  }
+
+  const card = host4.textContent ?? "";
+  ok("the proposal is described on screen", card.includes("فولاد مبارکه"));
+  ok("its warning is shown too", card.includes("پیش‌نویس ثبت می‌شود"));
+  ok("and it says plainly that nothing is recorded yet", card.includes("تا زدن این دکمه چیزی ثبت نشده است"));
+
+  /*
+   * The point of the whole exercise: the chat call happened, and nothing else
+   * did. A proposal on screen must not have touched the database.
+   */
+  ok("nothing was confirmed by drawing the card",
+    posted.filter((p) => p.includes("/confirm")).length === 0, posted);
+
+  const confirm = byText("تایید و ثبت");
+  ok("a confirm button is offered", !!confirm);
+  await act(async () => { confirm?.click(); });
+  await settle4();
+
+  ok("pressing it confirms exactly once",
+    posted.filter((p) => p.includes("/api/assistant/actions/p-1/confirm")).length === 1, posted);
+  ok("and the card reports what was written",
+    (host4.textContent ?? "").includes("ثبت شد: پیش‌فاکتور QT-1"));
+  ok("the buttons are gone once it is resolved", !byText("تایید و ثبت"));
+
+  act(() => { root4.unmount(); });
+  host4.remove();
+  g3.fetch = realFetch;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

@@ -55,10 +55,14 @@ import {
   resolveAssistantConfig,
 } from "../src/utils/assistant";
 import {
+  ASSISTANT_ACTIONS, PROPOSAL_TTL_MINUTES, confirmRefusalReason, proposalExpired,
+} from "../src/utils/assistantActions";
+import { catalogueMatchesImplementations } from "../src/server/services/assistant/actions";
+import {
   generateDeliveryNotes, getDeliverySummary, updateNotesWithDelivery,
 } from "../src/utils/deliveryNotes";
 import { DEFAULT_SETTINGS } from "../src/seedData";
-import { canSeeCosts } from "../src/server/auth";
+import { KEY_PERMISSION, canSeeCosts } from "../src/server/auth";
 import {
   preserveLineCosts, redactCustomerValue, redactInquiry, redactProduct,
   redactPurchaseOrder, redactProforma, redactValueDetail, redactValueSummary,
@@ -2445,7 +2449,8 @@ head("Assistant: configuration, and what it is told before it answers");
    */
   const prompt = buildSystemPrompt({
     companyName: "ابزار تامین آرشیا", todayJalali: "1405/06/01", userName: "محمد",
-    canSeeCosts: true, actionsAllowed: false, extra: "همیشه به تومان هم بنویس.",
+    canSeeCosts: true, actionsAllowed: false, actions: [],
+    extra: "همیشه به تومان هم بنویس.",
   });
   ok("it is told today's date", prompt.includes("1405/06/01"));
   ok("and whose question it is answering", prompt.includes("محمد"));
@@ -2455,14 +2460,119 @@ head("Assistant: configuration, and what it is told before it answers");
 
   const blind = buildSystemPrompt({
     companyName: "x", todayJalali: "1405/06/01", userName: "y",
-    canSeeCosts: false, actionsAllowed: true, extra: "",
+    canSeeCosts: false, actionsAllowed: true,
+    actions: [{ name: "propose_proforma", label: "صدور پیش‌فاکتور" }], extra: "",
   });
   ok("a cost-blind user's assistant is told it has no cost figures",
     blind.includes("بهای تمام‌شده"));
   ok("and one allowed to act is told it only proposes",
-    blind.includes("تایید کاربر"));
+    blind.includes("هیچ چیزی در سامانه ثبت نمی‌شود"));
+  ok("and is told which actions it may propose",
+    blind.includes("صدور پیش‌فاکتور"));
   ok("while one that is not is told to say so",
     prompt.includes("فعال نشده"));
+
+  /*
+   * The switch being on is not the same as the user being able to write, and
+   * the two need different sentences: a model told "you may issue a proforma"
+   * to somebody without the proformas permission promises what it cannot do.
+   */
+  const nothingWritable = buildSystemPrompt({
+    companyName: "x", todayJalali: "1405/06/01", userName: "y",
+    canSeeCosts: true, actionsAllowed: true, actions: [], extra: "",
+  });
+  ok("actions on but nothing writable is its own message",
+    nothingWritable.includes("دسترسی لازم را ندارد"));
+}
+
+head("Assistant actions: prepared, never written");
+{
+  const now = Date.parse("2026-08-23T10:00:00Z");
+  const fresh = new Date(now - 60_000).toISOString();
+  const stale = new Date(now - (PROPOSAL_TTL_MINUTES + 1) * 60_000).toISOString();
+
+  eq("a fresh proposal has not expired", proposalExpired(fresh, now), false);
+  eq("one past the window has", proposalExpired(stale, now), true);
+  eq("and so has one with an unreadable timestamp", proposalExpired("nonsense", now), true);
+
+  eq("a fresh pending proposal may be confirmed",
+    confirmRefusalReason({ status: "pending", createdAt: fresh }, now, true), null);
+  ok("a stale one may not",
+    confirmRefusalReason({ status: "pending", createdAt: stale }, now, true)?.includes("مهلت"));
+  /*
+   * Re-asked at confirmation time on purpose. The switch may have been turned
+   * off between the proposal and the button, and turning it off has to mean
+   * something for the proposals already on screen.
+   */
+  ok("nor may one whose feature has since been switched off",
+    confirmRefusalReason({ status: "pending", createdAt: fresh }, now, false)?.includes("فعال نیست"));
+  ok("a confirmed proposal is not confirmed twice",
+    confirmRefusalReason({ status: "confirmed", createdAt: fresh }, now, true)?.includes("قبلاً ثبت شده"));
+  ok("a cancelled one stays cancelled",
+    confirmRefusalReason({ status: "cancelled", createdAt: fresh }, now, true)?.includes("لغو"));
+  /*
+   * Terminal on purpose: the payload was prepared against a database that has
+   * since moved, so the second attempt is a fresh proposal, not a retry.
+   */
+  ok("and a failed one is not retried",
+    confirmRefusalReason({ status: "failed", createdAt: fresh }, now, true)?.includes("خطا"));
+
+  eq("the catalogue and the implementations agree",
+    catalogueMatchesImplementations(), true);
+
+  const read = (file: string) => readFileSync(file, "utf-8");
+  const actionSource = read("src/server/services/assistant/actions.ts");
+
+  /*
+   * The whole promise of the feature in one check: the file that prepares an
+   * action must not be able to write one. A `prepare` that created a record
+   * would make the confirm button a decoration.
+   */
+  const prepareBodies = actionSource.split(/\n  async prepare\(/).slice(1)
+    .map((chunk) => chunk.split(/\n  async execute\(/)[0]);
+  eq("every action has a prepare half", prepareBodies.length, ASSISTANT_ACTIONS.length);
+  for (const body of prepareBodies) {
+    ok("a prepare half writes nothing",
+      !/\.(create|update|delete|upsert|createMany|updateMany|deleteMany)\(/.test(
+        body.replace(/db\.assistantAction\.create/g, ""),
+      ));
+  }
+
+  /*
+   * The permission the module itself checks, not one of the assistant's own.
+   * An action guarded by anything else would be a way around a flag somebody
+   * was deliberately not given.
+   */
+  for (const meta of ASSISTANT_ACTIONS) {
+    ok(`${meta.name} is guarded by a real collection key`,
+      Object.prototype.hasOwnProperty.call(KEY_PERMISSION, meta.permissionKey));
+  }
+
+  ok("a proposal is claimed with a conditional update, so a double click writes once",
+    /updateMany\(\{\s*where: \{ id, status: "pending" \}/.test(actionSource));
+  ok("and the permission is re-checked at confirmation",
+    actionSource.includes("Re-checked: a permission may have been withdrawn"));
+
+  /*
+   * Document numbers are issued when a document comes into existence, not when
+   * one is imagined: a proposal nobody confirms must not burn a number.
+   */
+  for (const half of actionSource.split(/\n  async execute\(/).slice(1)) {
+    const body = half.split(/\n\};/)[0];
+    ok("no execute half prepares", !body.includes("await this.prepare"));
+  }
+  const prepareText = prepareBodies.join("\n");
+  ok("no prepare half issues a document number",
+    !prepareText.includes("nextProformaNumber(") && !prepareText.includes("nextPackingListNumber("));
+
+  /*
+   * One numbering rule per document. Two copies is how a series comes to have
+   * two meanings — the routes and the assistant must ask the same function.
+   */
+  for (const route of ["src/server/routes/proformas.ts", "src/server/routes/deliveries.ts"]) {
+    ok(`${route} does not keep its own numbering rule`,
+      !read(route).includes("nextDocumentNumber("));
+  }
 }
 
 head("Activity attachments: a list, with the old single file still readable");

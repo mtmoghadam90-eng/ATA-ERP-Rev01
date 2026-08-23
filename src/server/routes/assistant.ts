@@ -6,6 +6,10 @@ import {
   saveApiKey, testAssistant,
 } from "../services/assistant/assistantService";
 import { assistantTools } from "../services/assistant/tools";
+import {
+  actionCatalogue, cancelProposal, confirmProposal,
+} from "../services/assistant/actions";
+import { getTodayShamsi } from "../../dateUtils";
 
 /**
  * The dashboard assistant.
@@ -99,6 +103,50 @@ export function registerAssistantRoutes(app: express.Express, deps: RouteDeps): 
     }
   });
 
+  /* -------------------------------- actions ------------------------------- */
+
+  /**
+   * Confirming is where a write finally happens.
+   *
+   * Everything that decides whether it may happen is asked again here, against
+   * the stored proposal: the assistant permission, the settings switch, the
+   * module's own write permission, whose proposal it is, and whether it has
+   * gone stale. The browser sends an id and nothing else — the payload it would
+   * otherwise be able to edit never left the server.
+   */
+  app.post("/api/assistant/actions/:id/confirm", async (req, res) => {
+    const user = await requireAssistant(req, res);
+    if (!user) return;
+    try {
+      const config = await loadAssistantConfig();
+      const result = await confirmProposal(
+        req.params.id, { user, todayJalali: getTodayShamsi() }, config.allowActions,
+      );
+      if ("error" in result) {
+        res.status(400).json({ success: false, error: result.error });
+        return;
+      }
+      res.json({ success: true, proposal: result });
+    } catch (err) {
+      sendError(res, err, "POST /api/assistant/actions/:id/confirm");
+    }
+  });
+
+  app.post("/api/assistant/actions/:id/cancel", async (req, res) => {
+    const user = await requireAssistant(req, res);
+    if (!user) return;
+    try {
+      const result = await cancelProposal(req.params.id, user);
+      if ("error" in result) {
+        res.status(404).json({ success: false, error: result.error });
+        return;
+      }
+      res.json({ success: true, proposal: result });
+    } catch (err) {
+      sendError(res, err, "POST /api/assistant/actions/:id/cancel");
+    }
+  });
+
   /* ------------------------------- settings ------------------------------ */
 
   app.get("/api/assistant/config", async (req, res) => {
@@ -116,6 +164,9 @@ export function registerAssistantRoutes(app: express.Express, deps: RouteDeps): 
           name: tool.definition.name,
           description: tool.definition.description,
         })),
+        // What switching «ثبت با تایید» on actually permits, so the decision is
+        // made against a list rather than against a checkbox label.
+        actions: actionCatalogue(),
       });
     } catch (err) {
       sendError(res, err, "GET /api/assistant/config");

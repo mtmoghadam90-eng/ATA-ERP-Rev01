@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bot, ChevronDown, Loader2, Send, Sparkles, Trash2 } from 'lucide-react';
+import { AlertTriangle, Bot, Check, ChevronDown, Loader2, Send, Sparkles, Trash2, X } from 'lucide-react';
 import { ApiError } from '../api/client';
-import { AssistantAnswer, AssistantStep, assistantApi } from '../api/assistant';
+import { dataChanged } from '../api/liveData';
+import { AssistantAnswer, AssistantProposal, AssistantStep, assistantApi } from '../api/assistant';
+import { actionResource } from '../utils/assistantActions';
 
 /**
  * The assistant on the dashboard.
@@ -15,12 +17,19 @@ import { AssistantAnswer, AssistantStep, assistantApi } from '../api/assistant';
  * The steps under each answer are not decoration. An assistant that quotes a
  * profit figure is worth nothing unless the person reading it can tell which
  * records the figure came from.
+ *
+ * **Nothing here writes anything on its own.** When the assistant wants to
+ * record something it prepares a proposal on the server and this draws a card
+ * describing it; the record is created when — and only when — «تایید و ثبت» is
+ * pressed. The card is a summary, not a form: what gets written is the payload
+ * the server prepared, so there is nothing on screen that could change it.
  */
 
 interface Turn {
   role: 'user' | 'assistant';
   content: string;
   steps?: AssistantStep[];
+  proposals?: AssistantProposal[];
   failed?: boolean;
 }
 
@@ -39,6 +48,7 @@ export default function AssistantPanel() {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [showSteps, setShowSteps] = useState<number | null>(null);
+  const [working, setWorking] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   /*
@@ -78,7 +88,7 @@ export default function AssistantPanel() {
         history.map((t) => ({ role: t.role, content: t.content })),
       );
       setTurns((prev) => [...prev, answer.ok
-        ? { role: 'assistant', content: answer.reply ?? '', steps: answer.steps }
+        ? { role: 'assistant', content: answer.reply ?? '', steps: answer.steps, proposals: answer.proposals }
         : { role: 'assistant', content: answer.error ?? 'پاسخی دریافت نشد.', steps: answer.steps, failed: true }]);
     } catch (err) {
       setTurns((prev) => [...prev, {
@@ -90,6 +100,45 @@ export default function AssistantPanel() {
       setBusy(false);
     }
   }, [busy, turns]);
+
+  /**
+   * Replaces one proposal wherever it sits, leaving the conversation alone.
+   *
+   * The turns are the record of what was said; a resolved proposal changes the
+   * card inside a turn, not the turn.
+   */
+  const replaceProposal = useCallback((next: AssistantProposal) => {
+    setTurns((prev) => prev.map((turn) => (
+      turn.proposals?.some((p) => p.id === next.id)
+        ? { ...turn, proposals: turn.proposals.map((p) => (p.id === next.id ? next : p)) }
+        : turn
+    )));
+  }, []);
+
+  const resolve = useCallback(async (proposal: AssistantProposal, confirm: boolean) => {
+    if (working) return;
+    setWorking(proposal.id);
+    try {
+      const { proposal: next } = confirm
+        ? await assistantApi.confirmAction(proposal.id)
+        : await assistantApi.cancelAction(proposal.id);
+      replaceProposal(next);
+      /*
+       * The write went through `/api/assistant/…`, so the API client announced
+       * a resource nothing reads. The screens behind the panel are told here
+       * which module actually changed.
+       */
+      if (confirm && next.status === 'confirmed') dataChanged(actionResource(next.action));
+    } catch (err) {
+      replaceProposal({
+        ...proposal,
+        status: 'failed',
+        error: err instanceof ApiError ? err.message : 'ثبت انجام نشد.',
+      });
+    } finally {
+      setWorking(null);
+    }
+  }, [replaceProposal, working]);
 
   if (!visible) return null;
 
@@ -189,6 +238,71 @@ export default function AssistantPanel() {
                             )}
                           </div>
                         )}
+
+                        {/* What the assistant wants to record. Nothing yet is. */}
+                        {turn.proposals?.map((proposal) => (
+                          <div
+                            key={proposal.id}
+                            className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 p-2.5 text-slate-800"
+                          >
+                            <p className="font-bold text-[11px] flex items-center gap-1.5 mb-1.5">
+                              <AlertTriangle size={12} className="text-amber-600 shrink-0" />
+                              {proposal.title}
+                            </p>
+
+                            <dl className="space-y-0.5 mb-1.5">
+                              {proposal.lines.map((line, i) => (
+                                <div key={i} className="flex gap-1.5 text-[11px] leading-5">
+                                  <dt className="text-slate-500 shrink-0">{line.label}:</dt>
+                                  <dd className="font-medium break-words">{line.value}</dd>
+                                </div>
+                              ))}
+                            </dl>
+
+                            {proposal.warnings.map((warning, i) => (
+                              <p key={i} className="text-[10px] text-amber-800 leading-5">• {warning}</p>
+                            ))}
+
+                            {proposal.status === 'pending' ? (
+                              <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-amber-200/70">
+                                <button
+                                  type="button"
+                                  disabled={working === proposal.id}
+                                  onClick={() => void resolve(proposal, true)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold disabled:opacity-40 flex items-center gap-1"
+                                >
+                                  {working === proposal.id
+                                    ? <Loader2 size={12} className="animate-spin" />
+                                    : <Check size={12} />}
+                                  تایید و ثبت
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={working === proposal.id}
+                                  onClick={() => void resolve(proposal, false)}
+                                  className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-slate-600 hover:bg-white text-[11px] font-bold disabled:opacity-40 flex items-center gap-1"
+                                >
+                                  <X size={12} />
+                                  انصراف
+                                </button>
+                                <span className="text-[10px] text-slate-500 mr-auto">
+                                  تا زدن این دکمه چیزی ثبت نشده است
+                                </span>
+                              </div>
+                            ) : (
+                              <p className={`mt-2 pt-2 border-t border-amber-200/70 text-[11px] font-bold ${
+                                proposal.status === 'confirmed' ? 'text-emerald-700'
+                                  : proposal.status === 'cancelled' ? 'text-slate-500' : 'text-rose-700'
+                              }`}>
+                                {proposal.status === 'confirmed'
+                                  ? `ثبت شد: ${proposal.resultLabel ?? ''}`
+                                  : proposal.status === 'cancelled'
+                                    ? 'لغو شد؛ چیزی ثبت نشد.'
+                                    : `ثبت نشد: ${proposal.error ?? 'خطای نامشخص'}`}
+                              </p>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ))}

@@ -1571,3 +1571,38 @@ model AssistantCredentials {
 
   @@map("assistant_credentials")
 }
+
+/// A write the assistant has prepared and nobody has yet approved.
+///
+/// The prepared payload is stored **here**, not handed to the browser and
+/// posted back: the summary a person reads and the record that gets written
+/// have to be the same object, and a payload that made a round trip through the
+/// client is just an ordinary unreviewed write with a confirmation dialog in
+/// front of it.
+model AssistantAction {
+  id     String @id @db.NVarChar(36)
+  action String @db.NVarChar(60)
+  /// Whose proposal it is. Only they may confirm it.
+  userId String @db.NVarChar(36)
+  /// pending | confirmed | cancelled | failed
+  status String @db.NVarChar(20)
+
+  title     String  @db.NVarChar(400)
+  /// The summary lines shown on the confirmation card, as JSON.
+  summary   String? @db.NVarChar(Max)
+  /// What `execute` will be given, as JSON.
+  payload   String? @db.NVarChar(Max)
+  /// What the model asked for, as JSON — kept so a refusal can be explained.
+  arguments String? @db.NVarChar(Max)
+
+  resultId    String? @db.NVarChar(36)
+  resultLabel String? @db.NVarChar(400)
+  error       String? @db.NVarChar(Max)
+
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([userId, status])
+  @@index([createdAt])
+  @@map("assistant_actions")
+}

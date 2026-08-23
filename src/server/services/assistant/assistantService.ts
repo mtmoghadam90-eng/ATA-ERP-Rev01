@@ -6,8 +6,10 @@ import {
   AssistantConfig, DEFAULT_ASSISTANT_CONFIG, assistantUnavailableReason,
   buildSystemPrompt, resolveAssistantConfig,
 } from "../../../utils/assistant";
+import { AssistantProposal } from "../../../utils/assistantActions";
 import { ChatMessage, chat } from "./provider";
 import { AssistantTool, assistantTools, toolDefinitions } from "./tools";
+import { assistantActionsFor, prepareProposal } from "./actions";
 
 /**
  * The assistant: configuration, credentials, and the loop that turns a question
@@ -81,6 +83,13 @@ export interface AssistantAnswer {
   error?: string;
   /** Which tools ran, in order — shown under the answer so it can be checked. */
   steps?: { tool: string; arguments: string; ok: boolean }[];
+  /**
+   * Writes the assistant has prepared and nobody has approved.
+   *
+   * They are stored server-side; this is the summary the panel draws a confirm
+   * card from. Nothing in the database has changed because one of these exists.
+   */
+  proposals?: AssistantProposal[];
   usage?: { promptTokens: number; completionTokens: number };
 }
 
@@ -104,6 +113,16 @@ function serialiseResult(value: unknown): string {
   return `${text.slice(0, LIMIT)}\n…[خروجی طولانی بود و بریده شد. با فیلتر دقیق‌تر یا صفحه‌بندی دوباره بپرس.]`;
 }
 
+/** Tool arguments, or an empty object when the model produced nothing valid. */
+function parseArgs(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw || "{}") as unknown;
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function askAssistant(
   history: AssistantTurn[],
   user: AuthUser,
@@ -118,6 +137,22 @@ export async function askAssistant(
   const tools = assistantTools();
   const byName = new Map<string, AssistantTool>(tools.map((t) => [t.definition.name, t]));
 
+  /*
+   * The action tools, when they are switched on and this user may write.
+   *
+   * They are offered as ordinary tools because that is how a model is able to
+   * fill one in — it asks for the customer, reads the products, then calls it —
+   * but calling one *prepares* a proposal and returns a sentence saying so.
+   * There is no path from here to a row in the database; that is
+   * `confirmProposal`, and it runs when a person presses a button.
+   */
+  const actions = config.allowActions ? assistantActionsFor(user) : [];
+  const actionByName = new Map(actions.map((a) => [a.definition.name, a]));
+  const definitions = [
+    ...toolDefinitions(tools),
+    ...actions.map((a) => a.definition),
+  ];
+
   const todayJalali = getTodayShamsi();
   const messages: ChatMessage[] = [
     {
@@ -128,6 +163,7 @@ export async function askAssistant(
         userName: user.fullName || user.username || "کاربر",
         canSeeCosts: canSeeCosts(user),
         actionsAllowed: config.allowActions,
+        actions: actions.map((a) => ({ name: a.name, label: a.label })),
         extra: config.systemPrompt,
       }),
     },
@@ -138,6 +174,7 @@ export async function askAssistant(
   ];
 
   const steps: { tool: string; arguments: string; ok: boolean }[] = [];
+  const proposals: AssistantProposal[] = [];
   let promptTokens = 0;
   let completionTokens = 0;
 
@@ -147,7 +184,7 @@ export async function askAssistant(
       apiKey: apiKey!,
       model: config.model,
       messages,
-      tools: toolDefinitions(tools),
+      tools: definitions,
       temperature: config.temperature,
       maxTokens: config.maxTokens,
       timeoutSeconds: config.timeoutSeconds,
@@ -161,8 +198,12 @@ export async function askAssistant(
     if (calls.length === 0) {
       return {
         ok: true,
-        reply: result.content?.trim() || "پاسخی تولید نشد.",
+        reply: result.content?.trim()
+          || (proposals.length > 0
+            ? "پیشنهاد آماده است؛ خلاصه را ببینید و در صورت تایید ثبت کنید."
+            : "پاسخی تولید نشد."),
         steps,
+        proposals,
         usage: { promptTokens, completionTokens },
       };
     }
@@ -170,6 +211,30 @@ export async function askAssistant(
     messages.push({ role: "assistant", content: result.content ?? "", tool_calls: calls });
 
     for (const call of calls) {
+      const action = actionByName.get(call.name);
+      if (action) {
+        const prepared = await prepareProposal(action, parseArgs(call.arguments), {
+          user, todayJalali,
+        });
+        const failed = "error" in prepared;
+        steps.push({ tool: call.name, arguments: call.arguments, ok: !failed });
+        if (!failed) proposals.push(prepared);
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: JSON.stringify(failed
+            ? { error: (prepared as { error: string }).error }
+            : {
+                status: "awaiting_confirmation",
+                proposalId: (prepared as AssistantProposal).id,
+                note: "پیشنهاد آماده شد و خلاصه‌اش برای تایید به کاربر نشان داده"
+                  + " می‌شود. هنوز هیچ چیزی ثبت نشده است. همین را کوتاه به کاربر"
+                  + " بگو و دوباره این ابزار را صدا نزن.",
+              }),
+        });
+        continue;
+      }
+
       const tool = byName.get(call.name);
       if (!tool) {
         steps.push({ tool: call.name, arguments: call.arguments, ok: false });
@@ -228,6 +293,7 @@ export async function askAssistant(
     ok: false,
     error: `پاسخ در ${config.maxToolCalls} مرحله جمع نشد. سوال را کوچک‌تر بپرسید یا سقف مراحل را در تنظیمات بالا ببرید.`,
     steps,
+    proposals,
   };
 }
 

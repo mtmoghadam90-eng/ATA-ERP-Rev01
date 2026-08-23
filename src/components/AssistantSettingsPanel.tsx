@@ -3,6 +3,7 @@ import { Bot, KeyRound, Loader2, Plug } from 'lucide-react';
 import type { ERPSettings } from '../types';
 import { ApiError } from '../api/client';
 import { assistantApi } from '../api/assistant';
+import { PROPOSAL_TTL_MINUTES } from '../utils/assistantActions';
 
 /**
  * The assistant's settings.
@@ -27,6 +28,7 @@ export default function AssistantSettingsPanel({ settings, updateSettings }: Pro
   const [keyDraft, setKeyDraft] = useState('');
   const [keyHint, setKeyHint] = useState<string | null>(null);
   const [tools, setTools] = useState<{ name: string; description: string }[]>([]);
+  const [actions, setActions] = useState<{ name: string; label: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +39,7 @@ export default function AssistantSettingsPanel({ settings, updateSettings }: Pro
       const result = await assistantApi.config();
       setKeyHint(result.apiKeyHint);
       setTools(result.tools);
+      setActions(result.actions ?? []);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'خواندن تنظیمات دستیار ممکن نشد.');
     }
@@ -265,6 +268,17 @@ export default function AssistantSettingsPanel({ settings, updateSettings }: Pro
               با این گزینه دستیار می‌تواند برای کارهایی مثل صدور پیش‌فاکتور «پیشنهاد» آماده کند.
               هیچ‌چیز بدون فشردن دکمه‌ی تایید شما در سیستم ثبت نمی‌شود.
             </span>
+            {/*
+              What the switch actually permits, spelled out. A checkbox whose
+              label says «کارهایی مثل…» is a decision made in the dark.
+            */}
+            {actions.length > 0 && (
+              <span className="block text-slate-500 mt-1">
+                کارهای قابل پیشنهاد: {actions.map((a) => a.label).join('، ')}.
+                هر کدام فقط برای کاربری فعال است که دسترسی نوشتن در همان ماژول را دارد،
+                و مهلت تایید هر پیشنهاد {PROPOSAL_TTL_MINUTES.toLocaleString('fa-IR')} دقیقه است.
+              </span>
+            )}
           </span>
         </label>
       </div>
