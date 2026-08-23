@@ -34,7 +34,9 @@ import { hasEverPurchased, saleDateOf } from "../src/server/services/customerVal
 import { buildReportingTables } from "../src/reporting/flatten";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
-import { calculateProjectFinance, priceInWarehouseCurrency } from "../src/utils/finance";
+import {
+  calculateProformaFinance, calculateProjectFinance, priceInWarehouseCurrency,
+} from "../src/utils/finance";
 import {
   CHANNELS, MESSAGE_VARIABLES, SAMPLE_VARIABLE_VALUES, isBaleChatId, isWithinQuietHours,
   looksLikeMobile, nextAllowedSendTime, renderTemplate, resolveRecipient, retryDelayMs,
@@ -2492,6 +2494,84 @@ head("Assistant: configuration, and what it is told before it answers");
   });
   ok("actions on but nothing writable is its own message",
     nothingWritable.includes("دسترسی لازم را ندارد"));
+}
+
+head("Exchange difference: paying more rial is not overpaying");
+{
+  /*
+   * A real case, with its real figures.
+   *
+   * 968.22 dollars invoiced at 1,870,000 — so 1,810,571,400 rial of debt. The
+   * customer pays 1,911,025,600 rial months later, when the dollar is worth
+   * more. The extra 100,454,200 is a realized exchange gain: the debt is
+   * settled in full and nothing is left on account.
+   */
+  const proforma = {
+    id: "pf1", proformaNumber: "ATA-05-19-C1",
+    status: "تأیید شده (برنده)", outcomeStatus: "تأیید شده (برنده)",
+    currency: "دلار", historicalExchangeRate: 1_870_000, isCancelled: false,
+    finalAmount: 968.22,
+    items: [{ id: "i1", productName: "فلومتر", quantity: 1, unitPriceRIYAL: 968.22, totalPriceRIYAL: 968.22, status: "برنده" }],
+  } as never;
+  const rates = [{ currency: "USD", rateToRIYAL: 2_000_000 }] as never;
+
+  const receipt = (exchangeRate: number) => ([{
+    id: "t1", proformaId: "pf1", type: "دریافت", status: "تأیید شده",
+    date: "1405/06/01", amountRIYAL: 1_911_025_600,
+    exchangeRate, amountForeign: 0, isDirectForeign: false,
+  }] as never);
+
+  // The rate on the day the money arrived: 1,911,025,600 / 968.22.
+  const settlementRate = Math.round((1_911_025_600 / 968.22) * 10_000) / 10_000;
+  const settled = calculateProformaFinance(proforma, receipt(settlementRate), rates);
+
+  eq("the invoice is 968.22 dollars", settled.salesAmountForeign, 968.22);
+  eq("worth 1,810,571,400 rial at the rate it was priced at",
+    settled.salesAmountHistoricalRiyal, 1_810_571_400);
+  /*
+   * The column says «دریافتی واقعی». It reported the allocated part instead —
+   * so a customer who paid 1,911,025,600 was shown as having paid
+   * 1,810,571,400 and the difference turned up somewhere else entirely.
+   */
+  eq("what was received is what was received",
+    Math.round(settled.actualReceivedRiyal), 1_911_025_600);
+  eq("the debt is settled in full", Math.round(settled.settledAmountForeign * 100) / 100, 968.22);
+  eq("nothing is left owing", Math.round(settled.remainingAmountForeign * 100) / 100, 0);
+  eq("and the settlement reads 100%", settled.settlementPercent, 100);
+  /* The two figures the user was reading, the right way round. */
+  eq("nothing sits on account as an overpayment",
+    Math.round(settled.unallocatedRiyal), 0);
+  eq("the difference is a realized exchange gain",
+    Math.round(settled.realizedGainLoss ?? -1), 100_454_200);
+
+  /*
+   * The same receipt booked at the *historical* rate — which the form briefly
+   * filled in for you — produces the screenshot that was reported: the whole
+   * gain filed under «مبالغ تخصیص‌نیافته» and a gain column reading zero. It
+   * is not a rounding artefact or a display problem; it is what that rate
+   * means, which is why the form no longer chooses it on anybody's behalf.
+   */
+  const atHistorical = calculateProformaFinance(proforma, receipt(1_870_000), rates);
+  eq("booked at the sale's own rate the gain vanishes",
+    Math.round(atHistorical.realizedGainLoss ?? -1), 0);
+  eq("and reappears as money sitting on account",
+    Math.round(atHistorical.unallocatedRiyal), 100_454_200);
+
+  /* Four decimal places, because the column stores four. */
+  const rounded = calculateProformaFinance(proforma, receipt(Math.round(1_911_025_600 / 968.22)), rates);
+  ok("a rate rounded to the whole rial strands a few hundred rial",
+    Math.round(rounded.unallocatedRiyal) > 0);
+  ok("so the offered rate keeps its decimals",
+    readFileSync("src/components/TransactionsView.tsx", "utf-8")
+      .includes("Math.round((amountRIYAL / outstandingForeign) * 10_000) / 10_000"));
+
+  /*
+   * The settlement rate has to be reachable for a rial receipt, which is the
+   * ordinary case: the field used to appear only beside a foreign amount.
+   */
+  ok("the rate is asked for whenever the invoice is in another currency",
+    readFileSync("src/components/TransactionsView.tsx", "utf-8")
+      .includes("(amountForeign > 0 || proformaIsForeign)"));
 }
 
 head("Receipts and payments: a mistake is edited or deleted");

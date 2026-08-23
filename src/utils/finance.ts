@@ -165,7 +165,17 @@ export interface ProformaFinanceReport {
   historicalExchangeRate: number;
   salesAmountHistoricalRiyal: number | null;
   
+  /**
+   * Every rial actually received against this proforma.
+   *
+   * This used to report the *allocated* part — what was left after the excess
+   * had been carved off — under a heading that says «دریافتی واقعی». So a
+   * customer who paid 1,911,025,600 was shown as having paid 1,810,571,400,
+   * and the difference appeared somewhere else entirely.
+   */
   actualReceivedRiyal: number;
+  /** The part of it that settled the debt; the rest is `unallocatedRiyal`. */
+  allocatedReceivedRiyal: number;
   settledAmountForeign: number;
   settledSalesHistoricalRiyal: number | null;
   
@@ -328,6 +338,15 @@ export const calculateProformaFinance = (
     : remainingAmountForeign * currentRate;
   
   // 7. Realized and Unrealized Gains/Losses
+  /*
+   * What of the money received actually went against the debt.
+   *
+   * The realized gain is measured on this rather than on the whole receipt:
+   * money the customer overpaid is not an exchange difference, it is money
+   * sitting on account.
+   */
+  const allocatedReceivedRiyal = actualReceivedRiyal - unallocatedRiyal;
+
   const settledSalesHistoricalRiyal = missingHistoricalRate && settledAmountForeign > 0
     ? null
     : settledAmountForeign * historicalExchangeRate;
@@ -336,7 +355,7 @@ export const calculateProformaFinance = (
   const realizedGainLoss = isRiyal ? 0 : (
     settledSalesHistoricalRiyal === null 
       ? null 
-      : ((actualReceivedRiyal - unallocatedRiyal) - settledSalesHistoricalRiyal)
+      : (allocatedReceivedRiyal - settledSalesHistoricalRiyal)
   );
   
   // Unrealized: Difference between current day value of remaining and its historical value
@@ -359,7 +378,8 @@ export const calculateProformaFinance = (
     salesAmountForeign,
     historicalExchangeRate,
     salesAmountHistoricalRiyal,
-    actualReceivedRiyal: actualReceivedRiyal - unallocatedRiyal, // Allocated received
+    actualReceivedRiyal,
+    allocatedReceivedRiyal,
     settledAmountForeign,
     settledSalesHistoricalRiyal,
     remainingAmountForeign,
@@ -465,7 +485,7 @@ export const calculateProjectFinance = (
       totalSalesHistoricalRiyal += rep.salesAmountHistoricalRiyal;
     }
     
-    totalAllocatedReceivedRiyal += rep.actualReceivedRiyal;
+    totalAllocatedReceivedRiyal += rep.allocatedReceivedRiyal;
     
     if (rep.settledSalesHistoricalRiyal === null) {
       totalSettledSalesHistoricalRiyal = null;
