@@ -59,6 +59,10 @@ import {
 } from "../src/utils/assistantActions";
 import { catalogueMatchesImplementations } from "../src/server/services/assistant/actions";
 import {
+  TOKEN_PREFIX, maskToken, normalizeScope, parseBearer, pathClosedToTokens,
+  scopeAllowsMethod, tokenRefusalReason, visiblePrefix,
+} from "../src/utils/apiTokens";
+import {
   generateDeliveryNotes, getDeliverySummary, updateNotesWithDelivery,
 } from "../src/utils/deliveryNotes";
 import { DEFAULT_SETTINGS } from "../src/seedData";
@@ -2573,6 +2577,102 @@ head("Assistant actions: prepared, never written");
     ok(`${route} does not keep its own numbering rule`,
       !read(route).includes("nextDocumentNumber("));
   }
+}
+
+head("API tokens: one API, one permission model");
+{
+  const good = `${TOKEN_PREFIX}9f31c2b8aa`;
+
+  eq("a bearer header yields the token", parseBearer(`Bearer ${good}`), good);
+  eq("the scheme is matched case-insensitively", parseBearer(`bearer ${good}`), good);
+  /*
+   * Strict about the scheme on purpose: a Basic header carries a base64 blob
+   * that would otherwise be tried as a token, and an empty Bearer would be
+   * tried as an empty one.
+   */
+  eq("a basic header is not a token", parseBearer(`Basic ${good}`), null);
+  eq("an empty bearer is not a token", parseBearer("Bearer "), null);
+  eq("nor is something that is not one of ours", parseBearer("Bearer sk-abc123"), null);
+  eq("and neither is a missing header", parseBearer(undefined), null);
+
+  eq("the visible prefix is short and recognisable", visiblePrefix(good).length, 12);
+  ok("a masked token cannot be used", !maskToken(visiblePrefix(good)).includes("aa"));
+
+  /*
+   * Read-only is decided by method, not by a list of write routes: the endpoint
+   * nobody remembers to add to such a list is the one that matters.
+   */
+  eq("a read token may GET", scopeAllowsMethod("read", "GET"), true);
+  eq("and may not POST", scopeAllowsMethod("read", "POST"), false);
+  eq("nor PUT or DELETE",
+    scopeAllowsMethod("read", "PUT") || scopeAllowsMethod("read", "DELETE"), false);
+  eq("a full token may write", scopeAllowsMethod("full", "DELETE"), true);
+  eq("an unknown scope is read-only", normalizeScope("everything"), "read");
+
+  /* A credential must not be able to mint, widen or revoke credentials. */
+  eq("token management is closed to tokens", pathClosedToTokens("/api/api-tokens"), true);
+  eq("including one of them", pathClosedToTokens("/api/api-tokens/abc/revoke"), true);
+  /*
+   * And the assistant's confirm button exists to mean «a person looked at
+   * this», which a request from an automation platform cannot mean.
+   */
+  eq("so is confirming an assistant proposal",
+    pathClosedToTokens("/api/assistant/actions/p-1/confirm"), true);
+  eq("but the ordinary API is not", pathClosedToTokens("/api/proformas"), false);
+  eq("and neither is asking the assistant a question",
+    pathClosedToTokens("/api/assistant/chat"), false);
+  eq("a query string does not smuggle a path past the check",
+    pathClosedToTokens("/api/api-tokens?x=1"), true);
+
+  const now = Date.parse("2026-08-23T10:00:00Z");
+  const live = { isActive: true, expiresAt: null, userActive: true };
+  eq("a live token is accepted", tokenRefusalReason(live, now), null);
+  ok("a revoked one is not",
+    tokenRefusalReason({ ...live, isActive: false }, now)?.includes("باطل"));
+  ok("nor an expired one",
+    tokenRefusalReason({ ...live, expiresAt: new Date(now - 1000) }, now)?.includes("اعتبار"));
+  eq("one expiring later is fine",
+    tokenRefusalReason({ ...live, expiresAt: new Date(now + 86_400_000) }, now), null);
+  /*
+   * Deactivating somebody must stop their integrations too — that is most of
+   * the point of deactivating them.
+   */
+  ok("and a token belonging to a disabled account is refused",
+    tokenRefusalReason({ ...live, userActive: false }, now)?.includes("غیرفعال"));
+
+  const readSrc = (file: string) => readFileSync(file, "utf-8");
+  const server = readSrc("server.ts");
+
+  /*
+   * The branch has to sit inside `requireAuth`, which every route reaches
+   * through `RouteDeps`. Anywhere else and it would cover the endpoints
+   * somebody remembered.
+   */
+  ok("requireAuth is where a bearer token is resolved",
+    /const requireAuth[\s\S]{0,400}?authFromBearer\(req, res\)/.test(server));
+  ok("and a handled bearer request never falls through to the cookie",
+    /bearer\.handled\) return bearer\.user/.test(server));
+  /*
+   * An async handler that rejects in Express 4 sends nothing at all, so a
+   * database failure during token lookup would leave the integration's socket
+   * hanging until its own timeout — the least useful way to report an outage.
+   */
+  ok("a failure looking the token up answers instead of hanging",
+    /try \{\s*identity = await authenticateToken\(raw\);\s*\} catch/.test(server));
+
+  /* One parser, in the pure module. A second reading of the header would drift. */
+  const serverFiles = readdirSync("src/server/routes").map((f) => `src/server/routes/${f}`);
+  for (const file of serverFiles) {
+    ok(`${file} does not read the Authorization header itself`,
+      !/headers\.authorization/i.test(readSrc(file)));
+  }
+
+  /* Only a hash is stored, and nothing reads a token back out. */
+  const tokenService = readSrc("src/server/services/apiTokenService.ts");
+  ok("the raw token is hashed before it is stored",
+    tokenService.includes("tokenHash: hashToken(token)"));
+  ok("and the summary a screen receives carries no hash",
+    !/tokenHash/.test(tokenService.split("function toSummary")[1].split("}\n")[0]));
 }
 
 head("Activity attachments: a list, with the old single file still readable");

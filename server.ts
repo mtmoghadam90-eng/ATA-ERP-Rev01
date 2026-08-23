@@ -38,6 +38,9 @@ import { registerNotificationRoutes } from "./src/server/routes/notifications";
 import { registerDashboardRoutes } from "./src/server/routes/dashboard";
 import { registerMessagingRoutes } from "./src/server/routes/messaging";
 import { registerAssistantRoutes } from "./src/server/routes/assistant";
+import { registerApiTokenRoutes } from "./src/server/routes/apiTokens";
+import { authenticateToken } from "./src/server/services/apiTokenService";
+import { parseBearer, pathClosedToTokens, scopeAllowsMethod } from "./src/utils/apiTokens";
 import { processQueue } from "./src/server/services/messaging/messageService";
 import { scrapeRates } from "./src/server/rateSource";
 import { ensureRatesFresh } from "./src/server/services/rateRefresh";
@@ -220,11 +223,88 @@ async function startServer() {
     return safe as AuthUser;
   };
 
+  /**
+   * Resolves the caller from an `Authorization: Bearer` API token.
+   *
+   * The whole third-party story is this branch. A token authenticates as one of
+   * the real users, and every route below then applies the same
+   * `checkKeyAccess` it applies to a browser — so n8n, or anything else, drives
+   * the existing API under an existing account's permissions rather than
+   * through a parallel surface with a permission model of its own to keep in
+   * step.
+   *
+   * Two limits belong here rather than in the routes. A read-only token is
+   * refused by **method**, because enumerating the write routes would be a list
+   * to maintain and the endpoint nobody remembers to add is the one that
+   * matters; and a handful of paths are closed to tokens outright — a
+   * credential must not be able to mint or revoke credentials, and it must not
+   * be able to press the assistant's confirm button, which exists to mean "a
+   * person looked at this".
+   *
+   * Returns `handled: true` when it has already answered, so the cookie path is
+   * not tried for a caller who plainly meant to use a token.
+   */
+  const authFromBearer = async (
+    req: express.Request,
+    res: express.Response,
+  ): Promise<{ handled: boolean; user: AuthUser | null }> => {
+    const raw = parseBearer(req.headers.authorization);
+    if (!raw) return { handled: false, user: null };
+
+    /*
+     * A failure here answers, rather than escaping into Express.
+     *
+     * An async handler that rejects in Express 4 sends nothing at all, so the
+     * integration's socket simply hangs — the worst way for "the database is
+     * down" to reach an automation platform, which will sit on it until its own
+     * timeout and report nothing useful.
+     */
+    let identity: Awaited<ReturnType<typeof authenticateToken>>;
+    try {
+      identity = await authenticateToken(raw);
+    } catch (err) {
+      console.error("[api] token authentication failed:", err);
+      res.status(503).json({
+        success: false,
+        error: "بررسی توکن ممکن نشد؛ ارتباط با پایگاه داده برقرار نیست.",
+      });
+      return { handled: true, user: null };
+    }
+
+    if ("error" in identity) {
+      res.status(401).json({ success: false, error: identity.error, code: "UNAUTHENTICATED" });
+      return { handled: true, user: null };
+    }
+
+    if (pathClosedToTokens(req.path)) {
+      res.status(403).json({
+        success: false,
+        code: "FORBIDDEN",
+        error: "این بخش با توکن API قابل استفاده نیست و باید از داخل برنامه انجام شود.",
+      });
+      return { handled: true, user: null };
+    }
+
+    if (!scopeAllowsMethod(identity.scope, req.method)) {
+      res.status(403).json({
+        success: false,
+        code: "FORBIDDEN",
+        error: `توکن «${identity.tokenName}» فقط اجازه‌ی خواندن دارد.`,
+      });
+      return { handled: true, user: null };
+    }
+
+    return { handled: true, user: identity.user };
+  };
+
   /** Rejects unauthenticated callers. */
   const requireAuth = async (
     req: express.Request,
     res: express.Response,
   ): Promise<AuthUser | null> => {
+    const bearer = await authFromBearer(req, res);
+    if (bearer.handled) return bearer.user;
+
     const user = await getAuthUser(req);
     if (!user) {
       res.status(401).json({
@@ -308,6 +388,7 @@ async function startServer() {
 
   const routeDeps = { requireAuth, requireKeyAccess, reissueSession };
   registerAssistantRoutes(app, routeDeps);
+  registerApiTokenRoutes(app, routeDeps);
   registerCustomerRoutes(app, routeDeps);
   registerProjectRoutes(app, routeDeps);
   registerProformaRoutes(app, routeDeps);
@@ -325,12 +406,16 @@ async function startServer() {
   registerDashboardRoutes(app, routeDeps);
 registerMessagingRoutes(app, routeDeps);
 
-  /** Who am I? Lets the client restore its session on reload. */
+  /**
+   * Who am I? Lets the client restore its session on reload.
+   *
+   * Goes through `requireAuth` rather than the cookie alone so an integration
+   * can point a token at it and see which account it is acting as — the first
+   * thing anybody wiring up n8n needs, and the honest place to find it out.
+   */
   app.get("/api/me", async (req, res) => {
-    const user = await getAuthUser(req);
-    if (!user) {
-      return res.status(401).json({ success: false, code: "UNAUTHENTICATED" });
-    }
+    const user = await requireAuth(req, res);
+    if (!user) return;
     res.json({ success: true, user });
   });
 
