@@ -18,7 +18,10 @@
  */
 
 /** The same storyline, over the rules that decide the derived figures. */
-import { getProformaOutcome, getWonItems, deriveProjectStatus, statusWithoutProformas } from "../src/server/proformaStatus";
+import {
+  getProformaOutcome, getWonItems, deriveProjectStatus, statusWithoutProformas,
+  DERIVED_OUTCOMES, matchesWhere, outcomeWhere,
+} from "../src/server/proformaStatus";
 import { getProformaOutcomeStatus } from "../src/useERPStore";
 import { computeInquiryTotals } from "../src/utils/inquirySteps";
 import { toNumber } from "../src/server/childSync";
@@ -2496,6 +2499,74 @@ head("Assistant: configuration, and what it is told before it answers");
   });
   ok("actions on but nothing writable is its own message",
     nothingWritable.includes("دسترسی لازم را ندارد"));
+}
+
+head("Proforma filter: the grid filters on what the badge says");
+{
+  /*
+   * The status filter sent its value at the stored `status` column, and only
+   * two of its six options are ever in that column. «تأیید شده (برنده)»,
+   * «باخته» and «لغو شده» are outcomes derived from the lines, so choosing one
+   * asked SQL for a value nothing holds and the grid came back empty.
+   *
+   * Every combination of up to three lines, over every line status, against
+   * every workflow status and both cancellation flags — the clause and the rule
+   * must agree on all of them, or the filter is showing something other than
+   * what the badge says.
+   */
+  const LINE_STATUSES = ["برنده", "بازنده", "لغو شده", "در انتظار", null];
+  const DOC_STATUSES = ["پیش‌نویس", "ارسال شده", "تأیید شده", null];
+
+  const shapes: { status: string | null; isCancelled: boolean; items: { status: string | null }[] }[] = [];
+  for (const status of DOC_STATUSES) {
+    for (const isCancelled of [false, true]) {
+      shapes.push({ status, isCancelled, items: [] });
+      for (const a of LINE_STATUSES) {
+        shapes.push({ status, isCancelled, items: [{ status: a }] });
+        for (const b of LINE_STATUSES) {
+          shapes.push({ status, isCancelled, items: [{ status: a }, { status: b }] });
+          for (const c of LINE_STATUSES) {
+            shapes.push({ status, isCancelled, items: [{ status: a }, { status: b }, { status: c }] });
+          }
+        }
+      }
+    }
+  }
+
+  let disagreements = 0;
+  let firstBad = "";
+  for (const outcome of DERIVED_OUTCOMES) {
+    const where = outcomeWhere(outcome);
+    if (!where) { disagreements++; continue; }
+    for (const pf of shapes) {
+      const wanted = getProformaOutcome(pf as never) === outcome;
+      const found = matchesWhere(where, pf as never);
+      if (wanted !== found && disagreements++ === 0) {
+        firstBad = `${outcome}: ${JSON.stringify(pf)} — rule says ${wanted}, query says ${found}`;
+      }
+    }
+  }
+
+  ok(`the query and the rule agree on all ${shapes.length.toLocaleString("en-US")} shapes × ${DERIVED_OUTCOMES.length} outcomes`,
+    disagreements === 0, firstBad || disagreements);
+
+  /* The two that really are columns are left as plain equality. */
+  ok("«ارسال شده» is a workflow status and gets its own clause",
+    outcomeWhere("ارسال شده") !== null);
+  eq("something that is neither is left alone", outcomeWhere("چیز دیگر"), null);
+
+  const readSrc = (file: string) => readFileSync(file, "utf-8");
+  ok("the server translates a status filter into an outcome query",
+    readSrc("src/server/services/proformaService.ts").includes("outcomeWhere("));
+  /*
+   * And the screen no longer re-filters the page it was given. The server
+   * answered correctly and the browser then dropped rows from it — the same
+   * filter running twice, one of them over one page.
+   */
+  ok("the screen does not filter the page again",
+    !readSrc("src/components/ProformasView.tsx").includes("getProformaOutcomeStatus(p) === selectedStatus"));
+  ok("and «نیمه برنده» can be asked for at all",
+    readSrc("src/components/ProformasView.tsx").includes('<option value="نیمه برنده">'));
 }
 
 head("The ledger names things from the row, not from a picker");
