@@ -28,8 +28,17 @@ export interface AssistantConfig {
    * refuse.
    */
   systemPrompt: string;
-  /** 0 is repeatable and right for questions about figures. */
-  temperature: number;
+  /**
+   * 0 is repeatable and right for questions about figures — where the model
+   * lets it be set at all.
+   *
+   * `null` means «leave it to the model», and the field is then not sent. That
+   * is not a nicety: the reasoning models (o-series, gpt-5 and what the Iranian
+   * gateways proxy of them) reject *any* explicit temperature — «does not
+   * support 0 with this model. Only the default (1) value is supported» — so a
+   * setting that could only ever be a number made those models unusable.
+   */
+  temperature: number | null;
   maxTokens: number;
   /**
    * How many rounds of tool calls one question may take.
@@ -56,7 +65,9 @@ export const DEFAULT_ASSISTANT_CONFIG: AssistantConfig = {
   baseUrl: "https://api.openai.com/v1",
   model: "gpt-4o-mini",
   systemPrompt: "",
-  temperature: 0,
+  // Absent means the model's own default, which is the setting that works
+  // everywhere. A stored 0 is still honoured; see `resolveAssistantConfig`.
+  temperature: null,
   maxTokens: 2000,
   maxToolCalls: 12,
   timeoutSeconds: 60,
@@ -68,6 +79,21 @@ const clamp = (value: unknown, min: number, max: number, fallback: number): numb
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));
 };
+
+/**
+ * The stored temperature, or null for «let the model decide».
+ *
+ * Anything that is not a usable figure — absent, null, a corrupt value — comes
+ * back as null rather than as 0. Those are different instructions, and reading
+ * one as the other is precisely what sends an explicit temperature to a model
+ * that refuses to be given one.
+ */
+function temperatureOf(stored: unknown): number | null {
+  if (stored === null || stored === undefined || stored === "") return null;
+  const value = Number(stored);
+  if (!Number.isFinite(value)) return null;
+  return Math.min(2, Math.max(0, value));
+}
 
 /**
  * A stored configuration filled in with the defaults.
@@ -85,7 +111,12 @@ export function resolveAssistantConfig(
       || DEFAULT_ASSISTANT_CONFIG.baseUrl,
     model: String(raw.model ?? "").trim() || DEFAULT_ASSISTANT_CONFIG.model,
     systemPrompt: String(raw.systemPrompt ?? ""),
-    temperature: clamp(raw.temperature, 0, 2, DEFAULT_ASSISTANT_CONFIG.temperature),
+    /*
+     * Absent or null is «the model decides», which is different from 0 and has
+     * to survive the round trip — reading a missing value as 0 is what sends an
+     * explicit temperature to a model that refuses one.
+     */
+    temperature: temperatureOf(raw.temperature),
     maxTokens: clamp(raw.maxTokens, 256, 32000, DEFAULT_ASSISTANT_CONFIG.maxTokens),
     maxToolCalls: clamp(raw.maxToolCalls, 1, 30, DEFAULT_ASSISTANT_CONFIG.maxToolCalls),
     timeoutSeconds: clamp(raw.timeoutSeconds, 5, 300, DEFAULT_ASSISTANT_CONFIG.timeoutSeconds),
@@ -102,6 +133,37 @@ export function assistantUnavailableReason(
   if (!config.baseUrl) return "آدرس پایه سرویس هوش مصنوعی ثبت نشده است.";
   if (!config.model) return "مدل سرویس هوش مصنوعی ثبت نشده است.";
   if (!hasApiKey) return "کلید API سرویس هوش مصنوعی ثبت نشده است.";
+  return null;
+}
+
+/**
+ * The request parameter a provider has just refused, or null.
+ *
+ * Some models accept only their own default temperature, and the o-series
+ * family renamed `max_tokens` to `max_completion_tokens` — both answer 400 with
+ * a message naming the field. Reading the name out of that message is what lets
+ * the request be sent again without it rather than handing the user a provider
+ * error and a setting they have no way to guess at.
+ *
+ * Matched narrowly on purpose: a 400 that merely mentions the word temperature
+ * in passing is not permission to start dropping fields.
+ */
+export type DroppableParameter = "temperature" | "max_tokens";
+
+export function unsupportedParameterFrom(
+  status: number,
+  body: string,
+): DroppableParameter | null {
+  if (status !== 400) return null;
+  const text = String(body ?? "");
+
+  if (/unsupported (value|parameter)[^\n]*'temperature'/i.test(text)
+    || /'temperature'[^\n]*(is not supported|does not support|unsupported)/i.test(text)) {
+    return "temperature";
+  }
+  if (/'?max_tokens'?[^\n]*(is not supported|unsupported|use '?max_completion_tokens)/i.test(text)) {
+    return "max_tokens";
+  }
   return null;
 }
 

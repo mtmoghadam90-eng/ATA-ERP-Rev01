@@ -52,7 +52,7 @@ import {
 } from "../src/utils/attachments";
 import {
   DEFAULT_ASSISTANT_CONFIG, assistantUnavailableReason, buildSystemPrompt,
-  resolveAssistantConfig,
+  resolveAssistantConfig, unsupportedParameterFrom,
 } from "../src/utils/assistant";
 import {
   ASSISTANT_ACTIONS, PROPOSAL_TTL_MINUTES, confirmRefusalReason, proposalExpired,
@@ -2490,6 +2490,75 @@ head("Assistant: configuration, and what it is told before it answers");
   });
   ok("actions on but nothing writable is its own message",
     nothingWritable.includes("دسترسی لازم را ندارد"));
+}
+
+head("Assistant: a temperature the model refuses to be told");
+{
+  /*
+   * The reported failure, verbatim from avalai.ir. Some models accept only
+   * their own default temperature and answer 400 to any explicit value — so a
+   * setting that could only ever be a number made those models unusable, and
+   * the test button sent 0 whatever the setting said.
+   */
+  const refusal = JSON.stringify({
+    error: {
+      message: "Unsupported value: 'temperature' does not support 0 with this"
+        + " model. Only the default (1) value is supported.",
+    },
+  });
+
+  eq("the refused parameter is read out of the provider's own words",
+    unsupportedParameterFrom(400, refusal), "temperature");
+  eq("the o-series token cap rename is recognised too",
+    unsupportedParameterFrom(400, "Unsupported parameter: 'max_tokens' is not"
+      + " supported with this model. Use 'max_completion_tokens' instead."),
+    "max_tokens");
+
+  /* Narrow on purpose: a 400 is not permission to start dropping fields. */
+  eq("an unrelated 400 drops nothing",
+    unsupportedParameterFrom(400, "invalid request: messages must not be empty"), null);
+  eq("a 400 merely mentioning temperature drops nothing",
+    unsupportedParameterFrom(400, "the temperature of the room is irrelevant"), null);
+  eq("and a 401 is a key problem, not a parameter one",
+    unsupportedParameterFrom(401, refusal), null);
+
+  /*
+   * Absent means «the model decides», which is a different instruction from 0
+   * and has to survive the round trip. Reading a missing value as 0 is exactly
+   * what sends an explicit temperature to a model that refuses one.
+   */
+  eq("an unset temperature stays unset",
+    resolveAssistantConfig({}).temperature, null);
+  eq("an explicit null stays null",
+    resolveAssistantConfig({ temperature: null }).temperature, null);
+  eq("a stored zero is still honoured",
+    resolveAssistantConfig({ temperature: 0 }).temperature, 0);
+  eq("and a stored figure is bounded",
+    resolveAssistantConfig({ temperature: 9 }).temperature, 2);
+  eq("a fresh installation leaves it to the model",
+    DEFAULT_ASSISTANT_CONFIG.temperature, null);
+
+  const readSrc = (file: string) => readFileSync(file, "utf-8");
+  const service = readSrc("src/server/services/assistant/assistantService.ts");
+  /*
+   * The connection test has to send what the assistant sends. It hardcoded 0
+   * while the screen offered a box to change it, so it exercised a request
+   * nobody had configured and failed however the setting was left.
+   */
+  ok("the connection test sends the configured temperature",
+    !/temperature: 0,/.test(service));
+
+  const provider = readSrc("src/server/services/assistant/provider.ts");
+  ok("a null temperature is left out of the body rather than sent as null",
+    provider.includes('typeof request.temperature === "number"'));
+  ok("and each refused parameter is dropped at most once",
+    provider.includes("dropped.has(refused)"));
+  /*
+   * Dropping the token cap is never an option — it is the only thing between a
+   * confused model and a bill. It is renamed instead.
+   */
+  ok("the token cap is renamed, never removed",
+    provider.includes("max_completion_tokens: request.maxTokens"));
 }
 
 head("Assistant actions: prepared, never written");

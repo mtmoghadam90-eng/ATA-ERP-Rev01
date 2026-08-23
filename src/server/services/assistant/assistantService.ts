@@ -311,7 +311,16 @@ export async function testAssistant(): Promise<{ ok: boolean; error?: string; re
     apiKey,
     model: config.model,
     messages: [{ role: "user", content: "بگو: اتصال برقرار است." }],
-    temperature: 0,
+    /*
+     * The configured temperature, not a hardcoded one.
+     *
+     * It was 0 here while the settings screen offered a box to change it, so
+     * the test button exercised a request nobody had configured — and a model
+     * that accepts only its own default answered 400 however the setting was
+     * left. A connection test that does not send what the assistant sends is
+     * testing the wrong thing.
+     */
+    temperature: config.temperature,
     maxTokens: 32,
     timeoutSeconds: Math.min(config.timeoutSeconds, 30),
   });
