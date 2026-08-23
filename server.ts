@@ -37,6 +37,7 @@ import { registerActivityRoutes } from "./src/server/routes/activities";
 import { registerNotificationRoutes } from "./src/server/routes/notifications";
 import { registerDashboardRoutes } from "./src/server/routes/dashboard";
 import { registerMessagingRoutes } from "./src/server/routes/messaging";
+import { registerAssistantRoutes } from "./src/server/routes/assistant";
 import { processQueue } from "./src/server/services/messaging/messageService";
 import { scrapeRates } from "./src/server/rateSource";
 import { ensureRatesFresh } from "./src/server/services/rateRefresh";
@@ -306,6 +307,7 @@ async function startServer() {
   };
 
   const routeDeps = { requireAuth, requireKeyAccess, reissueSession };
+  registerAssistantRoutes(app, routeDeps);
   registerCustomerRoutes(app, routeDeps);
   registerProjectRoutes(app, routeDeps);
   registerProformaRoutes(app, routeDeps);

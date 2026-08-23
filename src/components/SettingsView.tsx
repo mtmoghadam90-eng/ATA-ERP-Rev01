@@ -26,11 +26,13 @@ import {
   Copy,
   ShieldAlert,
   Award,
-  X
+  X,
+  Bot
 } from 'lucide-react';
 import { ERPSettings, CustomField, User, Project, AuditLog, WorkflowRule } from '../types';
 import { APP_MODULES, DEFAULT_MODULE_ORDER } from '../appModules';
 import { MODULE_ICONS } from './moduleIcons';
+import AssistantSettingsPanel from './AssistantSettingsPanel';
 import { MessageTemplateRow, messagingApi } from '../api/messaging';
 import { CHANNEL_LABELS, Channel } from '../utils/messaging';
 import { formatERPNumber } from '../numUtils';
@@ -100,7 +102,7 @@ export default function SettingsView({
   };
   
   // Tab control
-  const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields' | 'customerValue'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields' | 'customerValue' | 'assistant'>('general');
 
   // Mandatory / optional fields state
   const [localRequiredFields, setLocalRequiredFields] = useState<Record<string, Record<string, boolean>>>(() => {
@@ -1027,6 +1029,18 @@ export default function SettingsView({
         </button>
 
         <button
+          onClick={() => setActiveTab('assistant')}
+          className={`py-2 px-4 md:py-2.5 md:px-5 text-xs md:text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 rounded-xl border flex-shrink-0 ${
+            activeTab === 'assistant'
+              ? 'bg-sky-50 text-sky-600 border-sky-300 shadow-sm shadow-sky-100'
+              : 'bg-white text-slate-500 hover:text-slate-800 hover:bg-slate-50 border-slate-200'
+          }`}
+        >
+          <Bot size={16} className="text-indigo-500" />
+          دستیار هوشمند
+        </button>
+
+        <button
           onClick={() => setActiveTab('customerValue')}
           className={`py-2 px-4 md:py-2.5 md:px-5 text-xs md:text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 rounded-xl border flex-shrink-0 ${
             activeTab === 'customerValue'
@@ -1149,6 +1163,8 @@ export default function SettingsView({
             </div>
           </div>
         </div>
+      ) : activeTab === 'assistant' ? (
+        <AssistantSettingsPanel settings={settings} updateSettings={updateSettings} />
       ) : activeTab === 'customerValue' ? (
         <CustomerValueSettingsPanel settings={settings} updateSettings={updateSettings} />
       ) : activeTab === 'rates' ? (

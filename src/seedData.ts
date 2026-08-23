@@ -234,6 +234,22 @@ export const DEFAULT_SETTINGS: ERPSettings = {
    * just configured a provider wants. Dry run is the switch somebody turns on
    * deliberately while trying a rule out.
    */
+  /*
+   * Off until somebody configures it: it needs a provider, a key and a model,
+   * and an assistant that answers «کلید ثبت نشده» on the front page of a fresh
+   * installation is worse than one that is simply not there yet.
+   */
+  assistant: {
+    enabled: false,
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    systemPrompt: '',
+    temperature: 0,
+    maxTokens: 2000,
+    maxToolCalls: 12,
+    timeoutSeconds: 60,
+    allowActions: false,
+  },
   messaging: {
     quietHours: { from: null, to: null },
     dryRun: false,

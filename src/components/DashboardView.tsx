@@ -35,6 +35,7 @@ import { useRevalidate } from '../api/liveData';
 import { rowToTask, tasksApi } from '../api/tasks';
 import type { TaskRow } from '../api/tasks';
 import { formatMoney } from '../numUtils';
+import AssistantPanel from './AssistantPanel';
 
 /**
  * The front page.
@@ -243,6 +244,15 @@ export default function DashboardView({
           </div>
         </div>
       </div>
+
+      {/*
+        The assistant, directly under the banner.
+
+        It draws nothing at all for an account without the permission — the
+        panel asks the server whether it is allowed before it renders, so this
+        is not a hidden-but-present control.
+      */}
+      <AssistantPanel />
 
       {/* 2. Top Metrics Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">

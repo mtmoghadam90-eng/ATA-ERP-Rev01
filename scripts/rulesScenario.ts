@@ -51,6 +51,10 @@ import {
   MAX_ACTIVITY_ATTACHMENTS, attachmentColumns, normalizeAttachments, parseAttachments,
 } from "../src/utils/attachments";
 import {
+  DEFAULT_ASSISTANT_CONFIG, assistantUnavailableReason, buildSystemPrompt,
+  resolveAssistantConfig,
+} from "../src/utils/assistant";
+import {
   generateDeliveryNotes, getDeliverySummary, updateNotesWithDelivery,
 } from "../src/utils/deliveryNotes";
 import { DEFAULT_SETTINGS } from "../src/seedData";
@@ -2400,6 +2404,65 @@ head("Activity category settings: usage is asked, not assumed");
     /renameCategory[\s\S]{0,600}updateMany\([\s\S]{0,200}categoryName/.test(service));
   ok("the bulk usage count is one query, not one per category",
     /categoryUsage[\s\S]{0,400}groupBy/.test(service));
+}
+
+head("Assistant: configuration, and what it is told before it answers");
+{
+  const c = resolveAssistantConfig(undefined);
+  eq("an unconfigured assistant is off", c.enabled, false);
+  eq("and never proposes writes", c.allowActions, false);
+  ok("but has a usable default base url and model", !!c.baseUrl && !!c.model);
+
+  eq("a trailing slash on the base url is dropped — the client appends the path",
+    resolveAssistantConfig({ baseUrl: "https://x/v1///" }).baseUrl, "https://x/v1");
+  eq("a blank base url falls back rather than producing a broken request",
+    resolveAssistantConfig({ baseUrl: "   " }).baseUrl, DEFAULT_ASSISTANT_CONFIG.baseUrl);
+
+  /*
+   * Every number is bounded here rather than at the call site: a step limit of
+   * 500 typed into the settings screen is a bill, not a preference.
+   */
+  eq("the step limit is capped", resolveAssistantConfig({ maxToolCalls: 500 }).maxToolCalls, 30);
+  eq("and floored", resolveAssistantConfig({ maxToolCalls: 0 }).maxToolCalls, 1);
+  eq("nonsense falls back to the default",
+    resolveAssistantConfig({ temperature: Number.NaN }).temperature,
+    DEFAULT_ASSISTANT_CONFIG.temperature);
+  eq("the timeout is bounded too", resolveAssistantConfig({ timeoutSeconds: 9999 }).timeoutSeconds, 300);
+
+  /* Why it cannot run, in the order somebody would fix them. */
+  const ready = resolveAssistantConfig({ enabled: true, baseUrl: "https://x/v1", model: "m" });
+  eq("disabled is the first thing reported",
+    assistantUnavailableReason(resolveAssistantConfig({}), true)?.includes("فعال نیست"), true);
+  eq("then the missing key",
+    assistantUnavailableReason(ready, false)?.includes("کلید"), true);
+  eq("and a configured assistant has no reason at all",
+    assistantUnavailableReason(ready, true), null);
+
+  /*
+   * The instructions are most of what makes an assistant over a business system
+   * useful, so they are pinned: the calendar, the currency, and the rule that
+   * it may not invent a figure.
+   */
+  const prompt = buildSystemPrompt({
+    companyName: "ابزار تامین آرشیا", todayJalali: "1405/06/01", userName: "محمد",
+    canSeeCosts: true, actionsAllowed: false, extra: "همیشه به تومان هم بنویس.",
+  });
+  ok("it is told today's date", prompt.includes("1405/06/01"));
+  ok("and whose question it is answering", prompt.includes("محمد"));
+  ok("and that it must not guess a number", prompt.includes("حدس نزن"));
+  ok("house instructions are appended, not substituted",
+    prompt.includes("همیشه به تومان هم بنویس.") && prompt.includes("حدس نزن"));
+
+  const blind = buildSystemPrompt({
+    companyName: "x", todayJalali: "1405/06/01", userName: "y",
+    canSeeCosts: false, actionsAllowed: true, extra: "",
+  });
+  ok("a cost-blind user's assistant is told it has no cost figures",
+    blind.includes("بهای تمام‌شده"));
+  ok("and one allowed to act is told it only proposes",
+    blind.includes("تایید کاربر"));
+  ok("while one that is not is told to say so",
+    prompt.includes("فعال نشده"));
 }
 
 head("Activity attachments: a list, with the old single file still readable");

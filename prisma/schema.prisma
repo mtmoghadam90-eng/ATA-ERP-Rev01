@@ -1558,3 +1558,16 @@ model Message {
   @@index([createdAt])
   @@map("messages")
 }
+
+/// The assistant's provider credentials.
+///
+/// Its own table rather than a field on the settings document, which is loaded
+/// whole by every browser: a key there would be handed to every signed-in user.
+/// One row, keyed by a fixed id, because there is one assistant.
+model AssistantCredentials {
+  id        String   @id @db.NVarChar(36)
+  apiKey    String?  @db.NVarChar(500)
+  updatedAt DateTime @default(now())
+
+  @@map("assistant_credentials")
+}
