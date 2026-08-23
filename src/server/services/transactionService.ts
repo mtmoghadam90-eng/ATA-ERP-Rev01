@@ -12,16 +12,20 @@ import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projec
 /**
  * Transaction (receipts and payments) data access.
  *
- * Money records are never edited into a different shape or quietly deleted once
- * they are confirmed — a correction is a reversing entry that points back at the
- * original, so the trail shows what happened rather than hiding it. See
- * `reverseTransaction`.
+ * **A document entered by mistake is corrected by editing it or deleting it.**
+ * This module used to insist on a reversing entry instead — the textbook
+ * answer, and the right one for a general ledger — but the screen never grew
+ * anywhere to issue one, so in practice a confirmed document could be neither
+ * edited in amount nor removed, and the error told the user to do something the
+ * application gave them no way to do. Deleting takes the row's effect with it,
+ * because a transaction's only effect is the money it contributes to the
+ * totals; the deletion itself is recorded in the audit log with a full before
+ * snapshot, which is where the trail lives.
  */
 
 export const RECEIPT = "دریافت";
 export const PAYMENT = "پرداخت";
 const CONFIRMED = "تأیید شده";
-const REVERSED = "ابطال شده";
 
 export const TRANSACTION_SORTABLE = [
   "documentNumber", "occurredAt", "amountRial", "type", "status", "createdAt",
@@ -106,15 +110,25 @@ export async function getTransaction(id: string, user: AuthUser) {
 }
 
 /**
- * Statuses that affect the balance.
+ * Statuses that do **not** affect the balance.
  *
- * A reversed entry stays in the totals on purpose. Its reversal is an opposite
- * entry that is itself counted, so the pair cancels to zero — which is the point
- * of correcting by reversal. Dropping the original while keeping the reversal
- * would apply the correction twice and understate the balance by the full
- * amount. Only entries that were never confirmed (drafts) are excluded.
+ * Written as an exclusion rather than a list of the ones that count, because
+ * that is the safer default: a status nobody thought of counts as real money
+ * rather than silently vanishing from the balance. Only a document explicitly
+ * marked a draft or cancelled is left out.
+ *
+ * «ابطال شده» is deliberately still counted. Reversal is no longer how a
+ * mistake is corrected here, but a database written before that may hold a
+ * reversed original *and* its opposite entry — and those two cancel only if
+ * both are counted. Dropping the original while keeping its reversal would
+ * apply the correction twice.
  */
-const EFFECTIVE_STATUSES = [CONFIRMED, REVERSED];
+export const IGNORED_STATUSES = ["پیش‌نویس", "لغو شده"];
+
+/** Whether a document with this status is money. Pure, and covered by `test:rules`. */
+export function countsTowardBalance(status: string | null | undefined): boolean {
+  return !IGNORED_STATUSES.includes(String(status ?? ""));
+}
 
 /**
  * Receipts and payments totalled in SQL, honouring the same filters as the list.
@@ -133,7 +147,7 @@ export async function transactionSummary(
 
   const grouped = await db.transaction.groupBy({
     by: ["type"],
-    where: { AND: [where, { status: { in: EFFECTIVE_STATUSES } }] },
+    where: { AND: [where, { status: { notIn: IGNORED_STATUSES } }] },
     _sum: { amountRial: true },
     _count: { _all: true },
   });
@@ -332,28 +346,24 @@ export async function createTransaction(input: TransactionInput, user: AuthUser,
 /**
  * Edits a transaction.
  *
- * A reversed entry is frozen: it and its reversal are a matched pair, and
- * changing either would break the correspondence that makes the correction
- * auditable.
+ * Nothing is frozen. A document with a wrong figure on it is a wrong figure in
+ * the balance, and the correction is to put the right one there; the audit log
+ * keeps the before and after, which is what makes the change explicable
+ * afterwards.
  */
 export async function updateTransaction(
   id: string,
   input: TransactionInput,
   user: AuthUser,
   todayJalali: string,
-): Promise<"forbidden" | "not-found" | "frozen" | { transaction: unknown }> {
+): Promise<"forbidden" | "not-found" | { transaction: unknown }> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
 
-  const existing = await db.transaction.findUnique({
-    where: { id },
-    select: { id: true, status: true, reversalOfTransactionId: true },
-  });
-  if (!existing) return "not-found";
-  if (existing.status === REVERSED || existing.reversalOfTransactionId) return "frozen";
-
-  // Get before state for audit log
+  // Read once, for the audit entry's before snapshot and to answer "not-found"
+  // before attempting a write that would throw P2025 instead.
   const before = await db.transaction.findUnique({ where: { id } });
+  if (!before) return "not-found";
 
   const data = scalarData(input);
   resolveAmount(input, data);
@@ -393,99 +403,18 @@ export async function updateTransaction(
 }
 
 /**
- * Reverses a transaction with an opposite entry rather than deleting it.
+ * Deletes a transaction, whatever its status.
  *
- * Deleting money that has been recorded loses the fact that it was ever
- * recorded. A reversal writes a mirror-image entry pointing back at the
- * original, marks the original reversed, and leaves both visible — which is what
- * makes a correction explicable afterwards.
- */
-export async function reverseTransaction(
-  id: string,
-  documentNumber: string,
-  user: AuthUser,
-  todayJalali: string,
-): Promise<"forbidden" | "not-found" | "already-reversed" | { reversal: unknown }> {
-  if (!allowed(user)) return "forbidden";
-  const db = getDb();
-
-  // Read once outside the transaction so the timeline entry below can describe
-  // what was reversed; the authoritative check is re-run inside it, because two
-  // concurrent reversals must not both get past it.
-  const original = await db.transaction.findUnique({ where: { id } });
-  if (!original) return "not-found";
-  if (original.status === REVERSED || original.reversalOfTransactionId) return "already-reversed";
-
-  const result = await db.$transaction(async (tx) => {
-    const current = await tx.transaction.findUnique({
-      where: { id },
-      select: { status: true, reversalOfTransactionId: true },
-    });
-    if (!current) return "not-found" as const;
-    if (current.status === REVERSED || current.reversalOfTransactionId) {
-      return "already-reversed" as const;
-    }
-
-    const reversal = await tx.transaction.create({
-      data: {
-        documentNumber,
-        // The mirror image: a receipt is undone by a payment.
-        type: original.type === RECEIPT ? PAYMENT : RECEIPT,
-        receiptType: original.receiptType,
-        status: CONFIRMED,
-        ...expandDateFields({ occurredAt: todayJalali }, TRANSACTION_DATE_FIELDS),
-        customerId: original.customerId,
-        supplierId: original.supplierId,
-        projectId: original.projectId,
-        proformaId: original.proformaId,
-        purchaseOrderId: original.purchaseOrderId,
-        partyName: original.partyName,
-        amountRial: original.amountRial,
-        amountForeign: original.amountForeign,
-        exchangeRate: original.exchangeRate,
-        isDirectForeign: original.isDirectForeign,
-        paymentType: original.paymentType,
-        referenceNumber: original.referenceNumber,
-        notes: `ابطال سند ${original.documentNumber}`,
-        reversalOfTransactionId: original.id,
-      } as Prisma.TransactionUncheckedCreateInput,
-    });
-
-    await tx.transaction.update({ where: { id }, data: { status: REVERSED } });
-    return { reversal };
-  });
-
-  if (typeof result === "string") return result;
-
-  // A reversal is how a confirmed entry is corrected, so it is the thing the
-  // timeline should show — the original is never deleted and never logged as
-  // such.
-  await logProjectFact(
-    {
-      projectId: original.projectId,
-      categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
-      text:
-        `سند ${original.type === RECEIPT ? "دریافت" : "پرداخت"} شماره ${original.documentNumber || "-"}` +
-        ` ابطال شد.` +
-        ` سند اصلاحی (معکوس) با شماره ${documentNumber} صادر گردید؛` +
-        ` اثر مالی این دو سند یکدیگر را خنثی می‌کند و مانده پروژه به وضعیت پیش از سند اصلی بازمی‌گردد.`,
-    },
-    user,
-    todayJalali,
-  );
-
-  return result;
-}
-
-/**
- * Deletes a transaction.
+ * It used to refuse a confirmed one and tell the user to issue a reversing
+ * entry instead. Every document this screen writes is confirmed and the screen
+ * has no way to issue a reversal, so that refusal made a mistyped receipt
+ * permanent — the error named a remedy the application did not offer.
  *
- * Only ever allowed for an entry that is not confirmed — a draft entered by
- * mistake. A confirmed one is corrected by reversal, and a reversal itself is
- * never removed, or the original would be left marked reversed with nothing
- * explaining it.
- */
-/**
+ * Deleting the row removes its effect in full, because the effect *is* the row:
+ * a transaction moves no stock and reconciles nothing, it only contributes its
+ * amount to the balances, and those are computed from the rows that exist. What
+ * survives is the audit entry, which carries the whole document as it stood.
+ *
  * `removeActivities` takes the automatic timeline entries about this record
  * with it — matched on the link each entry stores, never on its wording — and
  * drops a category group that is left empty. The default keeps them, and the
@@ -497,26 +426,19 @@ export async function deleteTransaction(
   user: AuthUser,
   todayJalali: string,
   removeActivities = false,
-): Promise<"ok" | "forbidden" | "not-found" | "confirmed"> {
+): Promise<"ok" | "forbidden" | "not-found"> {
   if (!allowed(user)) return "forbidden";
   const db = getDb();
 
-  const existing = await db.transaction.findUnique({
-    where: { id },
-    select: { id: true, status: true, reversalOfTransactionId: true, documentNumber: true },
-  });
-  if (!existing) return "not-found";
-  if (existing.status === CONFIRMED || existing.status === REVERSED || existing.reversalOfTransactionId) {
-    return "confirmed";
-  }
-
-  // Get transaction info for audit log before deletion
+  // Read in full first: this is the only copy of the document that will exist
+  // after the next line, and it is what the audit entry carries.
   const transaction = await db.transaction.findUnique({ where: { id } });
+  if (!transaction) return "not-found";
 
   await db.transaction.delete({ where: { id } });
 
   // Audit log
-  if (transaction) {
+  {
     await logAction(
       {
         action: "DELETE",

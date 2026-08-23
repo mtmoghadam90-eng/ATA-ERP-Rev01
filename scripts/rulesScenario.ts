@@ -75,7 +75,7 @@ import {
   redactPurchaseOrder, redactProforma, redactValueDetail, redactValueSummary,
   stripProductCostInput,
 } from "../src/server/costs";
-import { describeTransaction } from "../src/server/services/transactionService";
+import { countsTowardBalance, describeTransaction } from "../src/server/services/transactionService";
 import { rowToCustomer } from "../src/api/customerAdapter";
 import { rowToProject } from "../src/api/projectAdapter";
 import { rowToProforma } from "../src/api/proformaAdapter";
@@ -2490,6 +2490,72 @@ head("Assistant: configuration, and what it is told before it answers");
   });
   ok("actions on but nothing writable is its own message",
     nothingWritable.includes("دسترسی لازم را ندارد"));
+}
+
+head("Receipts and payments: a mistake is edited or deleted");
+{
+  /*
+   * The balance rule, written as an exclusion.
+   *
+   * A status nobody thought of has to count as money rather than silently
+   * vanish from the balance, which is the direction that goes unnoticed.
+   */
+  eq("a confirmed document is money", countsTowardBalance("تأیید شده"), true);
+  eq("a draft is not", countsTowardBalance("پیش‌نویس"), false);
+  eq("nor is a cancelled one", countsTowardBalance("لغو شده"), false);
+  /*
+   * A database written before reversal was dropped may hold a reversed
+   * original *and* its opposite entry. Those cancel only if both count —
+   * dropping the original while keeping its reversal applies the correction
+   * twice.
+   */
+  eq("a reversed one still counts, so its pair cancels",
+    countsTowardBalance("ابطال شده"), true);
+  eq("and so does a status nobody anticipated", countsTowardBalance("چیز دیگر"), true);
+
+  const readSrc = (file: string) => readFileSync(file, "utf-8");
+  const service = readSrc("src/server/services/transactionService.ts");
+  const route = readSrc("src/server/routes/transactions.ts");
+  const view = readSrc("src/components/TransactionsView.tsx");
+
+  /*
+   * Deleting must not be refused by status. Every document this screen writes
+   * is confirmed and it has no way to issue a reversal, so refusing a confirmed
+   * one made a mistyped receipt permanent — and the error named a remedy the
+   * application did not offer.
+   */
+  ok("nothing refuses a delete by status", !service.includes('return "confirmed"'));
+  ok("and the route has no reversal remedy to point at", !route.includes("MUST_REVERSE"));
+  ok("there is no reversing entry left to issue", !route.includes("/reverse"));
+  ok("nor a service that writes one", !service.includes("export async function reverseTransaction"));
+  ok("and editing is not frozen", !route.includes('code: "FROZEN"'));
+
+  /*
+   * The ledger's totals come from SQL over the whole query. Summed from the
+   * rows in hand they are the total of one page, and they count drafts.
+   */
+  ok("the summary cards read the server's totals",
+    view.includes("list.summary?.receivedRial"));
+  ok("and are not summed from the page in hand",
+    !/const totalReceived = transactions\s*\n\s*\.filter/.test(view));
+
+  /*
+   * The settlement rate is offered from the proforma being paid, and a picker
+   * only ever holds list rows — so the row has to carry the column.
+   */
+  ok("a proforma list row carries the rate it was priced at",
+    readSrc("src/server/services/proformaService.ts")
+      .includes("historicalExchangeRate: true,"));
+  ok("and the row adapter passes it on",
+    readSrc("src/api/proformaAdapter.ts").includes("historicalExchangeRate: row.historicalExchangeRate"));
+
+  /*
+   * The guard that blocked every edit of a confirmed document. It compared a
+   * stored `undefined` against the form's `0`, so it fired even when the amount
+   * had not been touched.
+   */
+  ok("no guard refuses an amount change on a confirmed document",
+    !view.includes("امکان تغییر مبلغ برای تراکنش تأیید شده وجود ندارد"));
 }
 
 head("Assistant: a temperature the model refuses to be told");
