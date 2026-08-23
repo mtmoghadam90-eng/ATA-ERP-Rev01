@@ -10,7 +10,7 @@ import { afterCommit } from "../afterCommit";
 import { describeProformaChanges, proformaChangeSentence } from "./proformaChanges";
 import {
   ProformaOutcome, deriveProjectStatus, getProformaOutcome, getWonItems, isWonStatus,
-  statusWithoutProformas,
+  outcomeWhere, statusWithoutProformas,
 } from "../proformaStatus";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
@@ -109,6 +109,18 @@ export function buildProformaWhere(
   }
 
   for (const [field, value] of Object.entries(q.filters)) {
+    /*
+     * The status filter means the outcome, because the outcome is what the
+     * grid prints. Sent at the column it only ever matched «پیش‌نویس» and
+     * «ارسال شده»; the other options are derived from the lines and the
+     * cancellation flag, so asking the column for one returned nothing at all.
+     * `outcomeWhere` turns each into the query that finds it.
+     */
+    if (field === "status") {
+      const byOutcome = outcomeWhere(String(value));
+      and.push(byOutcome ?? { status: value });
+      continue;
+    }
     and.push({ [field]: value });
   }
 

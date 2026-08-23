@@ -2152,13 +2152,15 @@ export default function ProformasView({
       (p.customerName || '').toLowerCase().includes(search.toLowerCase()) ||
       (p.projectName &&
         p.projectName.toLowerCase().includes(search.toLowerCase()));
-    // The filter offers both kinds of value — پیش‌نویس and ارسال شده are where
-    // the document is, the rest is what became of it — so it matches either.
-    const matchesStatus =
-      selectedStatus === "all" ||
-      p.status === selectedStatus ||
-      getProformaOutcomeStatus(p) === selectedStatus;
-    return matchesSearch && matchesStatus;
+    /*
+     * The status filter is the server's, and only the server's.
+     *
+     * It used to run here as well, over the page the server had already
+     * filtered — which meant the same rule applied twice, once to one page.
+     * The server now understands the derived outcomes (`outcomeWhere`), so this
+     * would only ever remove rows from a correct answer.
+     */
+    return matchesSearch;
   });
   const getProjectDetails = (projId: string) => {
     return projects.find((p) => p.id === projId);
@@ -3028,6 +3030,7 @@ export default function ProformasView({
             <option value="پیش‌نویس">پیش‌نویس</option>
             <option value="ارسال شده">ارسال شده (مذاکره)</option>
             <option value="تأیید شده (برنده)">تأیید شده (برنده نهایی)</option>
+            <option value="نیمه برنده">نیمه برنده</option>
             <option value="لغو شده">لغو شده</option>
             <option value="باخته">باخته (عدم موافقت)</option>
           </select>

@@ -185,3 +185,165 @@ export function statusWithoutProformas(current: string | null | undefined): Proj
   if (!current || !PROFORMA_DERIVED_STATUSES.has(current)) return null;
   return "در حال مذاکره";
 }
+
+/* ------------------------- filtering by outcome -------------------------- */
+
+/**
+ * Filtering the grid by what a proforma *became*, not by the column.
+ *
+ * The status filter sent its value straight at the stored `status` column, and
+ * only two of the six options are ever in that column: «پیش‌نویس» and «ارسال
+ * شده». «تأیید شده (برنده)», «باخته» and «لغو شده» are **outcomes** — derived
+ * from the line statuses and the cancellation flag by `getProformaOutcome`
+ * above — so choosing one asked SQL for a value nothing holds and the grid came
+ * back empty. «نیمه برنده» was not offered at all, though the grid prints it.
+ *
+ * The outcome cannot be a column comparison, but it can be a query: each branch
+ * of the rule above has an exact equivalent in terms of "how many lines are
+ * won / lost / cancelled". Those are what these clauses say.
+ *
+ * They are written without `not` on a nullable column and without `every`,
+ * whose treatment of NULL is a thing to have to remember; "no line outside this
+ * set" is spelled out instead, NULL included. `test:rules` evaluates every
+ * clause against every combination of lines and fails if it and
+ * `getProformaOutcome` ever disagree — which is what keeps this from becoming a
+ * second, drifting copy of the rule.
+ */
+
+/** Outcomes that are derived rather than stored, so a column filter cannot find them. */
+export const DERIVED_OUTCOMES: readonly ProformaOutcome[] = [
+  "تأیید شده (برنده)", "نیمه برنده", "باخته", "لغو شده", "جاری",
+];
+
+type Where = Record<string, unknown>;
+
+const NOT_CANCELLED: Where = { isCancelled: false };
+const HAS_LINES: Where = { items: { some: {} } };
+const NO_LINES: Where = { items: { none: {} } };
+
+/** At least one line whose status is one of these. */
+const someLineIn = (statuses: string[]): Where =>
+  ({ items: { some: { status: { in: statuses } } } });
+
+/** At least one line whose status is *not* one of these — a null counts. */
+const someLineOutside = (statuses: string[]): Where =>
+  ({ items: { some: { OR: [{ status: null }, { status: { notIn: statuses } }] } } });
+
+/** No line whose status is outside the set — so every line is inside it. */
+const noLineOutside = (statuses: string[]): Where =>
+  ({ items: { none: { OR: [{ status: null }, { status: { notIn: statuses } }] } } });
+
+/** The workflow status a document sits at while its lines are still open. */
+function openAt(status: ProformaOutcome): Where {
+  const stored: Where = status === "جاری"
+    ? { OR: [{ status: null }, { status: { notIn: ["پیش‌نویس", "ارسال شده"] } }] }
+    : { status };
+
+  return {
+    AND: [
+      NOT_CANCELLED,
+      stored,
+      {
+        OR: [
+          // Nothing to derive from, so the workflow status stands.
+          NO_LINES,
+          // Lines exist but none is won and at least one is still open, so no
+          // terminal outcome has been reached.
+          {
+            AND: [
+              { items: { none: { status: { in: [ITEM_WON] } } } },
+              someLineOutside([ITEM_LOST, ITEM_CANCELLED]),
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** The query for one outcome, or null when the value is a stored status. */
+export function outcomeWhere(outcome: string): Where | null {
+  switch (outcome) {
+    case "تأیید شده (برنده)":
+      // Every line won.
+      return { AND: [NOT_CANCELLED, HAS_LINES, noLineOutside([ITEM_WON])] };
+
+    case "باخته":
+      // Every line lost. A mix of lost and cancelled is a cancellation below.
+      return { AND: [NOT_CANCELLED, HAS_LINES, noLineOutside([ITEM_LOST])] };
+
+    case "نیمه برنده":
+      // Some won, not all.
+      return { AND: [NOT_CANCELLED, someLineIn([ITEM_WON]), someLineOutside([ITEM_WON])] };
+
+    case "لغو شده":
+      return {
+        OR: [
+          { isCancelled: true },
+          {
+            AND: [
+              NOT_CANCELLED,
+              HAS_LINES,
+              // Nothing open and nothing won, with at least one cancellation:
+              // all-cancelled, or cancelled mixed with lost.
+              noLineOutside([ITEM_LOST, ITEM_CANCELLED]),
+              someLineIn([ITEM_CANCELLED]),
+            ],
+          },
+        ],
+      };
+
+    case "پیش‌نویس":
+    case "ارسال شده":
+    case "جاری":
+      return openAt(outcome);
+
+    default:
+      return null;
+  }
+}
+
+/* ------------------------- the clauses, checked -------------------------- */
+
+/**
+ * Evaluates the subset of Prisma's query language the clauses above use.
+ *
+ * Written so `test:rules` can hold the clauses against `getProformaOutcome`
+ * over every combination of lines, rather than against a second reading of the
+ * rule — the point being that these two must never drift.
+ */
+export function matchesWhere(where: Where, pf: OutcomeProforma): boolean {
+  return Object.entries(where).every(([key, value]) => {
+    if (key === "AND") return (value as Where[]).every((w) => matchesWhere(w, pf));
+    if (key === "OR") return (value as Where[]).some((w) => matchesWhere(w, pf));
+    if (key === "isCancelled") return !!pf.isCancelled === value;
+    if (key === "status") return matchesField(pf.status ?? null, value);
+    if (key === "items") {
+      const items = pf.items ?? [];
+      const [op, itemWhere] = Object.entries(value as Where)[0] as [string, Where];
+      const hit = (item: OutcomeItem) => matchesItem(itemWhere, item);
+      if (op === "some") return items.some(hit);
+      if (op === "none") return !items.some(hit);
+      if (op === "every") return items.every(hit);
+    }
+    throw new Error(`unsupported clause: ${key}`);
+  });
+}
+
+function matchesItem(where: Where, item: OutcomeItem): boolean {
+  return Object.entries(where).every(([key, value]) => {
+    if (key === "OR") return (value as Where[]).some((w) => matchesItem(w, item));
+    if (key === "AND") return (value as Where[]).every((w) => matchesItem(w, item));
+    if (key === "status") return matchesField(item.status ?? null, value);
+    throw new Error(`unsupported item clause: ${key}`);
+  });
+}
+
+function matchesField(actual: string | null, expected: unknown): boolean {
+  if (expected === null) return actual === null;
+  if (typeof expected === "string") return actual === expected;
+  const op = expected as { in?: string[]; notIn?: string[] };
+  if (op.in) return actual !== null && op.in.includes(actual);
+  if (op.notIn) return actual !== null && !op.notIn.includes(actual);
+  throw new Error(`unsupported operator: ${JSON.stringify(expected)}`);
+}
