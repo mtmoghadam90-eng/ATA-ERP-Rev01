@@ -163,7 +163,23 @@ export async function summarizeProjectFinance(
       customerName: project.customer?.companyName ?? "",
       salesAmount: summary.totalSalesHistoricalRiyal,
       paidAmount: summary.totalReceivedRiyal,
-      remainingAmount: summary.totalRemainingCurrentRiyal,
+      /*
+       * The remaining figure on the **same basis as the sales figure**.
+       *
+       * It reported `totalRemainingCurrentRiyal` — what settling the balance
+       * would cost at today's rate — while the sales column beside it was
+       * valued at the rate the deal was struck at. Two valuations, one row, no
+       * label saying so: a project with nothing received showed 1,810,571,400
+       * sold and 1,917,075,600 outstanding, which cannot both be true of the
+       * same money. Worse, people typed the larger figure into a receipt and
+       * were then warned it exceeded the sale.
+       *
+       * Sold minus received is what a settlement column has to mean. The
+       * today's-rate figure and the exchange gain or loss between the two are
+       * still in `summary`, where the detail panel shows them with their own
+       * headings.
+       */
+      remainingAmount: summary.totalRemainingHistoricalRiyal,
       settlementPercent: summary.settlementPercent,
       summary,
     });

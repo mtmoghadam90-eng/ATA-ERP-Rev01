@@ -190,6 +190,13 @@ export interface TransactionInput {
   customValues?: unknown;
 }
 
+/** A figure, or null when there is not one — an empty box, a zero, a blank. */
+function positiveOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const n = toNumber(value, 0);
+  return n > 0 ? n : null;
+}
+
 function scalarData(input: TransactionInput): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const set = (key: string, value: unknown) => { if (value !== undefined) out[key] = value; };
@@ -211,14 +218,17 @@ function scalarData(input: TransactionInput): Record<string, unknown> {
   if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
 
   if ("amountRial" in input) set("amountRial", toNumber(input.amountRial, 0));
-  if ("amountForeign" in input) {
-    set("amountForeign", input.amountForeign == null || input.amountForeign === ""
-      ? null : toNumber(input.amountForeign));
-  }
-  if ("exchangeRate" in input) {
-    set("exchangeRate", input.exchangeRate == null || input.exchangeRate === ""
-      ? null : toNumber(input.exchangeRate));
-  }
+  /*
+   * Zero is stored as NULL for both of these.
+   *
+   * «There is no foreign amount» and «the foreign amount is zero» are the same
+   * thing here and neither is a figure, so the column says so — which is what
+   * lets `resolveAmount`, the grid and every report tell a rial document from a
+   * foreign one without having to know that some clients send 0 for an empty
+   * box and others send nothing at all.
+   */
+  if ("amountForeign" in input) set("amountForeign", positiveOrNull(input.amountForeign));
+  if ("exchangeRate" in input) set("exchangeRate", positiveOrNull(input.exchangeRate));
 
   return { ...out, ...expandDateFields(input as Record<string, unknown>, TRANSACTION_DATE_FIELDS) };
 }
@@ -229,13 +239,39 @@ function scalarData(input: TransactionInput): Record<string, unknown> {
  * The rial figure is what the books are kept in, so it is derived here rather
  * than trusted: a client that sent an amount inconsistent with its own currency
  * and rate would put a wrong number into every total.
+ *
+ * **A foreign amount of zero is not a foreign amount.** The test was
+ * `foreign != null`, and zero is not null — so a plain rial receipt that
+ * happened to carry a settlement rate had its amount overwritten with
+ * `0 × rate`, which is zero. The form sends `0` for an empty foreign box by
+ * construction, and the rate is filled in from the proforma being paid, so
+ * every rial receipt against a foreign-currency proforma was stored at zero:
+ * the document existed, the ledger showed «۰ ریال», and nothing said why.
+ *
+ * Guarded here rather than only in the client that happened to trip it. The
+ * server is the authority on this figure, and an integration posting the same
+ * shape through the API would have hit exactly the same thing.
  */
-function resolveAmount(input: TransactionInput, data: Record<string, unknown>): void {
-  const foreign = data.amountForeign as number | null | undefined;
-  const rate = data.exchangeRate as number | null | undefined;
-  if (foreign != null && rate != null && rate > 0) {
-    data.amountRial = foreign * rate;
+export function rialAmountOf(
+  amountRial: number,
+  amountForeign: number | null | undefined,
+  exchangeRate: number | null | undefined,
+): number {
+  const foreign = Number(amountForeign);
+  const rate = Number(exchangeRate);
+  if (Number.isFinite(foreign) && foreign > 0 && Number.isFinite(rate) && rate > 0) {
+    return foreign * rate;
   }
+  return amountRial;
+}
+
+function resolveAmount(input: TransactionInput, data: Record<string, unknown>): void {
+  if (!("amountRial" in data)) return;
+  data.amountRial = rialAmountOf(
+    Number(data.amountRial ?? 0),
+    data.amountForeign as number | null,
+    data.exchangeRate as number | null,
+  );
 }
 
 

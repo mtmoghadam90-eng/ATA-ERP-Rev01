@@ -75,7 +75,9 @@ import {
   redactPurchaseOrder, redactProforma, redactValueDetail, redactValueSummary,
   stripProductCostInput,
 } from "../src/server/costs";
-import { countsTowardBalance, describeTransaction } from "../src/server/services/transactionService";
+import {
+  countsTowardBalance, describeTransaction, rialAmountOf,
+} from "../src/server/services/transactionService";
 import { rowToCustomer } from "../src/api/customerAdapter";
 import { rowToProject } from "../src/api/projectAdapter";
 import { rowToProforma } from "../src/api/proformaAdapter";
@@ -2512,6 +2514,40 @@ head("Receipts and payments: a mistake is edited or deleted");
   eq("a reversed one still counts, so its pair cancels",
     countsTowardBalance("ابطال شده"), true);
   eq("and so does a status nobody anticipated", countsTowardBalance("چیز دیگر"), true);
+
+  /*
+   * The rial figure a document is stored at.
+   *
+   * The rule was `foreign != null`, and **zero is not null** — so a plain rial
+   * receipt that happened to carry a settlement rate was rewritten to
+   * `0 × rate`, which is zero. The form sends 0 for an empty foreign box by
+   * construction and fills the rate in from the proforma being paid, so every
+   * rial receipt against a foreign-currency proforma was stored at zero: the
+   * document existed, the ledger read «۰ ریال», and nothing said why.
+   */
+  eq("a rial receipt keeps its amount when there is no foreign figure",
+    rialAmountOf(1_917_075_600, null, null), 1_917_075_600);
+  eq("and keeps it even when a settlement rate is on the document",
+    rialAmountOf(1_917_075_600, 0, 900_000), 1_917_075_600);
+  eq("an empty foreign box does not zero it either",
+    rialAmountOf(500_000_000, null, 900_000), 500_000_000);
+  /* A real foreign amount is still converted, which is the point of the rule. */
+  eq("a foreign amount is converted at the document's rate",
+    rialAmountOf(0, 1_500, 900_000), 1_350_000_000);
+  eq("and overrides whatever rial figure was sent with it",
+    rialAmountOf(7, 1_500, 900_000), 1_350_000_000);
+  eq("a foreign amount with no rate cannot be converted, so the rial figure stands",
+    rialAmountOf(250_000, 1_500, 0), 250_000);
+
+  /*
+   * Sold, received and outstanding have to be three figures about one thing.
+   * The row reported the outstanding balance at *today's* rate beside a sales
+   * figure at the rate the deal was struck at, so a project with nothing
+   * received showed more outstanding than it had ever sold.
+   */
+  ok("the finance row's remaining figure is on the sales figure's own basis",
+    readFileSync("src/server/services/projectFinance.ts", "utf-8")
+      .includes("remainingAmount: summary.totalRemainingHistoricalRiyal"));
 
   const readSrc = (file: string) => readFileSync(file, "utf-8");
   const service = readSrc("src/server/services/transactionService.ts");
