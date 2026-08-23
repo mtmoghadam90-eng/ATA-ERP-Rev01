@@ -1606,3 +1606,35 @@ model AssistantAction {
   @@index([createdAt])
   @@map("assistant_actions")
 }
+
+/// A credential that lets a third party drive this API as one of its users.
+///
+/// Stored as a SHA-256 of the whole token rather than a bcrypt hash, and that
+/// is deliberate: bcrypt's cost exists to slow a dictionary attack on a secret
+/// a person chose, and this is 256 bits from the system's random source, which
+/// no dictionary reaches. What SHA-256 buys instead is a unique index, so
+/// authenticating a request is one index seek rather than a bcrypt comparison
+/// against every row — on every call an integration makes.
+model ApiToken {
+  id   String @id @db.NVarChar(36)
+  name String @db.NVarChar(200)
+  /// The first characters of the token, in the clear, to recognise it in the list.
+  prefix String @db.NVarChar(20)
+  /// SHA-256 of the token, hex.
+  tokenHash String @unique @db.NVarChar(64)
+
+  /// Whose permissions this token carries.
+  userId String @db.NVarChar(36)
+  /// read | full
+  scope String @db.NVarChar(10)
+
+  isActive   Boolean   @default(true)
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+
+  createdAt       DateTime @default(now())
+  createdByUserId String?  @db.NVarChar(36)
+
+  @@index([userId])
+  @@map("api_tokens")
+}
