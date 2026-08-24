@@ -27,6 +27,7 @@ import { computeInquiryTotals } from "../src/utils/inquirySteps";
 import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr } from "../src/dateUtils";
 import { generateSku, decodeSku } from "../src/utils/skuUtils";
+import { parseFeatureSpec, splitNameAndCode } from "../src/utils/productFeatureSpec";
 import {
   DEFAULT_CUSTOMER_VALUE_SETTINGS, calculateCVI, calculatePotentialScore, calculateRealizedScore,
   RANK_META, costToServeScoreOf, determineRank, evaluateCustomerValue, isPotentialAssessed,
@@ -2499,6 +2500,64 @@ head("Assistant: configuration, and what it is told before it answers");
   });
   ok("actions on but nothing writable is its own message",
     nothingWritable.includes("دسترسی لازم را ندارد"));
+}
+
+head("Bulk product import: the features column is not decoration");
+{
+  /*
+   * The real cell from the sheet that reported this — thirteen features on one
+   * magnetic flow meter. The importer read this column into `featuresRaw`,
+   * carried it through the whole batch, and then sent `features: null`, so the
+   * import reported success and saved none of it.
+   */
+  const cell = 'Size(sz):1"|Flow Range(fr):0.88-8.8 m3/h|Medium(md):Water'
+    + "|Power Supply(ps):24VDC|Accuracy(ac):±0.5%|Output(op):Pulse+RS485+4-20mA+Hart"
+    + "|Connection(cn):Flange ANSI|Pressure(pr):2.5Mpa(ANSI300#)|Body Material(bm):carbon steel"
+    + "|Liner(ln):PTFE|Electrode(el):316L|Structure(st):Compact|Protection(pt):IP65";
+
+  const features = parseFeatureSpec(cell);
+  eq("all thirteen features arrive", features.length, 13);
+  eq("with their names", features[0].name, "Size");
+  eq("and their codes", features[0].code, "sz");
+  eq("and their values", features[0].options[0].value, '1"');
+
+  /*
+   * «2.5Mpa(ANSI300#)» is a pressure rating written the way an instrument
+   * catalogue writes it. Read as a value-with-a-code it would become «2.5Mpa»
+   * and quietly lose the half the engineer cared about, so a code has to look
+   * like a code — something that can be a token in a SKU.
+   */
+  const pressure = features.find((f) => f.name === "Pressure")!;
+  eq("a parenthesis that is part of the value stays part of it",
+    pressure.options[0].value, "2.5Mpa(ANSI300#)");
+  eq("and is not mistaken for a code", pressure.options[0].code, undefined);
+
+  eq("a real code is a code", splitNameAndCode("سایز(sz)").code, "sz");
+  eq("a space rules it out", splitNameAndCode("چیزی(دو کلمه)").code, undefined);
+  eq("so does a symbol", splitNameAndCode("2.5Mpa(ANSI300#)").code, undefined);
+  eq("and empty parentheses leave the text alone", splitNameAndCode("چیزی()").name, "چیزی()");
+
+  /* The documented multi-option form, with the Persian comma. */
+  const multi = parseFeatureSpec("سایز(sz):۱ اینچ(1I)،۲ اینچ(2I)|متریال(mat):استیل(ST)،برنج(BR)");
+  eq("two features", multi.length, 2);
+  eq("two options on the first", multi[0].options.length, 2);
+  eq("the second option keeps its code", multi[0].options[1].code, "2I");
+
+  /* Only the first colon separates; a value may contain one. */
+  const colon = parseFeatureSpec("نسبت(rt):1:200");
+  eq("a value may contain a colon", colon[0].options[0].value, "1:200");
+
+  eq("an empty cell is no features", parseFeatureSpec("").length, 0);
+  eq("and so is a blank one", parseFeatureSpec("   ").length, 0);
+  eq("a feature with nothing to choose from is dropped",
+    parseFeatureSpec("سایز(sz)|متریال:استیل").length, 1);
+  eq("every option gets an id", parseFeatureSpec("a:x،y")[0].options.every((o) => !!o.id), true);
+  ok("and no two share one",
+    new Set(parseFeatureSpec("a:x،y|b:z").flatMap((f) => f.options.map((o) => o.id))).size === 3);
+
+  ok("the importer sends what it parsed",
+    readFileSync("src/components/ProductsView.tsx", "utf-8")
+      .includes("features: parseFeatureSpec(item.featuresRaw)"));
 }
 
 head("Proforma filter: the grid filters on what the badge says");
