@@ -2555,9 +2555,30 @@ head("Bulk product import: the features column is not decoration");
   ok("and no two share one",
     new Set(parseFeatureSpec("a:x،y|b:z").flatMap((f) => f.options.map((o) => o.id))).size === 3);
 
+  const importer = readFileSync("src/components/ProductsView.tsx", "utf-8");
   ok("the importer sends what it parsed",
-    readFileSync("src/components/ProductsView.tsx", "utf-8")
-      .includes("features: parseFeatureSpec(item.featuresRaw)"));
+    importer.includes("features: parseFeatureSpec(item.featuresRaw)"));
+
+  /*
+   * Updating an existing product sends the features and nothing else.
+   *
+   * `updateProduct` reads `stockLevel` and `variants` as the levels the caller
+   * *wants* and reconciles the difference into stock movements — so writing
+   * back a whole record read a moment earlier would undo any adjustment made in
+   * between, and write a correction movement for it, on the one screen whose
+   * job is bulk stock changes. The route copies only the keys the body has, so
+   * a partial write is the honest one.
+   */
+  ok("and updates an existing product with the features alone",
+    importer.includes("productsApi.update(existingProduct.id, { features })"));
+  ok("without reading the whole record back first",
+    !/const full = detailToProduct\(await productsApi\.get\(existingProduct\.id\)\)/.test(importer));
+  /*
+   * Features belong to the product, so a row matched by one of its SKUs must
+   * be able to set them too — the blank-cell check is the guard, not this.
+   */
+  ok("a row matched by SKU can still set them",
+    !/features\.length > 0 && !variantId/.test(importer));
 }
 
 head("Proforma filter: the grid filters on what the badge says");

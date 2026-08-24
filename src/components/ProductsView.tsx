@@ -724,22 +724,26 @@ export default function ProductsView({
             if (existingProduct) {
               /*
                * Features on an existing product are applied too, when the cell
-               * has something in it.
+               * has something in it. A blank cell means «not specified» and
+               * leaves what is stored alone.
                *
-               * The update path only ever moved stock, so re-importing a sheet
-               * to fill in a product's configuration did nothing at all. A
-               * blank cell means «not specified» and leaves what is stored
-               * alone; the whole record is loaded first, because a list row
-               * carries no variants and writing one back would take them with
-               * it.
+               * **Only the features are sent.** The route copies the keys the
+               * body actually has and the service acts on those alone, so this
+               * is a genuine partial update — which matters here more than
+               * anywhere: a whole-record write carries `stockLevel` and
+               * `variants`, and `updateProduct` reads those as *desired* levels
+               * and reconciles the difference into stock movements. A snapshot
+               * read a moment earlier would therefore undo any adjustment made
+               * in between and write a correction movement for it, on the one
+               * screen whose job is bulk stock changes.
+               *
+               * Features belong to the product, so it makes no difference
+               * whether the row was matched by the product's own code or by one
+               * of its SKUs.
                */
               const features = parseFeatureSpec(item.featuresRaw);
-              if (features.length > 0 && !variantId) {
-                const full = detailToProduct(await productsApi.get(existingProduct.id));
-                await productsApi.update(
-                  existingProduct.id,
-                  productToWriteInput({ ...full, features }),
-                );
+              if (features.length > 0) {
+                await productsApi.update(existingProduct.id, { features });
               }
 
               // UPDATE: Adjust stock if amt is provided
