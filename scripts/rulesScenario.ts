@@ -2595,6 +2595,42 @@ head("Product adviser: a suggestion is a preview of the line");
     form.includes('productId: product?.id ?? ""'));
 }
 
+head("The price calculator on a proforma line reads the real product");
+{
+  /*
+   * This screen holds product **list rows**, and a row carries no calculator:
+   * `LIST_SELECT` has no `priceCalc` and its variants come back with only an
+   * id, a SKU, attributes and a stock level. Seeding the modal from one meant
+   * every field opened blank however carefully it had been filled in, and the
+   * missing starting price made it recompute and change the price on apply.
+   */
+  const productList = readFileSync("src/server/services/productService.ts", "utf-8");
+  const listSelect = productList.slice(
+    productList.indexOf("const LIST_SELECT"),
+    productList.indexOf("} satisfies Prisma.ProductSelect"),
+  );
+  ok("a product list row genuinely carries no calculator",
+    !listSelect.includes("priceCalc"));
+  ok("nor do its variants", !/variants: \{ select: \{[^}]*priceCalc/.test(listSelect));
+
+  const form = readFileSync("src/components/ProformasView.tsx", "utf-8");
+  ok("so the calculator loads the whole record when it opens",
+    form.includes("detailToProduct(await productsApi.get(productId))"));
+  ok("and seeds from that, not from the picker",
+    /const prod = calcProduct;/.test(form));
+  ok("the modal waits for it rather than opening on zeros",
+    form.includes("calcModalItemIdx !== null && !calcLoading"));
+
+  /*
+   * A rial price is ten digits, and the cell also carries the calculator
+   * button. At two twelfths the figure was cut in half.
+   */
+  ok("the unit price column is wider than its neighbours",
+    form.includes('<div className="col-span-3 text-left">'));
+  ok("and the price box is a text field, so no spinner eats its width",
+    /NumberField[\s\S]{0,200}?handleItemFieldChange\(idx, "unitPriceRIYAL", value\)/.test(form));
+}
+
 head("Bulk product import: the features column is not decoration");
 {
   /*

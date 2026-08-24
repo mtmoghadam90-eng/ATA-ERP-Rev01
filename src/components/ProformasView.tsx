@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useExchangeRates } from '../api/exchangeRates';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { inlineDocumentAssets } from '../utils/inlineAssets';
@@ -84,6 +84,7 @@ import PriceCalculatorModal from "./PriceCalculatorModal";
 import { getCombinedFeaturePrice } from "../utils/skuUtils";
 import ProductConfiguratorModal from "./ProductConfiguratorModal";
 import ProductAdvisorModal from "./ProductAdvisorModal";
+import NumberField from "./NumberField";
 import type { SuggestedItem } from "../api/assistant";
 import { suggestionSpecText } from "../utils/advisorSuggestion";
 import RichTextField from "./RichTextField";
@@ -421,6 +422,57 @@ export default function ProformasView({
   const [isQuickAddingSentRecipient, setIsQuickAddingSentRecipient] = useState(false);
   // Row-level price calculator state
   const [calcModalItemIdx, setCalcModalItemIdx] = useState<number | null>(null);
+  /**
+   * The whole product being priced, loaded when the calculator opens.
+   *
+   * This screen holds product **list rows**, and a row carries no price
+   * calculator at all — `LIST_SELECT` has no `priceCalc`, and its variants come
+   * back with only an id, a SKU, attributes and a stock level. So the modal was
+   * seeded from nothing: every field opened blank however carefully it had been
+   * filled in last time, and because the starting foreign price was missing too
+   * it recomputed and changed the price on apply.
+   *
+   * One record, read when the modal opens. That also means the figures are
+   * whatever the catalogue holds now rather than whatever the picker fetched
+   * when the screen loaded.
+   */
+  const [calcProduct, setCalcProduct] = useState<Product | null>(null);
+  const [calcLoading, setCalcLoading] = useState(false);
+
+  useEffect(() => {
+    if (calcModalItemIdx === null) {
+      setCalcProduct(null);
+      return;
+    }
+    const productId = items[calcModalItemIdx]?.productId;
+    if (!productId) {
+      setCalcProduct(null);
+      return;
+    }
+
+    let cancelled = false;
+    setCalcLoading(true);
+    void (async () => {
+      try {
+        const full = detailToProduct(await productsApi.get(productId));
+        if (!cancelled) setCalcProduct(full);
+      } catch (err) {
+        // Without the record the calculator would open on a row of zeros and
+        // quietly rewrite the price, which is the bug being fixed — so it says
+        // so instead.
+        if (!cancelled) {
+          reportError(err, "اطلاعات کالا برای ماشین‌حساب قیمت خوانده نشد.");
+          setCalcModalItemIdx(null);
+        }
+      } finally {
+        if (!cancelled) setCalcLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // The line being priced is what decides this; the items array is rebuilt on
+    // every keystroke and must not re-fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [calcModalItemIdx]);
   // Modals state
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [isCreateModalFullscreen, setIsCreateModalFullscreen] = useState(false);
@@ -4705,7 +4757,7 @@ export default function ProformasView({
                 <div className="hidden md:grid grid-cols-12 gap-3 px-3 py-1 text-slate-400 font-bold text-[10px]">
                   <div
                     className={
-                      proformaType === "TECHNICAL" ? "col-span-8" : "col-span-4"
+                      proformaType === "TECHNICAL" ? "col-span-8" : "col-span-3"
                     }
                   >
                     انتخاب کالا
@@ -4713,7 +4765,14 @@ export default function ProformasView({
                   <div className="col-span-3 text-center">تعداد و واحد</div>
                   {proformaType !== "TECHNICAL" && (
                     <>
-                      <div className="col-span-2 text-left">
+                      {/*
+                        Wider than the columns beside it, on purpose. A rial
+                        price is ten digits and this cell also carries the
+                        calculator button, so at two twelfths the figure was cut
+                        in half — the one number on the row nobody can afford to
+                        misread.
+                      */}
+                      <div className="col-span-3 text-left">
                         بهای واحد ({currency})
                       </div>
                       <div className="col-span-2 text-left">
@@ -4736,7 +4795,7 @@ export default function ProformasView({
                           className={
                             proformaType === "TECHNICAL"
                               ? "col-span-2 md:col-span-8 w-full min-w-0"
-                              : "col-span-2 md:col-span-4 w-full min-w-0"
+                              : "col-span-2 md:col-span-3 w-full min-w-0"
                           }
                         >
                           <div className="flex flex-col gap-2 w-full min-w-0">
@@ -5091,23 +5150,26 @@ export default function ProformasView({
                         {proformaType !== "TECHNICAL" && (
                           <>
                             {/* Unit Price */}
-                            <div className="col-span-1 md:col-span-2 flex flex-col gap-1">
+                            <div className="col-span-1 md:col-span-3 flex flex-col gap-1">
                               <label className="text-[10px] font-bold text-slate-400 md:hidden block">
                                 بهای واحد ({currency}) *
                               </label>
                               <div className="flex items-center gap-1">
-                                <input
-                                  type="number"
-                                  required
+                                {/*
+                                  A text field, so the whole figure is visible:
+                                  a number input reserves room for its spinner
+                                  arrows, which on a ten-digit rial price is the
+                                  difference between reading it and guessing at
+                                  it. It also lets a decimal be typed — see
+                                  `src/utils/numberInput.ts`.
+                                */}
+                                <NumberField
+                                  min={0}
                                   value={item.unitPriceRIYAL}
-                                  onChange={(e) =>
-                                    handleItemFieldChange(
-                                      idx,
-                                      "unitPriceRIYAL",
-                                      Number(e.target.value),
-                                    )
+                                  onChange={(value) =>
+                                    handleItemFieldChange(idx, "unitPriceRIYAL", value)
                                   }
-                                  className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-left bg-white"
+                                  className="w-full min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-left bg-white"
                                 />
                                 {/*
                                   The calculator is a breakdown of what the item
@@ -5690,10 +5752,11 @@ export default function ProformasView({
       />
 
       {/* Row-Level Price Calculator Modal */}
-      {calcModalItemIdx !== null && (() => {
+      {calcModalItemIdx !== null && !calcLoading && (() => {
         const item = items[calcModalItemIdx];
         if (!item) return null;
-        const prod = products.find(p => p.id === item.productId);
+        // The loaded record, never the picker row it came from.
+        const prod = calcProduct;
         if (!prod) return null;
         const variant = item.variantId ? prod.variants?.find(v => v.id === item.variantId) : undefined;
 
