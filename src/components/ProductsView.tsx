@@ -40,6 +40,7 @@ import { ApiError } from '../api/client';
 import { productsApi, type InventoryMovementEdit, type InventoryMovementRow } from '../api/products';
 import StockMovementEditModal from './StockMovementEditModal';
 import { calcSeedOf, detailToProduct, productToWriteInput, rowToProduct } from '../api/productAdapter';
+import { parseFeatureSpec } from '../utils/productFeatureSpec';
 import { useProductList } from '../api/useProductList';
 import { useList } from '../api/useList';
 import { formatMoney } from '../numUtils';
@@ -721,6 +722,26 @@ export default function ProductsView({
             }
 
             if (existingProduct) {
+              /*
+               * Features on an existing product are applied too, when the cell
+               * has something in it.
+               *
+               * The update path only ever moved stock, so re-importing a sheet
+               * to fill in a product's configuration did nothing at all. A
+               * blank cell means «not specified» and leaves what is stored
+               * alone; the whole record is loaded first, because a list row
+               * carries no variants and writing one back would take them with
+               * it.
+               */
+              const features = parseFeatureSpec(item.featuresRaw);
+              if (features.length > 0 && !variantId) {
+                const full = detailToProduct(await productsApi.get(existingProduct.id));
+                await productsApi.update(
+                  existingProduct.id,
+                  productToWriteInput({ ...full, features }),
+                );
+              }
+
               // UPDATE: Adjust stock if amt is provided
               if (item.amt && item.amt !== 0) {
                 const delta = item.type === 'خروج' ? -Math.abs(item.amt) : Math.abs(item.amt);
@@ -744,7 +765,15 @@ export default function ProductsView({
                 unit: null,
                 supplyType: item.supplyType || 'INVENTORY',
                 description: null,
-                features: null,
+                /*
+                 * The features column, actually used.
+                 *
+                 * It was read off the row and carried through the batch under
+                 * `featuresRaw`, and then this said `null` — so a sheet listing
+                 * thirteen features per product imported none of them, silently
+                 * and with a success message.
+                 */
+                features: parseFeatureSpec(item.featuresRaw),
                 configRules: null,
                 images: null,
                 priceCalc: null,
