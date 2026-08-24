@@ -28,6 +28,7 @@ import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr } from "../src/dateUtils";
 import { generateSku, decodeSku } from "../src/utils/skuUtils";
 import { parseFeatureSpec, splitNameAndCode } from "../src/utils/productFeatureSpec";
+import { normalizeSuggestion, suggestionSpecText } from "../src/utils/advisorSuggestion";
 import {
   DEFAULT_CUSTOMER_VALUE_SETTINGS, calculateCVI, calculatePotentialScore, calculateRealizedScore,
   RANK_META, costToServeScoreOf, determineRank, evaluateCustomerValue, isPotentialAssessed,
@@ -2500,6 +2501,98 @@ head("Assistant: configuration, and what it is told before it answers");
   });
   ok("actions on but nothing writable is its own message",
     nothingWritable.includes("دسترسی لازم را ندارد"));
+}
+
+head("Product adviser: a suggestion is a preview of the line");
+{
+  /*
+   * The card, the proforma line and the printed document are the same text.
+   * The format is the one the configurator already writes — «Label: Value», one
+   * per line, free notes marked with «*» — so a line added from a card and one
+   * configured by hand are indistinguishable on the page.
+   */
+  const suggestion = normalizeSuggestion({
+    productName: "Turbine Flow Meter (Liquids)",
+    specs: [
+      { label: "Medium", value: "xylene" },
+      { label: "Accuracy", value: "±0.5%" },
+      { label: "Size", value: '2"' },
+    ],
+    notes: ["One click reset model"],
+    productId: "p1", variantId: "v1", sku: "ATA-TFM-2I",
+    match: "exact",
+  });
+
+  eq("the name survives", suggestion.productName, "Turbine Flow Meter (Liquids)");
+  eq("and the specification", suggestion.specs.length, 3);
+  eq("the spec text is what the document prints",
+    suggestionSpecText(suggestion),
+    'Medium: xylene\nAccuracy: ±0.5%\nSize: 2"\n* One click reset model');
+  eq("a note that already has its star does not get a second",
+    suggestionSpecText({ specs: [], notes: ["* already starred"] }), "* already starred");
+
+  /*
+   * The source is a language model and the destination is a document sent to a
+   * customer, so nothing is trusted: half-built specs are dropped, and a
+   * `match` nobody recognises becomes the least confident of the three rather
+   * than an unverified claim that something exists.
+   */
+  const messy = normalizeSuggestion({
+    specs: [
+      { label: "Size", value: "2" },
+      { label: "", value: "orphan" },
+      { label: "Medium", value: "" },
+      "not an object",
+    ],
+    notes: ["ok", "", 42],
+    match: "definitely-exists",
+  });
+  eq("a spec with no label is dropped", messy.specs.length, 1);
+  eq("and an empty note", messy.notes.length, 2);
+  eq("an unrecognised match is the least confident one", messy.match, "new");
+  eq("a nameless suggestion still has a heading", messy.productName, "قلم پیشنهادی");
+  eq("nonsense normalises rather than throwing", normalizeSuggestion(null).match, "new");
+  eq("and carries no ids it was not given", normalizeSuggestion({}).productId, undefined);
+
+  const readSrc = (file: string) => readFileSync(file, "utf-8");
+  const advisor = readSrc("src/server/services/assistant/advisor.ts");
+
+  /*
+   * Ids come from the catalogue, never from the model: a suggestion naming a
+   * product that does not exist is downgraded rather than put on a line as a
+   * foreign key referencing nothing — the same rule the configurator learned
+   * the hard way.
+   */
+  ok("every suggested product is looked up before it is believed",
+    advisor.includes("db.product.findUnique"));
+  ok("and one that is not there stops being a link",
+    /if \(!product\) \{\s*item\.match = "new";/.test(advisor));
+  ok("a claimed SKU that does not exist is downgraded too",
+    advisor.includes('item.match = "close"'));
+
+  /* The adviser reads. Creating anything is a different, confirmed act. */
+  for (const write of ["db.product.create", "db.product.update", "db.productVariant.create"]) {
+    ok(`the adviser never calls ${write}`, !advisor.includes(write));
+  }
+
+  /*
+   * A file that could not be read is reported. One quietly ignored is worse
+   * than one never attached: the answer looks considered and is missing half
+   * the question.
+   */
+  ok("what could not be read is reported back",
+    advisor.includes("read: !!(file.text || file.imageDataUrl)"));
+  ok("and the panel shows it",
+    readSrc("src/components/ProductAdvisorModal.tsx").includes("filter((a) => !a.read)"));
+
+  /* Adding a line touches the form, not the database. */
+  const form = readSrc("src/components/ProformasView.tsx");
+  ok("a suggestion becomes an unsaved line",
+    /const handleAddSuggestion[\s\S]{0,2400}?setItems\(\[/.test(form));
+  ok("built with the shared spec-text rule",
+    form.includes("suggestionSpecText(item)"));
+  ok("and never invents a product id",
+    form.includes('productId: product?.id ?? ""'));
 }
 
 head("Bulk product import: the features column is not decoration");

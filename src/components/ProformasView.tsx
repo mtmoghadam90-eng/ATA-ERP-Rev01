@@ -17,6 +17,7 @@ import {
   AlertCircle,
   Eye,
   PlusCircle,
+  Bot,
   MinusCircle,
   X,
   FileSpreadsheet,
@@ -82,6 +83,9 @@ import DuplicateCustomerModal from "./DuplicateCustomerModal";
 import PriceCalculatorModal from "./PriceCalculatorModal";
 import { getCombinedFeaturePrice } from "../utils/skuUtils";
 import ProductConfiguratorModal from "./ProductConfiguratorModal";
+import ProductAdvisorModal from "./ProductAdvisorModal";
+import type { SuggestedItem } from "../api/assistant";
+import { suggestionSpecText } from "../utils/advisorSuggestion";
 import RichTextField from "./RichTextField";
 import { renderRichText } from "../utils/richText";
 import { getDeliverySummary, updateNotesWithDelivery } from "../utils/deliveryNotes";
@@ -1306,6 +1310,67 @@ export default function ProformasView({
     setItems(newItems);
     setNotes((prev) => updateNotesWithDelivery(prev, newItems, isEqualDelivery));
     setDeliveryDate(getDeliverySummary(newItems));
+  };
+
+  const [showAdvisor, setShowAdvisor] = useState(false);
+
+  /**
+   * One suggestion from the adviser, as a line on this proforma.
+   *
+   * Nothing is saved here — it goes into the form's own `items`, the same place
+   * «افزودن ردیف کالا» writes to, so a suggestion that turns out to be wrong is
+   * removed by deleting the row.
+   *
+   * The specification is written in the format the printed document uses and
+   * the configurator produces — «Label: Value», one per line — so the card, the
+   * line and the printed page all read the same. Price and quantity are left
+   * alone on purpose: those are the two figures a machine has no business
+   * deciding.
+   */
+  const handleAddSuggestion = (item: SuggestedItem) => {
+    const product = item.productId
+      ? products.find((p) => p.id === item.productId)
+      : undefined;
+    const variant = item.variantId
+      ? product?.variants?.find((v) => v.id === item.variantId)
+      : undefined;
+
+    // The same rule the card renders and the document prints — see
+    // `suggestionSpecText`. Three copies of this format is how the card stops
+    // being a preview of the line.
+    const specText = suggestionSpecText(item);
+
+    const firstItem = items[0];
+    const range = isEqualDelivery && firstItem ? firstItem.deliveryRange : "۳-۴";
+    const unit = isEqualDelivery && firstItem ? firstItem.deliveryUnit : ("هفته" as const);
+    const dtype = isEqualDelivery && firstItem ? firstItem.deliveryType : ("کاری" as const);
+    const postfix = isEqualDelivery && firstItem
+      ? firstItem.deliveryPostfix
+      : "پس از تایید پیش فاکتور و دریافت پیش پرداخت";
+
+    setItems([
+      ...items,
+      {
+        // A product the adviser could not resolve becomes a free-text line
+        // rather than a made-up foreign key.
+        productId: product?.id ?? "",
+        variantId: variant?.id,
+        productName: item.productName,
+        productCode: item.sku || item.productCode || "",
+        brand: item.brand || product?.brand || "",
+        quantity: 1,
+        unit: defaultUnitFor(item.unit || product?.unit),
+        unitPriceRIYAL: 0,
+        ...costPatchFor(product, variant),
+        techSpecs: specText,
+        selectedImage: item.imageUrl,
+        deliveryRange: range,
+        deliveryUnit: unit,
+        deliveryType: dtype,
+        deliveryPostfix: postfix,
+        status: "جاری",
+      } as ProformaItem,
+    ]);
   };
 
   const handleAddItemLine = () => {
@@ -4521,6 +4586,15 @@ export default function ProformasView({
                     </label>
                     <button
                       type="button"
+                      onClick={() => setShowAdvisor(true)}
+                      className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg text-xs font-semibold flex items-center gap-1 transition border border-indigo-100"
+                      title="درخواست مشتری را بدهید تا اقلام مناسب پیشنهاد شود"
+                    >
+                      <Bot size={14} />
+                      راهنمای هوش مصنوعی
+                    </button>
+                    <button
+                      type="button"
                       onClick={handleAddItemLine}
                       className="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-600 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
                     >
@@ -5849,6 +5923,13 @@ export default function ProformasView({
             />
           );
         })()}
+
+      <ProductAdvisorModal
+        open={showAdvisor}
+        onClose={() => setShowAdvisor(false)}
+        onAdd={handleAddSuggestion}
+        currency={currency}
+      />
 
       {/* Quick Customer Add Modal */}
       {showQuickCustomerModal && (

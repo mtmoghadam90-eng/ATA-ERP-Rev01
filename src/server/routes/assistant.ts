@@ -10,6 +10,7 @@ import {
   actionCatalogue, cancelProposal, confirmProposal,
 } from "../services/assistant/actions";
 import { getTodayShamsi } from "../../dateUtils";
+import { askAdvisor } from "../services/assistant/advisor";
 
 /**
  * The dashboard assistant.
@@ -100,6 +101,45 @@ export function registerAssistantRoutes(app: express.Express, deps: RouteDeps): 
       res.json({ success: true, ...(await askAssistant(history, user)) });
     } catch (err) {
       sendError(res, err, "POST /api/assistant/chat");
+    }
+  });
+
+  /**
+   * The product adviser behind the proforma form.
+   *
+   * Reads a customer's enquiry and its files and proposes items in the shape a
+   * proforma line takes. It only ever *reads* — a suggestion becomes a line
+   * when the user presses the button on its card, in the form, before anything
+   * is saved. Nothing here writes to the catalogue.
+   */
+  app.post("/api/assistant/product-advisor", async (req, res) => {
+    const user = await requireAssistant(req, res);
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as { messages?: unknown; attachments?: unknown };
+      const raw = Array.isArray(body.messages) ? body.messages : [];
+      const history = raw
+        .map((entry) => entry as { role?: unknown; content?: unknown })
+        .filter((entry) => entry.role === "user" || entry.role === "assistant")
+        .map((entry) => ({
+          role: entry.role as "user" | "assistant",
+          content: String(entry.content ?? "").slice(0, 8000),
+        }))
+        .filter((entry) => entry.content.trim() !== "");
+
+      if (history.length === 0) {
+        res.status(400).json({ success: false, error: "درخواستی برای بررسی فرستاده نشد." });
+        return;
+      }
+
+      const attachments = (Array.isArray(body.attachments) ? body.attachments : [])
+        .map((url) => String(url ?? ""))
+        .filter((url) => url.startsWith("/uploads/"))
+        .slice(0, 10);
+
+      res.json({ success: true, ...(await askAdvisor(history, attachments, user)) });
+    } catch (err) {
+      sendError(res, err, "POST /api/assistant/product-advisor");
     }
   });
 

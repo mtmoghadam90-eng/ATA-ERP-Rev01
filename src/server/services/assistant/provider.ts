@@ -28,8 +28,21 @@ export interface ChatToolCall {
   arguments: string;
 }
 
+/**
+ * A user message may carry pictures alongside its text.
+ *
+ * The OpenAI-compatible shape for that is an array of parts rather than a
+ * string, and only a vision model accepts it — one that does not answers 400,
+ * which `describeFailure` reports as the provider's own refusal rather than as
+ * a fault here.
+ */
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export type ChatMessage =
-  | { role: "system" | "user"; content: string }
+  | { role: "system"; content: string }
+  | { role: "user"; content: string | ChatContentPart[] }
   | { role: "assistant"; content: string | null; tool_calls?: ChatToolCall[] }
   | { role: "tool"; content: string; tool_call_id: string };
 
