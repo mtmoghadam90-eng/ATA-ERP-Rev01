@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
-import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
-import { AuthUser, hasPermission } from "../auth";
+import { ListQuery, ListResult, buildResult, paginationArgs, searchClause, searchVariants } from "../listing";
+import { AuthUser, canSeeCosts, hasPermission } from "../auth";
 import { redactInquiries, redactInquiry } from "../costs";
 import { expandDateFields } from "../dates";
 import { syncChildren, toNullableString, toNumber } from "../childSync";
@@ -15,6 +15,9 @@ import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
+import {
+  HistorySummary, discountKeepFraction, netUnitPrice, summarizeHistory,
+} from "../../utils/inquiryPriceHistory";
 
 /**
  * Supplier inquiry data access.
@@ -779,4 +782,311 @@ export async function deleteInquiry(
   );
 
   return "ok";
+}
+
+/* ----------------------------- price history ----------------------------- */
+
+/**
+ * Every price this company has been quoted, searchable by the item.
+ *
+ * The question a buyer has is never "show me inquiry 4718"; it is "what did the
+ * last 6-inch turbine flow meter cost me, and from whom". That is a query over
+ * inquiry *lines*, not over inquiries, which is why it does not reuse
+ * `listInquiries`: paging inquiries and then picking the matching lines out of
+ * each page would page the wrong set — a supplier whose one matching line sits
+ * on inquiry 200 falls off page 1 and the answer silently changes with the page
+ * size.
+ *
+ * Nothing is stored for this. `supplier_inquiry_items` has carried `productId`
+ * and `variantId` since the module was written, so the whole history is already
+ * on disk; what was missing was a way to ask.
+ *
+ * Three rules it has to get right:
+ *
+ *  - **A line with no price is not a price.** An inquiry sent and never answered
+ *    has lines at zero, and listing them as "prices obtained" is the same class
+ *    of error as an uncosted proforma line reading as pure margin.
+ *  - **The discount belongs to the offer, not to the line**, so a line's stored
+ *    price is a pre-discount figure and quoting it overstates every discounted
+ *    offer. `discountKeepFraction` apportions it, which is why the inquiry's
+ *    *whole* item set comes down with each row.
+ *  - **The range spans every match, not the page.** A "cheapest price ever" that
+ *    changes when you turn the page is worse than none, so the summary is
+ *    computed over a bounded scan of the whole matched set and says when it hit
+ *    the bound.
+ */
+
+/*
+ * Date only, and deliberately.
+ *
+ * Sorting by price is the obvious second option and it cannot be done here: the
+ * price the screen shows is the line's figure *after* the offer's discount, and
+ * that is not a column — `priceRial` is the pre-discount figure. Offering it
+ * would sort by a number the table does not display, cheapest-first putting a
+ * heavily discounted offer below an undiscounted one. Same shape as filtering
+ * proformas by a derived outcome; unlike that one, there is no `where` that
+ * expresses it, so it is not offered.
+ */
+export const PRICE_HISTORY_SORTABLE = ["creationDate"] as const;
+export const PRICE_HISTORY_FILTERABLE = ["productId", "variantId", "supplierId", "projectId"] as const;
+
+/**
+ * How much of the matched history the summary is measured over.
+ *
+ * The same shape as the satisfaction-letters screen: the whole-set work happens
+ * on the server, bounded, and says so rather than quietly dropping rows.
+ */
+const SUMMARY_SCAN_LIMIT = 1000;
+
+function priceHistorySearchClause(term: string): Prisma.SupplierInquiryItemWhereInput | undefined {
+  const variants = searchVariants(term);
+  if (variants.length === 0) return undefined;
+
+  const OR: Prisma.SupplierInquiryItemWhereInput[] = [];
+  for (const v of variants) {
+    // The line's own words: what the buyer typed when asking for the price.
+    OR.push({ name: { contains: v } });
+    OR.push({ brand: { contains: v } });
+    OR.push({ partNumber: { contains: v } });
+    OR.push({ tagNumber: { contains: v } });
+    // The catalogue item and the SKU, which is the whole point of the screen —
+    // a line often names a part in prose while the SKU is what identifies it.
+    OR.push({ variant: { is: { sku: { contains: v } } } });
+    OR.push({ product: { is: { name: { contains: v } } } });
+    OR.push({ product: { is: { displayName: { contains: v } } } });
+    OR.push({ product: { is: { code: { contains: v } } } });
+    // And who quoted it, so "the last price from that Turkish supplier" works.
+    OR.push({ inquiry: { is: { supplier: { is: { name: { contains: v } } } } } });
+  }
+  return { OR };
+}
+
+export interface PriceHistoryExtra {
+  /** "winner" | "confirmed" — narrows to offers that were accepted. */
+  outcome?: unknown;
+}
+
+export function buildPriceHistoryWhere(
+  q: ListQuery,
+  extra: PriceHistoryExtra = {},
+): Prisma.SupplierInquiryItemWhereInput {
+  const and: Prisma.SupplierInquiryItemWhereInput[] = [];
+
+  // An unanswered inquiry's lines sit at zero. They are not prices.
+  and.push({ OR: [{ priceForeign: { gt: 0 } }, { priceRial: { gt: 0 } }] });
+
+  const search = priceHistorySearchClause(q.search);
+  if (search) and.push(search);
+
+  // Two of the four allowlisted filters are columns of the line and two belong
+  // to its parent, so they are translated here rather than spread blindly.
+  if (q.filters.productId) and.push({ productId: q.filters.productId });
+  if (q.filters.variantId) and.push({ variantId: q.filters.variantId });
+  if (q.filters.supplierId) and.push({ inquiry: { is: { supplierId: q.filters.supplierId } } });
+  if (q.filters.projectId) and.push({ inquiry: { is: { projectId: q.filters.projectId } } });
+
+  if (extra.outcome === "winner") and.push({ inquiry: { is: { isWinner: true } } });
+  else if (extra.outcome === "confirmed") and.push({ inquiry: { is: { offerConfirmed: true } } });
+
+  return { AND: and };
+}
+
+/**
+ * The offer's own lines ride along with each row.
+ *
+ * They are what the discount is apportioned against — the fraction is a
+ * property of the whole offer — and there is no cheaper way to get it: the
+ * figure cannot be computed in SQL because the percentage and the fixed amount
+ * apply in order. Offers here carry a handful of lines, and the page is capped
+ * at `MAX_PAGE_SIZE`.
+ */
+const PRICE_HISTORY_SELECT = {
+  id: true, name: true, brand: true, partNumber: true, tagNumber: true,
+  quantity: true, currency: true, priceForeign: true, priceRial: true,
+  deliveryTime: true, notes: true, productId: true, variantId: true,
+  product: { select: { id: true, code: true, displayName: true, unit: true } },
+  variant: { select: { id: true, sku: true } },
+  inquiry: {
+    select: {
+      id: true, creationDate: true, creationDateJalali: true,
+      isWinner: true, offerConfirmed: true,
+      discountPercent: true, discountAmount: true,
+      supplier: { select: { id: true, name: true } },
+      project: { select: { id: true, code: true, name: true } },
+      items: { select: { quantity: true, currency: true, priceForeign: true, priceRial: true } },
+    },
+  },
+} satisfies Prisma.SupplierInquiryItemSelect;
+
+type PriceHistoryRecord = Prisma.SupplierInquiryItemGetPayload<{ select: typeof PRICE_HISTORY_SELECT }>;
+
+/** One row of the answer: a line, its net unit price, and who quoted it when. */
+export interface PriceHistoryRow {
+  id: string;
+  inquiryId: string;
+  name: string;
+  brand: string | null;
+  partNumber: string | null;
+  tagNumber: string | null;
+  quantity: number;
+  currency: string;
+  /** After the offer's discount — see `netUnitPrice`. */
+  unitForeign: number;
+  unitRial: number;
+  /** Before it, so the screen can show what the discount took off. */
+  grossUnitForeign: number;
+  grossUnitRial: number;
+  discounted: boolean;
+  deliveryTime: string | null;
+  notes: string | null;
+  dateJalali: string | null;
+  isWinner: boolean;
+  offerConfirmed: boolean;
+  supplier: { id: string; name: string } | null;
+  project: { id: string; code: string; name: string } | null;
+  product: { id: string; code: string; displayName: string; unit: string | null } | null;
+  variant: { id: string; sku: string } | null;
+}
+
+function toHistoryRow(row: PriceHistoryRecord): PriceHistoryRow {
+  const inquiry = row.inquiry;
+  const keep = discountKeepFraction(
+    (inquiry.items ?? []).map((line) => ({
+      quantity: Number(line.quantity),
+      currency: line.currency,
+      priceForeign: Number(line.priceForeign),
+      priceRial: Number(line.priceRial),
+    })),
+    Number(inquiry.discountPercent ?? 0),
+    Number(inquiry.discountAmount ?? 0),
+  );
+
+  const net = netUnitPrice(
+    {
+      quantity: Number(row.quantity),
+      currency: row.currency,
+      priceForeign: Number(row.priceForeign),
+      priceRial: Number(row.priceRial),
+    },
+    keep,
+  );
+
+  return {
+    id: row.id,
+    inquiryId: inquiry.id,
+    name: row.name,
+    brand: row.brand,
+    partNumber: row.partNumber,
+    tagNumber: row.tagNumber,
+    quantity: Number(row.quantity),
+    currency: row.currency,
+    unitForeign: net.unitForeign,
+    unitRial: net.unitRial,
+    grossUnitForeign: Number(row.priceForeign),
+    grossUnitRial: Number(row.priceRial),
+    discounted: net.discounted,
+    deliveryTime: row.deliveryTime,
+    notes: row.notes,
+    dateJalali: inquiry.creationDateJalali,
+    isWinner: inquiry.isWinner,
+    offerConfirmed: inquiry.offerConfirmed,
+    supplier: inquiry.supplier,
+    project: inquiry.project,
+    product: row.product,
+    variant: row.variant,
+  };
+}
+
+export interface PriceHistoryResult extends ListResult<PriceHistoryRow> {
+  summary: HistorySummary & { truncated: boolean };
+}
+
+export async function listPriceHistory(
+  q: ListQuery,
+  user: AuthUser,
+  extra: PriceHistoryExtra = {},
+): Promise<PriceHistoryResult | "forbidden" | "cost-blind"> {
+  if (!allowed(user)) return "forbidden";
+  /*
+   * Refused rather than redacted, unlike every other read in this module.
+   *
+   * The usual rule is that a cost-blind user is served the record with the
+   * amounts blanked — right for an inquiry, which is a document about a part, a
+   * supplier and a date that happens to carry a price. This screen *is* the
+   * price: blanking it leaves a table of empty money columns and no way to tell
+   * that from "no prices recorded". Saying so is the honest answer.
+   */
+  if (!canSeeCosts(user)) return "cost-blind";
+
+  const db = getDb();
+  const where = buildPriceHistoryWhere(q, extra);
+
+  // What the question asks for: the most recent price first. Ordered by the
+  // offer's own date, not by when the row happened to be typed.
+  const orderBy: Prisma.SupplierInquiryItemOrderByWithRelationInput =
+    { inquiry: { creationDate: q.order } };
+
+  /*
+   * The range is only computed once the question has been narrowed to something.
+   *
+   * "The cheapest unit price across every part this company has ever been
+   * quoted" is not an answer to anything — it mixes flow meters with bolts, and
+   * the figure it produces is a bolt. It also costs a thousand-row scan on the
+   * first render of the tab, before the user has typed. So an unfiltered
+   * history is a list and nothing more; the summary appears with the search.
+   */
+  const narrowed = !!q.search || !!q.filters.productId || !!q.filters.variantId;
+
+  const [rows, total, scan] = await Promise.all([
+    db.supplierInquiryItem.findMany({ where, orderBy, select: PRICE_HISTORY_SELECT, ...paginationArgs(q) }),
+    db.supplierInquiryItem.count({ where }),
+    // The range across every match, not the page. Compact — it needs the price
+    // and the supplier, plus the offer's lines to apportion the discount.
+    narrowed ? db.supplierInquiryItem.findMany({
+      where,
+      orderBy,
+      take: SUMMARY_SCAN_LIMIT,
+      select: {
+        quantity: true, currency: true, priceForeign: true, priceRial: true,
+        inquiry: {
+          select: {
+            supplierId: true, discountPercent: true, discountAmount: true,
+            items: { select: { quantity: true, currency: true, priceForeign: true, priceRial: true } },
+          },
+        },
+      },
+    }) : [],
+  ]);
+
+  const summary = summarizeHistory(
+    scan.map((row) => {
+      const keep = discountKeepFraction(
+        (row.inquiry.items ?? []).map((line) => ({
+          quantity: Number(line.quantity),
+          currency: line.currency,
+          priceForeign: Number(line.priceForeign),
+          priceRial: Number(line.priceRial),
+        })),
+        Number(row.inquiry.discountPercent ?? 0),
+        Number(row.inquiry.discountAmount ?? 0),
+      );
+      return {
+        unitRial: netUnitPrice(
+          {
+            quantity: Number(row.quantity),
+            currency: row.currency,
+            priceForeign: Number(row.priceForeign),
+            priceRial: Number(row.priceRial),
+          },
+          keep,
+        ).unitRial,
+        supplierId: row.inquiry.supplierId,
+      };
+    }),
+  );
+
+  return {
+    ...buildResult(rows.map(toHistoryRow), total, q),
+    summary: { ...summary, truncated: narrowed && total > SUMMARY_SCAN_LIMIT },
+  };
 }

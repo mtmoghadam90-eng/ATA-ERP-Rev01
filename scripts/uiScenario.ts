@@ -42,6 +42,7 @@ import ProductConfiguratorModal from "../src/components/ProductConfiguratorModal
 import RichTextField from "../src/components/RichTextField";
 import AssistantPanel from "../src/components/AssistantPanel";
 import NumberField from "../src/components/NumberField";
+import InquiryPriceHistoryTab from "../src/components/InquiryPriceHistoryTab";
 import type { Product } from "../src/types";
 import type { ExchangeRate } from "../src/types";
 
@@ -476,6 +477,92 @@ head("Number field: a decimal can be typed one keystroke at a time");
 
   act(() => { root5.unmount(); });
   host5.remove();
+}
+
+/*
+ * A tab that is not on screen must not fetch.
+ *
+ * The price history is a third tab beside the inquiry cards and the comparison
+ * table, and a list hook fetches on mount — so without the `active` gate it
+ * would query on every visit to the module, for a table nobody has opened. The
+ * same shape as the messaging test above: nothing here is visible to the
+ * type-checker, because the hook is called correctly either way.
+ *
+ * The second half is the one the feature turns on: the rows it renders have to
+ * come from the price-history endpoint, not from the inquiries list. Resolving
+ * the answer out of the cards' page is the mistake this whole screen exists to
+ * avoid.
+ */
+head("Price history: the tab reads its own endpoint, and only when open");
+
+{
+  const g6 = globalThis as unknown as Record<string, unknown>;
+  const realFetch = g6.fetch;
+  const asked: string[] = [];
+
+  g6.fetch = async (url: unknown) => {
+    const path = String(url);
+    asked.push(path);
+    const rows = path.includes("price-history")
+      ? [{
+          id: "line-1", inquiryId: "inq-1", name: "فلومتر توربینی ۶ اینچ",
+          brand: "Krohne", partNumber: "TF-6", tagNumber: null,
+          quantity: 2, currency: "دلار",
+          // Already discounted by the server: 1,000 → 800.
+          unitForeign: 800, unitRial: 48_000_000,
+          grossUnitForeign: 1000, grossUnitRial: 60_000_000, discounted: true,
+          deliveryTime: "۶ هفته", notes: null, dateJalali: "1405/05/12",
+          isWinner: true, offerConfirmed: true,
+          supplier: { id: "s1", name: "تأمین‌کننده آزمون" },
+          project: null,
+          product: { id: "p1", code: "FT100", displayName: "فلومتر توربینی", unit: "عدد" },
+          variant: { id: "v1", sku: "FT100-S6I" },
+        }]
+      : [];
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true, rows, total: rows.length, page: 1, pageSize: 25, totalPages: 1,
+        summary: {
+          pricedCount: 1, supplierCount: 1,
+          minUnitRial: 48_000_000, maxUnitRial: 48_000_000, avgUnitRial: 48_000_000,
+          truncated: false,
+        },
+      }),
+      text: async () => "{}",
+    } as unknown as Response;
+  };
+
+  const settle = async () => {
+    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  const host6 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root6 = createRoot(host6);
+
+  await act(async () => { root6.render(React.createElement(InquiryPriceHistoryTab, { active: false })); });
+  await settle();
+  ok("a tab nobody has opened asks for nothing", asked.length === 0, asked);
+
+  await act(async () => { root6.render(React.createElement(InquiryPriceHistoryTab, { active: true })); });
+  await settle();
+
+  ok("opening it reads the price-history endpoint",
+    asked.some((p) => p.includes("/api/supplier-inquiries/price-history")), asked);
+  ok("and never the inquiries list",
+    !asked.some((p) => /\/api\/supplier-inquiries(\?|$)/.test(p)), asked);
+
+  const text = host6.textContent ?? "";
+  ok("the quoted unit price is drawn", text.includes("800"), text.slice(0, 400));
+  ok("beside the SKU it was quoted for", text.includes("FT100-S6I"), text.slice(0, 400));
+  ok("and the supplier who quoted it", text.includes("تأمین‌کننده آزمون"));
+  // The discount is shown as what it took off, not folded away silently.
+  ok("the pre-discount figure is still visible", text.includes("1,000"), text.slice(0, 400));
+
+  act(() => { root6.unmount(); });
+  host6.remove();
+  g6.fetch = realFetch;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

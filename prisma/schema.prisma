@@ -964,6 +964,8 @@ model SupplierInquiry {
   @@index([projectId])
   @@index([supplierId])
   @@index([isWinner])
+  // Every page of the price history is ordered by the offer's own date.
+  @@index([creationDate])
   @@map("supplier_inquiries")
 }
 
@@ -997,6 +999,7 @@ model SupplierInquiryItem {
 
   @@index([inquiryId])
   @@index([productId])
+  @@index([variantId])
   @@map("supplier_inquiry_items")
 }
 
