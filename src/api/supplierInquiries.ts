@@ -64,6 +64,51 @@ export interface InquiryRow {
   _count: { items: number; steps: number };
 }
 
+/**
+ * One row of the price history: an inquiry line, with the offer's discount
+ * already apportioned onto it by the server.
+ *
+ * The figures are numbers rather than the decimal strings the list rows carry,
+ * because the server computes them rather than reading them off a column.
+ */
+export interface PriceHistoryRow {
+  id: string;
+  inquiryId: string;
+  name: string;
+  brand: string | null;
+  partNumber: string | null;
+  tagNumber: string | null;
+  quantity: number;
+  currency: string;
+  /** Unit price after the offer's discount. */
+  unitForeign: number;
+  unitRial: number;
+  /** Before it, so the screen can show what the discount took off. */
+  grossUnitForeign: number;
+  grossUnitRial: number;
+  discounted: boolean;
+  deliveryTime: string | null;
+  notes: string | null;
+  dateJalali: string | null;
+  isWinner: boolean;
+  offerConfirmed: boolean;
+  supplier: { id: string; name: string } | null;
+  project: { id: string; code: string; name: string } | null;
+  product: { id: string; code: string; displayName: string; unit: string | null } | null;
+  variant: { id: string; sku: string } | null;
+}
+
+/** The range across every match, not the page. */
+export interface PriceHistorySummary {
+  pricedCount: number;
+  supplierCount: number;
+  minUnitRial: number | null;
+  maxUnitRial: number | null;
+  avgUnitRial: number | null;
+  /** True when more rows matched than the summary was measured over. */
+  truncated: boolean;
+}
+
 export interface InquiryWriteInput {
   projectId?: string | null;
   supplierId?: string;

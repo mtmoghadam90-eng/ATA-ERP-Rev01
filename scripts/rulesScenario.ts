@@ -23,7 +23,10 @@ import {
   DERIVED_OUTCOMES, matchesWhere, outcomeWhere,
 } from "../src/server/proformaStatus";
 import { getProformaOutcomeStatus } from "../src/useERPStore";
-import { computeInquiryTotals } from "../src/utils/inquirySteps";
+import { computeInquiryTotals, inquiryTotalRiyal } from "../src/utils/inquirySteps";
+import {
+  discountKeepFraction, netUnitPrice, summarizeHistory,
+} from "../src/utils/inquiryPriceHistory";
 import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr } from "../src/dateUtils";
 import { generateSku, decodeSku } from "../src/utils/skuUtils";
@@ -3780,6 +3783,124 @@ head("Modules: one catalogue, and everything reads it");
     ok(`${file} keeps no copy of the sidebar list`,
       !/id:\s*['"]dashboard['"]/.test(src));
   }
+}
+
+
+/* ── Supplier inquiry: the price history ─────────────────────────────────── */
+head("Supplier inquiry: price history");
+{
+  /*
+   * The question the history answers is "what did the last one cost me", and
+   * the trap it exists to avoid is quoting a line's stored price as the answer.
+   * A discount belongs to the whole offer, so a line's own figure is
+   * pre-discount and overstates every discounted quotation.
+   */
+  const lines = [
+    { quantity: 2, currency: "دلار", priceForeign: 1000, priceRial: 60_000_000 },
+    { quantity: 1, currency: "دلار", priceForeign: 500, priceRial: 30_000_000 },
+  ];
+
+  eq("no discount keeps the whole offer", discountKeepFraction(lines, 0, 0), 1);
+  eq("10% off keeps nine tenths", Math.round(discountKeepFraction(lines, 10, 0) * 1e6) / 1e6, 0.9);
+
+  // 2,500 gross; 10% leaves 2,250; 250 off that leaves 2,000.
+  eq("percent then amount, in that order",
+    Math.round(discountKeepFraction(lines, 10, 250) * 1e6) / 1e6, 0.8);
+
+  eq("a discount larger than the offer clamps at zero, never negative",
+    discountKeepFraction(lines, 0, 99_999), 0);
+
+  // A Rial-only offer has no foreign gross at all; the fraction must still be
+  // measured, off the Rial side.
+  const rialOnly = [{ quantity: 1, currency: "ریال", priceForeign: 0, priceRial: 100_000_000 }];
+  eq("a Rial-only offer is measured on its Rial total",
+    Math.round(discountKeepFraction(rialOnly, 25, 0) * 1e6) / 1e6, 0.75);
+
+  eq("an offer with no prices at all keeps everything rather than dividing by zero",
+    discountKeepFraction([], 10, 5), 1);
+
+  /* The line's own share of that. */
+  const keep = discountKeepFraction(lines, 10, 250);
+  const unit = netUnitPrice(lines[0], keep);
+  // Compared with a tolerance, not exactly: the fraction is a ratio of two
+  // sums, so 0.8 × 1000 lands at 799.999…. Every figure reaching a screen is
+  // rounded, and the sum-to-the-card check below is what pins the accuracy.
+  ok("the unit price carries the offer's discount",
+    Math.abs(unit.unitForeign - 800) < 1e-6, unit.unitForeign);
+  ok("and so does its Rial equivalent",
+    Math.abs(unit.unitRial - 48_000_000) < 1e-3, unit.unitRial);
+  ok("a discounted line says so", unit.discounted);
+  ok("an undiscounted one does not", !netUnitPrice(lines[0], 1).discounted);
+  eq("a fraction above one is clamped — a discount never raises a price",
+    netUnitPrice(lines[0], 1.4).unitForeign, 1000);
+
+  /*
+   * The invariant that matters: the history and the offer card must not
+   * disagree about one offer. The card computes a net total; the history
+   * computes each line's net unit price. Summing the second has to give the
+   * first, or the same quotation reads as two different amounts on two screens.
+   */
+  for (const [pct, amount] of [[0, 0], [10, 0], [10, 250], [7.5, 33.25], [100, 0]] as const) {
+    const fraction = discountKeepFraction(lines, pct, amount);
+    const summed = lines.reduce(
+      (total, line) => total + netUnitPrice(line, fraction).unitRial * line.quantity,
+      0,
+    );
+    const card = inquiryTotalRiyal(
+      lines.map((l) => ({ quantity: l.quantity, currency: l.currency, priceForeign: l.priceForeign, priceRiyal: l.priceRial })) as never,
+      pct, amount,
+    );
+    ok(`the lines sum to the offer card's total at ${pct}% + ${amount}`,
+      Math.abs(summed - card) < 0.01, { summed, card });
+  }
+
+  /* The range across the matched history. */
+  const summary = summarizeHistory([
+    { unitRial: 60_000_000, supplierId: "s1" },
+    { unitRial: 48_000_000, supplierId: "s2" },
+    { unitRial: 72_000_000, supplierId: "s1" },
+    // An inquiry that was sent and never answered. Not a price.
+    { unitRial: 0, supplierId: "s3" },
+  ]);
+  eq("an unanswered line is left out of the count", summary.pricedCount, 3);
+  eq("and out of the cheapest — a free quotation is missing data, not a bargain",
+    summary.minUnitRial, 48_000_000);
+  eq("the dearest is reported too", summary.maxUnitRial, 72_000_000);
+  eq("the average is over the priced rows only", summary.avgUnitRial, 60_000_000);
+  eq("suppliers are counted once each", summary.supplierCount, 2);
+
+  const empty = summarizeHistory([{ unitRial: 0, supplierId: "s1" }]);
+  ok("no prices at all reports nothing rather than zero",
+    empty.minUnitRial === null && empty.maxUnitRial === null && empty.avgUnitRial === null,
+    empty);
+
+  /*
+   * A static segment under a parameterised route.
+   *
+   * `/api/supplier-inquiries/price-history` must be registered before
+   * `/api/supplier-inquiries/:id`, or Express matches the second and the screen
+   * gets a 404 for an inquiry whose id is the literal string "price-history".
+   */
+  const routes = readFileSync("src/server/routes/inquiries.ts", "utf-8");
+  const historyAt = routes.indexOf('app.get("/api/supplier-inquiries/price-history"');
+  const byIdAt = routes.indexOf('app.get("/api/supplier-inquiries/:id"');
+  ok("the price-history route is registered before the :id route",
+    historyAt > -1 && byIdAt > -1 && historyAt < byIdAt, { historyAt, byIdAt });
+
+  /*
+   * The history reads the *lines*, not a page of inquiries. Picking matching
+   * lines out of a page of inquiries pages the wrong set: a supplier whose one
+   * matching line sits on inquiry 200 falls off page 1 and the answer changes
+   * with the page size.
+   */
+  const service = readFileSync("src/server/services/inquiryService.ts", "utf-8");
+  const historyBody = service.slice(service.indexOf("export async function listPriceHistory"));
+  ok("the history queries the lines table",
+    /db\.supplierInquiryItem\.findMany/.test(historyBody));
+  ok("and never pages inquiries to find them",
+    !/db\.supplierInquiry\.findMany/.test(historyBody));
+  ok("a user who may not see costs is refused rather than served a blank table",
+    /canSeeCosts\(user\)/.test(historyBody));
 }
 
 

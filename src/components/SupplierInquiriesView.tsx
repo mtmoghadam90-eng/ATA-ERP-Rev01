@@ -52,6 +52,7 @@ import {
   inquiryToWriteInput, rowToInquiry, supplierInquiriesApi,
 } from '../api/supplierInquiries';
 import { useSupplierInquiryList } from '../api/useSupplierInquiryList';
+import InquiryPriceHistoryTab from './InquiryPriceHistoryTab';
 import { useEntitySearch } from '../api/useEntitySearch';
 import { detailToProject } from '../api/projectAdapter';
 import { projectsApi } from '../api/projects';
@@ -134,7 +135,7 @@ export default function SupplierInquiriesView({
 
   const list = useSupplierInquiryList();
   const selectedProjectId = list.filters.projectId;
-  const [activeTab, setActiveTab] = useState<'cards' | 'compare'>('cards');
+  const [activeTab, setActiveTab] = useState<'cards' | 'compare' | 'history'>('cards');
 
   // Modals state
   const [isInquiryModalOpen, setIsInquiryModalOpen] = useState(false);
@@ -413,16 +414,22 @@ export default function SupplierInquiriesView({
         
         {/* Project Selector + search */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full sm:w-auto shrink-0" id="project-selector-wrapper">
-          <div className="relative w-full sm:w-56" id="inquiry-search">
-            <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-            <input
-              type="text"
-              value={list.search}
-              onChange={(e) => list.setSearch(e.target.value)}
-              placeholder="جستجوی تأمین‌کننده یا کالا..."
-              className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
-            />
-          </div>
+          {/* Hidden on the price-history tab: that tab searches lines rather
+              than inquiries and carries its own box, and two search fields on
+              one screen filtering different things is how a user comes to
+              believe the search is broken. */}
+          {activeTab !== 'history' && (
+            <div className="relative w-full sm:w-56" id="inquiry-search">
+              <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                value={list.search}
+                onChange={(e) => list.setSearch(e.target.value)}
+                placeholder="جستجوی تأمین‌کننده یا کالا..."
+                className="w-full pr-9 pl-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+              />
+            </div>
+          )}
 
           <label className="text-xs font-bold text-slate-600 whitespace-nowrap sm:text-right">پروژه مورد نظر:</label>
           <div id="project-selector" className="w-full sm:w-72">
@@ -549,12 +556,31 @@ export default function SupplierInquiriesView({
                   >
                     مقایسه آفرها
                   </button>
+                  {/* The cards and the comparison both answer "what did this
+                      supplier offer on this job". This one answers the question
+                      that spans every job: what has this part ever cost. It is
+                      only offered to users who may see costs, since the whole
+                      table is prices and the endpoint refuses them anyway. */}
+                  {showCosts && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('history')}
+                      className={`col-span-2 py-2 text-center text-xs font-bold rounded-lg border transition ${
+                        activeTab === 'history'
+                          ? 'bg-slate-800 text-white border-slate-800'
+                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                      }`}
+                      id="price-history-tab-btn"
+                    >
+                      سوابق قیمت کالاها
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
           </div>
 
-          {list.error && (
+          {activeTab !== 'history' && list.error && (
             <div className="bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold rounded-2xl p-4 flex items-center justify-between gap-3" id="inquiries-error">
               <span className="flex items-center gap-1.5">
                 <AlertTriangle size={14} />
@@ -570,7 +596,11 @@ export default function SupplierInquiriesView({
             </div>
           )}
 
-          {list.initialLoading ? (
+          {/* The history reads its own endpoint, so it is not held behind the
+              inquiries list loading — nothing on it comes from that list. */}
+          {activeTab === 'history' ? (
+            <InquiryPriceHistoryTab active />
+          ) : list.initialLoading ? (
             <div className="bg-white rounded-2xl border border-slate-100 p-12 text-center text-slate-400 text-xs shadow-sm" id="inquiries-loading">
               در حال دریافت استعلام‌ها…
             </div>
@@ -1013,7 +1043,7 @@ export default function SupplierInquiriesView({
           </>
           )}
 
-          {list.totalPages > 1 && (
+          {activeTab !== 'history' && list.totalPages > 1 && (
             <div className="bg-white rounded-2xl border border-slate-100 shadow-sm px-5 py-3 flex items-center justify-between gap-3" id="inquiries-pager">
               <span className="text-[11px] font-bold text-slate-500">
                 صفحه {list.page.toLocaleString('fa-IR')} از {list.totalPages.toLocaleString('fa-IR')}

@@ -5,8 +5,9 @@ import { refuseCostWrite } from "../costs";
 import { getTodayShamsi } from "../../dateUtils";
 import {
   INQUIRY_FILTERABLE, INQUIRY_SORTABLE, InquiryInput,
+  PRICE_HISTORY_FILTERABLE, PRICE_HISTORY_SORTABLE,
   addInquiryStep, createInquiry, deleteInquiry, deleteInquiryStep,
-  getInquiry, listInquiries, updateInquiry, updateInquiryStep,
+  getInquiry, listInquiries, listPriceHistory, updateInquiry, updateInquiryStep,
 } from "../services/inquiryService";
 
 /**
@@ -49,6 +50,39 @@ export function registerInquiryRoutes(app: express.Express, deps: RouteDeps): vo
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "GET /api/supplier-inquiries");
+    }
+  });
+
+  /*
+   * The prices this company has been quoted, searchable by the item.
+   *
+   * Registered **before** `/:id`, or Express matches this path as an inquiry
+   * whose id is the literal string "price-history" and answers 404 — the same
+   * trap every static segment under a parameterised route walks into.
+   */
+  app.get("/api/supplier-inquiries/price-history", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const q = parseListQuery(
+        req.query as Record<string, unknown>,
+        PRICE_HISTORY_SORTABLE,
+        PRICE_HISTORY_FILTERABLE,
+      );
+      const result = await listPriceHistory(q, user, { outcome: req.query.outcome });
+      if (result === "forbidden") return denied(res);
+      // Refused rather than served blank: this screen is nothing but prices, so
+      // a redacted copy of it is an empty table that looks like no history.
+      if (result === "cost-blind") {
+        res.status(403).json({
+          success: false,
+          error: "سوابق قیمت خرید برای شما قابل نمایش نیست؛ دسترسی «مشاهده بهای تمام‌شده» لازم است.",
+        });
+        return;
+      }
+      res.json({ success: true, ...result });
+    } catch (err) {
+      sendError(res, err, "GET /api/supplier-inquiries/price-history");
     }
   });
 
