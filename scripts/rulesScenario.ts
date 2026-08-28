@@ -122,6 +122,7 @@ import {
   assertLinesCosted, normalizeLineCost, stampSentDate,
 } from "../src/server/services/proformaService";
 import { formatMoney } from "../src/numUtils";
+import { renderProformaDocument } from "../src/utils/proformaDocument";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -2939,9 +2940,15 @@ head("Proforma totals: the form and the document agree");
     ok(`${file} keeps no discount arithmetic of its own`,
       !/discountAmount\s*=\s*[^;]*discountPercent\s*\/\s*100/.test(readSrc(file)));
   }
-  /* And the printed document reads the stored figures rather than recomputing. */
+  /* And the printed document reads the stored figures rather than recomputing.
+     It lives in its own module now — see proformaDocument.ts — so this follows
+     it there rather than quietly passing against a file that no longer builds
+     the document. */
+  const printed = readSrc("src/utils/proformaDocument.ts");
   ok("the printed totals come from the record",
-    readSrc("src/components/ProformasView.tsx").includes("formatMoney(pf.finalAmount)"));
+    printed.includes("formatMoney(pf.finalAmount)"));
+  ok("and the document grows no discount arithmetic of its own",
+    !/discountAmount\s*=\s*[^;]*discountPercent\s*\/\s*100/.test(printed));
 }
 
 head("Exchange difference: paying more rial is not overpaying");
@@ -3901,6 +3908,113 @@ head("Supplier inquiry: price history");
     !/db\.supplierInquiry\.findMany/.test(historyBody));
   ok("a user who may not see costs is refused rather than served a blank table",
     /canSeeCosts\(user\)/.test(historyBody));
+}
+
+
+/* ── The printed proforma, across several pages ──────────────────────────── */
+head("Printed proforma: the multi-page rules");
+{
+  /*
+   * The bug this section exists for: an eight-item proforma printed its first
+   * page with a letterhead, a buyer panel and no goods at all, and started the
+   * items on page two. The goods table sat inside a box marked
+   * "break-inside: avoid", so the browser was being told to keep the whole list
+   * on one sheet — and when it would not fit, it moved the lot.
+   *
+   * These read the document the builder actually produces, because the builder
+   * is pure. What they cannot see is the pagination itself; that was checked by
+   * printing the thing with a real browser and looking at the pages.
+   */
+  const item = (n: number) => ({
+    id: `it-${n}`, productId: null, productName: `INSTRUMENT ${n}`,
+    brand: "Krohne", tagNumber: `FT-${1100 + n}`,
+    techSpecs: "Type: Turbine flow meter\nSize: 6 inch\nBody: SS316",
+    quantity: 2, unit: "دستگاه",
+    unitPriceRIYAL: 128_400_000, totalPriceRIYAL: 256_800_000,
+    status: "در انتظار",
+  });
+  const proforma = {
+    id: "pf-1", proformaNumber: "ATA-1405-08", customerId: "c-1",
+    customerName: "پالایش نفت اصفهان", issueDate: "1405/06/07", expiryDate: "1405/06/17",
+    currency: "ریال", proformaType: "COMMERCIAL",
+    items: Array.from({ length: 8 }, (_, i) => item(i + 1)),
+    totalAmount: 2_054_400_000, discountPercent: 5, discountAmount: 102_720_000,
+    taxPercent: 10, taxAmount: 195_168_000, finalAmount: 2_146_848_000,
+    notes: "شرایط پرداخت: ۵۰٪ پیش‌پرداخت.", status: "ارسال شده",
+  };
+  const template = {
+    name: "t", companyName: "ابزار تامین ارشیا", registrationNumber: "1",
+    nationalCode: "1", economicCode: "1", phone: "021", email: "a@b.c",
+    website: "w", address: "تهران", titleColor: "#0ea5e9", documentTitle: "پیش‌فاکتور",
+    headerText: "", termsAndConditions: "", footerText: "",
+    signatureLabel1: "s1", signatureLabel2: "s2",
+    showLogo: true, showTerms: true, showSignatures: true, showTotals: true,
+  };
+
+  const doc = renderProformaDocument({
+    proforma: proforma as never, template: template as never,
+    customer: { id: "c-1", customerType: "حقوقی" } as never,
+    creator: { fullName: "محمد توکل مقدم", signatureImage: null },
+    products: [], showBrand: true,
+  });
+
+  /** The declarations inside one CSS rule, by selector. */
+  const ruleBody = (selector: string): string => {
+    const at = doc.indexOf(`${selector} {`);
+    return at === -1 ? "" : doc.slice(at, doc.indexOf("}", at));
+  };
+
+  ok("the letterhead is the frame table's header group, so it repeats",
+    /<table class="doc-frame">\s*<thead>[\s\S]{0,400}?class="header"/.test(doc));
+  ok("and the address bar is its footer group, so the space is reserved",
+    /<tfoot>[\s\S]{0,400}?class="print-footer"/.test(doc));
+  ok("with a second copy painted at the foot of the sheet",
+    doc.includes('class="print-footer-painted"'));
+
+  // The one that caused it. The container must let the table fragment.
+  const container = ruleBody(".table-container");
+  ok("the goods table is not held to one page", !/break-inside:\s*avoid/.test(container), container);
+  ok("nor clipped by an overflow that would stop it fragmenting",
+    !/overflow:\s*hidden/.test(container), container);
+
+  // …and a product's own box still stays whole.
+  ok("a product row stays whole", /\.table-container tr \{[^}]*break-inside:\s*avoid/.test(doc));
+  ok("the rule is scoped to the goods table, not to every tr on the page",
+    !/\n\s{6}tr \{/.test(doc));
+  ok("the frame's own row is explicitly breakable, or the whole body would have to fit one page",
+    /\.doc-frame > tbody > tr[\s\S]{0,120}break-inside:\s*auto/.test(doc));
+
+  /*
+   * Nothing of unbounded length may be unbreakable: a block taller than the
+   * printable area that refuses to break reproduces the empty page exactly.
+   * The terms are free text a user can make as long as they like.
+   */
+  for (const selector of [".notes-card", ".financial-grid"]) {
+    const body = ruleBody(selector);
+    ok(`${selector} may break across pages — its content has no fixed length`,
+      body !== "" && !/break-inside:\s*avoid/.test(body), body);
+  }
+
+  // The footer's ink must clear the bottom of its box, or the slice that
+  // overflows the reserved strip is painted over the next page's letterhead.
+  ok("the repeated footer keeps slack at its bottom edge",
+    /\.print-footer \{[^}]*padding:\s*8px 0 6px/.test(doc));
+
+  /*
+   * `white-space: pre-line` preserves newlines, so a line break between the tag
+   * and the value prints a blank line above every specification and leaves the
+   * product name floating away from the text it heads.
+   */
+  // Comments stripped first: one of them explains this very rule and quotes the
+  // property, and a check that matches its own comment is a check that passes
+  // for the wrong reason — this codebase has been caught by that before.
+  const docNoComments = doc.replace(/<!--[\s\S]*?-->/g, "");
+  const preLineBlocks = [...docNoComments.matchAll(/white-space: pre-line[^>]*>([^<])/g)].map((m) => m[1]);
+  ok("every pre-line block starts on its own first character",
+    preLineBlocks.length > 0 && preLineBlocks.every((c) => c !== "\n" && c !== "\r"),
+    preLineBlocks.length);
+
+  ok("all eight items are on the document", (doc.match(/INSTRUMENT \d/g) ?? []).length === 8);
 }
 
 
