@@ -235,8 +235,18 @@ const noLineOutside = (statuses: string[]): Where =>
 
 /** The workflow status a document sits at while its lines are still open. */
 function openAt(status: ProformaOutcome): Where {
+  /*
+   * No null branch for the document's own status.
+   *
+   * `proformas.status` is NOT NULL, and Prisma refuses `{ status: null }` on a
+   * non-nullable column — the filter type does not accept it, and the whole
+   * query fails at runtime with "Argument `status` is missing". The screen this
+   * clause serves then shows a wall of Prisma's own error text instead of a
+   * list. A line's status *is* nullable, which is why the item clauses below
+   * still carry their null branches and must keep them.
+   */
   const stored: Where = status === "جاری"
-    ? { OR: [{ status: null }, { status: { notIn: ["پیش‌نویس", "ارسال شده"] } }] }
+    ? { status: { notIn: ["پیش‌نویس", "ارسال شده"] } }
     : { status };
 
   return {

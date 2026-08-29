@@ -347,6 +347,16 @@ export interface ProformaInput {
   issueDate?: string | null;
   expiryDate?: string | null;
   deliveryDate?: string | null;
+  /**
+   * The day the quotation went to the customer.
+   *
+   * Stamped automatically when the status first becomes «ارسال شده», and
+   * writable because the stamp is only ever a guess at "today": a document
+   * entered on Wednesday for a quotation e-mailed on Sunday is three days
+   * younger than it really is, and the age of a quote is measured from this.
+   * `stampSentDate` steps aside when the request carries one.
+   */
+  sentDate?: string | null;
   discountPercent?: unknown;
   discountAmount?: unknown;
   taxPercent?: unknown;

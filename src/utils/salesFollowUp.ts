@@ -96,12 +96,22 @@ export function isTaskFinished(status: unknown): boolean {
 /**
  * The outcomes that end the sale, and therefore end the chase.
  *
- * «نیمه برنده» is deliberately **not** here: part of the document was won and
- * the rest is still being sold, which is precisely a quotation somebody should
- * still be following up.
+ * «نیمه برنده» is one of them, on the business's own reading: a document
+ * reaches it when some lines were won and the rest were closed off, so its
+ * fate is decided and there is nothing left to ask the customer. It was
+ * treated as still-live at first — "part of it is still being sold" — which is
+ * a plausible reading of the words and not how these documents are actually
+ * used here.
+ *
+ * Note what the outcome rule does and does not distinguish: it returns
+ * «نیمه برنده» whenever at least one line is won and not all are, which also
+ * covers a document with lines still «جاری». Those are treated as settled too.
+ * If a part-won quotation ever does need chasing for its remaining lines, this
+ * is the constant to split — see `getProformaOutcome`.
  */
 export const TERMINAL_OUTCOMES: readonly ProformaOutcome[] = [
   "تأیید شده (برنده)",
+  "نیمه برنده",
   "باخته",
   "لغو شده",
 ];
@@ -114,14 +124,13 @@ export function isTerminalOutcome(outcome: unknown): boolean {
  * The outcomes a follow-up queue is about at all.
  *
  * A quotation whose result is known needs no next action — that is what
- * "settled" means — so a won, lost or cancelled document has no business on
- * this screen, and asking somebody to plan a next step for one is nonsense.
- * «پیش‌نویس» is excluded for the opposite reason: it has not been sent to
- * anybody, so there is nothing yet to chase.
+ * "settled" means — so a won, part-won, lost or cancelled document has no
+ * business on this screen, and asking somebody to plan a next step for one is
+ * nonsense. «پیش‌نویس» is excluded for the opposite reason: it has not been sent
+ * to anybody, so there is nothing yet to chase.
  *
- * «نیمه برنده» **is** here: part of the document was won and the rest is still
- * being sold, which is precisely a quotation somebody should still be
- * following up.
+ * What is left is exactly the two open outcomes: sent and awaiting an answer,
+ * or running with nothing decided on any line.
  *
  * This is a *derived* value, so it cannot be a column filter — the server
  * builds the query with `outcomeWhere` (`src/server/proformaStatus.ts`), the
@@ -133,7 +142,6 @@ export function isTerminalOutcome(outcome: unknown): boolean {
 export const CHASEABLE_OUTCOMES: readonly ProformaOutcome[] = [
   "ارسال شده",
   "جاری",
-  "نیمه برنده",
 ];
 
 export function isChaseableOutcome(outcome: unknown): boolean {

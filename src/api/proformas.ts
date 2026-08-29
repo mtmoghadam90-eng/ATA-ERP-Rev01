@@ -123,6 +123,8 @@ export interface ProformaWriteInput {
   issueDate?: string | null;
   expiryDate?: string | null;
   deliveryDate?: string | null;
+  /** The day it went to the customer; editable, not only auto-stamped. */
+  sentDate?: string | null;
   discountPercent?: unknown;
   discountAmount?: unknown;
   taxPercent?: unknown;
