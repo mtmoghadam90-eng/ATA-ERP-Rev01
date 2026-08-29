@@ -74,6 +74,13 @@ export interface ProformaRow {
   lossReason: string | null;
   /** The grid draws a custom-fields column from these. */
   customValues: string | null;
+  /** Sales follow-up — a separate axis from the commercial outcome above. */
+  followUpState: string;
+  deferredUntilJalali: string | null;
+  /** Both ends of the revision chain, as records rather than ids. */
+  previousVersionId: string | null;
+  previousVersion: { id: string; proformaNumber: string } | null;
+  nextVersions: { id: string; proformaNumber: string }[];
 }
 
 export interface ProformaDetail extends Omit<ProformaRow, "items"> {
@@ -124,6 +131,8 @@ export interface ProformaWriteInput {
   sentMethod?: string | null;
   sentRecipients?: unknown;
   customValues?: unknown;
+  /** The document this one revises, when it is explicitly a revision. */
+  previousVersionId?: string | null;
   items?: Record<string, unknown>[];
 }
 
@@ -154,6 +163,17 @@ export const proformasApi = {
     outcomes: { itemId: string; status: string; lossReason?: string | null }[],
   ) => api.post<{ proforma: ProformaDetail }>(`/api/proformas/${id}/item-outcomes`, { outcomes })
     .then((r) => r.proforma),
+
+  /**
+   * Cancels the document this revision replaced.
+   *
+   * Offered after a revision is saved, and only offered: two quotations under
+   * one project may legitimately both stay open, so superseding one is a
+   * decision a person makes rather than something creating a revision implies.
+   * Assigns no loss reason — a revision is not a lost sale.
+   */
+  cancelPreviousVersion: (id: string) =>
+    api.post<Record<string, never>>(`/api/proformas/${id}/cancel-previous-version`, {}),
 
   /**
    * `removeActivities` also deletes the automatic project-timeline entries this

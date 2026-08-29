@@ -50,7 +50,7 @@ import ConfirmModal from "./ConfirmModal";
 import DeleteActivitiesOption from './DeleteActivitiesOption';
 import { SearchableSelect } from "./SearchableSelect";
 import { ApiError } from "../api/client";
-import { proformasApi } from "../api/proformas";
+import { proformasApi, type ProformaDetail } from "../api/proformas";
 import { customersApi, type CustomerRow } from "../api/customers";
 import { useEntitySearch } from "../api/useEntitySearch";
 import { productsApi, type ProductRow } from "../api/products";
@@ -65,6 +65,7 @@ import {
   COST_SOURCES, COST_SOURCE_LABELS, landedUnitCostOf, lineNeedsCost, linesMissingCost,
 } from "../utils/costOfGoods";
 import { isPartial } from "../api/partial";
+import { type CopyMode, isTerminalOutcome } from "../utils/salesFollowUp";
 import { useProformaList } from "../api/useProformaList";
 import { useUserDirectory } from "../api/useUserDirectory";
 import { useModuleNotes } from "../api/moduleNotes";
@@ -292,12 +293,21 @@ export default function ProformasView({
    * Totals are not sent: the server recomputes every one from the lines it
    * stores, so the form's arithmetic is a preview rather than the record.
    */
-  const addProforma = async (data: Partial<Proforma>) => {
+  /**
+   * Returns the created record, which the revision flow needs.
+   *
+   * After saving a new version the screen has to ask what should happen to the
+   * one it replaced, and that question names both documents — so the caller
+   * needs the number the server issued, not just to know the save worked.
+   */
+  const addProforma = async (data: Partial<Proforma>): Promise<ProformaDetail | null> => {
     try {
-      await proformasApi.create(proformaToWriteInput(data));
+      const created = await proformasApi.create(proformaToWriteInput(data));
       list.refresh();
+      return created;
     } catch (err) {
       reportError(err, 'ثبت پیش‌فاکتور با خطا مواجه شد.');
+      return null;
     }
   };
 
@@ -614,6 +624,18 @@ export default function ProformasView({
   const [bulkStatusSelected, setBulkStatusSelected] =
     useState<Proforma["status"]>("پیش‌نویس");
   const [bulkLossReason, setBulkLossReason] = useState("");
+  /*
+   * Copying, which is two different things.
+   *
+   * `copyTarget` holds the document while the person chooses between a revision
+   * and an independent quotation; `versionQuestion` holds both numbers while
+   * they decide what becomes of the one a revision replaced.
+   */
+  const [copyTarget, setCopyTarget] = useState<Proforma | null>(null);
+  const [versionQuestion, setVersionQuestion] = useState<{
+    newId: string; newNumber: string; previousNumber: string;
+  } | null>(null);
+
   // Delete confirm state
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [proformaToDeleteId, setProformaToDeleteId] = useState<string | null>(
@@ -2215,7 +2237,20 @@ export default function ProformasView({
    * marker never reached it. The full record is fetched first, exactly as
    * `handleOpenPrint` above does.
    */
-  const handleCopyProforma = async (pf: Proforma) => {
+  /**
+   * Copying, which is two different things wearing one button.
+   *
+   * «نسخه جدید همین پیش‌فاکتور» is a revision: it records `previousVersionId`,
+   * and once it is saved the screen asks what should become of the document it
+   * replaced. «پیش‌فاکتور مستقل» is the old behaviour — a fresh quotation that
+   * happens to start from the same lines, with no relation to anything.
+   *
+   * The distinction cannot be inferred later, which is why it is asked now: a
+   * project routinely carries several open quotations (the temperature
+   * instruments, the pressure instruments, the flow meters) and none of them
+   * supersedes the others.
+   */
+  const handleCopyProforma = async (pf: Proforma, mode: CopyMode = 'INDEPENDENT') => {
     let full = pf;
     if (isPartial(pf)) {
       try {
@@ -2232,7 +2267,9 @@ export default function ProformasView({
       status: "جاری",
       lossReason: undefined,
     }));
-    addProforma({
+    const created = await addProforma({
+      // A revision names what it revises; an independent copy names nothing.
+      ...(mode === 'NEW_VERSION' ? { previousVersionId: full.id } : {}),
       proformaType: full.proformaType || "FINANCIAL",
       customerId: full.customerId,
       customerName: full.customerName,
@@ -2261,6 +2298,39 @@ export default function ProformasView({
       notes: full.notes,
       customValues: full.customValues ? { ...full.customValues } : undefined,
     });
+
+    /*
+     * The revision is saved; now the question the person actually has.
+     *
+     * Asked here rather than assumed, and only when the previous document is
+     * still commercially open — a version that was already won, lost or
+     * cancelled has an outcome nobody should be invited to overwrite. «باخته»
+     * is deliberately not one of the answers: issuing a revision is not losing
+     * a sale.
+     */
+    if (created && mode === 'NEW_VERSION') {
+      const previousStillOpen = !isTerminalOutcome(full.outcomeStatus ?? full.status);
+      if (previousStillOpen) {
+        setVersionQuestion({
+          newId: created.id,
+          newNumber: created.proformaNumber,
+          previousNumber: full.proformaNumber,
+        });
+      }
+    }
+  };
+
+  /** Answers «لغو نسخه قبلی»; «بدون تغییر» just closes the question. */
+  const handleCancelPreviousVersion = async () => {
+    if (!versionQuestion) return;
+    try {
+      await proformasApi.cancelPreviousVersion(versionQuestion.newId);
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'لغو نسخه قبلی با خطا مواجه شد.');
+    } finally {
+      setVersionQuestion(null);
+    }
   };
   // Filter proformas
   const filteredProformas = proformas.filter((p) => {
@@ -2687,6 +2757,34 @@ export default function ProformasView({
                             <span className="font-mono font-extrabold text-slate-900 text-sm block whitespace-nowrap">
                               {pf.proformaNumber}
                             </span>
+                            {/*
+                              Both ends of the revision chain, when there is one.
+
+                              Only an explicit relation draws these. Two
+                              quotations under one project are not versions of
+                              each other, however alike they look, so nothing
+                              here groups by project.
+                            */}
+                            {pf.previousVersionNumber && (
+                              <button
+                                type="button"
+                                onClick={() => setSearch(pf.previousVersionNumber!)}
+                                className="mt-1 block text-[10px] font-bold text-indigo-600 hover:underline"
+                                title="نمایش نسخه قبلی"
+                              >
+                                نسخه جدید از {pf.previousVersionNumber}
+                              </button>
+                            )}
+                            {pf.nextVersionNumber && (
+                              <button
+                                type="button"
+                                onClick={() => setSearch(pf.nextVersionNumber!)}
+                                className="mt-1 block text-[10px] font-bold text-amber-600 hover:underline"
+                                title="نمایش نسخه بعدی"
+                              >
+                                نسخه بعدی: {pf.nextVersionNumber}
+                              </button>
+                            )}
                           </td>
                           {/* Dates */}
                           <td className="p-4 font-mono text-[11px] text-slate-600 space-y-1">
@@ -2858,7 +2956,7 @@ export default function ProformasView({
                                       <Edit size={15} />
                                     </button>
                                     <button
-                                      onClick={() => void handleCopyProforma(pf)}
+                                      onClick={() => setCopyTarget(pf)}
                                       className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-md transition"
                                       title="کپی"
                                     >
@@ -5089,6 +5187,109 @@ export default function ProformasView({
         </div>
       )}
       {/* Confirm Delete Modal */}
+      {/*
+        Copying is two different things, so it asks which.
+
+        A revision records `previousVersionId` and starts the "what about the
+        old one?" question below; an independent copy is the behaviour this
+        button always had. Nothing about the source document changes either way
+        — superseding it is a separate answer to a separate question.
+      */}
+      {copyTarget && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4" dir="rtl">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-800">نوع کپی را انتخاب کنید</h3>
+              <p className="text-[11px] text-slate-500 mt-1">
+                پیش‌فاکتور مبدأ: <span className="font-mono">{copyTarget.proformaNumber}</span>
+              </p>
+            </div>
+            <div className="p-5 space-y-3">
+              <button
+                type="button"
+                id="copy-as-version"
+                onClick={() => { const t = copyTarget; setCopyTarget(null); void handleCopyProforma(t, 'NEW_VERSION'); }}
+                className="w-full text-right p-4 rounded-xl border border-sky-200 bg-sky-50/60 hover:bg-sky-50 transition"
+              >
+                <span className="block text-xs font-bold text-sky-700">نسخه جدید همین پیش‌فاکتور</span>
+                <span className="block text-[11px] text-slate-500 mt-1 leading-relaxed">
+                  نسخه جدید به همین پیش‌فاکتور متصل می‌شود و پس از ثبت می‌پرسیم وضعیت نسخه قبلی چه شود. وضعیت اقلام به «جاری» برمی‌گردد.
+                </span>
+              </button>
+              <button
+                type="button"
+                id="copy-as-independent"
+                onClick={() => { const t = copyTarget; setCopyTarget(null); void handleCopyProforma(t, 'INDEPENDENT'); }}
+                className="w-full text-right p-4 rounded-xl border border-slate-200 hover:bg-slate-50 transition"
+              >
+                <span className="block text-xs font-bold text-slate-700">پیش‌فاکتور مستقل</span>
+                <span className="block text-[11px] text-slate-500 mt-1 leading-relaxed">
+                  یک پیش‌فاکتور کاملاً مستقل با همین اقلام؛ هیچ ارتباطی با پیش‌فاکتور مبدأ ثبت نمی‌شود و مبدأ بدون تغییر می‌ماند.
+                </span>
+              </button>
+            </div>
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-start">
+              <button
+                type="button"
+                onClick={() => setCopyTarget(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition"
+              >
+                انصراف
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/*
+        The revision is saved; what becomes of the one it replaced?
+
+        Only «لغو نسخه قبلی» or «بدون تغییر». «باخته» is deliberately absent —
+        a revision is not a lost sale, and filing one as a loss would poison
+        every report built on why sales are lost.
+      */}
+      {versionQuestion && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4" dir="rtl">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-100">
+              <h3 className="text-sm font-bold text-slate-800">نسخه جدید پیش‌فاکتور ثبت شد.</h3>
+              <p className="text-xs text-slate-600 mt-2">وضعیت نسخه قبلی چه شود؟</p>
+            </div>
+            <div className="p-5 space-y-2 text-xs">
+              <div className="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-lg px-3 py-2">
+                <span className="text-slate-500">نسخه قبلی</span>
+                <span className="font-mono font-bold text-slate-700">{versionQuestion.previousNumber}</span>
+              </div>
+              <div className="flex items-center justify-between bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">
+                <span className="text-emerald-600">نسخه جدید</span>
+                <span className="font-mono font-bold text-emerald-700">{versionQuestion.newNumber}</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
+                لغو نسخه قبلی دلیل باخت ثبت نمی‌کند و پیگیری‌های باز آن را می‌بندد.
+              </p>
+            </div>
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-between gap-2">
+              <button
+                type="button"
+                id="keep-previous-version"
+                onClick={() => setVersionQuestion(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition"
+              >
+                بدون تغییر باقی بماند
+              </button>
+              <button
+                type="button"
+                id="cancel-previous-version"
+                onClick={() => void handleCancelPreviousVersion()}
+                className="px-4 py-2 text-xs font-bold bg-rose-500 hover:bg-rose-600 text-white rounded-lg transition"
+              >
+                لغو نسخه قبلی
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmModal
         isOpen={deleteConfirmOpen}
         onClose={() => {

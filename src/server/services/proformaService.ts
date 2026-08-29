@@ -181,6 +181,17 @@ const LIST_SELECT = {
   sentRecipients: true,
   lossReason: true,
   customValues: true,
+  // The follow-up state, and both ends of the revision chain.
+  //
+  // The card prints «نسخه جدید از PF-A» and «نسخه بعدی: PF-B», and both are
+  // relations rather than columns — read here so the grid does not have to
+  // resolve a proforma number out of whatever page the picker happens to hold,
+  // which is the mistake this codebase keeps having to undo.
+  followUpState: true,
+  deferredUntilJalali: true,
+  previousVersionId: true,
+  previousVersion: { select: { id: true, proformaNumber: true } },
+  nextVersions: { select: { id: true, proformaNumber: true }, take: 1 },
   // The grid lists each line's name and quantity beside the customer, and
   // colours it by status — four small columns, not the whole line.
   items: {

@@ -346,6 +346,18 @@ export interface Proforma {
   moduleNotes?: ModuleNote[];
   sentMethod?: string;
   sentRecipients?: string[];
+  /**
+   * Sales follow-up — a separate axis from `status` and `outcomeStatus` above.
+   * OPEN | DEFERRED | NO_RESPONSE, and nothing that already exists there.
+   */
+  followUpState?: 'OPEN' | 'DEFERRED' | 'NO_RESPONSE';
+  deferredUntil?: string;
+  /** The document this one revises. Explicit; never inferred from the project. */
+  previousVersionId?: string;
+  previousVersionNumber?: string;
+  /** The revision that superseded this one, when there is one. */
+  nextVersionId?: string;
+  nextVersionNumber?: string;
 }
 
 export interface PurchaseOrderItem {
