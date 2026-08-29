@@ -45,6 +45,7 @@ import { parseBearer, pathClosedToTokens, scopeAllowsMethod } from "./src/utils/
 import { processQueue } from "./src/server/services/messaging/messageService";
 import { scrapeRates } from "./src/server/rateSource";
 import { ensureRatesFresh } from "./src/server/services/rateRefresh";
+import { refreshHolidayCache } from "./src/server/services/holidayService";
 import { ensureWorkflowSweepRanToday, runDueWorkflows } from "./src/server/services/workflowSweep";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 import { UPLOADS_DIR, ensureUploadsDir } from "./src/server/uploadsDir";
@@ -706,6 +707,15 @@ registerMessagingRoutes(app, routeDeps);
     // After binding, so a slow or unreachable database delays the report rather
     // than the port.
     void reportSchemaState();
+    /*
+     * The official calendar, into this process's date helpers.
+     *
+     * The server counts working days too — `projectSummary` proposes delivery
+     * dates — so it needs the same answers the browser has. Not awaited, and it
+     * never throws: until it lands the helpers use the fixed solar days, which
+     * is what they fall back to anyway.
+     */
+    void refreshHolidayCache();
   });
 
   /*

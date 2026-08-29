@@ -1,3 +1,6 @@
+import {
+  DEFAULT_WEEKEND_DAYS, HolidayMap, countForwardDays, isNonWorkingDay, normalizeJalali,
+} from './utils/holidays';
 export function gregorianToJalali(gy: number, gm: number, gd: number): [number, number, number] {
   const g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
   let jy = (gy <= 1600) ? 0 : 979;
@@ -120,101 +123,91 @@ export function getShamsiDaysDifference(dateA: string, dateB: string): number {
   return Math.round(diffTime / (1000 * 60 * 60 * 24));
 }
 
-const FIXED_HOLIDAYS = new Set([
-  '01/01',
-  '01/02',
-  '01/03',
-  '01/04',
-  '01/12',
-  '01/13',
-  '03/14',
-  '03/15',
-  '11/22',
-  '12/29',
-]);
+/* ------------------------------ the calendar ----------------------------- */
 
-const HOLIDAYS_1405 = new Set([
-  '01/10', // Martyrdom of Imam Ali
-  '01/22', // Martyrdom of Imam Sadiq
-  '03/06', // Eid al-Adha
-  '05/02', // Tasu'a
-  '05/03', // Ashura
-  '06/12', // Arba'een
-  '06/20', // Demise of Prophet
-  '06/22', // Martyrdom of Imam Reza
-  '06/29', // Martyrdom of Imam Askari
-  '07/07', // Birthday of Prophet
-  '09/02', // Martyrdom of Fatima
-  '11/02', // Birthday of Imam Ali
-  '11/16', // Mab'ath of Prophet
-  '12/03', // Birthday of Imam Mahdi
-]);
+/**
+ * The official calendar, as this process currently knows it.
+ *
+ * It used to be three hardcoded sets right here: the fixed solar days, plus
+ * hand-typed lunar dates for 1405 and 1406 and nothing after. Beyond 1406 every
+ * lunar holiday silently vanished from the working-day arithmetic — and the two
+ * years that were there were **a lunar month late**, so a delivery date counted
+ * across Ashura 1405 was counted across an ordinary Tuesday instead.
+ *
+ * The days are data now, in the `holidays` table. This module keeps a copy
+ * because `isOfficialHoliday` is called synchronously all over the forms while
+ * somebody types, and the alternative — making every caller await — is a
+ * refactor of every screen for no gain. It is loaded once after sign-in
+ * (`src/api/holidays.ts` on the client, `refreshHolidayCache` on the server)
+ * and falls back to the fixed solar days until it is, so a fresh installation
+ * still counts Nowruz correctly before anybody presses anything.
+ */
+let holidayOverrides: HolidayMap = {};
+let weekendDays: readonly number[] = DEFAULT_WEEKEND_DAYS;
 
-const HOLIDAYS_1406 = new Set([
-  '01/11', // Martyrdom of Imam Sadiq
-  '02/25', // Eid al-Adha
-  '03/03', // Eid al-Ghadir
-  '04/22', // Tasu'a
-  '04/23', // Ashura
-  '06/01', // Arba'een
-  '06/09', // Demise of Prophet
-  '06/11', // Martyrdom of Imam Reza
-  '06/18', // Martyrdom of Imam Askari
-  '06/26', // Birthday of Prophet
-  '08/21', // Martyrdom of Fatima
-  '10/21', // Birthday of Imam Ali
-  '11/05', // Mab'ath of Prophet
-  '11/21', // Birthday of Imam Mahdi
-]);
-
-export function isOfficialHoliday(shamsiStr: any): boolean {
-  if (!shamsiStr || typeof shamsiStr !== 'string') return false;
-  const normalized = shamsiStr.replace(/-/g, '/').trim();
-  const parts = normalized.split('/');
-  if (parts.length !== 3) return false;
-  const year = parseInt(parts[0], 10);
-  const month = parts[1].padStart(2, '0');
-  const day = parts[2].padStart(2, '0');
-  const md = `${month}/${day}`;
-
-  // 1. Check fixed holidays
-  if (FIXED_HOLIDAYS.has(md)) return true;
-
-  // 2. Check year-specific lunar holidays
-  if (year === 1405 && HOLIDAYS_1405.has(md)) return true;
-  if (year === 1406 && HOLIDAYS_1406.has(md)) return true;
-
-  // 3. Check Friday (weekend in Iran)
-  const gStr = toGregorianStr(normalized);
-  if (gStr) {
-    const d = new Date(gStr);
-    if (!isNaN(d.getTime())) {
-      // 5 is Friday in JS (Sunday is 0, Monday is 1, ..., Friday is 5, Saturday is 6)
-      if (d.getDay() === 5) {
-        return true;
-      }
-    }
-  }
-
-  return false;
+/** Replaces what this process knows. Called with the whole set, never a page. */
+export function setHolidayCalendar(
+  holidays: HolidayMap,
+  weekend: readonly number[] = DEFAULT_WEEKEND_DAYS,
+): void {
+  holidayOverrides = holidays ?? {};
+  weekendDays = weekend?.length ? weekend : DEFAULT_WEEKEND_DAYS;
 }
 
+/** What is loaded, for a screen that wants to say how many days it knows. */
+export function holidayCalendarSize(): number {
+  return Object.keys(holidayOverrides).length;
+}
+
+/** The day of the week, or null when the date cannot be read. */
+function jalaliDayOfWeek(normalized: string): number | null {
+  const gStr = toGregorianStr(normalized);
+  if (!gStr) return null;
+  const d = new Date(gStr);
+  return isNaN(d.getTime()) ? null : d.getDay();
+}
+
+/**
+ * Is this a day nobody works?
+ *
+ * The rule itself is `isNonWorkingDay` in `src/utils/holidays.ts`, which is
+ * pure and covered by `test:rules`; this only supplies the two things it
+ * deliberately does not compute — what the calendar says, and which day of the
+ * week the date falls on.
+ */
+export function isOfficialHoliday(shamsiStr: any): boolean {
+  const normalized = normalizeJalali(shamsiStr);
+  if (!normalized) return false;
+  return isNonWorkingDay(normalized, jalaliDayOfWeek(normalized), {
+    holidays: holidayOverrides,
+    weekendDays,
+  });
+}
+
+/**
+ * The date `workingDays` working days from here.
+ *
+ * Bounded — see `countForwardDays`. The old loop had nothing stopping it, so a
+ * calendar that marked every day (one bad import, or a weekend list of all
+ * seven) would spin the browser's main thread for ever with no error.
+ */
 export function addWorkingDaysToShamsi(shamsiStr: string, workingDays: number): string {
   if (!shamsiStr) return '';
-  let currentDate = shamsiStr;
-  let count = 0;
-  // If we need 0 working days, return current date
-  if (workingDays <= 0) return currentDate;
-  
-  while (count < workingDays) {
-    currentDate = addDaysToShamsi(currentDate, 1);
-    if (!isOfficialHoliday(currentDate)) {
-      count++;
-    }
-  }
-  return currentDate;
-}
+  if (workingDays <= 0) return shamsiStr;
 
+  // Memoised across the walk: `addDaysToShamsi` is the expensive part and the
+  // predicate is asked for the same offsets in order.
+  const seen: string[] = [shamsiStr];
+  const at = (offset: number): string => {
+    while (seen.length <= offset) {
+      seen.push(addDaysToShamsi(seen[seen.length - 1], 1));
+    }
+    return seen[offset];
+  };
+
+  const offset = countForwardDays(workingDays, (i) => isOfficialHoliday(at(i)));
+  return at(offset);
+}
 
 export function parsePersianDate(shamsiStr: string): Date {
   const gStr = toGregorianStr(shamsiStr);

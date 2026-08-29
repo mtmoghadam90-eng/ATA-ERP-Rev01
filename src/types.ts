@@ -718,6 +718,15 @@ export interface ERPSettings {
    * means "warn about nothing", which is a real answer.
    */
   projectDataGapFields?: string[];
+  /**
+   * Where a year's official holidays are fetched from.
+   *
+   * `{YEAR}` is replaced with the Shamsi year. Absent means the built-in
+   * source (`DEFAULT_HOLIDAY_SOURCE_URL`); it is a setting because the list is
+   * published by third parties whose addresses outlive no deployment, and
+   * because this network may only be able to reach one of them.
+   */
+  holidaySourceUrl?: string;
   dropdownItems: {
     industries: string[];
     customerTypes: string[];

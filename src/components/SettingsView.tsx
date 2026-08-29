@@ -29,7 +29,8 @@ import {
   Award,
   X,
   Bot,
-  Plug
+  Plug,
+  CalendarDays
 } from 'lucide-react';
 import { ERPSettings, CustomField, User, Project, AuditLog, WorkflowRule } from '../types';
 import { APP_MODULES, DEFAULT_MODULE_ORDER } from '../appModules';
@@ -53,6 +54,7 @@ import { uploadFile } from '../imageUtils';
 import { REQUIRED_FIELDS_METADATA, DEFAULT_REQUIRED_FIELDS } from '../utils/requiredFields';
 import { projectGapCatalogue, projectGapFields } from '../utils/projectDataGaps';
 import CustomerValueSettingsPanel from './CustomerValueSettingsPanel';
+import HolidayCalendarTab from './HolidayCalendarTab';
 import { TASK_KINDS, TASK_KIND_LABELS } from '../utils/salesFollowUp';
 
 interface SettingsViewProps {
@@ -107,7 +109,7 @@ export default function SettingsView({
   };
   
   // Tab control
-  const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields' | 'customerValue' | 'assistant' | 'apiTokens'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields' | 'customerValue' | 'assistant' | 'apiTokens' | 'holidays'>('general');
 
   // Mandatory / optional fields state
   const [localRequiredFields, setLocalRequiredFields] = useState<Record<string, Record<string, boolean>>>(() => {
@@ -1099,6 +1101,18 @@ export default function SettingsView({
           <TrendingUp size={16} className="text-emerald-500" />
           نرخ ارز روزانه
         </button>
+
+        <button
+          onClick={() => setActiveTab('holidays')}
+          className={`py-2 px-4 md:py-2.5 md:px-5 text-xs md:text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 rounded-xl border flex-shrink-0 ${
+            activeTab === 'holidays'
+              ? 'bg-sky-50 text-sky-600 border-sky-300 shadow-sm shadow-sky-100'
+              : 'bg-white text-slate-500 hover:text-slate-800 hover:bg-slate-50 border-slate-200'
+          }`}
+        >
+          <CalendarDays size={16} className="text-rose-500" />
+          تقویم تعطیلات
+        </button>
       </div>
 
       {activeTab === 'requiredFields' ? (
@@ -1253,6 +1267,8 @@ export default function SettingsView({
         <ApiTokensPanel />
       ) : activeTab === 'customerValue' ? (
         <CustomerValueSettingsPanel settings={settings} updateSettings={updateSettings} />
+      ) : activeTab === 'holidays' ? (
+        <HolidayCalendarTab />
       ) : activeTab === 'rates' ? (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="mb-6">

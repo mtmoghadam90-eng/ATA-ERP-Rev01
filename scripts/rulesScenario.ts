@@ -147,6 +147,12 @@ import {
   averageProformasPerProject, opportunityGroups, opportunityOutcome, wonValueRial,
 } from "../src/server/dashboardMetrics";
 import { decidingProformas } from "../src/server/proformaStatus";
+import {
+  FIXED_SOLAR_HOLIDAYS, MAX_WORKING_DAY_SPAN, MIN_PLAUSIBLE_HOLIDAYS, countForwardDays,
+  importRefusalReason, isNonWorkingDay, monthDayOf, normalizeJalali, parseCalendarYear,
+  toLatinDigits as holidayLatinDigits,
+} from "../src/utils/holidays";
+import { setHolidayCalendar, toGregorianStr } from "../src/dateUtils";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -5477,6 +5483,203 @@ head("Tasks: a board shows your own work, not the company's");
   ok("a referral inbox is scoped to the caller",
     /assignedByUserId: user\.id/.test(listBody.slice(0, 900))
     && /assignedToUserId: user\.id/.test(listBody.slice(0, 900)));
+}
+
+
+head("Holidays: the calendar is data, and it was a lunar month wrong");
+{
+  /*
+   * The fault this replaced.
+   *
+   * `dateUtils.ts` carried three hardcoded sets: the ten fixed solar days, plus
+   * hand-typed lunar dates for 1405 and 1406 and nothing after. Beyond 1406
+   * every lunar holiday silently disappeared from the working-day arithmetic —
+   * and the two years that *were* there were a lunar month late, so a delivery
+   * date promised across Ashura 1405 was counted across an ordinary Tuesday.
+   */
+
+  /* -- the ordering rule, which is the whole of `isNonWorkingDay` -- */
+
+  // An ordinary Tuesday with nothing said about it.
+  ok("an ordinary weekday is worked", !isNonWorkingDay("1405/02/07", 2));
+  ok("Friday is not", isNonWorkingDay("1405/02/10", 5));
+  ok("and a fixed solar day is not, whatever day it falls on",
+    isNonWorkingDay("1407/01/01", 3));
+
+  // The explicit answer wins over both, in both directions. Without the second
+  // direction «this announced holiday we are working» could not be said at all.
+  ok("an explicit holiday beats an ordinary weekday",
+    isNonWorkingDay("1405/02/07", 2, { holidays: { "1405/02/07": true } }));
+  ok("an explicit working day beats Friday",
+    !isNonWorkingDay("1405/02/10", 5, { holidays: { "1405/02/10": false } }));
+  ok("and beats a fixed solar day",
+    !isNonWorkingDay("1407/01/03", 3, { holidays: { "1407/01/03": false } }));
+  // The stored key is normalised, so a date typed `1405/2/7` still matches.
+  ok("the explicit answer is matched on the normalised date",
+    isNonWorkingDay("1405/2/7", 2, { holidays: { "1405/02/07": true } }));
+
+  // A weekend list is configurable; Thursday is off in some companies.
+  ok("the weekend is a setting",
+    isNonWorkingDay("1405/02/09", 4, { weekendDays: [4, 5] }));
+  ok("a date nobody can read is not a holiday", !isNonWorkingDay("nonsense", 5));
+
+  eq("a date normalises to one spelling", normalizeJalali("1405-2-7"), "1405/02/07");
+  eq("and an unreadable one to null", normalizeJalali("1405/13/40"), null);
+  eq("the month-day half is what the fixed list is keyed on",
+    monthDayOf("1407/01/13"), "01/13");
+  ok("and every fixed day is spelled that way",
+    FIXED_SOLAR_HOLIDAYS.every((md) => /^\d{2}\/\d{2}$/.test(md)));
+
+  /* -- the working-day walk is bounded -- */
+
+  /*
+   * The old loop was `while (count < workingDays)` with nothing stopping it: a
+   * calendar marking every day — one bad import, or a weekend list of all seven
+   * — spun the browser's main thread for ever, with no error and no way out.
+   */
+  eq("a calendar with no working days returns the cap rather than hanging",
+    countForwardDays(5, () => true), MAX_WORKING_DAY_SPAN);
+  eq("five working days with nothing in the way is five days",
+    countForwardDays(5, () => false), 5);
+  // Every third day off: five working days spans seven.
+  eq("and a holiday every third day pushes it out",
+    countForwardDays(5, (i) => i % 3 === 0), 7);
+  eq("zero working days moves nothing", countForwardDays(0, () => false), 0);
+  eq("and a negative count moves nothing either", countForwardDays(-3, () => false), 0);
+
+  /* -- reading a year out of the source -- */
+
+  // The source's own shape: `header.jalali` is «۱۴۰۵ فروردین», year first and
+  // the month name last, which is why the parser takes the last token.
+  const month = (name: string, days: unknown[]) => ({ header: { jalali: `۱۴۰۵ ${name}` }, days });
+  const day = (n: number, holiday: boolean, events: unknown[], disabled = false) => ({
+    disabled,
+    day: { jalali: String(n) },
+    events: { isHoliday: holiday, list: events },
+  });
+
+  const parsed = parseCalendarYear([
+    month("فروردین", [
+      day(1, true, [{ isHoliday: true, event: "نوروز" }]),
+      day(2, false, [{ isHoliday: false, event: "روز عادی" }]),
+      // The grid pads with the neighbouring months; importing those files a
+      // day under the wrong month.
+      day(31, true, [{ isHoliday: true, event: "روز ماه بعد" }], true),
+    ]),
+    month("تیر", [
+      day(4, true, [
+        { isHoliday: true, event: "عاشورا" },
+        { isHoliday: false, event: "یادداشت" },
+      ]),
+      // Repeated by the source; one answer per day.
+      day(4, true, [{ isHoliday: true, event: "تکراری" }]),
+    ]),
+    { header: { jalali: "۱۴۰۵ ماه‌ناشناخته" }, days: [day(9, true, [])] },
+  ], 1405);
+
+  eq("only the real holidays are read", parsed.length, 2);
+  eq("under the month they belong to", parsed[0]?.dateJalali, "1405/01/01");
+  eq("and the second in order", parsed[1]?.dateJalali, "1405/04/04");
+  eq("with only the holiday-bearing titles", parsed[1]?.title, "عاشورا");
+  // Somebody else's document: a change to its shape must produce fewer
+  // holidays and a visible count, never an exception that takes a screen down.
+  eq("a payload that is not an array is no holidays", parseCalendarYear({}, 1405).length, 0);
+  eq("nor is a null one", parseCalendarYear(null, 1405).length, 0);
+  eq("a month with no days array is skipped",
+    parseCalendarYear([{ header: { jalali: "۱۴۰۵ تیر" } }], 1405).length, 0);
+  eq("a source printing Persian digits is read", holidayLatinDigits("۱۴۰۵"), "1405");
+
+  /* -- an implausible year is refused rather than written -- */
+
+  const oneDay = [{ dateJalali: "1405/01/01", title: "نوروز" }];
+  ok("an empty answer is refused", importRefusalReason([]) !== null);
+  ok("and so is a handful of days", importRefusalReason(oneDay) !== null);
+  const full = Array.from({ length: MIN_PLAUSIBLE_HOLIDAYS }, (_, i) => ({
+    dateJalali: `1405/01/${String(i + 1).padStart(2, "0")}`, title: "x",
+  }));
+  eq("a full year goes through", importRefusalReason(full), null);
+
+  /* -- the regression itself, held against a checkable Gregorian date -- */
+
+  /*
+   * Ashura 1404 falls on 2025-07-05 — 10 Muharram 1447, checkable against any
+   * calendar. A lunar year is 354 or 355 days, so Ashura 1405 must land about
+   * that far after it. The date the app had hardcoded is 385 days after: a
+   * lunar year *plus a lunar month*, which is the whole shape of the bug.
+   */
+  const gap = (from: string, to: string) => Math.round(
+    (new Date(toGregorianStr(to)!).getTime() - new Date(toGregorianStr(from)!).getTime())
+    / 86400000,
+  );
+  const ashura1404 = "1404/04/14";
+  eq("Ashura 1404 is 5 July 2025", toGregorianStr(ashura1404), "2025-07-05");
+  const trueGap = gap(ashura1404, "1405/04/04");
+  ok("Ashura 1405 is one lunar year later — 4 Tir", trueGap >= 353 && trueGap <= 356, trueGap);
+  const wrongGap = gap(ashura1404, "1405/05/03");
+  ok("the date the app used to carry is a lunar month beyond that",
+    wrongGap >= 383 && wrongGap <= 386, wrongGap);
+
+  const dateUtils = readFileSync("src/dateUtils.ts", "utf8");
+  // The predicate is held against the thing that actually broke: the two
+  // hand-typed sets, by name.
+  ok("and the hardcoded lunar years are gone from dateUtils",
+    !/HOLIDAYS_1405|HOLIDAYS_1406/.test(dateUtils));
+  ok("the rule is read from the pure module instead",
+    /isNonWorkingDay\(/.test(dateUtils));
+
+  /* -- the calendar reaches the working-day arithmetic -- */
+
+  try {
+    // 1405/02/05 is a Saturday, and the Friday in the week that follows it is
+    // 1405/02/11 — so six working days has to step over that Friday.
+    setHolidayCalendar({});
+    const plain = addWorkingDaysToShamsi("1405/02/05", 6);
+    eq("six working days steps over the Friday", plain, "1405/02/12");
+
+    setHolidayCalendar({ "1405/02/08": true });
+    const withOne = addWorkingDaysToShamsi("1405/02/05", 6);
+    ok("marking a day off pushes a delivery date out", withOne > plain, { plain, withOne });
+
+    // The other direction, which the old hardcoded set could not express at all.
+    setHolidayCalendar({ "1405/02/11": false });
+    const openFriday = addWorkingDaysToShamsi("1405/02/05", 6);
+    ok("and working a Friday pulls it back in", openFriday < plain, { plain, openFriday });
+  } finally {
+    // Whatever happened, the rest of this file must see the default calendar.
+    setHolidayCalendar({});
+  }
+
+  /* -- who may read it, and who may change it -- */
+
+  const adminRoutes = readFileSync("src/server/routes/admin.ts", "utf8");
+  const getHolidays = adminRoutes.slice(
+    adminRoutes.indexOf('app.get("/api/holidays"'),
+    adminRoutes.indexOf('app.put("/api/holidays"'),
+  );
+  /*
+   * Read by any signed-in user, deliberately. Every screen that counts a
+   * working day needs it, and a salesperson who could not read it would be
+   * quoting delivery dates off a different calendar from everybody else.
+   */
+  ok("reading the calendar needs only a session",
+    getHolidays.includes("requireAuth") && !getHolidays.includes("requireKeyAccess"));
+
+  const holidayService = readFileSync("src/server/services/holidayService.ts", "utf8");
+  const writes = ["upsertHoliday", "deleteHoliday", "importHolidayYear"];
+  ok("but every write is gated on `settings`",
+    writes.every((fn) => {
+      const body = holidayService.slice(holidayService.indexOf(`export async function ${fn}`));
+      return /hasPermission\(user, "settings"\)/.test(body.slice(0, 400));
+    }));
+  // A hand-entered day is the correction somebody made *because* the source
+  // was wrong or silent; an import that overwrote it would undo it every time.
+  ok("an import leaves a hand-entered day alone",
+    /known === "MANUAL"[\s\S]{0,60}keptManual\+\+; continue;/.test(holidayService));
+  ok("and an edit marks the day as hand-entered, so the next import still will",
+    /update: \{ title, isHoliday, source: "MANUAL" \}/.test(holidayService));
+  // Removing a day the source dropped is a decision for a person.
+  ok("and nothing is deleted by an import",
+    !/deleteMany/.test(holidayService.slice(holidayService.indexOf("export async function importHolidayYear"))));
 }
 
 

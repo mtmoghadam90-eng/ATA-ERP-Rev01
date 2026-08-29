@@ -18,6 +18,7 @@ import PackagingDeliveryView from './components/PackagingDeliveryView';
 import SupplierInquiriesView from './components/SupplierInquiriesView';
 import LoginView from './components/LoginView';
 import { useERPStore, onSessionExpired } from './useERPStore';
+import { ensureHolidayCalendar } from './api/holidays';
 import { ShieldAlert, Bell, Inbox, Menu, Calendar, CheckCircle2, Clock, User, Sun, Moon } from 'lucide-react';
 import TaskCalendarModal from './components/TaskCalendarModal';
 import { getTodayShamsi, toShamsiStr } from './dateUtils';
@@ -111,6 +112,21 @@ export default function App() {
   useEffect(() => {
     return onSessionExpired(() => setSessionLost(true));
   }, []);
+
+  /*
+   * The official calendar, once a session exists.
+   *
+   * `isOfficialHoliday` is called synchronously while somebody types a delivery
+   * term, so the days cannot be fetched at the moment they are needed; they are
+   * loaded here and pushed into the date helpers, which use the fixed solar
+   * days until they land. Never awaited and never able to fail a render — a
+   * calendar that will not load leaves the fallback in place rather than
+   * stopping anybody working.
+   */
+  useEffect(() => {
+    if (!store.currentUser) return;
+    void ensureHolidayCalendar();
+  }, [store.currentUser]);
 
   // Project confirmation upload state
   const [projectToUploadDoc, setProjectToUploadDoc] = useState<Project | null>(null);
