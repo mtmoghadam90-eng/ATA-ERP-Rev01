@@ -90,7 +90,7 @@ import {
   generateDeliveryNotes, getDeliverySummary, updateNotesWithDelivery,
 } from "../src/utils/deliveryNotes";
 import { DEFAULT_SETTINGS } from "../src/seedData";
-import { KEY_PERMISSION, canSeeCosts } from "../src/server/auth";
+import { KEY_PERMISSION, canSeeAllTasks, canSeeCosts } from "../src/server/auth";
 import {
   preserveLineCosts, redactCustomerValue, redactInquiry, redactProduct,
   redactPurchaseOrder, redactProforma, redactValueDetail, redactValueSummary,
@@ -108,6 +108,7 @@ import { rowToSupplier } from "../src/api/suppliers";
 import { rowToTransaction } from "../src/api/transactions";
 import { detailToPurchaseOrder, purchaseOrderToWriteInput, rowToPurchaseOrder } from "../src/api/purchaseOrders";
 import { rowToTask } from "../src/api/tasks";
+import { scopeClause, visibilityClause as taskVisibility } from "../src/server/services/taskService";
 import { samePermissions } from "../src/server/services/userService";
 import { buildCustomerWhere } from "../src/server/services/customerService";
 import { buildTransactionWhere } from "../src/server/services/transactionService";
@@ -5376,6 +5377,106 @@ head("Migrations: no sqlcmd batch separators");
   // failed half way through the file.
   ok("every step is guarded, so a partial apply can be re-run",
     (messenger.match(/IF (NOT )?EXISTS|IF COL_LENGTH/g) ?? []).length >= 5);
+}
+
+
+head("Tasks: a board shows your own work, not the company's");
+{
+  /*
+   * The reported fault.
+   *
+   * `visibilityClause` returned "no restriction" for anybody holding the
+   * `tasks` permission, and `hasPermission` reads an **absent** key as granted
+   * — so since every account has the tasks module (everybody needs to see their
+   * own work), every account saw every task. The only way to get privacy was to
+   * be *denied* the module, which is backwards.
+   */
+  const plain = { id: "u1", permissions: { tasks: true } };
+  const legacy = { id: "u2" };
+  const manager = { id: "u3", permissions: { tasks: true, tasksAll: true } };
+  const admin = { id: "u4", isSystemAdmin: true };
+
+  const scoped = (u: unknown) => JSON.stringify(taskVisibility(u as never));
+  const mine = (id: string) =>
+    JSON.stringify({ OR: [{ assignedToUserId: id }, { createdByUserId: id }] });
+
+  eq("an ordinary user sees their own", scoped(plain), mine("u1"));
+  // The account with no permissions object at all — the legacy shape that made
+  // «absent means granted» the right default for module flags.
+  eq("and so does an account with no permissions written on it", scoped(legacy), mine("u2"));
+  eq("the whole board needs the flag, explicitly", scoped(manager), undefined as never);
+  eq("a system administrator has it", scoped(admin), undefined as never);
+
+  // Read strictly, like `costs`: an absent flag denies. A flag inheriting the
+  // module default would reproduce the fault on the day it shipped.
+  ok("tasksAll is denied when absent", !canSeeAllTasks(plain as never));
+  ok("and when explicitly false",
+    !canSeeAllTasks({ id: "u5", permissions: { tasksAll: false } } as never));
+  ok("granted only when explicitly true", canSeeAllTasks(manager as never));
+  ok("never for a signed-out caller", !canSeeAllTasks(null));
+  // The same reading as the other two strict flags, so the three agree.
+  ok("costs is still read the same way",
+    !canSeeCosts(plain as never) && canSeeCosts(admin as never));
+
+  /*
+   * A task you raised for a colleague is still yours to see.
+   *
+   * Scoping to the assignee alone would be worse than the fault: there is no
+   * other column naming you, so it would vanish from your own board.
+   */
+  ok("the clause is an OR over both people",
+    scoped(plain).includes("assignedToUserId") && scoped(plain).includes("createdByUserId"));
+
+  // The tab narrows within that; it must never be what enforces it.
+  eq("the «to me» tab narrows to the assignee",
+    JSON.stringify(scopeClause(plain as never, "toMe")), JSON.stringify({ assignedToUserId: "u1" }));
+  eq("the «from me» tab narrows to the creator",
+    JSON.stringify(scopeClause(plain as never, "fromMe")), JSON.stringify({ createdByUserId: "u1" }));
+  eq("«all» narrows nothing", scopeClause(plain as never, "all"), undefined);
+  eq("and an invented scope narrows nothing either",
+    scopeClause(plain as never, "everything" as never), undefined);
+
+  const service = readFileSync("src/server/services/taskService.ts", "utf8");
+  ok("the scope is applied on top of the visibility, not instead of it",
+    /if \(visibility\) and\.push\(visibility\);[\s\S]{0,200}scopeClause/.test(service));
+  // Half of who may see the task, so a client that could set it could put a
+  // task on somebody else's board — or take one off its own.
+  ok("the creator is taken from the session", /createdByUserId: user\.id/.test(service));
+  const routes = readFileSync("src/server/routes/tasks.ts", "utf8");
+  ok("and is not writable through the route",
+    !/["']createdByUserId["']/.test(routes.slice(routes.indexOf("const WRITABLE"), routes.indexOf("function pickInput"))));
+
+  const view = readFileSync("src/components/TasksView.tsx", "utf8");
+  // The ids are built from the key, so the two keys are what to look for.
+  ok("the board has the two tabs",
+    /task-scope-\$\{tab\.key\}/.test(view)
+    && /key: 'toMe' as const/.test(view) && /key: 'fromMe' as const/.test(view));
+  // A tab that returns your own tasks under the heading «همه» is worse than
+  // no tab at all.
+  ok("and offers «همه» only to somebody who holds the flag",
+    /canSeeEveryTask \? \[\{ key: 'all'/.test(view));
+  ok("read strictly on the screen too",
+    /permissions\?\.tasksAll === true/.test(view));
+
+  const hook = readFileSync("src/api/useTaskList.ts", "utf8");
+  ok("the board opens on what was given to me", /scope: "toMe",/.test(hook));
+
+  const users = readFileSync("src/components/UsersView.tsx", "utf8");
+  ok("the permission can be granted in Settings", /id: 'tasksAll'/.test(users));
+  ok("and is unticked unless explicitly held",
+    /tasksAll: user\.permissions\?\.tasksAll === true/.test(users));
+
+  /*
+   * Referrals were already right, and must stay so.
+   *
+   * The inbox sends a scope and the server forces the caller's own id into the
+   * clause; there is no way to widen it from the screen.
+   */
+  const activity = readFileSync("src/server/services/activityService.ts", "utf8");
+  const listBody = activity.slice(activity.indexOf("export async function listReferrals"));
+  ok("a referral inbox is scoped to the caller",
+    /assignedByUserId: user\.id/.test(listBody.slice(0, 900))
+    && /assignedToUserId: user\.id/.test(listBody.slice(0, 900)));
 }
 
 

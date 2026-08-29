@@ -18,6 +18,9 @@ export interface TaskRow {
   relatedToType: string | null;
   relatedToId: string | null;
   relatedToName: string | null;
+  /** Who raised it. Half of who may see it; null on rows written before it. */
+  createdByUserId: string | null;
+  createdByName: string | null;
   /**
    * The job behind the task, resolved on the server.
    *
@@ -104,6 +107,7 @@ export function rowToTask(row: TaskRow): Task {
     relatedToType: (row.relatedToType ?? undefined) as Task["relatedToType"],
     relatedToId: row.relatedToId ?? undefined,
     relatedToName: row.relatedToName ?? undefined,
+    createdByName: row.createdByName ?? undefined,
     relatedProject: row.relatedProject ?? undefined,
     priority: row.priority as Task["priority"],
     status: row.status as Task["status"],

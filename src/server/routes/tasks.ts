@@ -37,6 +37,12 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
         // The client's clock decides what "overdue" means, since the app runs on
         // the Persian calendar and the user's today is the relevant one.
         overdue: req.query.overdue === "true" ? getTodayShamsi() : undefined,
+        // Which half of the board. Narrowed *within* what the caller may see —
+        // `visibilityClause` still applies, so an omitted or invented scope
+        // widens nothing.
+        scope: req.query.scope === "toMe" ? "toMe"
+          : req.query.scope === "fromMe" ? "fromMe"
+          : undefined,
       });
       res.json({ success: true, ...result });
     } catch (err) {

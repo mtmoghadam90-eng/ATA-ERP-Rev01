@@ -13,6 +13,7 @@ import {
   Minimize2
 } from 'lucide-react';
 import { Task, Customer, Project, ERPSettings } from '../types';
+import type { User as AppUser } from '../types';
 import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import ShamsiDatePicker from './ShamsiDatePicker';
@@ -41,7 +42,14 @@ import { detailToProject, projectToWriteInput } from '../api/projectAdapter';
  */
 interface TasksViewProps {
   settings: ERPSettings;
-  currentUser?: { fullName: string; role?: string } | null;
+  /*
+   * The whole user, not just a name.
+   *
+   * The board's «همه وظایف» tab is offered only to somebody who actually holds
+   * `tasksAll`, and that is read strictly — a tab that returns your own tasks
+   * under the heading «همه» is worse than no tab at all.
+   */
+  currentUser?: AppUser | null;
 }
 
 export default function TasksView({
@@ -154,6 +162,22 @@ export default function TasksView({
    */
   const selectedStatus = list.filters.status;
   const setSelectedStatus = (value: string) => list.setFilter('status', value);
+
+  /*
+   * Which half of the board — the same two questions the referrals inbox asks.
+   *
+   * The screen used to show every task in the company to anybody who could open
+   * it, because the module permission was doing double duty: «may see this
+   * screen» and «may see everyone's work» were the same flag, and an absent
+   * flag reads as granted. The scope is enforced on the server; this only picks
+   * between the halves the caller is already allowed.
+   *
+   * «همه» is offered only to somebody who actually holds `tasksAll` — a tab
+   * that returns your own tasks under the heading «همه» is worse than no tab.
+   */
+  const selectedScope = list.filters.scope;
+  const canSeeEveryTask = !!currentUser?.isSystemAdmin
+    || currentUser?.permissions?.tasksAll === true;
   const [isTaskModalFullscreen, setIsTaskModalFullscreen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [quickAddType, setQuickAddType] = useState<'customer' | 'project' | 'supplier' | 'product' | null>(null);
@@ -324,6 +348,29 @@ export default function TasksView({
           <Plus size={16} />
           ثبت پیگیری / یادداشت جدید
         </button>
+      </div>
+
+      {/* Whose tasks. Enforced on the server; this picks between the halves. */}
+      <div className="flex flex-wrap items-center gap-2" id="task-scope-tabs">
+        {([
+          { key: 'toMe' as const, label: 'به من ارجاع شده' },
+          { key: 'fromMe' as const, label: 'من ارجاع دادم' },
+          ...(canSeeEveryTask ? [{ key: 'all' as const, label: 'همه وظایف' }] : []),
+        ]).map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => list.setFilter('scope', tab.key)}
+            id={`task-scope-${tab.key}`}
+            className={`px-3.5 py-1.5 text-xs font-bold rounded-xl border transition ${
+              selectedScope === tab.key
+                ? 'bg-sky-500 border-sky-500 text-white shadow-sm'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
       {/* Filters */}

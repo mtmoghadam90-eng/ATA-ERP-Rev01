@@ -158,6 +158,25 @@ export function canSeeCosts(user: AuthUser | null | undefined): boolean {
   return user.permissions?.costs === true;
 }
 
+/**
+ * May this user see the whole company's tasks, rather than their own?
+ *
+ * Read **strictly**, like `canSeeCosts` and unlike every module flag: an absent
+ * value denies. That is the whole point — the board used to show everybody
+ * everything because `hasPermission` reads an absent key as granted, and every
+ * account has the `tasks` module because everybody needs to see their own work.
+ * A flag that inherits the same default would reproduce the fault on the day it
+ * shipped.
+ *
+ * So it must be granted deliberately, per account, in Settings → کاربران. A
+ * sales manager can have it without being made a system administrator.
+ */
+export function canSeeAllTasks(user: AuthUser | null | undefined): boolean {
+  if (!user) return false;
+  if (user.isSystemAdmin) return true;
+  return user.permissions?.tasksAll === true;
+}
+
 export interface AuthUser {
   id: string;
   username?: string;
