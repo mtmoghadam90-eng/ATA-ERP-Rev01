@@ -3,7 +3,11 @@ import { useExchangeRates } from '../api/exchangeRates';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { computeInquiryTotals } from '../utils/inquirySteps';
 import { formatMoney } from '../numUtils';
+import {
+  ActivityAttachment, MAX_ACTIVITY_ATTACHMENTS, normalizeAttachments,
+} from '../utils/attachments';
 import { 
+  ChevronDown,
   Plus, 
   Edit, 
   Trash2, 
@@ -62,13 +66,15 @@ import type { ProductRow } from '../api/products';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import CostAccessNotice from './CostAccessNotice';
 import NumberField from './NumberField';
-import { canSeeCosts } from '../utils/permissions';
+import { canSeeCosts, hasModulePermission } from '../utils/permissions';
 import ProductConfiguratorModal from './ProductConfiguratorModal';
 import {
   ConfigSelections, attributesFromSelections, mergeSpecText,
   selectionsFromAttributes, selectionsFromSpecText, specLinesFrom,
 } from '../utils/productConfig';
-import { ensureVariantForAttributes } from '../api/productVariants';
+import {
+  ensureVariantForAttributes, updateProductById as applyProductChange,
+} from '../api/productVariants';
 import { detailToProduct } from '../api/productAdapter';
 import { productsApi } from '../api/products';
 
@@ -179,6 +185,25 @@ export default function SupplierInquiriesView({
   const catalogue = productPicker.matches;
 
   const filteredInquiries = useMemo(() => list.rows.map(rowToInquiry), [list.rows]);
+
+  /*
+   * A card can be folded away.
+   *
+   * Comparing six suppliers means six full cards — totals, attachments, every
+   * line and the whole timeline — and the page runs to several screens before
+   * two offers can be read against each other. Cards open by default, so a
+   * project with two suppliers looks exactly as it did; the header is the
+   * toggle and «بستن همه» closes the lot.
+   *
+   * `??` rather than `||`: an explicit click has to win over the default in
+   * both directions.
+   */
+  const [collapsedCards, setCollapsedCards] = useState<Record<string, boolean>>({});
+  const isCardOpen = (id: string) => !(collapsedCards[id] ?? false);
+  const toggleCard = (id: string) =>
+    setCollapsedCards((prev) => ({ ...prev, [id]: isCardOpen(id) }));
+  const setAllCards = (open: boolean) =>
+    setCollapsedCards(Object.fromEntries(filteredInquiries.map((i) => [i.id, !open])));
 
   /* The chosen project's own record, for the "items needed" brief and to seed a
      new inquiry's lines. A list row carries neither, so this is a real fetch. */
@@ -623,10 +648,30 @@ export default function SupplierInquiriesView({
               >
                 {filteredInquiries.length > 0 ? (
                   <div className="space-y-2" id="inquiries-scroller-section">
-                    <div className="text-xs font-bold text-slate-400 mb-2">
-                      استعلام‌ها ({list.total.toLocaleString('fa-IR')} مورد
-                      {list.totalPages > 1 && ` - نمایش ${filteredInquiries.length.toLocaleString('fa-IR')} مورد در صفحه ${list.page.toLocaleString('fa-IR')} از ${list.totalPages.toLocaleString('fa-IR')}`}
-                      ) - امکان پیمایش افقی
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="text-xs font-bold text-slate-400">
+                        استعلام‌ها ({list.total.toLocaleString('fa-IR')} مورد
+                        {list.totalPages > 1 && ` - نمایش ${filteredInquiries.length.toLocaleString('fa-IR')} مورد در صفحه ${list.page.toLocaleString('fa-IR')} از ${list.totalPages.toLocaleString('fa-IR')}`}
+                        )
+                      </div>
+                      {/* Six suppliers is six full cards; closing them turns the
+                          page into a list that can actually be compared. */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setAllCards(true)}
+                          className="px-2.5 py-1 text-[11px] font-bold text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 transition"
+                        >
+                          باز کردن همه
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAllCards(false)}
+                          className="px-2.5 py-1 text-[11px] font-bold text-slate-600 border border-slate-200 rounded-lg bg-white hover:bg-slate-50 transition"
+                        >
+                          بستن همه
+                        </button>
+                      </div>
                     </div>
 
                     {/* Horizontal scroll container */}
@@ -638,6 +683,7 @@ export default function SupplierInquiriesView({
                         // Calculate total offer amount in Riyal for brief display
                         const totals = computeInquiryTotals(inq.items, inq.discountPercent, inq.discountAmount);
                         const totalRiyal = totals.netRiyal;
+                        const open = isCardOpen(inq.id);
                         return (
                           <div 
                             key={inq.id}
@@ -656,8 +702,23 @@ export default function SupplierInquiriesView({
                                 <span className="text-xs font-bold text-slate-400">تأمین‌کننده</span>
                                 <h3 className="text-sm font-extrabold text-slate-800">{inq.supplierName}</h3>
                                 {selectedProjectId === 'all' && (
+                                  /* The name and the code, from the row's own
+                                     join. Several projects here are genuinely
+                                     called the same thing, and this used to
+                                     resolve the id against the project picker's
+                                     current matches — so a job outside that
+                                     page read «نامشخص». */
                                   <span className="text-[10px] bg-sky-50 text-sky-600 px-2 py-0.5 rounded font-bold block w-fit mt-1">
-                                    پروژه: {inq.projectId ? (projects.find(p => p.id === inq.projectId)?.name || 'نامشخص') : 'خرید انباری (بدون پروژه)'}
+                                    پروژه: {inq.projectId
+                                      ? (
+                                        <>
+                                          {inq.projectName || 'نامشخص'}
+                                          {inq.projectCode && (
+                                            <span className="font-mono text-sky-500"> — {inq.projectCode}</span>
+                                          )}
+                                        </>
+                                      )
+                                      : 'خرید انباری (بدون پروژه)'}
                                   </span>
                                 )}
                                 {inq.offerConfirmed && (
@@ -668,6 +729,30 @@ export default function SupplierInquiriesView({
                                 )}
                               </div>
                               <div className="flex items-center gap-1.5">
+                                {/* Closed, the header still has to say what the
+                                    offer came to — a folded card that shows only
+                                    a supplier's name is a row you have to open
+                                    to compare. */}
+                                {!open && (
+                                  <span className="text-xs font-extrabold text-sky-600 ml-1 hidden sm:inline">
+                                    {formatMoney(Math.round(totalRiyal))}
+                                    <span className="text-[10px] font-normal text-slate-400"> ریال</span>
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => toggleCard(inq.id)}
+                                  className="p-1.5 bg-slate-100 text-slate-500 hover:bg-slate-200 rounded-lg transition"
+                                  title={open ? 'جمع کردن کارت' : 'باز کردن کارت'}
+                                  aria-expanded={open}
+                                  id={`inquiry-card-toggle-${inq.id}`}
+                                >
+                                  <ChevronDown
+                                    size={16}
+                                    className="transition-transform duration-200"
+                                    style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}
+                                  />
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => handleToggleOfferConfirmed(inq.id)}
@@ -713,6 +798,7 @@ export default function SupplierInquiriesView({
 
                             {/* Card Body — three columns across the row: what it
                                 costs, what was offered, and how it got here. */}
+                            {open && (
                             <div className="p-4 grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 items-start">
                               <div className="space-y-4">
                               {/* Total Price Brief */}
@@ -745,37 +831,49 @@ export default function SupplierInquiriesView({
                                 )}
                               </div>
 
-                              {/* Document Attachments */}
+                              {/* Document attachments — one button per file:
+                                  an offer that arrived as a letter, a datasheet
+                                  and a price list is three downloads, and a
+                                  single button could only ever fetch the first. */}
                               <div className="grid grid-cols-2 gap-2">
-                                {inq.technicalOfferUrl ? (
-                                  <button 
-                                    type="button"
-                                    onClick={() => downloadFileFromServer(inq.technicalOfferUrl, `technical-offer-${inq.supplierName || 'supplier'}`)}
-                                    className="flex items-center justify-center gap-1 py-1.5 px-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg border border-emerald-100 text-[10px] font-bold transition text-center cursor-pointer"
-                                  >
-                                    <FileDown size={12} />
-                                    پیوست فنی
-                                  </button>
-                                ) : (
-                                  <div className="flex items-center justify-center gap-1 py-1.5 px-2 bg-slate-50 text-slate-400 rounded-lg border border-slate-100 text-[10px] font-bold">
-                                    پیوست فنی ندارد
+                                {([
+                                  {
+                                    kind: 'technical' as const,
+                                    label: 'پیوست فنی',
+                                    files: inq.technicalOfferFiles ?? [],
+                                    tone: 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border-emerald-100',
+                                  },
+                                  {
+                                    kind: 'financial' as const,
+                                    label: 'پیوست مالی',
+                                    files: inq.financialOfferFiles ?? [],
+                                    tone: 'bg-sky-50 text-sky-700 hover:bg-sky-100 border-sky-100',
+                                  },
+                                ]).map((group) => (
+                                  <div key={group.kind} className="flex flex-col gap-1">
+                                    {group.files.length === 0 ? (
+                                      <div className="flex items-center justify-center gap-1 py-1.5 px-2 bg-slate-50 text-slate-400 rounded-lg border border-slate-100 text-[10px] font-bold">
+                                        {group.label} ندارد
+                                      </div>
+                                    ) : group.files.map((file, i) => (
+                                      <button
+                                        key={file.url}
+                                        type="button"
+                                        onClick={() => downloadFileFromServer(
+                                          file.url,
+                                          `${group.kind}-offer-${inq.supplierName || 'supplier'}-${i + 1}`,
+                                        )}
+                                        title={file.name}
+                                        className={`flex items-center justify-center gap-1 py-1.5 px-2 rounded-lg border text-[10px] font-bold transition text-center cursor-pointer ${group.tone}`}
+                                      >
+                                        <FileDown size={12} />
+                                        <span className="truncate">
+                                          {group.files.length > 1 ? `${group.label} ${(i + 1).toLocaleString('fa-IR')}` : group.label}
+                                        </span>
+                                      </button>
+                                    ))}
                                   </div>
-                                )}
-
-                                {inq.financialOfferUrl ? (
-                                  <button 
-                                    type="button"
-                                    onClick={() => downloadFileFromServer(inq.financialOfferUrl, `financial-offer-${inq.supplierName || 'supplier'}`)}
-                                    className="flex items-center justify-center gap-1 py-1.5 px-2 bg-sky-50 text-sky-700 hover:bg-sky-100 rounded-lg border border-sky-100 text-[10px] font-bold transition text-center cursor-pointer"
-                                  >
-                                    <FileDown size={12} />
-                                    پیوست مالی
-                                  </button>
-                                ) : (
-                                  <div className="flex items-center justify-center gap-1 py-1.5 px-2 bg-slate-50 text-slate-400 rounded-lg border border-slate-100 text-[10px] font-bold">
-                                    پیوست مالی ندارد
-                                  </div>
-                                )}
+                                ))}
                               </div>
 
                               </div>
@@ -879,6 +977,7 @@ export default function SupplierInquiriesView({
                                 )}
                               </div>
                             </div>
+                            )}
 
                             {/* Winner banner footer */}
                             {inq.isWinner && (
@@ -976,16 +1075,20 @@ export default function SupplierInquiriesView({
                               </td>
                               <td className="p-3">
                                 <div className="flex flex-col gap-1 w-28">
-                                  {inq.technicalOfferUrl ? (
-                                    <a href={inq.technicalOfferUrl} target="_blank" rel="noreferrer" className="text-[10px] text-emerald-600 hover:underline flex items-center gap-1 font-semibold">
-                                      <FileText size={12} /> دانلود پیشنهاد فنی
-                                    </a>
-                                  ) : <span className="text-[10px] text-slate-400">بدون فایل فنی</span>}
-                                  {inq.financialOfferUrl ? (
-                                    <a href={inq.financialOfferUrl} target="_blank" rel="noreferrer" className="text-[10px] text-sky-600 hover:underline flex items-center gap-1 font-semibold">
-                                      <FileText size={12} /> دانلود پیشنهاد مالی
-                                    </a>
-                                  ) : <span className="text-[10px] text-slate-400">بدون فایل مالی</span>}
+                                  {(inq.technicalOfferFiles ?? []).length === 0
+                                    ? <span className="text-[10px] text-slate-400">بدون فایل فنی</span>
+                                    : (inq.technicalOfferFiles ?? []).map((file) => (
+                                      <a key={file.url} href={file.url} target="_blank" rel="noreferrer" title={file.name} className="text-[10px] text-emerald-600 hover:underline flex items-center gap-1 font-semibold">
+                                        <FileText size={12} /> <span className="truncate">{file.name}</span>
+                                      </a>
+                                    ))}
+                                  {(inq.financialOfferFiles ?? []).length === 0
+                                    ? <span className="text-[10px] text-slate-400">بدون فایل مالی</span>
+                                    : (inq.financialOfferFiles ?? []).map((file) => (
+                                      <a key={file.url} href={file.url} target="_blank" rel="noreferrer" title={file.name} className="text-[10px] text-sky-600 hover:underline flex items-center gap-1 font-semibold">
+                                        <FileText size={12} /> <span className="truncate">{file.name}</span>
+                                      </a>
+                                    ))}
                                 </div>
                               </td>
                               <td className="p-3">
@@ -1139,6 +1242,7 @@ export default function SupplierInquiriesView({
                   projectPicker={projectPicker}
                   getCurrencyRate={getCurrencyRate}
                   settings={settings}
+                  canEditCatalogue={hasModulePermission(currentUser, 'products')}
                   onClose={() => setIsInquiryModalOpen(false)}
                   onSubmit={handleSubmitInquiry}
                 />
@@ -1246,6 +1350,8 @@ interface InquiryFormInnerProps {
   projectPicker: PickerHandle;
   getCurrencyRate: (currency: string) => number;
   settings: ERPSettings;
+  /** Whether this user may add a feature or an option to the catalogue. */
+  canEditCatalogue: boolean;
   onClose: () => void;
   /** The second argument describes how the inquiry was sent; create only. */
   onSubmit: (data: Partial<SupplierInquiry>, initialStep?: InitialStepDetails) => void;
@@ -1264,6 +1370,7 @@ function InquiryFormInner({
   projectPicker,
   getCurrencyRate,
   settings,
+  canEditCatalogue,
   onClose,
   onSubmit
 }: InquiryFormInnerProps) {
@@ -1272,10 +1379,23 @@ function InquiryFormInner({
     return selectedProjectId === 'all' ? '' : selectedProjectId;
   });
   const [supplierId, setSupplierId] = useState<string>(editingInquiry?.supplierId || '');
-  const [technicalOfferUrl, setTechnicalOfferUrl] = useState<string>(editingInquiry?.technicalOfferUrl || '');
+  /*
+    * A quotation is rarely one file.
+    *
+    * A supplier answers with a covering letter, a datasheet and a price list,
+    * and the form took one of each — so the rest arrived as a second inquiry or
+    * not at all. The single `technicalOfferUrl`/`financialOfferUrl` columns are
+    * still written, with the first file, so the grid's link, the download
+    * button and the reporting export are untouched.
+    */
+  const [technicalFiles, setTechnicalFiles] = useState<ActivityAttachment[]>(
+    () => editingInquiry?.technicalOfferFiles
+      ?? normalizeAttachments([{ url: editingInquiry?.technicalOfferUrl }]));
+  const [financialFiles, setFinancialFiles] = useState<ActivityAttachment[]>(
+    () => editingInquiry?.financialOfferFiles
+      ?? normalizeAttachments([{ url: editingInquiry?.financialOfferUrl }]));
   const [discountPercent, setDiscountPercent] = useState<number>(editingInquiry?.discountPercent || 0);
   const [discountAmount, setDiscountAmount] = useState<number>(editingInquiry?.discountAmount || 0);
-  const [financialOfferUrl, setFinancialOfferUrl] = useState<string>(editingInquiry?.financialOfferUrl || '');
   
   const [uploadingTechnical, setUploadingTechnical] = useState(false);
   const [uploadingFinancial, setUploadingFinancial] = useState(false);
@@ -1520,29 +1640,45 @@ function InquiryFormInner({
   };
 
   // Upload files handler
-  const handleUploadFile = async (type: 'technical' | 'financial', file: File) => {
+  const handleUploadFiles = async (type: 'technical' | 'financial', chosen: File[]) => {
     setUploadError('');
-    if (type === 'technical') {
-      setUploadingTechnical(true);
-      try {
-        const url = await uploadToSupplierInquiries(file);
-        setTechnicalOfferUrl(url);
-      } catch (err: any) {
-        setUploadError(err.message || 'خطا در بارگذاری پیشنهاد فنی');
-      } finally {
-        setUploadingTechnical(false);
-      }
-    } else {
-      setUploadingFinancial(true);
-      try {
-        const url = await uploadToSupplierInquiries(file);
-        setFinancialOfferUrl(url);
-      } catch (err: any) {
-        setUploadError(err.message || 'خطا در بارگذاری پیشنهاد مالی');
-      } finally {
-        setUploadingFinancial(false);
-      }
+    const setBusy = type === 'technical' ? setUploadingTechnical : setUploadingFinancial;
+    const setList = type === 'technical' ? setTechnicalFiles : setFinancialFiles;
+    const existing = type === 'technical' ? technicalFiles : financialFiles;
+    const room = MAX_ACTIVITY_ATTACHMENTS - existing.length;
+    if (room <= 0) {
+      setUploadError(`حداکثر ${MAX_ACTIVITY_ATTACHMENTS} فایل برای هر پیشنهاد قابل بارگذاری است.`);
+      return;
     }
+
+    setBusy(true);
+    // One at a time, and a failure names the file rather than the batch: a
+    // silently dropped attachment is worse than one that was never chosen.
+    const uploaded: ActivityAttachment[] = [];
+    try {
+      for (const file of chosen.slice(0, room)) {
+        try {
+          const url = await uploadToSupplierInquiries(file);
+          uploaded.push({
+            name: file.name,
+            size: `${Math.max(1, Math.round(file.size / 1024))} KB`,
+            url,
+          });
+        } catch (err: any) {
+          setUploadError(`${file.name}: ${err?.message || 'خطا در بارگذاری فایل'}`);
+        }
+      }
+      if (uploaded.length > 0) {
+        setList(normalizeAttachments([...existing, ...uploaded]));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeOfferFile = (type: 'technical' | 'financial', url: string) => {
+    const setList = type === 'technical' ? setTechnicalFiles : setFinancialFiles;
+    setList((prev) => prev.filter((f) => f.url !== url));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -1575,8 +1711,8 @@ function InquiryFormInner({
           priceRiyal: Number(item.priceRiyal),
           quantity: Number(item.quantity)
         })),
-        technicalOfferUrl: technicalOfferUrl || undefined,
-        financialOfferUrl: financialOfferUrl || undefined,
+        technicalOfferFiles: technicalFiles,
+        financialOfferFiles: financialFiles,
         discountPercent: Number(discountPercent) || 0,
         discountAmount: Number(discountAmount) || 0,
         creationDate: editingInquiry?.creationDate || initialStepDate,
@@ -1940,6 +2076,18 @@ function InquiryFormInner({
           onConfirm={() => void confirmConfigurator()}
           confirmLabel="تایید و ثبت SKU روی ردیف"
           busy={configBusy}
+          /*
+            The same catalogue edit the proforma form offers: a supplier is
+            being asked to price a rating nobody has entered yet, and leaving
+            the inquiry to add it on the products screen loses the inquiry.
+            Gated on the products permission — this writes to the catalogue —
+            and the modal is given the product it just saved so the new option
+            is on screen at once.
+          */
+          onCatalogueEdit={canEditCatalogue ? async (mutate) => {
+            const saved = await applyProductChange(configFor.product.id, mutate);
+            if (saved) setConfigFor((prev) => (prev ? { ...prev, product: saved } : prev));
+          } : undefined}
           intro={(
             <>
               ویژگی‌های کالای <span className="font-bold">{configFor.product.displayName}</span> را
@@ -2022,69 +2170,87 @@ function InquiryFormInner({
 
       {/* Technical and Financial Upload fields */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Technical Offer Upload */}
-        <div className="border border-slate-150 p-4 rounded-xl bg-slate-50/50 space-y-2 relative">
-          <span className="text-xs font-bold text-slate-700 block">بارگذاری پروپوزال / پیشنهاد فنی (Technical Offer)</span>
-          
-          <div className="flex items-center gap-3">
-            <label className="cursor-pointer bg-white border border-slate-200 hover:bg-slate-50 px-4 py-2 rounded-lg text-[11px] font-bold text-slate-700 transition flex items-center gap-1">
-              <Upload size={14} className="text-slate-500" />
-              انتخاب فایل فنی
-              <input
-                type="file"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleUploadFile('technical', file);
-                }}
-              />
-            </label>
+        {([
+          {
+            type: 'technical' as const,
+            title: 'بارگذاری پروپوزال / پیشنهاد فنی (Technical Offer)',
+            pick: 'انتخاب فایل‌های فنی',
+            files: technicalFiles,
+            busy: uploadingTechnical,
+          },
+          {
+            type: 'financial' as const,
+            title: 'بارگذاری پیشنهاد مالی (Financial Offer / Invoice)',
+            pick: 'انتخاب فایل‌های مالی',
+            files: financialFiles,
+            busy: uploadingFinancial,
+          },
+        ]).map((panel) => (
+          <div
+            key={panel.type}
+            className="border border-slate-150 p-4 rounded-xl bg-slate-50/50 space-y-2 relative"
+          >
+            <span className="text-xs font-bold text-slate-700 block">{panel.title}</span>
 
-            {uploadingTechnical && <span className="text-[10px] text-sky-600 animate-pulse font-bold">در حال آپلود...</span>}
-            {technicalOfferUrl && (
-              <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
-                <Check size={12} /> فایل با موفقیت آپلود شد
-              </span>
+            <div className="flex items-center gap-3">
+              <label className="cursor-pointer bg-white border border-slate-200 hover:bg-slate-50 px-4 py-2 rounded-lg text-[11px] font-bold text-slate-700 transition flex items-center gap-1">
+                <Upload size={14} className="text-slate-500" />
+                {panel.pick}
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const chosen = Array.from(e.target.files ?? []);
+                    // Cleared so choosing the same file again still fires a
+                    // change event after it has been removed from the list.
+                    e.target.value = '';
+                    if (chosen.length > 0) void handleUploadFiles(panel.type, chosen);
+                  }}
+                />
+              </label>
+
+              {panel.busy && (
+                <span className="text-[10px] text-sky-600 animate-pulse font-bold">در حال آپلود...</span>
+              )}
+              {panel.files.length > 0 && (
+                <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
+                  <Check size={12} /> {panel.files.length.toLocaleString('fa-IR')} فایل
+                </span>
+              )}
+            </div>
+
+            {panel.files.length > 0 && (
+              <ul className="space-y-1">
+                {panel.files.map((file) => (
+                  <li
+                    key={file.url}
+                    className="flex items-center justify-between gap-2 text-[10px] bg-white p-1.5 rounded border border-slate-100"
+                  >
+                    <a
+                      href={file.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-slate-600 hover:text-sky-600 truncate flex-1"
+                      title={file.url}
+                    >
+                      {file.name}
+                      {file.size ? <span className="text-slate-400"> — {file.size}</span> : null}
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => removeOfferFile(panel.type, file.url)}
+                      className="text-rose-400 hover:text-rose-600 shrink-0"
+                      title="حذف از فهرست"
+                    >
+                      <X size={12} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
-          {technicalOfferUrl && (
-            <div className="text-[10px] text-slate-400 break-all bg-white p-1.5 rounded border border-slate-100 font-mono">
-              مسیر ذخیره: {technicalOfferUrl}
-            </div>
-          )}
-        </div>
-
-        {/* Financial Offer Upload */}
-        <div className="border border-slate-150 p-4 rounded-xl bg-slate-50/50 space-y-2 relative">
-          <span className="text-xs font-bold text-slate-700 block">بارگذاری پیشنهاد مالی (Financial Offer / Invoice)</span>
-          
-          <div className="flex items-center gap-3">
-            <label className="cursor-pointer bg-white border border-slate-200 hover:bg-slate-50 px-4 py-2 rounded-lg text-[11px] font-bold text-slate-700 transition flex items-center gap-1">
-              <Upload size={14} className="text-slate-500" />
-              انتخاب فایل مالی
-              <input
-                type="file"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleUploadFile('financial', file);
-                }}
-              />
-            </label>
-
-            {uploadingFinancial && <span className="text-[10px] text-sky-600 animate-pulse font-bold">در حال آپلود...</span>}
-            {financialOfferUrl && (
-              <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
-                <Check size={12} /> فایل با موفقیت آپلود شد
-              </span>
-            )}
-          </div>
-          {financialOfferUrl && (
-            <div className="text-[10px] text-slate-400 break-all bg-white p-1.5 rounded border border-slate-100 font-mono">
-              مسیر ذخیره: {financialOfferUrl}
-            </div>
-          )}
-        </div>
+        ))}
       </div>
 
       {uploadError && (

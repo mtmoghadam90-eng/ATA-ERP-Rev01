@@ -3,7 +3,7 @@ import React, { useState, useRef } from 'react';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { formatMoney } from '../numUtils';
 import {
-  Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, TrendingUp, X,
+  Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, AlertTriangle, TrendingUp, X,
   FileSpreadsheet, Clock, Sliders, User, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
   Send, CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
   ChevronRight, Loader2, Image as ImageIcon, Maximize2, Minimize2, ArrowLeftRight, Flag, Zap,
@@ -31,6 +31,10 @@ import { Project, Customer, Product, ERPSettings, User as UserType } from '../ty
 import { ApiError } from '../api/client';
 import { projectsApi, type ProjectRow, type ProjectSummary } from '../api/projects';
 import { useProjectActivities } from '../api/useProjectActivities';
+import { inboxApi, submitReferralReply } from '../api/inbox';
+import ReferralThread from './ReferralThread';
+import { compressImage } from '../imageUtils';
+import { projectDataGaps, projectGapFields } from '../utils/projectDataGaps';
 import { detailToProject, projectToWriteInput, rowToProject } from '../api/projectAdapter';
 import { firstOption, withStoredOption } from '../utils/selectOptions';
 import { useProjectList } from '../api/useProjectList';
@@ -209,6 +213,11 @@ export default function ProjectsView({
    */
   const activityFeed = useProjectActivities(selectedProjectForActivities?.id ?? null);
   const projectCategoryGroups = activityFeed.groups;
+
+  // Which blanks the badge on a project card warns about. Configured in
+  // Settings; absent falls back to the default list, and an empty array is a
+  // real answer meaning «warn about nothing».
+  const gapFields = projectGapFields(settings?.projectDataGapFields);
 
   /** Surfaces a failed feed mutation using the server's own Persian sentence. */
   const reportActivityError = (err: unknown, fallback: string) => {
@@ -3166,7 +3175,34 @@ export default function ProjectsView({
 
                   {/* Name */}
                   <td className="p-3 text-slate-900">
-                    <div className="font-bold text-sm text-slate-900">{p.name}</div>
+                    <div className="flex items-start gap-1.5">
+                      <div className="font-bold text-sm text-slate-900">{p.name}</div>
+                      {/*
+                        A small warning that the record itself is incomplete.
+
+                        Which blanks count is a setting, not a rule in code —
+                        every company means something different by "serious" —
+                        and it is deliberately not `requiredFields.projects`,
+                        which is enforced on save and would make every existing
+                        project unsavable the moment one was switched on. The
+                        badge names the fields it is complaining about rather
+                        than making somebody open the form to find out.
+                      */}
+                      {(() => {
+                        const gaps = projectDataGaps(p as unknown as Record<string, unknown>, gapFields);
+                        if (gaps.length === 0) return null;
+                        return (
+                          <span
+                            className="shrink-0 inline-flex items-center gap-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded px-1 py-0.5 text-[9px] font-bold"
+                            title={`اطلاعات ناقص: ${gaps.map((g) => g.label).join('، ')}`}
+                            id={`project-gap-badge-${p.id}`}
+                          >
+                            <AlertTriangle size={9} />
+                            {gaps.length.toLocaleString('fa-IR')}
+                          </span>
+                        );
+                      })()}
+                    </div>
                     
                     {/* Compact Meta Row */}
                     {(p.salesExpert || p.customerInquiryNumber || (p.itemsNeeded && p.itemsNeeded.length > 0) || (p.attachments && p.attachments.length > 0)) && (
@@ -5225,7 +5261,17 @@ export default function ProjectsView({
                                           <p className="text-slate-700 leading-relaxed font-semibold">{act.text}</p>
                                         )}
                                         
-                                        {/* Referral details inside activity card */}
+                                        {/*
+                                          The referral, and the ability to act on it.
+
+                                          The answer to a referral is usually read
+                                          here, in the project's own feed — and
+                                          this was the one place it could only be
+                                          read. Somebody who found the reply was
+                                          not what they asked for had to go to the
+                                          referrals screen to say so. Same
+                                          component, same three server calls.
+                                        */}
                                         {act.referral && (
                                           <div className="mt-2 bg-white rounded-lg p-3 border border-slate-150 space-y-2 text-right">
                                             <div className="flex justify-between items-center text-[9px] border-b border-slate-100 pb-1.5">
@@ -5240,50 +5286,34 @@ export default function ProjectsView({
                                               ارجاع‌دهنده: <strong className="text-slate-700">{act.referral.assignedBy}</strong>
                                               {' '} | ارجاع‌شونده: <strong className="text-slate-700">{act.referral.assignedTo}</strong>
                                             </div>
-                                            <div className="bg-sky-50/40 p-2.5 rounded text-[11px] text-slate-600 font-extrabold border-r-2 border-sky-500 leading-relaxed">
-                                              {act.referral.actionRequired}
-                                            </div>
 
-                                            {/* Messages visually nested under referral */}
-                                            {(act.referral.messages?.length ? act.referral.messages : (act.referral.response ? [act.referral.response] : [])).map((msg, msgIdx) => (
-                                              <div key={msgIdx} className="mt-2 pt-2 border-t border-slate-100 bg-emerald-50/20 p-2 rounded-md border border-emerald-100 space-y-1 text-right">
-                                                <div className="flex justify-between items-center text-[8px] text-emerald-800 font-bold">
-                                                  <span>پاسخ اقدام:</span>
-                                                  <span className="font-mono">{formatDateTimeToShamsi(msg.createdAt)}</span>
-                                                </div>
-                                                <p className="text-[11px] text-slate-800 font-semibold leading-relaxed bg-white/70 p-2 rounded border border-emerald-100">
-                                                  {msg.text}
-                                                </p>
-
-                                                {/* Response attachment if any */}
-                                                {msg.attachment && (
-                                                  <div className="pt-1">
-                                                    {msg.attachment.content ? (
-                                                      <a
-                                                        href={msg.attachment.content}
-                                                        download={msg.attachment.name}
-                                                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-100/60 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 hover:text-emerald-900 text-[10px] font-bold mt-1 transition"
-                                                        title="دانلود فایل پیوست اقدام"
-                                                      >
-                                                        <Paperclip size={11} className="text-emerald-600" />
-                                                        <span>فایل پیوست پاسخ: {msg.attachment.name}</span>
-                                                        <span className="text-emerald-500">({msg.attachment.size})</span>
-                                                      </a>
-                                                    ) : (
-                                                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-50 border border-emerald-100 text-emerald-700 text-[10px] font-bold mt-1">
-                                                        <Paperclip size={11} />
-                                                        <span>فایل پیوست پاسخ: {msg.attachment.name}</span>
-                                                        <span className="text-emerald-500">({msg.attachment.size})</span>
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                )}
-
-                                                <div className="text-[8px] text-slate-400">
-                                                  ارسال‌کننده: {msg.responder}
-                                                </div>
-                                              </div>
-                                            ))}
+                                            <ReferralThread
+                                              compact
+                                              referral={act.referral}
+                                              currentUserId={currentUser?.id}
+                                              formatDate={formatDateTimeToShamsi}
+                                              onPickAttachment={(file, done) => {
+                                                if (file.size > 2 * 1024 * 1024 && !file.type.startsWith('image/')) {
+                                                  alert('حداکثر حجم مجاز برای فایل‌های غیرتصویری ۲ مگابایت می‌باشد.');
+                                                  return;
+                                                }
+                                                compressImage(file, (dataUrl, sizeStr) => {
+                                                  done({ name: file.name, size: sizeStr, content: dataUrl });
+                                                });
+                                              }}
+                                              onSubmit={async (body) => {
+                                                const outcome = await submitReferralReply(act.referral!.id, body);
+                                                if (outcome === 'nothing') {
+                                                  alert('لطفاً پیام خود را بنویسید.');
+                                                  return;
+                                                }
+                                                activityFeed.refresh();
+                                              }}
+                                              onEditAction={async (text) => {
+                                                await inboxApi.updateReferralAction(act.referral!.id, text);
+                                                activityFeed.refresh();
+                                              }}
+                                            />
                                           </div>
                                         )}
                                       </div>

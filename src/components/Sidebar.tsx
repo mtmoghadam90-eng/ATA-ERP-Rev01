@@ -156,6 +156,18 @@ export default function Sidebar({
             return (
               <button
                 key={item.id}
+                /*
+                 * The name of the icon, when the icon is all there is.
+                 *
+                 * There was a styled tooltip here and nobody ever saw it: the
+                 * sidebar is `overflow-hidden` for the width animation and the
+                 * nav is `overflow-y-auto`, so a bubble positioned beside the
+                 * button was clipped by both — and a CSS-only tooltip cannot
+                 * escape a scrolling ancestor without being positioned from
+                 * script. The browser's own tooltip is not clipped by anything,
+                 * which is the whole reason to prefer it here.
+                 */
+                title={isOpen ? undefined : item.name}
                 onClick={() => {
                   setActiveTab(item.id);
                   if (window.innerWidth < 1024) setIsOpen(false); // Auto close on mobile click
@@ -172,19 +184,20 @@ export default function Sidebar({
                 <Icon size={18} className={`flex-shrink-0 ${isActive ? 'text-white' : 'text-slate-400 group-hover:text-slate-200'}`} />
                 
                 {/* Text showing depending on sidebar state */}
-                {(isOpen) ? (
-                  <span className="truncate flex-1 text-right">{item.name}</span>
-                ) : (
-                  <span className="absolute right-16 bg-slate-950 text-slate-200 px-2 py-1 rounded text-xs opacity-0 group-hover:opacity-100 transition duration-150 pointer-events-none whitespace-nowrap z-50">
-                    {item.name}
-                  </span>
-                )}
+                {isOpen && <span className="truncate flex-1 text-right">{item.name}</span>}
 
                 {/* Badges/Alerts */}
-                {item.badge && isOpen && (
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold leading-none ${item.badgeColor}`}>
-                    {item.badge}
-                  </span>
+                {item.badge && (
+                  isOpen ? (
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold leading-none ${item.badgeColor}`}>
+                      {item.badge}
+                    </span>
+                  ) : (
+                    /* Collapsed, the count has nowhere to sit, so it becomes a
+                       dot on the icon — the point of a badge is that something
+                       is waiting, and that survives the sidebar being narrow. */
+                    <span className={`absolute top-1.5 left-1.5 w-2 h-2 rounded-full ${item.badgeColor}`} />
+                  )
                 )}
               </button>
             );

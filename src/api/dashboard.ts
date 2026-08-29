@@ -24,7 +24,9 @@ export interface DashboardSummary {
     activeCount: number;
     winRatePercent: number;
     wonCount: number;
+    lostCount: number;
     totalCount: number;
+    averageProformasPerProject: number;
   };
   projectsByStatus: { status: string; count: number }[];
   revenueByCategory: { category: string; rial: string }[];
@@ -33,7 +35,10 @@ export interface DashboardSummary {
 
 const EMPTY: DashboardSummary = {
   counts: { customers: 0, products: 0, projects: 0, lowStock: 0, activePurchaseOrders: 0 },
-  revenue: { wonRial: "0", activeRial: "0", activeCount: 0, winRatePercent: 0, wonCount: 0, totalCount: 0 },
+  revenue: {
+    wonRial: "0", activeRial: "0", activeCount: 0, winRatePercent: 0,
+    wonCount: 0, lostCount: 0, totalCount: 0, averageProformasPerProject: 0,
+  },
   projectsByStatus: [],
   revenueByCategory: [],
   conversionByCategory: [],

@@ -38,6 +38,7 @@ function messageToView(msg: ActivityReferralMessageRow): ProjectReferralResponse
     id: msg.id,
     text: msg.text,
     responder: msg.responderName ?? "",
+    responderUserId: msg.responderUserId,
     createdAt: msg.createdAt,
     attachment: toAttachment(msg.attachmentName, msg.attachmentSize, msg.attachmentUrl),
   };
@@ -49,6 +50,10 @@ function referralToView(ref: ActivityReferralRow): ProjectReferral {
     id: ref.id,
     assignedTo: ref.assignedToName ?? "",
     assignedBy: ref.assignedByName ?? "",
+    // The identities, so the activity feed can offer the same reply, close and
+    // reopen the referrals screen does — decided by account, never by name.
+    assignedToUserId: ref.assignedToUserId,
+    assignedByUserId: ref.assignedByUserId,
     actionRequired: ref.actionRequired ?? "",
     createdAt: ref.createdAt,
     status: (ref.status as ProjectReferral["status"]) ?? "در انتظار اقدام",

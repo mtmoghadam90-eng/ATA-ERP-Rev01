@@ -104,3 +104,42 @@ export function attachmentColumns(list: ActivityAttachment[]): {
     attachmentUrl: first?.url ?? null,
   };
 }
+
+/* ---------------------- the same shape, for an offer --------------------- */
+
+/**
+ * A supplier's technical or financial offer, which is rarely one file.
+ *
+ * A quotation arrives as a covering letter, a datasheet and a price list, and
+ * the form accepted one of each — so the other two went in as a second inquiry
+ * or nowhere. Stored exactly like an activity's attachments: a JSON list, with
+ * the original `technicalOfferUrl` / `financialOfferUrl` column still carrying
+ * the **first** entry so the grid's link, the download button and the Power BI
+ * export are unaffected.
+ */
+export function parseOfferFiles(
+  json: string | null | undefined,
+  legacyUrl: string | null | undefined,
+): ActivityAttachment[] {
+  if (json) {
+    try {
+      const parsed = normalizeAttachments(JSON.parse(json));
+      if (parsed.length > 0) return parsed;
+    } catch {
+      // A broken value falls through to the column rather than throwing.
+    }
+  }
+  return normalizeAttachments([{ url: legacyUrl }]);
+}
+
+/** The two columns a list of offer files is written to. */
+export function offerFileColumns(list: ActivityAttachment[]): {
+  files: string | null;
+  url: string | null;
+} {
+  const clean = normalizeAttachments(list);
+  return {
+    files: clean.length > 0 ? JSON.stringify(clean) : null,
+    url: clean[0]?.url ?? null,
+  };
+}

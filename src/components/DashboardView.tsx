@@ -259,14 +259,17 @@ export default function DashboardView({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         
         {/* Metric 1: Total Won Value */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between hover:shadow-md transition">
+        <div
+          className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between hover:shadow-md transition"
+          title="بخش تسویه‌شده هر قرارداد به همان ریالی که دریافت شده ثابت می‌ماند و با نرخ ارز تغییر نمی‌کند؛ فقط باقیمانده وصول‌نشده با نرخ امروز محاسبه می‌شود."
+        >
           <div className="space-y-1">
             <span className="text-[11px] text-slate-400 font-bold block">مجموع قراردادهای برنده</span>
             <span className="text-lg font-black text-slate-800 block">
               {totalRevenue > 0 ? formatToman(totalRevenue) : "0 ریال"}
             </span>
             <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
-              <ArrowUpRight size={12} /> {summary.revenue.activeCount === 0 && totalRevenue === 0 ? "بدون پیش‌فاکتور برنده" : "ارزش قراردادهای برنده"}
+              <ArrowUpRight size={12} /> {summary.revenue.activeCount === 0 && totalRevenue === 0 ? "بدون پیش‌فاکتور برنده" : "تسویه‌شده به نرخ روز دریافت، باقیمانده به نرخ امروز"}
             </span>
           </div>
           <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center text-lg font-black shadow-sm">
@@ -643,10 +646,11 @@ export default function DashboardView({
                 <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
                   <Activity size={20} />
                 </div>
-                <h3 className="text-base font-bold text-slate-800">نرخ تبدیل کلی پیش‌فاکتورها</h3>
+                <h3 className="text-base font-bold text-slate-800">نرخ تبدیل پروژه‌ها</h3>
               </div>
               <p className="text-xs text-slate-500 leading-relaxed mb-6">
-                درصد پیش‌فاکتورهایی که به قرارداد نهایی (برنده) تبدیل شده‌اند نسبت به کل پیش‌فاکتورهای صادر شده.
+                درصد پروژه‌هایی که به قرارداد نهایی (برنده) تبدیل شده‌اند. هر پروژه یک فرصت است، هر چند
+                پیش‌فاکتور و نسخه برایش صادر شده باشد؛ پیش‌فاکتور بدون پروژه خودش یک فرصت شمرده می‌شود.
               </p>
             </div>
             
@@ -667,14 +671,29 @@ export default function DashboardView({
                 <CheckCircle2 size={14} />
                 <span>برنده: {summary.revenue.wonCount}</span>
               </div>
+              {/* Counted on the server, not subtracted here: «در جریان» used to
+                  be the total minus the wins minus the *active proformas*,
+                  which are a different unit and a different set. */}
               <div className="flex items-center gap-1.5 text-rose-500">
                 <AlertCircle size={14} />
-                <span>باخته: {Math.max(0, summary.revenue.totalCount - summary.revenue.wonCount - summary.revenue.activeCount)}</span>
+                <span>باخته: {summary.revenue.lostCount}</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-sky-500">
+                <Activity size={14} />
+                <span>در جریان: {Math.max(0, summary.revenue.totalCount - summary.revenue.wonCount - summary.revenue.lostCount)}</span>
               </div>
               <div className="flex items-center gap-1.5 text-slate-400">
                 <FileText size={14} />
-                <span>کل صادر شده: {summary.revenue.totalCount}</span>
+                <span>کل فرصت‌ها: {summary.revenue.totalCount}</span>
               </div>
+            </div>
+
+            {/* «چقدر رفت و برگشت داریم» — how many quotations a job takes. */}
+            <div className="mt-3 flex items-center justify-between bg-slate-50 border border-slate-100 rounded-xl px-3 py-2">
+              <span className="text-[11px] font-bold text-slate-600">میانگین تعداد پیش‌فاکتور برای هر پروژه</span>
+              <span className="text-sm font-black text-slate-800 font-mono">
+                {summary.revenue.averageProformasPerProject.toLocaleString('fa-IR')}
+              </span>
             </div>
           </div>
         </div>

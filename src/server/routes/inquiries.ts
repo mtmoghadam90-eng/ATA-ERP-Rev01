@@ -21,7 +21,9 @@ import {
 const WRITABLE: (keyof InquiryInput)[] = [
   "projectId", "supplierId", "isWinner", "offerConfirmed",
   "creationDate", "winnerDate", "offerConfirmedDate",
-  "technicalOfferUrl", "financialOfferUrl", "discountPercent", "discountAmount",
+  "technicalOfferUrl", "financialOfferUrl",
+  "technicalOfferFiles", "financialOfferFiles",
+  "discountPercent", "discountAmount",
   "items", "initialStep",
 ];
 

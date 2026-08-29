@@ -25,6 +25,9 @@ import {
 import { getProformaOutcomeStatus } from "../src/useERPStore";
 import { computeInquiryTotals, inquiryTotalRiyal } from "../src/utils/inquirySteps";
 import {
+  catalogueCodeRefusal, catalogueNameRefusal, describeProductSpec, newConfigId,
+} from "../src/utils/productConfig";
+import {
   discountKeepFraction, netUnitPrice, summarizeHistory,
 } from "../src/utils/inquiryPriceHistory";
 import { toNumber } from "../src/server/childSync";
@@ -42,6 +45,9 @@ import { hasEverPurchased, saleDateOf } from "../src/server/services/customerVal
 import { buildReportingTables } from "../src/reporting/flatten";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
+import {
+  DEFAULT_PROJECT_GAP_FIELDS, projectDataGaps, projectGapCatalogue, projectGapFields,
+} from "../src/utils/projectDataGaps";
 import { computeProformaTotals, roundMoney } from "../src/utils/proformaTotals";
 import {
   calculateProformaFinance, calculateProjectFinance, priceInWarehouseCurrency,
@@ -89,6 +95,7 @@ import {
 import {
   countsTowardBalance, describeTransaction, rialAmountOf,
 } from "../src/server/services/transactionService";
+import { inboxApi, submitReferralReply } from "../src/api/inbox";
 import { rowToCustomer } from "../src/api/customerAdapter";
 import { rowToProject } from "../src/api/projectAdapter";
 import { rowToProforma } from "../src/api/proformaAdapter";
@@ -131,6 +138,10 @@ import {
   versionRefusalReason,
 } from "../src/utils/salesFollowUp";
 import { chaseableWhere } from "../src/server/services/followUpService";
+import {
+  averageProformasPerProject, opportunityGroups, opportunityOutcome, wonValueRial,
+} from "../src/server/dashboardMetrics";
+import { decidingProformas } from "../src/server/proformaStatus";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -761,41 +772,67 @@ ok("two different categories still do not match",
   !sameCategory(ACTIVITY_CATEGORY.PROFORMAS, ACTIVITY_CATEGORY.DELIVERIES));
 
 /*
- * Refreshing the currency rates every two hours.
+ * Refreshing the currency rates every hour.
  *
  * Every foreign-priced document is valued at the stored rate, so a stale rate
  * prices the day's work wrongly and says nothing. It used to refresh once per
  * Shamsi day, which left a document priced at four in the afternoon carrying
- * the morning's number. The scheduling is the whole of the feature, and the
- * alternative to testing it here is a test that can only be run by waiting two
- * hours.
+ * the morning's number; two hours was still long enough that the rate was
+ * being kept up by hand between refreshes. The scheduling is the whole of the
+ * feature, and the alternative to testing it here is a test that can only be
+ * run by waiting an hour.
  */
-head("Exchange rates: the two-hourly refresh");
+head("Exchange rates: the hourly refresh");
 
 const HOUR = 60 * 60 * 1000;
+const RETRY_HOLD = 10 * 60 * 1000;
 const decide = (state: Partial<RateRefreshState>, now = 10 * HOUR) =>
   refreshDecision(
     { lastSuccessAt: 0, lastFailureAt: 0, running: false, ...state },
-    now, FRESH_FOR_MS, 30 * 60 * 1000);
+    now, FRESH_FOR_MS, RETRY_HOLD);
 
+eq("the window is an hour", FRESH_FOR_MS, HOUR);
 eq("the first caller starts the fetch", decide({}), "start");
 eq("a caller a minute later does nothing", decide({ lastSuccessAt: 10 * HOUR - 60_000 }), "skip");
-eq("nor does one an hour and a half later",
-  decide({ lastSuccessAt: 10 * HOUR - 1.5 * HOUR }), "skip");
-eq("two hours on, the rates are refetched",
-  decide({ lastSuccessAt: 10 * HOUR - 2 * HOUR }), "start");
+eq("nor does one half an hour later",
+  decide({ lastSuccessAt: 10 * HOUR - 0.5 * HOUR }), "skip");
+eq("an hour on, the rates are refetched",
+  decide({ lastSuccessAt: 10 * HOUR - HOUR }), "start");
 eq("a caller arriving mid-fetch waits on the same one", decide({ running: true }), "wait");
 eq("a run in progress outranks a recent failure, rather than being skipped past",
   decide({ running: true, lastFailureAt: 10 * HOUR - 60_000 }), "wait");
 
 // A failure holds callers off for a while — but for less than the freshness
-// window, or one bad minute would cost the whole two hours.
+// window, or one bad minute would cost the whole hour.
 eq("right after a failure, callers are held off",
   decide({ lastFailureAt: 10 * HOUR - 60_000 }), "skip");
-eq("an hour later, someone tries again",
-  decide({ lastFailureAt: 10 * HOUR - HOUR }), "start");
+eq("ten minutes later, someone tries again",
+  decide({ lastFailureAt: 10 * HOUR - RETRY_HOLD }), "start");
 eq("but rates fetched minutes ago still win over a stale failure",
   decide({ lastSuccessAt: 10 * HOUR - 60_000, lastFailureAt: 10 * HOUR - HOUR }), "skip");
+
+/*
+ * The timer must tick more often than the window, or the promise is not kept.
+ *
+ * `ensureRatesFresh` is a no-op until the window is up, so the tick only has to
+ * be frequent enough that the first caller after it opens is the timer itself:
+ * a half-hourly tick against an hourly window leaves up to ninety minutes
+ * between refreshes on a day nobody signs in.
+ */
+{
+  const serverSrc = readFileSync("server.ts", "utf8");
+  const tick = /const RATE_TICK_MS = (\d+) \* 60 \* 1000;/.exec(serverSrc);
+  ok("the rate timer ticks well inside the freshness window",
+    !!tick && Number(tick[1]) * 60_000 <= FRESH_FOR_MS / 4, tick?.[1]);
+
+  // The failure mode here is silence, so the state has to reach a screen.
+  const adminSrc = readFileSync("src/server/routes/admin.ts", "utf8");
+  ok("the rates endpoint reports what the automatic refresh has been doing",
+    /refresh: rateRefreshReport\(\)/.test(adminSrc));
+  const ratesView = readFileSync("src/components/RatesView.tsx", "utf8");
+  ok("and the screen shows it", /rates-auto-refresh/.test(ratesView));
+  ok("including the reason the last attempt failed", /refresh\.lastError/.test(ratesView));
+}
 
 /*
  * A warehouse-arrival date means the order arrived.
@@ -1052,7 +1089,10 @@ eq("and so is a value that cannot be a number", formatMoney("abc"), "0");
   // `list.total` and friends are the row count a pagination line prints
   // («نمایش ۵ از ۱۲ پیش‌فاکتور»), not an amount — the paging hooks all name it
   // `total`, which is the one word this rule has to disambiguate by receiver.
-  const COUNT = /(\.length|count|\bpage\b|totalPages|^(list|ledger|auditList|\w*List)\.total$)/i;
+  // `revenue.averageProformasPerProject` is «چند پیش‌فاکتور برای هر پروژه» — a
+  // count of documents that happens to live under `revenue`, so the receiver
+  // disambiguates it the same way `list.total` is disambiguated above.
+  const COUNT = /(\.length|count|\bpage\b|totalPages|average\w*Per\w+|^(list|ledger|auditList|\w*List)\.total$)/i;
 
   const uiFiles: string[] = [];
   (function walk(d: string) {
@@ -4535,6 +4575,535 @@ head("Sales follow-up: the ownership rules, read from the source");
     /lossReason\s+String\?/.test(proformaModel));
   ok("and there is no second loss-reason table",
     !/model LossReason/.test(schema));
+}
+
+
+/* ------------------------- dashboard: the front page --------------------- */
+head("Dashboard: a settled contract stops moving with the rate");
+{
+  const usd = (entries: Parameters<typeof wonValueRial>[0]["entries"]) => wonValueRial({
+    wonAmount: 1000, todayRate: 120_000, historicalRate: 90_000, entries,
+  });
+
+  // Nothing received: the debt is still exposed to the rate, exactly as before.
+  eq("an unpaid contract floats at today's rate", usd([]).rial, 120_000_000);
+
+  // Paid in full at the rate on the day: that rial is a historical fact.
+  const paid = usd([{
+    type: "دریافت", amountRial: 90_000_000, amountForeign: null,
+    exchangeRate: 90_000, isDirectForeign: false,
+  }]);
+  eq("a fully settled contract is worth the rial that arrived", paid.rial, 90_000_000);
+  eq("and its effective rate is the rate it was paid at", paid.effectiveRate, 90_000);
+  eq("nothing of it is left outstanding", paid.settledAmount, 1000);
+
+  // Today's rate moving must not move a settled contract at all.
+  const later = wonValueRial({
+    wonAmount: 1000, todayRate: 200_000, historicalRate: 90_000,
+    entries: [{
+      type: "دریافت", amountRial: 90_000_000, amountForeign: null,
+      exchangeRate: 90_000, isDirectForeign: false,
+    }],
+  });
+  eq("and it does not move when the rate doubles", later.rial, paid.rial);
+
+  // Half paid: half frozen, half floating.
+  eq("a half-paid contract moves by half", usd([{
+    type: "دریافت", amountRial: 45_000_000, amountForeign: null,
+    exchangeRate: 90_000, isDirectForeign: false,
+  }]).rial, 45_000_000 + 500 * 120_000);
+
+  // Money paid above the invoice sits on account; it is not sale value.
+  eq("an overpayment does not inflate the contract", usd([{
+    type: "دریافت", amountRial: 180_000_000, amountForeign: null,
+    exchangeRate: 90_000, isDirectForeign: false,
+  }]).rial, 90_000_000);
+
+  // A refund is a payment back, and the direction is the type.
+  eq("a refund gives the outstanding part back to the rate", usd([
+    { type: "دریافت", amountRial: 90_000_000, amountForeign: null, exchangeRate: 90_000, isDirectForeign: false },
+    { type: "پرداخت", amountRial: 90_000_000, amountForeign: null, exchangeRate: 90_000, isDirectForeign: false },
+  ]).rial, 120_000_000);
+
+  // Foreign cash in, converted at the day's rate.
+  eq("a direct foreign receipt settles its own amount", usd([{
+    type: "دریافت", amountRial: 0, amountForeign: 1000,
+    exchangeRate: 95_000, isDirectForeign: true,
+  }]).rial, 95_000_000);
+
+  /*
+   * A receipt with no settlement rate cannot say what it covered.
+   *
+   * Guessing at today's rate would put the whole figure back on the rate,
+   * which is the fault this exists to fix, so the sale goes on floating.
+   */
+  eq("a foreign receipt with no rate at all settles nothing", wonValueRial({
+    wonAmount: 1000, todayRate: 120_000, historicalRate: null,
+    entries: [{ type: "دریافت", amountRial: 90_000_000, amountForeign: null, exchangeRate: null, isDirectForeign: false }],
+  }).rial, 120_000_000);
+  eq("but the invoice's own rate stands in when the receipt has none", wonValueRial({
+    wonAmount: 1000, todayRate: 120_000, historicalRate: 90_000,
+    entries: [{ type: "دریافت", amountRial: 90_000_000, amountForeign: null, exchangeRate: null, isDirectForeign: false }],
+  }).rial, 90_000_000);
+
+  // A rial document has no rate to move with, whatever the receipts say.
+  for (const entries of [
+    [],
+    [{ type: "دریافت", amountRial: 500, amountForeign: null, exchangeRate: null, isDirectForeign: false }],
+    [{ type: "دریافت", amountRial: 5000, amountForeign: null, exchangeRate: null, isDirectForeign: false }],
+  ]) {
+    eq("a rial contract is always worth its own amount",
+      wonValueRial({ wonAmount: 1000, todayRate: 1, historicalRate: null, entries }).rial, 1000);
+  }
+
+  // The category split is the same money, so the parts must add to the whole.
+  const split = usd([{
+    type: "دریافت", amountRial: 45_000_000, amountForeign: null,
+    exchangeRate: 90_000, isDirectForeign: false,
+  }]);
+  eq("the effective rate splits the total without losing any of it",
+    Math.round(600 * split.effectiveRate + 400 * split.effectiveRate), Math.round(split.rial));
+}
+
+head("Dashboard: conversion is per project, not per document");
+{
+  const line = (status: string | null) => ({ status });
+  const pf = (id: string, projectId: string | null, days: number, items: { status: string | null }[]) => ({
+    id, projectId, status: "ارسال شده", isCancelled: false,
+    createdAt: new Date(2026, 0, days), items,
+  });
+
+  // The reported fault: ten quotations on one job, one of them won.
+  const tenQuotes = Array.from({ length: 10 }, (_, i) =>
+    pf(`p${i}`, "prj-1", i + 1, [line(i === 9 ? ITEM_WON : ITEM_LOST)]));
+  const groups = opportunityGroups(tenQuotes);
+  eq("ten proformas on one project are one opportunity", groups.length, 1);
+  eq("and that opportunity is won", opportunityOutcome(groups[0]), "won");
+
+  // A win earlier in the history is not undone by a later quotation for
+  // more scope — that is why the *deciding* proformas are used rather than
+  // literally the newest one.
+  const wonThenQuotedAgain = [
+    pf("a", "prj-2", 1, [line(ITEM_WON)]),
+    pf("b", "prj-2", 5, [line(null)]),
+  ];
+  eq("a later quotation does not un-win a project",
+    opportunityOutcome(opportunityGroups(wonThenQuotedAgain)[0]), "won");
+
+  // Nothing decided yet belongs in neither tally.
+  eq("an open project is neither won nor lost",
+    opportunityOutcome([pf("c", "prj-3", 1, [line(null)])]), "open");
+  eq("a project whose last quote was lost is lost",
+    opportunityOutcome([pf("d", "prj-4", 1, [line(ITEM_LOST)])]), "lost");
+  eq("a withdrawn project is not counted as won",
+    opportunityOutcome([pf("e", "prj-5", 1, [line(ITEM_CANCELLED)])]), "lost");
+
+  // A quotation with no project is still a quotation somebody sent.
+  const mixed = [
+    pf("f", "prj-6", 1, [line(ITEM_WON)]),
+    pf("g", null, 2, [line(ITEM_WON)]),
+    pf("h", null, 3, [line(ITEM_LOST)]),
+  ];
+  eq("project-less proformas stand alone", opportunityGroups(mixed).length, 3);
+
+  // The selection must be the project card's, or the front page and the card
+  // disagree about who won.
+  eq("the deciding set is the winners when there are any",
+    decidingProformas(tenQuotes).map((p) => p.id).join(","), "p9");
+  eq("and the most recent one when there are none",
+    decidingProformas(tenQuotes.slice(0, 9)).map((p) => p.id).join(","), "p8");
+  eq("an empty project decides nothing", decidingProformas([]).length, 0);
+
+  eq("«میانگین تعداد پیش‌فاکتور» keeps one decimal", averageProformasPerProject(7, 3), 2.3);
+  eq("and is zero rather than infinite with no projects", averageProformasPerProject(4, 0), 0);
+}
+
+head("Dashboard: the service uses those rules and no copies");
+{
+  const dash = readFileSync("src/server/services/dashboardService.ts", "utf8");
+  ok("the won total is built by wonValueRial", /wonValueRial\(\{/.test(dash));
+  ok("and no longer multiplies the won amount by today's rate directly",
+    !/wonRial \+= wonAmount \* rate/.test(dash), "dashboardService still converts at today's rate");
+  ok("the win rate counts opportunities, not proformas",
+    /opportunityGroups\(rows\)/.test(dash) && !/db\.proforma\.count\(\{ where: proformaWhere \}\)/.test(dash));
+  ok("conversion by category reads the deciding proformas",
+    /decidingProformas\(group\)/.test(dash));
+  ok("and is no longer a raw sum over every proforma line",
+    !/FROM \[dbo\]\.\[proforma_items\]/.test(dash), "dashboardService still groups every line in SQL");
+  ok("only money rows settle a contract", /countsTowardBalance\(t\.status\)/.test(dash));
+}
+
+
+head("Proforma: a delivery field can be typed over");
+{
+  /*
+   * `value={x || default}` on a text input cannot be cleared.
+   *
+   * The instant backspace empties «۳-۴» the stored value is "", the falsy
+   * fallback re-renders the default over it, and the box snaps back on the very
+   * keystroke that was meant to change it — reported as «با فشردن هر دکمه به
+   * حالت پیش‌فرض برمی‌گردد». Only an *absent* value may fall back, which is
+   * `??`. The same shape as the `<input type="number">` fault NumberField
+   * exists for.
+   *
+   * Seeding a new line from the previous one is a different question and keeps
+   * `||`, so this reads the `value=` bindings alone.
+   */
+  const src = readFileSync("src/components/ProformasView.tsx", "utf8");
+  const bindings = [...src.matchAll(/value=\{[\s\S]{0,160}?\}\n/g)].map((m) => m[0]);
+  for (const [field, label] of [
+    ["deliveryRange", "the numeric range"],
+    ["deliveryPostfix", "the delivery note"],
+  ] as const) {
+    const strays = bindings.filter((b) => b.includes(field) && / \|\|\s/.test(b));
+    ok(`${label} does not fall back on an empty string`, strays.length === 0, strays);
+  }
+  // The bindings are found at all — a regex that matches nothing passes here
+  // for the wrong reason.
+  ok("the delivery bindings were actually located",
+    bindings.some((b) => b.includes("deliveryRange"))
+    && bindings.some((b) => b.includes("deliveryPostfix")));
+}
+
+head("Proforma line: changing the product replaces its specification");
+{
+  const pressure = {
+    description: "ترانسمیتر فشار\nساخت آلمان",
+    featureNames: ["رنج", "جنس بدنه"],
+  };
+  const flow = {
+    description: "فلومتر توربینی\nکلاس ۱۵۰",
+    featureNames: ["سایز", "اتصال"],
+  };
+
+  // The reported fault: a new line is seeded from whichever product the picker
+  // holds first, and picking a different one kept the first one's description.
+  const afterSwitch = describeProductSpec(
+    flow, {}, "ترانسمیتر فشار\nساخت آلمان", pressure);
+  ok("the previous product's description does not survive the change",
+    !afterSwitch.includes("ترانسمیتر فشار"), afterSwitch);
+  eq("and the new product's description is what is left", afterSwitch, "فلومتر توربینی\nکلاس ۱۵۰");
+
+  // Without the outgoing product, which is exactly what used to be passed.
+  ok("passing no previous product is what let it through",
+    describeProductSpec(flow, {}, "ترانسمیتر فشار\nساخت آلمان").includes("ترانسمیتر فشار"));
+
+  // What the user typed has to survive, or the feature is useless.
+  const typed = describeProductSpec(
+    flow, {}, "ترانسمیتر فشار\nتگ: PT-101\nساخت آلمان", pressure);
+  ok("a note the user typed survives", typed.includes("تگ: PT-101"));
+
+  // The outgoing product's own feature lines go with it.
+  const featureLines = describeProductSpec(
+    flow, { "سایز": "۶ اینچ" }, "رنج: 0-10 bar\nجنس بدنه: 316", pressure);
+  ok("the old product's feature lines go too",
+    !featureLines.includes("رنج:") && !featureLines.includes("جنس بدنه:"), featureLines);
+  ok("and the new SKU's attributes are written", featureLines.includes("سایز: ۶ اینچ"));
+
+  // Bolding a line must not stop it being recognised as the product's own —
+  // the same reason mergeSpecText strips the marks.
+  ok("a bolded description line is still the product's",
+    !describeProductSpec(flow, {}, "**ترانسمیتر فشار**", pressure).includes("ترانسمیتر فشار"));
+
+  // Re-picking the same product must not duplicate its description.
+  eq("re-picking the same product does not double its description",
+    describeProductSpec(flow, {}, "فلومتر توربینی\nکلاس ۱۵۰", flow),
+    "فلومتر توربینی\nکلاس ۱۵۰");
+}
+
+head("Proforma form: a SKU created by the configurator is selectable");
+{
+  /*
+   * The `<select>` renders its options from the picker's product rows, which
+   * were fetched before the configurator created the SKU — and a select whose
+   * value matches no option shows its placeholder, so the line read «انتخاب
+   * ترکیب مشخصات» with a perfectly good variant id on it.
+   */
+  const src = readFileSync("src/components/ProformasView.tsx", "utf8");
+  ok("the screen keeps the products it has written to",
+    /rememberProduct\(ensured\.product\)/.test(src));
+  ok("and the product list is those overrides on top of the picker's rows",
+    /productOverrides\[product\.id\] \?\? product/.test(src));
+  ok("the specification rule takes the outgoing product",
+    /describeProduct\(prod, undefined, newItems\[index\]\.techSpecs, previousProd\)/.test(src));
+  ok("and the rule itself is the pure one",
+    /describeProductSpec\(/.test(src) && !/const storedLines = new Set/.test(src));
+
+  // The website is printed, and the field to set it exists.
+  const doc = readFileSync("src/utils/proformaDocument.ts", "utf8");
+  ok("the printed footer carries the website", /print-footer-site/.test(doc));
+  ok("in bold", /\.print-footer-site \{[^}]*font-weight: 700/.test(doc));
+  // Latin inside an RTL line reorders without this, and the address goes to a
+  // customer printed wrong.
+  ok("and isolated, so an RTL line does not reorder it",
+    /\.print-footer-site \{[^}]*unicode-bidi: isolate/.test(doc));
+  const settingsSrc = readFileSync("src/components/SettingsView.tsx", "utf8");
+  ok("general settings can edit it", /settings-company-website/.test(settingsSrc));
+  ok("and saving keeps it", /\n\s+website,\n/.test(settingsSrc));
+
+  ok("a proforma line can be copied", /handleDuplicateItemLine/.test(src));
+  // The copy is a new line; the id it was read under belongs to one row, and
+  // `preserveLineCosts` matches on it.
+  ok("and the copy carries no line id", /const \{ id: _id, \.\.\.copy \} = source/.test(src));
+}
+
+
+head("Configurator: defining a feature or an option from the quotation");
+{
+  /*
+   * The catalogue is never complete at the moment somebody is quoting from it,
+   * and the alternative was to abandon the proforma, add the option on the
+   * products screen and start again. Two things bound what may be added.
+   */
+  eq("a duplicate feature name is refused",
+    catalogueNameRefusal("رنج", ["رنج", "جنس بدنه"]), "این نام قبلاً تعریف شده است.");
+  // A name is what mergeSpecText, the SKU attributes and decodeSku all match
+  // on, so «رنج » and «رنج» must not both exist.
+  ok("with the spacing and the formatting ignored",
+    catalogueNameRefusal(" **رنج** ", ["رنج"]) !== null);
+  eq("a blank name is refused", catalogueNameRefusal("   ", []), "نام را وارد کنید.");
+  eq("a new name is allowed", catalogueNameRefusal("فشار کاری", ["رنج"]), null);
+
+  // The code goes straight into the SKU, which decodeSku splits on `-`.
+  eq("no code is fine", catalogueCodeRefusal(""), null);
+  eq("a latin token is fine", catalogueCodeRefusal("ANSI300"), null);
+  ok("a code with a separator is refused", catalogueCodeRefusal("ANSI-300") !== null);
+  ok("a Persian code is refused", catalogueCodeRefusal("فشار") !== null);
+  ok("an over-long code is refused", catalogueCodeRefusal("A".repeat(17)) !== null);
+
+  ok("ids are distinct", newConfigId("feat") !== newConfigId("feat"));
+  ok("and carry their kind", newConfigId("opt").startsWith("opt-"));
+
+  const modal = readFileSync("src/components/ProductConfiguratorModal.tsx", "utf8");
+  ok("the modal offers a new option per feature", /configurator-add-option-/.test(modal));
+  ok("and a new feature for the product", /configurator-add-feature/.test(modal));
+  // The modal builds the mutation; the host owns the write, because each host
+  // already has the helper that loads the full record before changing it.
+  ok("the write is the host's, so the full product is loaded",
+    /onCatalogueEdit\?: \(mutate/.test(modal));
+  ok("and the modal never calls the API itself",
+    !/api\.|fetch\(/.test(modal));
+
+  for (const [file, label] of [
+    ["src/components/ProformasView.tsx", "the proforma form"],
+    ["src/components/SupplierInquiriesView.tsx", "the inquiry form"],
+  ] as const) {
+    const src = readFileSync(file, "utf8");
+    ok(`${label} passes onCatalogueEdit`, /onCatalogueEdit=\{/.test(src));
+    // Writing to the catalogue needs the catalogue's own permission; the route
+    // checks it too, this is so nobody is shown a button that will be refused.
+    ok(`${label} gates it on the products permission`,
+      /hasModulePermission\((currentUser), 'products'\)/.test(src));
+  }
+}
+
+
+head("Referrals: one gesture, three calls, in one order");
+{
+  /*
+   * The referrals screen and the project's activity feed both offer «ثبت پاسخ
+   * و ارجاع مجدد», and each was a hand-written sequence of three requests. The
+   * order matters — the reply has to be on the thread before the forwarding
+   * moves it to somebody else's inbox — and a second copy is how one screen
+   * comes to reopen a referral without saying why.
+   */
+  const calls: string[] = [];
+  const original = {
+    reply: inboxApi.replyToReferral,
+    status: inboxApi.setReferralStatus,
+    reassign: inboxApi.reassignReferral,
+  };
+  inboxApi.replyToReferral = (async (_id: string, body: { text: string; andForwarded?: boolean }) => {
+    calls.push(`reply:${body.text}:${body.andForwarded ? "forwarded" : "-"}`);
+    return {} as never;
+  }) as typeof inboxApi.replyToReferral;
+  inboxApi.setReferralStatus = (async (_id: string, status: string, silent?: boolean) => {
+    calls.push(`status:${status}:${silent ? "silent" : "loud"}`);
+    return {} as never;
+  }) as typeof inboxApi.setReferralStatus;
+  inboxApi.reassignReferral = (async (_id: string, to: string) => {
+    calls.push(`forward:${to}`);
+    return {} as never;
+  }) as typeof inboxApi.reassignReferral;
+
+  const run = async (body: Parameters<typeof submitReferralReply>[1]) => {
+    calls.length = 0;
+    const outcome = await submitReferralReply("r1", body);
+    return { outcome, calls: [...calls] };
+  };
+
+  /*
+   * Awaited, not fired and forgotten.
+   *
+   * `void (async () => …)()` here would run these after the summary line, so a
+   * failure would be printed below the total and counted in neither — a test
+   * that agrees with itself.
+   */
+  await (async () => {
+    eq("a plain message is one call",
+      (await run({ text: "بررسی شد" })).calls.join("|"), "reply:بررسی شد:-");
+
+    // The reply already told the other party, and told them the part that
+    // matters — so the status change must not raise a second notice.
+    eq("closing sends the reply first, then a silent status",
+      (await run({ text: "انجام شد", outcome: "done" })).calls.join("|"),
+      "reply:انجام شد:-|status:انجام شده:silent");
+
+    // The whole point of the feature: the answer is not what was asked for.
+    eq("reopening puts it back to «در انتظار اقدام», after the reply",
+      (await run({ text: "این آن چیزی نیست که خواستم", outcome: "reopen" })).calls.join("|"),
+      "reply:این آن چیزی نیست که خواستم:-|status:در انتظار اقدام:silent");
+
+    // Forwarding sets its own status, so an outcome must not also be applied —
+    // and the reply is marked as forwarded so it raises no notice of its own.
+    eq("forwarding replaces the status change rather than adding to it",
+      (await run({ text: "به شما ارجاع شد", outcome: "done", forwardToUserId: "u2" })).calls.join("|"),
+      "reply:به شما ارجاع شد:forwarded|forward:u2");
+
+    // A bare button press with nothing typed is legitimate; an empty send is not.
+    const bare = await run({ outcome: "done", text: "  " });
+    eq("a bare «done» is a status change on its own", bare.calls.join("|"), "status:انجام شده:loud");
+    eq("and reports itself as such", bare.outcome, "status-only");
+    const empty = await run({ text: "" });
+    eq("an empty message sends nothing", empty.calls.length, 0);
+    eq("and says so", empty.outcome, "nothing");
+
+    // Forwarding with nothing typed still has to put something on the thread,
+    // or the next person opens a referral with no idea why it reached them.
+    ok("forwarding with no text still writes a line",
+      (await run({ text: "", forwardToUserId: "u2" })).calls[0]?.startsWith("reply:ارجاع به همکار"));
+
+    inboxApi.replyToReferral = original.reply;
+    inboxApi.setReferralStatus = original.status;
+    inboxApi.reassignReferral = original.reassign;
+  })();
+}
+
+head("Referrals: the thread is one component, sided by account");
+{
+  const thread = readFileSync("src/components/ReferralThread.tsx", "utf8");
+  // A name comparison put a renamed account's whole side of the conversation
+  // back on the other one — the same trap the referral's own two ids exist for.
+  ok("a message is placed by responderUserId",
+    /msg\.responderUserId === referral\.assignedByUserId/.test(thread));
+  ok("and the buttons by the two account ids",
+    /referral\.assignedToUserId === currentUserId/.test(thread)
+    && /referral\.assignedByUserId === currentUserId/.test(thread));
+  // Everything above the rule happened; the draft has not.
+  ok("the composer is separated from the history",
+    /border-t-2 border-dashed/.test(thread));
+  // Same family as the price calculator: the screens behind this re-render on
+  // their own, and a half-typed correction must survive that.
+  ok("the edit draft is seeded once per referral, not per render",
+    /seededFor\.current === referral\.id/.test(thread));
+
+  for (const [file, label] of [
+    ["src/components/ReferralsView.tsx", "the referrals screen"],
+    ["src/components/ProjectsView.tsx", "the project activity feed"],
+  ] as const) {
+    const src = readFileSync(file, "utf8");
+    ok(`${label} draws the shared thread`, /<ReferralThread/.test(src));
+    ok(`${label} uses the shared reply sequence`, /submitReferralReply\(/.test(src));
+    // Reopening from where the answer is read is the whole request.
+    ok(`${label} can correct the request`, /updateReferralAction\(/.test(src));
+  }
+
+  // Only the person who raised it: the assignee rewriting their own
+  // instructions is how a referral gets marked done against a request nobody
+  // made.
+  const service = readFileSync("src/server/services/activityService.ts", "utf8");
+  const body = service.slice(service.indexOf("export async function updateReferralAction"));
+  ok("editing the request is refused for anyone but the referrer",
+    /referral\.assignedByUserId !== user\.id/.test(body.slice(0, 2000)));
+  ok("and the assignee is told it changed",
+    /notifyUser\(/.test(body.slice(0, 3000)));
+}
+
+
+head("Project card: warning about a record's own gaps");
+{
+  const keys = ["salesExpert", "expectedCloseDate", "marketingChannel"];
+  const complete = {
+    salesExpert: "رضا", expectedCloseDate: "1405/06/20", marketingChannel: "نمایشگاه",
+  };
+
+  eq("a complete project shows nothing", projectDataGaps(complete, keys).length, 0);
+  eq("a blank field is a gap",
+    projectDataGaps({ ...complete, salesExpert: "" }, keys).map((g) => g.key).join(","),
+    "salesExpert");
+  // Whitespace is not an answer; neither is an absent key on a record that has
+  // the column.
+  eq("so is whitespace",
+    projectDataGaps({ ...complete, marketingChannel: "   " }, keys).length, 1);
+  eq("and null", projectDataGaps({ ...complete, expectedCloseDate: null }, keys).length, 1);
+
+  /*
+   * A key naming nothing on the record is skipped rather than reported.
+   *
+   * A list row does not carry every column, and a gap that can never be filled
+   * in is a badge nobody can clear — which reads as the feature being broken
+   * rather than the data being incomplete.
+   */
+  eq("a field the record does not carry at all is not a gap",
+    projectDataGaps({ salesExpert: "رضا" }, keys).length, 0);
+
+  // Zero is an answer, not a blank.
+  eq("a numeric zero is not a gap",
+    projectDataGaps({ leadQuality: 0 }, ["leadQuality"]).length, 0);
+
+  // Only the configured keys, and in the catalogue's own order.
+  const two = projectDataGaps({ salesExpert: "", marketingChannel: "", endUser: "" },
+    ["marketingChannel", "salesExpert"]);
+  eq("only the configured fields count", two.length, 2);
+  eq("reported in the catalogue's order", two.map((g) => g.key).join(","),
+    "salesExpert,marketingChannel");
+
+  // Every default has to exist in the catalogue, or it warns about nothing.
+  const known = new Set(projectGapCatalogue().map((f) => f.key));
+  ok("every default field is in the catalogue",
+    DEFAULT_PROJECT_GAP_FIELDS.every((k) => known.has(k)),
+    DEFAULT_PROJECT_GAP_FIELDS.filter((k) => !known.has(k)));
+  ok("and the catalogue is the required-fields one, not a second list",
+    known.has("salesExpert") && known.has("expectedCloseDate"));
+
+  eq("an unconfigured installation uses the defaults",
+    projectGapFields(undefined).join(","), DEFAULT_PROJECT_GAP_FIELDS.join(","));
+  // «Warn about nothing» is a real answer and must not fall back.
+  eq("an empty list turns the badge off entirely", projectGapFields([]).length, 0);
+  // A key left from a field since renamed would sit there warnable by nothing.
+  eq("a key naming no field is dropped",
+    projectGapFields(["salesExpert", "fieldThatWentAway"]).join(","), "salesExpert");
+
+  /*
+   * Not the same switch as `requiredFields.projects`.
+   *
+   * Making a field required blocks the *next save* of every project already on
+   * the system — including one somebody opened to correct a typo — so the two
+   * lists cannot be one.
+   */
+  const settingsSrc = readFileSync("src/components/SettingsView.tsx", "utf8");
+  ok("settings edits the gap list separately", /projectDataGapFields: gapFields/.test(settingsSrc));
+  ok("from the same field catalogue", /projectGapCatalogue\(\)/.test(settingsSrc));
+  /*
+   * A default must actually arrive on a grid row.
+   *
+   * The badge reads the row the grid holds, and `rowToProject` writes each
+   * field explicitly — so a field the adapter never sets is skipped by the
+   * "not carried" rule above and warns about nothing, silently, forever.
+   */
+  const adapter = readFileSync("src/api/projectAdapter.ts", "utf8");
+  const rowHalf = adapter.slice(adapter.indexOf("export function rowToProject"),
+    adapter.indexOf("export function detailToProject"));
+  for (const key of DEFAULT_PROJECT_GAP_FIELDS) {
+    ok(`the grid row carries ${key}`, new RegExp(`\\b${key}:`).test(rowHalf));
+  }
+
+  const projectsSrc = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("the project card draws the badge", /project-gap-badge-/.test(projectsSrc));
+  // A badge that will not say what is missing sends somebody into the form to
+  // find out, which is most of the work it was meant to save.
+  ok("and names the fields it is complaining about",
+    /gaps\.map\(\(g\) => g\.label\)\.join/.test(projectsSrc));
 }
 
 

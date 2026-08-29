@@ -655,6 +655,61 @@ export async function reassignReferral(
   return "ok";
 }
 
+/**
+ * Corrects what a referral is asking for.
+ *
+ * A referral is a request somebody typed, and the first version of it is
+ * routinely wrong — a tag number transposed, a deadline that moved, a sentence
+ * that reads two ways. There was no way to change it: the only recourse was to
+ * cancel the referral and raise another, which loses the thread.
+ *
+ * Only the person who **raised** it may edit, because it is their request; the
+ * assignee answers it and says what they think in the thread. Everything said
+ * so far stays exactly where it is, and the assignee is told the request moved
+ * — a silently rewritten request is worse than none.
+ */
+export async function updateReferralAction(
+  id: string,
+  actionRequired: string,
+  user: AuthUser,
+): Promise<"ok" | "forbidden" | "not-found" | "invalid"> {
+  const db = getDb();
+  const text = toNullableString(actionRequired);
+  if (!text) return "invalid";
+
+  const referral = await db.projectReferral.findUnique({
+    where: { id },
+    select: {
+      id: true, actionRequired: true, assignedToUserId: true, assignedByUserId: true,
+      activity: { select: { group: { select: { project: { select: { id: true, name: true, code: true } } } } } },
+    },
+  });
+  if (!referral) return "not-found";
+
+  // Not `involved`: the assignee changing what was asked of them is how a
+  // referral comes to be marked done against a request nobody made.
+  if (referral.assignedByUserId !== user.id && !user.isSystemAdmin) return "forbidden";
+  if (referral.actionRequired === text) return "ok";
+
+  await db.projectReferral.update({ where: { id }, data: { actionRequired: text } });
+
+  if (referral.assignedToUserId && referral.assignedToUserId !== user.id) {
+    const actor = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
+    const project = referral.activity?.group?.project;
+    const where = project ? ` در پروژه ${project.name}${project.code ? ` (${project.code})` : ""}` : "";
+    await notifyUser({
+      userId: referral.assignedToUserId,
+      module: "ارجاعات",
+      title: "ویرایش متن ارجاع",
+      description: `${actor?.fullName ?? "یک همکار"} متن ارجاع${where} را ویرایش کرد: ${text}`,
+      projectId: project?.id ?? null,
+      actorUserId: user.id,
+    });
+  }
+
+  return "ok";
+}
+
 /** Appends a reply to a referral thread. */
 export async function addReferralMessage(
   referralId: string,

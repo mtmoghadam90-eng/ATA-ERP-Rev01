@@ -258,6 +258,8 @@ export interface Supplier {
   id: string;
   name: string;
   country: string;
+  /** The city. Domestic suppliers are the majority and «ایران» says nothing. */
+  city?: string;
   contactName: string;
   phone?: string;
   email?: string;
@@ -700,6 +702,16 @@ export interface ERPSettings {
   activeTemplateId: string;
   documentFormats: DocumentFormat;
   requiredFields?: Record<string, Record<string, boolean>>;
+  /**
+   * Project fields whose blankness is worth a badge on the project card.
+   *
+   * Deliberately **not** `requiredFields.projects`: a required field is
+   * enforced on save, so turning one on says nothing about the projects
+   * already on the system and makes them unsavable the next time somebody
+   * opens one to fix a typo. Absent means the default list; an empty array
+   * means "warn about nothing", which is a real answer.
+   */
+  projectDataGapFields?: string[];
   dropdownItems: {
     industries: string[];
     customerTypes: string[];
@@ -759,6 +771,8 @@ export interface ProjectReferralResponse {
   id?: string;
   text: string;
   responder: string;
+  /** Which side of the thread it sits on. A name is a label, not an identity. */
+  responderUserId?: string | null;
   createdAt: string;
   attachment?: { name: string; size: string; content?: string } | null;
 }
@@ -768,6 +782,9 @@ export interface ProjectReferral {
   assignedTo: string;
   actionRequired: string;
   assignedBy: string;
+  /** The two accounts, which decide who may answer, close or reopen. */
+  assignedToUserId?: string | null;
+  assignedByUserId?: string | null;
   createdAt: string;
   status: 'در انتظار اقدام' | 'انجام شده';
   response: ProjectReferralResponse | null;
@@ -1138,8 +1155,13 @@ export interface SupplierInquiry {
   supplierId: string;
   supplierName: string;
   items: SupplierInquiryItem[];
-  technicalOfferUrl?: string; // فایل پیشنهاد فنی
-  financialOfferUrl?: string; // فایل پیشنهاد مالی
+  /** The project's code, joined on the row. Codes are unique; names are not. */
+  projectCode?: string;
+  technicalOfferUrl?: string; // فایل پیشنهاد فنی — اولین فایل فهرست زیر
+  financialOfferUrl?: string; // فایل پیشنهاد مالی — اولین فایل فهرست زیر
+  /** Every technical file. A quotation is rarely one document. */
+  technicalOfferFiles?: { name: string; size: string; url: string }[];
+  financialOfferFiles?: { name: string; size: string; url: string }[];
   steps: InquiryStep[];
   isWinner: boolean;
   winnerDate?: string;

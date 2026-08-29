@@ -9,6 +9,7 @@ import {
   deleteModuleNote,
   listActivities, listCategoryGroups, listModuleNotes, listReferrals,
   reassignReferral,
+  updateReferralAction,
   setReferralStatus, updateActivity, upsertCategoryGroup,
 } from "../services/activityService";
 import { normalizeAttachments } from "../../utils/attachments";
@@ -320,6 +321,40 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
       res.json({ success: true });
     } catch (err) {
       sendError(res, err, "PUT /api/referrals/:id/assignee");
+    }
+  });
+
+  /**
+   * Corrects what the referral asks for.
+   *
+   * Only the person who raised it, enforced in the service: the assignee
+   * rewriting their own instructions is how a referral comes to be marked done
+   * against a request nobody made.
+   */
+  app.put("/api/referrals/:id/action", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const actionRequired = (req.body as { actionRequired?: unknown })?.actionRequired;
+      if (typeof actionRequired !== "string") {
+        res.status(400).json({ success: false, error: "متن ارجاع الزامی است." });
+        return;
+      }
+      const outcome = await updateReferralAction(req.params.id, actionRequired, user);
+      if (outcome === "forbidden") {
+        return denied(res, "فقط ارجاع‌دهنده می‌تواند متن ارجاع را ویرایش کند.");
+      }
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "ارجاع یافت نشد." });
+        return;
+      }
+      if (outcome === "invalid") {
+        res.status(400).json({ success: false, error: "متن ارجاع الزامی است." });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      sendError(res, err, "PUT /api/referrals/:id/action");
     }
   });
 

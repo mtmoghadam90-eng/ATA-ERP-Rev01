@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
+import { normalizeAttachments, offerFileColumns } from "../../utils/attachments";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause, searchVariants } from "../listing";
 import { AuthUser, canSeeCosts, hasPermission } from "../auth";
 import { redactInquiries, redactInquiry } from "../costs";
@@ -86,6 +87,7 @@ const LIST_SELECT = {
   offerConfirmed: true, offerConfirmedDateJalali: true,
   creationDate: true, creationDateJalali: true,
   technicalOfferUrl: true, financialOfferUrl: true,
+  technicalOfferFiles: true, financialOfferFiles: true,
   discountPercent: true, discountAmount: true, createdAt: true,
   supplier: { select: { id: true, name: true } },
   project: { select: { id: true, code: true, name: true } },
@@ -187,10 +189,21 @@ export interface InquiryInput {
   creationDate?: string | null;
   winnerDate?: string | null;
   offerConfirmedDate?: string | null;
+  /**
+   * The offer's files.
+   *
+   * The list is what a person edits; `technicalOfferUrl`/`financialOfferUrl`
+   * are derived from it, so a caller sending only the list still leaves the
+   * single-URL columns — read by the grid, the download button and the Power
+   * BI export — pointing at the first file. A caller sending only a URL, which
+   * is every integration written before this, is still understood.
+   */
   technicalOfferUrl?: string | null;
+  financialOfferUrl?: string | null;
+  technicalOfferFiles?: unknown;
+  financialOfferFiles?: unknown;
   discountPercent?: unknown;
   discountAmount?: unknown;
-  financialOfferUrl?: string | null;
   items?: InquiryItemInput[];
   initialStep?: InquiryInitialStepInput;
 }
@@ -225,7 +238,18 @@ function scalarData(input: InquiryInput): Record<string, unknown> {
   if ("supplierId" in input) set("supplierId", input.supplierId);
   if ("isWinner" in input) set("isWinner", !!input.isWinner);
   if ("offerConfirmed" in input) set("offerConfirmed", !!input.offerConfirmed);
-  if ("technicalOfferUrl" in input) set("technicalOfferUrl", toNullableString(input.technicalOfferUrl, 500));
+  // The list wins when it is sent, because it is what the form edits; the
+  // single-URL column is written from its first entry either way, so the two
+  // can never disagree.
+  if ("technicalOfferFiles" in input) {
+    const columns = offerFileColumns(normalizeAttachments(input.technicalOfferFiles));
+    set("technicalOfferFiles", columns.files);
+    set("technicalOfferUrl", columns.url);
+  } else if ("technicalOfferUrl" in input) {
+    const columns = offerFileColumns(normalizeAttachments([{ url: input.technicalOfferUrl }]));
+    set("technicalOfferFiles", columns.files);
+    set("technicalOfferUrl", columns.url);
+  }
   // Clamped: a percentage outside 0-100 would inflate the offer or make it
   // negative, and the figure is never taken from the client for money.
   if ("discountPercent" in input) {
@@ -236,7 +260,15 @@ function scalarData(input: InquiryInput): Record<string, unknown> {
   if ("discountAmount" in input) {
     set("discountAmount", Math.max(Number(input.discountAmount) || 0, 0));
   }
-  if ("financialOfferUrl" in input) set("financialOfferUrl", toNullableString(input.financialOfferUrl, 500));
+  if ("financialOfferFiles" in input) {
+    const columns = offerFileColumns(normalizeAttachments(input.financialOfferFiles));
+    set("financialOfferFiles", columns.files);
+    set("financialOfferUrl", columns.url);
+  } else if ("financialOfferUrl" in input) {
+    const columns = offerFileColumns(normalizeAttachments([{ url: input.financialOfferUrl }]));
+    set("financialOfferFiles", columns.files);
+    set("financialOfferUrl", columns.url);
+  }
 
   return { ...out, ...expandDateFields(input as Record<string, unknown>, INQUIRY_DATE_FIELDS) };
 }

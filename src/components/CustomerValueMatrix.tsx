@@ -118,9 +118,11 @@ export default function CustomerValueMatrix({
         <Grid2x2 size={18} className="text-sky-600" />
         <div>
           <h3 className="text-sm font-bold text-slate-800">ماتریس ارزش مشتری</h3>
+          {/* The vertical axis is deliberately unlabelled — the quadrant
+              letters and each point's own tooltip say what it is, and a label
+              down the side of a small chart is more furniture than reading. */}
           <p className="text-[10px] text-slate-400 mt-0.5">
-            محور افقی: ارزش بالقوه · محور عمودی: ارزش ایجادشده · اندازه دایره:{' '}
-            {showCosts ? 'سود ناخالص' : 'فروش کل'}
+            اندازه دایره: {showCosts ? 'سود ناخالص' : 'فروش کل'}
           </p>
         </div>
       </div>
@@ -176,7 +178,7 @@ export default function CustomerValueMatrix({
       {!loading && !error && (
         <>
           <div className="relative">
-            <svg viewBox="-6 -6 112 112" className="w-full max-w-2xl mx-auto" role="img">
+            <svg viewBox="-6 -6 112 112" className="w-full max-w-sm mx-auto" role="img">
               {/* quadrant shading, split at the configured thresholds */}
               <rect x={config.highPotentialThreshold} y={0}
                 width={SIZE - config.highPotentialThreshold} height={SIZE - config.highRealizedThreshold}
@@ -235,9 +237,12 @@ export default function CustomerValueMatrix({
               })}
             </svg>
 
-            <div className="flex justify-between text-[10px] text-slate-400 max-w-2xl mx-auto px-1">
+            <div
+              dir="ltr"
+              className="flex justify-between text-[10px] text-slate-400 max-w-sm mx-auto px-1"
+            >
               <span>ارزش بالقوه کم</span>
-              <span>ارزش بالقوه زیاد ←</span>
+              <span>ارزش بالقوه زیاد</span>
             </div>
           </div>
 

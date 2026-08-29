@@ -59,6 +59,65 @@ export interface NotificationRow {
   createdAt: string;
 }
 
+/**
+ * One gesture in the referral thread, which is three operations on the server.
+ *
+ * A reply, a status change and a reassignment each have their own rule about
+ * who may do them, so they stay three routes — but they are always issued in
+ * this order and with these arguments, and the referrals screen and the
+ * project's activity feed both need exactly that. A second copy of the order is
+ * how one screen comes to reopen a referral without saying why.
+ *
+ * `silent` on the status change, because the reply already told the other party
+ * and told them the part that matters. `andForwarded` for the same reason: the
+ * forwarding is what puts the thread in the next person's inbox.
+ */
+export interface ReferralReply {
+  text: string;
+  attachment?: { name: string; size: string; content?: string } | null;
+  outcome?: "none" | "done" | "reopen";
+  forwardToUserId?: string;
+}
+
+export async function submitReferralReply(
+  referralId: string,
+  body: ReferralReply,
+): Promise<"sent" | "status-only" | "nothing"> {
+  const forwardTo = body.forwardToUserId || undefined;
+  const attachment = body.attachment ?? null;
+  const outcome = body.outcome ?? "none";
+  let text = body.text.trim();
+
+  if (!text && !attachment && !forwardTo) {
+    // A bare «done» or «reopen» is a legitimate thing to press; anything else
+    // with nothing in it is not.
+    if (outcome === "none") return "nothing";
+    await inboxApi.setReferralStatus(
+      referralId, outcome === "done" ? "انجام شده" : "در انتظار اقدام");
+    return "status-only";
+  }
+
+  if (forwardTo && !text) text = "ارجاع به همکار";
+
+  await inboxApi.replyToReferral(referralId, {
+    text,
+    attachmentName: attachment?.name ?? null,
+    attachmentSize: attachment?.size ?? null,
+    attachmentUrl: attachment?.content ?? null,
+    andForwarded: !!forwardTo,
+  });
+
+  // Forwarding sets its own status, so an outcome only applies without it.
+  if (outcome === "done" && !forwardTo) {
+    await inboxApi.setReferralStatus(referralId, "انجام شده", true);
+  } else if (outcome === "reopen" && !forwardTo) {
+    await inboxApi.setReferralStatus(referralId, "در انتظار اقدام", true);
+  }
+  if (forwardTo) await inboxApi.reassignReferral(referralId, forwardTo);
+
+  return "sent";
+}
+
 export const inboxApi = {
   /** `scope` picks the tab: what was asked of me, or what I asked of others. */
   referrals: (
@@ -75,6 +134,16 @@ export const inboxApi = {
    */
   setReferralStatus: (id: string, status: string, silent = false) =>
     api.put<Record<string, never>>(`/api/referrals/${id}/status`, { status, silent }),
+
+  /**
+   * Corrects what the referral asks for.
+   *
+   * Refused for anyone but the person who raised it — the assignee rewriting
+   * their own instructions is how a referral comes to be marked done against a
+   * request nobody made.
+   */
+  updateReferralAction: (id: string, actionRequired: string) =>
+    api.put<Record<string, never>>(`/api/referrals/${id}/action`, { actionRequired }),
 
   /** Hands the thread to someone else and puts it back into "awaiting action". */
   reassignReferral: (id: string, assignedToUserId: string) =>

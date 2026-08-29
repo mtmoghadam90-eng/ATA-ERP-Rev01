@@ -15,14 +15,14 @@ import { processWorkflowRules } from "./workflowService";
  * whole gate and there is no per-record scope.
  */
 
-export const SUPPLIER_SORTABLE = ["name", "country", "status", "createdAt", "updatedAt"] as const;
-export const SUPPLIER_FILTERABLE = ["status", "country"] as const;
+export const SUPPLIER_SORTABLE = ["name", "country", "city", "status", "createdAt", "updatedAt"] as const;
+export const SUPPLIER_FILTERABLE = ["status", "country", "city"] as const;
 
 const SEARCH_FIELDS = [
   // `country` is searchable as well as filterable: the grid's one search box has
   // always matched it, and leaving it out made a search for a country return
   // nothing at all.
-  "name", "country", "contactName", "phone", "email", "website",
+  "name", "country", "city", "contactName", "phone", "email", "website",
   "description", "providedCategories", "paymentTerms",
 ] as const;
 
@@ -44,7 +44,7 @@ export function buildSupplierWhere(q: ListQuery): Record<string, unknown> {
 }
 
 const LIST_SELECT = {
-  id: true, name: true, country: true, contactName: true, phone: true, email: true,
+  id: true, name: true, country: true, city: true, contactName: true, phone: true, email: true,
   website: true, paymentTerms: true, status: true, providedCategories: true, createdAt: true,
   // The grid has a «فیلدهای سفارشی» column, so the row has to carry the values.
   customValues: true,
@@ -77,6 +77,7 @@ export async function getSupplier(id: string, user: AuthUser) {
 export interface SupplierInput {
   name?: string;
   country?: string | null;
+  city?: string | null;
   contactName?: string | null;
   phone?: string | null;
   email?: string | null;
@@ -94,6 +95,7 @@ function scalarData(input: SupplierInput): Record<string, unknown> {
 
   if ("name" in input) set("name", toNullableString(input.name, 300));
   if ("country" in input) set("country", toNullableString(input.country, 100));
+  if ("city" in input) set("city", toNullableString(input.city, 120));
   if ("contactName" in input) set("contactName", toNullableString(input.contactName, 200));
   if ("phone" in input) set("phone", toNullableString(input.phone, 50));
   if ("email" in input) set("email", toNullableString(input.email, 200));

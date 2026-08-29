@@ -75,6 +75,7 @@ export const REQUIRED_FIELDS_METADATA: ModuleConfig[] = [
     fields: [
       { key: 'name', label: 'نام کمپانی تأمین‌کننده' },
       { key: 'country', label: 'کشور مبدا' },
+      { key: 'city', label: 'شهر' },
       { key: 'contactName', label: 'نام کارشناس/مخاطب' },
       { key: 'phone', label: 'تلفن تماس' },
       { key: 'email', label: 'ایمیل مکاتبه' },
@@ -212,6 +213,7 @@ export const DEFAULT_REQUIRED_FIELDS: Record<string, Record<string, boolean>> = 
   suppliers: {
     name: true,
     country: true,
+    city: false,
     contactName: true,
     phone: false,
     email: false,

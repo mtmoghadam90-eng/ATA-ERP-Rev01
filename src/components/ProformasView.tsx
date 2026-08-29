@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useExchangeRates } from '../api/exchangeRates';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { inlineDocumentAssets } from '../utils/inlineAssets';
@@ -60,7 +60,7 @@ import { productToWriteInput, detailToProduct, rowToProduct } from "../api/produ
 import { projectToWriteInput, detailToProject } from "../api/projectAdapter";
 import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
 import { calcSeedOf } from "../api/productAdapter";
-import { canSeeCosts } from "../utils/permissions";
+import { canSeeCosts, hasModulePermission } from "../utils/permissions";
 import {
   COST_SOURCES, COST_SOURCE_LABELS, landedUnitCostOf, lineNeedsCost, linesMissingCost,
 } from "../utils/costOfGoods";
@@ -92,7 +92,9 @@ import type { SuggestedItem } from "../api/assistant";
 import { suggestionSpecText } from "../utils/advisorSuggestion";
 import RichTextField from "./RichTextField";
 import { getDeliverySummary, updateNotesWithDelivery } from "../utils/deliveryNotes";
-import { attributesFromSelections, mergeSpecText, specLinesFrom } from "../utils/productConfig";
+import {
+  attributesFromSelections, describeProductSpec, mergeSpecText, specLinesFrom,
+} from "../utils/productConfig";
 import { ensureVariantForAttributes, updateProductById as applyProductChange } from "../api/productVariants";
 import { priceInWarehouseCurrency } from "../utils/finance";
 import { computeProformaTotals } from "../utils/proformaTotals";
@@ -1091,7 +1093,34 @@ export default function ProformasView({
   // create a duplicate SKU every time. Config rules and the price-calculator
   // inputs are genuinely detail-only, which is why writes go through
   // `updateProductById` rather than sending one of these rows back.
-  const products = productPicker.matches.map(rowToProduct);
+  /*
+   * Products the screen has written to since the picker last searched.
+   *
+   * The configurator creates a SKU and hands back the saved product, but the
+   * SKU `<select>` renders its options from the picker's rows — which were
+   * fetched before that SKU existed. A `<select>` whose value matches no option
+   * shows its placeholder, so the line was left reading «-- انتخاب ترکیب
+   * مشخصات (SKU) --» with a perfectly good variant id on it.
+   *
+   * Overrides replace a row of the same id and are otherwise appended, so a
+   * product written to stays reachable even after the search term moves on.
+   */
+  const [productOverrides, setProductOverrides] = useState<Record<string, Product>>({});
+  const rememberProduct = useCallback((product: Product) => {
+    setProductOverrides((prev) => ({ ...prev, [product.id]: product }));
+  }, []);
+
+  const products = useMemo(() => {
+    const byId = new Map<string, Product>();
+    for (const row of productPicker.matches) {
+      const product = rowToProduct(row);
+      byId.set(product.id, productOverrides[product.id] ?? product);
+    }
+    for (const [id, product] of Object.entries(productOverrides)) {
+      if (!byId.has(id)) byId.set(id, product);
+    }
+    return [...byId.values()];
+  }, [productPicker.matches, productOverrides]);
 
   // Open Create Modal
   const handleOpenCreate = () => {
@@ -1521,6 +1550,34 @@ export default function ProformasView({
     );
     setDeliveryDate(getDeliverySummary(newItems));
   };
+  /**
+   * Copy a line, immediately below the one it came from.
+   *
+   * Two sizes of the same transmitter, or the same item on two tags, differ by
+   * a word and a number; re-picking the product, re-configuring it and
+   * re-entering the price and the cost is the whole line again.
+   *
+   * The copy gets **no** `id`. That field is the line the client read the row
+   * under — `preserveLineCosts` matches on it to put back a cost a cost-blind
+   * user cannot see — so two lines carrying the same id would both claim one
+   * stored row. It is a new line, and a new line has no id yet.
+   */
+  const handleDuplicateItemLine = (index: number) => {
+    const source = items[index];
+    if (!source) return;
+    const { id: _id, ...copy } = source as typeof source & { id?: string };
+    const newItems = [
+      ...items.slice(0, index + 1),
+      { ...copy } as typeof source,
+      ...items.slice(index + 1),
+    ];
+    setItems(newItems);
+    setNotes((prevNotes) =>
+      updateNotesWithDelivery(prevNotes, newItems, isEqualDelivery),
+    );
+    setDeliveryDate(getDeliverySummary(newItems));
+  };
+
   // Remove Item line
   const handleRemoveItemLine = (index: number) => {
     if (items.length === 1) return;
@@ -1595,31 +1652,29 @@ export default function ProformasView({
    * feature lines and the stored description are replaced, their own text is
    * not.
    */
+  /**
+   * A line's specification text, with the rule itself in `productConfig.ts`.
+   *
+   * `previousProd` is the product the line is moving *away* from, and it is
+   * what stops that product's description being kept as "something the user
+   * typed" — see `describeProductSpec`.
+   */
   const describeProduct = (
     prod?: Product,
     variant?: ProductVariant,
     previous?: string,
+    previousProd?: Product,
   ): string => {
     const attributes = variant?.attributes ?? {};
-    const configLines = Object.entries(attributes).map(([k, v]) => `${k}: ${v}`);
-    const stored = (prod?.description || "").trim();
-
-    // What the user wrote, minus the two things this function owns.
-    const featureNames = prod?.features?.map((f) => f.name) ?? Object.keys(attributes);
-    const storedLines = new Set(stored.split("\n").map((l) => l.trim()).filter(Boolean));
-    const kept = (previous || "")
-      .split("\n")
-      .filter((line) => {
-        const trimmed = line.trim();
-        if (!trimmed) return false;
-        if (trimmed.startsWith("مشخصات:")) return false;
-        if (storedLines.has(trimmed)) return false;
-        return !featureNames.some((name) => trimmed.startsWith(`${name}:`));
-      });
-
-    return [...kept, ...configLines, ...(stored ? [stored] : [])]
-      .filter(Boolean)
-      .join("\n");
+    const ownerOf = (p?: Product) => ({
+      description: p?.description,
+      featureNames: p?.features?.map((f) => f.name)
+        ?? (p === prod ? Object.keys(attributes) : []),
+    });
+    return describeProductSpec(
+      ownerOf(prod), attributes, previous,
+      previousProd ? ownerOf(previousProd) : undefined,
+    );
   };
 
   const getProductOrVariantPriceInProformaCurrency = (
@@ -1829,6 +1884,12 @@ export default function ProformasView({
     const prod = products.find((p) => p.id === prodId);
     if (!prod) return;
 
+    // The product the line is leaving. Without it the outgoing product's
+    // description reads as text the user typed and is kept — which is how a
+    // new line, seeded from whichever product the picker held first, printed
+    // that product's specification above the one actually chosen.
+    const previousProd = products.find((p) => p.id === items[index]?.productId);
+
     const basePriceInSelectedCurrency = getProductOrVariantPriceInProformaCurrency(prod);
 
     const newItems = [...items];
@@ -1859,7 +1920,7 @@ export default function ProformasView({
       unitPriceRIYAL: basePriceInSelectedCurrency,
       ...costPatchFor(prod),
       // No variant yet: the stored description alone, plus anything typed.
-      techSpecs: describeProduct(prod, undefined, newItems[index].techSpecs),
+      techSpecs: describeProduct(prod, undefined, newItems[index].techSpecs, previousProd),
       selectedImage:
         prod.images && prod.images.length > 0 ? prod.images[0] : undefined,
     };
@@ -4133,6 +4194,15 @@ export default function ProformasView({
                     </div>
                   </div>
                 )}
+                {/*
+                  The currency and the rate it is priced at, stacked.
+
+                  They were two cells of the same grid row, so with the sending
+                  panel above them the rate landed directly under the list of
+                  recipients — which is where it was reported. The rate is a
+                  property of the currency, so it belongs under it.
+                */}
+                <div className="space-y-3">
                 {/* Currency Selection */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-500">
@@ -4187,6 +4257,7 @@ export default function ProformasView({
                     </span>
                   </div>
                 )}
+                </div>
               </div>
               {/* Items multi-row block */}
               <div className="space-y-3">
@@ -4238,10 +4309,19 @@ export default function ProformasView({
                         <label className="text-[10px] font-bold text-slate-500 block">
                           بازه عددی
                         </label>
+                        {/*
+                          `??`, not `||`.
+                          A stored empty string is what you have the instant
+                          you press backspace to replace «۳-۴» with «۲-۳», and
+                          `|| "۳-۴"` re-rendered the default over it — so the
+                          box snapped back on every keystroke that emptied it
+                          and the value could not be changed by typing at all.
+                          Only an absent value falls back to the default.
+                        */}
                         <input
                           type="text"
                           required
-                          value={items[0]?.deliveryRange || "۳-۴"}
+                          value={items[0]?.deliveryRange ?? "۳-۴"}
                           onChange={(e) =>
                             handleItemDeliveryFieldChange(
                               0,
@@ -4306,7 +4386,7 @@ export default function ProformasView({
                           type="text"
                           required
                           value={
-                            items[0]?.deliveryPostfix ||
+                            items[0]?.deliveryPostfix ??
                             "پس از تایید پیش فاکتور و دریافت پیش پرداخت"
                           }
                           onChange={(e) =>
@@ -4796,11 +4876,21 @@ export default function ProformasView({
                             </div>
                           </>
                         )}
-                        {/* Remove item line button */}
-                        <div className="col-span-1 md:col-span-1 flex flex-col justify-end md:justify-center items-center">
+                        {/* Copy and remove, on the line they act on. */}
+                        <div className="col-span-1 md:col-span-1 flex flex-col justify-end md:justify-center items-center gap-1">
                           <label className="text-[10px] font-bold text-slate-400 md:hidden block select-none">
                             &nbsp;
                           </label>
+                          <button
+                            type="button"
+                            onClick={() => handleDuplicateItemLine(idx)}
+                            title="کپی این ردیف"
+                            id={`proforma-item-copy-${idx}`}
+                            className="w-full md:w-auto py-1.5 md:py-1 px-3 md:px-1 text-slate-400 hover:text-sky-600 hover:bg-sky-50 md:hover:bg-white rounded-lg md:rounded border border-slate-200 md:border-0 flex items-center justify-center gap-1 transition text-xs font-semibold"
+                          >
+                            <Copy size={15} />
+                            <span className="md:hidden">کپی ردیف</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleRemoveItemLine(idx)}
@@ -5043,7 +5133,7 @@ export default function ProformasView({
                               <input
                                 type="text"
                                 required
-                                value={item.deliveryRange || "۳-۴"}
+                                value={item.deliveryRange ?? "۳-۴"}
                                 onChange={(e) =>
                                   handleItemDeliveryFieldChange(
                                     idx,
@@ -5108,7 +5198,7 @@ export default function ProformasView({
                                 type="text"
                                 required
                                 value={
-                                  item.deliveryPostfix ||
+                                  item.deliveryPostfix ??
                                   "پس از تایید پیش فاکتور و دریافت پیش پرداخت"
                                 }
                                 onChange={(e) =>
@@ -5599,6 +5689,9 @@ export default function ProformasView({
               const ensured = await ensureVariantForAttributes(prod, attributes);
               productForItem = ensured.product;
               matchedVariantId = ensured.variantId;
+              // The SKU list is drawn from these, and the one just created is
+              // not among the rows the picker fetched.
+              rememberProduct(ensured.product);
             } catch (err) {
               // The SKU could not be stored: the line keeps its specifications
               // and its manual price, and simply carries no SKU link. Refusing
@@ -5648,6 +5741,20 @@ export default function ProformasView({
               onCancel={() => setShowConfigModal(null)}
               onConfirm={() => void handleConfirmConfig()}
               confirmLabel="تایید و افزودن به مشخصات فنی"
+              /*
+                Defining a feature or an option without leaving the quotation.
+
+                Gated on the products permission: this writes to the catalogue,
+                and a sales account that may quote from it must not be able to
+                add to it. The write goes through `updateProductById`, which
+                loads the full record — sending a picker row back would erase
+                the config rules and the price calculator — and the result is
+                remembered so the new option is on screen at once.
+              */
+              onCatalogueEdit={hasModulePermission(currentUser, 'products') ? async (mutate) => {
+                const saved = await applyProductChange(prod.id, mutate);
+                if (saved) rememberProduct(saved);
+              } : undefined}
               intro={(
                 <>
                   در این بخش می‌توانید مقادیر ویژگی‌های تعریف شده برای محصول{" "}

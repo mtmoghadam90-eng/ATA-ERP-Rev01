@@ -1,6 +1,10 @@
-import { Settings, X } from 'lucide-react';
-import type { Product } from '../types';
+import { useState } from 'react';
+import { Plus, Settings, X } from 'lucide-react';
+import type { Product, ProductFeature } from '../types';
 import type { ConfigSelections } from '../utils/productConfig';
+import {
+  catalogueCodeRefusal, catalogueNameRefusal, newConfigId,
+} from '../utils/productConfig';
 
 /**
  * Picking the values of a catalogue item's configurable features.
@@ -27,13 +31,129 @@ interface Props {
   busy?: boolean;
   /** One line above the boxes, saying what confirming will do here. */
   intro: React.ReactNode;
+  /**
+   * Writes a change to the catalogue item, and returns once it is stored.
+   *
+   * Optional: a caller that does not pass it gets a read-only configurator,
+   * which is what a user without the products permission should see. The
+   * modal builds the mutation — a new feature, or a new option on one — and
+   * the screen owns the write, because each host already has the one helper
+   * that loads the full product before changing it.
+   */
+  onCatalogueEdit?: (mutate: (full: Product) => Product) => Promise<void>;
 }
 
 export default function ProductConfiguratorModal({
   product, selections, onSelectionsChange, onCancel, onConfirm, confirmLabel, busy = false, intro,
+  onCatalogueEdit,
 }: Props) {
   const features = product.features ?? [];
   const rules = product.configRules ?? [];
+
+  /*
+   * Defining a feature or an option without leaving the quotation.
+   *
+   * The catalogue is never complete at the moment somebody is quoting from it:
+   * a customer asks for a flange rating nobody has entered yet, and the choice
+   * was to abandon the proforma, open the products screen, add the option and
+   * start again. The write goes through the host's own product helper, so the
+   * full record is loaded and changed rather than a picker row being sent back.
+   */
+  const [adding, setAdding] = useState<null | { featureId: string } | { feature: true }>(null);
+  const [draftName, setDraftName] = useState('');
+  const [draftCode, setDraftCode] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const openAdd = (target: { featureId: string } | { feature: true }) => {
+    setAdding(target);
+    setDraftName('');
+    setDraftCode('');
+    setError(null);
+  };
+
+  const submitAdd = async () => {
+    if (!adding || !onCatalogueEdit) return;
+    const isFeature = 'feature' in adding;
+    const siblings = isFeature
+      ? features.map((f) => f.name)
+      : (features.find((f) => f.id === adding.featureId)?.options ?? []).map((o) => o.value);
+
+    const refusal = catalogueNameRefusal(draftName, siblings) ?? catalogueCodeRefusal(draftCode);
+    if (refusal) { setError(refusal); return; }
+
+    const name = draftName.trim();
+    const code = draftCode.trim() || undefined;
+    setSaving(true);
+    setError(null);
+    try {
+      await onCatalogueEdit((full) => {
+        const list = full.features ?? [];
+        if (isFeature) {
+          const feature: ProductFeature = { id: newConfigId('feat'), name, code, options: [] };
+          return { ...full, features: [...list, feature] };
+        }
+        return {
+          ...full,
+          features: list.map((f) => (f.id === adding.featureId
+            ? { ...f, options: [...f.options, { id: newConfigId('opt'), value: name, code }] }
+            : f)),
+        };
+      });
+      setAdding(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ثبت در انبار با خطا مواجه شد.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addForm = (
+    <div className="mt-2 border border-sky-200 bg-sky-50/60 rounded-lg p-2.5 space-y-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <input
+          type="text"
+          value={draftName}
+          onChange={(e) => setDraftName(e.target.value)}
+          placeholder={adding && 'feature' in adding ? 'نام ویژگی جدید' : 'مقدار جدید'}
+          className="sm:col-span-2 w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs bg-white outline-none focus:border-sky-400"
+          id="configurator-new-name"
+          autoFocus
+        />
+        <input
+          type="text"
+          value={draftCode}
+          onChange={(e) => setDraftCode(e.target.value)}
+          placeholder="کد (اختیاری)"
+          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs bg-white outline-none focus:border-sky-400 font-mono text-left"
+          id="configurator-new-code"
+        />
+      </div>
+      {/* The code goes straight into the SKU, which is why it is restricted. */}
+      <p className="text-[10px] text-slate-500">
+        کد در ساخت SKU استفاده می‌شود؛ در صورت خالی بودن، شماره ردیف جایگزین می‌شود.
+      </p>
+      {error && <p className="text-[10px] font-bold text-rose-600">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => setAdding(null)}
+          className="px-3 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition"
+        >
+          انصراف
+        </button>
+        <button
+          type="button"
+          onClick={() => void submitAdd()}
+          disabled={saving}
+          id="configurator-new-submit"
+          className="px-3 py-1 text-[11px] font-bold bg-sky-600 hover:bg-sky-700 text-white rounded-lg transition disabled:opacity-50"
+        >
+          {saving ? 'در حال ثبت…' : 'افزودن به انبار'}
+        </button>
+      </div>
+    </div>
+  );
 
   /**
    * Drops any selection the rules now forbid, repeatedly.
@@ -119,7 +239,20 @@ export default function ProductConfiguratorModal({
 
           {features.map((feature) => (
             <div key={feature.id} className="space-y-2 border border-slate-100 rounded-lg p-3">
-              <label className="text-sm font-bold text-slate-700">{feature.name}</label>
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-sm font-bold text-slate-700">{feature.name}</label>
+                {onCatalogueEdit && (
+                  <button
+                    type="button"
+                    onClick={() => openAdd({ featureId: feature.id })}
+                    id={`configurator-add-option-${feature.id}`}
+                    className="text-[10px] font-bold text-sky-600 hover:bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-lg transition flex items-center gap-1"
+                  >
+                    <Plus size={11} />
+                    مقدار جدید
+                  </button>
+                )}
+              </div>
               {/* One column on a phone, two once there is room: a feature with
                   a dozen sizes was a very long list. */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 mt-2">
@@ -165,8 +298,28 @@ export default function ProductConfiguratorModal({
                   );
                 })}
               </div>
+              {adding && 'featureId' in adding && adding.featureId === feature.id && addForm}
             </div>
           ))}
+
+          {/* A feature the catalogue has never had. The customer asking for a
+              flange rating nobody entered is not a reason to abandon the
+              quotation and start again from the products screen. */}
+          {onCatalogueEdit && (
+            <div className="pt-1">
+              {adding && 'feature' in adding ? addForm : (
+                <button
+                  type="button"
+                  onClick={() => openAdd({ feature: true })}
+                  id="configurator-add-feature"
+                  className="text-[11px] font-bold text-slate-600 hover:bg-slate-100 border border-dashed border-slate-300 px-3 py-1.5 rounded-lg transition flex items-center gap-1"
+                >
+                  <Plus size={12} />
+                  تعریف ویژگی جدید برای این کالا
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="p-4 border-t border-slate-100 bg-slate-50 flex flex-wrap justify-end gap-3 shrink-0">

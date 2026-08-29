@@ -2,6 +2,7 @@ import { DEFAULT_FOLLOW_UP_RESULTS } from './utils/salesFollowUp';
 import { DEFAULT_MODULE_ORDER } from './appModules';
 import { ExchangeRate, ERPSettings } from './types';
 import { DEFAULT_CUSTOMER_VALUE_SETTINGS } from './utils/customerValue';
+import { DEFAULT_PROJECT_GAP_FIELDS } from './utils/projectDataGaps';
 
 /**
  * What a fresh installation starts with.
@@ -31,6 +32,8 @@ export const DEFAULT_SETTINGS: ERPSettings = {
     { id: 'cf-1', module: 'customers', name: 'رتبه پیمانکاری', type: 'text' },
     { id: 'cf-2', module: 'products', name: 'دمای کاری حداکثر (C)', type: 'number' }
   ],
+  // Blanks worth a warning on a project card; see projectDataGaps.ts.
+  projectDataGapFields: [...DEFAULT_PROJECT_GAP_FIELDS],
   requiredFields: {
     customers: {
       companyName: true,

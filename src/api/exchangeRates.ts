@@ -20,6 +20,16 @@ export interface ExchangeRateRow {
   lastUpdated: string;
 }
 
+/** What the server's own hourly refresh has been doing. */
+export interface RateRefreshReport {
+  lastSuccessAt: number;
+  lastFailureAt: number;
+  lastError: string | null;
+  failedCurrencies: string[];
+  running: boolean;
+  freshForMs: number;
+}
+
 export interface RefreshResult {
   updated: number;
   /** Currencies that could not be read, and were therefore left untouched. */
@@ -29,8 +39,8 @@ export interface RefreshResult {
 
 export const exchangeRatesApi = {
   list: (signal?: AbortSignal) =>
-    api.get<{ rates: ExchangeRateRow[] }>("/api/exchange-rates", undefined, signal)
-      .then((r) => r.rates),
+    api.get<{ rates: ExchangeRateRow[]; refresh?: RateRefreshReport }>(
+      "/api/exchange-rates", undefined, signal),
 
   /** Keyed on the currency code, not the row id. */
   update: (currency: string, rateToRial: number, name?: string) =>
@@ -54,6 +64,8 @@ export function rowToExchangeRate(row: ExchangeRateRow): ExchangeRate {
 
 export interface UseExchangeRatesResult {
   rates: ExchangeRate[];
+  /** Undefined until the first answer, and from an older server. */
+  refresh: RateRefreshReport | undefined;
   loading: boolean;
   error: string | null;
   reload: () => Promise<void>;
@@ -67,14 +79,16 @@ export interface UseExchangeRatesResult {
  */
 export function useExchangeRates(): UseExchangeRatesResult {
   const [rates, setRates] = useState<ExchangeRate[]>([]);
+  const [refresh, setRefresh] = useState<RateRefreshReport | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const rows = await exchangeRatesApi.list(signal);
-      setRates(rows.map(rowToExchangeRate));
+      const answer = await exchangeRatesApi.list(signal);
+      setRates(answer.rates.map(rowToExchangeRate));
+      setRefresh(answer.refresh);
       setError(null);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
@@ -92,5 +106,5 @@ export function useExchangeRates(): UseExchangeRatesResult {
 
   const reload = useCallback(() => load(), [load]);
 
-  return { rates, loading, error, reload };
+  return { rates, refresh, loading, error, reload };
 }

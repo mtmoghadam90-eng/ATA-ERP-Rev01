@@ -103,6 +103,34 @@ export interface StatusProforma extends OutcomeProforma {
 }
 
 /**
+ * The proformas that decide what became of a project.
+ *
+ * A project here legitimately carries several quotations at once — the
+ * temperature instruments, the pressure instruments, the flow meters — and
+ * routinely carries several revisions of one. So "what happened to this
+ * opportunity" is never the sum of its documents: every winning proforma
+ * decides it together, and when none has won, the most recent one stands for
+ * the rest.
+ *
+ * Extracted so the dashboard's conversion figures can count **one data point
+ * per project** using the same selection the project's own status is derived
+ * from. Two readings of "which quotation counts" is how a project comes to be
+ * won on one screen and lost on another.
+ */
+export function decidingProformas<T extends StatusProforma>(proformas: T[]): T[] {
+  const winners = proformas.filter((pf) => {
+    const o = getProformaOutcome(pf);
+    return o === "تأیید شده (برنده)" || o === "نیمه برنده";
+  });
+  if (winners.length > 0) return winners;
+
+  const latest = [...proformas].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  )[0];
+  return latest ? [latest] : [];
+}
+
+/**
  * The status a project should carry, given its proformas.
  *
  * Picks the proforma that decides the outcome: a won or partially-won one if
@@ -132,16 +160,7 @@ export function deriveProjectStatus(proformas: StatusProforma[]): ProjectStatus 
    * reported برنده (موفق), and the same pair in the other order reported
    * نیمه برنده. The lines of all of them decide together.
    */
-  const winners = proformas.filter((pf) => {
-    const o = getProformaOutcome(pf);
-    return o === "تأیید شده (برنده)" || o === "نیمه برنده";
-  });
-
-  const items: OutcomeItem[] = winners.length > 0
-    ? winners.flatMap((pf) => pf.items ?? [])
-    : ([...proformas].sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      )[0]?.items ?? []);
+  const items: OutcomeItem[] = decidingProformas(proformas).flatMap((pf) => pf.items ?? []);
 
   if (items.length === 0) return "ارائه پیش‌فاکتور";
 
