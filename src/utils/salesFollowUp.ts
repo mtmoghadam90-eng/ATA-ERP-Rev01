@@ -110,6 +110,36 @@ export function isTerminalOutcome(outcome: unknown): boolean {
   return (TERMINAL_OUTCOMES as readonly string[]).includes(String(outcome ?? ""));
 }
 
+/**
+ * The outcomes a follow-up queue is about at all.
+ *
+ * A quotation whose result is known needs no next action — that is what
+ * "settled" means — so a won, lost or cancelled document has no business on
+ * this screen, and asking somebody to plan a next step for one is nonsense.
+ * «پیش‌نویس» is excluded for the opposite reason: it has not been sent to
+ * anybody, so there is nothing yet to chase.
+ *
+ * «نیمه برنده» **is** here: part of the document was won and the rest is still
+ * being sold, which is precisely a quotation somebody should still be
+ * following up.
+ *
+ * This is a *derived* value, so it cannot be a column filter — the server
+ * builds the query with `outcomeWhere` (`src/server/proformaStatus.ts`), the
+ * same machinery the proforma grid's status filter uses. Excluding by outcome
+ * rather than by having swept the tasks is also what makes the screen correct
+ * for documents that predate the feature: those were never swept and never
+ * will be, and they must still not appear.
+ */
+export const CHASEABLE_OUTCOMES: readonly ProformaOutcome[] = [
+  "ارسال شده",
+  "جاری",
+  "نیمه برنده",
+];
+
+export function isChaseableOutcome(outcome: unknown): boolean {
+  return (CHASEABLE_OUTCOMES as readonly string[]).includes(String(outcome ?? ""));
+}
+
 /** What is written on a follow-up task the system closes by itself. */
 export const AUTO_CLOSE_NOTE = "پیگیری بسته شد؛ نتیجه نهایی پیش‌فاکتور مشخص شد.";
 

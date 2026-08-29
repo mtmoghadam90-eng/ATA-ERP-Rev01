@@ -164,6 +164,15 @@ export default function SalesFollowUpTab({ active, settings }: Props) {
         )}
       </div>
 
+      {/* The ranking is computed over a bounded slice; say so rather than
+          quietly showing part of the list as if it were all of it. */}
+      {queueList.meta.truncated === true && (
+        <div className="bg-amber-50 border border-amber-100 text-amber-700 text-[11px] font-bold rounded-2xl p-3 flex items-center gap-1.5">
+          <AlertTriangle size={13} />
+          تعداد پیش‌فاکتورهای باز از حد نمایش بیشتر است؛ برای دیدن همه، جست‌وجو را محدودتر کنید.
+        </div>
+      )}
+
       {(queueList.error || error) && (
         <div className="bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold rounded-2xl p-4 flex items-center gap-1.5">
           <AlertTriangle size={14} />
