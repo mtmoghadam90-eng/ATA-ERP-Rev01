@@ -1495,6 +1495,42 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+/// An official holiday, or a day the company works that would otherwise be one.
+///
+/// The working-day arithmetic behind every promised delivery date used to read a
+/// hardcoded set: the ten fixed solar days, plus hand-typed lunar dates for 1405
+/// and 1406 and nothing after. Beyond 1406 every lunar holiday vanished, and the
+/// two years that were there were a lunar month late.
+///
+/// `isHoliday` is a boolean rather than the row's mere existence, because the
+/// answer runs both ways: a company works some announced holidays, and Iran
+/// occasionally turns a weekend into a working day. A row saying `false` is how
+/// «this Friday we are open» is expressed at all.
+model Holiday {
+  id String @id @default(uuid()) @db.NVarChar(36)
+
+  /// `YYYY/MM/DD`, and the identity of the row — one answer per day.
+  dateJalali String @unique @db.NVarChar(10)
+  /// The same day in the Gregorian calendar, for anything that queries a range.
+  date       DateTime @db.Date
+  /// Denormalised so a year can be counted and re-imported without parsing.
+  yearJalali Int
+
+  title     String  @db.NVarChar(300)
+  isHoliday Boolean @default(true)
+
+  /// IMPORT | MANUAL. A hand-entered day is never overwritten by an import:
+  /// somebody typed it *because* the source was wrong or silent.
+  source String @default("MANUAL") @db.NVarChar(20)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([yearJalali])
+  @@index([date])
+  @@map("holidays")
+}
+
 model ExchangeRate {
   id          String   @id @default(uuid()) @db.NVarChar(36)
   currency    String   @unique @db.NVarChar(10)

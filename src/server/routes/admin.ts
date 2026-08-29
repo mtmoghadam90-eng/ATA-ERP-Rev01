@@ -9,6 +9,9 @@ import {
   purgeAuditLogs, purgeBusinessData, recordAudit, saveSettings, trimAuditLogs, upsertExchangeRate,
 } from "../services/adminService";
 import { ensureRatesFresh, rateRefreshReport } from "../services/rateRefresh";
+import {
+  deleteHoliday, importHolidayYear, listHolidays, upsertHoliday,
+} from "../services/holidayService";
 
 /** Settings, exchange rates and the audit log. */
 
@@ -45,6 +48,96 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
       res.json({ success: true });
     } catch (err) {
       sendError(res, err, "PUT /api/settings");
+    }
+  });
+
+  /* ------------------------------ holidays ------------------------------ */
+
+  /*
+   * The official calendar.
+   *
+   * Read by **any** authenticated user, not by a settings holder: every screen
+   * that counts a working day needs it, and a salesperson who could not read it
+   * would be quoting delivery dates off a different calendar from everybody
+   * else. Writing it needs `settings`, which the service enforces.
+   *
+   * Not paged. The browser holds the whole list to answer «is this a holiday»
+   * while somebody types a delivery term, and a page of it would answer that
+   * wrongly for the dates it did not happen to carry.
+   */
+  app.get("/api/holidays", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      res.json({ success: true, holidays: await listHolidays() });
+    } catch (err) {
+      sendError(res, err, "GET /api/holidays");
+    }
+  });
+
+  app.put("/api/holidays", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const outcome = await upsertHoliday(
+        {
+          dateJalali: typeof body.dateJalali === "string" ? body.dateJalali : undefined,
+          title: typeof body.title === "string" ? body.title : undefined,
+          isHoliday: body.isHoliday !== false,
+        },
+        user,
+        getTodayShamsi(),
+      );
+      if (outcome === "forbidden") return denied(res, "شما اجازه تغییر تقویم را ندارید.");
+      if (outcome === "invalid") {
+        res.status(400).json({ success: false, error: "تاریخ شمسی معتبر نیست." });
+        return;
+      }
+      res.json({ success: true, holiday: outcome.holiday });
+    } catch (err) {
+      sendError(res, err, "PUT /api/holidays");
+    }
+  });
+
+  app.delete("/api/holidays/:dateJalali", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      // The date arrives with its slashes encoded; Express hands it back decoded.
+      const outcome = await deleteHoliday(req.params.dateJalali, user, getTodayShamsi());
+      if (outcome === "forbidden") return denied(res, "شما اجازه تغییر تقویم را ندارید.");
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "این روز در تقویم ثبت نشده است." });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      sendError(res, err, "DELETE /api/holidays/:dateJalali");
+    }
+  });
+
+  /**
+   * Imports one Jalali year from the configured calendar source.
+   *
+   * Answers 200 with the reason when the source could not be read or returned
+   * something that is not a year — a failed import is an ordinary outcome the
+   * screen has to explain, not a server error. Nothing is written in that case.
+   */
+  app.post("/api/holidays/import", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      const year = Number((req.body as { year?: unknown })?.year);
+      const outcome = await importHolidayYear(year, user, getTodayShamsi());
+      if (outcome === "forbidden") return denied(res, "شما اجازه تغییر تقویم را ندارید.");
+      if ("error" in outcome) {
+        res.json({ success: false, error: outcome.error });
+        return;
+      }
+      res.json({ success: true, ...outcome });
+    } catch (err) {
+      sendError(res, err, "POST /api/holidays/import");
     }
   });
 
