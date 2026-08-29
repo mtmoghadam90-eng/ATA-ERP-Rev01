@@ -174,6 +174,10 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
         attachmentName: typeof body.attachmentName === "string" ? body.attachmentName : null,
         attachmentSize: typeof body.attachmentSize === "string" ? body.attachmentSize : null,
         attachmentUrl: typeof body.attachmentUrl === "string" ? body.attachmentUrl : null,
+        // Checked against the same category group in the service: the id comes
+        // from a browser, and a reply hung under a message on another project
+        // would quote a job the reader cannot see.
+        replyToId: typeof body.replyToId === "string" ? body.replyToId : null,
         referral: referral
           ? {
               assignedToUserId: typeof referral.assignedToUserId === "string" ? referral.assignedToUserId : null,

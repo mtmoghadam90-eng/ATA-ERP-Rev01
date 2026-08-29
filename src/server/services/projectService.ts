@@ -214,7 +214,14 @@ async function getProjectRecord(id: string, user: AuthUser) {
         include: {
           activities: {
             orderBy: { createdAt: "desc" },
-            include: { referral: { include: { messages: { orderBy: { createdAt: "asc" } } } } },
+            include: {
+              // A message may name several colleagues, and each is its own request.
+              referrals: {
+                orderBy: { createdAt: "asc" },
+                include: { messages: { orderBy: { createdAt: "asc" } } },
+              },
+              replyTo: { select: { id: true, text: true, authorName: true, createdAt: true } },
+            },
           },
         },
       },

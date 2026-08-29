@@ -284,7 +284,19 @@ export interface ActivityRow {
   sourceType: string | null;
   sourceId: string | null;
   createdAt: string;
-  referral: ActivityReferralRow | null;
+  /**
+   * The people this message named, one request each.
+   *
+   * Was a single optional referral, from when it was a checkbox on the form
+   * addressed to exactly one colleague. Naming somebody in the text is the
+   * referral now, and one sentence can name two people.
+   */
+  referrals: ActivityReferralRow[];
+  /** The message this one answers, enough of it to quote a line. */
+  replyToId: string | null;
+  replyTo: {
+    id: string; text: string; authorName: string | null; createdAt: string;
+  } | null;
 }
 
 /** An activity category activated on a project, with its feed. */
@@ -396,6 +408,8 @@ export const projectsApi = {
     groupId: string;
     text: string;
     attachments?: ActivityAttachment[];
+    /** The message this one answers; the server checks it is in the same group. */
+    replyToId?: string | null;
     referral?: { assignedToUserId?: string | null; assignedToName?: string | null; actionRequired?: string };
   }) => api.post<{ activity: ActivityRow }>("/api/activities", body).then((r) => r.activity),
 

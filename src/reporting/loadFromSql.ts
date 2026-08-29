@@ -123,7 +123,7 @@ export async function readSqlCollections(): Promise<StoreCollections> {
       include: {
         activities: {
           orderBy: { createdAt: "asc" },
-          include: { referral: true },
+          include: { referrals: true },
         },
       },
     }),
@@ -549,7 +549,11 @@ export async function readSqlCollections(): Promise<StoreCollections> {
         // The flattener only records whether there was one, and whether the
         // note carried a referral.
         attachment: a.attachmentUrl ? { name: a.attachmentName, url: a.attachmentUrl } : null,
-        referral: a.referral ?? null,
+        // One message can name several colleagues, so this is a list now; the
+        // flattener still records the first, which is what the existing report
+        // columns describe.
+        referral: a.referrals?.[0] ?? null,
+        referrals: a.referrals ?? [],
       })),
     })),
   } as StoreCollections;

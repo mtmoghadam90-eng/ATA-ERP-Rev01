@@ -4,8 +4,9 @@ import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { formatMoney } from '../numUtils';
 import {
   Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, AlertTriangle, TrendingUp, X,
+  CornerUpLeft, ListChecks,
   FileSpreadsheet, Clock, Sliders, User, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
-  Send, CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
+ CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
   ChevronRight, Loader2, Image as ImageIcon, Maximize2, Minimize2, ArrowLeftRight, Flag, Zap,
   ExternalLink, Award
 } from 'lucide-react';
@@ -32,7 +33,11 @@ import { ApiError } from '../api/client';
 import { projectsApi, type ProjectRow, type ProjectSummary } from '../api/projects';
 import { useProjectActivities } from '../api/useProjectActivities';
 import { inboxApi, submitReferralReply } from '../api/inbox';
+import { tasksApi } from '../api/tasks';
 import ReferralThread from './ReferralThread';
+import ActivityComposer from './ActivityComposer';
+import TaskFromMessageModal, { TaskDraft } from './TaskFromMessageModal';
+import { renderWithMentions } from './MentionText';
 import { compressImage } from '../imageUtils';
 import { projectDataGaps, projectGapFields } from '../utils/projectDataGaps';
 import { detailToProject, projectToWriteInput, rowToProject } from '../api/projectAdapter';
@@ -276,11 +281,18 @@ export default function ProjectsView({
       }
     }
   }, [initialSelectedProjectId, onClearInitialSelectedProject]);
-  const [newActivityText, setNewActivityText] = useState<any>({});
   const [newActivityAttachment, setNewActivityAttachment] = useState<any>({});
-  const [referralEnabled, setReferralEnabled] = useState<any>({});
-  const [referralAssignedTo, setReferralAssignedTo] = useState<any>({});
-  const [referralAction, setReferralAction] = useState<any>({});
+  /*
+   * The message being answered, per category group.
+   *
+   * Keyed on the group because each group has its own composer, and a reply
+   * started in one must not follow the reader into another.
+   */
+  const [replyTo, setReplyTo] = useState<
+    { groupId: string; id: string; text: string; authorName: string | null } | null
+  >(null);
+  /** The message a task is being raised from, or null. */
+  const [taskFromMessage, setTaskFromMessage] = useState<{ id: string; text: string } | null>(null);
   const [selectedCategoryToCreate, setSelectedCategoryToCreate] = useState("");
   const [categoryStartDate, setCategoryStartDate] = useState(getTodayShamsi());
   const [editingGroupIdForStartDate, setEditingGroupIdForStartDate] = useState<string | null>(null);
@@ -5137,8 +5149,42 @@ export default function ProjectsView({
                                               </a>
                                             ))}
 
-                                            {/* Edit & Delete Action Buttons */}
+                                            {/* What can be done with a message. */}
                                             <div className="flex items-center gap-1 bg-slate-100/60 p-0.5 rounded border border-slate-200/40">
+                                              <button
+                                                type="button"
+                                                onClick={() => setReplyTo({
+                                                  groupId: group.id,
+                                                  id: act.id,
+                                                  text: act.text,
+                                                  authorName: act.createdBy ?? null,
+                                                })}
+                                                className="text-slate-400 hover:text-sky-600 transition p-1 hover:bg-white rounded"
+                                                title="پاسخ به این پیام"
+                                                id={`activity-reply-${act.id}`}
+                                              >
+                                                <CornerUpLeft size={10} />
+                                              </button>
+                                              {/*
+                                                Half the work on a job is handed
+                                                out in conversation without
+                                                anybody being formally referred —
+                                                «این را من پیگیری می‌کنم» — and
+                                                that left the person holding a
+                                                commitment with nothing recording
+                                                it. This puts it on their own
+                                                list, with the message already in
+                                                it and the job attached.
+                                              */}
+                                              <button
+                                                type="button"
+                                                onClick={() => setTaskFromMessage({ id: act.id, text: act.text })}
+                                                className="text-slate-400 hover:text-emerald-600 transition p-1 hover:bg-white rounded"
+                                                title="ثبت وظیفه برای خودم از روی این پیام"
+                                                id={`activity-make-task-${act.id}`}
+                                              >
+                                                <ListChecks size={10} />
+                                              </button>
                                               <button
                                                 type="button"
                                                 onClick={() => {
@@ -5258,11 +5304,30 @@ export default function ProjectsView({
                                             </div>
                                           </div>
                                         ) : (
-                                          <p className="text-slate-700 leading-relaxed font-semibold">{act.text}</p>
+                                          <>
+                                            {/* What is being answered, quoted. */}
+                                            {act.replyTo && (
+                                              <div className="bg-white border-r-2 border-sky-300 rounded px-2 py-1 mb-1.5">
+                                                <div className="text-[9px] font-bold text-sky-600">
+                                                  در پاسخ به {act.replyTo.authorName || 'یک همکار'}
+                                                </div>
+                                                <div className="text-[10px] text-slate-500 line-clamp-2">
+                                                  {act.replyTo.text}
+                                                </div>
+                                              </div>
+                                            )}
+                                            {/* The names in the message are the
+                                                requests it carries, so they are
+                                                marked as such rather than left
+                                                as punctuation in a sentence. */}
+                                            <p className="text-slate-700 leading-relaxed font-semibold whitespace-pre-line">
+                                              {renderWithMentions(act.text, users)}
+                                            </p>
+                                          </>
                                         )}
-                                        
+
                                         {/*
-                                          The referral, and the ability to act on it.
+                                          Everyone this message named, one thread each.
 
                                           The answer to a referral is usually read
                                           here, in the project's own feed — and
@@ -5272,24 +5337,22 @@ export default function ProjectsView({
                                           referrals screen to say so. Same
                                           component, same three server calls.
                                         */}
-                                        {act.referral && (
-                                          <div className="mt-2 bg-white rounded-lg p-3 border border-slate-150 space-y-2 text-right">
+                                        {(act.referrals ?? []).map((ref) => (
+                                          <div key={ref.id} className="mt-2 bg-white rounded-lg p-3 border border-slate-150 space-y-2 text-right">
                                             <div className="flex justify-between items-center text-[9px] border-b border-slate-100 pb-1.5">
-                                              <span className="text-sky-700 font-bold">ارجاع کار برای اقدام:</span>
-                                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${
-                                                (act.referral.status || 'در انتظار اقدام') === 'در انتظار اقدام' ? 'bg-sky-50 text-sky-700 border border-sky-100 animate-pulse' : 'bg-emerald-50 text-emerald-800'
-                                              }`}>
-                                                {act.referral.status || 'در انتظار اقدام'}
+                                              <span className="text-sky-700 font-bold">
+                                                ارجاع به {ref.assignedTo || 'همکار'}
                                               </span>
-                                            </div>
-                                            <div className="text-[10px] text-slate-500">
-                                              ارجاع‌دهنده: <strong className="text-slate-700">{act.referral.assignedBy}</strong>
-                                              {' '} | ارجاع‌شونده: <strong className="text-slate-700">{act.referral.assignedTo}</strong>
+                                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${
+                                                (ref.status || 'در انتظار اقدام') === 'در انتظار اقدام' ? 'bg-sky-50 text-sky-700 border border-sky-100 animate-pulse' : 'bg-emerald-50 text-emerald-800'
+                                              }`}>
+                                                {ref.status || 'در انتظار اقدام'}
+                                              </span>
                                             </div>
 
                                             <ReferralThread
                                               compact
-                                              referral={act.referral}
+                                              referral={ref}
                                               currentUserId={currentUser?.id}
                                               formatDate={formatDateTimeToShamsi}
                                               onPickAttachment={(file, done) => {
@@ -5302,7 +5365,7 @@ export default function ProjectsView({
                                                 });
                                               }}
                                               onSubmit={async (body) => {
-                                                const outcome = await submitReferralReply(act.referral!.id, body);
+                                                const outcome = await submitReferralReply(ref.id, body);
                                                 if (outcome === 'nothing') {
                                                   alert('لطفاً پیام خود را بنویسید.');
                                                   return;
@@ -5310,211 +5373,69 @@ export default function ProjectsView({
                                                 activityFeed.refresh();
                                               }}
                                               onEditAction={async (text) => {
-                                                await inboxApi.updateReferralAction(act.referral!.id, text);
+                                                await inboxApi.updateReferralAction(ref.id, text);
                                                 activityFeed.refresh();
                                               }}
                                             />
                                           </div>
-                                        )}
+                                        ))}
                                       </div>
                                     ))
                                   )}
                                 </div>
 
-                                {/* Form to Add Activity to this group (only if group is Active) */}
+                                {/*
+                                  The composer.
+
+                                  There is no «ارجاع» checkbox any more: it sat
+                                  beside a colleague picker and a separate "what
+                                  should they do" box, three controls saying what
+                                  the sentence already said — and leaving two
+                                  texts to keep in step. Naming somebody with @
+                                  raises the referral, and the message itself is
+                                  the request.
+                                */}
                                 {!isGroupClosed && (
                                   <div className="mt-4 pt-4 border-t border-slate-100 space-y-3">
-                                    <span className="text-[11px] font-bold text-slate-600 block">ثبت فعالیت جدید در این دسته‌بندی:</span>
-                                    
-                                    <div className="space-y-3 bg-slate-50 p-3 rounded-lg border border-slate-100">
-                                      <textarea
-                                        rows={2}
-                                        value={newActivityText[group.id] || ''}
-                                        onChange={(e) => {
-                                          const val = e.target.value;
-                                          setNewActivityText(prev => ({ ...prev, [group.id]: val }));
-                                        }}
-                                        placeholder="شرح جزئیات فعالیت انجام شده، مکالمات فنی یا مذاکرات با مشتری..."
-                                        className="w-full border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-sky-500/20 outline-none text-right placeholder-slate-400 bg-white"
-                                      />
+                                    <span className="text-[11px] font-bold text-slate-600 block">
+                                      پیام یا فعالیت جدید در این دسته‌بندی:
+                                    </span>
 
-                                      {/* Attachment simulator */}
-                                      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between text-[11px]">
-                                        <div className="flex items-center gap-2">
-                                          <label className="cursor-pointer bg-white border border-slate-200 px-3 py-1.5 rounded-md hover:bg-slate-50 transition font-bold text-slate-600 flex items-center gap-1">
-                                            <Paperclip size={12} className="text-slate-400" />
-                                            <span>
-                                              {uploadingActivityFiles
-                                                ? 'در حال بارگذاری…'
-                                                : 'پیوست فایل (چند فایل هم‌زمان)'}
-                                            </span>
-                                            {/*
-                                              `multiple`, and the chosen files are
-                                              added to what is already there
-                                              rather than replacing it — picking
-                                              two now and one more in a moment is
-                                              how people actually do this.
-                                            */}
-                                            <input
-                                              type="file"
-                                              multiple
-                                              className="hidden"
-                                              onChange={async (e) => {
-                                                const picked = e.target.files;
-                                                const current = newActivityAttachment[group.id] ?? [];
-                                                const next = await uploadActivityFiles(picked, current);
-                                                // Cleared after the upload, not
-                                                // before: reading `e.target.files`
-                                                // once it has been reset gives an
-                                                // empty list.
-                                                if (e.target) e.target.value = '';
-                                                if (next) {
-                                                  setNewActivityAttachment(prev => ({ ...prev, [group.id]: next }));
-                                                }
-                                              }}
-                                            />
-                                          </label>
-                                          {(newActivityAttachment[group.id] ?? []).map((file: ActivityAttachment) => (
-                                            <span
-                                              key={file.url}
-                                              className="text-sky-700 font-bold bg-sky-50 px-2 py-1 rounded flex items-center gap-1 border border-sky-100"
-                                            >
-                                              {file.name}
-                                              <button
-                                                type="button"
-                                                onClick={() => setNewActivityAttachment(prev => ({
-                                                  ...prev,
-                                                  [group.id]: (prev[group.id] ?? []).filter(
-                                                    (f: ActivityAttachment) => f.url !== file.url,
-                                                  ),
-                                                }))}
-                                                className="text-rose-500 hover:text-rose-700 font-bold text-xs"
-                                              >
-                                                ×
-                                              </button>
-                                            </span>
-                                          ))}
-                                        </div>
-
-                                        {/* Referral toggle */}
-                                        <label className="flex items-center gap-1.5 cursor-pointer font-bold text-slate-600">
-                                          <input
-                                            type="checkbox"
-                                            checked={referralEnabled[group.id] || false}
-                                            onChange={(e) => {
-                                              const checked = e.target.checked;
-                                              setReferralEnabled(prev => ({ ...prev, [group.id]: checked }));
-                                            }}
-                                            className="rounded border-slate-300 text-sky-500 focus:ring-sky-500"
-                                          />
-                                          <span>نیاز به اقدام و ارجاع به همکار؟</span>
-                                        </label>
-                                      </div>
-
-                                      {/* Referral Sub-form */}
-                                      {referralEnabled[group.id] && (
-                                        <div className="p-3 bg-white rounded-lg border border-slate-200 space-y-3 text-xs animate-fade-in text-right">
-                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                            <div className="space-y-1">
-                                              <label className="text-[10px] font-bold text-slate-500 block">ارجاع به همکار *</label>
-                                              <select
-                                                value={referralAssignedTo[group.id] || ''}
-                                                onChange={(e) => {
-                                                  const val = e.target.value;
-                                                  setReferralAssignedTo(prev => ({ ...prev, [group.id]: val }));
-                                                }}
-                                                className="w-full border border-slate-200 rounded p-1.5 text-xs bg-white text-right"
-                                              >
-                                                <option value="">-- انتخاب همکار --</option>
-                                                {(users || []).map((u) => (
-                                                  <option key={u.id} value={u.id}>
-                                                    {u.fullName}
-                                                  </option>
-                                                ))}
-                                              </select>
-                                            </div>
-                                          </div>
-
-                                          <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-slate-500 block">اقدام خواسته‌شده مشخص *</label>
-                                            <textarea
-                                              rows={2}
-                                              value={referralAction[group.id] || ''}
-                                              onChange={(e) => {
-                                                const val = e.target.value;
-                                                setReferralAction(prev => ({ ...prev, [group.id]: val }));
-                                              }}
-                                              placeholder="مثلاً: بررسی کاتالوگ ابعادی رنج کالا و تایید نهایی به تدارکات"
-                                              className="w-full border border-slate-200 rounded p-2 text-xs focus:ring-1 focus:ring-sky-500 outline-none text-right bg-white leading-relaxed"
-                                            />
-                                          </div>
-                                        </div>
+                                    <ActivityComposer
+                                      users={(users || []).map((u) => ({ id: u.id, fullName: u.fullName }))}
+                                      replyTo={replyTo?.groupId === group.id ? replyTo : null}
+                                      onCancelReply={() => setReplyTo(null)}
+                                      attachments={newActivityAttachment[group.id] ?? []}
+                                      onAttachmentsChange={(next) => setNewActivityAttachment(
+                                        (prev: any) => ({ ...prev, [group.id]: next }),
                                       )}
-
-                                      {/* Submit Activity Button */}
-                                      <div className="flex justify-end pt-1">
-                                        <button
-                                          type="button"
-                                          onClick={async () => {
-                                            const text = newActivityText[group.id] || '';
-                                            const attachmentData: ActivityAttachment[] =
-                                              newActivityAttachment[group.id] ?? [];
-
-                                            if (!text.trim() && attachmentData.length === 0) {
-                                              alert('لطفاً ابتدا شرح فعالیت یا پیوست را وارد کنید.');
-                                              return;
-                                            }
-
-                                            let referralInput = undefined;
-                                            if (referralEnabled[group.id]) {
-                                              const assignedToUserId = referralAssignedTo[group.id];
-                                              const action = referralAction[group.id];
-                                              if (!assignedToUserId) {
-                                                alert('لطفاً همکار ارجاع‌شونده را انتخاب کنید.');
-                                                return;
-                                              }
-                                              if (!action || !action.trim()) {
-                                                alert('لطفاً شرح اقدام ارجاع را وارد کنید.');
-                                                return;
-                                              }
-                                              // Send the id, not the name, so the referral reaches the
-                                              // assignee's inbox (which filters by user id).
-                                              const assignee = (users || []).find(u => u.id === assignedToUserId);
-                                              referralInput = {
-                                                assignedToUserId,
-                                                assignedToName: assignee?.fullName ?? null,
-                                                actionRequired: action.trim(),
-                                              };
-                                            }
-
-                                            try {
-                                              await activityFeed.addActivity(group.id, {
-                                                text: text.trim(),
-                                                attachments: attachmentData,
-                                                referral: referralInput,
-                                              });
-
-                                              // Reset forms
-                                              setNewActivityText(prev => ({ ...prev, [group.id]: '' }));
-                                              setNewActivityAttachment(prev => ({ ...prev, [group.id]: [] }));
-                                              setReferralEnabled(prev => ({ ...prev, [group.id]: false }));
-                                              setReferralAssignedTo(prev => ({ ...prev, [group.id]: '' }));
-                                              setReferralAction(prev => ({ ...prev, [group.id]: '' }));
-                                              // No confirmation: the entry is on
-                                              // the feed in front of the person
-                                              // who just wrote it.
-                                            } catch (err) {
-                                              reportActivityError(err, 'ثبت فعالیت با خطا مواجه شد.');
-                                            }
-                                          }}
-                                          className="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-xs font-bold transition flex items-center gap-1 shadow-md shadow-emerald-500/15"
-                                        >
-                                          <Send size={11} />
-                                          ثبت این فعالیت
-                                        </button>
-                                      </div>
-
-                                    </div>
+                                      uploading={uploadingActivityFiles}
+                                      onPickFiles={async (picked) => {
+                                        const current = newActivityAttachment[group.id] ?? [];
+                                        const next = await uploadActivityFiles(picked, current);
+                                        if (next) {
+                                          setNewActivityAttachment((prev: any) => ({ ...prev, [group.id]: next }));
+                                        }
+                                      }}
+                                      onSend={async (text) => {
+                                        const attachmentData: ActivityAttachment[] =
+                                          newActivityAttachment[group.id] ?? [];
+                                        try {
+                                          await activityFeed.addActivity(group.id, {
+                                            text,
+                                            attachments: attachmentData,
+                                            replyToId: replyTo?.groupId === group.id ? replyTo.id : null,
+                                          });
+                                          setNewActivityAttachment((prev: any) => ({ ...prev, [group.id]: [] }));
+                                          setReplyTo(null);
+                                          // No confirmation: the message is on
+                                          // the feed in front of the person who
+                                          // just wrote it.
+                                        } catch (err) {
+                                          reportActivityError(err, 'ثبت پیام با خطا مواجه شد.');
+                                        }
+                                      }}
+                                    />
                                   </div>
                                 )}
 
@@ -5579,6 +5500,44 @@ export default function ProjectsView({
         title="حذف پروژه"
         message={`آیا از حذف پروژه "${projectToDeleteName}" اطمینان دارید؟ این عمل غیرقابل بازگشت است.`}
       />
+
+      {/*
+        A task raised from something said in the feed.
+
+        Assigned to the reader and nobody else: handing work to a colleague is
+        what naming them in the message does, and that raises a referral with a
+        thread rather than a task appearing silently on their list.
+      */}
+      {taskFromMessage && (
+        <TaskFromMessageModal
+          message={taskFromMessage}
+          project={selectedProjectForActivities
+            ? {
+              id: selectedProjectForActivities.id,
+              code: selectedProjectForActivities.code,
+              name: selectedProjectForActivities.name,
+            }
+            : null}
+          assigneeName={currentUser?.fullName ?? ''}
+          onClose={() => setTaskFromMessage(null)}
+          onSubmit={async (draft: TaskDraft) => {
+            const project = selectedProjectForActivities;
+            await tasksApi.create({
+              title: draft.title,
+              description: draft.description,
+              priority: draft.priority,
+              status: 'در حال انجام',
+              dueDate: draft.dueDate,
+              assignedToUserId: currentUser?.id ?? null,
+              assignedToName: currentUser?.fullName ?? null,
+              relatedToType: project ? 'پروژه' : 'عمومی',
+              relatedToId: project?.id ?? null,
+              relatedToName: project?.name ?? null,
+            });
+            setTaskFromMessage(null);
+          }}
+        />
+      )}
 
       {/* Confirm Delete Activity Modal */}
       <ConfirmModal

@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { parseMentions } from "../../utils/mentions";
 import { ActivityAttachment, attachmentColumns, normalizeAttachments } from "../../utils/attachments";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
@@ -44,7 +45,7 @@ export async function listCategoryGroups(projectId: string, user: AuthUser) {
     include: {
       activities: {
         orderBy: { createdAt: "desc" },
-        include: { referral: { include: { messages: { orderBy: { createdAt: "asc" } } } } },
+        include: ACTIVITY_INCLUDE,
       },
     },
   });
@@ -196,7 +197,7 @@ export async function listActivities(
       orderBy: { createdAt: q.order === "asc" ? "asc" : "desc" },
       include: {
         group: { select: { id: true, categoryName: true, project: { select: { id: true, code: true, name: true } } } },
-        referral: { include: { messages: { orderBy: { createdAt: "asc" } } } },
+        ...ACTIVITY_INCLUDE,
       },
       ...paginationArgs(q),
     }),
@@ -260,13 +261,44 @@ export interface ActivityInput {
   attachmentName?: string | null;
   attachmentSize?: string | null;
   attachmentUrl?: string | null;
-  /** Optional referral raised together with the activity. */
+  /**
+   * The message this one answers.
+   *
+   * Checked against the same category group, so a reply cannot be attached to
+   * a message on another project — the id comes from a browser.
+   */
+  replyToId?: string | null;
+  /**
+   * Kept for callers written before mentions existed.
+   *
+   * A referral is raised by naming somebody in the text now, so this is no
+   * longer how the screens ask for one. It is still honoured because an
+   * integration may send it, and dropping it silently would lose a request.
+   */
   referral?: {
     assignedToUserId?: string | null;
     assignedToName?: string | null;
     actionRequired?: string;
   };
 }
+
+/**
+ * What an activity is read with, everywhere.
+ *
+ * `referrals` is a list: a message naming two colleagues is a request to two
+ * people, each with its own thread and its own status. `replyTo` is a narrow
+ * projection — the feed prints a quoted line above the answer, not the whole
+ * parent again.
+ */
+const ACTIVITY_INCLUDE = {
+  referrals: {
+    orderBy: { createdAt: "asc" },
+    include: { messages: { orderBy: { createdAt: "asc" } } },
+  },
+  replyTo: {
+    select: { id: true, text: true, authorName: true, createdAt: true },
+  },
+} as const;
 
 /**
  * The files an input carries, whichever shape it used.
@@ -299,18 +331,56 @@ export async function addActivity(
 
   const group = await db.projectCategoryGroup.findUnique({
     where: { id: input.groupId },
-    select: { id: true, project: { select: { id: true, ownerUserId: true } } },
+    select: { id: true, project: { select: { id: true, code: true, ownerUserId: true } } },
   });
   if (!group) return "not-found";
   if (!canSeeProjects(user) && group.project.ownerUserId !== user.id) return "forbidden";
 
   const author = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
 
+  /*
+   * A reply belongs to the same conversation.
+   *
+   * The parent id comes from a browser, so it is checked against this group
+   * rather than trusted — otherwise a message on one project could be hung
+   * under a message on another, and the feed would print a quotation from a
+   * job the reader cannot see.
+   */
+  let replyToId: string | null = null;
+  const requestedReply = toNullableString(input.replyToId, 36);
+  if (requestedReply) {
+    const parent = await db.projectActivity.findFirst({
+      where: { id: requestedReply, groupId: input.groupId },
+      select: { id: true },
+    });
+    replyToId = parent?.id ?? null;
+  }
+
+  /*
+   * The people the message named, each of whom is being asked to do something.
+   *
+   * Naming somebody *is* the referral — the form used to carry a checkbox, a
+   * colleague picker and a "what should they do" box saying what the sentence
+   * already said. The action required is the message itself, so there is one
+   * text and not two that drift apart.
+   *
+   * Matched against the real directory rather than a pattern, because a name
+   * here is two or three words with spaces in it. Never the author: writing
+   * your own name is not asking yourself, and it would put a referral in your
+   * own inbox every time you signed a note.
+   */
+  const directory = await db.user.findMany({
+    where: { isActive: true },
+    select: { id: true, fullName: true },
+  });
+  const mentioned = parseMentions(text, directory).filter((u) => u.id !== user.id);
+
   const result = await db.$transaction(async (tx) => {
     const activity = await tx.projectActivity.create({
       data: {
         groupId: input.groupId!,
         text,
+        replyToId,
         authorUserId: user.id,
         // Kept alongside the FK so the history stays readable if the account goes.
         authorName: author?.fullName ?? null,
@@ -318,59 +388,95 @@ export async function addActivity(
       } as Prisma.ProjectActivityUncheckedCreateInput,
     });
 
+    /*
+     * One referral per person named, plus the explicit one an older caller
+     * may still send.
+     *
+     * The action required is the message itself for a mention: writing
+     * «@علی لطفاً دیتاشیت را چک کن» *is* the request, and a second copy of it
+     * in a field of its own is a second thing to keep in step.
+     */
+    const requests: {
+      assignedToUserId: string | null;
+      assignedToName: string | null;
+      actionRequired: string;
+    }[] = mentioned.map((u) => ({
+      assignedToUserId: u.id,
+      assignedToName: u.fullName,
+      actionRequired: text,
+    }));
+
     if (input.referral?.actionRequired) {
-      const referral = await tx.projectReferral.create({
-        data: {
-          activityId: activity.id,
-          assignedToUserId: toNullableString(input.referral.assignedToUserId, 36),
+      const explicitId = toNullableString(input.referral.assignedToUserId, 36);
+      // Not twice for the same person: a caller that both mentions somebody
+      // and sends the old shape is asking once.
+      if (!explicitId || !requests.some((r) => r.assignedToUserId === explicitId)) {
+        requests.push({
+          assignedToUserId: explicitId,
           assignedToName: toNullableString(input.referral.assignedToName, 200),
-          assignedByUserId: user.id,
-          assignedByName: author?.fullName ?? null,
           actionRequired: toNullableString(input.referral.actionRequired)!,
-        } as Prisma.ProjectReferralUncheckedCreateInput,
-      });
-
-      // Get project info for workflow trigger
-      const group = await tx.projectCategoryGroup.findUnique({
-        where: { id: input.groupId! },
-        select: { project: { select: { id: true } } },
-      });
-
-      // Workflow trigger for referral created (outside transaction)
-      if (group?.project?.id) {
-        // Store for later execution
-        (referral as any).__triggerWorkflow = {
-          projectId: group.project.id,
-          assignedToUserId: referral.assignedToUserId,
-          assignedToName: referral.assignedToName,
-          actionRequired: referral.actionRequired,
-        };
+        });
       }
     }
 
+    const created = [];
+    for (const request of requests) {
+      created.push(await tx.projectReferral.create({
+        data: {
+          activityId: activity.id,
+          assignedToUserId: request.assignedToUserId,
+          assignedToName: request.assignedToName,
+          assignedByUserId: user.id,
+          assignedByName: author?.fullName ?? null,
+          actionRequired: request.actionRequired,
+        } as Prisma.ProjectReferralUncheckedCreateInput,
+      }));
+    }
+
     return {
+      created,
       activity: await tx.projectActivity.findUnique({
         where: { id: activity.id },
-        include: { referral: { include: { messages: true } } },
+        include: ACTIVITY_INCLUDE,
       }),
     };
   });
 
-  // Workflow trigger for referral (after transaction)
-  if (result.activity?.referral && (result.activity.referral as any).__triggerWorkflow) {
-    const trigger = (result.activity.referral as any).__triggerWorkflow;
-    await processWorkflowRules(
-      "referral_created",
-      {
-        referralId: result.activity.referral.id,
-        projectId: trigger.projectId,
-        assignedToUserId: trigger.assignedToUserId,
-        assignedToName: trigger.assignedToName,
-        actionRequired: trigger.actionRequired,
-      },
-      user,
-    );
-  }
+  /*
+   * Told after the write, and never allowed to fail it.
+   *
+   * Somebody named in a message has been asked to do something and has no
+   * reason to be looking at that project's feed; the notice is what makes a
+   * mention worth anything. `afterCommit` logs and swallows, like every other
+   * side effect here.
+   */
+  await afterCommit("activity mentions", async () => {
+    for (const referral of result.created) {
+      if (referral.assignedToUserId) {
+        await notifyUser({
+          userId: referral.assignedToUserId,
+          module: "ارجاعات",
+          title: "ارجاع جدید",
+          description: `${author?.fullName ?? "یک همکار"} شما را در پروژه ${
+            group.project.code ?? ""} نام برد: ${referral.actionRequired}`,
+          projectId: group.project.id,
+          actorUserId: user.id,
+        });
+      }
+
+      await processWorkflowRules(
+        "referral_created",
+        {
+          referralId: referral.id,
+          projectId: group.project.id,
+          assignedToUserId: referral.assignedToUserId,
+          assignedToName: referral.assignedToName,
+          actionRequired: referral.actionRequired,
+        },
+        user,
+      );
+    }
+  });
 
   return result;
 }
@@ -416,7 +522,7 @@ export async function updateActivity(
   return {
     activity: await db.projectActivity.findUnique({
       where: { id },
-      include: { referral: { include: { messages: { orderBy: { createdAt: "asc" } } } } },
+      include: ACTIVITY_INCLUDE,
     }),
   };
 }
@@ -424,9 +530,9 @@ export async function updateActivity(
 /**
  * Removes an activity.
  *
- * Only its author, and only while nothing has been said in reply — once a
- * referral has answers, deleting the entry they answer would leave the thread
- * incoherent.
+ * Only its author, and only while nothing has been said back — once any
+ * referral on it has answers, or somebody has replied to the message, deleting
+ * it would leave a thread quoting something that is no longer there.
  */
 export async function deleteActivity(
   id: string,
@@ -437,12 +543,16 @@ export async function deleteActivity(
     where: { id },
     select: {
       id: true, authorUserId: true,
-      referral: { select: { id: true, _count: { select: { messages: true } } } },
+      referrals: { select: { id: true, _count: { select: { messages: true } } } },
+      _count: { select: { replies: true } },
     },
   });
   if (!activity) return "not-found";
   if (activity.authorUserId !== user.id && !user.isSystemAdmin) return "forbidden";
-  if ((activity.referral?._count.messages ?? 0) > 0) return "has-replies";
+  // Any answered referral, or any reply to the message itself. `replyToId` is
+  // NoAction precisely so the database cannot quietly take the answers too.
+  if (activity.referrals.some((r) => r._count.messages > 0)) return "has-replies";
+  if (activity._count.replies > 0) return "has-replies";
 
   await db.projectActivity.delete({ where: { id } });
   return "ok";

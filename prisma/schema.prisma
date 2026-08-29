@@ -1257,19 +1257,37 @@ model ProjectActivity {
   sourceType String? @db.NVarChar(30)
   sourceId   String? @db.NVarChar(36)
 
+  /// The message this one answers, when it is a reply.
+  ///
+  /// NoAction: deleting a message must not silently take every answer to it
+  /// with it, and the cascade paths into this table are already at SQL
+  /// Server's limit through the category group.
+  replyToId String?           @db.NVarChar(36)
+  replyTo   ProjectActivity?  @relation("ActivityReply", fields: [replyToId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  replies   ProjectActivity[] @relation("ActivityReply")
+
   createdAt DateTime @default(now())
 
-  referral ProjectReferral?
+  /// The people this message named, one referral each.
+  ///
+  /// Was `ProjectReferral?` with a unique index on `activityId`, from when a
+  /// referral was a checkbox on the form and addressed exactly one colleague.
+  /// A mention *is* the referral now, and «@علی @رضا لطفاً بررسی کنید» is a
+  /// request to two people — which the unique index forbade outright.
+  referrals ProjectReferral[]
 
   @@index([groupId])
   @@index([createdAt])
   @@index([sourceId])
+  @@index([replyToId])
   @@map("project_activities")
 }
 
 model ProjectReferral {
   id         String          @id @default(uuid()) @db.NVarChar(36)
-  activityId String          @unique @db.NVarChar(36)
+  /// Not unique: one message may name several colleagues, and each is a
+  /// separate request with its own thread and its own status.
+  activityId String          @db.NVarChar(36)
   activity   ProjectActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
 
   assignedToUserId String? @db.NVarChar(36)
@@ -1288,6 +1306,7 @@ model ProjectReferral {
   messages ReferralMessage[]
 
   @@index([assignedToUserId, status])
+  @@index([activityId])
   @@map("project_referrals")
 }
 

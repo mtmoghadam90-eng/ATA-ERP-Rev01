@@ -872,11 +872,16 @@ export const flattenProjectActivities = (groups: any[]): Row[] => {
         created_by: s(a.createdBy),
         has_attachment: !!a.attachment,
         has_referral: !!a.referral,
+        // The first request on the message, which is what these five columns
+        // have always described. One message can name several colleagues now —
+        // `referral_count` is what says so, rather than the extra ones being
+        // invisible to a report that was built on the columns above.
         referral_assigned_to: s(a.referral?.assignedTo),
         referral_assigned_by: s(a.referral?.assignedBy),
         referral_status: s(a.referral?.status),
         referral_action_required: s(a.referral?.actionRequired),
         referral_message_count: arr(a.referral?.messages).length,
+        referral_count: arr((a as { referrals?: unknown }).referrals).length,
       });
     });
   });

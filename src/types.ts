@@ -804,7 +804,19 @@ export interface ProjectActivity {
   attachment: { name: string; size: string; content?: string } | null;
   /** Every attachment on the entry, in the order they were added. */
   attachments: ActivityAttachment[];
-  referral: ProjectReferral | null;
+  /**
+   * Everyone this message named, one request each.
+   *
+   * Was a single optional referral, from when it was a checkbox on the form
+   * addressed to exactly one colleague. Naming somebody in the text *is* the
+   * referral now, and one sentence can name two people.
+   */
+  referrals: ProjectReferral[];
+  /** The message this one answers, enough of it to quote a line. */
+  replyToId?: string | null;
+  replyTo?: {
+    id: string; text: string; authorName?: string | null; createdAt?: string;
+  } | null;
 }
 
 export interface ProjectCategoryGroup {

@@ -46,6 +46,10 @@ import { buildReportingTables } from "../src/reporting/flatten";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
 import {
+  insertMention, mentionQuery, mentionSpans, mentionSuggestions, parseMentions,
+  stripMentionMarkers, taskTitleFromMessage,
+} from "../src/utils/mentions";
+import {
   DEFAULT_PROJECT_GAP_FIELDS, projectDataGaps, projectGapCatalogue, projectGapFields,
 } from "../src/utils/projectDataGaps";
 import { computeProformaTotals, roundMoney } from "../src/utils/proformaTotals";
@@ -5135,6 +5139,147 @@ head("Tasks board: the status filter and the job behind a task");
   ok("the card prints the code, the project and the customer",
     /relatedProject\.code/.test(view) && /relatedProject\.name/.test(view)
     && /relatedProject\.customerName/.test(view));
+}
+
+
+head("Activity feed: naming a colleague is the referral");
+{
+  const users = [
+    { id: "u1", fullName: "علی رضایی" },
+    { id: "u2", fullName: "علی" },
+    { id: "u3", fullName: "مریم کاظمی" },
+  ];
+  const names = (list: { id: string }[]) => list.map((u) => u.id).join(",");
+
+  eq("a message with no @ names nobody", parseMentions("دیتاشیت ارسال شد", users).length, 0);
+  eq("one name is one request", names(parseMentions("@علی رضایی لطفاً بررسی کن", users)), "u1");
+
+  /*
+   * `@` plus a word does not work here.
+   *
+   * A name is two or three words with spaces in it, so «@علی رضایی» would name
+   * a colleague called «علی» under any pattern-based rule. Matching the real
+   * directory longest-first is what settles it.
+   */
+  eq("the longer name wins over the shorter one inside it",
+    names(parseMentions("@علی رضایی لطفاً بررسی کن", users)), "u1");
+  eq("and the short one is still found on its own",
+    names(parseMentions("@علی لطفاً بررسی کن", users)), "u2");
+
+  eq("two colleagues are two requests",
+    names(parseMentions("@علی رضایی و @مریم کاظمی لطفاً بررسی کنید", users)), "u1,u3");
+  eq("in the order they appear",
+    names(parseMentions("@مریم کاظمی و @علی رضایی", users)), "u3,u1");
+  eq("the same person twice is one request",
+    names(parseMentions("@علی رضایی صبح و @علی رضایی بعدازظهر", users)), "u1");
+  // …but both occurrences are marked, or the second reads as punctuation.
+  eq("though both mentions are marked",
+    mentionSpans("@علی رضایی صبح و @علی رضایی بعدازظهر", users).length, 2);
+
+  // The two spellings of the Arabic letters are the same name to a person.
+  eq("ي and ی are the same name", names(parseMentions("@علي رضايي بررسی کن", users)), "u1");
+
+  /*
+   * The spans index the **original** text.
+   *
+   * The feed marks the names it finds, so a normalisation that collapsed runs
+   * of spaces would report positions into a string nobody has.
+   */
+  const text = "سلام @مریم کاظمی لطفاً";
+  const span = mentionSpans(text, users)[0];
+  eq("a span points at the @ in the original text",
+    text.slice(span.start, span.end), "@مریم کاظمی");
+
+  eq("the markers come off for prose",
+    stripMentionMarkers("@علی رضایی لطفاً بررسی کن", users), "علی رضایی لطفاً بررسی کن");
+}
+
+head("Activity feed: the composer's @ list");
+{
+  const users = [
+    { id: "u1", fullName: "علی رضایی" },
+    { id: "u3", fullName: "مریم کاظمی" },
+  ];
+
+  eq("no @ means no list", mentionQuery("سلام", 4), null);
+  eq("an @ opens it with an empty term", mentionQuery("سلام @", 6), "");
+  eq("and narrows as you type", mentionQuery("سلام @مری", 9), "مری");
+  // A newline closes it, so an @ somewhere above does not leave the list open
+  // for the rest of the paragraph.
+  eq("a newline closes it", mentionQuery("@علی\nخط بعد", 10), null);
+  eq("a second @ closes the first", mentionQuery("@علی رضایی @", 12), "");
+  eq("and it is not a name after four words", mentionQuery("@a b c d e", 10), null);
+
+  eq("the list narrows to what matches",
+    mentionSuggestions("مری", users).map((u) => u.id).join(","), "u3");
+  eq("an empty term offers everybody", mentionSuggestions("", users).length, 2);
+
+  /*
+   * The inserted name carries a trailing space.
+   *
+   * Without it the next word runs into the name and the mention stops matching
+   * the moment somebody keeps typing.
+   */
+  const inserted = insertMention("سلام @مری", 9, users[1]);
+  eq("picking a name completes it", inserted.text, "سلام @مریم کاظمی ");
+  eq("with the caret after it", inserted.caret, inserted.text.length);
+  ok("and a trailing space", inserted.text.endsWith(" "));
+
+  eq("a task's title is the message's first line",
+    taskTitleFromMessage("بررسی دیتاشیت فلومتر\nخط دوم"), "بررسی دیتاشیت فلومتر");
+  ok("trimmed when it is long", taskTitleFromMessage("ب".repeat(200)).length <= 120);
+}
+
+head("Activity feed: the messenger, held together");
+{
+  const schema = readFileSync("prisma/schema.prisma", "utf8");
+  const activityModel = schema.slice(schema.indexOf("model ProjectActivity"),
+    schema.indexOf("model ProjectReferral"));
+
+  ok("a message can answer another", /replyToId String\?/.test(activityModel));
+  // NoAction: deleting a message must not silently take every answer with it,
+  // and the cascade paths here are already at SQL Server's limit.
+  ok("and the link does not cascade", /"ActivityReply"[\s\S]{0,200}onDelete: NoAction/.test(activityModel));
+  ok("a message carries a list of referrals", /referrals ProjectReferral\[\]/.test(activityModel));
+
+  const referralModel = schema.slice(schema.indexOf("model ProjectReferral"));
+  // One sentence can name two people; the unique index forbade that outright.
+  ok("and activityId is no longer unique",
+    !/activityId String\s+@unique/.test(referralModel.slice(0, 600)));
+
+  const service = readFileSync("src/server/services/activityService.ts", "utf8");
+  ok("the service raises one referral per name", /parseMentions\(text, directory\)/.test(service));
+  // Writing your own name is not asking yourself, and it would put a referral
+  // in your own inbox every time you signed a note.
+  ok("never for the author", /filter\(\(u\) => u\.id !== user\.id\)/.test(service));
+  // The id comes from a browser: a reply hung under a message on another
+  // project would quote a job the reader cannot see.
+  ok("a reply's parent is checked against the same group",
+    /findFirst\(\{\s*where: \{ id: requestedReply, groupId: input\.groupId \}/.test(service));
+  // Somebody named has been asked to do something and has no reason to be
+  // looking at that feed.
+  ok("the people named are told", /module: "ارجاعات"/.test(service));
+  ok("after the write, and never able to fail it", /afterCommit\("activity mentions"/.test(service));
+  ok("a message with answers cannot be deleted",
+    /activity\._count\.replies > 0/.test(service));
+
+  const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  // Three controls saying what the sentence already said, and two texts to
+  // keep in step.
+  ok("the referral checkbox is gone", !/نیاز به اقدام و ارجاع به همکار/.test(view));
+  ok("the composer is the shared one", /<ActivityComposer/.test(view));
+  ok("every referral on a message is drawn", /\(act\.referrals \?\? \[\]\)\.map/.test(view));
+  ok("a message can be replied to", /activity-reply-/.test(view));
+  ok("and turned into a task", /activity-make-task-/.test(view));
+
+  const modal = readFileSync("src/components/TaskFromMessageModal.tsx", "utf8");
+  ok("the task is seeded from the message", /taskTitleFromMessage\(message\.text\)/.test(modal));
+  ok("once per message, not per render", /seededFor\.current === message\.id/.test(modal));
+  // Handing work to somebody else is what naming them does, and that raises a
+  // referral with a thread rather than a task appearing on their list.
+  ok("and it is assigned to the reader alone", !/assignedTo(UserId)?=\{/.test(modal));
+  ok("the screen assigns it to the signed-in user",
+    /assignedToUserId: currentUser\?\.id/.test(view));
 }
 
 

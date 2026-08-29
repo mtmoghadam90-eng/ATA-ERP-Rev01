@@ -44,6 +44,7 @@ import AssistantPanel from "../src/components/AssistantPanel";
 import NumberField from "../src/components/NumberField";
 import InquiryPriceHistoryTab from "../src/components/InquiryPriceHistoryTab";
 import FollowUpCompletionModal from "../src/components/FollowUpCompletionModal";
+import ActivityComposer from "../src/components/ActivityComposer";
 import type { Product } from "../src/types";
 import type { ExchangeRate } from "../src/types";
 
@@ -669,6 +670,103 @@ head("Follow-up completion: the button will not close a live quote with nothing 
   act(() => { root8.unmount(); });
   host8.remove();
 }
+
+/*
+ * The composer's @ list, driven through the real DOM.
+ *
+ * The caret is the whole mechanism here: which term the list is showing comes
+ * from where the cursor is, and putting it back after a name is inserted is
+ * done by hand because React re-renders the textarea and the browser drops the
+ * cursor at the end. Driving the handler with a made-up event would skip
+ * exactly that.
+ */
+head("Activity composer: naming a colleague");
+{
+  // `settle` above is scoped to the block that declared it.
+  const settle = async () => {
+    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  const USERS = [
+    { id: "u1", fullName: "علی رضایی" },
+    { id: "u3", fullName: "مریم کاظمی" },
+  ];
+
+  let sent: string | null = null;
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(React.createElement(ActivityComposer, {
+      users: USERS,
+      replyTo: null,
+      onCancelReply: () => {},
+      attachments: [],
+      onAttachmentsChange: () => {},
+      onPickFiles: () => {},
+      uploading: false,
+      onSend: async (text: string) => { sent = text; },
+    }));
+  });
+  await settle();
+
+  const box = host.querySelector("#activity-composer-text") as HTMLTextAreaElement;
+  ok("the composer rendered", !!box);
+
+  // Nothing typed: no list, and the send button refuses an empty message.
+  ok("no list before an @ is typed", !host.querySelector("ul"));
+  const send = host.querySelector("#activity-composer-send") as HTMLButtonElement;
+  ok("an empty message cannot be sent", send?.disabled === true);
+
+  /*
+   * Focused first, as a real user has done by the time they type — and it is
+   * the branch the caret restore takes in a browser, where clicking a
+   * suggestion calls `preventDefault` so the textarea never loses focus.
+   *
+   * Focusing anything here makes React-DOM print one `attachEvent` stack: it
+   * decided at load that this environment fires no `input` events and
+   * installed its legacy IE polyfill, which jsdom has no reason to implement.
+   * Noise from the environment, not a failure — the checks below still run.
+   */
+  await act(async () => { box.focus(); });
+
+  const type = async (value: string) => {
+    await act(async () => {
+      box.value = value;
+      box.selectionStart = value.length;
+      box.selectionEnd = value.length;
+      handlers(box).onChange?.({ target: box, currentTarget: box });
+    });
+    await settle();
+  };
+
+  await type("سلام @مری");
+  const list = host.querySelector("ul");
+  ok("typing @ and part of a name opens the list", !!list);
+  ok("and narrows it to who matches", list?.querySelectorAll("li").length === 1);
+
+  const option = list?.querySelector("button") as HTMLButtonElement | null;
+  await act(async () => {
+    (handlers(option as Element) as { onMouseDown?: (e: unknown) => void })
+      .onMouseDown?.({ preventDefault: () => {} });
+  });
+  await settle();
+
+  ok("picking a name completes it in the box", box.value === "سلام @مریم کاظمی ");
+  ok("and closes the list", !host.querySelector("ul"));
+  // Who the message is asking is spelled out before it is sent.
+  ok("the composer says who will be referred",
+    (host.textContent ?? "").includes("مریم کاظمی")
+    && (host.textContent ?? "").includes("ارجاع ثبت می‌شود"));
+
+  ok("nothing was sent by merely typing", sent === null);
+
+  const sendNow = host.querySelector("#activity-composer-send") as HTMLButtonElement;
+  ok("now it can be sent", sendNow?.disabled === false);
+
+  act(() => { root.unmount(); });
+  host.remove();
+}
+
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
