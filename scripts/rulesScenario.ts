@@ -20,7 +20,7 @@
 /** The same storyline, over the rules that decide the derived figures. */
 import {
   getProformaOutcome, getWonItems, deriveProjectStatus, statusWithoutProformas,
-  DERIVED_OUTCOMES, matchesWhere, outcomeWhere,
+  DERIVED_OUTCOMES, ITEM_CANCELLED, ITEM_LOST, ITEM_WON, matchesWhere, outcomeWhere,
 } from "../src/server/proformaStatus";
 import { getProformaOutcomeStatus } from "../src/useERPStore";
 import { computeInquiryTotals, inquiryTotalRiyal } from "../src/utils/inquirySteps";
@@ -127,8 +127,10 @@ import {
   AUTO_CLOSE_NOTE, DEFAULT_FOLLOW_UP_RESULTS, FOLLOW_UP_HEALTH, FOLLOW_UP_STATES,
   TASK_KINDS, completionRefusalReason, followUpActivityText, followUpHealthOf,
   healthRank, isOpenWithoutNextAction, isTaskFinished, isTerminalOutcome,
-  normalizeFollowUpState, normalizeTaskKind, stateAfterDecision, versionRefusalReason,
+  isChaseableOutcome, normalizeFollowUpState, normalizeTaskKind, stateAfterDecision,
+  versionRefusalReason,
 } from "../src/utils/salesFollowUp";
+import { chaseableWhere } from "../src/server/services/followUpService";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -4243,6 +4245,87 @@ head("Sales follow-up: chasing a quotation");
 
   ok("every health band has a rank", FOLLOW_UP_HEALTH.every((h) => healthRank(h) < FOLLOW_UP_HEALTH.length));
 
+  /*
+   * A settled quotation is not in the queue at all.
+   *
+   * It was: the queue filtered on `isCancelled` and the stored status, and the
+   * outcome is derived from neither — a fully-won proforma still has
+   * `isCancelled: false` and a stored status of «ارسال شده», so every won and
+   * lost quotation came through and the screen asked for a next action on a
+   * finished sale. Documents written before the feature existed made it obvious:
+   * nothing had ever swept their follow-ups, because they had none.
+   *
+   * So the clause is built from `outcomeWhere` and held here against
+   * `getProformaOutcome` itself, over every combination of up to three lines
+   * crossed with the stored statuses and the cancellation flag — the same
+   * technique the grid's status filter is pinned with, and for the same reason:
+   * the query and the rule must never drift.
+   */
+  {
+    const where = chaseableWhere();
+    const LINE_STATUSES = [ITEM_WON, ITEM_LOST, ITEM_CANCELLED, "جاری", null];
+    /*
+     * Including null and a status nobody anticipated.
+     *
+     * `Proforma.status` is free text as far as the database is concerned, and a
+     * document is dropped from this screen by a clause that fails to match — so
+     * the sweep has to cover the values that were never designed for, not only
+     * the three the forms offer.
+     */
+    const DOC_STATUSES = ["پیش‌نویس", "ارسال شده", "جاری", "تأیید شده (برنده)", null];
+    const disagreements: string[] = [];
+    let checked = 0;
+
+    const combinations: (string | null)[][] = [[]];
+    for (const a of LINE_STATUSES) {
+      combinations.push([a]);
+      for (const b of LINE_STATUSES) {
+        combinations.push([a, b]);
+        for (const c of LINE_STATUSES) combinations.push([a, b, c]);
+      }
+    }
+
+    for (const lines of combinations) {
+      for (const status of DOC_STATUSES) {
+        for (const isCancelled of [false, true]) {
+          const pf = { status, isCancelled, items: lines.map((st) => ({ status: st })) };
+          const outcome = getProformaOutcome(pf as never);
+          const inQueue = matchesWhere(where as never, pf as never);
+          checked++;
+          if (inQueue !== isChaseableOutcome(outcome)) {
+            disagreements.push(`${status}/${isCancelled}/[${lines.join("|")}] -> ${outcome} inQueue=${inQueue}`);
+          }
+        }
+      }
+    }
+
+    ok(`the queue's query matches the outcome rule over ${checked} shapes`,
+      disagreements.length === 0, disagreements.slice(0, 4));
+
+    /* Spelled out, because these are the cases that were reported. */
+    const shape = (lines: string[], status = "ارسال شده", isCancelled = false) =>
+      ({ status, isCancelled, items: lines.map((st) => ({ status: st })) });
+
+    ok("a won quotation is out of the queue",
+      !matchesWhere(where as never, shape([ITEM_WON, ITEM_WON]) as never));
+    ok("a lost one is out",
+      !matchesWhere(where as never, shape([ITEM_LOST]) as never));
+    ok("one whose lines were all cancelled is out — even with isCancelled false",
+      !matchesWhere(where as never, shape([ITEM_CANCELLED, ITEM_CANCELLED]) as never));
+    ok("an explicitly cancelled document is out",
+      !matchesWhere(where as never, shape(["جاری"], "ارسال شده", true) as never));
+    ok("a draft is out — it has not been sent to anybody",
+      !matchesWhere(where as never, shape([], "پیش‌نویس") as never));
+
+    ok("a sent quotation with nothing decided is in",
+      matchesWhere(where as never, shape([], "ارسال شده") as never));
+    ok("so is one whose lines are still running",
+      matchesWhere(where as never, shape(["جاری", "جاری"]) as never));
+    // Part won, part still being sold: exactly what somebody should be chasing.
+    ok("and a part-won one is in, because the rest is still being sold",
+      matchesWhere(where as never, shape([ITEM_WON, "جاری"]) as never));
+  }
+
   // What a follow-up closed by the system says. It records that the sale
   // settled, not that anything was lost — the outcome is the place for that.
   ok("the automatic closing note explains itself",
@@ -4352,6 +4435,41 @@ head("Sales follow-up: the ownership rules, read from the source");
     !/nextAction/i.test(proformaModel), "proforma has a nextAction column");
   ok("and no expected decision date of its own — the project has one",
     !/expectedDecision|expectedCloseDate/i.test(proformaModel));
+
+  /*
+   * The queue asks the outcome machinery, rather than keeping its own idea of
+   * which quotations are settled. A hand-written `isCancelled: false` filter is
+   * what let every won and lost document onto the screen.
+   */
+  ok("the queue builds its filter from outcomeWhere",
+    /outcomeWhere\(outcome\)/.test(followUp));
+  ok("and keeps no column-level copy of the settled test",
+    !/\{ isCancelled: false \}/.test(followUp), "followUpService filters on isCancelled directly");
+  ok("raising a next action on a settled quotation is refused",
+    /isTerminalOutcome\(getProformaOutcome\(proforma as never\)\)/.test(followUp));
+
+  /*
+   * Ranked first, paged second.
+   *
+   * The rank is derived from the open follow-up task, so the database cannot
+   * order by it — which means paging in SQL and sorting the page afterwards
+   * puts an overdue quotation from six months ago on page three of a list whose
+   * whole purpose is to put it first. The bug is `paginationArgs` reaching the
+   * proforma query; the fix is a bounded scan and a slice after the sort.
+   */
+  const queueBody = followUp.slice(followUp.indexOf("export async function listFollowUpQueue"));
+  ok("the queue does not page the database query",
+    !/take: QUEUE_SCAN_LIMIT[\s\S]{0,200}paginationArgs/.test(queueBody)
+    && !/\.\.\.paginationArgs\(q\),\s*\n\s*\}\),\s*\n\s*db\.proforma\.count/.test(queueBody));
+  ok("it reads a bounded slice of the matched set instead",
+    /take: QUEUE_SCAN_LIMIT/.test(queueBody));
+  ok("and says so when it hits the bound", /truncated/.test(queueBody));
+  // The counter and the table must describe the same set: reporting the
+  // unfiltered total beside a filtered page reads exactly like a lost record.
+  ok("the total is counted after the health filter, not before",
+    /buildResult\(page, filtered\.length, q\)/.test(queueBody));
+  ok("and the page is sliced after the ranking",
+    queueBody.indexOf("filtered.slice") > queueBody.indexOf("filtered.sort"));
 
   /* Loss reasons are not redesigned. */
   ok("lossReason is still one nullable column on the proforma",

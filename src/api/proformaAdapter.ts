@@ -68,6 +68,7 @@ export function rowToProforma(row: ProformaRow): Proforma {
     // sent and to whom, why a lost one was lost, and the custom-field column.
     sentMethod: row.sentMethod ?? undefined,
     sentRecipients: parseJson<string[]>(row.sentRecipients, []),
+    sentDate: row.sentDateJalali ?? undefined,
     lossReason: row.lossReason ?? undefined,
     customValues: parseJson<Record<string, unknown>>(row.customValues, {}),
     // Follow-up and the revision chain. Both ends come down as records, so the

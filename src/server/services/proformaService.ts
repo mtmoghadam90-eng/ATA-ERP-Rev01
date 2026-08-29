@@ -181,6 +181,10 @@ const LIST_SELECT = {
   sentRecipients: true,
   lossReason: true,
   customValues: true,
+  // The day the quotation actually went out. The card prints it beside «ارسال
+  // شده»: the issue date is when the document was written, which is a different
+  // thing and routinely a different day.
+  sentDateJalali: true,
   // The follow-up state, and both ends of the revision chain.
   //
   // The card prints «نسخه جدید از PF-A» and «نسخه بعدی: PF-B», and both are

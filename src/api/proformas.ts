@@ -74,6 +74,8 @@ export interface ProformaRow {
   lossReason: string | null;
   /** The grid draws a custom-fields column from these. */
   customValues: string | null;
+  /** The day it was sent to the customer, not the day it was written. */
+  sentDateJalali: string | null;
   /** Sales follow-up — a separate axis from the commercial outcome above. */
   followUpState: string;
   deferredUntilJalali: string | null;

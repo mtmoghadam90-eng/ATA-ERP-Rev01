@@ -5,14 +5,14 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { expandDateFields, jalaliToDate } from "../dates";
 import { addDaysToShamsi, getTodayShamsi, jalaliToGregorian } from "../../dateUtils";
 import { toNullableString } from "../childSync";
-import { getProformaOutcome, type ProformaOutcome } from "../proformaStatus";
+import { getProformaOutcome, outcomeWhere, type ProformaOutcome } from "../proformaStatus";
 import { afterCommit } from "../afterCommit";
 import { logAction } from "./auditService";
 import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
 import {
-  AUTO_CLOSE_NOTE, FINISHED_TASK_STATUSES, FollowUpCompletionInput, FollowUpHealth,
-  completionRefusalReason, followUpActivityText, followUpHealthOf, healthRank,
-  isTerminalOutcome, normalizeFollowUpState, stateAfterDecision,
+  AUTO_CLOSE_NOTE, CHASEABLE_OUTCOMES, FINISHED_TASK_STATUSES, FollowUpCompletionInput,
+  FollowUpHealth, completionRefusalReason, followUpActivityText, followUpHealthOf,
+  healthRank, isTerminalOutcome, normalizeFollowUpState, stateAfterDecision,
 } from "../../utils/salesFollowUp";
 
 /**
@@ -41,6 +41,40 @@ import {
  */
 
 const OPEN_TASK: Prisma.TaskWhereInput = { status: { notIn: [...FINISHED_TASK_STATUSES] } };
+
+/**
+ * The quotations a follow-up queue is about, as a query.
+ *
+ * A document whose result is known needs no next action — that is what settled
+ * means — so a won, lost or cancelled one has no business here, and asking
+ * somebody to plan a next step for one is nonsense. A draft is excluded for the
+ * opposite reason: it has not been sent to anybody yet.
+ *
+ * The catch is that the outcome is **derived** from the line statuses and
+ * `isCancelled`, not stored — a fully-won proforma still has `isCancelled:
+ * false` and a stored status of «ارسال شده», so filtering on columns lets every
+ * won and lost quotation straight through. This is the same problem the grid's
+ * status filter has, and it gets the same answer: `outcomeWhere` turns each
+ * outcome into the query that finds it, and the queue is the union of the ones
+ * worth chasing. `test:rules` holds this clause against `getProformaOutcome`
+ * over every combination of lines rather than against a second reading of the
+ * rule.
+ *
+ * Filtering by outcome rather than by "the sweep has run" is also what makes
+ * the screen right for documents written before any of this existed: their
+ * follow-ups were never closed because there were none, and they must still not
+ * appear.
+ */
+export function chaseableWhere(): Prisma.ProformaWhereInput {
+  return {
+    OR: CHASEABLE_OUTCOMES.map((outcome) => outcomeWhere(outcome)).filter(
+      (w): w is Record<string, unknown> => w !== null,
+    ) as Prisma.ProformaWhereInput[],
+  };
+}
+
+/** A technical quotation quotes no prices and is not a sales opportunity. */
+const NOT_TECHNICAL: Prisma.ProformaWhereInput = { proformaType: { not: "TECHNICAL" } };
 
 /** The proforma's derived outcome, which decides whether the sale is over. */
 async function outcomeOf(
@@ -311,10 +345,28 @@ export async function reactivateFollowUp(
     where: { id: proformaId },
     select: {
       id: true, proformaNumber: true, projectId: true,
+      // Both halves of the outcome rule: a settled quotation gets no next action.
+      status: true, isCancelled: true, items: { select: { status: true } },
       project: { select: { salesExpert: true } },
     },
   });
   if (!proforma) return { ok: false, reason: "پیش‌فاکتور یافت نشد.", code: "not-found" };
+
+  /*
+   * A quotation whose result is known needs nobody chasing it.
+   *
+   * The screen does not offer the button for these — they are filtered out of
+   * the queue entirely — but the endpoint is the authority: a page left open
+   * while somebody else marked the document won must not be able to raise a
+   * follow-up on a finished sale.
+   */
+  if (isTerminalOutcome(getProformaOutcome(proforma as never))) {
+    return {
+      ok: false,
+      code: "invalid",
+      reason: "تکلیف این پیش‌فاکتور مشخص شده است و نیازی به اقدام بعدی ندارد.",
+    };
+  }
 
   const dueDate = toNullableString(input.dueDate, 10);
   if (!dueDate) return { ok: false, reason: "تاریخ اقدام بعدی الزامی است.", code: "invalid" };
@@ -390,6 +442,16 @@ export async function reactivateFollowUp(
 
 /* --------------------------------- the queue ------------------------------- */
 
+/**
+ * How much of the queue the ranking is computed over.
+ *
+ * The rank comes from the open follow-up task, so it cannot be an `orderBy` —
+ * the whole matched set has to be read to order it. Bounded because "read
+ * everything" is how a screen becomes slow silently, and flagged because a
+ * silently dropped row is worse than a slow one.
+ */
+const QUEUE_SCAN_LIMIT = 500;
+
 export const FOLLOW_UP_SORTABLE = ["sentDate", "issueDate", "finalAmount"] as const;
 export const FOLLOW_UP_FILTERABLE = ["followUpState", "projectId", "customerId"] as const;
 
@@ -443,12 +505,7 @@ export interface FollowUpSummary {
  * is the set a sales desk actually works: sent, not cancelled, not finished.
  */
 function queueWhere(q: ListQuery): Prisma.ProformaWhereInput {
-  const and: Prisma.ProformaWhereInput[] = [
-    { isCancelled: false },
-    { status: { not: "پیش‌نویس" } },
-    // A technical quotation quotes no prices and is not a sales opportunity.
-    { proformaType: { not: "TECHNICAL" } },
-  ];
+  const and: Prisma.ProformaWhereInput[] = [chaseableWhere(), NOT_TECHNICAL];
 
   // The number, the customer and the job — which is how a salesperson refers to
   // a quotation. The document's own columns carry none of the last two.
@@ -497,23 +554,42 @@ export async function listFollowUpQueue(
   q: ListQuery,
   user: AuthUser,
   extra: { health?: unknown } = {},
-): Promise<(ListResult<FollowUpQueueRow> & { summary: FollowUpSummary }) | null> {
+): Promise<
+  | (ListResult<FollowUpQueueRow> & { summary: FollowUpSummary; truncated: boolean })
+  | null
+> {
   if (!hasPermission(user, "proformas")) return null;
 
   const db = getDb();
   const where = queueWhere(q);
   const todayJalali = getTodayShamsi();
 
-  const [rows, total] = await Promise.all([
-    db.proforma.findMany({
-      where,
-      orderBy: { sentDate: "desc" },
-      select: QUEUE_SELECT,
-      ...paginationArgs(q),
-    }),
-    db.proforma.count({ where }),
-  ]);
+  /*
+   * The whole chaseable set, then sorted, then paged — in that order.
+   *
+   * It used to page first and sort the page afterwards, which quietly defeated
+   * the screen: the rank is «عقب‌افتاده» before «امروز» before «بدون اقدام
+   * بعدی», and that ordering only held *within* whichever twenty-five documents
+   * happened to be the most recent. An overdue quotation from six months ago
+   * sat on page three of a list whose entire purpose is to put it first. Worse,
+   * filtering by a KPI card filtered the page while the counter still reported
+   * the unfiltered total, so the header said one number and the table showed
+   * another — which reads exactly like a missing record.
+   *
+   * The rank is derived from the open follow-up task, so no database can sort
+   * by it. Bounded and flagged rather than unbounded, the same shape as the
+   * supplier price history: the work happens on the server, with a limit, and
+   * says when it hit it.
+   */
+  const candidates = await db.proforma.findMany({
+    where,
+    orderBy: { sentDate: "desc" },
+    take: QUEUE_SCAN_LIMIT,
+    select: QUEUE_SELECT,
+  });
+  const truncated = candidates.length === QUEUE_SCAN_LIMIT;
 
+  const rows = candidates;
   const ids = rows.map((r) => r.id);
   const tasks = ids.length
     ? await db.task.findMany({
@@ -603,8 +679,14 @@ export async function listFollowUpQueue(
     return (a.sentDateJalali ?? "") < (b.sentDateJalali ?? "") ? -1 : 1;
   });
 
+  // Paged after the ranking, and counted after the filter, so the header and
+  // the table are describing the same set.
+  const { skip, take } = paginationArgs(q);
+  const page = filtered.slice(skip, skip + take);
+
   return {
-    ...buildResult(filtered, total, q),
+    ...buildResult(page, filtered.length, q),
+    truncated,
     summary: await followUpSummary(user, todayJalali),
   };
 }
@@ -648,11 +730,10 @@ export async function followUpSummary(
   const today = jalaliToDate(todayJalali);
   const fortnightAgo = jalaliToDate(addDaysToShamsi(todayJalali, -14));
 
-  const active: Prisma.ProformaWhereInput = {
-    isCancelled: false,
-    status: { not: "پیش‌نویس" },
-    proformaType: { not: "TECHNICAL" },
-  };
+  // The same set the list shows, or the cards count quotations the table below
+  // them does not contain — and «بدون اقدام بعدی» would report every settled
+  // document in the database as neglected.
+  const active: Prisma.ProformaWhereInput = { AND: [chaseableWhere(), NOT_TECHNICAL] };
 
   /*
    * The task side is asked of the task table, not through a relation.
