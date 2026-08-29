@@ -18,6 +18,18 @@ export interface TaskRow {
   relatedToType: string | null;
   relatedToId: string | null;
   relatedToName: string | null;
+  /**
+   * The job behind the task, resolved on the server.
+   *
+   * `relatedToName` is one string the browser looked up in a picker's current
+   * matches when the task was saved; this is the project as it is now, with the
+   * customer behind it, and it is there for a task on a proforma too — a sales
+   * follow-up names a quotation, and the person reading their list wants to
+   * know whose job it is.
+   */
+  relatedProject: {
+    id: string; code: string; name: string; customerName: string | null;
+  } | null;
   dueDate: string | null;
   dueDateJalali: string | null;
   assignedToUserId: string | null;
@@ -92,6 +104,7 @@ export function rowToTask(row: TaskRow): Task {
     relatedToType: (row.relatedToType ?? undefined) as Task["relatedToType"],
     relatedToId: row.relatedToId ?? undefined,
     relatedToName: row.relatedToName ?? undefined,
+    relatedProject: row.relatedProject ?? undefined,
     priority: row.priority as Task["priority"],
     status: row.status as Task["status"],
     dueDate: row.dueDateJalali ?? "",

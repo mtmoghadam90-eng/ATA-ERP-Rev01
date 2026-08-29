@@ -64,6 +64,54 @@ export interface FollowUpCompletionBody {
   deferredUntil?: string;
 }
 
+/** One completed chase on a quotation: what was done, and what came of it. */
+export interface FollowUpHistoryEntry {
+  taskId: string;
+  title: string;
+  completedAtJalali: string | null;
+  result: string | null;
+  note: string | null;
+  assignee: string | null;
+}
+
+export interface ProjectFollowUpQuote {
+  id: string;
+  proformaNumber: string;
+  status: string;
+  outcome: string;
+  currency: string;
+  finalAmount: string;
+  sentDateJalali: string | null;
+  issueDateJalali: string | null;
+  ageDays: number | null;
+  followUpState: FollowUpState;
+  deferredUntilJalali: string | null;
+  /** The sale is decided, so no next action is wanted on it. */
+  settled: boolean;
+  followUpHealth: FollowUpHealth;
+  nextAction: string | null;
+  nextActionDueDateJalali: string | null;
+  nextActionAssignee: string | null;
+  nextActionTaskId: string | null;
+  /** Every completed chase, most recent first. */
+  history: FollowUpHistoryEntry[];
+}
+
+export interface ProjectFollowUpReport {
+  projectId: string;
+  quotes: ProjectFollowUpQuote[];
+  summary: {
+    quotes: number;
+    chaseable: number;
+    settled: number;
+    withoutNextAction: number;
+    overdue: number;
+    followUps: number;
+    lastFollowUpDateJalali: string | null;
+    lastFollowUpResult: string | null;
+  };
+}
+
 export const salesFollowUpApi = {
   list: (query: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     api.get<ListResponse<FollowUpRow> & { summary: FollowUpSummary }>(
@@ -85,6 +133,19 @@ export const salesFollowUpApi = {
   complete: (taskId: string, body: FollowUpCompletionBody) =>
     api.post<{ taskId: string; nextTaskId: string | null; followUpState: string }>(
       `/api/sales-follow-up/tasks/${taskId}/complete`, body,
+    ),
+
+  /**
+   * One project's whole follow-up story, settled quotations included.
+   *
+   * The queue answers «what should the sales desk do next, across the
+   * company» and deliberately leaves out finished sales; a project tab is
+   * asking what *happened* here, and a won document with three recorded
+   * chases behind it is exactly that.
+   */
+  project: (projectId: string, signal?: AbortSignal) =>
+    api.get<ProjectFollowUpReport>(
+      `/api/sales-follow-up/project/${projectId}`, undefined, signal,
     ),
 
   /** Reactivation *is* the new task; the state follows from it. */

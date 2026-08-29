@@ -79,7 +79,17 @@ function activityToView(act: ActivityRow): ProjectActivity {
     createdBy: act.authorName ?? undefined,
     attachment: toAttachment(act.attachmentName, act.attachmentSize, act.attachmentUrl),
     attachments,
-    referral: act.referral ? referralToView(act.referral) : null,
+    // One message can name several colleagues, and each is its own request.
+    referrals: (act.referrals ?? []).map(referralToView),
+    replyToId: act.replyToId,
+    replyTo: act.replyTo
+      ? {
+        id: act.replyTo.id,
+        text: act.replyTo.text,
+        authorName: act.replyTo.authorName,
+        createdAt: act.replyTo.createdAt,
+      }
+      : null,
   };
 }
 

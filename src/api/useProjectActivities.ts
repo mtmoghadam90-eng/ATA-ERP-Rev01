@@ -31,6 +31,15 @@ export interface ActivityReferralInput {
 
 export interface AddActivityInput extends ActivityAttachmentInput {
   text: string;
+  /** The message this one answers, when it is a reply. */
+  replyToId?: string | null;
+  /**
+   * Kept for the automatic entries other modules write.
+   *
+   * A person raises a referral by naming somebody in the message now, so no
+   * screen sends this; an integration still may, and dropping it silently
+   * would lose a request.
+   */
   referral?: ActivityReferralInput;
 }
 
@@ -144,6 +153,7 @@ export function useProjectActivities(projectId: string | null | undefined): Proj
       groupId,
       text: input.text,
       attachments: input.attachments ?? [],
+      replyToId: input.replyToId ?? null,
       referral: input.referral
         ? {
             assignedToUserId: input.referral.assignedToUserId ?? null,
