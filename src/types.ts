@@ -346,6 +346,8 @@ export interface Proforma {
   moduleNotes?: ModuleNote[];
   sentMethod?: string;
   sentRecipients?: string[];
+  /** The day it went to the customer — stamped when the status becomes «ارسال شده». */
+  sentDate?: string;
   /**
    * Sales follow-up — a separate axis from `status` and `outcomeStatus` above.
    * OPEN | DEFERRED | NO_RESPONSE, and nothing that already exists there.

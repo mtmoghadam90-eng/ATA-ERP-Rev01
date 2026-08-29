@@ -2905,6 +2905,16 @@ export default function ProformasView({
                                   <span className="px-2.5 py-1 rounded-full font-bold text-[10px] border bg-sky-50 text-sky-700 border-sky-200 block">
                                     ارسال شده برای کارفرما
                                   </span>
+                                  {/* When it went out, which is not the issue
+                                      date: a quotation written on Sunday and
+                                      sent on Wednesday is three days younger
+                                      than the document says, and this column is
+                                      where somebody looks for that. */}
+                                  {pf.sentDate && (
+                                    <span className="text-[9px] text-slate-500 block font-mono font-bold">
+                                      تاریخ ارسال: {pf.sentDate}
+                                    </span>
+                                  )}
                                   {pf.sentMethod && (
                                     <span className="text-[9px] text-slate-400 block font-medium">
                                       طریق: {pf.sentMethod}
