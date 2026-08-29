@@ -7,6 +7,7 @@ export interface SupplierRow {
   id: string;
   name: string;
   country: string | null;
+  city: string | null;
   contactName: string | null;
   phone: string | null;
   email: string | null;
@@ -37,6 +38,7 @@ export interface SupplierReferences {
 export interface SupplierWriteInput {
   name?: string;
   country?: string | null;
+  city?: string | null;
   contactName?: string | null;
   phone?: string | null;
   email?: string | null;
@@ -109,6 +111,7 @@ export function rowToSupplier(row: SupplierRow): Supplier {
     id: row.id,
     name: row.name,
     country: row.country ?? "",
+    city: row.city ?? "",
     contactName: row.contactName ?? "",
     phone: row.phone ?? "",
     email: row.email ?? "",
@@ -136,6 +139,7 @@ export function supplierToWriteInput(supplier: Partial<Supplier>): SupplierWrite
   return {
     name: supplier.name,
     country: supplier.country ?? null,
+    city: supplier.city ?? null,
     contactName: supplier.contactName ?? null,
     phone: supplier.phone ?? null,
     email: supplier.email ?? null,

@@ -258,6 +258,8 @@ export interface Supplier {
   id: string;
   name: string;
   country: string;
+  /** The city. Domestic suppliers are the majority and «ایران» says nothing. */
+  city?: string;
   contactName: string;
   phone?: string;
   email?: string;

@@ -537,6 +537,7 @@ export const flattenSuppliers = (suppliers: any[]): Row[] =>
     id: s(sp.id),
     name: s(sp.name),
     country: s(sp.country),
+    city: s((sp as { city?: unknown }).city),
     contact_name: s(sp.contactName),
     phone: s(sp.phone),
     email: s(sp.email),

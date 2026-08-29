@@ -4727,5 +4727,36 @@ head("Dashboard: the service uses those rules and no copies");
 }
 
 
+head("Proforma: a delivery field can be typed over");
+{
+  /*
+   * `value={x || default}` on a text input cannot be cleared.
+   *
+   * The instant backspace empties «۳-۴» the stored value is "", the falsy
+   * fallback re-renders the default over it, and the box snaps back on the very
+   * keystroke that was meant to change it — reported as «با فشردن هر دکمه به
+   * حالت پیش‌فرض برمی‌گردد». Only an *absent* value may fall back, which is
+   * `??`. The same shape as the `<input type="number">` fault NumberField
+   * exists for.
+   *
+   * Seeding a new line from the previous one is a different question and keeps
+   * `||`, so this reads the `value=` bindings alone.
+   */
+  const src = readFileSync("src/components/ProformasView.tsx", "utf8");
+  const bindings = [...src.matchAll(/value=\{[\s\S]{0,160}?\}\n/g)].map((m) => m[0]);
+  for (const [field, label] of [
+    ["deliveryRange", "the numeric range"],
+    ["deliveryPostfix", "the delivery note"],
+  ] as const) {
+    const strays = bindings.filter((b) => b.includes(field) && / \|\|\s/.test(b));
+    ok(`${label} does not fall back on an empty string`, strays.length === 0, strays);
+  }
+  // The bindings are found at all — a regex that matches nothing passes here
+  // for the wrong reason.
+  ok("the delivery bindings were actually located",
+    bindings.some((b) => b.includes("deliveryRange"))
+    && bindings.some((b) => b.includes("deliveryPostfix")));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

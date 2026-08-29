@@ -4238,10 +4238,19 @@ export default function ProformasView({
                         <label className="text-[10px] font-bold text-slate-500 block">
                           بازه عددی
                         </label>
+                        {/*
+                          `??`, not `||`.
+                          A stored empty string is what you have the instant
+                          you press backspace to replace «۳-۴» with «۲-۳», and
+                          `|| "۳-۴"` re-rendered the default over it — so the
+                          box snapped back on every keystroke that emptied it
+                          and the value could not be changed by typing at all.
+                          Only an absent value falls back to the default.
+                        */}
                         <input
                           type="text"
                           required
-                          value={items[0]?.deliveryRange || "۳-۴"}
+                          value={items[0]?.deliveryRange ?? "۳-۴"}
                           onChange={(e) =>
                             handleItemDeliveryFieldChange(
                               0,
@@ -4306,7 +4315,7 @@ export default function ProformasView({
                           type="text"
                           required
                           value={
-                            items[0]?.deliveryPostfix ||
+                            items[0]?.deliveryPostfix ??
                             "پس از تایید پیش فاکتور و دریافت پیش پرداخت"
                           }
                           onChange={(e) =>
@@ -5043,7 +5052,7 @@ export default function ProformasView({
                               <input
                                 type="text"
                                 required
-                                value={item.deliveryRange || "۳-۴"}
+                                value={item.deliveryRange ?? "۳-۴"}
                                 onChange={(e) =>
                                   handleItemDeliveryFieldChange(
                                     idx,
@@ -5108,7 +5117,7 @@ export default function ProformasView({
                                 type="text"
                                 required
                                 value={
-                                  item.deliveryPostfix ||
+                                  item.deliveryPostfix ??
                                   "پس از تایید پیش فاکتور و دریافت پیش پرداخت"
                                 }
                                 onChange={(e) =>

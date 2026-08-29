@@ -97,6 +97,7 @@ export default function SuppliersView({
   // Form states
   const [name, setName] = useState('');
   const [country, setCountry] = useState('');
+  const [city, setCity] = useState('');
   const [contactName, setContactName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -111,6 +112,7 @@ export default function SuppliersView({
     setEditingSupplier(null);
     setName('');
     setCountry('');
+    setCity('');
     setContactName('');
     setPhone('');
     setEmail('');
@@ -142,6 +144,7 @@ export default function SuppliersView({
     setEditingSupplier(supp);
     setName(supp.name);
     setCountry(supp.country);
+    setCity(supp.city ?? '');
     setContactName(supp.contactName);
     setPhone(supp.phone || '');
     setEmail(supp.email || '');
@@ -184,6 +187,7 @@ export default function SuppliersView({
     const data = {
       name,
       country,
+      city,
       contactName,
       phone,
       email,
@@ -218,7 +222,10 @@ export default function SuppliersView({
         return (s.name || '').toLowerCase().includes(fVal);
       }
       if (colId === 'country') {
-        return (s.country || '').toLowerCase().includes(fVal);
+        // One column shows the country with the city under it, so its filter
+        // matches either — a filter that ignores half of what the cell prints
+        // reads as a missing record.
+        return `${s.country || ''} ${s.city || ''}`.toLowerCase().includes(fVal);
       }
       if (colId === 'contactName') {
         return (s.contactName || '').toLowerCase().includes(fVal);
@@ -246,6 +253,7 @@ export default function SuppliersView({
     const headers = [
       'نام شرکت',
       'کشور مبدأ',
+      'شهر',
       'مخاطب فروش',
       'تلفن کمپانی',
       'پست الکترونیک',
@@ -257,6 +265,7 @@ export default function SuppliersView({
     const rows = filteredSuppliers.map(s => [
       s.name,
       s.country,
+      s.city || '',
       s.contactName,
       s.phone || '',
       s.email || '',
@@ -301,7 +310,7 @@ export default function SuppliersView({
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
           <input
             type="text"
-            placeholder="جستجو در نام شرکت سازنده، کشور مبدا یا نام نماینده خارجی..."
+            placeholder="جستجو در نام شرکت سازنده، کشور مبدا، شهر یا نام نماینده خارجی..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pr-10 pl-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition text-right"
@@ -340,7 +349,7 @@ export default function SuppliersView({
                 <th className="p-2">
                   <input
                     type="text"
-                    placeholder="فیلتر کشور..."
+                    placeholder="فیلتر کشور/شهر..."
                     value={colFilters.country || ''}
                     onChange={(e) => setColFilters({...colFilters, country: e.target.value})}
                     className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white"
@@ -412,12 +421,15 @@ export default function SuppliersView({
                     <div>{supp.name}</div>
                   </td>
 
-                  {/* Country */}
+                  {/* Country and city */}
                   <td className="p-3">
                     <span className="flex items-center gap-1">
                       <Globe size={12} className="text-slate-400" />
                       <span>{supp.country}</span>
                     </span>
+                    {supp.city && (
+                      <span className="block text-[10px] text-slate-400 mt-0.5 pr-4">{supp.city}</span>
+                    )}
                   </td>
 
                   {/* Contact Name */}
@@ -620,6 +632,21 @@ export default function SuppliersView({
                     value={country}
                     onChange={(e) => setCountry(e.target.value)}
                     placeholder="مثال: آلمان، امارات، ژاپن"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
+                  />
+                </div>
+
+                {/* City — most suppliers here are domestic, where the country
+                    says nothing and the city decides whether a part is
+                    collected this afternoon or freighted. */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'suppliers', 'city', 'شهر')}</label>
+                  <input
+                    type="text"
+                    required={isFieldRequired(settings, 'suppliers', 'city')}
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    placeholder="مثال: تهران، اصفهان، Hamburg"
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
                   />
                 </div>
