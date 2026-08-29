@@ -41,7 +41,13 @@ export const RICH_MARKS: RichMark[] = [
   { key: "highlight", label: "هایلایت", token: "==" },
 ];
 
-const escapeHtml = (text: string): string =>
+/**
+ * The one HTML escaper the printed documents share.
+ *
+ * Exported because `proformaDocument.ts` interpolates settings text into the
+ * page too, and a second copy is a second thing to forget to call.
+ */
+export const escapeHtml = (text: string): string =>
   text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

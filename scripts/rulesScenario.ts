@@ -25,6 +25,9 @@ import {
 import { getProformaOutcomeStatus } from "../src/useERPStore";
 import { computeInquiryTotals, inquiryTotalRiyal } from "../src/utils/inquirySteps";
 import {
+  catalogueCodeRefusal, catalogueNameRefusal, describeProductSpec, newConfigId,
+} from "../src/utils/productConfig";
+import {
   discountKeepFraction, netUnitPrice, summarizeHistory,
 } from "../src/utils/inquiryPriceHistory";
 import { toNumber } from "../src/server/childSync";
@@ -4757,6 +4760,139 @@ head("Proforma: a delivery field can be typed over");
     bindings.some((b) => b.includes("deliveryRange"))
     && bindings.some((b) => b.includes("deliveryPostfix")));
 }
+
+head("Proforma line: changing the product replaces its specification");
+{
+  const pressure = {
+    description: "ترانسمیتر فشار\nساخت آلمان",
+    featureNames: ["رنج", "جنس بدنه"],
+  };
+  const flow = {
+    description: "فلومتر توربینی\nکلاس ۱۵۰",
+    featureNames: ["سایز", "اتصال"],
+  };
+
+  // The reported fault: a new line is seeded from whichever product the picker
+  // holds first, and picking a different one kept the first one's description.
+  const afterSwitch = describeProductSpec(
+    flow, {}, "ترانسمیتر فشار\nساخت آلمان", pressure);
+  ok("the previous product's description does not survive the change",
+    !afterSwitch.includes("ترانسمیتر فشار"), afterSwitch);
+  eq("and the new product's description is what is left", afterSwitch, "فلومتر توربینی\nکلاس ۱۵۰");
+
+  // Without the outgoing product, which is exactly what used to be passed.
+  ok("passing no previous product is what let it through",
+    describeProductSpec(flow, {}, "ترانسمیتر فشار\nساخت آلمان").includes("ترانسمیتر فشار"));
+
+  // What the user typed has to survive, or the feature is useless.
+  const typed = describeProductSpec(
+    flow, {}, "ترانسمیتر فشار\nتگ: PT-101\nساخت آلمان", pressure);
+  ok("a note the user typed survives", typed.includes("تگ: PT-101"));
+
+  // The outgoing product's own feature lines go with it.
+  const featureLines = describeProductSpec(
+    flow, { "سایز": "۶ اینچ" }, "رنج: 0-10 bar\nجنس بدنه: 316", pressure);
+  ok("the old product's feature lines go too",
+    !featureLines.includes("رنج:") && !featureLines.includes("جنس بدنه:"), featureLines);
+  ok("and the new SKU's attributes are written", featureLines.includes("سایز: ۶ اینچ"));
+
+  // Bolding a line must not stop it being recognised as the product's own —
+  // the same reason mergeSpecText strips the marks.
+  ok("a bolded description line is still the product's",
+    !describeProductSpec(flow, {}, "**ترانسمیتر فشار**", pressure).includes("ترانسمیتر فشار"));
+
+  // Re-picking the same product must not duplicate its description.
+  eq("re-picking the same product does not double its description",
+    describeProductSpec(flow, {}, "فلومتر توربینی\nکلاس ۱۵۰", flow),
+    "فلومتر توربینی\nکلاس ۱۵۰");
+}
+
+head("Proforma form: a SKU created by the configurator is selectable");
+{
+  /*
+   * The `<select>` renders its options from the picker's product rows, which
+   * were fetched before the configurator created the SKU — and a select whose
+   * value matches no option shows its placeholder, so the line read «انتخاب
+   * ترکیب مشخصات» with a perfectly good variant id on it.
+   */
+  const src = readFileSync("src/components/ProformasView.tsx", "utf8");
+  ok("the screen keeps the products it has written to",
+    /rememberProduct\(ensured\.product\)/.test(src));
+  ok("and the product list is those overrides on top of the picker's rows",
+    /productOverrides\[product\.id\] \?\? product/.test(src));
+  ok("the specification rule takes the outgoing product",
+    /describeProduct\(prod, undefined, newItems\[index\]\.techSpecs, previousProd\)/.test(src));
+  ok("and the rule itself is the pure one",
+    /describeProductSpec\(/.test(src) && !/const storedLines = new Set/.test(src));
+
+  // The website is printed, and the field to set it exists.
+  const doc = readFileSync("src/utils/proformaDocument.ts", "utf8");
+  ok("the printed footer carries the website", /print-footer-site/.test(doc));
+  ok("in bold", /\.print-footer-site \{[^}]*font-weight: 700/.test(doc));
+  // Latin inside an RTL line reorders without this, and the address goes to a
+  // customer printed wrong.
+  ok("and isolated, so an RTL line does not reorder it",
+    /\.print-footer-site \{[^}]*unicode-bidi: isolate/.test(doc));
+  const settingsSrc = readFileSync("src/components/SettingsView.tsx", "utf8");
+  ok("general settings can edit it", /settings-company-website/.test(settingsSrc));
+  ok("and saving keeps it", /\n\s+website,\n/.test(settingsSrc));
+
+  ok("a proforma line can be copied", /handleDuplicateItemLine/.test(src));
+  // The copy is a new line; the id it was read under belongs to one row, and
+  // `preserveLineCosts` matches on it.
+  ok("and the copy carries no line id", /const \{ id: _id, \.\.\.copy \} = source/.test(src));
+}
+
+
+head("Configurator: defining a feature or an option from the quotation");
+{
+  /*
+   * The catalogue is never complete at the moment somebody is quoting from it,
+   * and the alternative was to abandon the proforma, add the option on the
+   * products screen and start again. Two things bound what may be added.
+   */
+  eq("a duplicate feature name is refused",
+    catalogueNameRefusal("رنج", ["رنج", "جنس بدنه"]), "این نام قبلاً تعریف شده است.");
+  // A name is what mergeSpecText, the SKU attributes and decodeSku all match
+  // on, so «رنج » and «رنج» must not both exist.
+  ok("with the spacing and the formatting ignored",
+    catalogueNameRefusal(" **رنج** ", ["رنج"]) !== null);
+  eq("a blank name is refused", catalogueNameRefusal("   ", []), "نام را وارد کنید.");
+  eq("a new name is allowed", catalogueNameRefusal("فشار کاری", ["رنج"]), null);
+
+  // The code goes straight into the SKU, which decodeSku splits on `-`.
+  eq("no code is fine", catalogueCodeRefusal(""), null);
+  eq("a latin token is fine", catalogueCodeRefusal("ANSI300"), null);
+  ok("a code with a separator is refused", catalogueCodeRefusal("ANSI-300") !== null);
+  ok("a Persian code is refused", catalogueCodeRefusal("فشار") !== null);
+  ok("an over-long code is refused", catalogueCodeRefusal("A".repeat(17)) !== null);
+
+  ok("ids are distinct", newConfigId("feat") !== newConfigId("feat"));
+  ok("and carry their kind", newConfigId("opt").startsWith("opt-"));
+
+  const modal = readFileSync("src/components/ProductConfiguratorModal.tsx", "utf8");
+  ok("the modal offers a new option per feature", /configurator-add-option-/.test(modal));
+  ok("and a new feature for the product", /configurator-add-feature/.test(modal));
+  // The modal builds the mutation; the host owns the write, because each host
+  // already has the helper that loads the full record before changing it.
+  ok("the write is the host's, so the full product is loaded",
+    /onCatalogueEdit\?: \(mutate/.test(modal));
+  ok("and the modal never calls the API itself",
+    !/api\.|fetch\(/.test(modal));
+
+  for (const [file, label] of [
+    ["src/components/ProformasView.tsx", "the proforma form"],
+    ["src/components/SupplierInquiriesView.tsx", "the inquiry form"],
+  ] as const) {
+    const src = readFileSync(file, "utf8");
+    ok(`${label} passes onCatalogueEdit`, /onCatalogueEdit=\{/.test(src));
+    // Writing to the catalogue needs the catalogue's own permission; the route
+    // checks it too, this is so nobody is shown a button that will be refused.
+    ok(`${label} gates it on the products permission`,
+      /hasModulePermission\((currentUser), 'products'\)/.test(src));
+  }
+}
+
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

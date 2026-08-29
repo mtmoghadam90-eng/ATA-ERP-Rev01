@@ -66,13 +66,15 @@ import type { ProductRow } from '../api/products';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import CostAccessNotice from './CostAccessNotice';
 import NumberField from './NumberField';
-import { canSeeCosts } from '../utils/permissions';
+import { canSeeCosts, hasModulePermission } from '../utils/permissions';
 import ProductConfiguratorModal from './ProductConfiguratorModal';
 import {
   ConfigSelections, attributesFromSelections, mergeSpecText,
   selectionsFromAttributes, selectionsFromSpecText, specLinesFrom,
 } from '../utils/productConfig';
-import { ensureVariantForAttributes } from '../api/productVariants';
+import {
+  ensureVariantForAttributes, updateProductById as applyProductChange,
+} from '../api/productVariants';
 import { detailToProduct } from '../api/productAdapter';
 import { productsApi } from '../api/products';
 
@@ -1240,6 +1242,7 @@ export default function SupplierInquiriesView({
                   projectPicker={projectPicker}
                   getCurrencyRate={getCurrencyRate}
                   settings={settings}
+                  canEditCatalogue={hasModulePermission(currentUser, 'products')}
                   onClose={() => setIsInquiryModalOpen(false)}
                   onSubmit={handleSubmitInquiry}
                 />
@@ -1347,6 +1350,8 @@ interface InquiryFormInnerProps {
   projectPicker: PickerHandle;
   getCurrencyRate: (currency: string) => number;
   settings: ERPSettings;
+  /** Whether this user may add a feature or an option to the catalogue. */
+  canEditCatalogue: boolean;
   onClose: () => void;
   /** The second argument describes how the inquiry was sent; create only. */
   onSubmit: (data: Partial<SupplierInquiry>, initialStep?: InitialStepDetails) => void;
@@ -1365,6 +1370,7 @@ function InquiryFormInner({
   projectPicker,
   getCurrencyRate,
   settings,
+  canEditCatalogue,
   onClose,
   onSubmit
 }: InquiryFormInnerProps) {
@@ -2070,6 +2076,18 @@ function InquiryFormInner({
           onConfirm={() => void confirmConfigurator()}
           confirmLabel="تایید و ثبت SKU روی ردیف"
           busy={configBusy}
+          /*
+            The same catalogue edit the proforma form offers: a supplier is
+            being asked to price a rating nobody has entered yet, and leaving
+            the inquiry to add it on the products screen loses the inquiry.
+            Gated on the products permission — this writes to the catalogue —
+            and the modal is given the product it just saved so the new option
+            is on screen at once.
+          */
+          onCatalogueEdit={canEditCatalogue ? async (mutate) => {
+            const saved = await applyProductChange(configFor.product.id, mutate);
+            if (saved) setConfigFor((prev) => (prev ? { ...prev, product: saved } : prev));
+          } : undefined}
           intro={(
             <>
               ویژگی‌های کالای <span className="font-bold">{configFor.product.displayName}</span> را

@@ -615,6 +615,9 @@ export default function SettingsView({
   const [address, setAddress] = useState(template?.address || '');
   const [phone, setPhone] = useState(template?.phone || '');
   const [email, setEmail] = useState(template?.email || '');
+  // Printed in bold at the foot of every proforma; the field existed on the
+  // template from the start with nothing on any screen to edit it.
+  const [website, setWebsite] = useState(template?.website || '');
   const [registrationNumber, setRegistrationNumber] = useState(template?.registrationNumber || '');
   const [nationalId, setNationalId] = useState(template?.nationalCode || '');
   const [logoUrl, setLogoUrl] = useState(template?.logoUrl || '');
@@ -676,6 +679,7 @@ export default function SettingsView({
           address,
           phone,
           email,
+          website,
           registrationNumber,
           nationalCode: nationalId,
           logoUrl,
@@ -1376,6 +1380,20 @@ export default function SettingsView({
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none font-mono text-left"
                   />
+                </div>
+
+                {/* Website — printed in bold in the proforma's footer. */}
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="text-xs font-semibold text-slate-500">وب‌سایت شرکت</label>
+                  <input
+                    type="text"
+                    value={website}
+                    onChange={(e) => setWebsite(e.target.value)}
+                    placeholder="www.example.com"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none font-mono text-left"
+                    id="settings-company-website"
+                  />
+                  <p className="text-[10px] text-slate-400">در پاورقی پیش‌فاکتور چاپ می‌شود.</p>
                 </div>
 
                 {/* Address */}

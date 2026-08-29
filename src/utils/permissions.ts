@@ -19,3 +19,21 @@ export function canSeeCosts(user: User | null | undefined): boolean {
   if (user.isSystemAdmin) return true;
   return user.permissions?.costs === true;
 }
+
+/**
+ * Client mirror of `hasPermission` in `src/server/auth.ts`: absent means
+ * granted.
+ *
+ * The opposite default to `canSeeCosts` above, and deliberately so — these
+ * flags predate the stored accounts, so an account written before a module
+ * existed must not lose the module. Like `canSeeCosts`, this decides only what
+ * is *drawn*; the route checks the same key on the way in.
+ */
+export function hasModulePermission(
+  user: User | null | undefined,
+  key: keyof NonNullable<User["permissions"]>,
+): boolean {
+  if (!user) return false;
+  if (user.isSystemAdmin) return true;
+  return user.permissions?.[key] !== false;
+}

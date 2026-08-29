@@ -1,6 +1,6 @@
 import type { Customer, Product, Proforma, ProformaTemplate } from "../types";
 import { formatMoney } from "../numUtils";
-import { renderRichText } from "./richText";
+import { escapeHtml, renderRichText } from "./richText";
 import { familyNameOnly } from "./customerLabel";
 
 /**
@@ -188,6 +188,9 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
               <div><strong>آدرس شرکت:</strong> ${template.address || "-"}</div>
               <div><strong>تلفن تماس:</strong> ${template.phone || "-"}</div>
               <div><strong>پست الکترونیکی:</strong> ${template.email || "-"}</div>
+              ${template.website
+                ? `<div class="print-footer-site">${escapeHtml(template.website)}</div>`
+                : ""}
           </div>
       </div>`;
 
@@ -618,6 +621,19 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
           display: flex;
           justify-content: space-between;
           align-items: center;
+      }
+      /*
+       * The website, printed in bold beside the rest of the bar.
+       *
+       * Latin text inside an RTL line, so it carries its own direction: without
+       * it a trailing dot or a path segment is reordered and the address is
+       * printed wrong on a document that goes to a customer.
+       */
+      .print-footer-site {
+          font-weight: 700;
+          color: #334155;
+          direction: ltr;
+          unicode-bidi: isolate;
       }
       .print-footer-info {
           display: flex;
