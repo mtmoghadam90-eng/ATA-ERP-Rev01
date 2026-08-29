@@ -883,6 +883,16 @@ export default function ProformasView({
   const [deliveryDate, setDeliveryDate] = useState(
     "۳ هفته کاری پس از پیش پرداخت",
   );
+  /*
+   * The day the quotation went out, which is not the day it was written.
+   *
+   * The server stamps it with "today" the first time a document is marked
+   * «ارسال شده», and that is only ever a guess: a quotation e-mailed on Sunday
+   * and entered on Wednesday is three days younger than it really is, and the
+   * age of a quote on the follow-up screen is measured from this. Blank means
+   * "let the server stamp it".
+   */
+  const [sentDate, setSentDate] = useState("");
   const [status, setStatus] = useState<Proforma["status"]>("پیش‌نویس");
   const [currency, setCurrency] = useState<Proforma["currency"]>("ریال");
   const [historicalExchangeRate, setHistoricalExchangeRate] =
@@ -1098,6 +1108,7 @@ export default function ProformasView({
     setProformaNumber("");
     setIssueDate(getTodayShamsi());
     setExpiryDate(addDaysToShamsi(getTodayShamsi(), 30));
+    setSentDate("");
 
     const defaultItems = [
       {
@@ -1169,6 +1180,7 @@ export default function ProformasView({
     setProformaNumber(pf.proformaNumber || "");
     setIssueDate(pf.issueDate);
     setExpiryDate(pf.expiryDate);
+    setSentDate(pf.sentDate || "");
     setStatus(pf.status);
     setCurrency(pf.currency || "ریال");
     setHistoricalExchangeRate(pf.historicalExchangeRate || 0);
@@ -2095,6 +2107,9 @@ export default function ProformasView({
         issueDate,
         expiryDate,
         deliveryDate,
+        // Only meaningful once the document is sent; blank lets the server
+        // stamp it on the save that first marks it so.
+        sentDate: status === "ارسال شده" ? (sentDate || undefined) : undefined,
         status,
         currency,
         historicalExchangeRate:
@@ -2125,6 +2140,9 @@ export default function ProformasView({
         issueDate,
         expiryDate,
         deliveryDate,
+        // Only meaningful once the document is sent; blank lets the server
+        // stamp it on the save that first marks it so.
+        sentDate: status === "ارسال شده" ? (sentDate || undefined) : undefined,
         status,
         currency,
         historicalExchangeRate:
@@ -3941,6 +3959,24 @@ export default function ProformasView({
                     onChange={(val) => setExpiryDate(val)}
                   />
                 </div>
+                {/*
+                  When it went to the customer.
+
+                  Shown only for a sent document, because that is the only state
+                  in which it means anything — and left blank, the server stamps
+                  today on the save that marks it sent, which is right for the
+                  ordinary case of sending it as you issue it.
+                */}
+                {status === "ارسال شده" && (
+                  <div className="space-y-1.5" id="proforma-sent-date-picker-wrapper">
+                    <ShamsiDatePicker
+                      label="تاریخ ارسال به کارفرما"
+                      value={sentDate}
+                      onChange={(val) => setSentDate(val)}
+                      placeholder="در صورت خالی بودن، تاریخ امروز ثبت می‌شود"
+                    />
+                  </div>
+                )}
                 {/* Status */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-slate-500">

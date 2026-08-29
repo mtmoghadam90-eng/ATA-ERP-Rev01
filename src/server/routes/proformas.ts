@@ -21,7 +21,7 @@ import {
 const WRITABLE: (keyof ProformaInput)[] = [
   "proformaNumber", "proformaType", "customerId", "contactCustomerId", "contactPrefix",
   "projectId", "status", "isCancelled", "lossReason", "currency",
-  "issueDate", "expiryDate", "deliveryDate",
+  "issueDate", "expiryDate", "deliveryDate", "sentDate",
   "discountPercent", "discountAmount", "taxPercent", "taxAmount", "extraCosts",
   "historicalExchangeRate", "notes", "sentMethod", "sentRecipients", "customValues",
   // A revision names what it revises. Explicit and writable, because it can

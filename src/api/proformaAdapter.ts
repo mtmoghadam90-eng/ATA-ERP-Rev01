@@ -169,6 +169,9 @@ export function proformaToWriteInput(proforma: Partial<Proforma>): ProformaWrite
     issueDate: proforma.issueDate ?? null,
     expiryDate: proforma.expiryDate ?? null,
     deliveryDate: proforma.deliveryDate ?? null,
+    // Only when the form carries one: absent lets the server stamp it on the
+    // save that first marks the document sent.
+    ...(proforma.sentDate ? { sentDate: proforma.sentDate } : {}),
     discountPercent: proforma.discountPercent,
     discountAmount: proforma.discountAmount,
     taxPercent: proforma.taxPercent,
