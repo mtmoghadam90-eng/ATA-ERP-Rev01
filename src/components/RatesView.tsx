@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { 
-  RefreshCw, 
-  ArrowRightLeft, 
+import {
+  RefreshCw,
+  ArrowRightLeft,
   Clock,
+  AlertTriangle,
+  CheckCircle2,
 } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { exchangeRatesApi, useExchangeRates } from '../api/exchangeRates';
@@ -16,7 +18,7 @@ import { formatMoney } from '../numUtils';
  * writing its own copy of them.
  */
 export default function RatesView() {
-  const { rates: exchangeRates, loading, error, reload } = useExchangeRates();
+  const { rates: exchangeRates, refresh, loading, error, reload } = useExchangeRates();
 
   const [rates, setRates] = useState<{ [key: string]: number }>({});
   const [isLoadingTGJU, setIsLoadingTGJU] = useState(false);
@@ -103,6 +105,38 @@ export default function RatesView() {
           {isLoadingTGJU ? 'در حال دریافت...' : 'بروزرسانی زنده از TGJU'}
         </button>
       </div>
+
+      {/*
+        * What the server's own refresh has been doing.
+        *
+        * The scrape reads two web pages, and when it stops working — the site
+        * changes its markup, or the server's network will not make the request
+        * — nothing said so: the rates simply stopped moving and somebody
+        * pressed the manual button every morning. A figure that is stale for a
+        * reason should say the reason.
+        */}
+      {refresh && (
+        <div
+          className={`text-[11px] font-bold rounded-2xl px-4 py-3 flex items-center gap-2 border ${
+            refresh.lastError
+              ? 'bg-amber-50 border-amber-100 text-amber-700'
+              : 'bg-slate-50 border-slate-100 text-slate-500'
+          }`}
+          id="rates-auto-refresh"
+        >
+          {refresh.lastError ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} className="text-emerald-500" />}
+          <span>
+            بروزرسانی خودکار هر {Math.round(refresh.freshForMs / 60000).toLocaleString('fa-IR')} دقیقه انجام می‌شود
+            {refresh.lastSuccessAt > 0
+              ? ` — آخرین بار: ${new Date(refresh.lastSuccessAt).toLocaleTimeString('fa-IR')}`
+              : ' — از زمان راه‌اندازی سرور هنوز اجرا نشده است'}
+            {refresh.lastError ? ` — آخرین تلاش ناموفق بود: ${refresh.lastError}` : ''}
+            {refresh.failedCurrencies.length > 0
+              ? ` — ارزهای خوانده‌نشده: ${refresh.failedCurrencies.join('، ')}`
+              : ''}
+          </span>
+        </div>
+      )}
 
       {error && (
         <div className="bg-rose-50 border border-rose-100 text-rose-600 text-xs font-bold rounded-2xl p-4 flex items-center justify-between gap-3" id="rates-error">

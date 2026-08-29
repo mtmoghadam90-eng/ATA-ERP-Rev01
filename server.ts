@@ -713,12 +713,12 @@ registerMessagingRoutes(app, routeDeps);
    *
    * A sign-in and a read of the rates screen both ask for a refresh, but an
    * afternoon in which nobody does either would leave every document priced at
-   * whatever the morning said. The tick is more frequent than the two-hour
+   * whatever the morning said. The tick is more frequent than the one-hour
    * freshness window on purpose: `ensureRatesFresh` is a no-op until the window
    * is up, so a restart at any point in the day still lands on the schedule
    * rather than starting a new one.
    */
-  const RATE_TICK_MS = 30 * 60 * 1000;
+  const RATE_TICK_MS = 10 * 60 * 1000;
   const rateTimer = setInterval(() => { void ensureRatesFresh(); }, RATE_TICK_MS);
   // Nothing here should hold the process open on its own.
   rateTimer.unref?.();

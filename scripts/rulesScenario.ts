@@ -131,6 +131,10 @@ import {
   versionRefusalReason,
 } from "../src/utils/salesFollowUp";
 import { chaseableWhere } from "../src/server/services/followUpService";
+import {
+  averageProformasPerProject, opportunityGroups, opportunityOutcome, wonValueRial,
+} from "../src/server/dashboardMetrics";
+import { decidingProformas } from "../src/server/proformaStatus";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -761,41 +765,67 @@ ok("two different categories still do not match",
   !sameCategory(ACTIVITY_CATEGORY.PROFORMAS, ACTIVITY_CATEGORY.DELIVERIES));
 
 /*
- * Refreshing the currency rates every two hours.
+ * Refreshing the currency rates every hour.
  *
  * Every foreign-priced document is valued at the stored rate, so a stale rate
  * prices the day's work wrongly and says nothing. It used to refresh once per
  * Shamsi day, which left a document priced at four in the afternoon carrying
- * the morning's number. The scheduling is the whole of the feature, and the
- * alternative to testing it here is a test that can only be run by waiting two
- * hours.
+ * the morning's number; two hours was still long enough that the rate was
+ * being kept up by hand between refreshes. The scheduling is the whole of the
+ * feature, and the alternative to testing it here is a test that can only be
+ * run by waiting an hour.
  */
-head("Exchange rates: the two-hourly refresh");
+head("Exchange rates: the hourly refresh");
 
 const HOUR = 60 * 60 * 1000;
+const RETRY_HOLD = 10 * 60 * 1000;
 const decide = (state: Partial<RateRefreshState>, now = 10 * HOUR) =>
   refreshDecision(
     { lastSuccessAt: 0, lastFailureAt: 0, running: false, ...state },
-    now, FRESH_FOR_MS, 30 * 60 * 1000);
+    now, FRESH_FOR_MS, RETRY_HOLD);
 
+eq("the window is an hour", FRESH_FOR_MS, HOUR);
 eq("the first caller starts the fetch", decide({}), "start");
 eq("a caller a minute later does nothing", decide({ lastSuccessAt: 10 * HOUR - 60_000 }), "skip");
-eq("nor does one an hour and a half later",
-  decide({ lastSuccessAt: 10 * HOUR - 1.5 * HOUR }), "skip");
-eq("two hours on, the rates are refetched",
-  decide({ lastSuccessAt: 10 * HOUR - 2 * HOUR }), "start");
+eq("nor does one half an hour later",
+  decide({ lastSuccessAt: 10 * HOUR - 0.5 * HOUR }), "skip");
+eq("an hour on, the rates are refetched",
+  decide({ lastSuccessAt: 10 * HOUR - HOUR }), "start");
 eq("a caller arriving mid-fetch waits on the same one", decide({ running: true }), "wait");
 eq("a run in progress outranks a recent failure, rather than being skipped past",
   decide({ running: true, lastFailureAt: 10 * HOUR - 60_000 }), "wait");
 
 // A failure holds callers off for a while — but for less than the freshness
-// window, or one bad minute would cost the whole two hours.
+// window, or one bad minute would cost the whole hour.
 eq("right after a failure, callers are held off",
   decide({ lastFailureAt: 10 * HOUR - 60_000 }), "skip");
-eq("an hour later, someone tries again",
-  decide({ lastFailureAt: 10 * HOUR - HOUR }), "start");
+eq("ten minutes later, someone tries again",
+  decide({ lastFailureAt: 10 * HOUR - RETRY_HOLD }), "start");
 eq("but rates fetched minutes ago still win over a stale failure",
   decide({ lastSuccessAt: 10 * HOUR - 60_000, lastFailureAt: 10 * HOUR - HOUR }), "skip");
+
+/*
+ * The timer must tick more often than the window, or the promise is not kept.
+ *
+ * `ensureRatesFresh` is a no-op until the window is up, so the tick only has to
+ * be frequent enough that the first caller after it opens is the timer itself:
+ * a half-hourly tick against an hourly window leaves up to ninety minutes
+ * between refreshes on a day nobody signs in.
+ */
+{
+  const serverSrc = readFileSync("server.ts", "utf8");
+  const tick = /const RATE_TICK_MS = (\d+) \* 60 \* 1000;/.exec(serverSrc);
+  ok("the rate timer ticks well inside the freshness window",
+    !!tick && Number(tick[1]) * 60_000 <= FRESH_FOR_MS / 4, tick?.[1]);
+
+  // The failure mode here is silence, so the state has to reach a screen.
+  const adminSrc = readFileSync("src/server/routes/admin.ts", "utf8");
+  ok("the rates endpoint reports what the automatic refresh has been doing",
+    /refresh: rateRefreshReport\(\)/.test(adminSrc));
+  const ratesView = readFileSync("src/components/RatesView.tsx", "utf8");
+  ok("and the screen shows it", /rates-auto-refresh/.test(ratesView));
+  ok("including the reason the last attempt failed", /refresh\.lastError/.test(ratesView));
+}
 
 /*
  * A warehouse-arrival date means the order arrived.
@@ -1052,7 +1082,10 @@ eq("and so is a value that cannot be a number", formatMoney("abc"), "0");
   // `list.total` and friends are the row count a pagination line prints
   // («نمایش ۵ از ۱۲ پیش‌فاکتور»), not an amount — the paging hooks all name it
   // `total`, which is the one word this rule has to disambiguate by receiver.
-  const COUNT = /(\.length|count|\bpage\b|totalPages|^(list|ledger|auditList|\w*List)\.total$)/i;
+  // `revenue.averageProformasPerProject` is «چند پیش‌فاکتور برای هر پروژه» — a
+  // count of documents that happens to live under `revenue`, so the receiver
+  // disambiguates it the same way `list.total` is disambiguated above.
+  const COUNT = /(\.length|count|\bpage\b|totalPages|average\w*Per\w+|^(list|ledger|auditList|\w*List)\.total$)/i;
 
   const uiFiles: string[] = [];
   (function walk(d: string) {
@@ -4535,6 +4568,162 @@ head("Sales follow-up: the ownership rules, read from the source");
     /lossReason\s+String\?/.test(proformaModel));
   ok("and there is no second loss-reason table",
     !/model LossReason/.test(schema));
+}
+
+
+/* ------------------------- dashboard: the front page --------------------- */
+head("Dashboard: a settled contract stops moving with the rate");
+{
+  const usd = (entries: Parameters<typeof wonValueRial>[0]["entries"]) => wonValueRial({
+    wonAmount: 1000, todayRate: 120_000, historicalRate: 90_000, entries,
+  });
+
+  // Nothing received: the debt is still exposed to the rate, exactly as before.
+  eq("an unpaid contract floats at today's rate", usd([]).rial, 120_000_000);
+
+  // Paid in full at the rate on the day: that rial is a historical fact.
+  const paid = usd([{
+    type: "دریافت", amountRial: 90_000_000, amountForeign: null,
+    exchangeRate: 90_000, isDirectForeign: false,
+  }]);
+  eq("a fully settled contract is worth the rial that arrived", paid.rial, 90_000_000);
+  eq("and its effective rate is the rate it was paid at", paid.effectiveRate, 90_000);
+  eq("nothing of it is left outstanding", paid.settledAmount, 1000);
+
+  // Today's rate moving must not move a settled contract at all.
+  const later = wonValueRial({
+    wonAmount: 1000, todayRate: 200_000, historicalRate: 90_000,
+    entries: [{
+      type: "دریافت", amountRial: 90_000_000, amountForeign: null,
+      exchangeRate: 90_000, isDirectForeign: false,
+    }],
+  });
+  eq("and it does not move when the rate doubles", later.rial, paid.rial);
+
+  // Half paid: half frozen, half floating.
+  eq("a half-paid contract moves by half", usd([{
+    type: "دریافت", amountRial: 45_000_000, amountForeign: null,
+    exchangeRate: 90_000, isDirectForeign: false,
+  }]).rial, 45_000_000 + 500 * 120_000);
+
+  // Money paid above the invoice sits on account; it is not sale value.
+  eq("an overpayment does not inflate the contract", usd([{
+    type: "دریافت", amountRial: 180_000_000, amountForeign: null,
+    exchangeRate: 90_000, isDirectForeign: false,
+  }]).rial, 90_000_000);
+
+  // A refund is a payment back, and the direction is the type.
+  eq("a refund gives the outstanding part back to the rate", usd([
+    { type: "دریافت", amountRial: 90_000_000, amountForeign: null, exchangeRate: 90_000, isDirectForeign: false },
+    { type: "پرداخت", amountRial: 90_000_000, amountForeign: null, exchangeRate: 90_000, isDirectForeign: false },
+  ]).rial, 120_000_000);
+
+  // Foreign cash in, converted at the day's rate.
+  eq("a direct foreign receipt settles its own amount", usd([{
+    type: "دریافت", amountRial: 0, amountForeign: 1000,
+    exchangeRate: 95_000, isDirectForeign: true,
+  }]).rial, 95_000_000);
+
+  /*
+   * A receipt with no settlement rate cannot say what it covered.
+   *
+   * Guessing at today's rate would put the whole figure back on the rate,
+   * which is the fault this exists to fix, so the sale goes on floating.
+   */
+  eq("a foreign receipt with no rate at all settles nothing", wonValueRial({
+    wonAmount: 1000, todayRate: 120_000, historicalRate: null,
+    entries: [{ type: "دریافت", amountRial: 90_000_000, amountForeign: null, exchangeRate: null, isDirectForeign: false }],
+  }).rial, 120_000_000);
+  eq("but the invoice's own rate stands in when the receipt has none", wonValueRial({
+    wonAmount: 1000, todayRate: 120_000, historicalRate: 90_000,
+    entries: [{ type: "دریافت", amountRial: 90_000_000, amountForeign: null, exchangeRate: null, isDirectForeign: false }],
+  }).rial, 90_000_000);
+
+  // A rial document has no rate to move with, whatever the receipts say.
+  for (const entries of [
+    [],
+    [{ type: "دریافت", amountRial: 500, amountForeign: null, exchangeRate: null, isDirectForeign: false }],
+    [{ type: "دریافت", amountRial: 5000, amountForeign: null, exchangeRate: null, isDirectForeign: false }],
+  ]) {
+    eq("a rial contract is always worth its own amount",
+      wonValueRial({ wonAmount: 1000, todayRate: 1, historicalRate: null, entries }).rial, 1000);
+  }
+
+  // The category split is the same money, so the parts must add to the whole.
+  const split = usd([{
+    type: "دریافت", amountRial: 45_000_000, amountForeign: null,
+    exchangeRate: 90_000, isDirectForeign: false,
+  }]);
+  eq("the effective rate splits the total without losing any of it",
+    Math.round(600 * split.effectiveRate + 400 * split.effectiveRate), Math.round(split.rial));
+}
+
+head("Dashboard: conversion is per project, not per document");
+{
+  const line = (status: string | null) => ({ status });
+  const pf = (id: string, projectId: string | null, days: number, items: { status: string | null }[]) => ({
+    id, projectId, status: "ارسال شده", isCancelled: false,
+    createdAt: new Date(2026, 0, days), items,
+  });
+
+  // The reported fault: ten quotations on one job, one of them won.
+  const tenQuotes = Array.from({ length: 10 }, (_, i) =>
+    pf(`p${i}`, "prj-1", i + 1, [line(i === 9 ? ITEM_WON : ITEM_LOST)]));
+  const groups = opportunityGroups(tenQuotes);
+  eq("ten proformas on one project are one opportunity", groups.length, 1);
+  eq("and that opportunity is won", opportunityOutcome(groups[0]), "won");
+
+  // A win earlier in the history is not undone by a later quotation for
+  // more scope — that is why the *deciding* proformas are used rather than
+  // literally the newest one.
+  const wonThenQuotedAgain = [
+    pf("a", "prj-2", 1, [line(ITEM_WON)]),
+    pf("b", "prj-2", 5, [line(null)]),
+  ];
+  eq("a later quotation does not un-win a project",
+    opportunityOutcome(opportunityGroups(wonThenQuotedAgain)[0]), "won");
+
+  // Nothing decided yet belongs in neither tally.
+  eq("an open project is neither won nor lost",
+    opportunityOutcome([pf("c", "prj-3", 1, [line(null)])]), "open");
+  eq("a project whose last quote was lost is lost",
+    opportunityOutcome([pf("d", "prj-4", 1, [line(ITEM_LOST)])]), "lost");
+  eq("a withdrawn project is not counted as won",
+    opportunityOutcome([pf("e", "prj-5", 1, [line(ITEM_CANCELLED)])]), "lost");
+
+  // A quotation with no project is still a quotation somebody sent.
+  const mixed = [
+    pf("f", "prj-6", 1, [line(ITEM_WON)]),
+    pf("g", null, 2, [line(ITEM_WON)]),
+    pf("h", null, 3, [line(ITEM_LOST)]),
+  ];
+  eq("project-less proformas stand alone", opportunityGroups(mixed).length, 3);
+
+  // The selection must be the project card's, or the front page and the card
+  // disagree about who won.
+  eq("the deciding set is the winners when there are any",
+    decidingProformas(tenQuotes).map((p) => p.id).join(","), "p9");
+  eq("and the most recent one when there are none",
+    decidingProformas(tenQuotes.slice(0, 9)).map((p) => p.id).join(","), "p8");
+  eq("an empty project decides nothing", decidingProformas([]).length, 0);
+
+  eq("«میانگین تعداد پیش‌فاکتور» keeps one decimal", averageProformasPerProject(7, 3), 2.3);
+  eq("and is zero rather than infinite with no projects", averageProformasPerProject(4, 0), 0);
+}
+
+head("Dashboard: the service uses those rules and no copies");
+{
+  const dash = readFileSync("src/server/services/dashboardService.ts", "utf8");
+  ok("the won total is built by wonValueRial", /wonValueRial\(\{/.test(dash));
+  ok("and no longer multiplies the won amount by today's rate directly",
+    !/wonRial \+= wonAmount \* rate/.test(dash), "dashboardService still converts at today's rate");
+  ok("the win rate counts opportunities, not proformas",
+    /opportunityGroups\(rows\)/.test(dash) && !/db\.proforma\.count\(\{ where: proformaWhere \}\)/.test(dash));
+  ok("conversion by category reads the deciding proformas",
+    /decidingProformas\(group\)/.test(dash));
+  ok("and is no longer a raw sum over every proforma line",
+    !/FROM \[dbo\]\.\[proforma_items\]/.test(dash), "dashboardService still groups every line in SQL");
+  ok("only money rows settle a contract", /countsTowardBalance\(t\.status\)/.test(dash));
 }
 
 

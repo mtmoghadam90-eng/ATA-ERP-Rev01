@@ -1,7 +1,13 @@
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { AuthUser, hasPermission } from "../auth";
-import { ITEM_CANCELLED, ITEM_LOST, ITEM_WON, getProformaOutcome } from "../proformaStatus";
+import {
+  ITEM_CANCELLED, ITEM_LOST, ITEM_WON, decidingProformas, getProformaOutcome,
+} from "../proformaStatus";
+import {
+  averageProformasPerProject, opportunityGroups, opportunityOutcome, wonValueRial,
+} from "../dashboardMetrics";
+import { countsTowardBalance } from "./transactionService";
 
 /**
  * The figures the front page shows.
@@ -12,9 +18,12 @@ import { ITEM_CANCELLED, ITEM_LOST, ITEM_WON, getProformaOutcome } from "../prof
  * numbers. At the volumes this system is being built for that is minutes of
  * transfer to render one page.
  *
- * Everything here is counted or summed in SQL, in one request. The two figures
- * that cannot be (won revenue and revenue by category) are explained where they
- * are computed.
+ * Almost everything here is counted or summed in SQL, in one request. What
+ * cannot be is the sales figures: a proforma's outcome is derived from its line
+ * statuses, an opportunity's outcome from the proformas that decide it, and a
+ * won contract's rial value from the receipts against it — none of which SQL
+ * can express without a second copy of the rules. Those read rows, through one
+ * query with a narrow projection.
  */
 
 export interface DashboardSummary {
@@ -26,15 +35,24 @@ export interface DashboardSummary {
     activePurchaseOrders: number;
   };
   revenue: {
-    /** Won value across every won and partly-won proforma, converted to rial. */
+    /**
+     * Won value across every won and partly-won proforma, in rial — frozen at
+     * what was actually paid for the settled part, at today's rate for the rest.
+     */
     wonRial: string;
     /** Value of proformas still in play. */
     activeRial: string;
     activeCount: number;
-    /** Won proformas as a percentage of every proforma issued. */
+    /**
+     * Won opportunities as a percentage of every opportunity, where an
+     * opportunity is a **project**, not a document.
+     */
     winRatePercent: number;
     wonCount: number;
+    lostCount: number;
     totalCount: number;
+    /** «چقدر رفت و برگشت» — proformas issued per project, to one decimal. */
+    averageProformasPerProject: number;
   };
   projectsByStatus: { status: string; count: number }[];
   /** Won revenue per product category, largest first. */
@@ -65,25 +83,31 @@ async function rateLookup(): Promise<(currency: string | null | undefined) => nu
 }
 
 /**
- * Won proformas, with just enough of each to derive its outcome and its value.
+ * Every proforma the caller may see, with just enough of each to derive what
+ * became of it and what it is worth.
  *
- * The one place that still reads rows rather than aggregating them, because the
- * outcome is derived from the line statuses and a partly-won proforma counts
- * only the proportion actually won — neither of which SQL can express without
- * duplicating the rules. The projection is narrow and the set is bounded by
- * "has at least one won line", so this is a fraction of what the browser used
- * to pull.
+ * The whole set rather than the won ones, because the conversion figures are
+ * per **project** and a project's deciding quotation cannot be picked out in
+ * SQL. The projection is scalar columns plus line statuses and quantities, so
+ * this is a fraction of what the browser used to pull for the same screen.
  */
-async function wonProformaValues(where: Prisma.ProformaWhereInput) {
+async function dashboardProformas(where: Prisma.ProformaWhereInput) {
   return getDb().proforma.findMany({
-    where: { ...where, items: { some: { status: "برنده" } } },
+    where,
     select: {
+      id: true, projectId: true, createdAt: true,
       status: true, isCancelled: true, currency: true,
-      finalAmount: true, totalAmount: true,
+      finalAmount: true, totalAmount: true, historicalExchangeRate: true,
       items: {
         select: {
-          status: true, supplyMethod: true, totalPriceRial: true,
+          status: true, quantity: true, totalPriceRial: true,
           product: { select: { category: true } },
+        },
+      },
+      transactions: {
+        select: {
+          type: true, status: true, amountRial: true,
+          amountForeign: true, exchangeRate: true, isDirectForeign: true,
         },
       },
     },
@@ -102,7 +126,7 @@ export async function dashboardSummary(user: AuthUser): Promise<DashboardSummary
 
   const [
     customers, products, lowStock, activePurchaseOrders,
-    projectsByStatus, wonRows, activeAgg,
+    projectsByStatus, rows, activeAgg,
   ] = await Promise.all([
     db.customer.count(),
     db.product.count(),
@@ -115,7 +139,7 @@ export async function dashboardSummary(user: AuthUser): Promise<DashboardSummary
     `.then((rows) => Number(rows[0]?.n ?? 0)),
     db.purchaseOrder.count({ where: { status: { not: "تحویل شده (رسید انبار)" } } }),
     db.project.groupBy({ by: ["status"], _count: { _all: true } }),
-    wonProformaValues(proformaWhere),
+    dashboardProformas(proformaWhere),
     /* Everything still in play, summed per currency so each converts at its own
        rate rather than being added together first.
 
@@ -144,19 +168,16 @@ export async function dashboardSummary(user: AuthUser): Promise<DashboardSummary
 
   /* Won revenue, and the same value split by product category. */
   let wonRial = 0;
-  let wonCount = 0;
   const byCategory = new Map<string, number>();
 
-  for (const pf of wonRows) {
+  for (const pf of rows) {
     const outcome = getProformaOutcome(pf);
     if (outcome !== "تأیید شده (برنده)" && outcome !== "نیمه برنده") continue;
-    wonCount++;
 
-    const rate = rateFor(pf.currency);
     const finalAmount = Number(pf.finalAmount);
     const totalAmount = Number(pf.totalAmount);
     const wonLinesTotal = pf.items
-      .filter((i) => i.status === "برنده")
+      .filter((i) => i.status === ITEM_WON)
       .reduce((sum, i) => sum + Number(i.totalPriceRial), 0);
 
     // A wholly won proforma is worth its final amount. A partly won one is
@@ -169,40 +190,77 @@ export async function dashboardSummary(user: AuthUser): Promise<DashboardSummary
         ? Math.round(finalAmount * (wonLinesTotal / totalAmount))
         : 0;
 
-    wonRial += wonAmount * rate;
+    const { rial, effectiveRate } = wonValueRial({
+      wonAmount,
+      todayRate: rateFor(pf.currency),
+      historicalRate: pf.historicalExchangeRate === null ? null : Number(pf.historicalExchangeRate),
+      entries: pf.transactions
+        .filter((t) => countsTowardBalance(t.status))
+        .map((t) => ({
+          type: t.type,
+          amountRial: Number(t.amountRial),
+          amountForeign: t.amountForeign === null ? null : Number(t.amountForeign),
+          exchangeRate: t.exchangeRate === null ? null : Number(t.exchangeRate),
+          isDirectForeign: t.isDirectForeign,
+        })),
+    });
 
+    wonRial += rial;
+
+    // The lines are converted at the rate the document as a whole came out at,
+    // so the categories still add up to the total beside them.
     for (const item of pf.items) {
-      if (item.status !== "برنده") continue;
+      if (item.status !== ITEM_WON) continue;
       const category = item.product?.category || "سایر تجهیزات";
-      byCategory.set(category, (byCategory.get(category) ?? 0) + Number(item.totalPriceRial) * rate);
+      byCategory.set(category, (byCategory.get(category) ?? 0) + Number(item.totalPriceRial) * effectiveRate);
     }
   }
 
   const activeRial = activeAgg.reduce(
     (sum, row) => sum + Number(row._sum.finalAmount ?? 0) * rateFor(row.currency), 0);
 
-  // The denominator is every proforma the caller may see, cancelled ones
-  // included — a deal that was called off is still one that was not won.
-  const totalCount = await db.proforma.count({ where: proformaWhere });
+  /* Conversion, counted per opportunity rather than per document.
+     A project quoted ten times and won once is one win, not one in ten. */
+  const groups = opportunityGroups(rows);
+  let wonCount = 0;
+  let lostCount = 0;
+  for (const group of groups) {
+    const result = opportunityOutcome(group);
+    if (result === "won") wonCount++;
+    else if (result === "lost") lostCount++;
+  }
+  const totalCount = groups.length;
 
   /* Conversion by category: of everything quoted in a category, how much was
      won — by quantity, not by value, so a category is not dominated by one
-     expensive line. Grouped in SQL because the category lives on the product
-     rather than the line, which `groupBy` cannot reach. Cancelled documents are
-     excluded: they were withdrawn, not lost. */
-  const conversionRows = await db.$queryRaw<
-    { category: string; won: number; total: number }[]
-  >`
-    SELECT ISNULL(p.[category], N'سایر تجهیزات') AS [category],
-           SUM(CASE WHEN i.[status] = N'برنده' THEN i.[quantity] ELSE 0 END) AS [won],
-           SUM(i.[quantity]) AS [total]
-    FROM [dbo].[proforma_items] i
-    INNER JOIN [dbo].[proformas] pf ON pf.[id] = i.[proformaId]
-    LEFT JOIN [dbo].[products] p ON p.[id] = i.[productId]
-    WHERE pf.[isCancelled] = 0 AND pf.[status] <> N'لغو شده'
-      ${canSeeAll ? Prisma.empty : Prisma.sql`AND pf.[creatorUserId] = ${user.id}`}
-    GROUP BY ISNULL(p.[category], N'سایر تجهیزات')
-  `;
+     expensive line. Only the proformas that decide their project count, for the
+     same reason the rate above does; cancelled documents are excluded, since
+     they were withdrawn rather than lost. */
+  const conversion = new Map<string, { won: number; total: number }>();
+  for (const group of groups) {
+    for (const pf of decidingProformas(group)) {
+      if (pf.isCancelled || pf.status === "لغو شده") continue;
+      for (const item of pf.items) {
+        const category = item.product?.category || "سایر تجهیزات";
+        const bucket = conversion.get(category) ?? { won: 0, total: 0 };
+        const quantity = Number(item.quantity);
+        bucket.total += quantity;
+        if (item.status === ITEM_WON) bucket.won += quantity;
+        conversion.set(category, bucket);
+      }
+    }
+  }
+
+  /* «چقدر رفت و برگشت داریم» — quotations issued per project. Proformas with
+     no project are left out of both halves rather than counted against a
+     project that does not exist. */
+  const projectIds = new Set<string>();
+  let proformasOnProjects = 0;
+  for (const pf of rows) {
+    if (!pf.projectId) continue;
+    proformasOnProjects++;
+    projectIds.add(pf.projectId);
+  }
 
   return {
     counts: {
@@ -215,7 +273,9 @@ export async function dashboardSummary(user: AuthUser): Promise<DashboardSummary
       activeCount: activeAgg.reduce((sum, row) => sum + row._count._all, 0),
       winRatePercent: totalCount > 0 ? Math.round((wonCount / totalCount) * 100) : 0,
       wonCount,
+      lostCount,
       totalCount,
+      averageProformasPerProject: averageProformasPerProject(proformasOnProjects, projectIds.size),
     },
     projectsByStatus: projectsByStatus
       .map((s) => ({ status: s.status, count: s._count._all }))
@@ -223,16 +283,11 @@ export async function dashboardSummary(user: AuthUser): Promise<DashboardSummary
     revenueByCategory: [...byCategory.entries()]
       .map(([category, rial]) => ({ category, rial: String(Math.round(rial)) }))
       .sort((a, b) => Number(b.rial) - Number(a.rial)),
-    conversionByCategory: conversionRows
-      .map((row) => {
-        const won = Number(row.won);
-        const total = Number(row.total);
-        return {
-          category: row.category,
-          won, total,
-          percent: total > 0 ? Math.round((won / total) * 100) : 0,
-        };
-      })
+    conversionByCategory: [...conversion.entries()]
+      .map(([category, { won, total }]) => ({
+        category, won, total,
+        percent: total > 0 ? Math.round((won / total) * 100) : 0,
+      }))
       .sort((a, b) => b.percent - a.percent || b.total - a.total),
   };
 }

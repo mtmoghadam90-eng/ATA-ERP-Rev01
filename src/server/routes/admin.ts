@@ -8,7 +8,7 @@ import {
   getAuditLog, getSettings, listAuditLogs, listExchangeRates,
   purgeAuditLogs, purgeBusinessData, recordAudit, saveSettings, trimAuditLogs, upsertExchangeRate,
 } from "../services/adminService";
-import { ensureRatesFresh } from "../services/rateRefresh";
+import { ensureRatesFresh, rateRefreshReport } from "../services/rateRefresh";
 
 /** Settings, exchange rates and the audit log. */
 
@@ -65,7 +65,20 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
        * usable, and a scrape that fails must not take the screen with it.
        */
       await ensureRatesFresh();
-      res.json({ success: true, rates: await listExchangeRates() });
+      /*
+       * The state of the automatic refresh travels with the rates.
+       *
+       * When the scrape stops working — a markup change at the source, an
+       * outbound request the server's network will not make — nothing on any
+       * screen says so. The rates just stop moving, and the only symptom is
+       * somebody pressing the manual button every morning. The screen shows
+       * this so a stale figure can say why it is stale.
+       */
+      res.json({
+        success: true,
+        rates: await listExchangeRates(),
+        refresh: rateRefreshReport(),
+      });
     } catch (err) {
       sendError(res, err, "GET /api/exchange-rates");
     }
