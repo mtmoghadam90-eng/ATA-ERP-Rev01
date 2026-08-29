@@ -1,19 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Inbox, 
-  CheckCircle2, 
+
   Clock, 
   Send, 
   User as UserIcon, 
   Briefcase, 
   MessageSquare, 
   ChevronLeft,
-  FileCheck2,
+
   Calendar,
   Paperclip,
   ChevronDown,
   ChevronUp,
-  RefreshCcw,
+
   Bell
 } from 'lucide-react';
 import { ERPSettings } from '../types';
@@ -21,7 +21,8 @@ import type { User } from '../types';
 import { compressImage } from '../imageUtils';
 import { toShamsiStr } from '../dateUtils';
 import { ApiError } from '../api/client';
-import { NotificationRow, ReferralRow, inboxApi } from '../api/inbox';
+import { NotificationRow, ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
+import ReferralThread, { ReferralComposerSubmit } from './ReferralThread';
 import { useRevalidate } from '../api/liveData';
 import { useUserDirectory } from '../api/useUserDirectory';
 
@@ -57,9 +58,6 @@ export default function ReferralsView({
       setActiveTab(initialTab);
     }
   }, [initialTab]);
-  const [replyText, setReplyText] = useState<Record<string, string>>({});
-  const [replyAttachments, setReplyAttachments] = useState<Record<string, { name: string; size: string; content?: string } | null>>({});
-  const [forwardToMap, setForwardToMap] = useState<Record<string, string>>({});
   const [filterProject, setFilterProject] = useState<string>('all');
   const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
   const [expandedNotificationGroups, setExpandedNotificationGroups] = useState<Record<string, boolean>>({});
@@ -230,6 +228,10 @@ export default function ReferralsView({
             id: m.id,
             text: m.text,
             responder: m.responderName ?? '',
+            // Which side of the conversation a message sits on. By id, because
+            // a name comparison puts a renamed account's whole side back on
+            // the other one — the same trap the two ids above exist for.
+            responderUserId: m.responderUserId ?? null,
             createdAt: m.createdAt,
             attachment: m.attachmentUrl
               ? { name: m.attachmentName ?? '', size: m.attachmentSize ?? '', url: m.attachmentUrl }
@@ -357,78 +359,40 @@ export default function ReferralsView({
   /**
    * Records the response to a referral.
    *
-   * What was one store call is three distinct operations on the server — a
-   * reply, a status change, a reassignment — because each has its own rule
-   * about who may do it. They are applied in that order so that forwarding
-   * leaves the thread reading correctly: the reply is already there when the
-   * next person opens it.
+   * The three server calls and the order they go in live in
+   * `submitReferralReply`, shared with the project's activity feed — the same
+   * gesture is offered in both places and a second copy of the sequence is how
+   * one of them comes to reopen a referral without saying why.
    */
-  const handleReplySubmit = async (
-    referralId: string,
-    outcome: 'none' | 'done' | 'reopen' = 'none',
-  ) => {
-    const text = replyText[referralId] || '';
-    const attachment = replyAttachments[referralId] || null;
-    const forwardTo = forwardToMap[referralId] || undefined;
-
-    let textToSave = text.trim();
-    if (!textToSave && !attachment && !forwardTo) {
-      if (outcome !== 'none') {
-        const next = outcome === 'done' ? 'انجام شده' : 'در انتظار اقدام';
-        try {
-          // The card's own badge and the counter both move; saying so as
-          // well is a dialog the user has to dismiss to see the answer.
-          await inboxApi.setReferralStatus(referralId, next);
-          refresh();
-        } catch (err) {
-          reportError(err, 'تغییر وضعیت ارجاع با خطا مواجه شد.');
-        }
+  const handleReplySubmit = async (referralId: string, body: ReferralComposerSubmit) => {
+    try {
+      const outcome = await submitReferralReply(referralId, {
+        text: body.text,
+        attachment: body.attachment,
+        outcome: body.outcome,
+        forwardToUserId: body.forwardToUserId,
+      });
+      if (outcome === "nothing") {
+        alert('لطفاً پیام، پیوست یا شخص ارجاع شونده را مشخص کنید.');
         return;
       }
-      alert('لطفاً پیام، پیوست یا شخص ارجاع شونده را مشخص کنید.');
-      return;
-    }
-
-    if (forwardTo && !textToSave) {
-      textToSave = 'ارجاع به همکار';
-    }
-
-    try {
-      await inboxApi.replyToReferral(referralId, {
-        text: textToSave,
-        attachmentName: attachment?.name ?? null,
-        attachmentSize: attachment?.size ?? null,
-        attachmentUrl: attachment?.content ?? null,
-        // Forwarding puts the thread in the next person's referral inbox, so
-        // the reply must not also raise a notice about itself.
-        andForwarded: !!forwardTo,
-      });
-
-      // Forwarding sets its own status, so only apply an outcome when not
-      // forwarding. `reopen` is the person who raised it saying the work is
-      // not what they meant: the reply is already on the thread, and putting
-      // the referral back to "در انتظار اقدام" is what puts it back in the
-      // assignee's inbox and back into their counter.
-      if (outcome === 'done' && !forwardTo) {
-        await inboxApi.setReferralStatus(referralId, 'انجام شده', true);
-      } else if (outcome === 'reopen' && !forwardTo) {
-        await inboxApi.setReferralStatus(referralId, 'در انتظار اقدام', true);
-      }
-      if (forwardTo) {
-        await inboxApi.reassignReferral(referralId, forwardTo);
-      }
-
-      setReplyText(prev => ({ ...prev, [referralId]: '' }));
-      setReplyAttachments(prev => ({ ...prev, [referralId]: null }));
-      setForwardToMap(prev => ({ ...prev, [referralId]: '' }));
       refresh();
-
       // Only forwarding is worth a word: the thread leaves this inbox for
       // someone else's, so there is nothing left on screen to show for it.
       // A reply and a status change are both visible where they happened.
-      if (forwardTo) alert('ارجاع به همکار انتخاب‌شده منتقل شد.');
+      if (body.forwardToUserId) alert('ارجاع به همکار انتخاب‌شده منتقل شد.');
     } catch (err) {
       reportError(err, 'ثبت پاسخ ارجاع با خطا مواجه شد.');
+    }
+  };
+
+  /** Corrects the request. The server refuses anyone but the referrer. */
+  const handleEditAction = async (referralId: string, text: string) => {
+    try {
+      await inboxApi.updateReferralAction(referralId, text);
+      refresh();
+    } catch (err) {
+      reportError(err, 'ویرایش متن ارجاع با خطا مواجه شد.');
     }
   };
 
@@ -800,20 +764,17 @@ export default function ReferralsView({
                   <div className="p-6 space-y-8 animate-fade-in">
                     {referrals.map((item, refIdx) => {
                     const { activity, referral } = item;
-                    const isItemPending = (referral.status || 'در انتظار اقدام') === 'در انتظار اقدام';
                     /*
-                     * By account, not by name.
+                     * Which buttons the thread offers is decided **by account
+                     * id**, inside `ReferralThread`.
                      *
-                     * These were `currentUserName === referral.assignedBy`, a
-                     * comparison of display names. A referral whose stored
+                     * It used to be `currentUserName === referral.assignedBy`,
+                     * a comparison of display names. A referral whose stored
                      * name did not match — an account since renamed, a name
                      * never filled in — matched nobody, and the person who
                      * raised it was left with no way to answer. The id is the
                      * identity; the name is a label.
                      */
-                    const isAssignee = !!currentUser?.id && referral.assignedToUserId === currentUser.id;
-                    const isReferrer = !!currentUser?.id && referral.assignedByUserId === currentUser.id;
-
                     return (
                       <div key={`${activity.id}-${refIdx}`} className={`${refIdx !== 0 ? 'pt-8 border-t-2 border-slate-100' : ''} space-y-4`}>
                         {/* Origin Activity */}
@@ -845,194 +806,40 @@ export default function ReferralsView({
                           )}
                         </div>
 
-                        {/* Referral specifics */}
+                        {/*
+                          The referral, read as the conversation it is.
+
+                          One component, shared with the project's activity
+                          feed: the request, the replies sided by who wrote
+                          them, and the box to answer in — below a rule,
+                          because everything above it happened and this has
+                          not.
+                        */}
                         <div className="space-y-2">
                           <div className="flex items-center gap-2 text-xs text-slate-500">
                             <UserIcon size={14} className="text-sky-500" />
                             <span>ارجاع‌دهنده: <strong className="text-slate-800">{referral.assignedBy}</strong></span>
                             <ChevronLeft size={12} className="text-slate-400" />
-                            <span>ارجاع‌شونده (شما): <strong className="text-slate-800">{referral.assignedTo}</strong></span>
+                            <span>ارجاع‌شونده: <strong className="text-slate-800">{referral.assignedTo}</strong></span>
                           </div>
 
-                          <div className="pt-2">
-                            <span className="text-xs font-extrabold text-slate-400 block mb-1">اقدام خواسته‌شده:</span>
-                            <p className="text-sm font-bold text-slate-800 bg-sky-50/40 p-3 rounded-lg border border-sky-100/50 leading-relaxed">
-                              {referral.actionRequired}
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Reply section */}
-                        <div className="pt-4 border-t border-slate-100 space-y-4">
-                          {/* Messages List */}
-                          {(referral.messages?.length ? referral.messages : (referral.response ? [referral.response] : [])).map((msg, msgIdx) => (
-                            <div key={msgIdx} className="bg-emerald-50/30 p-4 rounded-xl border border-dashed border-emerald-200 animate-fade-in">
-                              <div className="flex items-center justify-between text-xs font-bold text-emerald-800 mb-2">
-                                <div className="flex items-center gap-1.5">
-                                  <FileCheck2 size={16} className="text-emerald-600" />
-                                  <span>{msg.responder} ({msg.responder === referral.assignedTo ? 'ارجاع شونده' : 'ارجاع دهنده'}):</span>
-                                </div>
-                                <span className="font-mono text-[10px] text-emerald-600">{shamsi(msg.createdAt)}</span>
-                              </div>
-                              <p className="text-sm text-slate-800 leading-relaxed font-medium bg-white/70 p-3 rounded-lg border border-emerald-100">
-                                {msg.text}
-                              </p>
-
-                              {/* Response attachment if any */}
-                              {msg.attachment && (
-                                <div className="pt-2">
-                                  {msg.attachment.content ? (
-                                    <a
-                                      href={msg.attachment.content}
-                                      download={msg.attachment.name}
-                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-100/60 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 hover:text-emerald-900 text-[10px] font-bold transition"
-                                      title="دانلود فایل پیوست اقدام"
-                                    >
-                                      <Paperclip size={11} className="text-emerald-600" />
-                                      <span>فایل پیوست: {msg.attachment.name}</span>
-                                      <span className="text-emerald-500">({msg.attachment.size})</span>
-                                    </a>
-                                  ) : (
-                                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-50 border border-emerald-100 text-emerald-700 text-[10px] font-bold">
-                                      <Paperclip size={11} />
-                                      <span>فایل پیوست: {msg.attachment.name}</span>
-                                      <span className="text-emerald-500">({msg.attachment.size})</span>
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-
-                          {/* Active response form */}
-                          <div className="pt-2">
-                            <span className="text-xs font-extrabold text-slate-700 block mb-3">ارسال پیام یا ثبت نتیجه:</span>
-                            <div className="flex flex-col gap-3">
-                              <textarea
-                                rows={2}
-                                placeholder="لطفاً پیام یا نتیجه بررسی خود را به صورت متنی بنویسید..."
-                                value={replyText[referral.id] || ''}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setReplyText(prev => ({
-                                    ...prev,
-                                    [referral.id]: val
-                                  }));
-                                }}
-                                className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right placeholder-slate-400"
-                              />
-
-                              <div className="flex flex-wrap items-center justify-between gap-3">
-                                <select
-                                  value={forwardToMap[referral.id] || ''}
-                                  onChange={(e) => setForwardToMap(prev => ({...prev, [referral.id]: e.target.value}))}
-                                  className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-slate-600 focus:border-sky-500 outline-none"
-                                >
-                                  <option value="">-- ارجاع به همکار (اختیاری) --</option>
-                                  {users.filter(u => u.fullName !== currentUserName).map(u => (
-                                    <option key={u.id} value={u.id}>{u.fullName}{u.position ? ` - ${u.position}` : ""}</option>
-                                  ))}
-                                </select>
-                                {/* File upload section */}
-                                <div className="flex items-center gap-3">
-                                  <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-bold transition">
-                                    <Paperclip size={14} className="text-slate-400" />
-                                    <span>افزودن فایل پیوست</span>
-                                    <input
-                                      type="file"
-                                      className="hidden"
-                                      onChange={(e) => {
-                                        const file = e.target.files?.[0];
-                                        if (file) {
-                                          if (file.size > 2 * 1024 * 1024 && !file.type.startsWith('image/')) {
-                                            alert('حداکثر حجم مجاز برای فایل‌های غیرتصویری ۲ مگابایت می‌باشد.');
-                                            if (e.target) e.target.value = '';
-                                            return;
-                                          }
-                                          compressImage(file, (dataUrl, sizeStr) => {
-                                            setReplyAttachments(prev => ({
-                                              ...prev,
-                                              [referral.id]: {
-                                                name: file.name,
-                                                size: sizeStr,
-                                                content: dataUrl
-                                              }
-                                            }));
-                                          });
-                                        }
-                                        if (e.target) e.target.value = '';
-                                      }}
-                                    />
-                                  </label>
-
-                                  {replyAttachments[referral.id] && (
-                                    <div className="flex items-center gap-2 bg-sky-50 text-sky-700 text-xs px-2.5 py-1 rounded-lg border border-sky-100 font-medium">
-                                      <span>{replyAttachments[referral.id]?.name} ({replyAttachments[referral.id]?.size})</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setReplyAttachments(prev => ({
-                                            ...prev,
-                                            [referral.id]: null
-                                          }));
-                                        }}
-                                        className="text-rose-500 hover:text-rose-700 font-bold px-1"
-                                        title="حذف فایل"
-                                      >
-                                        ×
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleReplySubmit(referral.id, 'none')}
-                                    className="px-6 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-sky-500/15 flex items-center justify-center gap-1.5 min-h-[42px]"
-                                  >
-                                    <MessageSquare size={15} />
-                                    ارسال پیام
-                                  </button>
-                                  {isItemPending && isAssignee && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleReplySubmit(referral.id, 'done')}
-                                      className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-emerald-500/15 flex items-center justify-center gap-1.5 min-h-[42px]"
-                                    >
-                                      <CheckCircle2 size={15} />
-                                      ثبت اتمام کار
-                                    </button>
-                                  )}
-                                  {/*
-                                    The conversation does not end when the
-                                    assignee calls it done.
-                                    
-                                    Often that is when it really starts: the
-                                    person who raised the referral reads the
-                                    result and finds it is not what they asked
-                                    for. Sending a message alone left the
-                                    referral closed, so the assignee was never
-                                    told to look again and the counter did not
-                                    move; reopening alone said nothing about
-                                    what was wanted. This does both — the reply
-                                    goes on the same thread and the referral
-                                    goes back to «در انتظار اقدام».
-                                  */}
-                                  {!isItemPending && isReferrer && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleReplySubmit(referral.id, 'reopen')}
-                                      className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-amber-500/15 flex items-center justify-center gap-1.5 min-h-[42px]"
-                                    >
-                                      <RefreshCcw size={15} />
-                                      ثبت پاسخ و ارجاع مجدد
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
+                          <ReferralThread
+                            referral={referral}
+                            currentUserId={currentUser?.id}
+                            formatDate={shamsi}
+                            users={users.filter(u => u.id !== currentUser?.id)}
+                            onPickAttachment={(file, done) => {
+                              if (file.size > 2 * 1024 * 1024 && !file.type.startsWith('image/')) {
+                                alert('حداکثر حجم مجاز برای فایل‌های غیرتصویری ۲ مگابایت می‌باشد.');
+                                return;
+                              }
+                              compressImage(file, (dataUrl, sizeStr) => {
+                                done({ name: file.name, size: sizeStr, content: dataUrl });
+                              });
+                            }}
+                            onSubmit={(body) => handleReplySubmit(referral.id, body)}
+                            onEditAction={(text) => handleEditAction(referral.id, text)}
+                          />
                         </div>
                       </div>
                     );

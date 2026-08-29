@@ -92,6 +92,7 @@ import {
 import {
   countsTowardBalance, describeTransaction, rialAmountOf,
 } from "../src/server/services/transactionService";
+import { inboxApi, submitReferralReply } from "../src/api/inbox";
 import { rowToCustomer } from "../src/api/customerAdapter";
 import { rowToProject } from "../src/api/projectAdapter";
 import { rowToProforma } from "../src/api/proformaAdapter";
@@ -4891,6 +4892,128 @@ head("Configurator: defining a feature or an option from the quotation");
     ok(`${label} gates it on the products permission`,
       /hasModulePermission\((currentUser), 'products'\)/.test(src));
   }
+}
+
+
+head("Referrals: one gesture, three calls, in one order");
+{
+  /*
+   * The referrals screen and the project's activity feed both offer «ثبت پاسخ
+   * و ارجاع مجدد», and each was a hand-written sequence of three requests. The
+   * order matters — the reply has to be on the thread before the forwarding
+   * moves it to somebody else's inbox — and a second copy is how one screen
+   * comes to reopen a referral without saying why.
+   */
+  const calls: string[] = [];
+  const original = {
+    reply: inboxApi.replyToReferral,
+    status: inboxApi.setReferralStatus,
+    reassign: inboxApi.reassignReferral,
+  };
+  inboxApi.replyToReferral = (async (_id: string, body: { text: string; andForwarded?: boolean }) => {
+    calls.push(`reply:${body.text}:${body.andForwarded ? "forwarded" : "-"}`);
+    return {} as never;
+  }) as typeof inboxApi.replyToReferral;
+  inboxApi.setReferralStatus = (async (_id: string, status: string, silent?: boolean) => {
+    calls.push(`status:${status}:${silent ? "silent" : "loud"}`);
+    return {} as never;
+  }) as typeof inboxApi.setReferralStatus;
+  inboxApi.reassignReferral = (async (_id: string, to: string) => {
+    calls.push(`forward:${to}`);
+    return {} as never;
+  }) as typeof inboxApi.reassignReferral;
+
+  const run = async (body: Parameters<typeof submitReferralReply>[1]) => {
+    calls.length = 0;
+    const outcome = await submitReferralReply("r1", body);
+    return { outcome, calls: [...calls] };
+  };
+
+  /*
+   * Awaited, not fired and forgotten.
+   *
+   * `void (async () => …)()` here would run these after the summary line, so a
+   * failure would be printed below the total and counted in neither — a test
+   * that agrees with itself.
+   */
+  await (async () => {
+    eq("a plain message is one call",
+      (await run({ text: "بررسی شد" })).calls.join("|"), "reply:بررسی شد:-");
+
+    // The reply already told the other party, and told them the part that
+    // matters — so the status change must not raise a second notice.
+    eq("closing sends the reply first, then a silent status",
+      (await run({ text: "انجام شد", outcome: "done" })).calls.join("|"),
+      "reply:انجام شد:-|status:انجام شده:silent");
+
+    // The whole point of the feature: the answer is not what was asked for.
+    eq("reopening puts it back to «در انتظار اقدام», after the reply",
+      (await run({ text: "این آن چیزی نیست که خواستم", outcome: "reopen" })).calls.join("|"),
+      "reply:این آن چیزی نیست که خواستم:-|status:در انتظار اقدام:silent");
+
+    // Forwarding sets its own status, so an outcome must not also be applied —
+    // and the reply is marked as forwarded so it raises no notice of its own.
+    eq("forwarding replaces the status change rather than adding to it",
+      (await run({ text: "به شما ارجاع شد", outcome: "done", forwardToUserId: "u2" })).calls.join("|"),
+      "reply:به شما ارجاع شد:forwarded|forward:u2");
+
+    // A bare button press with nothing typed is legitimate; an empty send is not.
+    const bare = await run({ outcome: "done", text: "  " });
+    eq("a bare «done» is a status change on its own", bare.calls.join("|"), "status:انجام شده:loud");
+    eq("and reports itself as such", bare.outcome, "status-only");
+    const empty = await run({ text: "" });
+    eq("an empty message sends nothing", empty.calls.length, 0);
+    eq("and says so", empty.outcome, "nothing");
+
+    // Forwarding with nothing typed still has to put something on the thread,
+    // or the next person opens a referral with no idea why it reached them.
+    ok("forwarding with no text still writes a line",
+      (await run({ text: "", forwardToUserId: "u2" })).calls[0]?.startsWith("reply:ارجاع به همکار"));
+
+    inboxApi.replyToReferral = original.reply;
+    inboxApi.setReferralStatus = original.status;
+    inboxApi.reassignReferral = original.reassign;
+  })();
+}
+
+head("Referrals: the thread is one component, sided by account");
+{
+  const thread = readFileSync("src/components/ReferralThread.tsx", "utf8");
+  // A name comparison put a renamed account's whole side of the conversation
+  // back on the other one — the same trap the referral's own two ids exist for.
+  ok("a message is placed by responderUserId",
+    /msg\.responderUserId === referral\.assignedByUserId/.test(thread));
+  ok("and the buttons by the two account ids",
+    /referral\.assignedToUserId === currentUserId/.test(thread)
+    && /referral\.assignedByUserId === currentUserId/.test(thread));
+  // Everything above the rule happened; the draft has not.
+  ok("the composer is separated from the history",
+    /border-t-2 border-dashed/.test(thread));
+  // Same family as the price calculator: the screens behind this re-render on
+  // their own, and a half-typed correction must survive that.
+  ok("the edit draft is seeded once per referral, not per render",
+    /seededFor\.current === referral\.id/.test(thread));
+
+  for (const [file, label] of [
+    ["src/components/ReferralsView.tsx", "the referrals screen"],
+    ["src/components/ProjectsView.tsx", "the project activity feed"],
+  ] as const) {
+    const src = readFileSync(file, "utf8");
+    ok(`${label} draws the shared thread`, /<ReferralThread/.test(src));
+    ok(`${label} uses the shared reply sequence`, /submitReferralReply\(/.test(src));
+    // Reopening from where the answer is read is the whole request.
+    ok(`${label} can correct the request`, /updateReferralAction\(/.test(src));
+  }
+
+  // Only the person who raised it: the assignee rewriting their own
+  // instructions is how a referral gets marked done against a request nobody
+  // made.
+  const service = readFileSync("src/server/services/activityService.ts", "utf8");
+  const body = service.slice(service.indexOf("export async function updateReferralAction"));
+  ok("editing the request is refused for anyone but the referrer",
+    /referral\.assignedByUserId !== user\.id/.test(body.slice(0, 2000)));
+  ok("and the assignee is told it changed",
+    /notifyUser\(/.test(body.slice(0, 3000)));
 }
 
 

@@ -761,6 +761,8 @@ export interface ProjectReferralResponse {
   id?: string;
   text: string;
   responder: string;
+  /** Which side of the thread it sits on. A name is a label, not an identity. */
+  responderUserId?: string | null;
   createdAt: string;
   attachment?: { name: string; size: string; content?: string } | null;
 }
@@ -770,6 +772,9 @@ export interface ProjectReferral {
   assignedTo: string;
   actionRequired: string;
   assignedBy: string;
+  /** The two accounts, which decide who may answer, close or reopen. */
+  assignedToUserId?: string | null;
+  assignedByUserId?: string | null;
   createdAt: string;
   status: 'در انتظار اقدام' | 'انجام شده';
   response: ProjectReferralResponse | null;
