@@ -66,6 +66,7 @@ import {
 } from "../utils/costOfGoods";
 import { isPartial } from "../api/partial";
 import { type CopyMode, isTerminalOutcome } from "../utils/salesFollowUp";
+import SalesFollowUpTab from "./SalesFollowUpTab";
 import { useProformaList } from "../api/useProformaList";
 import { useUserDirectory } from "../api/useUserDirectory";
 import { useModuleNotes } from "../api/moduleNotes";
@@ -631,6 +632,8 @@ export default function ProformasView({
    * and an independent quotation; `versionQuestion` holds both numbers while
    * they decide what becomes of the one a revision replaced.
    */
+  /** «اسناد» (the register) or «پیگیری فروش» (the sales desk's working list). */
+  const [mainTab, setMainTab] = useState<'documents' | 'follow-up'>('documents');
   const [copyTarget, setCopyTarget] = useState<Proforma | null>(null);
   const [versionQuestion, setVersionQuestion] = useState<{
     newId: string; newNumber: string; previousNumber: string;
@@ -2564,14 +2567,54 @@ export default function ProformasView({
             ارزش افزوده و رهگیری بازرگانی
           </p>
         </div>
-        <button
-          onClick={handleOpenCreate}
-          className="px-4 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-sky-500/15 flex items-center gap-2"
-        >
-          <Plus size={16} />
-          صدور پیش‌فاکتور جدید
-        </button>
+        <div className="flex items-center gap-2">
+          {/*
+            Two ways to read the same documents.
+
+            «اسناد» is the register — every quotation, by project. «پیگیری فروش»
+            is the sales desk's working list: the ones that have gone out and
+            still need chasing, ordered by what needs attention first. It is a
+            tab here rather than a module of its own because it is the same
+            records, asked a different question.
+          */}
+          <div className="flex rounded-xl border border-slate-200 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setMainTab('documents')}
+              id="proformas-tab-documents"
+              className={`px-4 py-2 text-xs font-bold transition ${
+                mainTab === 'documents' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              اسناد
+            </button>
+            <button
+              type="button"
+              onClick={() => setMainTab('follow-up')}
+              id="proformas-tab-follow-up"
+              className={`px-4 py-2 text-xs font-bold transition ${
+                mainTab === 'follow-up' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              پیگیری فروش
+            </button>
+          </div>
+          <button
+            onClick={handleOpenCreate}
+            className="px-4 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-sky-500/15 flex items-center gap-2"
+          >
+            <Plus size={16} />
+            صدور پیش‌فاکتور جدید
+          </button>
+        </div>
       </div>
+
+      {/* The follow-up queue reads its own endpoint and is held off until it is
+          opened — a list hook fetches on mount. */}
+      {mainTab === 'follow-up' && <SalesFollowUpTab active settings={settings} />}
+
+      {mainTab === 'documents' && (
+      <>
       {/* Search and Filters row */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex flex-col md:flex-row gap-4 items-center">
         <div className="relative w-full md:flex-1">
@@ -3067,6 +3110,8 @@ export default function ProformasView({
           </div>
         )}
       </div>
+      </>
+      )}
       {/* Status Adjustment Modal */}
       {showStatusModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">

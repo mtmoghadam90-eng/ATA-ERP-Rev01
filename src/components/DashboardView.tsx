@@ -29,6 +29,7 @@ import CustomerValueMatrix from './CustomerValueMatrix';
 import { getTodayShamsi, toShamsiStr } from '../dateUtils';
 import { ApiError } from '../api/client';
 import { useDashboard } from '../api/dashboard';
+import FollowUpHealthSection from './FollowUpHealthSection';
 import { useExchangeRates } from '../api/exchangeRates';
 import { inboxApi, ReferralRow } from '../api/inbox';
 import { useRevalidate } from '../api/liveData';
@@ -328,6 +329,17 @@ export default function DashboardView({
         </div>
 
       </div>
+
+      {/*
+        Sales follow-up health.
+
+        Two of these have a target of zero and are the point of the section: a
+        quotation nobody has planned a next move on, and one whose planned move
+        is late. Neither is visible anywhere else — the proformas register shows
+        a document's commercial outcome, which says nothing about whether
+        anybody is still chasing it. Every card opens the follow-up screen.
+      */}
+      <FollowUpHealthSection onOpen={() => setActiveTab('proformas')} />
 
       {/* 3. Main Row: Sales & Exchange Rates */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
