@@ -2736,7 +2736,16 @@ head("Proforma filter: the grid filters on what the badge says");
    * what the badge says.
    */
   const LINE_STATUSES = ["برنده", "بازنده", "لغو شده", "در انتظار", null];
-  const DOC_STATUSES = ["پیش‌نویس", "ارسال شده", "تأیید شده", null];
+  /*
+   * The document's own status is never null: `proformas.status` is NOT NULL.
+   *
+   * It used to be swept as a possible value, and the clause carried a matching
+   * `{ status: null }` branch to satisfy it — which Prisma rejects outright on
+   * a non-nullable column ("Argument `status` is missing"), taking the whole
+   * query and the screen using it down. A line's status is nullable and stays
+   * in the sweep above.
+   */
+  const DOC_STATUSES = ["پیش‌نویس", "ارسال شده", "تأیید شده"];
 
   const shapes: { status: string | null; isCancelled: boolean; items: { status: string | null }[] }[] = [];
   for (const status of DOC_STATUSES) {
@@ -4072,8 +4081,10 @@ head("Sales follow-up: chasing a quotation");
   ok("a won quotation is terminal", isTerminalOutcome("تأیید شده (برنده)"));
   ok("so is a lost one", isTerminalOutcome("باخته"));
   ok("and a cancelled one", isTerminalOutcome("لغو شده"));
-  ok("but نیمه برنده is still being sold, so it is not",
-    !isTerminalOutcome("نیمه برنده"));
+  // Part-won is settled too, on the business's reading: it is reached when some
+  // lines were won and the rest closed off, so there is nothing left to ask.
+  ok("and a part-won one, which here means the rest were closed off",
+    isTerminalOutcome("نیمه برنده"));
   ok("nor is a document still running", !isTerminalOutcome("جاری"));
 
   /*
@@ -4265,14 +4276,15 @@ head("Sales follow-up: chasing a quotation");
     const where = chaseableWhere();
     const LINE_STATUSES = [ITEM_WON, ITEM_LOST, ITEM_CANCELLED, "جاری", null];
     /*
-     * Including null and a status nobody anticipated.
+     * Including a status nobody anticipated, but not null.
      *
-     * `Proforma.status` is free text as far as the database is concerned, and a
-     * document is dropped from this screen by a clause that fails to match — so
-     * the sweep has to cover the values that were never designed for, not only
-     * the three the forms offer.
+     * A document is dropped from this screen by a clause that fails to match, so
+     * the sweep covers values that were never designed for. Null is not one of
+     * them: `proformas.status` is NOT NULL, and a clause that tried to match it
+     * against null would not merely be dead — Prisma rejects the filter and the
+     * whole query fails. That is checked separately, below.
      */
-    const DOC_STATUSES = ["پیش‌نویس", "ارسال شده", "جاری", "تأیید شده (برنده)", null];
+    const DOC_STATUSES = ["پیش‌نویس", "ارسال شده", "جاری", "تأیید شده (برنده)"];
     const disagreements: string[] = [];
     let checked = 0;
 
@@ -4302,6 +4314,36 @@ head("Sales follow-up: chasing a quotation");
     ok(`the queue's query matches the outcome rule over ${checked} shapes`,
       disagreements.length === 0, disagreements.slice(0, 4));
 
+    /*
+     * No clause may compare the document's own status against null.
+     *
+     * `proformas.status` is NOT NULL, so Prisma's filter type does not accept
+     * null there and the query fails outright — "Argument `status` is missing"
+     * — taking the whole screen with it. A line's status is nullable and its
+     * null branches are correct and necessary, so this walks the tree and only
+     * inspects `status` keys that are *not* inside an `items` clause.
+     */
+    const nullStatusFilters: string[] = [];
+    const walk = (node: unknown, insideItems: boolean, path: string) => {
+      if (!node || typeof node !== "object") return;
+      for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+        if (key === "items") { walk(value, true, `${path}.${key}`); continue; }
+        if (key === "status" && !insideItems && value === null) {
+          nullStatusFilters.push(`${path}.${key}`);
+        }
+        if (Array.isArray(value)) {
+          value.forEach((v, i) => walk(v, insideItems, `${path}.${key}[${i}]`));
+        } else if (value && typeof value === "object") {
+          walk(value, insideItems, `${path}.${key}`);
+        }
+      }
+    };
+    for (const outcome of [...DERIVED_OUTCOMES, "ارسال شده", "پیش‌نویس"]) {
+      walk(outcomeWhere(String(outcome)), false, String(outcome));
+    }
+    ok("no clause filters the document's non-nullable status against null",
+      nullStatusFilters.length === 0, nullStatusFilters);
+
     /* Spelled out, because these are the cases that were reported. */
     const shape = (lines: string[], status = "ارسال شده", isCancelled = false) =>
       ({ status, isCancelled, items: lines.map((st) => ({ status: st })) });
@@ -4321,9 +4363,26 @@ head("Sales follow-up: chasing a quotation");
       matchesWhere(where as never, shape([], "ارسال شده") as never));
     ok("so is one whose lines are still running",
       matchesWhere(where as never, shape(["جاری", "جاری"]) as never));
-    // Part won, part still being sold: exactly what somebody should be chasing.
-    ok("and a part-won one is in, because the rest is still being sold",
-      matchesWhere(where as never, shape([ITEM_WON, "جاری"]) as never));
+    // Part-won is settled here: the remaining lines were closed off, so the
+    // document's fate is decided and nobody needs to chase it.
+    ok("a part-won one is out",
+      !matchesWhere(where as never, shape([ITEM_WON, ITEM_CANCELLED]) as never));
+
+    /*
+     * The three sets partition the outcome space.
+     *
+     * Every outcome is either settled, worth chasing, or a draft that has not
+     * been sent — and none is in two of those at once. An outcome that fell
+     * through all three would silently vanish from the screen without anyone
+     * deciding it should.
+     */
+    const ALL_OUTCOMES = [...DERIVED_OUTCOMES, "ارسال شده", "پیش‌نویس"];
+    const unclassified = ALL_OUTCOMES.filter(
+      (o) => !isTerminalOutcome(o) && !isChaseableOutcome(o) && o !== "پیش‌نویس",
+    );
+    ok("every outcome is settled, chaseable or a draft", unclassified.length === 0, unclassified);
+    const both = ALL_OUTCOMES.filter((o) => isTerminalOutcome(o) && isChaseableOutcome(o));
+    ok("and none is both at once", both.length === 0, both);
   }
 
   // What a follow-up closed by the system says. It records that the sale
