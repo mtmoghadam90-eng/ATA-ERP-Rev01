@@ -6,6 +6,7 @@ import { notifyModuleResponsible } from "./notificationService";
 import { expandDateFields } from "../dates";
 import { isChannel, renderTemplate } from "../../utils/messaging";
 import { messageVariables, queueForCustomer } from "./messaging/messageService";
+import { FINISHED_TASK_STATUSES, normalizeTaskKind } from "../../utils/salesFollowUp";
 
 /**
  * Workflow automation system.
@@ -162,6 +163,54 @@ export async function executeRule(
         // had a NULL `dueDate` and fell out of every due-date sort and filter.
         const dueDate = addDaysToShamsi(getTodayShamsi(), config.dueDaysOffset || 0);
         const assignee = await resolveAssignee(finalAssignedTo);
+        const taskKind = normalizeTaskKind(config.taskKind);
+
+        /*
+         * What the task is *about*, which is not always the project.
+         *
+         * A payload naming a proforma attaches the task to that proforma: a
+         * follow-up on «کدام پیش‌فاکتور» is the question the sales desk asks,
+         * and a task pointing at the project cannot answer it when the project
+         * carries three open quotations. The assignee is still resolved through
+         * the project — SALES_EXPERT above — so the task is on the document and
+         * on the right person's desk, which are two different questions.
+         */
+        const related = enrichedPayload.proformaId
+          ? {
+              relatedToType: "proforma",
+              relatedToId: String(enrichedPayload.proformaId),
+              relatedToName: enrichedPayload.proformaNumber
+                ? String(enrichedPayload.proformaNumber)
+                : null,
+            }
+          : {
+              relatedToType: enrichedPayload.projectId ? "project" : null,
+              relatedToId: enrichedPayload.projectId || null,
+              relatedToName: enrichedPayload.projectName || null,
+            };
+
+        /*
+         * Don't raise a second one while the first is still open.
+         *
+         * The trigger fires on every qualifying event — a quotation re-sent, a
+         * status nudged back and forth — and without this each firing lands
+         * another follow-up on a document somebody is already chasing. Checked
+         * here rather than in the caller because the caller is the workflow
+         * engine for every rule, and because the answer has to be read at the
+         * moment of writing to be worth anything.
+         */
+        if (config.skipIfOpenSameKind && related.relatedToId) {
+          const open = await db.task.findFirst({
+            where: {
+              taskKind,
+              relatedToType: related.relatedToType,
+              relatedToId: related.relatedToId,
+              status: { notIn: [...FINISHED_TASK_STATUSES] },
+            },
+            select: { id: true },
+          });
+          if (open) continue;
+        }
 
         // Create task
         await db.task.create({
@@ -173,11 +222,10 @@ export async function executeRule(
             ...expandDateFields({ dueDate }, ["dueDate"]),
             priority: config.priority || "متوسط",
             status: "در انتظار",
+            taskKind,
             assignedToUserId: assignee.assignedToUserId,
             assignedToName: assignee.assignedToName,
-            relatedToType: enrichedPayload.projectId ? "project" : null,
-            relatedToId: enrichedPayload.projectId || null,
-            relatedToName: enrichedPayload.projectName || null,
+            ...related,
           },
         });
       } else if (action.type === "send_message" && action.messageConfig) {
@@ -314,6 +362,30 @@ export async function executeRule(
 export async function enrichPayload(payload: any, triggerType: string, db: any = getDb()): Promise<any> {
   const enriched = { ...payload };
 
+  /*
+   * 0. The proforma first, because it names the project.
+   *
+   * The project and customer blocks below resolve names from ids, so an id this
+   * step supplies has to be in the payload before they run. It used to sit
+   * fifth, which meant a rule triggered on a proforma had no `projectName` for
+   * its title and no project for SALES_EXPERT to read.
+   */
+  if (enriched.proformaId) {
+    const pf = await db.proforma.findUnique({
+      where: { id: enriched.proformaId },
+      // The project comes down with it so a rule triggered on a proforma can
+      // still resolve SALES_EXPERT: the follow-up belongs to the document and
+      // its owner belongs to the job, and a payload carrying only the first
+      // leaves the assignee falling back to «admin».
+      select: { proformaNumber: true, projectId: true, customerId: true },
+    });
+    if (pf) {
+      if (!enriched.proformaNumber) enriched.proformaNumber = pf.proformaNumber;
+      if (!enriched.projectId && pf.projectId) enriched.projectId = pf.projectId;
+      if (!enriched.customerId && pf.customerId) enriched.customerId = pf.customerId;
+    }
+  }
+
   // 1. Resolve Project Info
   if (enriched.projectId) {
     const proj = await db.project.findUnique({
@@ -369,17 +441,6 @@ export async function enrichPayload(payload: any, triggerType: string, db: any =
     }
   } else if (triggerType === "product_created" || triggerType === "product_low_stock") {
     if (!enriched.productName) enriched.productName = enriched.name;
-  }
-
-  // 5. Resolve Proforma Info
-  if (enriched.proformaId) {
-    const pf = await db.proforma.findUnique({
-      where: { id: enriched.proformaId },
-      select: { proformaNumber: true },
-    });
-    if (pf) {
-      if (!enriched.proformaNumber) enriched.proformaNumber = pf.proformaNumber;
-    }
   }
 
   // 6. Resolve Purchase Order Info

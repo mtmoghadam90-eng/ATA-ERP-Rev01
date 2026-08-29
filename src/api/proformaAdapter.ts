@@ -70,6 +70,15 @@ export function rowToProforma(row: ProformaRow): Proforma {
     sentRecipients: parseJson<string[]>(row.sentRecipients, []),
     lossReason: row.lossReason ?? undefined,
     customValues: parseJson<Record<string, unknown>>(row.customValues, {}),
+    // Follow-up and the revision chain. Both ends come down as records, so the
+    // card can print «نسخه جدید از PF-A» without resolving a number out of
+    // whatever page a picker happens to be holding.
+    followUpState: (row.followUpState ?? "OPEN") as Proforma["followUpState"],
+    deferredUntil: row.deferredUntilJalali ?? undefined,
+    previousVersionId: row.previousVersionId ?? undefined,
+    previousVersionNumber: row.previousVersion?.proformaNumber ?? undefined,
+    nextVersionId: row.nextVersions?.[0]?.id ?? undefined,
+    nextVersionNumber: row.nextVersions?.[0]?.proformaNumber ?? undefined,
     // A list row carries only what the grid prints beside the customer — each
     // line's name, quantity and status. Prices and specs arrive with the detail
     // record, which is the only place they are needed.
@@ -169,6 +178,10 @@ export function proformaToWriteInput(proforma: Partial<Proforma>): ProformaWrite
     sentMethod: proforma.sentMethod ?? null,
     sentRecipients: proforma.sentRecipients,
     customValues: proforma.customValues,
+    // Only when the form carries one. A document that is not a revision must
+    // send nothing here rather than a null, or an ordinary edit of a revision
+    // would quietly detach it from the version it revises.
+    ...(proforma.previousVersionId ? { previousVersionId: proforma.previousVersionId } : {}),
     items: (proforma.items ?? []).map((item) => ({
       // Sent back as a correlation key, not as a value to store: the server
       // re-inserts every line with a fresh id. It is how a save by a user who

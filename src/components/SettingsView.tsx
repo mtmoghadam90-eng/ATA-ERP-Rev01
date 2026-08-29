@@ -51,6 +51,7 @@ import ConfirmModal from './ConfirmModal';
 import { uploadFile } from '../imageUtils';
 import { REQUIRED_FIELDS_METADATA, DEFAULT_REQUIRED_FIELDS } from '../utils/requiredFields';
 import CustomerValueSettingsPanel from './CustomerValueSettingsPanel';
+import { TASK_KINDS, TASK_KIND_LABELS } from '../utils/salesFollowUp';
 
 interface SettingsViewProps {
   settings: ERPSettings;
@@ -248,6 +249,7 @@ export default function SettingsView({
     'equipmentTypes',
     'supplierInquirySteps',
     'proformaSentMethods',
+    'followUpResults',
     'lossReasons'
   ];
 
@@ -269,6 +271,7 @@ export default function SettingsView({
     equipmentTypes: 'انواع پیش‌فرض تجهیزات ابزار دقیق (پروژه‌ها)',
     supplierInquirySteps: 'مراحل و رویدادهای استعلام (استعلام‌ها)',
     proformaSentMethods: 'طرق ارسال پیش‌فاکتور (پیش‌فاکتور)',
+    followUpResults: 'نتایج پیگیری فروش (پیگیری پیش‌فاکتور)',
     lossReasons: 'دلایل باخت پروژه/اقلام (پروژه‌ها/پیش‌فاکتور)'
   };
 
@@ -290,6 +293,7 @@ export default function SettingsView({
     equipmentTypes: 'لیست انواع تجهیزات ابزار دقیق (مانند فلومتر کوریولیس، ترانسمیتر فشار، لول ترانسمیتر راداری و غیره) برای ثبت سریع درخواست‌های پروژه‌ها.',
     supplierInquirySteps: 'مراحل و رویدادهای پیش‌فرض برای ثبت گردش کار استعلام‌های قیمت از تأمین‌کنندگان خارجی.',
     proformaSentMethods: 'روش‌های ارسال پیش‌فاکتور به کارفرما جهت ثبت در زمان اعلام وضعیت ارسال‌شده.',
+    followUpResults: 'نتیجه‌ای که کارشناس فروش هنگام بستن یک پیگیری ثبت می‌کند (مثال: در حال بررسی فنی، خرید به تعویق افتاد). این فهرست «دلیل باخت» نیست؛ دلایل باخت جدا مدیریت می‌شوند.',
     lossReasons: 'دلایل باخت تعریف شده که کاربر می‌تواند هنگام مشخص کردن وضعیت بازنده یا لغو پروژه/پیش‌فاکتور انتخاب کند.'
   };
 
@@ -3178,6 +3182,10 @@ export default function SettingsView({
                       <optgroup label="پیش‌فاکتورها و پروژه‌ها">
                         <option value="proforma_created">ایجاد پیش‌فاکتور جدید</option>
                         <option value="proforma_outcome_change">تغییر وضعیت نهایی پیش‌فاکتور</option>
+                        {/* The stored status — «ارسال شده» and the like — which
+                            is a different event from the derived commercial
+                            outcome above and is what a follow-up rule hangs on. */}
+                        <option value="proforma_status_change">تغییر وضعیت ثبت‌شده پیش‌فاکتور (مثلاً ارسال شده)</option>
                         <option value="project_created">ایجاد پروژه جدید</option>
                         <option value="project_status_change">تغییر وضعیت پروژه</option>
                       </optgroup>
@@ -3313,6 +3321,7 @@ export default function SettingsView({
                         const fieldMap: Record<string, string> = {
                           proforma_created: 'status',
                           proforma_outcome_change: 'newOutcome',
+                          proforma_status_change: 'newStatus',
                           project_created: 'status',
                           project_status_change: 'newStatus',
                           customer_created: 'type',
@@ -3402,6 +3411,18 @@ export default function SettingsView({
                             { value: 'proformaAmount', label: 'مبلغ پیش‌فاکتور' }
                           ];
                           valueOptions = ['تأیید شده (برنده)', 'نیمه برنده', 'باخته', 'لغو شده', 'در حال بررسی', 'پیش‌نویس'];
+                        } else if (editingRule.triggerType === 'proforma_status_change') {
+                          // The stored column, so the values are the document
+                          // statuses a user picks on the form — not the derived
+                          // outcomes above, which never include «ارسال شده».
+                          fieldOptions = [
+                            { value: 'newStatus', label: 'وضعیت جدید ثبت‌شده' },
+                            { value: 'oldStatus', label: 'وضعیت قبلی ثبت‌شده' },
+                            { value: 'proformaAmount', label: 'مبلغ پیش‌فاکتور' }
+                          ];
+                          valueOptions = settings.dropdownItems?.proformaStatuses?.length
+                            ? settings.dropdownItems.proformaStatuses
+                            : ['پیش‌نویس', 'ارسال شده'];
                         } else if (editingRule.triggerType === 'proforma_created') {
                           fieldOptions = [
                             { value: 'status', label: 'وضعیت پیش‌فاکتور' },
@@ -3811,6 +3832,52 @@ export default function SettingsView({
                                     dir="ltr"
                                   />
                                 </div>
+
+                                {/*
+                                  What kind of work the rule raises.
+
+                                  «پیگیری فروش» is what puts a task into the
+                                  follow-up queue, lets the duplicate check below
+                                  find it, and gets it closed automatically when
+                                  the quotation is won or lost. An ordinary task
+                                  is none of those things, which is why this is a
+                                  choice and not a guess from the title.
+                                */}
+                                <div>
+                                  <label className="block text-slate-600 text-[11px] font-bold mb-1">نوع وظیفه</label>
+                                  <select
+                                    value={act.taskConfig.taskKind || 'GENERAL'}
+                                    onChange={(e) => {
+                                      const updatedActs = [...editingRule.actions];
+                                      updatedActs[actIdx].taskConfig!.taskKind = e.target.value as 'GENERAL' | 'SALES_FOLLOW_UP';
+                                      setEditingRule({ ...editingRule, actions: updatedActs });
+                                    }}
+                                    className="w-full border border-slate-200 rounded-lg p-2.5 bg-white"
+                                  >
+                                    {TASK_KINDS.map((kind) => (
+                                      <option key={kind} value={kind}>{TASK_KIND_LABELS[kind]}</option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div className="md:col-span-2">
+                                  <label className="flex items-center gap-2 text-[11px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!act.taskConfig.skipIfOpenSameKind}
+                                      onChange={(e) => {
+                                        const updatedActs = [...editingRule.actions];
+                                        updatedActs[actIdx].taskConfig!.skipIfOpenSameKind = e.target.checked;
+                                        setEditingRule({ ...editingRule, actions: updatedActs });
+                                      }}
+                                      className="w-4 h-4 accent-sky-500"
+                                    />
+                                    اگر وظیفه بازی از همین نوع روی همین رکورد وجود دارد، وظیفه جدید ساخته نشود
+                                  </label>
+                                  <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                                    برای پیگیری فروش توصیه می‌شود؛ در غیر این صورت هر بار ارسال مجدد یا ویرایش وضعیت، یک پیگیری تکراری می‌سازد.
+                                  </p>
+                                </div>
                               </div>
                             )}
 
@@ -4057,6 +4124,7 @@ export default function SettingsView({
                     {(settings.workflows || []).map((rule) => {
                       const triggerLabelMap: Record<string, string> = {
                         proforma_outcome_change: 'تغییر وضعیت نهایی پیش‌فاکتور',
+                        proforma_status_change: 'تغییر وضعیت ثبت‌شده پیش‌فاکتور',
                         project_status_change: 'تغییر وضعیت پروژه',
                         purchase_order_status_change: 'تغییر وضعیت سفارش خرید',
                         packaging_delivery_created: 'ثبت بسته‌بندی و تحویل',
