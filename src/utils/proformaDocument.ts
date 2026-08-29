@@ -248,7 +248,10 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
           align-items: center;
           border-bottom: 2px solid ${template.titleColor};
           padding-bottom: 20px;
-          margin-bottom: 20px;
+          /* Repeated on every page, so every point here is a point off every
+             sheet. Twelve reads the same as twenty under a rule that already
+             has twenty above it. */
+          margin-bottom: 12px;
       }
       .logo-box {
           display: flex;
@@ -355,7 +358,7 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
        * sheet.
        */
       .table-container {
-          margin-bottom: 14px;
+          margin-bottom: 10px;
       }
       .table-container > table {
           border: 1px solid #e2e8f0;
@@ -421,7 +424,10 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
           display: grid;
           grid-template-columns: 1.2fr 0.8fr;
           gap: 14px;
-          margin-bottom: 20px;
+          /* Was 20px of plain air between the totals and the seal below them,
+             which is most of what used to push the seal onto a sheet of its
+             own. */
+          margin-bottom: 2px;
       }
       /* Same reason as the grid around it: the terms have no fixed length. */
       .notes-card {
@@ -435,7 +441,7 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
       .totals-card {
           border: 1px solid #e2e8f0;
           border-radius: 8px;
-          padding: 12px;
+          padding: 10px 12px;
           background-color: #f8fafc;
           font-size: 12px;
           page-break-inside: avoid;
@@ -467,37 +473,109 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
           margin-top: 4px;
       }
       /*
-       * The seal and signature, kept small on purpose.
+       * The seal and signature, kept small on purpose — and now in one place.
        *
-       * A proforma with a single item was printing on two pages, with nothing
-       * on the second but this block — the stamp panel alone stood 100px tall
-       * with 45px of margin above it. Everything here is sized so that one
-       * item, its photograph and its specifications, the totals and the seal
-       * all land on the same sheet.
+       * Every dimension here used to be an inline style, written out twice: once
+       * for a template with a company seal and once for a template without. Two
+       * copies of a height is how a block comes to be a different size depending
+       * on a setting nobody connected to it, and it is why the sizes below could
+       * not be tuned without editing four places.
+       *
+       * The sizes themselves are the answer to a specific fault. A proforma with
+       * a single item once printed on two pages with nothing on the second but
+       * this block; more recently a three-item and an eight-item document each
+       * ended with a sheet carrying the seal and nothing else, because the block
+       * stood about 48pt tall and the space left under the totals was 36. It is
+       * now short enough to land on the page its document ends on — verified by
+       * printing eleven documents of different lengths and looking at the last
+       * page of each.
        */
       .signatures {
           display: flex;
           justify-content: flex-end;
-          margin-top: 6px;
+          margin-top: 0;
           text-align: center;
           page-break-inside: avoid;
           break-inside: avoid;
+          /*
+           * And never alone at the top of a sheet.
+           *
+           * Shrinking the block buys room but cannot win the argument: whatever
+           * height it is, some document ends a point short and the seal goes
+           * over on its own — which is a page carrying a stamp and nothing
+           * else. This asks the browser to keep it with what comes before it,
+           * so the last sheet is the totals, the terms and the seal together.
+           * It is a preference, not a demand: when the block before it genuinely
+           * cannot move, the break happens anyway, which is what stops this from
+           * becoming the "must not break, taller than a page" trap that emptied
+           * page one.
+           */
+          page-break-before: avoid;
+          break-before: avoid;
       }
       .signature-box {
-          padding-top: 4px;
+          width: 178px;
+          border: 1px solid #f1f5f9;
+          border-radius: 8px;
+          padding: 2px 6px;
+          background-color: #fafafa;
           page-break-inside: avoid;
           break-inside: avoid;
       }
-      .signature-title {
-          font-size: 10px;
-          color: #64748b;
-          font-weight: bold;
-          margin-bottom: 30px;
-      }
       .signature-name {
           font-weight: bold;
-          font-size: 12px;
+          font-size: 9px;
           color: #334155;
+          margin-bottom: 2px;
+      }
+      /* The strip holding the signature, and the seal beside it when the
+         template carries one. */
+      .seal-panel {
+          display: flex;
+          justify-content: space-evenly;
+          align-items: center;
+          gap: 4px;
+          height: 24px;
+          background-color: #ffffff;
+          border-radius: 6px;
+          border: 1px dashed #cbd5e1;
+          padding: 2px;
+      }
+      .seal-cell {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          flex: 1;
+      }
+      /* The rule between the two, on the side that separates them in RTL. */
+      .seal-cell + .seal-cell {
+          border-right: 1px solid #f1f5f9;
+          padding-right: 6px;
+      }
+      .seal-label {
+          font-size: 6px;
+          color: #94a3b8;
+          font-weight: bold;
+      }
+      .seal-img {
+          max-height: 20px;
+          max-width: 62px;
+          object-fit: contain;
+      }
+      .seal-img-stamp {
+          max-width: 56px;
+          transform: rotate(-3deg);
+      }
+      /* Alone in the strip, the signature has the whole width to itself. */
+      .seal-panel-single .seal-img {
+          max-height: 22px;
+          max-width: 130px;
+      }
+      .seal-missing {
+          font-size: 9px;
+          color: #cbd5e1;
+          font-weight: bold;
       }
       .buyer-horizontal-row {
           display: flex;
@@ -788,46 +866,30 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
                 template.showSignatures
                   ? `
               <div class="signatures">
-                  <div class="signature-box" style="width: 178px; border: 1px solid #f1f5f9; border-radius: 8px; padding: 4px 6px; background-color: #fafafa;">
-                      <div class="signature-title" style="margin-bottom: 2px; font-size: 8px;">مهر و امضای صادرکننده</div>
-                      <div class="signature-name" style="margin-bottom: 2px; font-size: 9px;">${creatorUser ? creatorUser.fullName : template.signatureLabel1}</div>
-                      <div style="margin-top: 2px;">
+                  <div class="signature-box">
+                      <div class="signature-name">${creatorUser ? creatorUser.fullName : template.signatureLabel1}</div>
+                      <!-- One strip, one set of dimensions. With a company seal
+                           it holds two cells; without, the signature has it to
+                           itself — the difference is a class, not a second copy
+                           of the block. -->
+                      <div class="seal-panel${template.companySealUrl ? "" : " seal-panel-single"}">
+                          <div class="seal-cell">
+                              <span class="seal-label">امضای صادرکننده</span>
+                              ${
+                                creatorUser && creatorUser.signatureImage
+                                  ? `<img class="seal-img" src="${creatorUser.signatureImage}" alt="Signature" referrerPolicy="no-referrer" />`
+                                  : `<span class="seal-missing">فاقد امضا</span>`
+                              }
+                          </div>
                           ${
                             template.companySealUrl
                               ? `
-                              <div style="display: flex; justify-content: space-evenly; align-items: center; gap: 4px; height: 38px; background-color: #ffffff; border-radius: 6px; border: 1px dashed #cbd5e1; padding: 2px;">
-                                  <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1;">
-                                      <span style="font-size: 6px; color: #94a3b8; font-weight: bold; margin-bottom: 0;">امضای صادرکننده</span>
-                                      ${
-                                        creatorUser && creatorUser.signatureImage
-                                          ? `
-                                          <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 30px; max-width: 62px; object-fit: contain;" referrerPolicy="no-referrer" />
-                                      `
-                                          : `
-                                          <span style="font-size: 10px; color: #cbd5e1; font-weight: bold;">فاقد امضا</span>
-                                      `
-                                      }
-                                  </div>
-                                  <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; border-right: 1px solid #f1f5f9; padding-right: 6px;">
-                                      <span style="font-size: 6px; color: #94a3b8; font-weight: bold; margin-bottom: 0;">مهر شرکت</span>
-                                      <img src="${template.companySealUrl}" alt="Company Seal" style="max-height: 30px; max-width: 56px; object-fit: contain; transform: rotate(-3deg);" referrerPolicy="no-referrer" />
-                                  </div>
-                              </div>
+                          <div class="seal-cell">
+                              <span class="seal-label">مهر شرکت</span>
+                              <img class="seal-img seal-img-stamp" src="${template.companySealUrl}" alt="Company Seal" referrerPolicy="no-referrer" />
+                          </div>
                           `
-                              : `
-                              <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 38px; background-color: #ffffff; border-radius: 6px; border: 1px dashed #cbd5e1; padding: 2px;">
-                                  <span style="font-size: 6px; color: #94a3b8; font-weight: bold; margin-bottom: 0;">امضای صادرکننده</span>
-                                  ${
-                                    creatorUser && creatorUser.signatureImage
-                                      ? `
-                                      <img src="${creatorUser.signatureImage}" alt="Signature" style="max-height: 32px; max-width: 130px; object-fit: contain;" referrerPolicy="no-referrer" />
-                                  `
-                                      : `
-                                      <span style="font-size: 10px; color: #cbd5e1; font-weight: bold;">فاقد امضا</span>
-                                  `
-                                  }
-                              </div>
-                          `
+                              : ""
                           }
                       </div>
                   </div>

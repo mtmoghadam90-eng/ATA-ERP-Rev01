@@ -4015,6 +4015,30 @@ head("Printed proforma: the multi-page rules");
     preLineBlocks.length);
 
   ok("all eight items are on the document", (doc.match(/INSTRUMENT \d/g) ?? []).length === 8);
+
+  /*
+   * The seal must never be the only thing on a sheet.
+   *
+   * Shrinking it buys room and cannot win the argument — whatever height the
+   * block is, some document ends a point short. `break-before: avoid` asks the
+   * browser to keep it with the totals above it, and being a preference rather
+   * than a demand it cannot recreate the "unbreakable and taller than a page"
+   * fault that emptied page one.
+   */
+  ok("the seal asks to stay with what comes before it",
+    /\.signatures \{[^}]*break-before:\s*avoid/.test(doc));
+  ok("and still refuses to be split down the middle",
+    /\.signatures \{[^}]*break-inside:\s*avoid/.test(doc));
+
+  /*
+   * One set of dimensions for the seal strip. Every size in this block used to
+   * be an inline style written out twice — once for a template with a company
+   * stamp and once for a template without — which is how a block comes to be a
+   * different height depending on a setting nobody connected to it.
+   */
+  ok("the seal strip is sized in one place", ruleBody(".seal-panel").includes("height"));
+  ok("and the markup carries no second copy of it",
+    (doc.match(/class="seal-panel/g) ?? []).length === 1, doc.match(/class="seal-panel/g));
 }
 
 
