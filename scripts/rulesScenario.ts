@@ -5329,5 +5329,55 @@ head("Project follow-up tab: what happened on this job");
 }
 
 
+head("Migrations: no sqlcmd batch separators");
+{
+  /*
+   * `GO` is not T-SQL.
+   *
+   * It is sqlcmd's batch separator, and Prisma hands each statement to the
+   * driver on its own — so a `GO` between them is read as an identifier and
+   * the whole migration dies with «Incorrect syntax near 'GO'». That is not
+   * hypothetical: `20260903000000_activity_messenger` shipped with them and
+   * the deployment stopped on the server, which is the same class of failure
+   * as the amended-migration one this file already guards.
+   *
+   * Statements are separated by a blank line here, which every other migration
+   * in the tree already does.
+   */
+  const dir = "prisma/migrations";
+  const offenders: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const file = joinPath(dir, name, "migration.sql");
+    let sql: string;
+    try { sql = readFileSync(file, "utf8"); } catch { continue; }
+    sql.split("\n").forEach((line, i) => {
+      // A bare GO on its own line is the separator; the word inside a comment
+      // or a string is somebody writing English.
+      if (/^\s*GO\s*(--.*)?$/i.test(line)) offenders.push(`${name}:${i + 1}`);
+    });
+  }
+  ok("no migration uses a GO batch separator", offenders.length === 0, offenders);
+  // A check that matches nothing passes for the wrong reason, so the predicate
+  // is held against the line that actually broke the deployment.
+  ok("and the check would have caught the one that did",
+    /^\s*GO\s*(--.*)?$/i.test("GO") && /^\s*GO\s*(--.*)?$/i.test("  GO  ")
+    && !/^\s*GO\s*(--.*)?$/i.test("-- no GO anywhere"));
+
+  // The one that failed, specifically: it must still do all four things.
+  const messenger = readFileSync(
+    "prisma/migrations/20260903000000_activity_messenger/migration.sql", "utf8");
+  ok("the messenger migration still adds replyToId",
+    /ADD \[replyToId\]/.test(messenger));
+  ok("indexes it", /project_activities_replyToId_idx/.test(messenger));
+  ok("gives it a foreign key", /project_activities_replyToId_fkey/.test(messenger));
+  ok("and drops the unique constraint on the referral's activityId",
+    /DROP CONSTRAINT \[project_referrals_activityId_key\]/.test(messenger));
+  // Guarded, because part of it may already have landed on the attempt that
+  // failed half way through the file.
+  ok("every step is guarded, so a partial apply can be re-run",
+    (messenger.match(/IF (NOT )?EXISTS|IF COL_LENGTH/g) ?? []).length >= 5);
+}
+
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
