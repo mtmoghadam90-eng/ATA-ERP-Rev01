@@ -10,7 +10,17 @@ import { TaskRow } from "./tasks";
  * describe the page rather than the result.
  */
 
+/**
+ * Which half of the board.
+ *
+ * A convenience on top of the server's own scope, never instead of it: what a
+ * user may see at all is decided by `visibilityClause`, so «all» here means
+ * «everything I am allowed to see», not «everything».
+ */
+export type TaskScope = "toMe" | "fromMe" | "all";
+
 export interface TaskListFilters {
+  scope: TaskScope;
   status: string;
   priority: string;
   assignedToUserId: string;
@@ -21,6 +31,9 @@ export interface TaskListFilters {
 }
 
 const EMPTY_FILTERS: TaskListFilters = {
+  // Opens on what was given to me, which is what somebody signing in wants to
+  // know. «از طرف من» and «همه» are one click away.
+  scope: "toMe",
   status: "all",
   priority: "all",
   assignedToUserId: "all",
@@ -34,6 +47,7 @@ export function useTaskList(initialSearch = "") {
   const [filters, setFilters] = useState<TaskListFilters>(EMPTY_FILTERS);
 
   const params = useMemo(() => ({
+    scope: filters.scope === "all" ? undefined : filters.scope,
     status: filters.status,
     priority: filters.priority,
     assignedToUserId: filters.assignedToUserId,
@@ -65,7 +79,7 @@ export function useTaskList(initialSearch = "") {
   const clearFilters = () => setFilters(EMPTY_FILTERS);
 
   const hasActiveFilters =
-    filters.status !== "all" || filters.priority !== "all"
+    filters.scope !== "toMe" || filters.status !== "all" || filters.priority !== "all"
     || filters.assignedToUserId !== "all" || filters.relatedToType !== "all"
     || filters.overdue || !!filters.dateFrom || !!filters.dateTo;
 

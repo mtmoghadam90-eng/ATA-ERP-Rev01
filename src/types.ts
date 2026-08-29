@@ -567,6 +567,8 @@ export interface Task {
   title: string;
   description: string;
   relatedToType: 'مشتری' | 'پروژه' | 'پیش‌فاکتور' | 'سفارش خرید' | 'عمومی' | 'خدمات پس از فروش' | 'بسته‌بندی و تحویل' | 'استعلام تامین‌کننده';
+  /** Who raised it, kept beside the id so history survives a deactivated account. */
+  createdByName?: string;
   /** The job behind the task — code, name and customer — joined by the server. */
   relatedProject?: {
     id: string; code: string; name: string; customerName: string | null;
@@ -880,6 +882,16 @@ export interface User {
      * fields so nobody is shown empty boxes.
      */
     costs?: boolean;
+    /**
+     * Seeing the whole company's tasks rather than one's own.
+     *
+     * Read **strictly** — an absent value denies, like `costs` and `assistant`
+     * and unlike every module flag above. The board used to show everybody
+     * everything precisely because an absent module key reads as granted, and
+     * every account has `tasks` since everybody needs their own work; a flag
+     * inheriting that default would reproduce the fault on the day it shipped.
+     */
+    tasksAll?: boolean;
   };
 }
 

@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
-import { AuthUser, hasPermission } from "../auth";
+import { AuthUser, canSeeAllTasks } from "../auth";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate } from "../dates";
 import { toJsonColumn, toNullableString } from "../childSync";
 import { notifyModuleResponsible } from "./notificationService";
@@ -23,9 +23,45 @@ const SEARCH_FIELDS = ["title", "description", "relatedToName", "assignedToName"
 
 export const TASK_DATE_FIELDS = ["dueDate", "reminderDate"] as const;
 
+/** Which half of the board is being asked for. */
+export type TaskScope = "toMe" | "fromMe" | "all";
+
+/**
+ * The rows this user may see at all.
+ *
+ * It used to be «no restriction for anybody holding the `tasks` permission»,
+ * and `hasPermission` reads an absent key as granted — so since every account
+ * has the tasks module (everybody needs to see their own work), every account
+ * saw every task in the company. The only way to get privacy was to be *denied*
+ * the module, which is backwards: denying it was meant to hide the screen.
+ *
+ * A task now belongs to two people: the one it was given to, and the one who
+ * gave it. Scoping to the assignee alone would be worse than the fault — a task
+ * you raised for a colleague would vanish from your own board with no column to
+ * find it by, which is why `createdByUserId` was added alongside this.
+ *
+ * `canSeeAllTasks` is read strictly, so nobody is quietly granted the whole
+ * company by a permissions object written before the flag existed.
+ */
 export function visibilityClause(user: AuthUser): Record<string, unknown> | undefined {
-  if (hasPermission(user, "tasks")) return undefined;
-  return { assignedToUserId: user.id };
+  if (canSeeAllTasks(user)) return undefined;
+  return { OR: [{ assignedToUserId: user.id }, { createdByUserId: user.id }] };
+}
+
+/**
+ * The tab, narrowed within what the user may see.
+ *
+ * Deliberately *on top of* `visibilityClause` rather than instead of it: a tab
+ * is a convenience and must never be the thing that enforces the scope, or a
+ * client that omits it sees everything.
+ */
+export function scopeClause(
+  user: AuthUser,
+  scope: TaskScope | undefined,
+): Record<string, unknown> | undefined {
+  if (scope === "toMe") return { assignedToUserId: user.id };
+  if (scope === "fromMe") return { createdByUserId: user.id };
+  return undefined;
 }
 
 export function buildTaskWhere(
@@ -38,12 +74,16 @@ export function buildTaskWhere(
     relatedToId?: unknown;
     reminderDate?: unknown;
     reminderTime?: unknown;
+    scope?: TaskScope;
   } = {},
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
 
   const visibility = visibilityClause(user);
   if (visibility) and.push(visibility);
+
+  const scoped = scopeClause(user, extra.scope);
+  if (scoped) and.push(scoped);
 
   const search = searchClause(q.search, SEARCH_FIELDS);
   if (search) and.push(search);
@@ -79,6 +119,7 @@ export function buildTaskWhere(
 
 const LIST_SELECT = {
   id: true, title: true, description: true, priority: true, status: true,
+  createdByUserId: true, createdByName: true,
   relatedToType: true, relatedToId: true, relatedToName: true,
   dueDate: true, dueDateJalali: true,
   assignedToUserId: true, assignedToName: true,
@@ -105,6 +146,7 @@ export async function listTasks(
     relatedToId?: unknown;
     reminderDate?: unknown;
     reminderTime?: unknown;
+    scope?: TaskScope;
   } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
@@ -268,12 +310,28 @@ function scalarData(input: TaskInput): Record<string, unknown> {
 
 export async function createTask(input: TaskInput, user: AuthUser, todayJalali: string) {
   const db = getDb();
+  const author = await db.user.findUnique({
+    where: { id: user.id }, select: { fullName: true },
+  });
+
   const task = await db.task.create({
     data: {
       ...scalarData(input),
       // An unassigned task belongs to whoever raised it, so it appears in
       // someone's list rather than nobody's.
       assignedToUserId: input.assignedToUserId ?? user.id,
+      /*
+       * Taken from the session, never from the body.
+       *
+       * This is half of who may *see* the task, so a client that could set it
+       * could put a task on somebody else's board — or take one off its own.
+       * `WRITABLE` in the route leaves it out for the same reason.
+       *
+       * The name is kept beside the id so the history stays readable when an
+       * account is deactivated, exactly as `assignedToName` is.
+       */
+      createdByUserId: user.id,
+      createdByName: author?.fullName ?? null,
     } as Prisma.TaskUncheckedCreateInput,
   });
 

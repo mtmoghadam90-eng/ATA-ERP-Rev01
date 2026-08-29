@@ -1371,6 +1371,18 @@ model Task {
   assignedToUserId String? @db.NVarChar(36)
   assignedToName   String? @db.NVarChar(200)
 
+  /// Who raised the task.
+  ///
+  /// Added when the board stopped showing everybody everything: a task is
+  /// visible to the person it was given to **and** to the person who gave it,
+  /// and without this column the second half cannot be asked for — a manager
+  /// who assigned work to a colleague would lose sight of it entirely.
+  ///
+  /// Null on every task written before this existed, and on the ones the
+  /// automation raises with nobody acting.
+  createdByUserId String? @db.NVarChar(36)
+  createdByName   String? @db.NVarChar(200)
+
   reminderEnabled    Boolean   @default(false)
   reminderDate       DateTime? @db.Date
   reminderDateJalali String?   @db.NVarChar(10)
@@ -1382,6 +1394,8 @@ model Task {
   updatedAt DateTime @updatedAt
 
   @@index([assignedToUserId, status])
+  /// «کارهایی که من سپرده‌ام» — the other half of the board's own scope.
+  @@index([createdByUserId, status])
   @@index([dueDate])
   @@index([relatedToType, relatedToId])
   /// "Is there still an open follow-up on this proforma" — the duplicate check

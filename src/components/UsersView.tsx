@@ -94,6 +94,10 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     costs: false,
     // Same reasoning, more so: the assistant reads across every module at once.
     assistant: false,
+    // Same again: everybody has the tasks module because everybody needs their
+    // own work, so a flag inheriting «absent means granted» would put the whole
+    // company's board back in front of every account.
+    tasksAll: false,
   });
 
   // Module Persian names and descriptions
@@ -114,6 +118,9 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     { id: 'assistant', name: 'دستیار هوشمند', desc: 'پنل پرسش و پاسخ هوش مصنوعی در داشبورد. جداگانه از دسترسی داشبورد کنترل می‌شود؛ می‌توانید داشبورد را بدهید و این را ندهید. دستیار فقط همان داده‌هایی را می‌بیند که خود کاربر اجازه دیدنش را دارد.' },
     // Not a screen: it governs fields inside modules the user already has.
     { id: 'costs', name: 'مشاهده بهای خرید', desc: 'دیدن قیمت تمام شده: ماشین‌حساب قیمت کالا، هزینه‌های سفارش خرید و مبالغ آفر تأمین‌کنندگان. بدون این دسترسی، این اعداد نمایش داده نمی‌شوند و سفارش خرید و استعلام قابل ذخیره نیست.' },
+    // Also not a screen: it widens what the tasks board shows, not whether it
+    // can be opened at all.
+    { id: 'tasksAll', name: 'مشاهده وظایف همه کاربران', desc: 'دیدن وظایف کل تیم در صفحه «وظایف و پیگیری». بدون این دسترسی هر کاربر فقط وظایفی را می‌بیند که به او ارجاع شده یا خودش ثبت کرده است. برای مدیر فروش یا سرپرست تیم مناسب است.' },
   ];
 
   const handleRoleChange = (selectedRole: 'admin' | 'user') => {
@@ -136,6 +143,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
         users: true,
         costs: true,
         assistant: true,
+        tasksAll: true,
       });
     }
   };
@@ -174,6 +182,9 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
       // Off for a new account: it reads across every module at once, so it is
       // granted deliberately rather than inherited from a template.
       assistant: false,
+      // Off too: a new colleague sees their own work, and somebody decides
+      // afterwards whether they should see the team's.
+      tasksAll: false,
     });
     setShowPassword(false);
     setShowAddModal(true);
@@ -232,6 +243,11 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
       // Read strictly, like `costs`: an absent flag denies. An account written
       // before the assistant existed must not silently gain it.
       assistant: user.permissions?.assistant === true,
+      // Strict as well, and for the sharpest reason of the three: every account
+      // has the tasks module, so «absent means granted» here would hand the
+      // whole company's board to everybody — which is the fault this flag was
+      // introduced to fix.
+      tasksAll: user.permissions?.tasksAll === true,
     });
     setShowPassword(false);
     setShowEditModal(true);
