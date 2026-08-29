@@ -6,7 +6,7 @@ import { getTodayShamsi } from "../../dateUtils";
 import { redactProforma } from "../costs";
 import {
   PROFORMA_FILTERABLE, PROFORMA_SORTABLE, ProformaInput,
-  countProformaReferences, createProforma, deleteProforma, getProforma,
+  cancelSupersededVersion, countProformaReferences, createProforma, deleteProforma, getProforma,
   listProformas, setItemOutcomes, updateProforma,
 } from "../services/proformaService";
 
@@ -24,6 +24,9 @@ const WRITABLE: (keyof ProformaInput)[] = [
   "issueDate", "expiryDate", "deliveryDate",
   "discountPercent", "discountAmount", "taxPercent", "taxAmount", "extraCosts",
   "historicalExchangeRate", "notes", "sentMethod", "sentRecipients", "customValues",
+  // A revision names what it revises. Explicit and writable, because it can
+  // never be inferred: a project routinely carries several open quotations.
+  "previousVersionId",
   "items",
 ];
 
@@ -112,6 +115,44 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
     }
   });
 
+  /**
+   * Cancels the document this revision replaced.
+   *
+   * A separate call because it is a separate decision, made after the revision
+   * is saved and answered by a person: «لغو نسخه قبلی» or «بدون تغییر باقی
+   * بماند». Nothing here assigns a loss reason — a revision is not a lost sale.
+   */
+  app.post("/api/proformas/:id/cancel-previous-version", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const outcome = await cancelSupersededVersion(req.params.id, user, getTodayShamsi());
+      if (outcome === "forbidden") {
+        res.status(403).json({ success: false, error: "شما اجازه تغییر این پیش‌فاکتور را ندارید." });
+        return;
+      }
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "نسخه قبلی یافت نشد." });
+        return;
+      }
+      if (outcome === "no-previous") {
+        res.status(400).json({ success: false, error: "این پیش‌فاکتور نسخه قبلی ندارد." });
+        return;
+      }
+      if (outcome === "already-closed") {
+        res.status(409).json({
+          success: false,
+          code: "ALREADY_CLOSED",
+          error: "نتیجه نهایی نسخه قبلی قبلاً مشخص شده است و تغییر داده نمی‌شود.",
+        });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      sendError(res, err, "POST /api/proformas/:id/cancel-previous-version");
+    }
+  });
+
   app.put("/api/proformas/:id", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
@@ -192,11 +233,18 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
         return;
       }
       if (outcome === "in-use") {
+        const references = await countProformaReferences(req.params.id);
         res.status(409).json({
           success: false,
           code: "IN_USE",
-          error: "این پیش‌فاکتور اسناد وابسته دارد (سفارش خرید، تراکنش یا ارسال) و قابل حذف نیست.",
-          references: await countProformaReferences(req.params.id),
+          // Being the base of a revision is a different problem from having a
+          // purchase order against it, and it has a different answer — cancel
+          // it, do not delete it — so it says so rather than naming documents
+          // the user will go looking for and not find.
+          error: references.nextVersions > 0
+            ? "این پیش‌فاکتور مبنای یک نسخه جدید است و قابل حذف نیست. در صورت نیاز آن را لغو کنید."
+            : "این پیش‌فاکتور اسناد وابسته دارد (سفارش خرید، تراکنش یا ارسال) و قابل حذف نیست.",
+          references,
         });
         return;
       }

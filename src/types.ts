@@ -712,6 +712,14 @@ export interface ERPSettings {
     equipmentTypes?: string[];
     supplierInquirySteps?: string[];
     proformaSentMethods?: string[];
+    /**
+     * What the customer said on a sales follow-up.
+     *
+     * Not a loss reason — `settings.lossReasons` stays exactly where it is —
+     * and not a commercial outcome. «خرید به تعویق افتاد» is a follow-up state,
+     * not a lost sale.
+     */
+    followUpResults?: string[];
   };
   lossReasons: string[];
   activityCategories: { id: string; name: string; module: string; responsibleUserId?: string }[];
@@ -970,6 +978,15 @@ export interface WorkflowRule {
     | 'project_status_change'
     | 'proforma_created'
     | 'proforma_outcome_change'
+    /**
+     * The *stored* status moved — «پیش‌نویس» → «ارسال شده» and the like.
+     *
+     * Separate from `proforma_outcome_change`, which reports the **derived**
+     * commercial result computed from the line statuses. Sending a quotation
+     * changes the first and not the second, so the rule that raises a follow-up
+     * two days after it goes out has nothing to hang on without this.
+     */
+    | 'proforma_status_change'
     | 'product_created'
     | 'product_low_stock'
     | 'supplier_created'
@@ -1014,6 +1031,23 @@ export interface WorkflowRule {
       assignedTo: string; // "MODULE_RESPONSIBLE_<moduleName>", "SALES_EXPERT", or a specific user full name
       priority: 'پایین' | 'متوسط' | 'بالا' | 'فوری';
       dueDaysOffset: number;
+      /**
+       * What kind of task this raises. Absent means GENERAL, which is what
+       * every rule written before this existed keeps meaning.
+       */
+      taskKind?: 'GENERAL' | 'SALES_FOLLOW_UP';
+      /**
+       * Skip the creation when an unfinished task of the same kind is already
+       * attached to the same record.
+       *
+       * A rule fires whenever its trigger fires — re-sending a quotation, an
+       * edit that moves the status back and forth — and without this each
+       * firing raises another follow-up on a proforma somebody is already
+       * chasing. Deliberately an option on the action rather than a rule
+       * hardcoded in the engine: "one task for ever" is not true of every kind
+       * of work an automation might raise.
+       */
+      skipIfOpenSameKind?: boolean;
     };
     notificationConfig?: {
       titleTemplate: string;

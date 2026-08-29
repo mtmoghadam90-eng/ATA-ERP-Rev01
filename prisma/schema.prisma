@@ -682,6 +682,30 @@ model Proforma {
   creatorUserId String? @db.NVarChar(36)
   creator       User?   @relation("ProformaCreator", fields: [creatorUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  /// Sales follow-up, which is **not** the commercial outcome.
+  ///
+  /// OPEN | DEFERRED | NO_RESPONSE, and deliberately nothing else: won, lost,
+  /// cancelled and superseded are already derived from the line statuses and
+  /// `isCancelled` (see src/server/proformaStatus.ts), and a second column
+  /// spelling them again is two sources of truth for one fact. This column
+  /// answers only "is anybody still chasing this quotation, and if not why".
+  followUpState        String    @default("OPEN") @db.NVarChar(20)
+  /// Set with DEFERRED: the day the customer asked to be approached again.
+  deferredUntil        DateTime? @db.Date
+  deferredUntilJalali  String?   @db.NVarChar(10)
+
+  /// The proforma this one revises, when it is explicitly a revision.
+  ///
+  /// A project may legitimately carry several open quotations at once — the
+  /// temperature instruments, the pressure instruments, the flow meters — so a
+  /// revision can never be inferred from sharing a project. It is a relation a
+  /// person creates, or it does not exist. NoAction: a revision must not
+  /// silently delete the document it revises, and cascade paths here are
+  /// already at SQL Server's limit.
+  previousVersionId String?    @db.NVarChar(36)
+  previousVersion   Proforma?  @relation("ProformaVersion", fields: [previousVersionId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  nextVersions      Proforma[] @relation("ProformaVersion")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -693,6 +717,10 @@ model Proforma {
   @@index([customerId])
   @@index([projectId])
   @@index([status])
+  /// The follow-up queue asks for the quotations still being chased.
+  @@index([followUpState])
+  /// "Which revision superseded this one" — read on every proforma card.
+  @@index([previousVersionId])
   @@index([issueDate])
   @@map("proformas")
 }
@@ -1286,6 +1314,24 @@ model Task {
   relatedToId   String? @db.NVarChar(36)
   relatedToName String? @db.NVarChar(400)
 
+  /// What kind of work this task is: GENERAL | SALES_FOLLOW_UP.
+  ///
+  /// The follow-up machinery — the queue, the duplicate check, the automatic
+  /// closing when a quotation is won or lost — must act on sales follow-ups and
+  /// on nothing else. Without a column saying so it would have to guess from
+  /// the title or from `relatedToType`, and either guess would sweep up the
+  /// ordinary tasks somebody attached to the same proforma by hand.
+  taskKind String @default("GENERAL") @db.NVarChar(30)
+
+  /// Filled in when a SALES_FOLLOW_UP task is completed through its own flow.
+  /// `followUpResult` is what the customer said — a value from
+  /// `settings.dropdownItems.followUpResults` — and is **not** a loss reason and
+  /// not a commercial outcome.
+  followUpResult   String?   @db.NVarChar(200)
+  completionNote   String?   @db.NVarChar(Max)
+  completedAt      DateTime? @db.Date
+  completedAtJalali String?  @db.NVarChar(10)
+
   priority String @default("متوسط") @db.NVarChar(20)
   status   String @default("در حال انجام") @db.NVarChar(30)
 
@@ -1308,6 +1354,10 @@ model Task {
   @@index([assignedToUserId, status])
   @@index([dueDate])
   @@index([relatedToType, relatedToId])
+  /// "Is there still an open follow-up on this proforma" — the duplicate check
+  /// on every automatic task creation, and the queue's own join.
+  @@index([taskKind, relatedToType, relatedToId, status])
+  @@index([taskKind, status, dueDate])
   @@map("tasks")
 }
 

@@ -7,6 +7,8 @@ import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } fr
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { scrubProductRefs } from "../refIntegrity";
 import { afterCommit } from "../afterCommit";
+import { closeFollowUpTasks } from "./followUpService";
+import { isTerminalOutcome, versionRefusalReason } from "../../utils/salesFollowUp";
 import { describeProformaChanges, proformaChangeSentence } from "./proformaChanges";
 import {
   ProformaOutcome, deriveProjectStatus, getProformaOutcome, getWonItems, isWonStatus,
@@ -276,6 +278,46 @@ export interface ProformaItemInput {
   selectedImage?: string | null;
 }
 
+/**
+ * Refuses a second revision of the same document.
+ *
+ * A chain is A → B → C, and it is a chain because "the current version" has to
+ * mean something. Allowing a second revision straight off A forks it, and
+ * neither branch is the live one; the person almost always meant to revise B,
+ * so that is what the message says.
+ *
+ * Thrown rather than returned: the message is Persian, which is what `sendError`
+ * turns into a 400 for the form to show. Checked inside the write transaction
+ * because the answer is only worth anything at the moment of writing.
+ */
+export async function assertVersionChain(
+  tx: Prisma.TransactionClient,
+  previousVersionId: string | null | undefined,
+  selfId?: string,
+): Promise<void> {
+  if (!previousVersionId) return;
+
+  const base = await tx.proforma.findUnique({
+    where: { id: previousVersionId },
+    select: { id: true, proformaNumber: true },
+  });
+  if (!base) return; // A dangling id is the reference checker's problem, not this one.
+
+  const existing = await tx.proforma.findFirst({
+    where: {
+      previousVersionId,
+      ...(selfId ? { id: { not: selfId } } : {}),
+    },
+    select: { proformaNumber: true },
+  });
+
+  const refusal = versionRefusalReason({
+    proformaNumber: base.proformaNumber,
+    nextVersionNumber: existing?.proformaNumber ?? null,
+  });
+  if (refusal) throw new Error(refusal);
+}
+
 export interface ProformaInput {
   proformaNumber?: string;
   proformaType?: string;
@@ -301,6 +343,14 @@ export interface ProformaInput {
   sentRecipients?: unknown;
   customValues?: unknown;
   creatorUserId?: string | null;
+  /**
+   * The proforma this one revises, when it is explicitly a revision.
+   *
+   * Never inferred. A project may carry several open quotations at once — the
+   * temperature instruments, the pressure instruments, the flow meters — so
+   * sharing a project says nothing about one superseding another.
+   */
+  previousVersionId?: string | null;
   items?: ProformaItemInput[];
 }
 
@@ -488,6 +538,7 @@ function scalarData(input: ProformaInput): Record<string, unknown> {
   if ("sentRecipients" in input) set("sentRecipients", toJsonColumn(input.sentRecipients));
   if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
   if ("creatorUserId" in input) set("creatorUserId", toNullableString(input.creatorUserId, 36));
+  if ("previousVersionId" in input) set("previousVersionId", toNullableString(input.previousVersionId, 36));
   if ("historicalExchangeRate" in input) {
     set("historicalExchangeRate",
       input.historicalExchangeRate == null || input.historicalExchangeRate === ""
@@ -619,6 +670,8 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
 
     const createCurrency = String(input.currency ?? "ریال");
     if (canSeeCosts(user)) assertLinesCosted(items, createCurrency, input.proformaType);
+    // A revision names the document it revises, and a document may have one.
+    await assertVersionChain(tx, input.previousVersionId);
 
     const createData: Record<string, unknown> = {
       ...scalarData(input),
@@ -691,6 +744,33 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
       },
       user,
     );
+
+    /*
+     * A document that arrives already sent has reached that status too.
+     *
+     * The status trigger otherwise only fires on an edit, and «صدور و ارسال در
+     * یک ذخیره» is an ordinary way to work here — a rule reading "when the
+     * status becomes ارسال شده" would simply not run for those, and the
+     * quotation would go out with nobody assigned to chase it. A document
+     * created as a draft has not changed status and does not fire.
+     */
+    if (proforma.status && proforma.status !== "پیش‌نویس") {
+      await processWorkflowRules(
+        "proforma_status_change",
+        {
+          proformaId: proforma.id,
+          proformaNumber: proforma.proformaNumber,
+          projectId: proforma.projectId,
+          customerId: proforma.customerId,
+          oldStatus: null,
+          newStatus: proforma.status,
+          status: proforma.status,
+          sentDateJalali: proforma.sentDateJalali,
+          proformaAmount: proforma.finalAmount,
+        },
+        user,
+      );
+    }
 
     await logProjectFact(
       {
@@ -793,6 +873,32 @@ export async function updateProforma(
       await reconcileProformaStock(tx, before, after, todayJalali);
     }
 
+    if ("previousVersionId" in input) {
+      await assertVersionChain(tx, input.previousVersionId, id);
+    }
+
+    /*
+     * The sale ended, so the chase ends with it.
+     *
+     * Won, lost or cancelled: nobody should be left holding a follow-up on a
+     * quotation whose result is known, and the person who set that result is
+     * not going to go and tidy up somebody else's task list. Inside the
+     * transaction on purpose — an outcome that stuck with a follow-up still
+     * open is precisely the inconsistency the queue would then report for ever.
+     *
+     * Only when it *becomes* terminal, and only for follow-ups: an ordinary
+     * task somebody attached to the same proforma ("send the calibration
+     * certificates") does not stop being necessary because the quotation was
+     * won.
+     */
+    const wasTerminal = before ? isTerminalOutcome(getProformaOutcome(before as never)) : false;
+    const nowTerminal = isTerminalOutcome(
+      getProformaOutcome((after ?? proforma) as never),
+    );
+    if (nowTerminal && !wasTerminal) {
+      await closeFollowUpTasks(tx, id, todayJalali);
+    }
+
     // Re-derive both projects when the proforma was moved between them, or the
     // old project keeps a status derived from a proforma it no longer has.
     await syncProjectStatus(tx, proforma.projectId, todayJalali);
@@ -828,6 +934,39 @@ export async function updateProforma(
         user,
         todayJalali,
       );
+
+      /*
+       * The stored status moved — which is a different event from the outcome.
+       *
+       * «پیش‌نویس» → «ارسال شده» is the moment a quotation goes out, and the
+       * derived outcome does not change at all when it does: the lines are
+       * still «جاری» either way. So the rule that raises a follow-up two days
+       * after a quotation is sent has nothing to hang on unless this fires
+       * separately.
+       *
+       * Only on a real change. A re-save that leaves the column where it was is
+       * not an event, and firing on it would raise a follow-up every time
+       * somebody corrected a typo — which is exactly what the duplicate check
+       * on the action exists to survive, but the engine should not be relying
+       * on it for something this easy to get right here.
+       */
+      if (result.before && result.before.status !== result.proforma.status) {
+        await processWorkflowRules(
+          "proforma_status_change",
+          {
+            proformaId: result.proforma.id,
+            proformaNumber: result.proforma.proformaNumber,
+            projectId: result.proforma.projectId,
+            customerId: result.proforma.customerId,
+            oldStatus: result.before.status,
+            newStatus: result.proforma.status,
+            status: result.proforma.status,
+            sentDateJalali: result.proforma.sentDateJalali,
+            proformaAmount: result.proforma.finalAmount,
+          },
+          user,
+        );
+      }
 
       // Workflow rules for outcome change
       if (oldOutcome !== newOutcome) {
@@ -923,12 +1062,20 @@ async function withOutcomeFor(id: string) {
 
 export async function countProformaReferences(id: string) {
   const db = getDb();
-  const [purchaseOrders, transactions, deliveries] = await Promise.all([
+  const [purchaseOrders, transactions, deliveries, nextVersions] = await Promise.all([
     db.purchaseOrder.count({ where: { proformaId: id } }),
     db.transaction.count({ where: { proformaId: id } }),
     db.packagingDelivery.count({ where: { proformaId: id } }),
+    // A revision points back at the document it revises. Deleting that document
+    // would break the chain, and a revision history with a hole in it is worse
+    // than one nobody can delete: the answer is to cancel the old one, which is
+    // what the message says.
+    db.proforma.count({ where: { previousVersionId: id } }),
   ]);
-  return { purchaseOrders, transactions, deliveries, total: purchaseOrders + transactions + deliveries };
+  return {
+    purchaseOrders, transactions, deliveries, nextVersions,
+    total: purchaseOrders + transactions + deliveries + nextVersions,
+  };
 }
 
 /**
@@ -1028,6 +1175,92 @@ export async function deleteProforma(
  * the whole proforma would mean recomputing totals and rewriting every line for
  * what is a status change on a few rows.
  */
+/**
+ * Cancels the document a revision replaced.
+ *
+ * Offered after a revision is saved, and only offered — a revision is not a
+ * lost sale and the previous version is not automatically anything. Two
+ * quotations may legitimately stay open; superseding one is a decision.
+ *
+ * What it deliberately does not do: assign a loss reason. `settings.lossReasons`
+ * is about losing to a competitor or a price, and «نسخه جدید صادر شد» is not
+ * one of those — it would poison every report built on why sales are lost. The
+ * cancellation is the ERP's ordinary one (`isCancelled`), which the derived
+ * outcome already reads as «لغو شده».
+ */
+export async function cancelSupersededVersion(
+  newVersionId: string,
+  user: AuthUser,
+  todayJalali: string,
+): Promise<"ok" | "forbidden" | "not-found" | "no-previous" | "already-closed"> {
+  const db = getDb();
+  const visibility = visibilityClause(user);
+
+  const revision = await db.proforma.findFirst({
+    where: visibility ? { AND: [{ id: newVersionId }, visibility] } : { id: newVersionId },
+    select: { id: true, proformaNumber: true, projectId: true, previousVersionId: true },
+  });
+  if (!revision) return "forbidden";
+  if (!revision.previousVersionId) return "no-previous";
+
+  const previous = await db.proforma.findUnique({
+    where: { id: revision.previousVersionId },
+    select: {
+      id: true, proformaNumber: true, projectId: true,
+      status: true, isCancelled: true, items: { select: { status: true } },
+    },
+  });
+  if (!previous) return "not-found";
+
+  // An outcome that is already settled is not overwritten. A previous version
+  // that was won is a fact about money; a revision issued afterwards does not
+  // undo it, and the question should not have been asked in the first place.
+  if (isTerminalOutcome(getProformaOutcome(previous as never))) return "already-closed";
+
+  await db.$transaction(async (tx) => {
+    await tx.proforma.update({
+      where: { id: previous.id },
+      data: { isCancelled: true },
+    });
+    await syncProjectStatus(tx, previous.projectId, todayJalali);
+    // Nobody should be chasing a quotation that has been replaced.
+    await closeFollowUpTasks(
+      tx,
+      previous.id,
+      todayJalali,
+      `پیگیری بسته شد؛ نسخه جدید ${revision.proformaNumber} صادر شد.`,
+    );
+  });
+
+  await afterCommit("cancel superseded proforma", async () => {
+    await logAction(
+      {
+        action: "UPDATE",
+        module: "پیش‌فاکتورها",
+        entityId: previous.id,
+        description: `لغو پیش‌فاکتور ${previous.proformaNumber} به دلیل صدور نسخه جدید ${revision.proformaNumber}`,
+        beforeState: previous,
+      },
+      user,
+      todayJalali,
+    );
+    await logProjectFact(
+      {
+        projectId: previous.projectId,
+        categoryName: ACTIVITY_CATEGORY.PROFORMAS,
+        sourceType: "PROFORMA",
+        sourceId: previous.id,
+        text: `نسخه قبلی پیش‌فاکتور ${previous.proformaNumber} به علت صدور نسخه جدید ${revision.proformaNumber} لغو شد.`,
+      },
+      user,
+      todayJalali,
+    );
+  });
+
+  scheduleCustomerValueRecalculation();
+  return "ok";
+}
+
 export async function setItemOutcomes(
   id: string,
   outcomes: { itemId: string; status: string; lossReason?: string | null }[],
@@ -1040,9 +1273,15 @@ export async function setItemOutcomes(
   const outcome = await db.$transaction(async (tx) => {
     const existing = await tx.proforma.findFirst({
       where: visibility ? { AND: [{ id }, visibility] } : { id },
-      select: { id: true, projectId: true, customerId: true },
+      select: {
+        id: true, projectId: true, customerId: true,
+        // Both halves of the outcome rule, so "did the sale end just now" can
+        // be answered on the way out.
+        status: true, isCancelled: true, items: { select: { status: true } },
+      },
     });
     if (!existing) return "forbidden";
+    const wasTerminal = isTerminalOutcome(getProformaOutcome(existing as never));
 
     for (const o of outcomes) {
       // Scoped to this proforma, so an id from another one cannot be touched.
@@ -1057,6 +1296,23 @@ export async function setItemOutcomes(
     }
 
     await syncProjectStatus(tx, existing.projectId, todayJalali);
+
+    /*
+     * This is the screen where a quotation is actually won or lost.
+     *
+     * The same rule as the ordinary save: the moment the outcome becomes
+     * terminal, the follow-ups on that document close. Both paths need it
+     * because both can set it — the outcome modal marks the lines, and an
+     * ordinary edit can cancel the document.
+     */
+    const after = await tx.proforma.findUnique({
+      where: { id },
+      select: { status: true, isCancelled: true, items: { select: { status: true } } },
+    });
+    if (after && isTerminalOutcome(getProformaOutcome(after as never)) && !wasTerminal) {
+      await closeFollowUpTasks(tx, id, todayJalali);
+    }
+
     return "ok";
   });
 

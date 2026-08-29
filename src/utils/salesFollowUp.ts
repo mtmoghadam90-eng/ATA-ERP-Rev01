@@ -1,0 +1,363 @@
+import type { ProformaOutcome } from "../server/proformaStatus";
+
+/**
+ * Chasing a quotation — the rules, with nothing that needs a database.
+ *
+ * ## Why this is a separate axis from the commercial outcome
+ *
+ * A proforma already has an outcome, and it is *derived*: won, part-won, lost,
+ * cancelled or still running, computed from the line statuses and `isCancelled`
+ * (`src/server/proformaStatus.ts`). That axis answers "how did the sale go".
+ *
+ * It cannot answer the question this file exists for, which is "is anybody
+ * still chasing this, and if not, why not". A quotation sent three weeks ago
+ * with nobody assigned to it and a quotation the customer explicitly asked us
+ * to raise again after Nowruz have the *same* commercial outcome — «جاری» — and
+ * are completely different situations for the sales desk. So follow-up gets its
+ * own small state, and it deliberately spells only the three things the outcome
+ * cannot: OPEN, DEFERRED, NO_RESPONSE. There is no WON, LOST, CANCELLED or
+ * SUPERSEDED here; those exist already, one column away, and a second copy is
+ * how two columns come to disagree about one fact.
+ *
+ * ## Where the next action lives
+ *
+ * Not on the proforma. The open `SALES_FOLLOW_UP` task related to it *is* the
+ * next action, its due date, its assignee and its priority — one record, edited
+ * on one screen. A `nextAction` column beside it would be a second copy of all
+ * four, kept in step by hand.
+ *
+ * ## Who owns the chase
+ *
+ * `Project.salesExpert`, never the proforma's creator. A support engineer
+ * routinely prepares the document for a job somebody else is selling, and
+ * making the author the follow-up owner puts the chase on the wrong desk on the
+ * day the model is meant to separate them.
+ */
+
+/* --------------------------------- states --------------------------------- */
+
+export const FOLLOW_UP_STATES = ["OPEN", "DEFERRED", "NO_RESPONSE"] as const;
+export type FollowUpState = (typeof FOLLOW_UP_STATES)[number];
+
+export const FOLLOW_UP_STATE_LABELS: Record<FollowUpState, string> = {
+  OPEN: "در حال پیگیری",
+  DEFERRED: "موکول‌شده",
+  NO_RESPONSE: "بدون پاسخ",
+};
+
+/** Anything unrecognised is treated as an active chase rather than dropped. */
+export function normalizeFollowUpState(value: unknown): FollowUpState {
+  const text = String(value ?? "").trim().toUpperCase();
+  return (FOLLOW_UP_STATES as readonly string[]).includes(text)
+    ? (text as FollowUpState)
+    : "OPEN";
+}
+
+/* -------------------------------- task kind ------------------------------- */
+
+export const TASK_KINDS = ["GENERAL", "SALES_FOLLOW_UP"] as const;
+export type TaskKind = (typeof TASK_KINDS)[number];
+
+export const TASK_KIND_LABELS: Record<TaskKind, string> = {
+  GENERAL: "وظیفه عمومی",
+  SALES_FOLLOW_UP: "پیگیری فروش",
+};
+
+/**
+ * Absent means GENERAL, and that is what makes the migration a no-op.
+ *
+ * Every task written before this feature existed has no kind, and none of them
+ * is a sales follow-up: the automatic closing, the duplicate check and the
+ * queue must all pass straight over them.
+ */
+export function normalizeTaskKind(value: unknown): TaskKind {
+  const text = String(value ?? "").trim().toUpperCase();
+  return text === "SALES_FOLLOW_UP" ? "SALES_FOLLOW_UP" : "GENERAL";
+}
+
+/* ------------------------------ task lifecycle ----------------------------- */
+
+/**
+ * The statuses that mean a task is over.
+ *
+ * Written as an **exclusion**, like `countsTowardBalance` on the ledger: the
+ * automatic rules here ask "is one still open", and a status nobody anticipated
+ * must read as still open — a forgotten follow-up is the failure this whole
+ * feature exists to prevent, so the safe default is to keep chasing.
+ */
+export const FINISHED_TASK_STATUSES = ["انجام شده", "کنسل شده"] as const;
+
+export function isTaskFinished(status: unknown): boolean {
+  return (FINISHED_TASK_STATUSES as readonly string[]).includes(String(status ?? "").trim());
+}
+
+/* ---------------------------- terminal outcomes ---------------------------- */
+
+/**
+ * The outcomes that end the sale, and therefore end the chase.
+ *
+ * «نیمه برنده» is deliberately **not** here: part of the document was won and
+ * the rest is still being sold, which is precisely a quotation somebody should
+ * still be following up.
+ */
+export const TERMINAL_OUTCOMES: readonly ProformaOutcome[] = [
+  "تأیید شده (برنده)",
+  "باخته",
+  "لغو شده",
+];
+
+export function isTerminalOutcome(outcome: unknown): boolean {
+  return (TERMINAL_OUTCOMES as readonly string[]).includes(String(outcome ?? ""));
+}
+
+/** What is written on a follow-up task the system closes by itself. */
+export const AUTO_CLOSE_NOTE = "پیگیری بسته شد؛ نتیجه نهایی پیش‌فاکتور مشخص شد.";
+
+/* ------------------------- the follow-up result list ----------------------- */
+
+/**
+ * What the customer said, as a controlled list.
+ *
+ * A user-editable `settings.dropdownItems.followUpResults`, managed by the same
+ * settings screen as every other dropdown. It is **not** a loss reason and not
+ * a commercial outcome: «خرید به تعویق افتاد» is a follow-up state, not a lost
+ * sale, and `settings.lossReasons` stays exactly where it is.
+ */
+export const DEFAULT_FOLLOW_UP_RESULTS = [
+  "دریافت پیش‌فاکتور تأیید شد",
+  "در حال بررسی فنی",
+  "در حال بررسی مالی/مدیریتی",
+  "درخواست اصلاح قیمت",
+  "درخواست اصلاح مشخصات یا تعداد",
+  "زمان تصمیم خرید اعلام شد",
+  "خرید به تعویق افتاد",
+  "عدم پاسخ",
+  "سایر",
+];
+
+/* --------------------------------- health --------------------------------- */
+
+/**
+ * How a row of the queue is doing, and therefore where it sorts.
+ *
+ * The order is the order the sales desk should work in, which is why it is one
+ * ranked list rather than a set of independent flags: overdue first, then what
+ * is due today, then the quotations nobody has planned a next step for — that
+ * last one being the health check the whole screen exists for, because a
+ * quotation with no next action is exactly the one that gets forgotten.
+ */
+export const FOLLOW_UP_HEALTH = [
+  "OVERDUE",
+  "DUE_TODAY",
+  "NO_NEXT_ACTION",
+  "UPCOMING",
+  "DEFERRED",
+  "NO_RESPONSE",
+] as const;
+export type FollowUpHealth = (typeof FOLLOW_UP_HEALTH)[number];
+
+export const FOLLOW_UP_HEALTH_LABELS: Record<FollowUpHealth, string> = {
+  OVERDUE: "عقب‌افتاده",
+  DUE_TODAY: "پیگیری امروز",
+  NO_NEXT_ACTION: "بدون اقدام بعدی",
+  UPCOMING: "پیگیری آینده",
+  DEFERRED: "موکول‌شده",
+  NO_RESPONSE: "بدون پاسخ",
+};
+
+/** Operational order: the first thing in this list is the first thing to do. */
+export function healthRank(health: FollowUpHealth): number {
+  const at = FOLLOW_UP_HEALTH.indexOf(health);
+  return at === -1 ? FOLLOW_UP_HEALTH.length : at;
+}
+
+export interface FollowUpRowState {
+  followUpState: FollowUpState;
+  /** Jalali `YYYY/MM/DD` of the open follow-up task, or null when there is none. */
+  nextActionDueDateJalali: string | null;
+  /** True when an unfinished SALES_FOLLOW_UP task exists for this proforma. */
+  hasOpenFollowUpTask: boolean;
+  /** Jalali `YYYY/MM/DD`, from DEFERRED. */
+  deferredUntilJalali?: string | null;
+}
+
+/**
+ * Classifies one row.
+ *
+ * Two decisions worth stating. **A deferred quotation is not overdue** while its
+ * date is still ahead — that is the entire point of deferring, and letting the
+ * open task it carries mark it overdue would put it back in front of the person
+ * who agreed to leave it alone. Once the date arrives it rejoins the ordinary
+ * ranking, so nothing is deferred for ever. And **a quotation with no open task
+ * is not "fine"**: it has no next step, which is worse than a late one, so it
+ * ranks above what is merely upcoming.
+ */
+export function followUpHealthOf(row: FollowUpRowState, todayJalali: string): FollowUpHealth {
+  if (row.followUpState === "NO_RESPONSE") return "NO_RESPONSE";
+
+  if (row.followUpState === "DEFERRED") {
+    const until = row.deferredUntilJalali ?? null;
+    // Still inside the agreed pause. Past it, the deferral has expired and the
+    // row is judged like any other.
+    if (until && until > todayJalali) return "DEFERRED";
+  }
+
+  if (!row.hasOpenFollowUpTask || !row.nextActionDueDateJalali) return "NO_NEXT_ACTION";
+  if (row.nextActionDueDateJalali < todayJalali) return "OVERDUE";
+  if (row.nextActionDueDateJalali === todayJalali) return "DUE_TODAY";
+  return "UPCOMING";
+}
+
+/**
+ * The health check the dashboard reports a target of zero for.
+ *
+ * An actively followed quotation with nothing planned. Deferred and abandoned
+ * ones are excluded on purpose: both are decisions somebody made, and counting
+ * them as neglect would make the figure impossible to drive to zero and
+ * therefore worth ignoring.
+ */
+export function isOpenWithoutNextAction(row: FollowUpRowState): boolean {
+  return row.followUpState === "OPEN" && !row.hasOpenFollowUpTask;
+}
+
+/* ------------------------------ the decisions ------------------------------ */
+
+/**
+ * What the person completing a follow-up says happens next.
+ *
+ * `TERMINAL` is only offered when the proforma's derived outcome already says
+ * the sale is over — the commercial close belongs to the outcome machinery and
+ * is not re-decided here.
+ */
+export const FOLLOW_UP_DECISIONS = ["NEXT_ACTION", "DEFER", "NO_RESPONSE", "TERMINAL"] as const;
+export type FollowUpDecision = (typeof FOLLOW_UP_DECISIONS)[number];
+
+export interface FollowUpCompletionInput {
+  decision: FollowUpDecision;
+  followUpResult?: string | null;
+  completionNote?: string | null;
+  /** NEXT_ACTION: the task to raise in place of this one. */
+  nextTitle?: string | null;
+  nextDueDate?: string | null;
+  nextAssignedToName?: string | null;
+  /** DEFER: the day the customer asked to be approached again. */
+  deferredUntil?: string | null;
+}
+
+/**
+ * Why a completion cannot be recorded, in Persian, or null when it can.
+ *
+ * Pure, and shared by the modal and the route: the form should not be able to
+ * submit something the server will refuse, and the server must not rely on the
+ * form having checked.
+ */
+export function completionRefusalReason(
+  input: FollowUpCompletionInput,
+  context: { todayJalali: string; outcomeIsTerminal: boolean },
+): string | null {
+  if (!(FOLLOW_UP_DECISIONS as readonly string[]).includes(input.decision)) {
+    return "تصمیم پیگیری نامعتبر است.";
+  }
+  if (!String(input.followUpResult ?? "").trim()) {
+    return "ثبت نتیجه پیگیری الزامی است.";
+  }
+
+  if (input.decision === "NEXT_ACTION") {
+    if (!String(input.nextTitle ?? "").trim()) return "عنوان اقدام بعدی الزامی است.";
+    if (!String(input.nextDueDate ?? "").trim()) return "تاریخ اقدام بعدی الزامی است.";
+  }
+
+  if (input.decision === "DEFER") {
+    const until = String(input.deferredUntil ?? "").trim();
+    if (!until) return "تاریخ پیگیری مجدد الزامی است.";
+    // A deferral into the past is not a deferral: it would come back overdue
+    // the moment it was saved, which is not what the customer asked for.
+    if (until <= context.todayJalali) return "تاریخ پیگیری مجدد باید در آینده باشد.";
+  }
+
+  if (input.decision === "TERMINAL" && !context.outcomeIsTerminal) {
+    return "بستن پیگیری بدون اقدام بعدی فقط وقتی ممکن است که نتیجه نهایی پیش‌فاکتور مشخص شده باشد.";
+  }
+
+  return null;
+}
+
+/**
+ * The follow-up state a decision leaves the proforma in.
+ *
+ * TERMINAL keeps OPEN deliberately: the chase ended because the *sale* ended,
+ * which the outcome already records. Writing NO_RESPONSE there would claim the
+ * customer went quiet on a quotation they had just approved.
+ */
+export function stateAfterDecision(decision: FollowUpDecision): FollowUpState {
+  if (decision === "DEFER") return "DEFERRED";
+  if (decision === "NO_RESPONSE") return "NO_RESPONSE";
+  return "OPEN";
+}
+
+/* -------------------------------- timeline -------------------------------- */
+
+/**
+ * The sentence that goes on the project's timeline.
+ *
+ * The task stays the structured record — the result, the note, the dates, who
+ * it was on — and this is the human-readable half somebody scrolling the
+ * project reads. Deliberately one place, so the two halves cannot describe the
+ * same follow-up differently.
+ */
+export function followUpActivityText(entry: {
+  proformaNumber: string;
+  followUpResult?: string | null;
+  completionNote?: string | null;
+  nextTitle?: string | null;
+  nextDueDateJalali?: string | null;
+  deferredUntilJalali?: string | null;
+  decision: FollowUpDecision;
+}): string {
+  const head = `پیگیری پیش‌فاکتور ${entry.proformaNumber}${
+    entry.followUpResult ? ` — ${entry.followUpResult}` : ""
+  }`;
+
+  const lines = [head];
+  const note = String(entry.completionNote ?? "").trim();
+  if (note) lines.push(note);
+
+  if (entry.decision === "NEXT_ACTION" && entry.nextTitle) {
+    lines.push(
+      `اقدام بعدی: ${entry.nextTitle}${
+        entry.nextDueDateJalali ? ` در ${entry.nextDueDateJalali}` : ""
+      }`,
+    );
+  } else if (entry.decision === "DEFER" && entry.deferredUntilJalali) {
+    lines.push(`پیگیری تا ${entry.deferredUntilJalali} موکول شد.`);
+  } else if (entry.decision === "NO_RESPONSE") {
+    lines.push("پیگیری به دلیل عدم پاسخ مشتری بسته شد.");
+  } else if (entry.decision === "TERMINAL") {
+    lines.push("پیگیری بسته شد؛ نتیجه نهایی پیش‌فاکتور مشخص شده است.");
+  }
+
+  return lines.join("\n");
+}
+
+/* --------------------------------- copying -------------------------------- */
+
+export const COPY_MODES = ["INDEPENDENT", "NEW_VERSION"] as const;
+export type CopyMode = (typeof COPY_MODES)[number];
+
+/**
+ * Why a revision cannot be created from this document, or null.
+ *
+ * One rule, and it is about keeping the chain a chain: if A already has B as
+ * its revision, a second revision of A would fork the history and neither
+ * branch would be "the current one". The revision is made from B instead, which
+ * is what the person almost always means anyway.
+ */
+export function versionRefusalReason(source: {
+  proformaNumber?: string | null;
+  nextVersionNumber?: string | null;
+}): string | null {
+  if (source.nextVersionNumber) {
+    return `این پیش‌فاکتور قبلاً نسخه جدیدی دارد (${source.nextVersionNumber}). نسخه بعدی را از روی همان بسازید.`;
+  }
+  return null;
+}
