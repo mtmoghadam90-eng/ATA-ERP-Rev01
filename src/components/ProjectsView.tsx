@@ -4,7 +4,7 @@ import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { formatMoney } from '../numUtils';
 import {
   Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, AlertTriangle, TrendingUp, X,
-  CornerUpLeft, ListChecks,
+  CornerUpLeft, ListChecks, RefreshCcw,
   FileSpreadsheet, Clock, Sliders, User, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
  CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
   ChevronRight, Loader2, Image as ImageIcon, Maximize2, Minimize2, ArrowLeftRight, Flag, Zap,
@@ -35,6 +35,7 @@ import { useProjectActivities } from '../api/useProjectActivities';
 import { inboxApi, submitReferralReply } from '../api/inbox';
 import { tasksApi } from '../api/tasks';
 import ReferralThread from './ReferralThread';
+import ProjectFollowUpTab from './ProjectFollowUpTab';
 import ActivityComposer from './ActivityComposer';
 import TaskFromMessageModal, { TaskDraft } from './TaskFromMessageModal';
 import { renderWithMentions } from './MentionText';
@@ -4802,6 +4803,28 @@ export default function ProjectsView({
                   <History size={15} />
                   <span>فعالیت‌ها و شرح اقدامات</span>
                 </button>
+                {/*
+                  What has happened on this job's quotations.
+
+                  The follow-up queue answers «what should the sales desk do
+                  next, across the company» and leaves out finished sales;
+                  somebody who has opened a project is asking what happened
+                  here, so this shows every quotation with the chases recorded
+                  against it — settled ones included.
+                */}
+                <button
+                  type="button"
+                  onClick={() => setModalTab('followUp')}
+                  id="project-tab-follow-up"
+                  className={`px-4 py-2 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
+                    modalTab === 'followUp'
+                      ? 'border-sky-500 text-sky-600 font-extrabold'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <RefreshCcw size={15} />
+                  <span>پیگیری‌های پروژه</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => setModalTab('documents')}
@@ -5450,6 +5473,13 @@ export default function ProjectsView({
                 </div>
 
               </div>
+              ) : modalTab === 'followUp' ? (
+                selectedProjectForActivities ? (
+                  <ProjectFollowUpTab
+                    projectId={selectedProjectForActivities.id}
+                    settings={settings}
+                  />
+                ) : null
               ) : modalTab === 'documents' ? (
                 renderProjectDocuments(selectedProjectForActivities)
               ) : modalTab === 'milestones' ? (

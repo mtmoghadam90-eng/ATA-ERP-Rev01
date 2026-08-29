@@ -691,6 +691,181 @@ export async function listFollowUpQueue(
   };
 }
 
+/* ---------------------- one project's follow-up story --------------------- */
+
+/** One completed chase: what was done, when, and what came of it. */
+export interface FollowUpHistoryEntry {
+  taskId: string;
+  title: string;
+  completedAtJalali: string | null;
+  result: string | null;
+  note: string | null;
+  assignee: string | null;
+}
+
+export interface ProjectFollowUpQuote {
+  id: string;
+  proformaNumber: string;
+  status: string;
+  outcome: ProformaOutcome;
+  currency: string;
+  finalAmount: string;
+  sentDateJalali: string | null;
+  issueDateJalali: string | null;
+  ageDays: number | null;
+  followUpState: string;
+  deferredUntilJalali: string | null;
+  /** True when the sale is decided, so no next action is wanted. */
+  settled: boolean;
+  followUpHealth: FollowUpHealth;
+  nextAction: string | null;
+  nextActionDueDateJalali: string | null;
+  nextActionAssignee: string | null;
+  nextActionTaskId: string | null;
+  /** Every completed chase, most recent first. */
+  history: FollowUpHistoryEntry[];
+}
+
+export interface ProjectFollowUpReport {
+  projectId: string;
+  quotes: ProjectFollowUpQuote[];
+  summary: {
+    quotes: number;
+    /** Still being chased — sent, not settled. */
+    chaseable: number;
+    settled: number;
+    /** Chaseable, in play, and nobody is on it. The number to get to zero. */
+    withoutNextAction: number;
+    overdue: number;
+    /** How many times anybody has chased anything on this job. */
+    followUps: number;
+    lastFollowUpDateJalali: string | null;
+    lastFollowUpResult: string | null;
+  };
+}
+
+/**
+ * Everything that has happened on one project's quotations, in one request.
+ *
+ * The queue screen answers «what should the sales desk do next, across the
+ * company»; this answers «what has happened on *this* job», which is what
+ * somebody opening a project wants — and it therefore includes the settled
+ * quotations, which the queue deliberately excludes. A won document with three
+ * recorded chases behind it is exactly the history being asked for.
+ *
+ * Two reads, never one per row: the project's quotations, then **one** query
+ * for every follow-up task belonging to them. Nothing is stored — the age, the
+ * next action, the last result and the health are read back every time, for the
+ * same reason the queue does it.
+ */
+export async function projectFollowUpReport(
+  projectId: string,
+  user: AuthUser,
+): Promise<ProjectFollowUpReport | null> {
+  if (!hasPermission(user, "proformas")) return null;
+
+  const db = getDb();
+  const todayJalali = getTodayShamsi();
+
+  const rows = await db.proforma.findMany({
+    where: { AND: [{ projectId }, NOT_TECHNICAL] },
+    orderBy: { issueDate: "desc" },
+    select: QUEUE_SELECT,
+  });
+
+  const ids = rows.map((r) => r.id);
+  const tasks = ids.length
+    ? await db.task.findMany({
+        where: { taskKind: "SALES_FOLLOW_UP", relatedToType: "proforma", relatedToId: { in: ids } },
+        select: {
+          id: true, relatedToId: true, title: true, status: true,
+          dueDateJalali: true, assignedToName: true,
+          followUpResult: true, completionNote: true, completedAtJalali: true,
+        },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
+
+  const open = new Map<string, (typeof tasks)[number]>();
+  const done = new Map<string, (typeof tasks)[number][]>();
+  for (const t of tasks) {
+    const key = t.relatedToId!;
+    if ((FINISHED_TASK_STATUSES as readonly string[]).includes(t.status)) {
+      done.set(key, [...(done.get(key) ?? []), t]);
+    } else if (!open.has(key)) {
+      open.set(key, t);
+    }
+  }
+
+  const quotes = rows.map((row) => {
+    const openTask = open.get(row.id) ?? null;
+    const outcome = getProformaOutcome(row as never);
+    const followUpState = normalizeFollowUpState(row.followUpState);
+
+    return {
+      id: row.id,
+      proformaNumber: row.proformaNumber,
+      status: row.status,
+      outcome,
+      currency: row.currency,
+      finalAmount: String(row.finalAmount),
+      sentDateJalali: row.sentDateJalali,
+      issueDateJalali: row.issueDateJalali,
+      ageDays: quoteAgeDays(row.sentDateJalali ?? row.issueDateJalali, todayJalali),
+      followUpState,
+      deferredUntilJalali: row.deferredUntilJalali,
+      // A won, lost or cancelled quotation needs no next action; «نیمه برنده»
+      // is settled too, and a draft has not been sent to anybody.
+      settled: isTerminalOutcome(outcome)
+        || !(CHASEABLE_OUTCOMES as readonly string[]).includes(outcome),
+      followUpHealth: followUpHealthOf(
+        {
+          followUpState,
+          nextActionDueDateJalali: openTask?.dueDateJalali ?? null,
+          hasOpenFollowUpTask: !!openTask,
+          deferredUntilJalali: row.deferredUntilJalali,
+        },
+        todayJalali,
+      ),
+      nextAction: openTask?.title ?? null,
+      nextActionDueDateJalali: openTask?.dueDateJalali ?? null,
+      nextActionAssignee: openTask?.assignedToName ?? row.project?.salesExpert ?? null,
+      nextActionTaskId: openTask?.id ?? null,
+      // Most recent first: the last thing that happened is the thing being
+      // looked for, and the tasks arrive in creation order.
+      history: [...(done.get(row.id) ?? [])].reverse().map((t) => ({
+        taskId: t.id,
+        title: t.title,
+        completedAtJalali: t.completedAtJalali,
+        result: t.followUpResult,
+        note: t.completionNote,
+        assignee: t.assignedToName,
+      })),
+    } satisfies ProjectFollowUpQuote;
+  });
+
+  const everyEntry = quotes.flatMap((q) => q.history)
+    .filter((h) => !!h.completedAtJalali)
+    .sort((a, b) => (a.completedAtJalali! < b.completedAtJalali! ? 1 : -1));
+
+  return {
+    projectId,
+    quotes,
+    summary: {
+      quotes: quotes.length,
+      chaseable: quotes.filter((q) => !q.settled).length,
+      settled: quotes.filter((q) => q.settled).length,
+      // Only the ones still in play: asking for a next action on a finished
+      // sale is the fault the queue screen was corrected for.
+      withoutNextAction: quotes.filter((q) => !q.settled && !q.nextActionTaskId).length,
+      overdue: quotes.filter((q) => q.followUpHealth === "OVERDUE").length,
+      followUps: quotes.reduce((sum, q) => sum + q.history.length, 0),
+      lastFollowUpDateJalali: everyEntry[0]?.completedAtJalali ?? null,
+      lastFollowUpResult: everyEntry[0]?.result ?? null,
+    },
+  };
+}
+
 /** Whole days between two Jalali dates, counted through the Gregorian pair. */
 function quoteAgeDays(fromJalali: string | null, todayJalali: string): number | null {
   const parse = (s: string | null) => {

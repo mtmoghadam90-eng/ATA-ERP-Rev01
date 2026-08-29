@@ -4,7 +4,8 @@ import { RouteDeps, sendError } from "./types";
 import { getTodayShamsi } from "../../dateUtils";
 import {
   FOLLOW_UP_FILTERABLE, FOLLOW_UP_SORTABLE,
-  completeFollowUp, followUpSummary, listFollowUpQueue, reactivateFollowUp,
+  completeFollowUp, followUpSummary, listFollowUpQueue, projectFollowUpReport,
+  reactivateFollowUp,
 } from "../services/followUpService";
 import type { FollowUpCompletionInput } from "../../utils/salesFollowUp";
 
@@ -44,6 +45,32 @@ export function registerFollowUpRoutes(app: express.Express, deps: RouteDeps): v
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "GET /api/sales-follow-up");
+    }
+  });
+
+  /*
+   * One project's whole follow-up story.
+   *
+   * Registered **before** `/:proformaId/reactivate` would be, and above every
+   * parameterised path here, so «project» is never read as an id — the same
+   * trap the supplier price-history route exists to avoid.
+   *
+   * Unlike the queue, this includes the settled quotations: somebody opening a
+   * project is asking what happened, and a won document with three recorded
+   * chases behind it is exactly that.
+   */
+  app.get("/api/sales-follow-up/project/:projectId", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const report = await projectFollowUpReport(req.params.projectId, user);
+      if (!report) {
+        res.status(403).json({ success: false, error: "شما اجازه دسترسی به این بخش را ندارید." });
+        return;
+      }
+      res.json({ success: true, ...report });
+    } catch (err) {
+      sendError(res, err, "GET /api/sales-follow-up/project/:projectId");
     }
   });
 

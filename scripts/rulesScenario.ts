@@ -5283,5 +5283,51 @@ head("Activity feed: the messenger, held together");
 }
 
 
+head("Project follow-up tab: what happened on this job");
+{
+  const service = readFileSync("src/server/services/followUpService.ts", "utf8");
+  const body = service.slice(service.indexOf("export async function projectFollowUpReport"));
+
+  /*
+   * The queue leaves out finished sales on purpose; a project tab is asking
+   * what *happened*, and a won document with three recorded chases behind it
+   * is exactly that.
+   */
+  ok("the project report is not filtered to the chaseable set",
+    !/chaseableWhere\(\)/.test(body.slice(0, 2500)));
+  ok("but a settled quotation is still marked as settled",
+    /settled: isTerminalOutcome\(outcome\)/.test(body));
+  // Asking for a next action on a finished sale is the fault the queue screen
+  // was corrected for.
+  ok("and only the ones in play count as missing a next action",
+    /!q\.settled && !q\.nextActionTaskId/.test(body));
+
+  // Two reads, never one per row — the shape the whole migration exists for.
+  ok("the tasks come in one query for every quotation",
+    /relatedToId: \{ in: ids \}/.test(body));
+  ok("and the history is most recent first",
+    /\.reverse\(\)\.map/.test(body));
+
+  const routes = readFileSync("src/server/routes/followUp.ts", "utf8");
+  // «project» must never be read as a proforma id — the same trap the supplier
+  // price-history route exists to avoid.
+  ok("the project route is registered before the parameterised ones",
+    routes.indexOf('"/api/sales-follow-up/project/:projectId"')
+      < routes.indexOf('"/api/sales-follow-up/:proformaId/reactivate"'));
+
+  const tab = readFileSync("src/components/ProjectFollowUpTab.tsx", "utf8");
+  ok("the tab records a result through the shared modal",
+    /<FollowUpCompletionModal/.test(tab));
+  ok("and raises a next action through the shared call",
+    /salesFollowUpApi\.reactivate\(/.test(tab));
+  // A finished sale gets neither button, and no health badge either.
+  ok("a settled quotation is offered no next action", /!quote\.settled && \(/.test(tab));
+
+  const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("the project detail has the tab", /project-tab-follow-up/.test(view));
+  ok("and renders it", /<ProjectFollowUpTab/.test(view));
+}
+
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
