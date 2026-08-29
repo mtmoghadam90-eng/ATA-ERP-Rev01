@@ -567,6 +567,10 @@ export interface Task {
   title: string;
   description: string;
   relatedToType: 'مشتری' | 'پروژه' | 'پیش‌فاکتور' | 'سفارش خرید' | 'عمومی' | 'خدمات پس از فروش' | 'بسته‌بندی و تحویل' | 'استعلام تامین‌کننده';
+  /** The job behind the task — code, name and customer — joined by the server. */
+  relatedProject?: {
+    id: string; code: string; name: string; customerName: string | null;
+  };
   relatedToId?: string;
   relatedToName?: string;
   priority: 'پایین' | 'متوسط' | 'بالا' | 'فوری';

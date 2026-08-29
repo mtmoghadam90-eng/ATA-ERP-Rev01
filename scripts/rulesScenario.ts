@@ -5107,5 +5107,36 @@ head("Project card: warning about a record's own gaps");
 }
 
 
+head("Tasks board: the status filter and the job behind a task");
+{
+  const service = readFileSync("src/server/services/taskService.ts", "utf8");
+  const view = readFileSync("src/components/TasksView.tsx", "utf8");
+
+  // The list is paged, so narrowing what the browser holds would filter one
+  // page and call it the answer.
+  ok("status is filtered on the server", /TASK_FILTERABLE = \[[^\]]*"status"/.test(service));
+  ok("and the screen sends it rather than filtering the page",
+    /list\.setFilter\('status', value\)/.test(view)
+    && !/filteredTasks = tasks\.filter/.test(view));
+  ok("the filter is on the screen", /task-status-filter/.test(view));
+
+  /*
+   * `relatedToName` is one string the *browser* resolved out of a picker's
+   * current matches at save time — the trap this codebase keeps meeting. The
+   * project is joined on the server instead, for a task on a proforma too:
+   * a sales follow-up names a quotation, and the reader wants the job.
+   */
+  ok("the service resolves the project behind each task",
+    /async function withProjectContext/.test(service));
+  ok("for a task on a proforma as well as one on a project",
+    /relatedToType === "پیش‌فاکتور"/.test(service));
+  ok("in bounded queries, not one per row",
+    /id: \{ in: \[\.\.\.projectIds\] \}/.test(service));
+  ok("the card prints the code, the project and the customer",
+    /relatedProject\.code/.test(view) && /relatedProject\.name/.test(view)
+    && /relatedProject\.customerName/.test(view));
+}
+
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

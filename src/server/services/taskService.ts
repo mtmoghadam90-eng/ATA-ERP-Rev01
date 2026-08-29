@@ -116,7 +116,84 @@ export async function listTasks(
     db.task.count({ where }),
   ]);
 
-  return buildResult(rows as unknown as Record<string, unknown>[], total, q);
+  return buildResult(
+    await withProjectContext(rows) as unknown as Record<string, unknown>[], total, q);
+}
+
+/** The job a task belongs to, as the card prints it. */
+export interface TaskProjectContext {
+  id: string;
+  code: string;
+  name: string;
+  customerName: string | null;
+}
+
+/**
+ * The project behind each task on the page, and the customer behind that.
+ *
+ * `relatedToType`/`relatedToId` is a polymorphic link, so there is no relation
+ * for Prisma to join — and `relatedToName` is a single string the *browser*
+ * resolved out of a picker's current matches at save time, which is how a task
+ * comes to be labelled with a name that has since changed or was never found.
+ *
+ * So the ids on the page are resolved here, in two bounded queries: a task on a
+ * project reads that project, and a task on a proforma reads the proforma's
+ * project — a sales follow-up names a quotation, and the person looking at
+ * their list wants to know whose job it is.
+ */
+async function withProjectContext<T extends {
+  relatedToType?: string | null;
+  relatedToId?: string | null;
+}>(rows: T[]): Promise<(T & { relatedProject: TaskProjectContext | null })[]> {
+  const db = getDb();
+  const projectIds = new Set<string>();
+  const proformaIds = new Set<string>();
+
+  for (const row of rows) {
+    if (!row.relatedToId) continue;
+    if (row.relatedToType === "پروژه") projectIds.add(row.relatedToId);
+    else if (row.relatedToType === "پیش‌فاکتور") proformaIds.add(row.relatedToId);
+  }
+  if (projectIds.size === 0 && proformaIds.size === 0) {
+    return rows.map((row) => ({ ...row, relatedProject: null }));
+  }
+
+  const projectSelect = {
+    id: true, code: true, name: true,
+    customer: { select: { companyName: true } },
+  };
+
+  const [projects, proformas] = await Promise.all([
+    projectIds.size > 0
+      ? db.project.findMany({ where: { id: { in: [...projectIds] } }, select: projectSelect })
+      : Promise.resolve([]),
+    proformaIds.size > 0
+      ? db.proforma.findMany({
+          where: { id: { in: [...proformaIds] } },
+          select: { id: true, project: { select: projectSelect } },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const toContext = (p: {
+    id: string; code: string; name: string; customer: { companyName: string } | null;
+  }): TaskProjectContext => ({
+    id: p.id, code: p.code, name: p.name,
+    customerName: p.customer?.companyName ?? null,
+  });
+
+  const byProject = new Map(projects.map((p) => [p.id, toContext(p)]));
+  const byProforma = new Map(
+    proformas.filter((pf) => pf.project).map((pf) => [pf.id, toContext(pf.project!)]));
+
+  return rows.map((row) => ({
+    ...row,
+    relatedProject: row.relatedToId
+      ? (row.relatedToType === "پروژه" ? byProject.get(row.relatedToId) ?? null
+        : row.relatedToType === "پیش‌فاکتور" ? byProforma.get(row.relatedToId) ?? null
+        : null)
+      : null,
+  }));
 }
 
 export async function getTask(id: string, user: AuthUser) {

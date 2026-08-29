@@ -145,6 +145,15 @@ export default function TasksView({
 
   const selectedPriority = list.filters.priority;
   const setSelectedPriority = (value: string) => list.setFilter('priority', value);
+  /*
+   * Filtered on the server, like the priority beside it.
+   *
+   * The list is paged, so narrowing what the browser happens to be holding
+   * would filter one page and call it the answer — «انجام نشده» would show
+   * whatever open tasks were on page one and nothing else.
+   */
+  const selectedStatus = list.filters.status;
+  const setSelectedStatus = (value: string) => list.setFilter('status', value);
   const [isTaskModalFullscreen, setIsTaskModalFullscreen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [quickAddType, setQuickAddType] = useState<'customer' | 'project' | 'supplier' | 'product' | null>(null);
@@ -330,7 +339,7 @@ export default function TasksView({
           />
         </div>
 
-        <div className="relative w-full md:w-64 flex items-center gap-2">
+        <div className="relative w-full md:w-52 flex items-center gap-2">
           <select
             value={selectedPriority}
             onChange={(e) => setSelectedPriority(e.target.value)}
@@ -341,6 +350,20 @@ export default function TasksView({
             <option value="بالا">اولویت بالا</option>
             <option value="متوسط">اولویت متوسط</option>
             <option value="پایین">اولویت پایین</option>
+          </select>
+        </div>
+
+        <div className="relative w-full md:w-52 flex items-center gap-2">
+          <select
+            value={selectedStatus}
+            onChange={(e) => setSelectedStatus(e.target.value)}
+            id="task-status-filter"
+            className="w-full border border-slate-200 rounded-lg text-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition appearance-none text-right bg-white"
+          >
+            <option value="all">همه وضعیت‌ها</option>
+            <option value="در حال انجام">انجام نشده (در حال انجام)</option>
+            <option value="انجام شده">انجام شده</option>
+            <option value="کنسل شده">کنسل شده</option>
           </select>
         </div>
       </div>
@@ -373,7 +396,29 @@ export default function TasksView({
                 </h4>
                 <p className="text-xs text-slate-500 break-words">{task.description}</p>
                 
-                {task.relatedToName && (
+                {/*
+                  The job, not just its label.
+
+                  `relatedToName` is a single string the browser resolved out of
+                  a picker's matches when the task was saved. `relatedProject`
+                  is the project as it is *now* — code, name and the customer
+                  behind it — joined by the server, and it is filled in for a
+                  task on a proforma too, since a sales follow-up names a
+                  quotation and the reader wants to know whose job it is.
+                */}
+                {task.relatedProject ? (
+                  <span className="text-[10px] text-sky-700 bg-sky-50 border border-sky-100 px-2 py-0.5 rounded font-medium inline-flex flex-wrap items-center gap-1 mt-1 max-w-full">
+                    <span className="font-mono font-bold">{task.relatedProject.code}</span>
+                    <span className="text-sky-300">|</span>
+                    <span className="truncate">{task.relatedProject.name}</span>
+                    {task.relatedProject.customerName && (
+                      <>
+                        <span className="text-sky-300">|</span>
+                        <span className="truncate text-slate-600">{task.relatedProject.customerName}</span>
+                      </>
+                    )}
+                  </span>
+                ) : task.relatedToName && (
                   <span className="text-[10px] text-sky-600 bg-sky-50 px-2 py-0.5 rounded font-medium inline-block mt-1 max-w-full truncate">
                     مربوط به {task.relatedToType}: {task.relatedToName}
                   </span>
