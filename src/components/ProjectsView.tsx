@@ -3,7 +3,7 @@ import React, { useState, useRef } from 'react';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { formatMoney } from '../numUtils';
 import {
-  Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, TrendingUp, X,
+  Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, AlertTriangle, TrendingUp, X,
   FileSpreadsheet, Clock, Sliders, User, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
   Send, CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
   ChevronRight, Loader2, Image as ImageIcon, Maximize2, Minimize2, ArrowLeftRight, Flag, Zap,
@@ -34,6 +34,7 @@ import { useProjectActivities } from '../api/useProjectActivities';
 import { inboxApi, submitReferralReply } from '../api/inbox';
 import ReferralThread from './ReferralThread';
 import { compressImage } from '../imageUtils';
+import { projectDataGaps, projectGapFields } from '../utils/projectDataGaps';
 import { detailToProject, projectToWriteInput, rowToProject } from '../api/projectAdapter';
 import { firstOption, withStoredOption } from '../utils/selectOptions';
 import { useProjectList } from '../api/useProjectList';
@@ -212,6 +213,11 @@ export default function ProjectsView({
    */
   const activityFeed = useProjectActivities(selectedProjectForActivities?.id ?? null);
   const projectCategoryGroups = activityFeed.groups;
+
+  // Which blanks the badge on a project card warns about. Configured in
+  // Settings; absent falls back to the default list, and an empty array is a
+  // real answer meaning «warn about nothing».
+  const gapFields = projectGapFields(settings?.projectDataGapFields);
 
   /** Surfaces a failed feed mutation using the server's own Persian sentence. */
   const reportActivityError = (err: unknown, fallback: string) => {
@@ -3169,7 +3175,34 @@ export default function ProjectsView({
 
                   {/* Name */}
                   <td className="p-3 text-slate-900">
-                    <div className="font-bold text-sm text-slate-900">{p.name}</div>
+                    <div className="flex items-start gap-1.5">
+                      <div className="font-bold text-sm text-slate-900">{p.name}</div>
+                      {/*
+                        A small warning that the record itself is incomplete.
+
+                        Which blanks count is a setting, not a rule in code —
+                        every company means something different by "serious" —
+                        and it is deliberately not `requiredFields.projects`,
+                        which is enforced on save and would make every existing
+                        project unsavable the moment one was switched on. The
+                        badge names the fields it is complaining about rather
+                        than making somebody open the form to find out.
+                      */}
+                      {(() => {
+                        const gaps = projectDataGaps(p as unknown as Record<string, unknown>, gapFields);
+                        if (gaps.length === 0) return null;
+                        return (
+                          <span
+                            className="shrink-0 inline-flex items-center gap-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded px-1 py-0.5 text-[9px] font-bold"
+                            title={`اطلاعات ناقص: ${gaps.map((g) => g.label).join('، ')}`}
+                            id={`project-gap-badge-${p.id}`}
+                          >
+                            <AlertTriangle size={9} />
+                            {gaps.length.toLocaleString('fa-IR')}
+                          </span>
+                        );
+                      })()}
+                    </div>
                     
                     {/* Compact Meta Row */}
                     {(p.salesExpert || p.customerInquiryNumber || (p.itemsNeeded && p.itemsNeeded.length > 0) || (p.attachments && p.attachments.length > 0)) && (

@@ -702,6 +702,16 @@ export interface ERPSettings {
   activeTemplateId: string;
   documentFormats: DocumentFormat;
   requiredFields?: Record<string, Record<string, boolean>>;
+  /**
+   * Project fields whose blankness is worth a badge on the project card.
+   *
+   * Deliberately **not** `requiredFields.projects`: a required field is
+   * enforced on save, so turning one on says nothing about the projects
+   * already on the system and makes them unsavable the next time somebody
+   * opens one to fix a typo. Absent means the default list; an empty array
+   * means "warn about nothing", which is a real answer.
+   */
+  projectDataGapFields?: string[];
   dropdownItems: {
     industries: string[];
     customerTypes: string[];

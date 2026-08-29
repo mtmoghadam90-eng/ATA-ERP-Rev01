@@ -6,6 +6,7 @@ import {
   Save, 
   RefreshCw,
   Sliders,
+  AlertTriangle,
   CheckCircle2,
   FileCheck,
   Lock,
@@ -50,6 +51,7 @@ import { SCHEDULE_SUBJECTS, describeSchedule } from '../utils/workflowSchedule';
 import ConfirmModal from './ConfirmModal';
 import { uploadFile } from '../imageUtils';
 import { REQUIRED_FIELDS_METADATA, DEFAULT_REQUIRED_FIELDS } from '../utils/requiredFields';
+import { projectGapCatalogue, projectGapFields } from '../utils/projectDataGaps';
 import CustomerValueSettingsPanel from './CustomerValueSettingsPanel';
 import { TASK_KINDS, TASK_KIND_LABELS } from '../utils/salesFollowUp';
 
@@ -646,6 +648,18 @@ export default function SettingsView({
   const [isSaved, setIsSaved] = useState(false);
   const [isRequiredFieldsSaved, setIsRequiredFieldsSaved] = useState(false);
 
+  /*
+   * Which blanks put a warning badge on a project card.
+   *
+   * A separate list from `requiredFields.projects` on purpose: a required
+   * field is enforced when the form is submitted, so switching one on says
+   * nothing about the projects already on the system and makes every one of
+   * them unsavable the next time somebody opens it to fix a typo. This is the
+   * other half — the blanks worth reporting on a record that already exists.
+   */
+  const [gapFields, setGapFields] = useState<string[]>(
+    () => [...projectGapFields(settings.projectDataGapFields)]);
+
   // Custom Fields manager states
   const [selectedModule, setSelectedModule] = useState<'customers' | 'projects' | 'products' | 'proformas' | 'suppliers' | 'purchaseOrders' | 'transactions' | 'tasks' | 'packagingDelivery' | 'afterSalesServices'>('customers');
   const [newFieldName, setNewFieldName] = useState('');
@@ -1147,6 +1161,52 @@ export default function SettingsView({
             })}
           </div>
 
+          {/*
+            Warned about, not enforced.
+
+            Making a field required blocks the *next save* of every project
+            already on the system, which is why "these are the fields a project
+            must have" and "these are the blanks worth a warning" cannot be the
+            same switch. The fields are the same catalogue above; the effect is
+            a small badge on the project card that names what is missing.
+          */}
+          <div className="bg-amber-50/40 border border-amber-100 rounded-2xl p-5 space-y-3">
+            <div>
+              <h4 className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                <AlertTriangle size={15} className="text-amber-500" />
+                نقص اطلاعات پروژه (بج هشدار روی کارت پروژه)
+              </h4>
+              <p className="text-slate-500 text-[11px] mt-1 leading-relaxed">
+                فیلدهایی که خالی بودنشان روی کارت پروژه با یک بج کوچک هشدار داده می‌شود. این فهرست
+                جدا از فیلدهای اجباری بالاست: فیلد اجباری جلوی ثبت را می‌گیرد و پروژه‌های قبلی را
+                غیرقابل ذخیره می‌کند، اما این فقط هشدار می‌دهد. اگر هیچ فیلدی انتخاب نشود، هیچ بجی
+                نمایش داده نمی‌شود.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {projectGapCatalogue().map((field) => {
+                const on = gapFields.includes(field.key);
+                return (
+                  <label
+                    key={field.key}
+                    className="flex items-center gap-2 bg-white border border-slate-150 rounded-xl px-3 py-2 cursor-pointer select-none"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => setGapFields((prev) => (
+                        on ? prev.filter((k) => k !== field.key) : [...prev, field.key]
+                      ))}
+                      className="w-4 h-4 rounded border-slate-300 text-amber-500 focus:ring-amber-500"
+                      id={`project-gap-${field.key}`}
+                    />
+                    <span className="text-xs font-semibold text-slate-600">{field.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="flex justify-between items-center border-t border-slate-100 pt-6">
             <div>
               {isRequiredFieldsSaved && (
@@ -1161,6 +1221,7 @@ export default function SettingsView({
                 type="button"
                 onClick={() => {
                   setLocalRequiredFields(settings.requiredFields || DEFAULT_REQUIRED_FIELDS);
+                  setGapFields([...projectGapFields(settings.projectDataGapFields)]);
                   setIsRequiredFieldsSaved(false);
                 }}
                 className="px-5 py-2.5 text-xs font-bold text-slate-500 hover:text-slate-700 hover:bg-slate-50 border border-slate-200 rounded-xl transition"
@@ -1173,6 +1234,7 @@ export default function SettingsView({
                   updateSettings({
                     ...settings,
                     requiredFields: localRequiredFields,
+                    projectDataGapFields: gapFields,
                   });
                   setIsRequiredFieldsSaved(true);
                   setTimeout(() => setIsRequiredFieldsSaved(false), 4000);

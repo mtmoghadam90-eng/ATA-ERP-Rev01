@@ -45,6 +45,9 @@ import { hasEverPurchased, saleDateOf } from "../src/server/services/customerVal
 import { buildReportingTables } from "../src/reporting/flatten";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
+import {
+  DEFAULT_PROJECT_GAP_FIELDS, projectDataGaps, projectGapCatalogue, projectGapFields,
+} from "../src/utils/projectDataGaps";
 import { computeProformaTotals, roundMoney } from "../src/utils/proformaTotals";
 import {
   calculateProformaFinance, calculateProjectFinance, priceInWarehouseCurrency,
@@ -5014,6 +5017,93 @@ head("Referrals: the thread is one component, sided by account");
     /referral\.assignedByUserId !== user\.id/.test(body.slice(0, 2000)));
   ok("and the assignee is told it changed",
     /notifyUser\(/.test(body.slice(0, 3000)));
+}
+
+
+head("Project card: warning about a record's own gaps");
+{
+  const keys = ["salesExpert", "expectedCloseDate", "marketingChannel"];
+  const complete = {
+    salesExpert: "رضا", expectedCloseDate: "1405/06/20", marketingChannel: "نمایشگاه",
+  };
+
+  eq("a complete project shows nothing", projectDataGaps(complete, keys).length, 0);
+  eq("a blank field is a gap",
+    projectDataGaps({ ...complete, salesExpert: "" }, keys).map((g) => g.key).join(","),
+    "salesExpert");
+  // Whitespace is not an answer; neither is an absent key on a record that has
+  // the column.
+  eq("so is whitespace",
+    projectDataGaps({ ...complete, marketingChannel: "   " }, keys).length, 1);
+  eq("and null", projectDataGaps({ ...complete, expectedCloseDate: null }, keys).length, 1);
+
+  /*
+   * A key naming nothing on the record is skipped rather than reported.
+   *
+   * A list row does not carry every column, and a gap that can never be filled
+   * in is a badge nobody can clear — which reads as the feature being broken
+   * rather than the data being incomplete.
+   */
+  eq("a field the record does not carry at all is not a gap",
+    projectDataGaps({ salesExpert: "رضا" }, keys).length, 0);
+
+  // Zero is an answer, not a blank.
+  eq("a numeric zero is not a gap",
+    projectDataGaps({ leadQuality: 0 }, ["leadQuality"]).length, 0);
+
+  // Only the configured keys, and in the catalogue's own order.
+  const two = projectDataGaps({ salesExpert: "", marketingChannel: "", endUser: "" },
+    ["marketingChannel", "salesExpert"]);
+  eq("only the configured fields count", two.length, 2);
+  eq("reported in the catalogue's order", two.map((g) => g.key).join(","),
+    "salesExpert,marketingChannel");
+
+  // Every default has to exist in the catalogue, or it warns about nothing.
+  const known = new Set(projectGapCatalogue().map((f) => f.key));
+  ok("every default field is in the catalogue",
+    DEFAULT_PROJECT_GAP_FIELDS.every((k) => known.has(k)),
+    DEFAULT_PROJECT_GAP_FIELDS.filter((k) => !known.has(k)));
+  ok("and the catalogue is the required-fields one, not a second list",
+    known.has("salesExpert") && known.has("expectedCloseDate"));
+
+  eq("an unconfigured installation uses the defaults",
+    projectGapFields(undefined).join(","), DEFAULT_PROJECT_GAP_FIELDS.join(","));
+  // «Warn about nothing» is a real answer and must not fall back.
+  eq("an empty list turns the badge off entirely", projectGapFields([]).length, 0);
+  // A key left from a field since renamed would sit there warnable by nothing.
+  eq("a key naming no field is dropped",
+    projectGapFields(["salesExpert", "fieldThatWentAway"]).join(","), "salesExpert");
+
+  /*
+   * Not the same switch as `requiredFields.projects`.
+   *
+   * Making a field required blocks the *next save* of every project already on
+   * the system — including one somebody opened to correct a typo — so the two
+   * lists cannot be one.
+   */
+  const settingsSrc = readFileSync("src/components/SettingsView.tsx", "utf8");
+  ok("settings edits the gap list separately", /projectDataGapFields: gapFields/.test(settingsSrc));
+  ok("from the same field catalogue", /projectGapCatalogue\(\)/.test(settingsSrc));
+  /*
+   * A default must actually arrive on a grid row.
+   *
+   * The badge reads the row the grid holds, and `rowToProject` writes each
+   * field explicitly — so a field the adapter never sets is skipped by the
+   * "not carried" rule above and warns about nothing, silently, forever.
+   */
+  const adapter = readFileSync("src/api/projectAdapter.ts", "utf8");
+  const rowHalf = adapter.slice(adapter.indexOf("export function rowToProject"),
+    adapter.indexOf("export function detailToProject"));
+  for (const key of DEFAULT_PROJECT_GAP_FIELDS) {
+    ok(`the grid row carries ${key}`, new RegExp(`\\b${key}:`).test(rowHalf));
+  }
+
+  const projectsSrc = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("the project card draws the badge", /project-gap-badge-/.test(projectsSrc));
+  // A badge that will not say what is missing sends somebody into the form to
+  // find out, which is most of the work it was meant to save.
+  ok("and names the fields it is complaining about",
+    /gaps\.map\(\(g\) => g\.label\)\.join/.test(projectsSrc));
 }
 
 
