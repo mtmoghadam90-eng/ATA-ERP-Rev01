@@ -84,6 +84,13 @@ const LIST_SELECT = {
   assignedToUserId: true, assignedToName: true,
   reminderEnabled: true, reminderDateJalali: true, reminderTime: true,
   createdAt: true,
+  // What kind of work it is, and — for a sales follow-up — what came of it.
+  // The card needs the kind to send the user to the follow-up flow rather than
+  // offering the ordinary tick, which is refused for these.
+  taskKind: true,
+  followUpResult: true,
+  completionNote: true,
+  completedAtJalali: true,
   // The task card draws a custom-fields block from these.
   customValues: true,
 } satisfies Prisma.TaskSelect;
@@ -243,6 +250,27 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
   // Get before state for audit log
   const before = await db.task.findUnique({ where: { id } });
   if (!before) return null;
+
+  /*
+   * A sales follow-up is not finished with a tick.
+   *
+   * Ticking one closes the task and leaves the quotation with nobody on it and
+   * nothing recorded about why the customer said — which is the exact failure
+   * the follow-up flow exists to prevent. So the generic path refuses the
+   * completion and points at the screen that asks the three questions. Every
+   * other edit of the task goes through unchanged, and the automatic closing
+   * (a won quotation, a superseded revision) writes with `updateMany` and is
+   * not affected.
+   */
+  if (
+    before.taskKind === "SALES_FOLLOW_UP"
+    && input.status === "انجام شده"
+    && before.status !== "انجام شده"
+  ) {
+    throw new Error(
+      "بستن پیگیری فروش از این صفحه ممکن نیست؛ از «پیگیری فروش» در ماژول پیش‌فاکتورها نتیجه پیگیری را ثبت کنید.",
+    );
+  }
 
   const task = await db.task.update({ where: { id }, data: scalarData(input) as Prisma.TaskUncheckedUpdateInput });
 

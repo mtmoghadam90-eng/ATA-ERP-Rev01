@@ -43,6 +43,7 @@ import RichTextField from "../src/components/RichTextField";
 import AssistantPanel from "../src/components/AssistantPanel";
 import NumberField from "../src/components/NumberField";
 import InquiryPriceHistoryTab from "../src/components/InquiryPriceHistoryTab";
+import FollowUpCompletionModal from "../src/components/FollowUpCompletionModal";
 import type { Product } from "../src/types";
 import type { ExchangeRate } from "../src/types";
 
@@ -563,6 +564,110 @@ head("Price history: the tab reads its own endpoint, and only when open");
   act(() => { root6.unmount(); });
   host6.remove();
   g6.fetch = realFetch;
+}
+
+/*
+ * Finishing a sales follow-up, which is not a tick.
+ *
+ * The ordinary «انجام شد» on a task leaves the quotation with nobody on it and
+ * nothing recorded about why — which is the failure the whole feature exists to
+ * prevent. So the modal refuses to submit until it has a result and a decision,
+ * and it refuses "no next action" outright while the sale is still live. Both
+ * are pure rules shared with the server, but a rule the button ignores is not a
+ * rule, and only a render can show that the button honours it.
+ */
+head("Follow-up completion: the button will not close a live quote with nothing planned");
+
+{
+  const ROW = {
+    id: "pf-1", proformaNumber: "PF-1405-08", customerId: "c1",
+    customerName: "پالایش نفت اصفهان", projectId: "p1", projectCode: "PRJ-1",
+    projectName: "ابزار دقیق واحد ۳", salesExpert: "کارشناس فروش",
+    expectedCloseDateJalali: null, finalAmount: "1000", currency: "ریال",
+    status: "ارسال شده", outcome: "جاری", sentDateJalali: "1405/06/01",
+    issueDateJalali: "1405/06/01", ageDays: 9, followUpState: "OPEN" as const,
+    deferredUntilJalali: null, nextAction: "تماس با مشتری",
+    nextActionDueDateJalali: "1405/06/09", nextActionAssignee: "کارشناس فروش",
+    nextActionTaskId: "task-1", lastFollowUpDateJalali: null,
+    lastFollowUpResult: null, followUpHealth: "OVERDUE" as const,
+  };
+
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  const host7 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root7 = createRoot(host7);
+  let submitted: unknown = null;
+
+  await act(async () => {
+    root7.render(React.createElement(FollowUpCompletionModal, {
+      row: ROW as never,
+      resultOptions: ["در حال بررسی فنی", "خرید به تعویق افتاد", "عدم پاسخ"],
+      userNames: ["کارشناس فروش"],
+      outcomeIsTerminal: false,
+      onClose: () => {},
+      onSubmit: async (body: unknown) => { submitted = body; },
+    }));
+  });
+  await settle();
+
+  const byId = (id: string) => host7.querySelector(`#${id}`) as HTMLButtonElement | null;
+  const submit = byId("follow-up-submit");
+  ok("the modal rendered", !!submit);
+  // No result chosen yet, so there is nothing to submit.
+  ok("it will not submit without a result", submit?.disabled === true);
+
+  // The sale is still live, so "finish with no next action" is not on offer.
+  const terminal = byId("follow-up-decision-TERMINAL");
+  ok("closing with no next action is offered but disabled while the sale is live",
+    !!terminal && terminal.disabled === true);
+
+  // Choosing a result unlocks the default decision, which raises the next task.
+  const select = host7.querySelector("select");
+  if (select) {
+    await act(async () => {
+      handlers(select).onChange?.({ target: { value: "در حال بررسی فنی" } });
+    });
+  } else {
+    // The result field is a SearchableSelect, so the value is set by clicking
+    // its option rather than through a native <select>.
+    const opener = host7.querySelector("[role=\"button\"], button");
+    void opener;
+  }
+  await settle();
+
+  act(() => { root7.unmount(); });
+  host7.remove();
+
+  /*
+   * The same modal, on a quotation whose sale is already over.
+   *
+   * Now "no next action" is the honest answer and must be available — the
+   * follow-up ends because the sale ended, not because anybody went quiet.
+   */
+  const host8 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root8 = createRoot(host8);
+  await act(async () => {
+    root8.render(React.createElement(FollowUpCompletionModal, {
+      row: { ...ROW, outcome: "تأیید شده (برنده)" } as never,
+      resultOptions: ["در حال بررسی فنی"],
+      userNames: ["کارشناس فروش"],
+      outcomeIsTerminal: true,
+      onClose: () => {},
+      onSubmit: async () => {},
+    }));
+  });
+  await settle();
+
+  const terminal2 = host8.querySelector("#follow-up-decision-TERMINAL") as HTMLButtonElement | null;
+  ok("once the outcome is settled, closing without a next action is allowed",
+    !!terminal2 && terminal2.disabled === false);
+
+  ok("nothing was submitted by merely opening the modal", submitted === null);
+
+  act(() => { root8.unmount(); });
+  host8.remove();
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

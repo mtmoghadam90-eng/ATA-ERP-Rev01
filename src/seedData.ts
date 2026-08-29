@@ -288,6 +288,47 @@ export const DEFAULT_SETTINGS: ERPSettings = {
           }
         }
       ]
+    },
+    /*
+     * The standard sales follow-up, as a rule rather than as code.
+     *
+     * Seeded so a new installation chases its quotations from day one, and
+     * seeded as an ordinary automation so every part of it — when it fires, who
+     * it lands on, how long the person has, what the task is called — is edited
+     * or switched off in Settings → Automations like any other. Hardcoding it
+     * would put all four beyond reach.
+     *
+     * `SALES_EXPERT` resolves through the proforma's project, not through
+     * whoever prepared the document: a support engineer routinely writes the
+     * quotation for a job somebody else is selling, and the chase belongs to
+     * the person selling it.
+     *
+     * `skipIfOpenSameKind` is what stops a re-sent quotation collecting a
+     * second follow-up while the first is still open.
+     */
+    {
+      id: 'wf-default-follow-up',
+      name: 'پیگیری پیش‌فاکتور پس از ارسال به مشتری',
+      active: true,
+      triggerType: 'proforma_status_change',
+      conditions: [
+        { field: 'newStatus', operator: 'equals', value: 'ارسال شده' }
+      ],
+      actions: [
+        {
+          id: 'wfa-follow-up',
+          type: 'create_task',
+          taskConfig: {
+            titleTemplate: 'پیگیری پیش‌فاکتور {proformaNumber}',
+            descTemplate: 'پیش‌فاکتور {proformaNumber} برای {customerName} ارسال شد. نتیجه بررسی مشتری را پیگیری کنید.',
+            assignedTo: 'SALES_EXPERT',
+            priority: 'متوسط',
+            dueDaysOffset: 2,
+            taskKind: 'SALES_FOLLOW_UP',
+            skipIfOpenSameKind: true
+          }
+        }
+      ]
     }
   ]
 };

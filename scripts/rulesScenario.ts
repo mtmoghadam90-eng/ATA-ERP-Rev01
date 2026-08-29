@@ -123,6 +123,12 @@ import {
 } from "../src/server/services/proformaService";
 import { formatMoney } from "../src/numUtils";
 import { renderProformaDocument } from "../src/utils/proformaDocument";
+import {
+  AUTO_CLOSE_NOTE, DEFAULT_FOLLOW_UP_RESULTS, FOLLOW_UP_HEALTH, FOLLOW_UP_STATES,
+  TASK_KINDS, completionRefusalReason, followUpActivityText, followUpHealthOf,
+  healthRank, isOpenWithoutNextAction, isTaskFinished, isTerminalOutcome,
+  normalizeFollowUpState, normalizeTaskKind, stateAfterDecision, versionRefusalReason,
+} from "../src/utils/salesFollowUp";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -4039,6 +4045,319 @@ head("Printed proforma: the multi-page rules");
   ok("the seal strip is sized in one place", ruleBody(".seal-panel").includes("height"));
   ok("and the markup carries no second copy of it",
     (doc.match(/class="seal-panel/g) ?? []).length === 1, doc.match(/class="seal-panel/g));
+}
+
+
+/* ── Sales follow-up ─────────────────────────────────────────────────────── */
+head("Sales follow-up: chasing a quotation");
+{
+  /*
+   * The rule this whole feature rests on: follow-up is a different axis from
+   * the commercial outcome. A quotation sent three weeks ago with nobody on it
+   * and one the customer asked us to raise again after Nowruz have the *same*
+   * outcome and are completely different situations.
+   */
+  ok("the states are only the three the outcome cannot express",
+    FOLLOW_UP_STATES.join(",") === "OPEN,DEFERRED,NO_RESPONSE", FOLLOW_UP_STATES);
+  for (const forbidden of ["WON", "LOST", "CANCELLED", "SUPERSEDED"]) {
+    ok(`${forbidden} is not a follow-up state — it already exists as an outcome`,
+      !(FOLLOW_UP_STATES as readonly string[]).includes(forbidden));
+  }
+  eq("anything unrecognised is treated as still being chased",
+    normalizeFollowUpState("wat"), "OPEN");
+
+  /* Terminal outcomes end the chase; a part-won document does not. */
+  ok("a won quotation is terminal", isTerminalOutcome("تأیید شده (برنده)"));
+  ok("so is a lost one", isTerminalOutcome("باخته"));
+  ok("and a cancelled one", isTerminalOutcome("لغو شده"));
+  ok("but نیمه برنده is still being sold, so it is not",
+    !isTerminalOutcome("نیمه برنده"));
+  ok("nor is a document still running", !isTerminalOutcome("جاری"));
+
+  /*
+   * Absent means GENERAL, which is what makes the migration a no-op: every task
+   * written before this existed is an ordinary one and must be untouched by the
+   * duplicate check, the queue and the automatic closing.
+   */
+  eq("a task with no kind is a general task", normalizeTaskKind(undefined), "GENERAL");
+  eq("and an unknown one is too", normalizeTaskKind("SOMETHING"), "GENERAL");
+  eq("only the follow-up kind is the follow-up kind",
+    normalizeTaskKind("SALES_FOLLOW_UP"), "SALES_FOLLOW_UP");
+  ok("there are exactly two kinds", TASK_KINDS.length === 2, TASK_KINDS);
+
+  /*
+   * "Finished" is an exclusion, like the ledger's balance rule: a status nobody
+   * anticipated must read as still open, because a forgotten follow-up is the
+   * failure this feature exists to prevent.
+   */
+  ok("a completed task is finished", isTaskFinished("انجام شده"));
+  ok("a cancelled one too", isTaskFinished("کنسل شده"));
+  ok("but one in progress is not", !isTaskFinished("در حال انجام"));
+  ok("and neither is a status nobody anticipated", !isTaskFinished("منتظر مشتری"));
+
+  /* --- the health ranking, which is the order the desk works in --- */
+  const today = "1405/06/10";
+  const health = (row: Parameters<typeof followUpHealthOf>[0]) => followUpHealthOf(row, today);
+
+  eq("a late next action is overdue",
+    health({ followUpState: "OPEN", nextActionDueDateJalali: "1405/06/09", hasOpenFollowUpTask: true }),
+    "OVERDUE");
+  eq("today's is due today",
+    health({ followUpState: "OPEN", nextActionDueDateJalali: today, hasOpenFollowUpTask: true }),
+    "DUE_TODAY");
+  eq("a future one is upcoming",
+    health({ followUpState: "OPEN", nextActionDueDateJalali: "1405/06/20", hasOpenFollowUpTask: true }),
+    "UPCOMING");
+  eq("an open quotation with no task at all has no next action",
+    health({ followUpState: "OPEN", nextActionDueDateJalali: null, hasOpenFollowUpTask: false }),
+    "NO_NEXT_ACTION");
+  eq("and that ranks above merely upcoming — nothing planned is worse than late",
+    healthRank("NO_NEXT_ACTION") < healthRank("UPCOMING"), true);
+  ok("overdue leads the whole list", healthRank("OVERDUE") === 0);
+
+  /*
+   * A deferred quotation is not overdue while its date is ahead — that is the
+   * entire point of deferring — and rejoins the ordinary ranking once it
+   * passes, so nothing is parked for ever.
+   */
+  eq("a deferral still in the future is parked, not late",
+    health({
+      followUpState: "DEFERRED", nextActionDueDateJalali: "1405/06/09",
+      hasOpenFollowUpTask: true, deferredUntilJalali: "1405/07/01",
+    }),
+    "DEFERRED");
+  eq("once the date passes it is judged like any other row",
+    health({
+      followUpState: "DEFERRED", nextActionDueDateJalali: "1405/06/09",
+      hasOpenFollowUpTask: true, deferredUntilJalali: "1405/06/01",
+    }),
+    "OVERDUE");
+  eq("an abandoned one says so", 
+    health({ followUpState: "NO_RESPONSE", nextActionDueDateJalali: null, hasOpenFollowUpTask: false }),
+    "NO_RESPONSE");
+
+  /* The health check with a target of zero. */
+  ok("open with no task is the fault the dashboard counts",
+    isOpenWithoutNextAction({ followUpState: "OPEN", nextActionDueDateJalali: null, hasOpenFollowUpTask: false }));
+  ok("a deferred quotation is a decision, not neglect",
+    !isOpenWithoutNextAction({ followUpState: "DEFERRED", nextActionDueDateJalali: null, hasOpenFollowUpTask: false }));
+  ok("and so is an abandoned one",
+    !isOpenWithoutNextAction({ followUpState: "NO_RESPONSE", nextActionDueDateJalali: null, hasOpenFollowUpTask: false }));
+  ok("an open quotation somebody is chasing is fine",
+    !isOpenWithoutNextAction({ followUpState: "OPEN", nextActionDueDateJalali: "1405/06/20", hasOpenFollowUpTask: true }));
+
+  /* --- what a decision leaves behind --- */
+  eq("recording a next action keeps the chase open", stateAfterDecision("NEXT_ACTION"), "OPEN");
+  eq("deferring parks it", stateAfterDecision("DEFER"), "DEFERRED");
+  eq("giving up closes it", stateAfterDecision("NO_RESPONSE"), "NO_RESPONSE");
+  // Not NO_RESPONSE: the chase ended because the sale ended, which the outcome
+  // already records. Writing "no response" would claim the customer went quiet
+  // on a quotation they had just approved.
+  eq("a terminal outcome does not claim the customer went quiet",
+    stateAfterDecision("TERMINAL"), "OPEN");
+
+  /* --- the refusals, run by the modal and by the route --- */
+  const ctx = { todayJalali: today, outcomeIsTerminal: false };
+  ok("a result is required",
+    completionRefusalReason({ decision: "NEXT_ACTION", followUpResult: "" }, ctx) !== null);
+  ok("a next action needs a title",
+    completionRefusalReason({ decision: "NEXT_ACTION", followUpResult: "در حال بررسی فنی", nextDueDate: "1405/06/20" }, ctx) !== null);
+  ok("and a date",
+    completionRefusalReason({ decision: "NEXT_ACTION", followUpResult: "در حال بررسی فنی", nextTitle: "تماس" }, ctx) !== null);
+  ok("a complete next action is accepted",
+    completionRefusalReason(
+      { decision: "NEXT_ACTION", followUpResult: "در حال بررسی فنی", nextTitle: "تماس", nextDueDate: "1405/06/20" },
+      ctx,
+    ) === null);
+  // A deferral into the past comes back overdue the moment it is saved, which
+  // is not what the customer asked for.
+  ok("a deferral must be into the future",
+    completionRefusalReason({ decision: "DEFER", followUpResult: "خرید به تعویق افتاد", deferredUntil: "1405/06/01" }, ctx) !== null);
+  ok("a future deferral is accepted",
+    completionRefusalReason({ decision: "DEFER", followUpResult: "خرید به تعویق افتاد", deferredUntil: "1405/07/01" }, ctx) === null);
+  ok("giving up needs only a result",
+    completionRefusalReason({ decision: "NO_RESPONSE", followUpResult: "عدم پاسخ" }, ctx) === null);
+  // The hole this screen exists to close: closing a live quotation with nothing
+  // planned.
+  ok("closing without a next action is refused while the sale is live",
+    completionRefusalReason({ decision: "TERMINAL", followUpResult: "سایر" }, ctx) !== null);
+  ok("and allowed once the outcome is settled",
+    completionRefusalReason({ decision: "TERMINAL", followUpResult: "سایر" },
+      { ...ctx, outcomeIsTerminal: true }) === null);
+
+  /* --- the version chain --- */
+  ok("a document with no revision may be revised",
+    versionRefusalReason({ proformaNumber: "PF-A", nextVersionNumber: null }) === null);
+  const forked = versionRefusalReason({ proformaNumber: "PF-A", nextVersionNumber: "PF-B" });
+  ok("a second revision of the same document is refused", forked !== null);
+  ok("and the message names the revision to work from instead",
+    (forked ?? "").includes("PF-B"), forked);
+
+  /* --- the timeline sentence --- */
+  const text = followUpActivityText({
+    proformaNumber: "PF-1404-12",
+    followUpResult: "در حال بررسی فنی",
+    completionNote: "مشتری اعلام کرد تأیید فنی انجام شده است.",
+    nextTitle: "پیگیری تأیید مالی",
+    nextDueDateJalali: "1405/06/15",
+    decision: "NEXT_ACTION",
+  });
+  ok("the timeline entry names the quotation and the result",
+    text.includes("PF-1404-12") && text.includes("در حال بررسی فنی"), text);
+  ok("carries the note", text.includes("تأیید فنی انجام شده"), text);
+  ok("and says what happens next, with its date",
+    text.includes("اقدام بعدی") && text.includes("1405/06/15"), text);
+
+  ok("the default result list is offered and «عدم پاسخ» is one of them",
+    DEFAULT_FOLLOW_UP_RESULTS.includes("عدم پاسخ"));
+  // A follow-up result is not a loss reason: «خرید به تعویق افتاد» is a
+  // deferral, and filing it as a loss would poison every loss report.
+  ok("the follow-up results are not the loss reasons",
+    DEFAULT_FOLLOW_UP_RESULTS.every((r) => !DEFAULT_SETTINGS.lossReasons.includes(r)));
+  ok("«خرید به تعویق افتاد» is a follow-up result, never a loss reason",
+    DEFAULT_FOLLOW_UP_RESULTS.includes("خرید به تعویق افتاد")
+    && !DEFAULT_SETTINGS.lossReasons.includes("خرید به تعویق افتاد"));
+  ok("the settings ship the list so the dropdown is not empty",
+    (DEFAULT_SETTINGS.dropdownItems.followUpResults ?? []).length === DEFAULT_FOLLOW_UP_RESULTS.length);
+
+  /*
+   * The standard follow-up is seeded as a rule, not written into code.
+   *
+   * That is the whole point: when it fires, who it lands on, how long the
+   * person has and what the task is called are all editable in Settings, and
+   * the rule can be switched off entirely. A seeded rule is a default, not a
+   * hardcoding — the same distinction as a seeded dropdown list.
+   */
+  const followUpRule = (DEFAULT_SETTINGS.workflows ?? []).find(
+    (r) => r.triggerType === "proforma_status_change",
+  );
+  ok("a follow-up automation ships with a new installation", !!followUpRule);
+  eq("it fires when a quotation is sent",
+    followUpRule?.conditions?.[0]?.value, "ارسال شده");
+  const cfg = followUpRule?.actions?.[0]?.taskConfig;
+  eq("it raises a sales follow-up", cfg?.taskKind, "SALES_FOLLOW_UP");
+  // Never the person who prepared the document.
+  eq("owned by the project's sales engineer", cfg?.assignedTo, "SALES_EXPERT");
+  ok("and it will not stack duplicates on a re-sent quotation", cfg?.skipIfOpenSameKind === true);
+  ok("the title names the quotation", (cfg?.titleTemplate ?? "").includes("{proformaNumber}"));
+
+  ok("every health band has a rank", FOLLOW_UP_HEALTH.every((h) => healthRank(h) < FOLLOW_UP_HEALTH.length));
+
+  // What a follow-up closed by the system says. It records that the sale
+  // settled, not that anything was lost — the outcome is the place for that.
+  ok("the automatic closing note explains itself",
+    AUTO_CLOSE_NOTE.includes("نتیجه نهایی"), AUTO_CLOSE_NOTE);
+  ok("and does not claim a loss",
+    !AUTO_CLOSE_NOTE.includes("باخت"), AUTO_CLOSE_NOTE);
+}
+
+/* ── Sales follow-up: what the code may and may not do ───────────────────── */
+head("Sales follow-up: the ownership rules, read from the source");
+{
+  const read = (file: string) => readFileSync(file, "utf-8");
+  const workflow = read("src/server/services/workflowService.ts");
+  const proforma = read("src/server/services/proformaService.ts");
+  const followUp = read("src/server/services/followUpService.ts");
+
+  /*
+   * Task creation belongs to the workflow engine, and to nothing else.
+   *
+   * Hardcoding "when a proforma is sent, raise a follow-up" would make its
+   * timing, its assignee and its priority uneditable code — the opposite of
+   * what a configurable automation is for. The proforma service may fire the
+   * trigger; it may not create the task.
+   */
+  ok("the proforma service creates no task of its own",
+    !/db\.task\.create|tx\.task\.create/.test(proforma), "proformaService creates a task");
+  ok("it fires the status trigger instead",
+    proforma.includes('"proforma_status_change"'));
+  ok("only on a real change of the stored status",
+    /before\.status !== result\.proforma\.status/.test(proforma));
+  ok("and the outcome trigger stays separate",
+    proforma.includes('"proforma_outcome_change"'));
+
+  /*
+   * The commercial owner is the project's sales engineer, never the person who
+   * prepared the document. A support engineer routinely writes the quotation
+   * for a job somebody else is selling.
+   */
+  ok("SALES_EXPERT resolves through the project", /salesExpert/.test(workflow));
+  ok("and never through the proforma's creator",
+    !/creatorUserId|creator\.fullName/.test(
+      workflow.slice(workflow.indexOf("SALES_EXPERT"), workflow.indexOf("SALES_EXPERT") + 900),
+    ));
+
+  /* A follow-up task is attached to the proforma; its owner comes from the job. */
+  ok("a payload naming a proforma attaches the task to it",
+    /relatedToType: "proforma"/.test(workflow));
+  ok("the duplicate check is an option on the action, not a law in the engine",
+    /config\.skipIfOpenSameKind/.test(workflow));
+  ok("and it looks for an unfinished task of the same kind on the same record",
+    /taskKind,\s*\n\s*relatedToType: related\.relatedToType/.test(workflow));
+
+  /*
+   * The automatic closing acts on follow-ups and on nothing else. An ordinary
+   * task somebody attached to the same proforma does not stop being necessary
+   * because the quotation was won.
+   */
+  const closer = followUp.slice(followUp.indexOf("export async function closeFollowUpTasks"));
+  ok("closing is scoped to the follow-up kind",
+    /taskKind: "SALES_FOLLOW_UP"/.test(closer.slice(0, 900)));
+  ok("general tasks are never swept up",
+    !/taskKind: "GENERAL"/.test(closer.slice(0, 900)));
+  ok("a terminal outcome closes them",
+    /closeFollowUpTasks\(tx/.test(proforma));
+
+  /*
+   * The completion is one transaction. Three separate writes could stop half
+   * way and leave a quotation marked as actively followed up with the task
+   * completed and nothing to replace it.
+   */
+  const completion = followUp.slice(
+    followUp.indexOf("export async function completeFollowUp"),
+    followUp.indexOf("/* ------------------------------- reactivation"),
+  );
+  ok("completion runs inside a transaction", /db\.\$transaction/.test(completion));
+  ok("the next task is written inside it, not after",
+    completion.indexOf("tx.task.create") > completion.indexOf("db.$transaction"));
+  ok("the proforma's follow-up state moves inside it too",
+    completion.indexOf("tx.proforma.update") > completion.indexOf("db.$transaction"));
+  // A double-clicked button must complete once, not raise two next actions.
+  ok("the close is a conditional claim", /updateMany/.test(completion));
+
+  /*
+   * A follow-up is not finished with the ordinary tick.
+   *
+   * Ticking one on the tasks screen closes it and leaves the quotation with
+   * nobody on it and nothing recorded — the exact failure the flow prevents.
+   * The generic path refuses it; the automatic closing writes with `updateMany`
+   * and is deliberately not affected.
+   */
+  const tasks = read("src/server/services/taskService.ts");
+  ok("the generic task update refuses to tick a sales follow-up",
+    /taskKind === "SALES_FOLLOW_UP"[\s\S]{0,200}throw new Error/.test(tasks));
+  ok("and the message sends the user to the follow-up screen",
+    /پیگیری فروش/.test(tasks));
+
+  /* The next action lives on the task. A column on the proforma would be a
+     second copy of the date, the owner and the priority. */
+  const schema = read("prisma/schema.prisma");
+  const proformaModel = schema.slice(
+    schema.indexOf("model Proforma {"),
+    schema.indexOf("model ProformaItem {"),
+  );
+  ok("the proforma carries a follow-up state", /followUpState/.test(proformaModel));
+  ok("and a revision link", /previousVersionId/.test(proformaModel));
+  ok("but no next action of its own",
+    !/nextAction/i.test(proformaModel), "proforma has a nextAction column");
+  ok("and no expected decision date of its own — the project has one",
+    !/expectedDecision|expectedCloseDate/i.test(proformaModel));
+
+  /* Loss reasons are not redesigned. */
+  ok("lossReason is still one nullable column on the proforma",
+    /lossReason\s+String\?/.test(proformaModel));
+  ok("and there is no second loss-reason table",
+    !/model LossReason/.test(schema));
 }
 
 
