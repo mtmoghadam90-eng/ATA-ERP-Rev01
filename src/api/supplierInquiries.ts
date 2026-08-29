@@ -1,4 +1,5 @@
 import { ListResponse, api } from "./client";
+import { parseOfferFiles } from "../utils/attachments";
 import type { InquiryStep, SupplierInquiry, SupplierInquiryItem } from "../types";
 
 /**
@@ -53,6 +54,9 @@ export interface InquiryRow {
   creationDateJalali: string | null;
   technicalOfferUrl: string | null;
   financialOfferUrl: string | null;
+  /** `[{name,size,url}]`; the single URLs above are its first entry. */
+  technicalOfferFiles: string | null;
+  financialOfferFiles: string | null;
   discountPercent: string | null;
   discountAmount: string | null;
   createdAt: string;
@@ -119,6 +123,8 @@ export interface InquiryWriteInput {
   offerConfirmedDate?: string | null;
   technicalOfferUrl?: string | null;
   financialOfferUrl?: string | null;
+  technicalOfferFiles?: unknown;
+  financialOfferFiles?: unknown;
   discountPercent?: number;
   discountAmount?: number;
   items?: Record<string, unknown>[];
@@ -220,6 +226,10 @@ export function rowToInquiry(row: InquiryRow): SupplierInquiry {
     id: row.id,
     projectId: row.projectId,
     projectName: row.project?.name ?? undefined,
+    // From the row's own join, never looked up in a picker's matches: several
+    // projects here are genuinely called the same thing, and the code is what
+    // separates them.
+    projectCode: row.project?.code ?? undefined,
     supplierId: row.supplierId,
     // The card reads this directly; on the server it is a join, not a column.
     supplierName: row.supplier?.name ?? "",
@@ -227,6 +237,11 @@ export function rowToInquiry(row: InquiryRow): SupplierInquiry {
     steps: (row.steps ?? []).map(rowToStep),
     technicalOfferUrl: row.technicalOfferUrl ?? undefined,
     financialOfferUrl: row.financialOfferUrl ?? undefined,
+    // Two sources with a precedence, resolved in one place: the first entry of
+    // the list *is* what the single-URL column holds, so reading both would
+    // show the first file twice.
+    technicalOfferFiles: parseOfferFiles(row.technicalOfferFiles, row.technicalOfferUrl),
+    financialOfferFiles: parseOfferFiles(row.financialOfferFiles, row.financialOfferUrl),
     discountPercent: Number(row.discountPercent ?? 0),
     discountAmount: Number(row.discountAmount ?? 0),
     isWinner: row.isWinner,
@@ -251,8 +266,10 @@ export function inquiryToWriteInput(inquiry: Partial<SupplierInquiry>): InquiryW
     creationDate: inquiry.creationDate || null,
     winnerDate: inquiry.winnerDate ?? null,
     offerConfirmedDate: inquiry.offerConfirmedDate ?? null,
-    technicalOfferUrl: inquiry.technicalOfferUrl ?? null,
-    financialOfferUrl: inquiry.financialOfferUrl ?? null,
+    // The lists are sent, not the URLs: the server derives those from the
+    // first entry, so the two can never be written out of step.
+    technicalOfferFiles: inquiry.technicalOfferFiles ?? [],
+    financialOfferFiles: inquiry.financialOfferFiles ?? [],
     discountPercent: Number(inquiry.discountPercent) || 0,
     discountAmount: Number(inquiry.discountAmount) || 0,
     items: (inquiry.items ?? []).map((item) => ({

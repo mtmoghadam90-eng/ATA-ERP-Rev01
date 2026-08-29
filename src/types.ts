@@ -1140,8 +1140,13 @@ export interface SupplierInquiry {
   supplierId: string;
   supplierName: string;
   items: SupplierInquiryItem[];
-  technicalOfferUrl?: string; // فایل پیشنهاد فنی
-  financialOfferUrl?: string; // فایل پیشنهاد مالی
+  /** The project's code, joined on the row. Codes are unique; names are not. */
+  projectCode?: string;
+  technicalOfferUrl?: string; // فایل پیشنهاد فنی — اولین فایل فهرست زیر
+  financialOfferUrl?: string; // فایل پیشنهاد مالی — اولین فایل فهرست زیر
+  /** Every technical file. A quotation is rarely one document. */
+  technicalOfferFiles?: { name: string; size: string; url: string }[];
+  financialOfferFiles?: { name: string; size: string; url: string }[];
   steps: InquiryStep[];
   isWinner: boolean;
   winnerDate?: string;

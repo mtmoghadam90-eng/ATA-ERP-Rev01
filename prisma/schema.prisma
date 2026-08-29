@@ -973,8 +973,16 @@ model SupplierInquiry {
   creationDate       DateTime @db.Date
   creationDateJalali String?  @db.NVarChar(10)
 
+  /// The first technical file, kept in step with `technicalOfferFiles` below
+  /// so the grid's link, the download button and the reporting export are
+  /// unaffected by an offer having more than one.
   technicalOfferUrl String? @db.NVarChar(500)
   financialOfferUrl String? @db.NVarChar(500)
+
+  /// `[{name,size,url}]` — a quotation arrives as a covering letter, a
+  /// datasheet and a price list, and one column could hold one of them.
+  technicalOfferFiles String? @db.NVarChar(Max)
+  financialOfferFiles String? @db.NVarChar(Max)
 
   /// A discount on the whole offer: a percentage, then a fixed amount off what
   /// is left.
