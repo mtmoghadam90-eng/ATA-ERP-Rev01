@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { X, ChevronRight, ChevronLeft, Bell, Calendar, User, Clock } from 'lucide-react';
 import { Task } from '../types';
 import { rowToTask, taskToWriteInput, tasksApi } from '../api/tasks';
-import { getTodayShamsi } from '../dateUtils';
+import { getTodayShamsi, holidayReason } from '../dateUtils';
 import { getJalaliMonthDays, getShamsiWeekDayOfFirst } from './ShamsiDatePicker';
 
 /**
@@ -160,6 +160,20 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
   const isCurrentMonth =
     currentYear === today.year && currentMonthIndex === today.monthIndex;
 
+  /*
+   * Why a day is off, asked of the calendar rather than of the grid column.
+   *
+   * The weekday header painted its last column red and the cells below it
+   * nothing at all, so a month containing Nowruz or Ashura looked like a month
+   * of unbroken working days — on the one screen whose whole job is showing
+   * when work is due. `holidayReason` is the same rule the due-date arithmetic
+   * uses, so a day the board draws as working is a day a task can actually be
+   * due on.
+   */
+  const dayOffReason = (day: number): string | null => holidayReason(
+    `${currentYear}/${String(currentMonthIndex + 1).padStart(2, '0')}/${String(day).padStart(2, '0')}`,
+  );
+
   // Navigate months
   const handlePrevMonth = () => {
     if (currentMonthIndex === 0) {
@@ -278,22 +292,32 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
               const isSelected = selectedDay === dayNum;
               const isToday = isCurrentMonth && dayNum === today.day;
               const hasTasks = dayTasks.length > 0;
+              const reason = dayOffReason(dayNum);
 
               return (
                 <button
                   key={dayNum}
                   onClick={() => setSelectedDay(dayNum)}
+                  // A red day without a reason invites the question it cannot
+                  // answer, so the day's own title is on it.
+                  title={reason ?? undefined}
                   className={`relative p-2.5 rounded-xl border flex flex-col justify-between items-center transition min-h-[50px] sm:min-h-[64px] hover:border-sky-300 group ${
                     isSelected 
                       ? 'border-sky-500 bg-sky-500 text-white shadow-md shadow-sky-500/10' 
                       : isToday
                         ? 'border-sky-400 bg-sky-50/60 text-slate-800'
-                        : hasTasks 
-                          ? 'border-slate-200 bg-slate-50/50 text-slate-800 hover:bg-slate-50' 
-                          : 'border-slate-100 bg-white text-slate-700 hover:bg-slate-50/50'
+                        : reason
+                          ? 'border-rose-100 bg-rose-50/60 text-rose-700 hover:bg-rose-50'
+                          : hasTasks 
+                            ? 'border-slate-200 bg-slate-50/50 text-slate-800 hover:bg-slate-50' 
+                            : 'border-slate-100 bg-white text-slate-700 hover:bg-slate-50/50'
                   }`}
                 >
-                  <span className={`text-xs font-bold font-mono ${isSelected ? 'text-white' : 'text-slate-700 group-hover:text-sky-600'}`}>
+                  <span className={`text-xs font-bold font-mono ${
+                    isSelected ? 'text-white'
+                      : reason ? 'text-rose-600'
+                        : 'text-slate-700 group-hover:text-sky-600'
+                  }`}>
                     {dayNum}
                   </span>
 

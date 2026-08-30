@@ -153,7 +153,9 @@ import {
   normalizeCalendarKind, parseCalendarYear, planHijriShift, shiftForYear, shiftRefusalReason,
   toLatinDigits as holidayLatinDigits,
 } from "../src/utils/holidays";
-import { addDaysToShamsi as addDays, setHolidayCalendar, toGregorianStr } from "../src/dateUtils";
+import {
+  addDaysToShamsi as addDays, holidayReason, setHolidayCalendar, toGregorianStr,
+} from "../src/dateUtils";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -5861,6 +5863,70 @@ head("Holidays: the calendar is data, and it was a lunar month wrong");
    */
   ok("and the re-placement is one transaction, not a row-by-row update",
     /\$transaction\([\s\S]{0,400}deleteMany[\s\S]{0,600}holiday\.create/.test(holidayService));
+
+  /* -- the calendars paint the day the rule calls off, not the last column -- */
+
+  try {
+    /*
+     * Both calendars used to colour by grid position — `idx % 7 === 6`, the
+     * last column, which is Friday because the grid starts on Saturday. That
+     * painted exactly one thing red and could express nothing else: Nowruz,
+     * Ashura and every day imported or typed into the calendar were drawn as
+     * ordinary working days, and a Friday the company had marked as worked was
+     * still red. Asking `holidayReason` makes the colour and the delivery date
+     * it produces the same answer.
+     */
+    setHolidayCalendar(
+      { "1405/04/04": true, "1405/02/11": false },
+      undefined,
+      { "1405/04/04": "عاشورای حسینی" },
+    );
+
+    eq("an imported day is named", holidayReason("1405/04/04"), "عاشورای حسینی");
+    // 1405/02/11 is a Friday the company has said it works.
+    eq("a Friday marked as worked is not off", holidayReason("1405/02/11"), null);
+    eq("an ordinary Friday is", holidayReason("1405/02/18"), "تعطیل آخر هفته");
+    // A fixed solar day on a database nobody has imported a year into yet.
+    eq("and a fixed solar day says so without a stored row",
+      holidayReason("1407/01/13"), "تعطیل رسمی");
+    eq("a working Tuesday has no reason", holidayReason("1405/02/07"), null);
+    eq("and neither has a date nobody can read", holidayReason("چرند"), null);
+  } finally {
+    setHolidayCalendar({});
+  }
+
+  /*
+   * Comments come out first.
+   *
+   * The comment explaining the fix quotes the expression it replaced, so a
+   * check reading the raw file fails on the very note saying it was fixed —
+   * the same trap the migration scan above closes by dropping `--` lines.
+   */
+  const withoutComments = (source: string) =>
+    source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  const picker = readFileSync("src/components/ShamsiDatePicker.tsx", "utf8");
+  const taskCalendar = readFileSync("src/components/TaskCalendarModal.tsx", "utf8");
+  for (const [name, raw] of [["the date picker", picker], ["the task calendar", taskCalendar]] as const) {
+    const source = withoutComments(raw);
+    ok(`${name} asks the calendar which days are off`, /holidayReason\(/.test(source));
+    // The predicate is the expression that actually shipped the fault.
+    ok(`${name} no longer colours a day by the last column`, !/idx % 7 === 6/.test(source));
+    // A red day nobody can explain invites the question it cannot answer.
+    ok(`${name} names the day it paints`, /title=\{reason \?\? undefined\}/.test(source));
+  }
+  /*
+   * The stripping itself, both ways: a check that removed the code as well as
+   * the comment would pass by matching nothing. Whole-line `//` only, so a
+   * `https://` inside a string is left alone.
+   */
+  ok("the comment stripping removes a block comment",
+    !withoutComments("/* idx % 7 === 6 */\nconst a = 1;").includes("idx % 7"));
+  ok("and a whole-line one",
+    !withoutComments("  // idx % 7 === 6\nconst a = 1;").includes("idx % 7"));
+  ok("while keeping the code around it",
+    withoutComments("/* note */\nconst a = 1;").includes("const a = 1;")
+    && withoutComments('const u = "https://x";').includes("https://x"));
 
   /* -- who may read it, and who may change it -- */
 

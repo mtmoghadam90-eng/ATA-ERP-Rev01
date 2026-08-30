@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getTodayShamsi, jalaliToGregorian } from '../dateUtils';
+import { getTodayShamsi, holidayReason, jalaliToGregorian } from '../dateUtils';
 
 interface ShamsiDatePickerProps {
   value: string; // "1405/04/14" or "YYYY/MM/DD"
@@ -221,6 +221,21 @@ export default function ShamsiDatePicker({
     );
   };
 
+  /*
+   * Why a day is off, asked of the calendar rather than of the grid.
+   *
+   * This used to be `idx % 7 === 6` — the last column, which is Friday because
+   * the grid starts on Saturday. That painted exactly one thing red and could
+   * express nothing else: Nowruz, Ashura and every day imported or typed into
+   * the calendar were drawn as ordinary working days, and a Friday the company
+   * had marked as worked was still red. `holidayReason` is the same rule the
+   * working-day arithmetic uses, so the colour and the delivery date it
+   * produces can no longer disagree.
+   */
+  const dayOffReason = (day: number): string | null => holidayReason(
+    `${currentYear}/${String(currentMonth).padStart(2, '0')}/${String(day).padStart(2, '0')}`,
+  );
+
   return (
     <div ref={containerRef} className={`relative select-none w-full ${className}`} id="shamsi-datepicker-container">
       {label && (
@@ -333,20 +348,23 @@ export default function ShamsiDatePicker({
 
               const isSelected = isSelectedDay(day);
               const isToday = isTodayDay(day);
-              const isFriday = idx % 7 === 6;
+              const reason = dayOffReason(day);
 
               return (
                 <button
                   key={`day-${day}`}
                   type="button"
                   onClick={() => handleDaySelect(day)}
+                  // A red day without a reason invites the question it cannot
+                  // answer, so the day's own title is on it.
+                  title={reason ?? undefined}
                   className={`
                     h-7 w-7 rounded-full text-xs font-medium flex items-center justify-center transition-all outline-none font-mono
                     ${isSelected 
                       ? 'bg-sky-500 text-white font-bold shadow-md shadow-sky-500/20' 
                       : isToday 
                         ? 'bg-slate-100 text-slate-900 border border-slate-300 font-bold' 
-                        : isFriday
+                        : reason
                           ? 'hover:bg-red-50 text-red-500 font-semibold'
                           : 'hover:bg-slate-50 text-slate-700'
                     }
