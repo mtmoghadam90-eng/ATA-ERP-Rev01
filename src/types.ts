@@ -727,6 +727,17 @@ export interface ERPSettings {
    * because this network may only be able to reach one of them.
    */
   holidaySourceUrl?: string;
+  /**
+   * How far a year's lunar holidays sit from where the calendar source put
+   * them, in whole days, keyed by Shamsi year.
+   *
+   * Iran announces the start of each hijri month by sighting the moon; every
+   * calendar a server can reach computes it instead, and they can be a day
+   * apart — usually a day early. Solar holidays are fixed dates and are never
+   * affected. Stored per year because a sighting is a fact about one year, and
+   * remembered so re-importing does not silently undo the correction.
+   */
+  hijriHolidayShift?: Record<string, number>;
   dropdownItems: {
     industries: string[];
     customerTypes: string[];

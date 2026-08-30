@@ -10,7 +10,7 @@ import {
 } from "../services/adminService";
 import { ensureRatesFresh, rateRefreshReport } from "../services/rateRefresh";
 import {
-  deleteHoliday, importHolidayYear, listHolidays, upsertHoliday,
+  deleteHoliday, importHolidayYear, listHolidays, shiftHijriHolidays, upsertHoliday,
 } from "../services/holidayService";
 
 /** Settings, exchange rates and the audit log. */
@@ -138,6 +138,35 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
       res.json({ success: true, ...outcome });
     } catch (err) {
       sendError(res, err, "POST /api/holidays/import");
+    }
+  });
+
+  /**
+   * Moves a year's lunar holidays by a whole number of days.
+   *
+   * The correction no better source can supply: Iran announces the start of
+   * each hijri month by sighting, and every calendar reachable from a server
+   * computes it. Solar holidays are untouched — they are fixed dates and are
+   * right, which is exactly the reported shape of the error.
+   *
+   * Answers 200 with the reason when the offset is refused, like the import.
+   */
+  app.post("/api/holidays/shift", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as { year?: unknown; offset?: unknown };
+      const outcome = await shiftHijriHolidays(
+        Number(body.year), Number(body.offset), user, getTodayShamsi(),
+      );
+      if (outcome === "forbidden") return denied(res, "شما اجازه تغییر تقویم را ندارید.");
+      if ("error" in outcome) {
+        res.json({ success: false, error: outcome.error });
+        return;
+      }
+      res.json({ success: true, ...outcome });
+    } catch (err) {
+      sendError(res, err, "POST /api/holidays/shift");
     }
   });
 

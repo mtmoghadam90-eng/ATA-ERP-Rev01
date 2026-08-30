@@ -1519,6 +1519,16 @@ model Holiday {
   title     String  @db.NVarChar(300)
   isHoliday Boolean @default(true)
 
+  /// HIJRI | SOLAR. Solar days are fixed and right; lunar ones come from a
+  /// computed table and Iran announces its months by sighting, so the whole
+  /// lunar set of a year can be a day out together.
+  calendarKind String @default("SOLAR") @db.NVarChar(10)
+
+  /// Where the source put this day, before any lunar correction. The shift is
+  /// re-derived from here rather than applied cumulatively, so moving to +1 and
+  /// back to 0 restores exactly what was imported.
+  sourceDateJalali String? @db.NVarChar(10)
+
   /// IMPORT | MANUAL. A hand-entered day is never overwritten by an import:
   /// somebody typed it *because* the source was wrong or silent.
   source String @default("MANUAL") @db.NVarChar(20)
@@ -1528,6 +1538,7 @@ model Holiday {
 
   @@index([yearJalali])
   @@index([date])
+  @@index([yearJalali, calendarKind])
   @@map("holidays")
 }
 
