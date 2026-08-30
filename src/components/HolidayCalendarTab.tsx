@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, CalendarDays, CheckCircle2, Download, Loader2, Plus, Trash2,
+  AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Download,
+  Loader2, Moon, Plus, RotateCcw, Trash2,
 } from 'lucide-react';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { ApiError } from '../api/client';
 import { HolidayRow, holidaysApi, refreshHolidayCalendar } from '../api/holidays';
-import { getTodayShamsi } from '../dateUtils';
-import { FIXED_SOLAR_HOLIDAYS } from '../utils/holidays';
+import { getShamsiDaysDifference, getTodayShamsi } from '../dateUtils';
+import { FIXED_SOLAR_HOLIDAYS, MAX_HIJRI_SHIFT_DAYS } from '../utils/holidays';
 
 /**
  * The official calendar: the days nobody works.
@@ -22,6 +23,14 @@ import { FIXED_SOLAR_HOLIDAYS } from '../utils/holidays';
  * Iran announces holidays for snow, pollution and elections at two days'
  * notice, and no yearly source has them in advance. Importing a year is the
  * convenience on top, and it never overwrites a day somebody typed.
+ *
+ * And a third control, which is not a convenience: **the lunar days can be
+ * moved as a set**. Iran announces the start of each hijri month by sighting
+ * the moon, and every calendar a server can reach computes it instead — they
+ * agree with each other and can all be a day away from what was announced.
+ * Solar holidays are fixed dates and are never touched. That is why the fix is
+ * one offset for the year rather than a better source: there is no reachable
+ * source that knows what was announced.
  */
 
 const YEAR_OF_TODAY = parseInt(getTodayShamsi().slice(0, 4), 10) || 1404;
@@ -34,6 +43,8 @@ export default function HolidayCalendarTab() {
 
   const [year, setYear] = useState(YEAR_OF_TODAY);
   const [importing, setImporting] = useState(false);
+
+  const [shifting, setShifting] = useState(false);
 
   const [newDate, setNewDate] = useState(getTodayShamsi());
   const [newTitle, setNewTitle] = useState('');
@@ -63,6 +74,26 @@ export default function HolidayCalendarTab() {
     () => rows.filter((r) => r.yearJalali === year),
     [rows, year],
   );
+
+  const lunarDays = useMemo(
+    () => shown.filter((r) => r.calendarKind === 'HIJRI' && r.source !== 'MANUAL'),
+    [shown],
+  );
+
+  /*
+   * The offset in force, read back from the rows rather than from the settings
+   * document.
+   *
+   * The stored days are what every calculation uses, so they are the honest
+   * answer to «where are the lunar holidays right now» — a settings value that
+   * had somehow not been applied would show a number the calendar disagrees
+   * with, which is the fault this screen exists to make visible.
+   */
+  const lunarOffset = useMemo(() => {
+    const sample = lunarDays.find((r) => r.sourceDateJalali);
+    if (!sample?.sourceDateJalali) return 0;
+    return getShamsiDaysDifference(sample.sourceDateJalali, sample.dateJalali);
+  }, [lunarDays]);
 
   /** Every year that has anything stored, plus the next two to import into. */
   const years = useMemo(() => {
@@ -126,6 +157,33 @@ export default function HolidayCalendarTab() {
     }
   };
 
+  /**
+   * Moves the year's lunar holidays.
+   *
+   * The offset sent is absolute, never a delta, so pressing the button twice
+   * cannot drift the calendar two days: the server re-derives every date from
+   * what the source originally said.
+   */
+  const shiftLunar = async (offset: number) => {
+    setShifting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await holidaysApi.shiftHijri(year, offset);
+      await after(
+        `تعطیلات قمری سال ${year} روی ${result.offset > 0 ? `${result.offset}+` : result.offset}`
+        + ` روز تنظیم شد (${result.moved} روز جابه‌جا شد)`
+        + (result.blocked.length
+          ? ` — ${result.blocked.length} روز جابه‌جا نشد چون روز مقصد دستی ثبت شده است`
+          : ''),
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'جابه‌جایی تقویم قمری با خطا مواجه شد.');
+    } finally {
+      setShifting(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-6" dir="rtl">
       <div>
@@ -175,6 +233,72 @@ export default function HolidayCalendarTab() {
         <p className="text-[10px] text-slate-500 leading-relaxed">
           روزهایی که دستی ثبت یا اصلاح کرده‌اید با دریافت مجدد بازنویسی نمی‌شوند. اگر منبع پاسخ
           ندهد یا پاسخش برای یک سال کامل کم باشد، هیچ چیزی ذخیره نمی‌شود.
+        </p>
+      </div>
+
+      {/* Move the lunar holidays as a set */}
+      <div className="bg-indigo-50/60 border border-indigo-100 rounded-2xl p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <span className="text-xs font-bold text-indigo-900 flex items-center gap-1.5">
+            <Moon size={14} className="text-indigo-500" />
+            تنظیم تعطیلات قمری سال {year}
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => void shiftLunar(lunarOffset - 1)}
+              disabled={shifting || !lunarDays.length || lunarOffset <= -MAX_HIJRI_SHIFT_DAYS}
+              id="holiday-lunar-back"
+              title="یک روز عقب"
+              className="w-9 h-9 flex items-center justify-center bg-white border border-indigo-200 rounded-lg text-indigo-600 hover:bg-indigo-100 disabled:opacity-40 transition"
+            >
+              <ChevronRight size={16} />
+            </button>
+            <span
+              id="holiday-lunar-offset"
+              className="min-w-[5.5rem] text-center text-xs font-bold text-indigo-900 bg-white border border-indigo-200 rounded-lg py-2 font-mono"
+            >
+              {lunarOffset === 0 ? 'بدون تغییر' : `${lunarOffset > 0 ? '+' : ''}${lunarOffset} روز`}
+            </span>
+            <button
+              type="button"
+              onClick={() => void shiftLunar(lunarOffset + 1)}
+              disabled={shifting || !lunarDays.length || lunarOffset >= MAX_HIJRI_SHIFT_DAYS}
+              id="holiday-lunar-forward"
+              title="یک روز جلو"
+              className="w-9 h-9 flex items-center justify-center bg-white border border-indigo-200 rounded-lg text-indigo-600 hover:bg-indigo-100 disabled:opacity-40 transition"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => void shiftLunar(0)}
+              disabled={shifting || !lunarDays.length || lunarOffset === 0}
+              id="holiday-lunar-reset"
+              title="بازگشت به تاریخ منبع"
+              className="w-9 h-9 flex items-center justify-center bg-white border border-indigo-200 rounded-lg text-slate-500 hover:bg-indigo-100 disabled:opacity-40 transition"
+            >
+              <RotateCcw size={14} />
+            </button>
+          </div>
+        </div>
+        {/*
+          Said in full, because otherwise this reads as an arbitrary knob. It is
+          not: no calendar a server can reach knows what Iran announced, so the
+          person looking at a real calendar is the only available authority.
+        */}
+        <p className="text-[10px] text-indigo-800/80 leading-relaxed">
+          مناسبت‌های مذهبی بر پایه تقویم قمری‌اند و آغاز ماه قمری در ایران با <b>رؤیت هلال</b> اعلام
+          می‌شود، نه با محاسبه. هیچ منبع آنلاینی که از سرور در دسترس باشد این اعلام را ندارد، پس
+          محاسبه‌ی منبع ممکن است یک روز جلوتر باشد. اگر عاشورا یا سایر مناسبت‌های مذهبی یک روز
+          اختلاف دارند، با این دکمه‌ها همه‌شان با هم جابه‌جا می‌شوند.{' '}
+          <b>تعطیلات شمسی (نوروز، ۲۲ بهمن و…) دست نمی‌خورند</b>، و روزهایی که خودتان دستی ثبت
+          کرده‌اید هم جابه‌جا نمی‌شوند.
+        </p>
+        <p className="text-[10px] text-indigo-800/60 leading-relaxed">
+          {lunarDays.length
+            ? `${lunarDays.length.toLocaleString('fa-IR')} روز قمری در سال ${year} ثبت شده است. این تنظیم برای همین سال ذخیره می‌شود و با دریافت مجدد از بین نمی‌رود.`
+            : `برای سال ${year} هنوز روز قمری‌ای دریافت نشده است؛ اول تعطیلات سال را دریافت کنید.`}
         </p>
       </div>
 
@@ -280,6 +404,17 @@ export default function HolidayCalendarTab() {
                 {row.isHoliday ? 'تعطیل' : 'کاری'}
               </span>
               <span className="text-[11px] text-slate-600 flex-1 truncate">{row.title}</span>
+              {row.calendarKind === 'HIJRI' && (
+                <span
+                  className="text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 border bg-indigo-50 text-indigo-700 border-indigo-100 flex items-center gap-1"
+                  title={row.sourceDateJalali && row.sourceDateJalali !== row.dateJalali
+                    ? `تاریخ منبع: ${row.sourceDateJalali}`
+                    : 'مناسبت قمری'}
+                >
+                  <Moon size={9} />
+                  قمری
+                </span>
+              )}
               <span className="text-[9px] text-slate-400 shrink-0">
                 {row.source === 'MANUAL' ? 'دستی' : 'دریافت‌شده'}
               </span>

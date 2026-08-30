@@ -149,10 +149,11 @@ import {
 import { decidingProformas } from "../src/server/proformaStatus";
 import {
   FIXED_SOLAR_HOLIDAYS, MAX_WORKING_DAY_SPAN, MIN_PLAUSIBLE_HOLIDAYS, countForwardDays,
-  importRefusalReason, isNonWorkingDay, monthDayOf, normalizeJalali, parseCalendarYear,
+  MAX_HIJRI_SHIFT_DAYS, importRefusalReason, isNonWorkingDay, monthDayOf, normalizeJalali,
+  normalizeCalendarKind, parseCalendarYear, planHijriShift, shiftForYear, shiftRefusalReason,
   toLatinDigits as holidayLatinDigits,
 } from "../src/utils/holidays";
-import { setHolidayCalendar, toGregorianStr } from "../src/dateUtils";
+import { addDaysToShamsi as addDays, setHolidayCalendar, toGregorianStr } from "../src/dateUtils";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -5552,10 +5553,12 @@ head("Holidays: the calendar is data, and it was a lunar month wrong");
   // The source's own shape: `header.jalali` is «۱۴۰۵ فروردین», year first and
   // the month name last, which is why the parser takes the last token.
   const month = (name: string, days: unknown[]) => ({ header: { jalali: `۱۴۰۵ ${name}` }, days });
-  const day = (n: number, holiday: boolean, events: unknown[], disabled = false) => ({
+  const day = (
+    n: number, holiday: boolean, events: unknown[], disabled = false, kind = "jalali",
+  ) => ({
     disabled,
     day: { jalali: String(n) },
-    events: { isHoliday: holiday, list: events },
+    events: { isHoliday: holiday, holidayType: kind, list: events },
   });
 
   const parsed = parseCalendarYear([
@@ -5570,7 +5573,7 @@ head("Holidays: the calendar is data, and it was a lunar month wrong");
       day(4, true, [
         { isHoliday: true, event: "عاشورا" },
         { isHoliday: false, event: "یادداشت" },
-      ]),
+      ], false, "hijri"),
       // Repeated by the source; one answer per day.
       day(4, true, [{ isHoliday: true, event: "تکراری" }]),
     ]),
@@ -5581,6 +5584,10 @@ head("Holidays: the calendar is data, and it was a lunar month wrong");
   eq("under the month they belong to", parsed[0]?.dateJalali, "1405/01/01");
   eq("and the second in order", parsed[1]?.dateJalali, "1405/04/04");
   eq("with only the holiday-bearing titles", parsed[1]?.title, "عاشورا");
+  // Which calendar a day is fixed against is what the lunar correction keys
+  // on; without it Ashura could not be moved without moving Nowruz too.
+  eq("Nowruz is read as a solar day", parsed[0]?.calendarKind, "SOLAR");
+  eq("and Ashura as a lunar one", parsed[1]?.calendarKind, "HIJRI");
   // Somebody else's document: a change to its shape must produce fewer
   // holidays and a visible count, never an exception that takes a screen down.
   eq("a payload that is not an array is no holidays", parseCalendarYear({}, 1405).length, 0);
@@ -5591,11 +5598,12 @@ head("Holidays: the calendar is data, and it was a lunar month wrong");
 
   /* -- an implausible year is refused rather than written -- */
 
-  const oneDay = [{ dateJalali: "1405/01/01", title: "نوروز" }];
+  const oneDay = [{ dateJalali: "1405/01/01", title: "نوروز", calendarKind: "SOLAR" as const }];
   ok("an empty answer is refused", importRefusalReason([]) !== null);
   ok("and so is a handful of days", importRefusalReason(oneDay) !== null);
   const full = Array.from({ length: MIN_PLAUSIBLE_HOLIDAYS }, (_, i) => ({
     dateJalali: `1405/01/${String(i + 1).padStart(2, "0")}`, title: "x",
+    calendarKind: "SOLAR" as const,
   }));
   eq("a full year goes through", importRefusalReason(full), null);
 
@@ -5649,6 +5657,127 @@ head("Holidays: the calendar is data, and it was a lunar month wrong");
     setHolidayCalendar({});
   }
 
+  const holidayService = readFileSync("src/server/services/holidayService.ts", "utf8");
+
+  /* -- the lunar days move as a set, and the solar ones never -- */
+
+  /*
+   * Why this exists rather than a better source.
+   *
+   * Iran announces the start of each hijri month by sighting the moon. Every
+   * calendar reachable from a server computes it instead — the source used
+   * here and aladhan.com behind it agree with each other and can both be a day
+   * away from what was announced, usually a day early. Solar holidays are fixed
+   * dates and are right, which is exactly the reported shape: Nowruz correct,
+   * Ashura a day out. So the correction is one offset for the whole lunar set
+   * of a year, and there is no source that could remove the need for it.
+   */
+  const stored = [
+    { id: "a", dateJalali: "1405/01/01", sourceDateJalali: "1405/01/01", calendarKind: "SOLAR", source: "IMPORT" },
+    { id: "b", dateJalali: "1405/04/03", sourceDateJalali: "1405/04/03", calendarKind: "HIJRI", source: "IMPORT" },
+    { id: "c", dateJalali: "1405/04/04", sourceDateJalali: "1405/04/04", calendarKind: "HIJRI", source: "IMPORT" },
+    { id: "d", dateJalali: "1405/09/09", sourceDateJalali: "1405/09/09", calendarKind: "HIJRI", source: "MANUAL" },
+  ];
+
+  const forward = planHijriShift(stored, 1, addDays);
+  eq("both imported lunar days move", forward.moves.length, 2);
+  eq("Tasu'a moves to the day after", forward.moves[0]?.to, "1405/04/04");
+  eq("and Ashura with it", forward.moves[1]?.to, "1405/04/05");
+  ok("Nowruz is not among them", !forward.moves.some((m) => m.id === "a"));
+  /*
+   * A hand-entered day is an answer about *that* date — somebody typed it
+   * because the computed calendar was wrong — so moving it by the very
+   * correction they were working around would undo their answer.
+   */
+  ok("and neither is a day somebody entered by hand",
+    !forward.moves.some((m) => m.id === "d"));
+
+  /*
+   * The target is re-derived from what the source said, never added to where
+   * the day currently sits. Otherwise pressing «forward» twice would drift the
+   * calendar two days while the screen still said one.
+   */
+  const already = stored.map((r) => (
+    r.id === "c" ? { ...r, dateJalali: "1405/04/05" } : r
+  ));
+  const again = planHijriShift(already, 1, addDays);
+  ok("asking for +1 twice moves nothing further",
+    !again.moves.some((m) => m.id === "c"), again.moves);
+  const back = planHijriShift(already, 0, addDays);
+  eq("and zero puts it back exactly where the source had it",
+    back.moves.find((m) => m.id === "c")?.to, "1405/04/04");
+
+  // A day imported before the source column existed has none; its current
+  // date is the base, which is right — nothing had moved it yet.
+  const legacy = [
+    { id: "e", dateJalali: "1405/05/12", sourceDateJalali: null, calendarKind: "HIJRI", source: "IMPORT" },
+  ];
+  eq("a day with no recorded source moves from where it is",
+    planHijriShift(legacy, 1, addDays).moves[0]?.to, "1405/05/13");
+
+  /*
+   * Only one row can hold a date, and the day already sitting there is either
+   * a person's answer or a solar holiday — both outranking a computed lunar
+   * guess. It is reported rather than silently dropped.
+   */
+  const collide = [
+    { id: "f", dateJalali: "1405/03/13", sourceDateJalali: "1405/03/13", calendarKind: "HIJRI", source: "IMPORT" },
+    { id: "g", dateJalali: "1405/03/14", sourceDateJalali: "1405/03/14", calendarKind: "SOLAR", source: "IMPORT" },
+  ];
+  const blocked = planHijriShift(collide, 1, addDays);
+  eq("a move onto an occupied day is refused", blocked.moves.length, 0);
+  eq("and reported", blocked.blocked.length, 1);
+
+  eq("a whole-day offset is required", shiftRefusalReason(0.5) !== null, true);
+  eq("a plausible correction goes through", shiftRefusalReason(1), null);
+  eq("and so does putting it back", shiftRefusalReason(0), null);
+  // A wider range is not a correction, it is a mistake being typed — and it
+  // would move every religious holiday of a year off where people are quoting.
+  ok("but a wild one is refused", shiftRefusalReason(MAX_HIJRI_SHIFT_DAYS + 1) !== null);
+
+  /*
+   * The backfill in the migration marks an imported day lunar unless its
+   * month-day is one of the fixed solar ten — checked against a real year of
+   * source data, where that agrees with the source's own tag on all 25 days.
+   * If the fixed list ever changes, the migration's copy has to change with it
+   * or a database already holding a year would tag that day the wrong way.
+   */
+  const kindMigration = readFileSync(
+    "prisma/migrations/20260906000000_holiday_calendar_kind/migration.sql", "utf8",
+  );
+  ok("the backfill lists exactly the fixed solar days",
+    FIXED_SOLAR_HOLIDAYS.every((md) => kindMigration.includes(`'${md}'`))
+    && (kindMigration.match(/'\d\d\/\d\d'/g) ?? []).length === FIXED_SOLAR_HOLIDAYS.length);
+
+  eq("the source's own tag decides the kind", normalizeCalendarKind("hijri"), "HIJRI");
+  eq("and anything else is solar", normalizeCalendarKind("jalali"), "SOLAR");
+  eq("an absent tag is solar too", normalizeCalendarKind(undefined), "SOLAR");
+
+  eq("a stored offset is read for its own year",
+    shiftForYear({ "1405": 1, "1406": -1 }, 1405), 1);
+  eq("a year with none is unshifted", shiftForYear({ "1405": 1 }, 1407), 0);
+  // A stored value out of range must not move a calendar by a month.
+  eq("and a stored value out of range is ignored",
+    shiftForYear({ "1405": 40 }, 1405), 0);
+  eq("as is a stored value that is not a number",
+    shiftForYear({ "1405": "چند" }, 1405), 0);
+
+  // Remembered, or re-importing the year would silently undo the correction —
+  // the feature quietly cancelling itself the next time the button was pressed.
+  ok("the import applies the year's stored offset",
+    /shiftForYear\(settings\?\.hijriHolidayShift, year\)/.test(holidayService)
+    && /calendarKind === "HIJRI" && offset !== 0/.test(holidayService));
+  // A hand-entered day is stamped solar so no lunar correction can drag it.
+  ok("a hand-entered day is never lunar",
+    /calendarKind: "SOLAR", sourceDateJalali: dateJalali/.test(holidayService));
+  /*
+   * Shifting a set of dates by one day means every target but the last is
+   * occupied by the day in front of it, so an in-place update fails on the
+   * first collision. Delete then insert, in one transaction.
+   */
+  ok("and the re-placement is one transaction, not a row-by-row update",
+    /\$transaction\([\s\S]{0,400}deleteMany[\s\S]{0,600}holiday\.create/.test(holidayService));
+
   /* -- who may read it, and who may change it -- */
 
   const adminRoutes = readFileSync("src/server/routes/admin.ts", "utf8");
@@ -5664,8 +5793,7 @@ head("Holidays: the calendar is data, and it was a lunar month wrong");
   ok("reading the calendar needs only a session",
     getHolidays.includes("requireAuth") && !getHolidays.includes("requireKeyAccess"));
 
-  const holidayService = readFileSync("src/server/services/holidayService.ts", "utf8");
-  const writes = ["upsertHoliday", "deleteHoliday", "importHolidayYear"];
+  const writes = ["upsertHoliday", "deleteHoliday", "importHolidayYear", "shiftHijriHolidays"];
   ok("but every write is gated on `settings`",
     writes.every((fn) => {
       const body = holidayService.slice(holidayService.indexOf(`export async function ${fn}`));
@@ -5676,10 +5804,14 @@ head("Holidays: the calendar is data, and it was a lunar month wrong");
   ok("an import leaves a hand-entered day alone",
     /known === "MANUAL"[\s\S]{0,60}keptManual\+\+; continue;/.test(holidayService));
   ok("and an edit marks the day as hand-entered, so the next import still will",
-    /update: \{ title, isHoliday, source: "MANUAL" \}/.test(holidayService));
-  // Removing a day the source dropped is a decision for a person.
-  ok("and nothing is deleted by an import",
-    !/deleteMany/.test(holidayService.slice(holidayService.indexOf("export async function importHolidayYear"))));
+    /update: \{\s*title, isHoliday, source: "MANUAL",/.test(holidayService));
+  // Removing a day the source dropped is a decision for a person. Bounded to
+  // the import: the lunar shift below it deletes on purpose, to re-place.
+  const importBody = holidayService.slice(
+    holidayService.indexOf("export async function importHolidayYear"),
+    holidayService.indexOf("export interface ShiftOutcome"),
+  );
+  ok("and nothing is deleted by an import", !/delete/i.test(importBody));
 }
 
 

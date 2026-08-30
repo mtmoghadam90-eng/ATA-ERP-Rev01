@@ -24,6 +24,10 @@ export interface HolidayRow {
   title: string;
   isHoliday: boolean;
   source: string;
+  /** HIJRI | SOLAR — only the lunar days move with the calendar correction. */
+  calendarKind: string;
+  /** Where the source put it, before any correction. */
+  sourceDateJalali: string | null;
 }
 
 /**
@@ -42,6 +46,16 @@ export interface HolidayImportResult {
   keptManual: number;
   found: number;
   url: string;
+  /** The lunar correction applied on the way in. */
+  hijriShift: number;
+}
+
+export interface HolidayShiftResult {
+  year: number;
+  offset: number;
+  moved: number;
+  /** Days that could not move because a hand-entered day is already there. */
+  blocked: string[];
 }
 
 let cache: HolidayRow[] | null = null;
@@ -108,4 +122,14 @@ export const holidaysApi = {
    */
   importYear: (year: number) =>
     api.post<HolidayImportResult>("/api/holidays/import", { year }),
+
+  /**
+   * Moves a year's lunar holidays by a whole number of days.
+   *
+   * The offset is absolute, not a nudge: sending 1 twice leaves the days one
+   * day forward, and sending 0 puts them back exactly where the source had
+   * them. It is remembered for the year, so a later re-import keeps it.
+   */
+  shiftHijri: (year: number, offset: number) =>
+    api.post<HolidayShiftResult>("/api/holidays/shift", { year, offset }),
 };
