@@ -61,6 +61,42 @@ export interface HolidayShiftResult {
 let cache: HolidayRow[] | null = null;
 let inFlight: Promise<HolidayRow[]> | null = null;
 
+/*
+ * Who to tell when the calendar lands.
+ *
+ * `isOfficialHoliday` reads a module-level copy, so a screen that rendered
+ * before the fetch resolved has no way to know it should paint again — it
+ * would sit there showing a month of unbroken working days until something
+ * else happened to re-render it. A calendar that draws the wrong answer until
+ * you poke it is the same fault as one that draws it for ever.
+ */
+const listeners = new Set<() => void>();
+
+export function onHolidayCalendarChange(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+/**
+ * What this browser knows, so a screen can say «not loaded» rather than
+ * silently drawing a year with no holidays in it as a year with none.
+ */
+export interface HolidayCalendarState {
+  /** False until the first successful read; an empty database is `true`. */
+  loaded: boolean;
+  days: number;
+  /** Shamsi years that have at least one day stored. */
+  years: number[];
+}
+
+export function holidayCalendarState(): HolidayCalendarState {
+  return {
+    loaded: cache !== null,
+    days: cache?.length ?? 0,
+    years: [...new Set((cache ?? []).map((r) => r.yearJalali))].sort((a, b) => a - b),
+  };
+}
+
 function applyToDateUtils(rows: HolidayRow[]): void {
   const map: HolidayMap = {};
   const titles: Record<string, string> = {};
@@ -71,6 +107,7 @@ function applyToDateUtils(rows: HolidayRow[]): void {
     if (row.isHoliday && row.title) titles[row.dateJalali] = row.title;
   }
   setHolidayCalendar(map, undefined, titles);
+  for (const listener of [...listeners]) listener();
 }
 
 /**

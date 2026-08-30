@@ -4,6 +4,7 @@ import { Task } from '../types';
 import { rowToTask, taskToWriteInput, tasksApi } from '../api/tasks';
 import { getTodayShamsi, holidayReason } from '../dateUtils';
 import { getJalaliMonthDays, getShamsiWeekDayOfFirst } from './ShamsiDatePicker';
+import { useHolidayCalendar } from '../api/useHolidayCalendar';
 
 /**
  * The month's tasks are loaded here rather than handed in.
@@ -45,6 +46,15 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
   // Opens on today. It used to open on Tir 1405, day 20 — a date hardcoded when
   // the screen was written, which every month since has been wrong.
   const today = todayParts();
+  /*
+   * The official calendar, and a repaint when it lands.
+   *
+   * Reading `holidayReason` alone was not enough: it reads a copy held in the
+   * date helpers, so a calendar drawn before the fetch resolved showed a month
+   * of unbroken working days and had nothing to tell it to draw again.
+   */
+  const holidays = useHolidayCalendar();
+
   const [currentYear, setCurrentYear] = useState(today.year);
   const [currentMonthIndex, setCurrentMonthIndex] = useState(today.monthIndex);
   const [selectedDay, setSelectedDay] = useState<number | null>(today.day);
@@ -174,6 +184,16 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
     `${currentYear}/${String(currentMonthIndex + 1).padStart(2, '0')}/${String(day).padStart(2, '0')}`,
   );
 
+  /*
+   * Whether this year's holidays are actually on the system.
+   *
+   * A year nobody has imported draws exactly like a year with no religious
+   * holidays in it — Fridays red, everything else plain — and the two mean
+   * completely different things. Saying so is the difference between a screen
+   * that is wrong and a screen that tells you what to do about it.
+   */
+  const yearIsLoaded = holidays.years.includes(currentYear);
+
   // Navigate months
   const handlePrevMonth = () => {
     if (currentMonthIndex === 0) {
@@ -282,6 +302,19 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
             ))}
           </div>
 
+          {/*
+            A year nobody has imported draws exactly like a year with no
+            religious holidays in it, and the two mean completely different
+            things — so the screen says which one this is rather than leaving
+            somebody to conclude the feature is broken.
+          */}
+          {holidays.loaded && !yearIsLoaded && (
+            <div className="mb-2 text-[10px] leading-relaxed text-amber-800 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+              تعطیلات رسمی سال {currentYear} هنوز روی سیستم ثبت نشده است، بنابراین فقط جمعه‌ها
+              تعطیل در نظر گرفته می‌شوند. از «تنظیمات ← تقویم تعطیلات» سال را دریافت کنید.
+            </div>
+          )}
+
           <div className="grid grid-cols-7 gap-2 min-h-[240px] sm:min-h-[280px]">
             {Array.from({ length: startOffset }).map((_, index) => (
               <div key={`lead-${index}`} className="min-h-[50px] sm:min-h-[64px]" />
@@ -320,6 +353,21 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
                   }`}>
                     {dayNum}
                   </span>
+
+                  {/*
+                    Written on the cell, not only in a tooltip: this screen is
+                    read on a phone, where there is no hover and a red day with
+                    no explanation is a question nobody can answer.
+                  */}
+                  {reason && !hasTasks && (
+                    <span
+                      className={`mt-0.5 text-[7px] leading-tight text-center line-clamp-2 ${
+                        isSelected ? 'text-white/90' : 'text-rose-500/90'
+                      }`}
+                    >
+                      {reason}
+                    </span>
+                  )}
 
                   {/* Tasks count indicator / Priority dots */}
                   {hasTasks && (
