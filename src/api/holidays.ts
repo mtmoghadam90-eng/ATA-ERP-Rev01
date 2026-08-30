@@ -63,8 +63,14 @@ let inFlight: Promise<HolidayRow[]> | null = null;
 
 function applyToDateUtils(rows: HolidayRow[]): void {
   const map: HolidayMap = {};
-  for (const row of rows) map[row.dateJalali] = row.isHoliday;
-  setHolidayCalendar(map);
+  const titles: Record<string, string> = {};
+  for (const row of rows) {
+    map[row.dateJalali] = row.isHoliday;
+    // Only a day that is off has a reason worth showing; a working exception
+    // is named on the settings screen and nowhere else.
+    if (row.isHoliday && row.title) titles[row.dateJalali] = row.title;
+  }
+  setHolidayCalendar(map, undefined, titles);
 }
 
 /**

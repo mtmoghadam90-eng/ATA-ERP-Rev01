@@ -144,14 +144,18 @@ export function getShamsiDaysDifference(dateA: string, dateB: string): number {
  */
 let holidayOverrides: HolidayMap = {};
 let weekendDays: readonly number[] = DEFAULT_WEEKEND_DAYS;
+/** What each stored day is called, for a calendar that wants to say why. */
+let holidayTitles: Record<string, string> = {};
 
 /** Replaces what this process knows. Called with the whole set, never a page. */
 export function setHolidayCalendar(
   holidays: HolidayMap,
   weekend: readonly number[] = DEFAULT_WEEKEND_DAYS,
+  titles: Record<string, string> = {},
 ): void {
   holidayOverrides = holidays ?? {};
   weekendDays = weekend?.length ? weekend : DEFAULT_WEEKEND_DAYS;
+  holidayTitles = titles ?? {};
 }
 
 /** What is loaded, for a screen that wants to say how many days it knows. */
@@ -182,6 +186,29 @@ export function isOfficialHoliday(shamsiStr: any): boolean {
     holidays: holidayOverrides,
     weekendDays,
   });
+}
+
+/**
+ * Why this day is off, or null when it is worked.
+ *
+ * A calendar that paints a day red without saying why invites the question it
+ * cannot answer — «چرا این روز قرمز است؟» — so the day's own title travels with
+ * the colour. It is derived from the same rule as the colour rather than from a
+ * second reading of the calendar, which is how the two come to disagree: a
+ * Friday somebody has marked as worked returns null here exactly as it returns
+ * false there.
+ */
+export function holidayReason(shamsiStr: any): string | null {
+  const normalized = normalizeJalali(shamsiStr);
+  if (!normalized || !isOfficialHoliday(normalized)) return null;
+
+  const stored = holidayTitles[normalized];
+  if (stored) return stored;
+
+  const dayOfWeek = jalaliDayOfWeek(normalized);
+  if (dayOfWeek !== null && weekendDays.includes(dayOfWeek)) return 'تعطیل آخر هفته';
+  // A fixed solar day on a database nobody has imported a year into yet.
+  return 'تعطیل رسمی';
 }
 
 /**
