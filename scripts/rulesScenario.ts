@@ -5914,6 +5914,10 @@ head("Holidays: the calendar is data, and it was a lunar month wrong");
     ok(`${name} no longer colours a day by the last column`, !/idx % 7 === 6/.test(source));
     // A red day nobody can explain invites the question it cannot answer.
     ok(`${name} names the day it paints`, /title=\{reason \?\? undefined\}/.test(source));
+    // A late-arriving calendar has to repaint what has already been drawn:
+    // `holidayReason` reads a copy in the date helpers, so a grid rendered
+    // before the fetch resolved has nothing telling it to draw again.
+    ok(`${name} repaints when the calendar lands`, /useHolidayCalendar\(\)/.test(source));
   }
   /*
    * The stripping itself, both ways: a check that removed the code as well as
@@ -5924,6 +5928,21 @@ head("Holidays: the calendar is data, and it was a lunar month wrong");
     !withoutComments("/* idx % 7 === 6 */\nconst a = 1;").includes("idx % 7"));
   ok("and a whole-line one",
     !withoutComments("  // idx % 7 === 6\nconst a = 1;").includes("idx % 7"));
+  /*
+   * A year nobody has imported draws exactly like a year with no religious
+   * holidays in it — Fridays red, everything else plain. Those mean completely
+   * different things, and the reported «holidays are not red» was the first of
+   * them, so the board says which one it is rather than leaving somebody to
+   * conclude the feature is broken.
+   */
+  const board = withoutComments(taskCalendar);
+  ok("the task board can tell an unloaded year from an empty one",
+    /holidays\.loaded && !yearIsLoaded/.test(board)
+    && /تقویم تعطیلات/.test(board));
+  // No hover on a phone, which is where this screen is read.
+  ok("and writes the reason on the day rather than only in a tooltip",
+    /\{reason\}/.test(board));
+
   ok("while keeping the code around it",
     withoutComments("/* note */\nconst a = 1;").includes("const a = 1;")
     && withoutComments('const u = "https://x";').includes("https://x"));

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getTodayShamsi, holidayReason, jalaliToGregorian } from '../dateUtils';
+import { useHolidayCalendar } from '../api/useHolidayCalendar';
 
 interface ShamsiDatePickerProps {
   value: string; // "1405/04/14" or "YYYY/MM/DD"
@@ -51,6 +52,16 @@ export default function ShamsiDatePicker({
   className = "",
   compact = false
 }: ShamsiDatePickerProps) {
+  /*
+   * Loads the official calendar and repaints when it lands.
+   *
+   * The value is not read — the days are asked of `holidayReason`, which reads
+   * the copy in the date helpers — but without the subscription a picker
+   * rendered before the fetch resolved would keep drawing every holiday as an
+   * ordinary working day until something else re-rendered it.
+   */
+  useHolidayCalendar();
+
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
