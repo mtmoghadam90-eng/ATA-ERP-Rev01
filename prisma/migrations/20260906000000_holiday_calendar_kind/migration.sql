@@ -11,8 +11,26 @@
 -- re-derivation from that rather than a cumulative nudge: shifting to +1 and
 -- back to 0 restores exactly the imported dates.
 --
--- No `GO`: it is sqlcmd's batch separator and Prisma hands each statement to
--- the driver on its own.
+-- ======================= why the backfill is inside EXEC ====================
+--
+-- SQL Server resolves column names when it compiles a batch, before running
+-- any of it — so a plain UPDATE of a column added earlier in the same file
+-- fails with «Invalid column name» (207) even though the ALTER above it would
+-- have run first, and even though an IF guards it: the guard is evaluated at
+-- run time, and the compile has already failed. That is exactly how this
+-- migration failed on the server. DDL is different — CREATE INDEX on the new
+-- column is compiled when it executes, which is why every other migration here
+-- writes those plainly, and why the ones that backfill (`cost_of_goods`,
+-- `customer_value_ranking`, `proforma_sent_date`) all wrap the UPDATE.
+--
+-- `EXEC(N'…')` is the convention that answers it: the inner statement is
+-- compiled when the EXEC runs, by which point the column exists. `GO` would
+-- also separate the batches and must never be used — it is sqlcmd's separator,
+-- not T-SQL, and Prisma hands the file to the driver, which reads it as an
+-- identifier and kills the deployment.
+--
+-- Each step is guarded, because a migration that fails half way leaves the
+-- statements before the failure applied and the retry has to be safe.
 
 IF COL_LENGTH('dbo.holidays', 'calendarKind') IS NULL
     ALTER TABLE [dbo].[holidays] ADD [calendarKind] NVARCHAR(10) NOT NULL CONSTRAINT [holidays_calendarKind_df] DEFAULT 'SOLAR';
@@ -27,20 +45,22 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'holidays_yearJalali_calen
 -- it again before the correction can be used.
 --
 -- The ten fixed solar dates are exactly the days the source tags `jalali` — a
--- year of real data was checked against them — so anything else an import wrote
--- is lunar. A hand-entered day is deliberately left SOLAR: it is an answer
--- about that date and must never be dragged by a lunar correction.
-IF COL_LENGTH('dbo.holidays', 'calendarKind') IS NOT NULL
+-- year of real data was checked against them, all 25 days — so anything else an
+-- import wrote is lunar. A hand-entered day is deliberately left SOLAR: it is
+-- an answer about that date and must never be dragged by a lunar correction.
+EXEC(N'
     UPDATE [dbo].[holidays]
-       SET [calendarKind] = 'HIJRI'
-     WHERE [source] = 'IMPORT'
-       AND [calendarKind] = 'SOLAR'
+       SET [calendarKind] = ''HIJRI''
+     WHERE [source] = ''IMPORT''
+       AND [calendarKind] = ''SOLAR''
        AND SUBSTRING([dateJalali], 6, 5) NOT IN
-           ('01/01', '01/02', '01/03', '01/04', '01/12', '01/13',
-            '03/14', '03/15', '11/22', '12/29');
+           (''01/01'', ''01/02'', ''01/03'', ''01/04'', ''01/12'', ''01/13'',
+            ''03/14'', ''03/15'', ''11/22'', ''12/29'')
+');
 
 -- Nothing has moved these yet, so where they are is where the source put them.
-IF COL_LENGTH('dbo.holidays', 'sourceDateJalali') IS NOT NULL
+EXEC(N'
     UPDATE [dbo].[holidays]
        SET [sourceDateJalali] = [dateJalali]
-     WHERE [sourceDateJalali] IS NULL;
+     WHERE [sourceDateJalali] IS NULL
+');

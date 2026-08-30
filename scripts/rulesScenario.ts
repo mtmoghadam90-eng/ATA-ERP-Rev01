@@ -5370,6 +5370,90 @@ head("Migrations: no sqlcmd batch separators");
   ok("and the check would have caught the one that did",
     /^\s*GO\s*(--.*)?$/i.test("GO") && /^\s*GO\s*(--.*)?$/i.test("  GO  ")
     && !/^\s*GO\s*(--.*)?$/i.test("-- no GO anywhere"));
+  /*
+   * And the other half of the same trap: a column read in the batch that adds
+   * it.
+   *
+   * SQL Server resolves column names when it **compiles** a batch, before
+   * running any of it — so a plain `UPDATE … SET [newColumn]` in the file that
+   * adds `newColumn` dies with «Invalid column name» (207) even though the
+   * ALTER is above it, and even though an `IF COL_LENGTH(…) IS NULL` guards
+   * it: the guard is evaluated at run time and the compile has already failed.
+   * `20260906000000_holiday_calendar_kind` shipped that way and stopped the
+   * deployment.
+   *
+   * DDL is not affected — `CREATE INDEX` on the new column is compiled when it
+   * executes, which is why five migrations here write those plainly and have
+   * always worked. What must be deferred is the DML, and `EXEC(N'…')` is how
+   * every backfill in this tree already does it (`cost_of_goods`,
+   * `customer_value_ranking`, `proforma_sent_date`). `GO` would work too and is
+   * forbidden by the check above.
+   */
+  const readsOwnNewColumn = (sql: string): string[] => {
+    // Prose about a column is not a reference to it.
+    const code = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+    const added = [...code.matchAll(
+      /ALTER\s+TABLE\s+(?:\[?dbo\]?\.)?\[?\w+\]?\s+ADD\s+(?!CONSTRAINT\b)\[?(\w+)\]?/gi,
+    )].map((m) => m[1]);
+    if (!added.length) return [];
+
+    /*
+     * Whole `EXEC(N'…')` calls come out first, literal and all.
+     *
+     * A T-SQL string is `'(?:[^']|'')*'` — the doubled-quote alternative is
+     * what makes it stop at the real end rather than at the first `''` inside
+     * a backfill, and those literals contain semicolons, so removing them
+     * before splitting is also what keeps the split honest.
+     */
+    const withoutDynamic = code.replace(
+      /EXEC\s*(?:sp_executesql\s*)?\(?\s*N?'(?:[^']|'')*'\s*\)?\s*;?/gi, " ",
+    );
+
+    const bad: string[] = [];
+    for (const stmt of withoutDynamic.split(";")) {
+      // The statement doing the adding.
+      if (/ALTER\s+TABLE[\s\S]*\bADD\b/i.test(stmt)) continue;
+      /*
+       * Only DML. `CREATE INDEX` on a new column resolves at execution and is
+       * written plainly by five migrations here that have always worked, and
+       * every `IF NOT EXISTS (SELECT …)` guard would otherwise read as one.
+       */
+      if (!/\b(UPDATE|INSERT|DELETE|MERGE)\b/i.test(stmt)) continue;
+      for (const col of added) {
+        if (new RegExp(`\\b${col}\\b`).test(stmt)) bad.push(col);
+      }
+    }
+    return bad;
+  };
+
+  const compileOffenders: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const file = joinPath(dir, name, "migration.sql");
+    let sql: string;
+    try { sql = readFileSync(file, "utf8"); } catch { continue; }
+    for (const col of readsOwnNewColumn(sql)) compileOffenders.push(`${name}:${col}`);
+  }
+  ok("no migration reads a column it adds outside dynamic SQL",
+    compileOffenders.length === 0, compileOffenders);
+
+  /*
+   * Held against the shape that actually failed, and against the two shapes
+   * that are fine — a check that matches nothing passes for the wrong reason.
+   */
+  const addsColumn = [
+    "IF COL_LENGTH('dbo.holidays', 'calendarKind') IS NULL",
+    "    ALTER TABLE [dbo].[holidays] ADD [calendarKind] NVARCHAR(10) NULL;",
+  ].join("\n");
+  const plainBackfill = `${addsColumn}\nUPDATE [dbo].[holidays] SET [calendarKind] = 'HIJRI';`;
+  const wrappedBackfill =
+    `${addsColumn}\nEXEC(N'UPDATE [dbo].[holidays] SET [calendarKind] = ''HIJRI''');`;
+  const indexOnly =
+    `${addsColumn}\nCREATE INDEX [i] ON [dbo].[holidays]([calendarKind]);`;
+
+  eq("the check catches the plain backfill", readsOwnNewColumn(plainBackfill).length, 1);
+  eq("and passes the EXEC-wrapped one", readsOwnNewColumn(wrappedBackfill).length, 0);
+  eq("and does not complain about an index, which compiles late",
+    readsOwnNewColumn(indexOnly).length, 0);
 
   // The one that failed, specifically: it must still do all four things.
   const messenger = readFileSync(
