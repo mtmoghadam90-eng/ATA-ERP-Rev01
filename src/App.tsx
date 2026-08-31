@@ -539,6 +539,7 @@ export default function App() {
           <SettingsView 
             settings={store.settings}
             updateSettings={store.updateSettings}
+            applyServerSettings={store.applyServerSettings}
             userRole={store.userRole}
             changeRole={store.changeRole}
             currentUser={store.currentUser}

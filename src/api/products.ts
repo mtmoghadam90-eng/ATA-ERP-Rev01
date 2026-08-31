@@ -132,6 +132,20 @@ export interface ProductWriteInput {
   variants?: Record<string, unknown>[];
 }
 
+export interface CategoryUsageRow {
+  category: string;
+  products: number;
+  /** False for a category products carry that the dropdown list does not have. */
+  known: boolean;
+}
+
+export interface CategoryMergeResult {
+  from: string;
+  to: string;
+  moved: number;
+  listEntryRemoved: boolean;
+}
+
 export const productsApi = {
   list: (query: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     api.get<ListResponse<ProductRow>>("/api/products", query, signal),
@@ -219,4 +233,21 @@ export const productsApi = {
     }
     return rows.slice(0, limit);
   },
+
+  /** Every category products are filed under, beside the dropdown list. */
+  categoryUsage: () =>
+    api.get<{ categories: CategoryUsageRow[] }>("/api/products/categories")
+      .then((r) => r.categories),
+
+  /**
+   * Files every product under one category onto another.
+   *
+   * A real write over the products table, not a display alias: the category is
+   * what every report groups by, and an alias would have to be applied in the
+   * dashboard, the grid, the filter, the export and the Power BI flattener —
+   * the first one anybody forgot would show the split again.
+   */
+  mergeCategory: (from: string, to: string) =>
+    api.post<CategoryMergeResult>("/api/products/merge-category", { from, to }),
+
 };

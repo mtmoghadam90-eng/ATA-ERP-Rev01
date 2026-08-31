@@ -41,6 +41,7 @@ import { productsApi, type InventoryMovementEdit, type InventoryMovementRow } fr
 import StockMovementEditModal from './StockMovementEditModal';
 import { calcSeedOf, detailToProduct, productToWriteInput, rowToProduct } from '../api/productAdapter';
 import { parseFeatureSpec } from '../utils/productFeatureSpec';
+import { unknownImportCategories } from '../utils/productCategories';
 import { useProductList } from '../api/useProductList';
 import { useList } from '../api/useList';
 import { formatMoney } from '../numUtils';
@@ -698,6 +699,23 @@ export default function ProductsView({
           };
         });
 
+        /*
+         * Categories the sheet names that the dropdown list does not have.
+         *
+         * This is where the taxonomy split: the product form is a `<select>`
+         * over `settings.dropdownItems.categories` and cannot invent a
+         * category, while this path took the cell verbatim — so a sheet saying
+         * «Flow» created a second category beside the «فلو» somebody had picked
+         * from the list, and the dashboard grew two flow bars.
+         *
+         * Reported rather than refused: rejecting a hundred-row sheet over one
+         * cell is worse than importing it. What was not acceptable was doing it
+         * *silently*.
+         */
+        const newCategories = unknownImportCategories(
+          itemsToImport.map((i) => i.category), categories,
+        );
+
         // Process batch import via API
         let successCount = 0;
         let createCount = 0;
@@ -808,7 +826,16 @@ export default function ProductsView({
         }
 
         await list.refresh();
-        alert(`عملیات موفقیت آمیز بود. ${successCount} کالا بروزرسانی شد و ${createCount} کالای جدید تعریف شد.`);
+        alert(
+          `عملیات موفقیت آمیز بود. ${successCount} کالا بروزرسانی شد و ${createCount} کالای جدید تعریف شد.`
+          + (newCategories.length
+            ? `\n\n⚠️ این دسته‌بندی‌ها در فهرست تنظیمات شما نبودند و تازه ساخته شدند:\n`
+              + `${newCategories.join('، ')}\n\n`
+              + `اگر همان چیزی هستند که از قبل دارید (مثلاً «Flow» در برابر «فلو»)، `
+              + `از «تنظیمات ← فهرست‌های کشویی ← دسته‌بندی کالا» آن‌ها را ادغام کنید — `
+              + `وگرنه گزارش‌ها دو تکه می‌شوند.`
+            : '')
+        );
         setBatchModalOpen(false);
         setIsBatchModalFullscreen(false);
         setBatchFile(null);
