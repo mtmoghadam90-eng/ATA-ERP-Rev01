@@ -337,6 +337,16 @@ export default function ProjectsView({
   const [description, setDescription] = useState("");
   const [itemsNeeded, setItemsNeeded] = useState<any[]>([]);
   const [lossReason, setLossReason] = useState("");
+  /*
+   * Whether this project's loss reason is its own to type.
+   *
+   * Once a quotation exists the reason is derived from that quotation's lines
+   * (`deriveProjectLossReason` on the server), because the loss is decided
+   * there — line by line — and a second editable copy here is how a loss-reason
+   * report came to find two different answers for one project. Zero quotations
+   * is the case the box still answers: a job lost before anything was quoted.
+   */
+  const [proformaCount, setProformaCount] = useState(0);
   const [salesExpert, setSalesExpert] = useState("");
   /** Who to write to about this job, and how — see the messaging module. */
   const [messagingContactId, setMessagingContactId] = useState("");
@@ -732,6 +742,8 @@ export default function ProjectsView({
     setCustomValues({});
     setItemsNeeded([]);
     setLossReason("");
+    // A project being created has no quotation, so its loss reason is its own.
+    setProformaCount(0);
     // Whoever is opening the form is nearly always the expert on the
     // opportunity; it stays editable for the times they are not.
     setSalesExpert(currentUser?.fullName || "");
@@ -790,6 +802,7 @@ export default function ProjectsView({
     setCustomValues(proj.customValues || {});
     setItemsNeeded(proj.itemsNeeded || []);
     setLossReason(proj.lossReason || "");
+    setProformaCount(proj.proformaCount ?? 0);
     setSalesExpert(proj.salesExpert || "");
     setMessagingContactId(proj.messagingContactId || "");
     setSuppressAutoMessages(proj.suppressAutoMessages === true);
@@ -854,7 +867,12 @@ export default function ProjectsView({
       description,
       customValues,
       itemsNeeded,
-      lossReason: status === "باخته" ? lossReason : void 0,
+      /*
+       * `void 0` is «not edited», and that is what a project with a quotation
+       * always sends: its reason is derived from the proforma lines, so the
+       * form must not offer the server a second opinion it would refuse.
+       */
+      lossReason: status === "باخته" && proformaCount === 0 ? lossReason : void 0,
       // New Fields
       salesExpert,
       messagingContactId: messagingContactId || undefined,
@@ -3930,21 +3948,49 @@ export default function ProjectsView({
                     </select>
                   </div>
 
-                  {/* Loss Reason (Conditional) */}
+                  {/*
+                    Loss reason — one per project, and whose it is depends on
+                    whether anything has been quoted.
+
+                    With a proforma out, the reason comes from that document's
+                    lines and this shows it read-only, saying where to change it;
+                    the server refuses a different value here rather than
+                    accepting a second answer nobody can reconcile with the
+                    first. With none, this box is the only place it could ever
+                    be recorded, so it is a live field.
+                  */}
                   {status === 'باخته' && (
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-rose-500">دلیل باخت پروژه *</label>
-                      <select
-                        value={lossReason}
-                        onChange={(e) => setLossReason(e.target.value)}
-                        required
-                        className="w-full border border-rose-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none text-right bg-white"
-                      >
-                        <option value="">-- انتخاب دلیل باخت --</option>
-                        {settings.lossReasons?.map((reason, i) => (
-                          <option key={i} value={reason}>{reason}</option>
-                        ))}
-                      </select>
+                      <label className="text-xs font-semibold text-rose-500">
+                        دلیل باخت پروژه {proformaCount === 0 && '*'}
+                      </label>
+                      {proformaCount > 0 ? (
+                        <>
+                          <div
+                            id="project-loss-reason-derived"
+                            className="w-full border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm text-right text-slate-600"
+                          >
+                            {lossReason || '— هنوز در ردیف‌های پیش‌فاکتور ثبت نشده —'}
+                          </div>
+                          <p className="text-[10px] text-slate-500 leading-relaxed">
+                            این پروژه پیش‌فاکتور دارد، بنابراین دلیل باخت از «ثبت نتیجه اقلام»
+                            همان پیش‌فاکتور گرفته می‌شود تا برای هر پروژه فقط یک دلیل باخت وجود
+                            داشته باشد.
+                          </p>
+                        </>
+                      ) : (
+                        <select
+                          value={lossReason}
+                          onChange={(e) => setLossReason(e.target.value)}
+                          required
+                          className="w-full border border-rose-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 outline-none text-right bg-white"
+                        >
+                          <option value="">-- انتخاب دلیل باخت --</option>
+                          {settings.lossReasons?.map((reason, i) => (
+                            <option key={i} value={reason}>{reason}</option>
+                          ))}
+                        </select>
+                      )}
                     </div>
                   )}
 

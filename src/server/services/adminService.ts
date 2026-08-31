@@ -5,7 +5,7 @@ import { AuthUser, hasPermission } from "../auth";
 import { logAction } from "./auditService";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { toNullableString, toNumber } from "../childSync";
-import { invalidateSettingsCache, loadSettings } from "../settings";
+import { ensureSettingsPatches, invalidateSettingsCache, loadSettings } from "../settings";
 
 /**
  * Settings, exchange rates and the audit log.
@@ -38,6 +38,14 @@ export async function saveSettings(
 
   // Services cache the parsed document; drop it so the change is visible at once.
   invalidateSettingsCache();
+
+  /*
+   * And re-apply the named additions, because the browser sent a whole document
+   * it may have read before they were made. `appliedPatches` travels with it, so
+   * a document that already carries them is untouched and an entry somebody
+   * deliberately removed stays removed.
+   */
+  await ensureSettingsPatches();
 
   // The client used to record this, into an audit log that lived in the
   // document store. Nothing read that log any more, so a settings change went

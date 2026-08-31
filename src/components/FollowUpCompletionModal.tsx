@@ -248,17 +248,27 @@ export default function FollowUpCompletionModal({
                     ))}
                   </div>
 
+                  {/*
+                    Required, not optional. The project's own loss reason is
+                    derived from these lines and is no longer typed on the
+                    project form, so a document settled as «باخته» with this
+                    blank is a lost job nothing can explain.
+                  */}
                   {settleOutcome === 'LOST' && (
                     <div>
                       <label className="block text-[10px] font-bold text-slate-600 mb-1">
-                        دلیل باخت
+                        دلیل باخت <span className="text-rose-500">*</span>
                       </label>
                       <SearchableSelect
                         value={settleLossReason}
                         onChange={setSettleLossReason}
                         options={lossReasons.map((r) => ({ value: r, label: r }))}
                         placeholder="-- انتخاب کنید --"
+                        required
                       />
+                      <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                        همین دلیل، دلیل باخت پروژه هم می‌شود.
+                      </p>
                     </div>
                   )}
 

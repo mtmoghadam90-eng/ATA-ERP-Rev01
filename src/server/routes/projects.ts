@@ -366,6 +366,12 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
         res.status(403).json({ success: false, error: "شما اجازه تغییر این پروژه را ندارید." });
         return;
       }
+      // The save is legal and one field of it is not — a different answer from
+      // "you may not touch this project", and it says which field and why.
+      if ("refusal" in project) {
+        res.status(400).json({ success: false, error: project.refusal });
+        return;
+      }
       res.json({ success: true, project });
     } catch (err) {
       sendError(res, err, "PUT /api/projects/:id");

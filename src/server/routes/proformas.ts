@@ -4,6 +4,7 @@ import { RouteDeps, sendError } from "./types";
 import { nextProformaNumber } from "../documentNumberSpecs";
 import { getTodayShamsi } from "../../dateUtils";
 import { redactProforma } from "../costs";
+import { lostLineWithoutReason } from "../proformaStatus";
 import {
   PROFORMA_FILTERABLE, PROFORMA_SORTABLE, ProformaInput,
   cancelSupersededVersion, countProformaReferences, createProforma, deleteProforma, getProforma,
@@ -197,6 +198,21 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
           status,
           lossReason: typeof e.lossReason === "string" ? e.lossReason : null,
         });
+      }
+
+      /*
+       * A lost line has to say why. The project's own loss reason is derived
+       * from these lines now, so one left blank is a lost job the report cannot
+       * explain — and the form already marks the field required, which makes
+       * this the server saying the same thing rather than a new demand.
+       */
+      const blank = lostLineWithoutReason(outcomes);
+      if (blank !== null) {
+        res.status(400).json({
+          success: false,
+          error: `برای ردیف ${blank + 1} که «بازنده» شده، انتخاب دلیل باخت الزامی است.`,
+        });
+        return;
       }
 
       const outcome = await setItemOutcomes(req.params.id, outcomes, user, getTodayShamsi());

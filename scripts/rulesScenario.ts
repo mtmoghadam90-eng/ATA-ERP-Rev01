@@ -43,6 +43,10 @@ import {
 } from "../src/utils/customerValue";
 import { hasEverPurchased, saleDateOf } from "../src/server/services/customerValueService";
 import { taskRelationKind } from "../src/utils/taskRelations";
+import { applySettingsPatches } from "../src/utils/settingsPatches";
+import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
+import { lossReasonRefusal } from "../src/server/services/projectService";
+import type { ERPSettings } from "../src/types";
 import { buildTaskWhere } from "../src/server/services/taskService";
 import type { AuthUser } from "../src/server/auth";
 import type { ListQuery } from "../src/server/listing";
@@ -6787,6 +6791,208 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   ok("the route passes the flag through", /hideCompleted:\s*req\.query\.hideCompleted === "true"/.test(route));
   const view = readFileSync("src/components/TasksView.tsx", "utf8");
   ok("and the screen has the button", /setFilter\('hideCompleted'/.test(view));
+}
+
+/* ── One loss reason per project ─────────────────────────────────────────── */
+{
+  /*
+   * Why a job was lost was recordable in two places that meant the same thing —
+   * the lines of its quotations, and a box on the project form — so a report of
+   * loss reasons found two answers for one project. The quotations win, because
+   * that is where the loss is actually decided and where the project's status
+   * already comes from; the box answers only for a project nothing was ever
+   * quoted on.
+   */
+  const pf = (
+    id: string, createdAt: string,
+    items: { status?: string | null; lossReason?: string | null }[],
+    extra: { isCancelled?: boolean; lossReason?: string | null } = {},
+  ) => ({ id, createdAt, status: "ارسال شده", items, ...extra });
+
+  const LOST = ITEM_LOST;
+
+  eq("no proformas: the project's own box is the only answer there is",
+    deriveProjectLossReason([]), undefined);
+
+  eq("one lost line gives its reason",
+    deriveProjectLossReason([pf("a", "2026-01-01", [{ status: LOST, lossReason: "قیمت بالا" }])]),
+    "قیمت بالا");
+
+  // The report needs one value per project, so disagreement is resolved rather
+  // than reported as two.
+  eq("the commonest reason wins where the lines disagree",
+    deriveProjectLossReason([pf("a", "2026-01-01", [
+      { status: LOST, lossReason: "قیمت بالا" },
+      { status: LOST, lossReason: "زمان تحویل" },
+      { status: LOST, lossReason: "زمان تحویل" },
+    ])]),
+    "زمان تحویل");
+  eq("...and a tie goes to the first, deterministically",
+    deriveProjectLossReason([pf("a", "2026-01-01", [
+      { status: LOST, lossReason: "قیمت بالا" },
+      { status: LOST, lossReason: "زمان تحویل" },
+    ])]),
+    "قیمت بالا");
+
+  // One vote against the lines' many: it answers a document written off without
+  // per-line reasons, and never overrules them.
+  eq("the document's own reason answers when its lines carry none",
+    deriveProjectLossReason([pf("a", "2026-01-01",
+      [{ status: LOST }, { status: LOST }], { lossReason: "انصراف مشتری" })]),
+    "انصراف مشتری");
+  eq("...and does not overrule lines that do",
+    deriveProjectLossReason([pf("a", "2026-01-01", [
+      { status: LOST, lossReason: "قیمت بالا" },
+      { status: LOST, lossReason: "قیمت بالا" },
+    ], { lossReason: "انصراف مشتری" })]),
+    "قیمت بالا");
+
+  /*
+   * The two answers that are not a string, and the difference between them is
+   * the whole reason this is three-valued.
+   */
+  eq("lost with nothing recorded leaves the project's own value alone",
+    deriveProjectLossReason([pf("a", "2026-01-01", [{ status: LOST }])]), undefined);
+  eq("nothing lost at all clears a reason left over from an earlier status",
+    deriveProjectLossReason([pf("a", "2026-01-01", [{ status: ITEM_WON }])]), null);
+  eq("...and a live quotation is not a loss either",
+    deriveProjectLossReason([pf("a", "2026-01-01", [{ status: "جاری" }])]), null);
+
+  /*
+   * The same documents the status is derived from. A superseded revision must
+   * not contribute a reason the winning quotation disagrees with — this is the
+   * pair that would read «باخته» and «قیمت بالا» together.
+   */
+  eq("a losing revision beside a winning one contributes nothing",
+    deriveProjectLossReason([
+      pf("old", "2026-01-01", [{ status: LOST, lossReason: "قیمت بالا" }]),
+      pf("new", "2026-02-01", [{ status: ITEM_WON }]),
+    ]), null);
+  // And the status agrees, which is the point of sharing `decidingProformas`.
+  eq("...and the project reads as won",
+    deriveProjectStatus([
+      pf("old", "2026-01-01", [{ status: LOST, lossReason: "قیمت بالا" }]),
+      pf("new", "2026-02-01", [{ status: ITEM_WON }]),
+    ]), "برنده (موفق)");
+
+  /* -- a lost line has to say why -- */
+  eq("a lost line with no reason is named by its position",
+    lostLineWithoutReason([{ status: ITEM_WON }, { status: LOST }]), 1);
+  eq("...and a blank one counts as none",
+    lostLineWithoutReason([{ status: LOST, lossReason: "   " }]), 0);
+  eq("a reason given passes", lostLineWithoutReason([{ status: LOST, lossReason: "قیمت بالا" }]), null);
+  // Only a loss carries one: demanding it of a win or a cancellation would
+  // make the outcome modal unsubmittable.
+  eq("a win needs none", lostLineWithoutReason([{ status: ITEM_WON }]), null);
+  eq("nor does a cancellation", lostLineWithoutReason([{ status: ITEM_CANCELLED }]), null);
+
+  /* -- the form and the write path -- */
+  const input = (lossReason?: string) =>
+    (lossReason === undefined ? {} : { lossReason }) as Parameters<typeof lossReasonRefusal>[0];
+  ok("with no quotation the project's own box is accepted",
+    lossReasonRefusal(input("قیمت بالا"), null, 0) === null);
+  ok("with one, a different value is refused rather than quietly dropped",
+    lossReasonRefusal(input("قیمت بالا"), "زمان تحویل", 1) !== null);
+  // The form sends the field back on every save of a lost project; refusing
+  // that would make the record unsavable for an unrelated edit.
+  ok("...but re-sending the derived value is not an edit",
+    lossReasonRefusal(input("زمان تحویل"), "زمان تحویل", 1) === null);
+  ok("...and an absent field is never an edit",
+    lossReasonRefusal(input(), "زمان تحویل", 1) === null);
+
+  const service = readFileSync("src/server/services/proformaService.ts", "utf8");
+  const sync = service.slice(service.indexOf("export async function syncProjectStatus"));
+  ok("the project's reason is written where its status is",
+    /deriveProjectLossReason\(proformas\)/.test(sync));
+  // `undefined` means «say nothing», and writing it would blank the column.
+  ok("and «say nothing» writes nothing",
+    /nextLossReason !== undefined/.test(sync));
+  ok("the lines' reasons are actually selected", /lossReason: true/.test(sync));
+
+  const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("the form shows the derived value read-only once a quotation exists",
+    /project-loss-reason-derived/.test(view));
+  ok("and sends nothing for it", /proformaCount === 0 \? lossReason : void 0/.test(view));
+
+  const route = readFileSync("src/server/routes/proformas.ts", "utf8");
+  ok("the outcome endpoint refuses a lost line with no reason",
+    /lostLineWithoutReason\(outcomes\)/.test(route));
+}
+
+/* ── Settings a rule refers to by name ───────────────────────────────────── */
+{
+  /*
+   * A default added to `seedData.ts` reaches a fresh installation and nothing
+   * else. Three follow-up results are what `impliedSettlement` keys on, so on
+   * every database seeded before them the option was not in the dropdown at
+   * all and the feature read as broken rather than unconfigured.
+   */
+  const base = (results: string[]): ERPSettings => ({
+    ...DEFAULT_SETTINGS,
+    dropdownItems: { ...DEFAULT_SETTINGS.dropdownItems, followUpResults: results },
+    appliedPatches: undefined,
+  } as ERPSettings);
+
+  const old = base(["در حال بررسی فنی", "عدم پاسخ"]);
+  const patched = applySettingsPatches(old);
+  ok("an old document gains the three settling results", patched !== null);
+  eq("...appended, not replacing what was there",
+    patched?.next.dropdownItems.followUpResults?.slice(0, 2).join("|"),
+    "در حال بررسی فنی|عدم پاسخ");
+  ok("...and all three arrive",
+    [RESULT_PURCHASE_CONFIRMED, RESULT_PURCHASE_CANCELLED, RESULT_LOST_TO_COMPETITOR]
+      .every((r) => patched?.next.dropdownItems.followUpResults?.includes(r)));
+  // Every one of them is what `impliedSettlement` matches on: an entry that
+  // arrives but suggests nothing would be decoration.
+  ok("...each of which actually settles something",
+    [RESULT_PURCHASE_CONFIRMED, RESULT_PURCHASE_CANCELLED, RESULT_LOST_TO_COMPETITOR]
+      .every((r) => impliedSettlement(r) !== null));
+
+  // Applied once. Removing an entry afterwards has to stick, or somebody is
+  // handed it back every restart.
+  ok("a patched document is not patched again",
+    applySettingsPatches(patched!.next) === null);
+  const trimmed = { ...patched!.next };
+  trimmed.dropdownItems = {
+    ...trimmed.dropdownItems,
+    followUpResults: (trimmed.dropdownItems.followUpResults ?? [])
+      .filter((r) => r !== RESULT_LOST_TO_COMPETITOR),
+  };
+  ok("...and a deliberately removed entry stays removed",
+    applySettingsPatches(trimmed) === null);
+
+  // A fresh installation already has them, and is still marked: otherwise the
+  // decision is re-made on every restart for ever.
+  const fresh = applySettingsPatches(DEFAULT_SETTINGS as ERPSettings);
+  ok("a fresh document is recorded as patched without being changed",
+    fresh !== null
+    && fresh.next.dropdownItems.followUpResults?.length
+      === DEFAULT_SETTINGS.dropdownItems.followUpResults?.length);
+
+  const settings = readFileSync("src/server/settings.ts", "utf8");
+  ok("the server applies them", /export async function ensureSettingsPatches/.test(settings));
+  const admin = readFileSync("src/server/services/adminService.ts", "utf8");
+  // The browser sends a whole document it may have read before the patch.
+  ok("...on every settings save as well as at startup",
+    /await ensureSettingsPatches\(\)/.test(admin)
+    && /void ensureSettingsPatches\(\)/.test(readFileSync("server.ts", "utf8")));
+
+  /* -- a loss has to say why, here too -- */
+  const body = (extra: Record<string, unknown>) => ({
+    decision: "TERMINAL" as const, followUpResult: RESULT_LOST_TO_COMPETITOR, ...extra,
+  });
+  const ctx = { todayJalali: "1405/06/10", outcomeIsTerminal: false };
+  ok("settling a loss with no reason is refused",
+    completionRefusalReason(body({ settleOutcome: "LOST" }), ctx) !== null);
+  eq("...and accepted with one",
+    completionRefusalReason(body({ settleOutcome: "LOST", settleLossReason: "قیمت بالا" }), ctx),
+    null);
+  // Only a loss. A win carrying no reason is the ordinary case.
+  eq("a win needs none here either",
+    completionRefusalReason(
+      { decision: "TERMINAL", followUpResult: RESULT_PURCHASE_CONFIRMED, settleOutcome: "WON" },
+      ctx),
+    null);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
