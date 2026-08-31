@@ -8,7 +8,7 @@ import {
   FileSpreadsheet, Clock, Sliders, User, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
  CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
   ChevronRight, Loader2, Image as ImageIcon, Maximize2, Minimize2, ArrowLeftRight, Flag, Zap,
-  ExternalLink, Award
+  ExternalLink, Award, Users
 } from 'lucide-react';
 
 import { getTodayShamsi, formatDateTimeToShamsi } from '../dateUtils';
@@ -37,6 +37,7 @@ import { tasksApi } from '../api/tasks';
 import ReferralThread from './ReferralThread';
 import ProjectFollowUpTab from './ProjectFollowUpTab';
 import ActivityComposer from './ActivityComposer';
+import CategoryMembersModal from './CategoryMembersModal';
 import TaskFromMessageModal, { TaskDraft } from './TaskFromMessageModal';
 import { renderWithMentions } from './MentionText';
 import { compressImage } from '../imageUtils';
@@ -323,6 +324,9 @@ export default function ProjectsView({
   const [activityDeleteConfirmOpen, setActivityDeleteConfirmOpen] = useState(false);
   const [activityToDeleteId, setActivityToDeleteId] = useState<any>(null);
   const [completeGroupConfirmOpen, setCompleteGroupConfirmOpen] = useState(false);
+  // Which category's membership is being edited, by id — never the object, so
+  // a refetch behind the modal cannot swap the subject out from under it.
+  const [membersGroupId, setMembersGroupId] = useState<string | null>(null);
   const [groupToCompleteId, setGroupToCompleteId] = useState<any>(null);
   const [groupToCompleteName, setGroupToCompleteName] = useState("");
   const [name, setName] = useState("");
@@ -5089,6 +5093,32 @@ export default function ProjectsView({
                                     )}
                                   </div>
                                   
+                                  {/*
+                                    Who is notified of every message here.
+                                    The count is on the button because an empty
+                                    group is the state worth noticing — nobody
+                                    is being told anything.
+                                  */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setMembersGroupId(group.id);
+                                    }}
+                                    id={`category-members-open-${group.id}`}
+                                    className={`px-2 py-1 rounded transition border flex items-center gap-1 shadow-sm text-[10px] font-bold ${
+                                      group.memberUserIds.length
+                                        ? 'bg-sky-50 hover:bg-sky-100 text-sky-700 border-sky-150'
+                                        : 'bg-slate-50 hover:bg-slate-100 text-slate-500 border-slate-200'
+                                    }`}
+                                    title="اعضای گروه — دریافت‌کنندگان اعلانِ هر پیام این دسته‌بندی"
+                                  >
+                                    <Users size={11} />
+                                    {group.memberUserIds.length
+                                      ? group.memberUserIds.length.toLocaleString('fa-IR')
+                                      : 'اعضا'}
+                                  </button>
+
                                   {/* Delete Category Group Button (only for non-system) */}
                                   {!group.categoryId.startsWith('cat-fact-') && (
                                     <button
@@ -5587,6 +5617,22 @@ export default function ProjectsView({
       />
 
       {/* Confirm Complete Category Group Modal */}
+      {/*
+        Rendered from the live `activityFeed.groups`, so the list the modal
+        seeds from is the one the screen just fetched rather than a copy taken
+        when the button was pressed.
+      */}
+      <CategoryMembersModal
+        isOpen={!!membersGroupId}
+        group={activityFeed.groups.find((g) => g.id === membersGroupId) ?? null}
+        onClose={() => setMembersGroupId(null)}
+        onSave={async (memberUserIds) => {
+          const group = activityFeed.groups.find((g) => g.id === membersGroupId);
+          if (!group) return;
+          await activityFeed.setGroupMembers(group, memberUserIds);
+        }}
+      />
+
       <ConfirmModal
         isOpen={completeGroupConfirmOpen}
         onClose={() => {

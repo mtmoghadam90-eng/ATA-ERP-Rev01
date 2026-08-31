@@ -849,6 +849,15 @@ export interface ProjectCategoryGroup {
   status: 'جاری' | 'اتمام کار';
   startDate: string;
   endDate: string | null;
+  /**
+   * Who follows this conversation and is notified of every message in it.
+   *
+   * Per project **and** per category — «خرید» on one job involves different
+   * people from «خرید» on the next. Distinct from
+   * `settings.activityCategories[].responsibleUserId`, which answers who owns
+   * this kind of work in the company and is untouched by this.
+   */
+  memberUserIds: string[];
   activities: ProjectActivity[];
 }
 

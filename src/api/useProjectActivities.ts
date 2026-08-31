@@ -50,6 +50,7 @@ export interface ProjectActivitiesApi {
   refresh: () => void;
   addGroup: (categoryId: string, categoryName: string, startDate: string) => Promise<void>;
   updateGroupDates: (group: ProjectCategoryGroup, patch: { startDate?: string; endDate?: string }) => Promise<void>;
+  setGroupMembers: (group: ProjectCategoryGroup, memberUserIds: string[]) => Promise<void>;
   deleteGroup: (id: string) => Promise<void>;
   completeGroup: (group: ProjectCategoryGroup) => Promise<void>;
   resumeGroup: (group: ProjectCategoryGroup) => Promise<void>;
@@ -112,7 +113,7 @@ export function useProjectActivities(projectId: string | null | undefined): Proj
   // to "جاری" — editing a completed group's dates would otherwise reopen it.
   const upsertFromGroup = useCallback(async (
     group: ProjectCategoryGroup,
-    overrides: { status?: string; startDate?: string; endDate?: string },
+    overrides: { status?: string; startDate?: string; endDate?: string; memberUserIds?: string[] },
   ) => {
     if (!projectId) return;
     await projectsApi.upsertCategoryGroup(projectId, {
@@ -121,6 +122,16 @@ export function useProjectActivities(projectId: string | null | undefined): Proj
       status: overrides.status ?? group.status,
       startDate: "startDate" in overrides ? overrides.startDate : (group.startDate || undefined),
       endDate: "endDate" in overrides ? overrides.endDate : (group.endDate ?? undefined),
+      /*
+       * Sent only when it is what is being changed.
+       *
+       * Deliberately *not* resent from `group` the way status is: every other
+       * caller here is editing a date or closing the category, and re-posting a
+       * membership they never looked at would write it back from whatever the
+       * screen last fetched — including over somebody else's edit. Absent means
+       * «leave it alone» all the way to the column.
+       */
+      ...("memberUserIds" in overrides ? { memberUserIds: overrides.memberUserIds } : {}),
     });
   }, [projectId]);
 
@@ -128,6 +139,14 @@ export function useProjectActivities(projectId: string | null | undefined): Proj
     group: ProjectCategoryGroup, patch: { startDate?: string; endDate?: string },
   ) => {
     await upsertFromGroup(group, patch);
+    refresh();
+  }, [upsertFromGroup, refresh]);
+
+  /** Sets who follows this category's conversation. */
+  const setGroupMembers = useCallback(async (
+    group: ProjectCategoryGroup, memberUserIds: string[],
+  ) => {
+    await upsertFromGroup(group, { memberUserIds });
     refresh();
   }, [upsertFromGroup, refresh]);
 
@@ -179,7 +198,7 @@ export function useProjectActivities(projectId: string | null | undefined): Proj
 
   return {
     groups, loading, error, refresh,
-    addGroup, updateGroupDates, deleteGroup, completeGroup, resumeGroup,
+    addGroup, updateGroupDates, setGroupMembers, deleteGroup, completeGroup, resumeGroup,
     addActivity, updateActivity, deleteActivity,
   };
 }

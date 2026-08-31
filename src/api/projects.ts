@@ -310,6 +310,8 @@ export interface CategoryGroupRow {
   startDateJalali: string | null;
   endDate: string | null;
   endDateJalali: string | null;
+  /** `["userId", …]` as stored, or null when nobody follows this category. */
+  memberUserIds: string | null;
   createdAt: string;
   activities: ActivityRow[];
 }
@@ -398,7 +400,12 @@ export const projectsApi = {
 
   upsertCategoryGroup: (
     projectId: string,
-    body: { categoryId: string; categoryName: string; status?: string; startDate?: string; endDate?: string },
+    body: {
+      categoryId: string; categoryName: string; status?: string;
+      startDate?: string; endDate?: string;
+      /** Omit to leave the membership alone; `[]` clears it. */
+      memberUserIds?: string[];
+    },
   ) => api.put<{ group: CategoryGroupRow }>(`/api/projects/${projectId}/category-groups`, body).then((r) => r.group),
 
   deleteCategoryGroup: (id: string) =>

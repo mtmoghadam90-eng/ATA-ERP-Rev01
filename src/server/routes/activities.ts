@@ -112,6 +112,17 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
         status: typeof body.status === "string" ? body.status : undefined,
         startDate: typeof body.startDate === "string" ? body.startDate : undefined,
         endDate: typeof body.endDate === "string" ? body.endDate : undefined,
+        /*
+         * Absent stays absent.
+         *
+         * The date editors and the close/reopen buttons all post to this same
+         * route and send no member list; turning an absent key into `[]` here
+         * would empty the membership every time somebody closed a category.
+         * The service validates the ids it is given.
+         */
+        memberUserIds: Array.isArray(body.memberUserIds)
+          ? body.memberUserIds.filter((v): v is string => typeof v === "string")
+          : undefined,
       }, user);
 
       if (outcome === "forbidden") return denied(res);
