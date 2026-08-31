@@ -11,6 +11,7 @@ import type {
   CategoryGroupRow,
 } from "./projects";
 import { parseAttachments } from "../utils/attachments";
+import { parseMemberIds } from "../utils/activityMembers";
 
 /**
  * Translation between the activity/referral API and the `ProjectCategoryGroup`
@@ -103,6 +104,7 @@ export function groupToView(row: CategoryGroupRow): ProjectCategoryGroup {
     status: (row.status as ProjectCategoryGroup["status"]) ?? "جاری",
     startDate: row.startDateJalali ?? "",
     endDate: row.endDateJalali ?? null,
+    memberUserIds: parseMemberIds(row.memberUserIds),
     activities: (row.activities ?? []).map(activityToView),
   };
 }

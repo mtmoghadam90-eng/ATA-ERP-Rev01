@@ -148,6 +148,9 @@ import {
 } from "../src/server/dashboardMetrics";
 import { decidingProformas } from "../src/server/proformaStatus";
 import {
+  NOTICE_EXCERPT_LENGTH, activityRecipients, noticeExcerpt, parseMemberIds, serializeMemberIds,
+} from "../src/utils/activityMembers";
+import {
   FIXED_SOLAR_HOLIDAYS, MAX_WORKING_DAY_SPAN, MIN_PLAUSIBLE_HOLIDAYS, countForwardDays,
   MAX_HIJRI_SHIFT_DAYS, importRefusalReason, isNonWorkingDay, monthDayOf, normalizeJalali,
   normalizeCalendarKind, parseCalendarYear, planHijriShift, shiftForYear, shiftRefusalReason,
@@ -5983,6 +5986,135 @@ head("Holidays: the calendar is data, and it was a lunar month wrong");
   ok("and nothing is deleted by an import", !/delete/i.test(importBody));
 }
 
+
+head("Activity groups: membership is the quiet half of a mention");
+{
+  /*
+   * The feed became a messenger and had no membership.
+   *
+   * The only way to reach a colleague was to name them — which raises a
+   * referral, an explicit request with an action and an inbox of its own. Right
+   * for «please check this datasheet», wrong for «the shipment cleared
+   * customs», which the people working the job want to know without being asked
+   * to do anything. So members get a notice and no referral.
+   */
+
+  const directory = [
+    { id: "u1", fullName: "علی رضایی" },
+    { id: "u2", fullName: "مریم احمدی" },
+    { id: "u3", fullName: "حسن کریمی" },
+  ];
+
+  eq("a stored list reads back", parseMemberIds('["u1","u2"]').length, 2);
+  // The column is JSON this application writes, but a hand-edited row must
+  // produce «nobody follows this» rather than an exception on a feed.
+  eq("a broken value is nobody, not an exception", parseMemberIds("{oops").length, 0);
+  eq("and so is null", parseMemberIds(null).length, 0);
+  eq("an id repeated is one member", parseMemberIds('["u1","u1"]').length, 1);
+  eq("blanks are dropped", parseMemberIds('["u1","  ",""]').length, 1);
+
+  /*
+   * An id naming nobody would raise a notice into a void on every message for
+   * ever, and no screen would ever show that.
+   */
+  eq("only real accounts are stored",
+    serializeMemberIds(["u1", "ghost"], directory), JSON.stringify(["u1"]));
+  // One representation for one state: «nobody set members» and «somebody
+  // removed them all» are the same thing here.
+  eq("and an empty result is null rather than an empty array",
+    serializeMemberIds(["ghost"], directory), null);
+  eq("as is clearing the list", serializeMemberIds([], directory), null);
+
+  /* -- who a message actually notifies -- */
+
+  const recipients = (over: Partial<Parameters<typeof activityRecipients>[0]> = {}) =>
+    activityRecipients({
+      memberUserIds: ["u1", "u2", "u3"],
+      authorUserId: "u1",
+      mentionedUserIds: [],
+      directory,
+      ...over,
+    });
+
+  eq("every member but the author", JSON.stringify(recipients()), JSON.stringify(["u2", "u3"]));
+  /*
+   * Somebody named gets a referral notice, which says they have been asked to
+   * do something — strictly more than this one. Two notices for one message is
+   * how a person learns to dismiss the pair without reading either.
+   */
+  eq("and never somebody the message named",
+    JSON.stringify(recipients({ mentionedUserIds: ["u2"] })), JSON.stringify(["u3"]));
+  /*
+   * Filtered on save, but an account can be deactivated afterwards and the
+   * stored list is not rewritten when that happens — so it is checked here too,
+   * at the moment of sending.
+   */
+  eq("nor an account that has since gone",
+    JSON.stringify(recipients({ directory: [{ id: "u2" }] })), JSON.stringify(["u2"]));
+  eq("a group nobody follows notifies nobody",
+    recipients({ memberUserIds: null }).length, 0);
+  // The author writing to a group they are the only member of.
+  eq("and neither does a group of one, written by that one",
+    recipients({ memberUserIds: ["u1"] }).length, 0);
+
+  eq("a long message is cut for the notice",
+    noticeExcerpt("x".repeat(NOTICE_EXCERPT_LENGTH + 20)).length, NOTICE_EXCERPT_LENGTH + 1);
+  eq("a short one is not", noticeExcerpt("سلام"), "سلام");
+  eq("and newlines are flattened", noticeExcerpt("یک\n\nدو"), "یک دو");
+
+  /* -- the service, and the trap the write path carries -- */
+
+  const service = readFileSync("src/server/services/activityService.ts", "utf8");
+  /*
+   * `upsertCategoryGroup` is also what the date editors and the close/reopen
+   * buttons call, and none of them sends a member list. Reading absent as
+   * «nobody» would empty the membership every time somebody closed a category.
+   */
+  ok("an absent member list leaves the column alone",
+    /input\.memberUserIds !== undefined/.test(service));
+  ok("and what is stored is validated against the directory",
+    /serializeMemberIds\(input\.memberUserIds, directory\)/.test(service));
+
+  const routes = readFileSync("src/server/routes/activities.ts", "utf8");
+  ok("the route keeps absent absent rather than sending an empty array",
+    /Array\.isArray\(body\.memberUserIds\)[\s\S]{0,140}: undefined/.test(routes));
+
+  const hook = readFileSync("src/api/useProjectActivities.ts", "utf8");
+  // Resending it from the screen's copy would write a membership back over
+  // somebody else's edit on every date change.
+  ok("and the client sends it only when it is what changed",
+    /"memberUserIds" in overrides/.test(hook));
+
+  /* -- the two orders, which are deliberately opposite -- */
+
+  const feedQuery = service.slice(
+    service.indexOf("export async function listCategoryGroups"),
+    service.indexOf("export interface CategoryGroupInput"),
+  );
+  /*
+   * Messages oldest first, so the newest sits directly above the box you reply
+   * in; categories newest first, because they are parallel strands of work and
+   * the one opened most recently is the one being worked. Flipping either back
+   * is a one-word edit nothing else would notice.
+   */
+  ok("categories come newest first",
+    /orderBy: \{ createdAt: "desc" \}[\s\S]{0,120}activities:/.test(feedQuery));
+  ok("and messages oldest first, like a conversation",
+    /activities: \{[\s\S]{0,80}orderBy: \{ createdAt: "asc" \}/.test(feedQuery));
+
+  const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  // The order only reads as a messenger because the composer is below the list.
+  ok("the screen renders that order as it arrives",
+    !/activities[^\n]{0,40}\.reverse\(\)/.test(view));
+  ok("and offers the membership from the group header",
+    /CategoryMembersModal/.test(view) && /setMembersGroupId\(group\.id\)/.test(view));
+
+  const modal = readFileSync("src/components/CategoryMembersModal.tsx", "utf8");
+  // The parent rebuilds `group` on every fetch, so an effect keyed on the
+  // object would wipe half-ticked boxes — the price-calculator trap.
+  ok("the modal seeds on the group's id, not on the object",
+    /seededFor\.current === group\.id/.test(modal));
+}
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

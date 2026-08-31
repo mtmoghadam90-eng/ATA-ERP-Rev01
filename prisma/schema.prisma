@@ -1218,6 +1218,18 @@ model ProjectCategoryGroup {
   endDate         DateTime? @db.Date
   endDateJalali   String?   @db.NVarChar(10)
 
+  /// The people who follow this conversation, as `["userId", …]`.
+  ///
+  /// Subscribing in the sense a messaging app means it: every message posted
+  /// here raises a notice for them, without anybody having to be named. Being
+  /// named stays a referral, which is a stronger and different thing.
+  ///
+  /// Per project **and** per category: the people involved in «خرید» on one job
+  /// are not the ones involved in it on the next, which is why this cannot be
+  /// `settings.activityCategories[].responsibleUserId` — a different question,
+  /// left alone. NULL means nobody has set one, which is not `[]`.
+  memberUserIds String? @db.NVarChar(Max)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

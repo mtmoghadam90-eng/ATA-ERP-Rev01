@@ -1,5 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { parseMentions } from "../../utils/mentions";
+import {
+  activityRecipients, noticeExcerpt, parseMemberIds, serializeMemberIds,
+} from "../../utils/activityMembers";
 import { ActivityAttachment, attachmentColumns, normalizeAttachments } from "../../utils/attachments";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
@@ -39,12 +42,30 @@ export async function listCategoryGroups(projectId: string, user: AuthUser) {
     if (owned === 0) return null;
   }
 
+  /*
+   * Two orders, deliberately opposite, and neither is the other's default.
+   *
+   * **Messages read oldest first**, so the newest sits at the bottom, directly
+   * above the box you reply in — the order every messenger uses, and the one a
+   * conversation is written in. Reversed, a reply appears above the message it
+   * answers.
+   *
+   * **Categories read newest first**, because they are not a conversation: they
+   * are the parallel strands of work on a job, and the one somebody opened most
+   * recently is the one being worked. An old finished category should not sit
+   * between you and it.
+   *
+   * The screen renders this order as it arrives and the composer is drawn below
+   * the list, so the two together are what put the newest message beside the
+   * reply box. `test:rules` pins both, because flipping one back is a one-word
+   * edit that nothing else would notice.
+   */
   return db.projectCategoryGroup.findMany({
     where: { projectId },
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "desc" },
     include: {
       activities: {
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: "asc" },
         include: ACTIVITY_INCLUDE,
       },
     },
@@ -58,6 +79,18 @@ export interface CategoryGroupInput {
   status?: string;
   startDate?: string | null;
   endDate?: string | null;
+  /**
+   * The people who follow this conversation.
+   *
+   * **Absent means «not edited»**, the same distinction `syncChildren` draws
+   * and for a sharper reason here: this function is also what the date editors
+   * and the «اتمام کار» / «به جریان انداختن مجدد» buttons call, and none of
+   * them sends a member list. Reading absent as «nobody» would silently empty
+   * the membership every time somebody closed a category.
+   *
+   * An empty array is a real answer and does clear it.
+   */
+  memberUserIds?: string[];
 }
 
 export async function upsertCategoryGroup(
@@ -89,10 +122,27 @@ export async function upsertCategoryGroup(
     Object.assign(dates, expandDateFields({ endDate: getTodayShamsi() }, ["endDate"]));
   }
 
+  /*
+   * Only real, active accounts are stored.
+   *
+   * An id naming nobody would raise a notice into a void on every message for
+   * ever, and no screen would ever show that. Absent leaves the column alone —
+   * see `CategoryGroupInput.memberUserIds`.
+   */
+  let members: { memberUserIds: string | null } | Record<string, never> = {};
+  if (input.memberUserIds !== undefined) {
+    const directory = await db.user.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+    members = { memberUserIds: serializeMemberIds(input.memberUserIds, directory) };
+  }
+
   const data = {
     status,
     categoryName: toNullableString(input.categoryName, 200)!,
     ...dates,
+    ...members,
   };
 
   // One group per category per project: the pair is the natural key even though
@@ -331,7 +381,12 @@ export async function addActivity(
 
   const group = await db.projectCategoryGroup.findUnique({
     where: { id: input.groupId },
-    select: { id: true, project: { select: { id: true, code: true, ownerUserId: true } } },
+    select: {
+      id: true,
+      categoryName: true,
+      memberUserIds: true,
+      project: { select: { id: true, code: true, ownerUserId: true } },
+    },
   });
   if (!group) return "not-found";
   if (!canSeeProjects(user) && group.project.ownerUserId !== user.id) return "forbidden";
@@ -475,6 +530,49 @@ export async function addActivity(
         },
         user,
       );
+    }
+  });
+
+  /*
+   * And the people who follow this category, whom nobody named.
+   *
+   * The quieter half of the messenger: «the shipment cleared customs» is worth
+   * knowing to the three people working the job and is not a request to any of
+   * them. `activityRecipients` is the rule — never the author, never somebody
+   * the message named (their referral notice already says more), never an
+   * account that has since been deactivated.
+   *
+   * Its own `afterCommit` rather than the block above: a failure here must not
+   * stop the mention notices, which are the ones somebody is waiting on.
+   */
+  await afterCommit("activity group members", async () => {
+    const members = parseMemberIds(group.memberUserIds);
+    if (!members.length) return;
+
+    // Asked for by id, so a deactivated account drops out even though the
+    // stored list still carries it.
+    const active = await db.user.findMany({
+      where: { id: { in: members }, isActive: true },
+      select: { id: true },
+    });
+
+    const recipients = activityRecipients({
+      memberUserIds: members,
+      authorUserId: user.id,
+      mentionedUserIds: mentioned.map((u) => u.id),
+      directory: active,
+    });
+
+    for (const userId of recipients) {
+      await notifyUser({
+        userId,
+        module: "فعالیت‌ها",
+        title: `پیام جدید در ${group.categoryName}`,
+        description: `${author?.fullName ?? "یک همکار"} در پروژه ${
+          group.project.code ?? ""} نوشت: ${noticeExcerpt(text)}`,
+        projectId: group.project.id,
+        actorUserId: user.id,
+      });
     }
   });
 
