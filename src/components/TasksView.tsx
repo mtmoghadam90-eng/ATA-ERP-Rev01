@@ -12,7 +12,8 @@ import {
   Maximize2,
   Minimize2,
   Eye,
-  EyeOff
+  EyeOff,
+  UserPlus
 } from 'lucide-react';
 import { Task, Customer, Project, ERPSettings } from '../types';
 import type { User as AppUser } from '../types';
@@ -542,6 +543,28 @@ export default function TasksView({
               <div className="text-[11px] text-slate-400 flex items-center gap-1.5 font-sans bg-slate-50 px-2 py-1 rounded border">
                 <User size={12} />
                 <span>مسئول: {task.assignedTo || 'شخصی (بدون ارجاع)'}</span>
+              </div>
+
+              {/*
+                Who raised it — the other half of who a task belongs to.
+
+                `createdByUserId` is what «من ارجاع دادم» filters on and the
+                second arm of `visibilityClause`, and nothing on the card drew
+                it: a row that appeared under «همه وظایف» and in neither tab had
+                no visible explanation, which is exactly how it was reported.
+                An empty creator is not a gap in the record — it is what an
+                automation-raised task carries, and what every task written
+                before the column existed carries — so it is named rather than
+                left blank.
+              */}
+              <div
+                className="text-[11px] text-slate-400 flex items-center gap-1.5 font-sans bg-slate-50 px-2 py-1 rounded border"
+                title={task.createdByName
+                  ? `این وظیفه را ${task.createdByName} ثبت کرده است.`
+                  : 'کاربری این وظیفه را ثبت نکرده: یا خودکار ساخته شده، یا پیش از افزوده‌شدن ستون ثبت‌کننده ایجاد شده است.'}
+              >
+                <UserPlus size={12} />
+                <span>ارجاع‌دهنده: {task.createdByName || 'سیستم / نامشخص'}</span>
               </div>
 
               {task.reminderEnabled && (
