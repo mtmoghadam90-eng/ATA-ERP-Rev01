@@ -26,6 +26,14 @@ export interface TaskListFilters {
   assignedToUserId: string;
   relatedToType: string;
   overdue: boolean;
+  /**
+   * «انجام‌شده‌ها را پنهان کن».
+   *
+   * Sent to the server rather than applied to the page: the board is paged, so
+   * dropping the done rows after they arrive would leave a page of twenty
+   * completed tasks looking empty with the unfiltered total printed beside it.
+   */
+  hideCompleted: boolean;
   dateFrom: string;
   dateTo: string;
 }
@@ -39,6 +47,9 @@ const EMPTY_FILTERS: TaskListFilters = {
   assignedToUserId: "all",
   relatedToType: "all",
   overdue: false,
+  // Off by default: the board shows everything it always showed, and hiding is
+  // the deliberate click.
+  hideCompleted: false,
   dateFrom: "",
   dateTo: "",
 };
@@ -53,6 +64,7 @@ export function useTaskList(initialSearch = "") {
     assignedToUserId: filters.assignedToUserId,
     relatedToType: filters.relatedToType,
     overdue: filters.overdue ? "true" : undefined,
+    hideCompleted: filters.hideCompleted ? "true" : undefined,
     dateFrom: filters.dateFrom || undefined,
     dateTo: filters.dateTo || undefined,
   }), [filters]);
@@ -81,7 +93,7 @@ export function useTaskList(initialSearch = "") {
   const hasActiveFilters =
     filters.scope !== "toMe" || filters.status !== "all" || filters.priority !== "all"
     || filters.assignedToUserId !== "all" || filters.relatedToType !== "all"
-    || filters.overdue || !!filters.dateFrom || !!filters.dateTo;
+    || filters.overdue || filters.hideCompleted || !!filters.dateFrom || !!filters.dateTo;
 
   return { ...list, filters, setFilter, clearFilters, hasActiveFilters };
 }

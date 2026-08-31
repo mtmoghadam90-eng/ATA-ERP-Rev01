@@ -42,6 +42,10 @@ import {
   sumRealizedWeights, validateCustomerValueSettings,
 } from "../src/utils/customerValue";
 import { hasEverPurchased, saleDateOf } from "../src/server/services/customerValueService";
+import { taskRelationKind } from "../src/utils/taskRelations";
+import { buildTaskWhere } from "../src/server/services/taskService";
+import type { AuthUser } from "../src/server/auth";
+import type { ListQuery } from "../src/server/listing";
 import { buildReportingTables } from "../src/reporting/flatten";
 import { findCustomerDuplicates } from "../src/utils/customerDuplicates";
 import { canonicalizeProvince } from "../src/utils/iranProvinces";
@@ -5197,8 +5201,15 @@ head("Tasks board: the status filter and the job behind a task");
    */
   ok("the service resolves the project behind each task",
     /async function withProjectContext/.test(service));
+  /*
+   * The spelling is no longer compared here: `relatedToType` is stored in two
+   * languages (see `taskRelations.ts`), so what is pinned is that the proforma
+   * path exists at all — its own bounded query, resolving to that quotation's
+   * project.
+   */
   ok("for a task on a proforma as well as one on a project",
-    /relatedToType === "پیش‌فاکتور"/.test(service));
+    /proformaIds\.add\(row\.relatedToId\)/.test(service)
+    && /id: \{ in: \[\.\.\.proformaIds\] \}/.test(service));
   ok("in bounded queries, not one per row",
     /id: \{ in: \[\.\.\.projectIds\] \}/.test(service));
   ok("the card prints the code, the project and the customer",
@@ -6700,6 +6711,82 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     && /follow-up-settle-yes/.test(modal) && /follow-up-settle-no/.test(modal));
   ok("and the terminal option unlocks when the answer is yes",
     /!outcomeIsTerminal && !settleOutcome/.test(modal));
+}
+
+/* ── The tasks board: what a card names, and hiding what is done ─────────── */
+{
+  /*
+   * `Task.relatedToType` is stored in two languages and always was.
+   *
+   * The reader that puts the project and the customer on a card compared
+   * against the Persian words alone, so every task an automation raised — each
+   * sales follow-up among them, which is most of that board — came back with no
+   * project and no customer at all.
+   *
+   * Both halves are pinned: the rule reads both spellings, and the writers that
+   * actually shipped the Latin ones still write them, so changing either side
+   * is reported here rather than blanking the cards again.
+   */
+  eq("«پروژه» is a project", taskRelationKind("پروژه"), "project");
+  eq("«پیش‌فاکتور» is a proforma", taskRelationKind("پیش‌فاکتور"), "proforma");
+  eq("«مشتری» is a customer", taskRelationKind("مشتری"), "customer");
+  eq("and so is the Latin key the automations write", taskRelationKind("proforma"), "proforma");
+  eq("...for a project", taskRelationKind("project"), "project");
+  eq("...for a customer", taskRelationKind("customer"), "customer");
+  // A value nothing writes must resolve to nothing rather than to a guess: the
+  // id would then be looked up in the wrong table.
+  eq("anything else names nothing", taskRelationKind("سررسید"), null);
+  eq("...including an absent one", taskRelationKind(null), null);
+  eq("...and one that is not a string", taskRelationKind(7), null);
+
+  const followUp = readFileSync("src/server/services/followUpService.ts", "utf8");
+  ok("a sales follow-up is still raised as the Latin \"proforma\"",
+    /relatedToType:\s*"proforma"/.test(followUp));
+  const workflow = readFileSync("src/server/services/workflowService.ts", "utf8");
+  ok("and the workflow engine still raises the Latin \"project\"",
+    /relatedToType:\s*enrichedPayload\.projectId \? "project"/.test(workflow));
+  const milestones = readFileSync("src/server/services/milestoneAutomation.ts", "utf8");
+  ok("...as does the milestone automation",
+    /relatedToType:\s*"project"/.test(milestones));
+
+  const service = readFileSync("src/server/services/taskService.ts", "utf8");
+  const context = service.slice(service.indexOf("async function withProjectContext"));
+  ok("the card's context resolves the kind through the shared rule",
+    /taskRelationKind\(row\.relatedToType\)/.test(context));
+  // The fault itself: a bare comparison against one spelling.
+  ok("and never against a spelling written out on the spot",
+    !/row\.relatedToType\s*===\s*"/.test(context));
+
+  /* -- «انجام‌شده‌ها را پنهان کن» -- */
+  const user: AuthUser = {
+    id: "u1", username: "u", name: "u", isSystemAdmin: true,
+    permissions: { erp_tasks: true, tasksAll: true },
+  } as unknown as AuthUser;
+  const query = (filters: Record<string, string>): ListQuery => ({
+    page: 1, pageSize: 50, search: "", order: "desc", filters,
+  });
+  // A clause on the query, because the board is paged: hiding the rows after
+  // they arrive empties a page of twenty done tasks and prints the full total.
+  const clauses = (where: Record<string, unknown>) =>
+    JSON.stringify((where.AND as unknown[]) ?? []);
+  ok("the toggle drops the completed rows in the query",
+    clauses(buildTaskWhere(query({}), user, { hideCompleted: true }))
+      .includes('{"status":{"not":"انجام شده"}}'));
+  ok("...and off, it drops nothing",
+    !clauses(buildTaskWhere(query({}), user, {})).includes('"انجام شده"'));
+  // Asking for «انجام شده» from the dropdown and being answered with nothing
+  // would be a screen that explains none of it.
+  ok("an explicit status wins over the toggle",
+    !clauses(buildTaskWhere(query({ status: "انجام شده" }), user, { hideCompleted: true }))
+      .includes('{"status":{"not":"انجام شده"}}'));
+  // Read strictly, so a caller that sends nothing gets the whole list.
+  ok("...and only a real true hides anything",
+    !clauses(buildTaskWhere(query({}), user, { hideCompleted: "false" })).includes('"انجام شده"'));
+
+  const route = readFileSync("src/server/routes/tasks.ts", "utf8");
+  ok("the route passes the flag through", /hideCompleted:\s*req\.query\.hideCompleted === "true"/.test(route));
+  const view = readFileSync("src/components/TasksView.tsx", "utf8");
+  ok("and the screen has the button", /setFilter\('hideCompleted'/.test(view));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

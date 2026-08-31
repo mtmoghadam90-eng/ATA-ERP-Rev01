@@ -10,7 +10,9 @@ import {
   CheckCircle2,
   ListTodo,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { Task, Customer, Project, ERPSettings } from '../types';
 import type { User as AppUser } from '../types';
@@ -162,6 +164,10 @@ export default function TasksView({
    */
   const selectedStatus = list.filters.status;
   const setSelectedStatus = (value: string) => list.setFilter('status', value);
+
+  // The declutter toggle. The server drops the completed rows from the query,
+  // so this is only what the button draws.
+  const hideCompleted = list.filters.hideCompleted;
 
   /*
    * Which half of the board — the same two questions the referrals inbox asks.
@@ -413,6 +419,32 @@ export default function TasksView({
             <option value="کنسل شده">کنسل شده</option>
           </select>
         </div>
+
+        {/*
+          «انجام‌شده‌ها را پنهان کن» — declutter, not a filter of its own.
+
+          It is disabled while the dropdown beside it names a status, because
+          that is the rule the server applies: an explicit choice wins, and a
+          toggle that silently did nothing would read as broken. Pressing it
+          re-queries — the board is paged, so hiding rows in the browser would
+          empty a page of completed tasks and print the full total under it.
+        */}
+        <button
+          type="button"
+          onClick={() => list.setFilter('hideCompleted', !hideCompleted)}
+          disabled={selectedStatus !== 'all'}
+          title={selectedStatus !== 'all'
+            ? 'وضعیت به‌صورت مشخص انتخاب شده است'
+            : hideCompleted ? 'نمایش وظایف انجام‌شده' : 'پنهان کردن وظایف انجام‌شده'}
+          className={`w-full md:w-auto flex items-center justify-center gap-2 border rounded-lg text-sm py-2 px-3 transition whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
+            hideCompleted && selectedStatus === 'all'
+              ? 'bg-sky-50 border-sky-500 text-sky-700'
+              : 'bg-white border-slate-200 text-slate-600 hover:border-sky-500'
+          }`}
+        >
+          {hideCompleted ? <EyeOff size={16} /> : <Eye size={16} />}
+          {hideCompleted ? 'نمایش انجام‌شده‌ها' : 'پنهان کردن انجام‌شده‌ها'}
+        </button>
       </div>
 
       {/* List */}
@@ -455,12 +487,24 @@ export default function TasksView({
                 */}
                 {task.relatedProject ? (
                   <span className="text-[10px] text-sky-700 bg-sky-50 border border-sky-100 px-2 py-0.5 rounded font-medium inline-flex flex-wrap items-center gap-1 mt-1 max-w-full">
-                    <span className="font-mono font-bold">{task.relatedProject.code}</span>
-                    <span className="text-sky-300">|</span>
-                    <span className="truncate">{task.relatedProject.name}</span>
+                    {/*
+                      A task attached to a customer has no project behind it, so
+                      the code and the name are empty and only the customer is
+                      printed — an empty «کد | نام |» would read as a project
+                      that does not exist.
+                    */}
+                    {task.relatedProject.code && (
+                      <>
+                        <span className="font-mono font-bold">{task.relatedProject.code}</span>
+                        <span className="text-sky-300">|</span>
+                      </>
+                    )}
+                    {task.relatedProject.name && (
+                      <span className="truncate">{task.relatedProject.name}</span>
+                    )}
                     {task.relatedProject.customerName && (
                       <>
-                        <span className="text-sky-300">|</span>
+                        {task.relatedProject.name && <span className="text-sky-300">|</span>}
                         <span className="truncate text-slate-600">{task.relatedProject.customerName}</span>
                       </>
                     )}

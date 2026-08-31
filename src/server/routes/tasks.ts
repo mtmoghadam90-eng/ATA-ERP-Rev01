@@ -43,6 +43,10 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
         scope: req.query.scope === "toMe" ? "toMe"
           : req.query.scope === "fromMe" ? "fromMe"
           : undefined,
+        // The board's «hide completed» toggle. Read strictly, so a caller that
+        // omits it — every integration written before the button existed —
+        // still gets the whole list.
+        hideCompleted: req.query.hideCompleted === "true",
       });
       res.json({ success: true, ...result });
     } catch (err) {
