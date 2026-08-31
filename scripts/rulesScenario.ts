@@ -148,6 +148,9 @@ import {
 } from "../src/server/dashboardMetrics";
 import { decidingProformas } from "../src/server/proformaStatus";
 import {
+  categoryKey, matchKnownCategory, mergeRefusalReason, unknownImportCategories,
+} from "../src/utils/productCategories";
+import {
   NOTICE_EXCERPT_LENGTH, activityRecipients, noticeExcerpt, parseMemberIds, serializeMemberIds,
 } from "../src/utils/activityMembers";
 import {
@@ -6500,6 +6503,94 @@ head("Contrast: the palette was measured, and most of it did not pass");
   const composer = readFileSync("src/components/ActivityComposer.tsx", "utf8");
   ok("the compose bar carries the edge rather than a heavier fill",
     /border-t-edge/.test(composer));
+}
+
+head("Product categories: one taxonomy, two ways in");
+{
+  /*
+   * The reported fault: the dashboard's conversion chart drew «فلو» at 38% and
+   * «Flow» at 0% — two piles of the same equipment.
+   *
+   * A product's category is a plain string copied onto the row, so every report
+   * groups by exactly what is stored. The product form is a `<select>` over
+   * `settings.dropdownItems.categories` and cannot invent a category; the Excel
+   * import took `row["دسته بندی"]` verbatim and could. One path constrained and
+   * one not is the same shape as the five customer creation forms.
+   */
+  const known = ["ابزار دقیق - فشار", "فلو", "قطعات یدکی و اتصالات"];
+
+  /* -- spelling is not meaning -- */
+  eq("case is spelling", categoryKey("Flow"), categoryKey("flow "));
+  // SQL Server's collation treats these as different characters, which is the
+  // same reason `searchClause` expands them.
+  eq("and so are the Persian character pairs", categoryKey("كنترلي"), categoryKey("کنترلی"));
+  eq("as is a zero-width joiner", categoryKey("قطعات‌یدکی"), categoryKey("قطعات یدکی"));
+  eq("an empty value has no key", categoryKey(null), "");
+
+  eq("a value that means a list entry resolves to it",
+    matchKnownCategory(" فلو ", known), "فلو");
+  eq("and one the list does not have resolves to nothing",
+    matchKnownCategory("Flow", known), null);
+  /*
+   * The rule deliberately does not translate. «Flow» and «فلو» are the same
+   * equipment in two languages and no string rule can know that — which is
+   * exactly why the merge below takes a person's answer.
+   */
+  ok("because a language is not a spelling",
+    categoryKey("Flow") !== categoryKey("فلو"));
+
+  /* -- what an import brings in that the list has never heard of -- */
+  const sheet = ["فلو", "Flow", "flow", "Pressure", "", "  ", "ابزار دقیق - فشار"];
+  const strays = unknownImportCategories(sheet, known);
+  eq("the sheet's unknown categories are reported", JSON.stringify(strays),
+    JSON.stringify(["Flow", "Pressure"]));
+  // Reported once, in the sheet's own spelling, so the message names what to
+  // look for rather than a normalised form nobody typed.
+  ok("once each, however many rows carry them", strays.length === 2);
+  eq("a sheet that stays inside the list reports nothing",
+    unknownImportCategories(["فلو", "ابزار دقیق - فشار"], known).length, 0);
+
+  /* -- merging, which is a person's decision -- */
+  eq("merging into a list entry is allowed", mergeRefusalReason("Flow", "فلو", known), null);
+  ok("merging a category into itself is refused",
+    mergeRefusalReason("فلو", " فلو ", known) !== null);
+  /*
+   * The target must exist. Merging into a typo would move every product onto a
+   * name the product form cannot offer — the fault this repairs, not a repair
+   * of it.
+   */
+  ok("and merging into something the list does not have is refused",
+    mergeRefusalReason("Flow", "Flowmeter", known) !== null);
+  ok("a blank either side is refused", mergeRefusalReason("", "فلو", known) !== null);
+
+  /* -- the two halves, in the source -- */
+  const importer = readFileSync("src/components/ProductsView.tsx", "utf8");
+  // Reported, not refused: rejecting a hundred-row sheet over one cell is worse
+  // than importing it. Doing it silently was what was not acceptable.
+  ok("the import says which categories it had never heard of",
+    /unknownImportCategories\(/.test(importer));
+
+  const service = readFileSync("src/server/services/productService.ts", "utf8");
+  const mergeBody = service.slice(service.indexOf("export async function mergeCategory"));
+  /*
+   * The move and the list edit are one transaction: leaving the source in the
+   * dropdown after its products have gone lets somebody pick it again the same
+   * afternoon and recreate what was just merged.
+   */
+  ok("the merge moves the products and shortens the list together",
+    /\$transaction\([\s\S]{0,600}product\.updateMany[\s\S]{0,600}appSetting\.upsert/.test(mergeBody));
+  // The taxonomy is edited in Settings, so changing it is that authority — not
+  // `products`, which every warehouse account holds.
+  ok("and needs the settings permission, not the products one",
+    /hasPermission\(user, "settings"\)/.test(mergeBody.slice(0, 700)));
+  // Stored in the list's own spelling, never the caller's.
+  ok("the target is taken from the list, not from the request",
+    /matchKnownCategory\(to, known\)!/.test(mergeBody));
+
+  const routes = readFileSync("src/server/routes/products.ts", "utf8");
+  // Or Express answers 404 for a product whose id is the literal string.
+  ok("the categories route is registered before /api/products/:id",
+    routes.indexOf('"/api/products/categories"') < routes.indexOf('"/api/products/:id"'));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

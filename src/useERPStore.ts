@@ -341,5 +341,18 @@ export function useERPStore() {
         alert(err instanceof ApiError ? err.message : "ذخیره تنظیمات با خطا مواجه شد.");
       });
     },
+
+    /**
+     * Takes a change the server has already written, without posting it back.
+     *
+     * `updateSettings` is for a change the *screen* made; this is for one an
+     * endpoint made as part of something else — the category merge rewrites the
+     * dropdown list inside its own transaction, and posting the document again
+     * afterwards would race with what was just saved and could put the removed
+     * entry back.
+     */
+    applyServerSettings: (patch: Partial<ERPSettings>) => {
+      setSettings((current) => ({ ...current, ...patch }));
+    },
   };
 }

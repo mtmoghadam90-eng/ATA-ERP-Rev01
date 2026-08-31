@@ -55,11 +55,18 @@ import { REQUIRED_FIELDS_METADATA, DEFAULT_REQUIRED_FIELDS } from '../utils/requ
 import { projectGapCatalogue, projectGapFields } from '../utils/projectDataGaps';
 import CustomerValueSettingsPanel from './CustomerValueSettingsPanel';
 import HolidayCalendarTab from './HolidayCalendarTab';
+import CategoryMergePanel from './CategoryMergePanel';
 import { TASK_KINDS, TASK_KIND_LABELS } from '../utils/salesFollowUp';
 
 interface SettingsViewProps {
   settings: ERPSettings;
   updateSettings: (newSettings: ERPSettings) => void;
+  /**
+   * Takes a settings change an endpoint has already written, without posting
+   * the document back — see the store's own note. The category merge rewrites
+   * the dropdown list inside its transaction.
+   */
+  applyServerSettings: (patch: Partial<ERPSettings>) => void;
   userRole?: 'admin' | 'user';
   changeRole?: (role: 'admin' | 'user') => void;
   currentUser?: User | null;
@@ -70,6 +77,7 @@ interface SettingsViewProps {
 export default function SettingsView({
   settings,
   updateSettings,
+  applyServerSettings,
   userRole = 'admin',
   changeRole,
   currentUser = null,
@@ -1895,6 +1903,31 @@ export default function SettingsView({
                   </button>
                 </form>
               </div>
+
+              {/*
+                Only for the product taxonomy. It is the one list whose entries
+                are copied onto records — a project status or a unit is read
+                back through a picker, but a product's category is a string on
+                the row, so two spellings are two categories in every report.
+              */}
+              {selectedDropdownKey === 'categories' && (
+                <CategoryMergePanel
+                  known={settings.dropdownItems.categories || []}
+                  onMerged={(removed) => {
+                    // The server removed it inside the merge transaction, so
+                    // this only brings the local copy into step — posting the
+                    // document again would race with what was just written.
+                    if (!removed) return;
+                    applyServerSettings({
+                      dropdownItems: {
+                        ...settings.dropdownItems,
+                        categories: (settings.dropdownItems.categories || [])
+                          .filter((c) => c !== removed),
+                      },
+                    });
+                  }}
+                />
+              )}
 
               {/* Items List Table */}
               <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden p-6 space-y-4">

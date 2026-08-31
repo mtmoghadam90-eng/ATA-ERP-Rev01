@@ -7,7 +7,8 @@ import {
   INVENTORY_SORTABLE, PRODUCT_FILTERABLE, PRODUCT_SORTABLE, ProductInput,
   adjustStock, copyProduct, countProductReferences, createProduct, deleteProduct,
   deleteInventoryTransaction, getProduct, listInventoryTransactions, listProducts,
-  lowStockProducts, updateInventoryTransaction, updateProduct,
+  listCategoryUsage, lowStockProducts, mergeCategory, updateInventoryTransaction,
+  updateProduct,
 } from "../services/productService";
 
 /**
@@ -65,6 +66,54 @@ export function registerProductRoutes(app: express.Express, deps: RouteDeps): vo
       res.json({ success: true, rows });
     } catch (err) {
       sendError(res, err, "GET /api/products/low-stock");
+    }
+  });
+
+  /*
+   * Which categories products are actually filed under, beside the list.
+   *
+   * Registered before `/api/products/:id`, or Express answers 404 for a product
+   * whose id is the literal string «categories».
+   */
+  app.get("/api/products/categories", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const rows = await listCategoryUsage(user);
+      if (rows === "forbidden") return denied(res);
+      res.json({ success: true, categories: rows });
+    } catch (err) {
+      sendError(res, err, "GET /api/products/categories");
+    }
+  });
+
+  /**
+   * Files every product under one category onto another.
+   *
+   * Needs `settings`, not `products`: this edits the taxonomy every report
+   * groups by, which is not the same authority as editing a product.
+   */
+  app.post("/api/products/merge-category", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as { from?: unknown; to?: unknown };
+      const outcome = await mergeCategory(
+        String(body.from ?? ""), String(body.to ?? ""), user, getTodayShamsi(),
+      );
+      if (outcome === "forbidden") {
+        res.status(403).json({
+          success: false, error: "شما اجازه تغییر دسته‌بندی‌ها را ندارید.",
+        });
+        return;
+      }
+      if ("error" in outcome) {
+        res.status(400).json({ success: false, error: outcome.error });
+        return;
+      }
+      res.json({ success: true, ...outcome });
+    } catch (err) {
+      sendError(res, err, "POST /api/products/merge-category");
     }
   });
 

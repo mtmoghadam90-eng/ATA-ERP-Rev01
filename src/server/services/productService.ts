@@ -8,6 +8,10 @@ import { toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
+import { invalidateSettingsCache, loadSettings } from "../settings";
+import {
+  categoryKey, matchKnownCategory, mergeRefusalReason,
+} from "../../utils/productCategories";
 
 /**
  * Product and inventory data access.
@@ -972,4 +976,134 @@ export async function copyProduct(
     // product is not editing its costs — but this user still may not read it.
     return redactProduct(created, user);
   });
+}
+
+
+/* ========================= the product taxonomy ========================== */
+
+export interface CategoryUsage {
+  category: string;
+  products: number;
+  /** False for a category products carry that the dropdown list does not have. */
+  known: boolean;
+}
+
+/**
+ * Every category products are actually filed under, beside the list.
+ *
+ * The two are not the same set, which is the whole point of showing them
+ * together: the Excel import wrote categories the form could never have
+ * offered, and until they are counted nobody can see that «Flow» and «فلو» are
+ * two piles of the same equipment.
+ */
+export async function listCategoryUsage(user: AuthUser): Promise<CategoryUsage[] | "forbidden"> {
+  if (!hasPermission(user, "products")) return "forbidden";
+
+  const [rows, settings] = await Promise.all([
+    getDb().product.groupBy({ by: ["category"], _count: { _all: true } }),
+    loadSettings(),
+  ]);
+  const known = settings?.dropdownItems?.categories ?? [];
+
+  const used = rows
+    .map((r) => ({
+      category: r.category ?? "",
+      products: r._count._all,
+      known: matchKnownCategory(r.category, known) !== null,
+    }))
+    .filter((r) => r.category);
+
+  // A list entry nothing is filed under is still a category somebody may pick,
+  // so it belongs in the picker the merge screen draws.
+  for (const entry of known) {
+    if (!used.some((u) => categoryKey(u.category) === categoryKey(entry))) {
+      used.push({ category: entry, products: 0, known: true });
+    }
+  }
+
+  return used.sort((a, b) => b.products - a.products || a.category.localeCompare(b.category));
+}
+
+export interface MergeOutcome {
+  from: string;
+  to: string;
+  /** Products moved. */
+  moved: number;
+  /** True when the source was also removed from the dropdown list. */
+  listEntryRemoved: boolean;
+}
+
+/**
+ * Files every product under one category onto another.
+ *
+ * The repair for a taxonomy that split. It is a real write over the products
+ * table rather than a display-time alias, because the category is what every
+ * report groups by — an alias would have to be applied in the dashboard, the
+ * grid, the filter, the Excel export and the Power BI flattener, and the first
+ * one anybody forgot would show the old split again.
+ *
+ * The move and the list edit are one transaction: leaving the source in the
+ * dropdown after its products have gone would let somebody pick it again the
+ * same afternoon and recreate exactly what was just merged.
+ */
+export async function mergeCategory(
+  from: string,
+  to: string,
+  user: AuthUser,
+  todayJalali: string,
+): Promise<"forbidden" | { error: string } | MergeOutcome> {
+  // The taxonomy is edited in Settings, so changing it needs that permission —
+  // not `products`, which every warehouse account has.
+  if (!hasPermission(user, "settings")) return "forbidden";
+
+  const settings = await loadSettings();
+  const known = settings?.dropdownItems?.categories ?? [];
+
+  const refusal = mergeRefusalReason(from, to, known);
+  if (refusal) return { error: refusal };
+
+  // The target is stored in the list's own spelling, never the caller's.
+  const target = matchKnownCategory(to, known)!;
+
+  const db = getDb();
+  let moved = 0;
+  let listEntryRemoved = false;
+
+  await db.$transaction(async (tx) => {
+    const result = await tx.product.updateMany({
+      where: { category: from },
+      data: { category: target },
+    });
+    moved = result.count;
+
+    const remaining = known.filter((entry) => categoryKey(entry) !== categoryKey(from));
+    if (remaining.length !== known.length && remaining.length > 0) {
+      const next = {
+        ...(settings ?? {}),
+        dropdownItems: { ...(settings?.dropdownItems ?? {}), categories: remaining },
+      };
+      await tx.appSetting.upsert({
+        where: { id: "singleton" },
+        create: { id: "singleton", data: JSON.stringify(next) },
+        update: { data: JSON.stringify(next) },
+      });
+      listEntryRemoved = true;
+    }
+  });
+
+  if (listEntryRemoved) invalidateSettingsCache();
+
+  await logAction(
+    {
+      action: "UPDATE",
+      module: "محصولات",
+      entityId: `category-merge`,
+      description: `ادغام دسته‌بندی «${from}» در «${target}» — ${moved} محصول منتقل شد`,
+      afterState: { from, to: target, moved, listEntryRemoved },
+    },
+    user,
+    todayJalali,
+  );
+
+  return { from, to: target, moved, listEntryRemoved };
 }
