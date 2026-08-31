@@ -107,7 +107,18 @@ export default function ActivityComposer({
   };
 
   return (
-    <div className="space-y-2 bg-slate-50 p-3 rounded-xl border border-slate-100" id="activity-composer">
+    /*
+      The compose bar has to read as a separate region from the messages above
+      it, and it did not: its fill and theirs measured 1.03:1 — the same colour.
+      Two large surfaces in a light interface cannot be pulled to 3:1 without
+      one of them going obviously grey, so the separation is carried by the
+      top edge instead. `border-edge` is 3.63:1 on white, which is what the
+      contrast rule actually asks of a boundary.
+    */
+    <div
+      className="space-y-2 bg-slate-50 p-3 rounded-xl border border-hairline border-t-2 border-t-edge"
+      id="activity-composer"
+    >
       {/* What is being answered, so the reply is not written blind. */}
       {replyTo && (
         <div className="flex items-start gap-2 bg-white border-r-2 border-sky-400 rounded-lg px-2.5 py-1.5">

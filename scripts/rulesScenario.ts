@@ -6116,5 +6116,147 @@ head("Activity groups: membership is the quiet half of a mention");
     /seededFor\.current === group\.id/.test(modal));
 }
 
+head("Contrast: the palette was measured, and most of it did not pass");
+{
+  /*
+   * The reported fault, and what was under it.
+   *
+   * «پس‌زمینه ثبت فعالیت با متن پیام‌ها رنگ نزدیک به هم دارد» measured 1.03:1 —
+   * the same colour. It was not a local mistake but one palette repeated
+   * everywhere: `text-slate-400` at 2.56 on 676 elements, `border-slate-100` at
+   * 1.10 on 479, `border-slate-200` at 1.23 on 948.
+   */
+  const hex = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  const lin = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const lum = (h: string) => {
+    const [r, g, b] = hex(h).map(lin);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const contrast = (a: string, b: string) => {
+    const [x, y] = [lum(a), lum(b)];
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+  };
+
+  // Held against a value everyone can check: black on white is 21:1.
+  eq("the formula agrees with the one figure everybody knows",
+    Math.round(contrast("#000000", "#ffffff")), 21);
+  eq("and a colour against itself is 1", contrast("#616f85", "#616f85").toFixed(2), "1.00");
+
+  const css = readFileSync("src/index.css", "utf8");
+  const WHITE = "#ffffff", SLATE50 = "#f8fafc", SLATE100 = "#f1f5f9";
+
+  /** The replacement this layer declares for a utility, or null. */
+  const declared = (selector: string, prop: string): string | null => {
+    const re = new RegExp(
+      `html:not\\(\\.dark\\)\\s+\\.${selector.replace(/\\/g, "\\\\")}[^{]*\\{[^}]*${prop}:\\s*(#[0-9a-f]{6})`,
+      "i",
+    );
+    return css.match(re)?.[1] ?? null;
+  };
+
+  /*
+   * Body text has to clear 4.5 on every ground it actually sits on — white, and
+   * the two tinted surfaces the app fills panels with. A value chosen against
+   * white alone fails the moment the same text lands inside a card.
+   */
+  for (const cls of ["text-slate-400", "text-slate-500"]) {
+    const value = declared(cls, "color");
+    ok(`${cls} is restated`, value !== null, value);
+    if (!value) continue;
+    for (const [name, ground] of [["white", WHITE], ["slate-50", SLATE50], ["slate-100", SLATE100]] as const) {
+      const r = contrast(value, ground);
+      ok(`  and clears AA on ${name}`, r >= 4.5, r.toFixed(2));
+    }
+  }
+
+  /*
+   * `slate-300` deliberately does not reach 4.5: it is icon strokes, disabled
+   * states and decorative glyphs, and holding it to the text threshold would
+   * make every one of those read as content. It still has to beat what it
+   * replaced, which was 1.48 — invisible.
+   */
+  const decorative = declared("text-slate-300", "color");
+  ok("slate-300 is lifted well clear of what it replaced",
+    !!decorative && contrast(decorative, WHITE) > 2.5,
+    decorative && contrast(decorative, WHITE).toFixed(2));
+
+  /*
+   * The status colours are the ones that have to be read in a single glance —
+   * «برنده», «باخته», «هشدار» — and every one of them was below AA.
+   */
+  for (const cls of ["text-sky-600", "text-emerald-600", "text-rose-500", "text-amber-600"]) {
+    const value = declared(cls, "color");
+    const r = value ? contrast(value, WHITE) : 0;
+    ok(`${cls} clears AA on white`, r >= 4.5, value ? r.toFixed(2) : null);
+  }
+
+  /*
+   * A border is not held to 4.5 — it is not text — but 1.10:1 is not a border,
+   * it is the absence of one. The card weights are deliberately below the 3:1
+   * component threshold because a divider between every row at edge weight
+   * reads as noise; what must clear 3:1 is `--color-edge`, below.
+   */
+  const borders: [string, number][] = [
+    ["border-slate-100", 1.35], ["border-slate-150", 1.5],
+    ["border-slate-200", 1.6], ["border-slate-300", 2.0],
+  ];
+  for (const [cls, floor] of borders) {
+    const value = declared(cls, "border-color");
+    const r = value ? contrast(value, WHITE) : 0;
+    ok(`${cls} is visible against white`, r >= floor, value ? r.toFixed(2) : null);
+  }
+
+  /*
+   * `border-slate-150` is the one that was not merely faint: Tailwind's slate
+   * ramp goes 100 → 200, so no rule was ever generated for it and all 149 of
+   * those borders fell back to `currentColor` — drawing in whatever text colour
+   * they inherited. It needs a value at all, which is why it is in the list.
+   */
+  ok("and slate-150, which had no value whatsoever, now has one",
+    declared("border-slate-150", "border-color") !== null);
+
+  /*
+   * The one border the standard is strict about (WCAG 1.4.11) is the boundary
+   * of a control. It is a token rather than a literal so dark mode restates it
+   * in one place.
+   */
+  const edge = css.match(/--color-edge:\s*(#[0-9a-f]{6})/i)?.[1];
+  ok("the load-bearing edge clears the 3:1 component threshold",
+    !!edge && contrast(edge, WHITE) >= 3, edge && contrast(edge, WHITE).toFixed(2));
+  // It sits on the sunken surfaces too, not only on white.
+  ok("on a tinted surface as well",
+    !!edge && contrast(edge, SLATE100) >= 3, edge && contrast(edge, SLATE100).toFixed(2));
+  ok("form controls are given it", /input:not\(\[type="checkbox"\]\)[\s\S]{0,220}var\(--color-edge\)/.test(css));
+
+  /*
+   * Scoped to light mode throughout. A value chosen to be darker on white is
+   * the wrong direction on a dark ground, and the dark block already restates
+   * most of these.
+   */
+  const layerAt = css.indexOf("Contrast layer");
+  // Or the slice below would be one character and the check would pass by
+  // examining nothing.
+  ok("the layer is where this check thinks it is", layerAt > 0);
+  const layer = css.slice(layerAt);
+  const scoped = layer.split("\n").filter((l) => /^html:not\(\.dark\)/.test(l));
+  ok("and it is not empty", scoped.length > 10, scoped.length);
+  const rules = layer.split("\n").filter((l) => /^\s*\.[a-z]/i.test(l));
+  ok("no rule in the layer escapes the light-mode scope", rules.length === 0, rules.slice(0, 3));
+
+  /*
+   * The palette itself is untouched on purpose. The same token is a text
+   * colour, a border *and* a fill: darkening `--color-slate-100` to fix 479
+   * borders would darken 200 `bg-slate-100` surfaces too, which nobody asked
+   * for and which the border problem does not imply.
+   */
+  ok("and the slate scale itself is left alone",
+    !/--color-slate-\d00\s*:/.test(css));
+
+  // The compose bar, which is what was reported.
+  const composer = readFileSync("src/components/ActivityComposer.tsx", "utf8");
+  ok("the compose bar carries the edge rather than a heavier fill",
+    /border-t-edge/.test(composer));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
