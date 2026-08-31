@@ -153,13 +153,28 @@ export const AUTO_CLOSE_NOTE = "پیگیری بسته شد؛ نتیجه نهای
 
 /* ------------------------- the follow-up result list ----------------------- */
 
+/*
+ * The three results that end a sale, named so the rule below and the list above
+ * cannot drift into two spellings of the same sentence.
+ */
+export const RESULT_PURCHASE_CONFIRMED = "تأیید نهایی خرید";
+export const RESULT_PURCHASE_CANCELLED = "لغو خرید توسط مشتری";
+export const RESULT_LOST_TO_COMPETITOR = "واگذاری به رقیب (باخت)";
+
+
 /**
  * What the customer said, as a controlled list.
  *
  * A user-editable `settings.dropdownItems.followUpResults`, managed by the same
- * settings screen as every other dropdown. It is **not** a loss reason and not
- * a commercial outcome: «خرید به تعویق افتاد» is a follow-up state, not a lost
- * sale, and `settings.lossReasons` stays exactly where it is.
+ * settings screen as every other dropdown. It is still **not** a loss reason —
+ * `settings.lossReasons` stays exactly where it is, and a loss reason is asked
+ * for separately when a document is actually being marked lost.
+ *
+ * Three of these entries do carry a commercial meaning, and the rest carry
+ * none. That distinction is the whole of `impliedSettlement` below: «تأیید
+ * نهایی خرید» ends the sale, while «خرید به تعویق افتاد» and «عدم پاسخ» are
+ * follow-up states and must never be read as one. The three decisive entries
+ * only *suggest*; a person confirms before anything is written.
  */
 export const DEFAULT_FOLLOW_UP_RESULTS = [
   "دریافت پیش‌فاکتور تأیید شد",
@@ -170,8 +185,51 @@ export const DEFAULT_FOLLOW_UP_RESULTS = [
   "زمان تصمیم خرید اعلام شد",
   "خرید به تعویق افتاد",
   "عدم پاسخ",
+  // The three that end a sale. Kept last so the list still reads as a
+  // conversation from first contact to decision.
+  RESULT_PURCHASE_CONFIRMED,
+  RESULT_PURCHASE_CANCELLED,
+  RESULT_LOST_TO_COMPETITOR,
   "سایر",
 ];
+
+/* ------------------- the commercial outcome, when there is one ------------- */
+
+/**
+ * What the sales desk can settle a quotation to from the follow-up screen.
+ *
+ * Deliberately the three a follow-up call can actually establish. «نیمه برنده»
+ * is not here: a part-won document is decided line by line, which is what the
+ * proforma's own outcome modal is for, and offering it as a single button would
+ * mean guessing which lines the customer took.
+ */
+export const SETTLE_OUTCOMES = ["WON", "LOST", "CANCELLED"] as const;
+export type SettleOutcome = (typeof SETTLE_OUTCOMES)[number];
+
+export const SETTLE_OUTCOME_LABELS: Record<SettleOutcome, string> = {
+  WON: "تأیید شده (برنده)",
+  LOST: "باخته",
+  CANCELLED: "لغو شده",
+};
+
+/**
+ * The outcome a result suggests, or null when it suggests nothing.
+ *
+ * A **suggestion**, never an action: the screen asks before anything is
+ * written, because the person on the call is the only one who knows whether
+ * «تأیید نهایی خرید» meant the whole quotation or two lines of it.
+ *
+ * Matched against the default entries by name. A renamed entry simply stops
+ * suggesting — the outcome can still be chosen by hand — which is the right way
+ * for this to degrade: a wrong guess about a sale is worse than no guess.
+ */
+export function impliedSettlement(result: unknown): SettleOutcome | null {
+  const text = String(result ?? "").trim();
+  if (text === RESULT_PURCHASE_CONFIRMED) return "WON";
+  if (text === RESULT_PURCHASE_CANCELLED) return "CANCELLED";
+  if (text === RESULT_LOST_TO_COMPETITOR) return "LOST";
+  return null;
+}
 
 /* --------------------------------- health --------------------------------- */
 
@@ -280,6 +338,17 @@ export interface FollowUpCompletionInput {
   nextAssignedToName?: string | null;
   /** DEFER: the day the customer asked to be approached again. */
   deferredUntil?: string | null;
+  /**
+   * The commercial outcome to write onto the proforma along with this result.
+   *
+   * Absent means «only record what the customer said» — the previous and still
+   * the default behaviour. Present, it is a person's explicit answer to the
+   * question the screen asked, never something a result string decided on its
+   * own.
+   */
+  settleOutcome?: SettleOutcome | null;
+  /** LOST only: which of `settings.lossReasons` this was. */
+  settleLossReason?: string | null;
 }
 
 /**
@@ -313,8 +382,30 @@ export function completionRefusalReason(
     if (until <= context.todayJalali) return "تاریخ پیگیری مجدد باید در آینده باشد.";
   }
 
-  if (input.decision === "TERMINAL" && !context.outcomeIsTerminal) {
-    return "بستن پیگیری بدون اقدام بعدی فقط وقتی ممکن است که نتیجه نهایی پیش‌فاکتور مشخص شده باشد.";
+  if (input.settleOutcome) {
+    if (!(SETTLE_OUTCOMES as readonly string[]).includes(input.settleOutcome)) {
+      return "وضعیت تجاری انتخاب‌شده نامعتبر است.";
+    }
+    /*
+     * Nothing to settle twice. A won or lost document reaching this screen is
+     * already decided, and writing the outcome again would re-stamp every line
+     * — and, on a won one, re-date the sale that customer-value ranking counts.
+     */
+    if (context.outcomeIsTerminal) {
+      return "نتیجه تجاری این پیش‌فاکتور قبلاً مشخص شده است.";
+    }
+  }
+
+  /*
+   * «بدون اقدام بعدی» needs a settled sale — and settling it *here* counts.
+   *
+   * The check used to read only the outcome as it stands, so the option was
+   * greyed out at exactly the moment it was wanted: the call where the customer
+   * confirms the purchase is the call after which no next action is needed.
+   */
+  if (input.decision === "TERMINAL" && !context.outcomeIsTerminal && !input.settleOutcome) {
+    return "بستن پیگیری بدون اقدام بعدی فقط وقتی ممکن است که نتیجه نهایی پیش‌فاکتور مشخص شده باشد"
+      + " یا هم‌زمان در همین فرم ثبت شود.";
   }
 
   return null;

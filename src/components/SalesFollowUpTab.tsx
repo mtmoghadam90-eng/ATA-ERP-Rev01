@@ -333,6 +333,7 @@ export default function SalesFollowUpTab({ active, settings }: Props) {
           resultOptions={resultOptions}
           userNames={userNames}
           outcomeIsTerminal={isTerminalOutcome(completing.outcome)}
+          lossReasons={settings.lossReasons ?? []}
           onClose={() => setCompleting(null)}
           onSubmit={submitCompletion}
         />

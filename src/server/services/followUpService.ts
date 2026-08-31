@@ -5,7 +5,12 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { expandDateFields, jalaliToDate } from "../dates";
 import { addDaysToShamsi, getTodayShamsi, jalaliToGregorian } from "../../dateUtils";
 import { toNullableString } from "../childSync";
-import { getProformaOutcome, outcomeWhere, type ProformaOutcome } from "../proformaStatus";
+import {
+  ITEM_CANCELLED, ITEM_LOST, ITEM_WON, getProformaOutcome, outcomeWhere,
+  type ProformaOutcome,
+} from "../proformaStatus";
+import { syncProjectStatus } from "./proformaService";
+import { scheduleCustomerValueRecalculation } from "./customerValueRecalc";
 import { afterCommit } from "../afterCommit";
 import { logAction } from "./auditService";
 import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
@@ -181,6 +186,7 @@ export async function completeFollowUp(
   if (!proforma) return { ok: false, reason: "پیش‌فاکتور یافت نشد.", code: "not-found" };
 
   const decision = input.decision;
+  const settleOutcome = input.settleOutcome ?? null;
   const nextState = stateAfterDecision(decision);
   const followUpResult = toNullableString(input.followUpResult, 200);
   const completionNote = toNullableString(input.completionNote);
@@ -258,8 +264,43 @@ export async function completeFollowUp(
         ...(decision === "DEFER"
           ? expandDateFields({ deferredUntil: input.deferredUntil }, ["deferredUntil"])
           : { deferredUntil: null, deferredUntilJalali: null }),
+        // Cancelling is the ERP's own flag, not a line status: it is a fact
+        // about the document, and the outcome rule reads it first.
+        ...(settleOutcome === "CANCELLED" ? { isCancelled: true } : {}),
       },
     });
+
+    /*
+     * The commercial outcome, written in the same transaction as the result
+     * that justified it.
+     *
+     * A person answered «yes, also update the proforma» on a call that ended
+     * the sale, so the two must land together: the alternative is a follow-up
+     * recorded as «تأیید نهایی خرید» against a document still sitting in the
+     * queue as open, which is precisely the state this screen exists to stop.
+     *
+     * Every line is set, because this is the whole-document answer. A part-won
+     * document is decided line by line in the proforma's own outcome modal —
+     * `SETTLE_OUTCOMES` deliberately does not offer «نیمه برنده».
+     */
+    if (settleOutcome) {
+      await tx.proformaItem.updateMany({
+        where: { proformaId },
+        data: {
+          status: settleOutcome === "WON" ? ITEM_WON
+            : settleOutcome === "LOST" ? ITEM_LOST
+              : ITEM_CANCELLED,
+          // Only a loss carries one, and only onto the lines being marked lost.
+          lossReason: settleOutcome === "LOST"
+            ? toNullableString(input.settleLossReason, 300)
+            : null,
+        },
+      });
+
+      // The same function the outcome modal calls, so the two cannot disagree
+      // about what this project's status becomes.
+      await syncProjectStatus(tx, proforma.projectId, todayJalali);
+    }
 
     return { nextTaskId };
   });
@@ -269,6 +310,13 @@ export async function completeFollowUp(
   }
 
   const nextDueJalali = decision === "NEXT_ACTION" ? input.nextDueDate ?? null : null;
+
+  /*
+   * Marking a quotation won or lost is exactly what turns it into a sale, so
+   * the gross profit behind every customer's rank has moved. Coalesced and
+   * unable to fail the write, like every other caller.
+   */
+  if (settleOutcome) scheduleCustomerValueRecalculation();
 
   // The timeline and the audit entry are after-commit work: neither may fail a
   // completion that has already happened.

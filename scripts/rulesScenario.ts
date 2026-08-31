@@ -140,7 +140,8 @@ import {
   TASK_KINDS, completionRefusalReason, followUpActivityText, followUpHealthOf,
   healthRank, isOpenWithoutNextAction, isTaskFinished, isTerminalOutcome,
   isChaseableOutcome, normalizeFollowUpState, normalizeTaskKind, stateAfterDecision,
-  versionRefusalReason,
+  versionRefusalReason, impliedSettlement,
+  RESULT_PURCHASE_CONFIRMED, RESULT_PURCHASE_CANCELLED, RESULT_LOST_TO_COMPETITOR,
 } from "../src/utils/salesFollowUp";
 import { chaseableWhere } from "../src/server/services/followUpService";
 import {
@@ -6591,6 +6592,114 @@ head("Product categories: one taxonomy, two ways in");
   // Or Express answers 404 for a product whose id is the literal string.
   ok("the categories route is registered before /api/products/:id",
     routes.indexOf('"/api/products/categories"') < routes.indexOf('"/api/products/:id"'));
+}
+
+head("Follow-up: a result that ends a sale, and the outcome it offers to write");
+{
+  /*
+   * Recording «تأیید نهایی خرید» used to leave the quotation sitting in the
+   * queue as open, because the follow-up result and the commercial outcome are
+   * two different columns and nothing connected them. The screen now asks, and
+   * writes both in one transaction when the answer is yes.
+   */
+
+  /* -- which results mean something commercial, and which deliberately do not -- */
+  eq("confirming the purchase suggests a win",
+    impliedSettlement(RESULT_PURCHASE_CONFIRMED), "WON");
+  eq("the customer cancelling suggests a cancellation",
+    impliedSettlement(RESULT_PURCHASE_CANCELLED), "CANCELLED");
+  eq("losing to a competitor suggests a loss",
+    impliedSettlement(RESULT_LOST_TO_COMPETITOR), "LOST");
+  /*
+   * The rule the older note in this file exists for: a deferral is a follow-up
+   * state, not a lost sale. Reading «خرید به تعویق افتاد» as a loss would file
+   * a live opportunity as dead and poison every report built on lossReasons.
+   */
+  eq("but a deferral suggests nothing", impliedSettlement("خرید به تعویق افتاد"), null);
+  eq("nor does silence", impliedSettlement("عدم پاسخ"), null);
+  eq("nor «سایر»", impliedSettlement("سایر"), null);
+  eq("nor an empty result", impliedSettlement(""), null);
+  // A renamed list entry stops suggesting rather than guessing — a wrong guess
+  // about a sale is worse than no guess, and the outcome is still selectable.
+  eq("nor an entry somebody has renamed", impliedSettlement("تایید خرید!"), null);
+
+  ok("every decisive result is actually in the list",
+    [RESULT_PURCHASE_CONFIRMED, RESULT_PURCHASE_CANCELLED, RESULT_LOST_TO_COMPETITOR]
+      .every((r) => DEFAULT_FOLLOW_UP_RESULTS.includes(r)));
+  // Or the list would offer a result the rule cannot recognise, and vice versa.
+  eq("and nothing else in the list suggests an outcome",
+    DEFAULT_FOLLOW_UP_RESULTS.filter((r) => impliedSettlement(r) !== null).length, 3);
+
+  /* -- «بدون اقدام بعدی», which was greyed out at the moment it was wanted -- */
+  const base = { followUpResult: RESULT_PURCHASE_CONFIRMED };
+  const open = { todayJalali: "1405/08/21", outcomeIsTerminal: false };
+
+  ok("closing with no next action is refused on a live quotation",
+    completionRefusalReason({ ...base, decision: "TERMINAL" }, open) !== null);
+  /*
+   * The whole point. The call where the customer confirms the purchase is the
+   * call after which no next action is needed — settling it here is settling
+   * it, so the option unlocks.
+   */
+  eq("but allowed when the outcome is being settled in the same form",
+    completionRefusalReason(
+      { ...base, decision: "TERMINAL", settleOutcome: "WON" }, open), null);
+  eq("and allowed when it was already settled elsewhere",
+    completionRefusalReason(
+      { ...base, decision: "TERMINAL" },
+      { ...open, outcomeIsTerminal: true }), null);
+
+  /*
+   * Nothing to settle twice: writing the outcome again would re-stamp every
+   * line and, on a won document, re-date the sale that customer-value ranking
+   * counts from.
+   */
+  ok("settling a quotation that is already decided is refused",
+    completionRefusalReason(
+      { ...base, decision: "TERMINAL", settleOutcome: "WON" },
+      { ...open, outcomeIsTerminal: true }) !== null);
+  ok("and an outcome nobody offers is refused",
+    completionRefusalReason(
+      { ...base, decision: "TERMINAL", settleOutcome: "HALF_WON" as never }, open) !== null);
+
+  // Settling alongside a next action is legitimate — a won order still needs
+  // chasing through to delivery — so the two are independent.
+  eq("settling does not force the decision",
+    completionRefusalReason({
+      ...base, decision: "NEXT_ACTION", settleOutcome: "WON",
+      nextTitle: "پیگیری تحویل", nextDueDate: "1405/09/01",
+    }, open), null);
+
+  /* -- the write, in the service -- */
+  const service = readFileSync("src/server/services/followUpService.ts", "utf8");
+  const body = service.slice(service.indexOf("export async function completeFollowUp"));
+  /*
+   * One transaction. The alternative is a follow-up recorded as «تأیید نهایی
+   * خرید» against a document still open in the queue — the exact state this
+   * screen exists to stop.
+   */
+  ok("the outcome is written inside the completion's own transaction",
+    /\$transaction\([\s\S]*?if \(settleOutcome\) \{[\s\S]{0,400}proformaItem\.updateMany/.test(body));
+  // Cancelling is a fact about the document, which the outcome rule reads first.
+  ok("cancelling sets the document's own flag",
+    /settleOutcome === "CANCELLED" \? \{ isCancelled: true \}/.test(body));
+  // The same function the outcome modal calls, so the two cannot disagree.
+  ok("and the project is re-derived through the shared rule",
+    /syncProjectStatus\(tx, proforma\.projectId, todayJalali\)/.test(body));
+  ok("a loss reason is written only onto a loss",
+    /settleOutcome === "LOST"\s*\?\s*toNullableString\(input\.settleLossReason/.test(body));
+  // Marking a quotation won is exactly what turns it into a sale.
+  ok("and the customer ranking is told",
+    /if \(settleOutcome\) scheduleCustomerValueRecalculation\(\)/.test(body));
+
+  const modal = readFileSync("src/components/FollowUpCompletionModal.tsx", "utf8");
+  // A question, not an action: only the person on the call knows whether
+  // «confirmed» meant the whole quotation or two lines of it.
+  ok("the screen asks before it writes",
+    /impliedSettlement\(followUpResult\)/.test(modal)
+    && /follow-up-settle-yes/.test(modal) && /follow-up-settle-no/.test(modal));
+  ok("and the terminal option unlocks when the answer is yes",
+    /!outcomeIsTerminal && !settleOutcome/.test(modal));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

@@ -581,7 +581,12 @@ function scalarData(input: ProformaInput): Record<string, unknown> {
  * and closing dates the first time a project becomes won — those are recorded
  * when it happens, and must not be overwritten on a later save.
  */
-async function syncProjectStatus(
+/*
+ * Exported so the sales-follow-up settlement can re-derive the project through
+ * the same function the outcome modal uses. A second copy of «what does this
+ * project's status become» is how the two come to disagree.
+ */
+export async function syncProjectStatus(
   tx: Prisma.TransactionClient,
   projectId: string | null | undefined,
   todayJalali: string,

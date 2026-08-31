@@ -1,5 +1,5 @@
 import { ListResponse, api } from "./client";
-import type { FollowUpDecision, FollowUpHealth, FollowUpState } from "../utils/salesFollowUp";
+import type { SettleOutcome, FollowUpDecision, FollowUpHealth, FollowUpState } from "../utils/salesFollowUp";
 
 /**
  * The sales follow-up queue and the completion flow.
@@ -62,6 +62,14 @@ export interface FollowUpCompletionBody {
   nextDueDate?: string;
   nextAssignedToName?: string;
   deferredUntil?: string;
+  /**
+   * The commercial outcome to write onto the proforma alongside the result.
+   *
+   * Sent only when a person answered the screen's question — a decisive result
+   * string on its own never settles a sale.
+   */
+  settleOutcome?: SettleOutcome;
+  settleLossReason?: string;
 }
 
 /** One completed chase on a quotation: what was done, and what came of it. */
