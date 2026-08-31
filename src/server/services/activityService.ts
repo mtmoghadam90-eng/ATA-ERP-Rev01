@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { parseMentions } from "../../utils/mentions";
+import { isAllowedReaction } from "../../utils/reactions";
 import {
   activityRecipients, noticeExcerpt, parseMemberIds, serializeMemberIds,
 } from "../../utils/activityMembers";
@@ -348,6 +349,21 @@ const ACTIVITY_INCLUDE = {
   replyTo: {
     select: { id: true, text: true, authorName: true, createdAt: true },
   },
+  /*
+   * The reactions travel with the feed; the readers do not.
+   *
+   * A chip row has to be drawn for every message on screen, so its rows come
+   * with the fetch — they are three short columns and there are a handful per
+   * message. «چه کسانی دیده‌اند» is a **count** here and a list only when the
+   * eye is pressed (`listActivityReaders`): in a team of twenty, every reader
+   * of every message would be the largest thing in the response and nobody is
+   * looking at more than one of them at a time.
+   */
+  reactions: {
+    orderBy: { createdAt: "asc" },
+    select: { emoji: true, userId: true, userName: true },
+  },
+  _count: { select: { reads: true } },
 } as const;
 
 /**
@@ -654,6 +670,181 @@ export async function deleteActivity(
 
   await db.projectActivity.delete({ where: { id } });
   return "ok";
+}
+
+/* ==================== reactions and read receipts ======================== */
+
+/**
+ * The ids of the activities among these that the caller may actually see.
+ *
+ * Reactions and read receipts are written by id from a browser, so the scope
+ * has to be re-derived from the record rather than trusted: an id from another
+ * project would otherwise let somebody stamp a message they cannot read — and,
+ * through the eye, learn who is working on a job they have no access to.
+ *
+ * One query for the whole batch, since the read receipts arrive a screenful at
+ * a time.
+ */
+async function visibleActivityIds(ids: string[], user: AuthUser): Promise<string[]> {
+  if (ids.length === 0) return [];
+  const db = getDb();
+  const rows = await db.projectActivity.findMany({
+    where: canSeeProjects(user)
+      ? { id: { in: ids } }
+      : { AND: [{ id: { in: ids } }, { group: { project: { ownerUserId: user.id } } }] },
+    select: { id: true },
+  });
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Adds this person's reaction to a message, or takes it away again.
+ *
+ * A toggle, because that is what pressing the same button twice means
+ * everywhere else — and it is a real insert or delete against the unique index
+ * on `(activityId, userId, emoji)`, so two people reacting in the same instant
+ * cannot lose each other's, which a JSON column on the message would.
+ *
+ * The emoji is checked against the allowlist on the way in: it is rendered on
+ * everybody else's screen, so a free-text column here is a free-text column
+ * there. The check guards **creation** only — see `isAllowedReaction`.
+ */
+export async function toggleActivityReaction(
+  activityId: string,
+  emoji: string,
+  user: AuthUser,
+): Promise<"forbidden" | "not-found" | "invalid" | { reactions: unknown[] }> {
+  if (!isAllowedReaction(emoji)) return "invalid";
+
+  const db = getDb();
+  const activity = await db.projectActivity.findUnique({
+    where: { id: activityId },
+    select: { id: true, group: { select: { project: { select: { ownerUserId: true } } } } },
+  });
+  if (!activity) return "not-found";
+  if (!canSeeProjects(user) && activity.group.project.ownerUserId !== user.id) return "forbidden";
+
+  const existing = await db.activityReaction.findFirst({
+    where: { activityId, userId: user.id, emoji },
+    select: { id: true },
+  });
+  if (existing) {
+    await db.activityReaction.delete({ where: { id: existing.id } });
+  } else {
+    await db.activityReaction.create({
+      data: { activityId, userId: user.id, userName: user.fullName ?? null, emoji },
+    });
+  }
+
+  return {
+    reactions: await db.activityReaction.findMany({
+      where: { activityId },
+      orderBy: { createdAt: "asc" },
+      select: { emoji: true, userId: true, userName: true },
+    }),
+  };
+}
+
+/**
+ * Records that the caller has seen these messages.
+ *
+ * **The author is never recorded against their own message.** «چه کسانی دیده‌اند»
+ * answers «did this reach anybody», and the person who wrote it is not an answer
+ * to that — listing them makes every message look as though it had one reader.
+ *
+ * Existing receipts are read first and only the difference inserted, rather than
+ * `createMany({ skipDuplicates })`, which the SQL Server connector does not
+ * support: writing them blind would violate the unique index and fail the whole
+ * batch on the second visit to a conversation, which is every visit.
+ *
+ * Returns how many were newly recorded, so a caller can tell "nothing to do"
+ * from "done" — the screen uses it to avoid a pointless refresh.
+ */
+export async function markActivitiesRead(
+  activityIds: string[],
+  user: AuthUser,
+): Promise<{ recorded: number }> {
+  const db = getDb();
+  const ids = [...new Set(activityIds.filter((id) => typeof id === "string" && id))].slice(0, 200);
+  const visible = await visibleActivityIds(ids, user);
+  if (visible.length === 0) return { recorded: 0 };
+
+  const [mine, already] = await Promise.all([
+    db.projectActivity.findMany({
+      where: { id: { in: visible }, authorUserId: user.id },
+      select: { id: true },
+    }),
+    db.activityRead.findMany({
+      where: { activityId: { in: visible }, userId: user.id },
+      select: { activityId: true },
+    }),
+  ]);
+
+  const skip = new Set([...mine.map((r) => r.id), ...already.map((r) => r.activityId)]);
+  const fresh = visible.filter((id) => !skip.has(id));
+  if (fresh.length === 0) return { recorded: 0 };
+
+  /*
+   * Written one at a time and each failure swallowed.
+   *
+   * Two tabs open on the same conversation race here, and the loser hits the
+   * unique index — which is the index doing its job, not an error worth showing
+   * somebody who was only reading. A receipt is never worth failing a read over.
+   */
+  let recorded = 0;
+  for (const activityId of fresh) {
+    try {
+      await db.activityRead.create({
+        data: { activityId, userId: user.id, userName: user.fullName ?? null },
+      });
+      recorded++;
+    } catch {
+      /* already recorded by another tab */
+    }
+  }
+  return { recorded };
+}
+
+/**
+ * Who has seen one message, newest first.
+ *
+ * Fetched when the eye is pressed rather than with the feed: in a team of
+ * twenty, every reader of every message would be the largest thing in the
+ * response and nobody looks at more than one at a time. The feed carries the
+ * count, which is all the icon needs to draw.
+ *
+ * The **current** name wins over the stored one — a colleague who has been
+ * renamed should read under the name they have now — and the stored copy is
+ * what answers for an account that has since been removed.
+ */
+export async function listActivityReaders(
+  activityId: string,
+  user: AuthUser,
+): Promise<"forbidden" | { readers: { userId: string; name: string; readAt: Date }[] }> {
+  const db = getDb();
+  const visible = await visibleActivityIds([activityId], user);
+  if (visible.length === 0) return "forbidden";
+
+  const rows = await db.activityRead.findMany({
+    where: { activityId },
+    orderBy: { readAt: "desc" },
+    select: { userId: true, userName: true, readAt: true },
+  });
+  if (rows.length === 0) return { readers: [] };
+
+  const directory = await db.user.findMany({
+    where: { id: { in: rows.map((r) => r.userId) } },
+    select: { id: true, fullName: true },
+  });
+  const nameOf = new Map(directory.map((u) => [u.id, u.fullName]));
+
+  return {
+    readers: rows.map((row) => ({
+      userId: row.userId,
+      name: nameOf.get(row.userId) || row.userName || "همکار",
+      readAt: row.readAt,
+    })),
+  };
 }
 
 /* =============================== referrals =============================== */

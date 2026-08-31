@@ -43,6 +43,7 @@ import RichTextField from "../src/components/RichTextField";
 import AssistantPanel from "../src/components/AssistantPanel";
 import NumberField from "../src/components/NumberField";
 import InquiryPriceHistoryTab from "../src/components/InquiryPriceHistoryTab";
+import MessageReactions from "../src/components/MessageReactions";
 import FollowUpCompletionModal from "../src/components/FollowUpCompletionModal";
 import ActivityComposer from "../src/components/ActivityComposer";
 import type { Product } from "../src/types";
@@ -769,6 +770,120 @@ head("Activity composer: naming a colleague");
   host.remove();
 }
 
+
+head("Message reactions: the eye asks nobody until it is pressed");
+{
+  /*
+   * The count travels with the feed; the *names* do not. Every reader of every
+   * message would be the largest thing in a feed response and nobody is looking
+   * at more than one at a time — so the readers are fetched when the eye is
+   * pressed, and this is the only layer that can prove it.
+   */
+  const host7 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root7 = createRoot(host7);
+  const settle7 = async () => {
+    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  let readerCalls = 0;
+  const toggled: string[] = [];
+
+  const props = {
+    activityId: "act-1",
+    reactions: [
+      { emoji: "👍", userId: "u1", userName: "علی" },
+      { emoji: "👍", userId: "u2", userName: "مریم" },
+      { emoji: "✅", userId: "u2", userName: "مریم" },
+    ],
+    readCount: 2,
+    currentUserId: "u2",
+    onToggle: (emoji: string) => { toggled.push(emoji); },
+    loadReaders: async () => {
+      readerCalls++;
+      return [{ userId: "u1", name: "علی رضایی", readAt: "2026-06-01T10:00:00Z" }];
+    },
+  };
+
+  await act(async () => { root7.render(React.createElement(MessageReactions, props)); });
+  await settle7();
+
+  /*
+   * Found by walking the attribute, not by a selector holding the emoji.
+   *
+   * An emoji is not a CSS identifier, and jsdom's selector engine also answers
+   * `null` for an *attribute* selector whose value is outside the BMP — which
+   * silently makes every check here pass vacuously. Reading the attribute back
+   * has no such trap.
+   */
+  const byAttr = (host: Element, attr: string, value: string) =>
+    ([...host.querySelectorAll(`[${attr}]`)] as HTMLElement[])
+      .find((el) => el.getAttribute(attr) === value) ?? null;
+  const chipFor = (emoji: string) => byAttr(host7, "data-reaction-chip", emoji);
+
+  ok("a message with reactions draws one chip per emoji",
+    !!chipFor("\u{1F44D}") && !!chipFor("\u2705"));
+  // Grouped, so two people pressing 👍 is one chip reading 2.
+  ok("...counting the people who pressed it",
+    (chipFor("\u{1F44D}")?.textContent ?? "").includes("2"),
+    chipFor("\u{1F44D}")?.textContent);
+  // Read off the eye itself: the 👍 chip also says «2», and a check that took
+  // the whole card's text would pass with the count missing entirely.
+  ok("the eye shows how many have seen it",
+    (host7.querySelector("#reaction-eye-act-1")?.textContent ?? "").includes("2"),
+    host7.querySelector("#reaction-eye-act-1")?.textContent);
+  ok("and nothing was asked of the server to draw it", readerCalls === 0, readerCalls);
+
+  // Pressing a chip toggles — the server decides add or remove against the
+  // unique index, so the client never sends which of the two it meant.
+  const chip = chipFor("\u{1F44D}") as HTMLElement;
+  await act(async () => { chip.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("pressing a chip reports the emoji", toggled.join(",") === "👍", toggled);
+
+  // The picker is not drawn until asked for: six emoji under every message
+  // would be most of the feed.
+  ok("the picker is closed to begin with", !host7.querySelector("#reaction-picker-act-1"));
+  const opener = host7.querySelector("#reaction-open-act-1") as HTMLElement;
+  await act(async () => { opener.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("...and opens on the smiley", !!host7.querySelector("#reaction-picker-act-1"));
+
+  const pick = byAttr(host7, "data-reaction-pick", "\u{1F64F}") as HTMLElement;
+  await act(async () => { pick.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("picking one reports it", toggled.join(",") === "👍,🙏", toggled);
+  ok("...and closes the picker", !host7.querySelector("#reaction-picker-act-1"));
+
+  /* -- the eye -- */
+  const eye = host7.querySelector("#reaction-eye-act-1") as HTMLElement;
+  await act(async () => { eye.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settle7();
+  ok("pressing the eye asks who has read it", readerCalls === 1, readerCalls);
+  ok("...and names them", (host7.textContent ?? "").includes("علی رضایی"), host7.textContent);
+
+  await act(async () => { eye.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("pressing it again closes the list", !host7.querySelector("#reaction-readers-act-1"));
+
+  /*
+   * Nobody yet is an answer and is said out loud: a blank panel reads as a
+   * screen that failed rather than as a message nobody has opened, which is
+   * exactly what the eye is for.
+   */
+  const host8 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root8 = createRoot(host8);
+  await act(async () => {
+    root8.render(React.createElement(MessageReactions, {
+      ...props, activityId: "act-2", readCount: 0, reactions: [],
+      loadReaders: async () => [],
+    }));
+  });
+  const eye2 = host8.querySelector("#reaction-eye-act-2") as HTMLElement;
+  await act(async () => { eye2.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settle7();
+  ok("an unread message says so rather than drawing a blank panel",
+    (host8.textContent ?? "").includes("هنوز کسی این پیام را ندیده است"), host8.textContent);
+
+  act(() => { root7.unmount(); root8.unmount(); });
+  host7.remove();
+  host8.remove();
+}
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {

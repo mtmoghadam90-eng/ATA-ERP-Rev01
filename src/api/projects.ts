@@ -292,6 +292,10 @@ export interface ActivityRow {
    * referral now, and one sentence can name two people.
    */
   referrals: ActivityReferralRow[];
+  /** One row per person per emoji — see `src/utils/reactions.ts`. */
+  reactions?: { emoji: string; userId: string; userName: string | null }[];
+  /** `reads` is a count here; the names are fetched when the eye is pressed. */
+  _count?: { reads: number };
   /** The message this one answers, enough of it to quote a line. */
   replyToId: string | null;
   replyTo: {
@@ -432,4 +436,32 @@ export const projectsApi = {
     ).then((r) => r.activity),
 
   deleteActivity: (id: string) => api.delete<Record<string, never>>(`/api/activities/${id}`),
+
+  /* ------------------- reactions and read receipts ---------------------- */
+
+  /**
+   * Adds this person's reaction, or takes it away again.
+   *
+   * A toggle on the server against a unique index, so the client sends the
+   * emoji and never a "add or remove" flag it would have to work out from a
+   * copy of the state that may be a second old.
+   */
+  toggleActivityReaction: (id: string, emoji: string) =>
+    api.post<{ reactions: { emoji: string; userId: string; userName: string | null }[] }>(
+      `/api/activities/${id}/reactions`, { emoji }).then((r) => r.reactions),
+
+  /**
+   * Records that the reader has seen these messages.
+   *
+   * Deliberately **not** announced as a change: announcing it would make the
+   * feed re-read itself, and the re-read is what posts the receipts.
+   */
+  markActivitiesRead: (activityIds: string[]) =>
+    api.postQuietly<{ recorded: number }>("/api/activities/read", { activityIds })
+      .then((r) => r.recorded),
+
+  /** Who has seen one message. Fetched when the eye is pressed, never before. */
+  activityReaders: (id: string) =>
+    api.get<{ readers: { userId: string; name: string; readAt: string }[] }>(
+      `/api/activities/${id}/reads`).then((r) => r.readers),
 };

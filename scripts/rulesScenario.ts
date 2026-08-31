@@ -44,6 +44,7 @@ import {
 import { hasEverPurchased, saleDateOf } from "../src/server/services/customerValueService";
 import { taskRelationKind } from "../src/utils/taskRelations";
 import { applySettingsPatches } from "../src/utils/settingsPatches";
+import { ACTIVITY_REACTIONS, isAllowedReaction, summarizeReactions } from "../src/utils/reactions";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
 import { lossReasonRefusal } from "../src/server/services/projectService";
 import type { ERPSettings } from "../src/types";
@@ -7010,6 +7011,121 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
       { decision: "TERMINAL", followUpResult: RESULT_PURCHASE_CONFIRMED, settleOutcome: "WON" },
       ctx),
     null);
+}
+
+/* ── Reactions and read receipts on an activity message ──────────────────── */
+{
+  /* -- the allowlist -- */
+  ok("there are a handful of reactions, not a keyboard",
+    ACTIVITY_REACTIONS.length >= 5 && ACTIVITY_REACTIONS.length <= 8,
+    ACTIVITY_REACTIONS.length);
+  ok("each has a label a person can read",
+    ACTIVITY_REACTIONS.every((r) => !!r.emoji && !!r.label));
+  ok("...and no emoji appears twice",
+    new Set(ACTIVITY_REACTIONS.map((r) => r.emoji)).size === ACTIVITY_REACTIONS.length);
+  // The emoji is rendered on everybody else's screen, so it is checked coming in.
+  ok("a listed reaction is allowed", ACTIVITY_REACTIONS.every((r) => isAllowedReaction(r.emoji)));
+  ok("anything else is refused",
+    !isAllowedReaction("🦄") && !isAllowedReaction("") && !isAllowedReaction("<b>x</b>")
+    && !isAllowedReaction(null) && !isAllowedReaction(7));
+
+  /* -- the chips -- */
+  const rows = [
+    { emoji: "👍", userId: "u1", userName: "علی" },
+    { emoji: "✅", userId: "u3", userName: "رضا" },
+    { emoji: "👍", userId: "u2", userName: "مریم" },
+  ];
+  const chips = summarizeReactions(rows, "u2");
+  eq("one chip per emoji, however many pressed it", chips.length, 2);
+  /*
+   * First-seen order, deliberately not by count: a row that reorders itself as
+   * colleagues react is a row whose buttons move under the cursor, and the
+   * counts are right there to be read.
+   */
+  eq("...in the order they first appeared", chips.map((c) => c.emoji).join(","), "👍,✅");
+  eq("counted", chips[0].count, 2);
+  eq("...and named, so the chip can say who", chips[0].names.join("،"), "علی،مریم");
+  ok("the one you pressed is marked", chips[0].mine && !chips[1].mine);
+  ok("...and nobody's is when you are not signed in",
+    summarizeReactions(rows, null).every((c) => !c.mine));
+
+  // A renamed colleague reads under the name they have now; the stored copy is
+  // all there is for an account that has since been removed.
+  const renamed = summarizeReactions(rows, "u2", (id) => (id === "u1" ? "علی رضایی" : undefined));
+  eq("the current name wins over the stored one", renamed[0].names.join("،"), "علی رضایی،مریم");
+
+  /* -- the write path -- */
+  const service = readFileSync("src/server/services/activityService.ts", "utf8");
+  // A JSON column on the message would be a read-modify-write race between two
+  // people reacting at once; a row per person per emoji is not.
+  ok("a reaction is a row, toggled against the unique index",
+    /activityReaction\.delete/.test(service) && /activityReaction\.create/.test(service));
+  ok("the allowlist is enforced on the server", /isAllowedReaction\(emoji\)/.test(service));
+  /*
+   * «چه کسانی دیده‌اند» answers «did this reach anybody», and the person who
+   * wrote it is not an answer — recorded, every message would look as though it
+   * had one reader.
+   */
+  ok("the author is never recorded as having read their own message",
+    /authorUserId: user\.id/.test(service));
+  /*
+   * `createMany({ skipDuplicates })` is unsupported on SQL Server: writing them
+   * blind would fail the whole batch on the second visit to a conversation,
+   * which is every visit. Comments are stripped first — the note in the service
+   * explaining exactly this names the thing being searched for, so a check
+   * reading the raw file fails on the sentence saying it was avoided.
+   */
+  const serviceCode = service.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  ok("existing receipts are read before new ones are written",
+    /activityRead\.findMany/.test(serviceCode) && !/skipDuplicates/.test(serviceCode));
+  ok("...and the comment stripper is not simply eating everything",
+    /activityReaction\.create/.test(serviceCode));
+
+  const feed = service.slice(service.indexOf("const ACTIVITY_INCLUDE"));
+  ok("the chips travel with the feed", /reactions: \{/.test(feed));
+  // Every reader of every message would be the largest thing in the response.
+  ok("...and the readers are a count there, not a list",
+    /_count: \{ select: \{ reads: true \} \}/.test(feed));
+
+  const route = readFileSync("src/server/routes/activities.ts", "utf8");
+  // Otherwise Express reads «read» as an activity id and answers 404.
+  ok("«read» is registered before the id routes",
+    route.indexOf('"/api/activities/read"') < route.indexOf('"/api/activities/:id/reads"'));
+
+  const api = readFileSync("src/api/projects.ts", "utf8");
+  /*
+   * The receipt must not announce a change: the feed re-reads itself on every
+   * write anywhere, and the re-read is what puts the messages on screen, which
+   * is what posts the receipts.
+   */
+  ok("posting a receipt is not announced as a change",
+    /postQuietly<\{ recorded: number \}>\("\/api\/activities\/read"/.test(api));
+  const client = readFileSync("src/api/client.ts", "utf8");
+  ok("...which the client actually honours",
+    /method !== "GET" && announce/.test(client));
+
+  const hook = readFileSync("src/api/useProjectActivities.ts", "utf8");
+  // Once per message per session, not once per render: the feed revalidates on
+  // every write in the application.
+  ok("a receipt is posted once per message", /reported\.current\.has\(id\)/.test(hook));
+  /*
+   * And only for what is actually on screen. Every category the project has
+   * arrives with the feed and each stays folded until somebody opens it, so
+   * reporting the whole fetch would claim people had read conversations they
+   * never unfolded — which is the one thing the eye must not do.
+   */
+  const screen = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("...and only for the categories somebody opened",
+    /filter\(\(group\) => !!expandedGroups\[group\.id\]\)/.test(screen));
+  ok("the hook does not decide that for itself",
+    !/groups\s*\n?\s*\.flatMap\(\(g\) => g\.activities/.test(hook));
+
+  const migration = readFileSync(
+    "prisma/migrations/20260908000000_activity_reactions_reads/migration.sql", "utf8");
+  ok("the reaction table is unique per person per emoji",
+    /UNIQUE NONCLUSTERED INDEX \[activity_reactions_activityId_userId_emoji_key\]/.test(migration));
+  ok("and a message is read once per person",
+    /UNIQUE NONCLUSTERED INDEX \[activity_reads_activityId_userId_key\]/.test(migration));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

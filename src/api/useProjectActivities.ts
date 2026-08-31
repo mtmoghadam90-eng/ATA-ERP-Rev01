@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ActivityAttachment } from "../utils/attachments";
 import { useRevalidate } from "./liveData";
 import type { ProjectCategoryGroup } from "../types";
@@ -57,6 +57,15 @@ export interface ProjectActivitiesApi {
   addActivity: (groupId: string, input: AddActivityInput) => Promise<void>;
   updateActivity: (id: string, text: string, attachments?: ActivityAttachment[]) => Promise<void>;
   deleteActivity: (id: string) => Promise<void>;
+  /** Adds this person's reaction to a message, or takes it away again. */
+  toggleReaction: (activityId: string, emoji: string) => Promise<void>;
+  /**
+   * Records that the reader has seen these messages.
+   *
+   * The caller passes the ones actually on screen — a collapsed category has
+   * not been read by anybody. Deduplicated per session, and never awaited.
+   */
+  markRead: (activityIds: string[]) => void;
 }
 
 export function useProjectActivities(projectId: string | null | undefined): ProjectActivitiesApi {
@@ -100,6 +109,39 @@ export function useProjectActivities(projectId: string | null | undefined): Proj
       });
     return () => { cancelled = true; };
   }, [projectId, reloadKey]);
+
+  /*
+   * The read receipts, for the messages the screen says are actually on it.
+   *
+   * **Which messages those are is the caller's to say, not this hook's.** The
+   * feed draws every category the project has and each one is collapsed until
+   * somebody opens it, so posting a receipt for everything the fetch returned
+   * would claim a person had read conversations they never unfolded — and the
+   * eye exists precisely to be believed.
+   *
+   * Posted once per message per session rather than once per render: the feed
+   * re-reads itself on every write anywhere in the application, so an unguarded
+   * post would be a request per revalidation for ever. `reported` is what makes
+   * the second one cost nothing, and it is a ref because recording that a
+   * receipt was sent must not itself cause a render.
+   *
+   * Fire-and-forget: a receipt that could not be written is not worth an error
+   * on a screen somebody is only reading.
+   */
+  const reported = useRef<Set<string>>(new Set());
+  useEffect(() => { reported.current = new Set(); }, [projectId]);
+
+  const markRead = useCallback((activityIds: string[]) => {
+    const unseen = activityIds.filter((id) => id && !reported.current.has(id));
+    if (unseen.length === 0) return;
+    for (const id of unseen) reported.current.add(id);
+    projectsApi.markActivitiesRead(unseen).catch(() => { /* not worth reporting */ });
+  }, []);
+
+  const toggleReaction = useCallback(async (activityId: string, emoji: string) => {
+    await projectsApi.toggleActivityReaction(activityId, emoji);
+    refresh();
+  }, [refresh]);
 
   const addGroup = useCallback(async (categoryId: string, categoryName: string, startDate: string) => {
     if (!projectId) return;
@@ -199,6 +241,6 @@ export function useProjectActivities(projectId: string | null | undefined): Proj
   return {
     groups, loading, error, refresh,
     addGroup, updateGroupDates, setGroupMembers, deleteGroup, completeGroup, resumeGroup,
-    addActivity, updateActivity, deleteActivity,
+    addActivity, updateActivity, deleteActivity, toggleReaction, markRead,
   };
 }

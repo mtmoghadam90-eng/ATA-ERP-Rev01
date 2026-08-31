@@ -91,6 +91,13 @@ function activityToView(act: ActivityRow): ProjectActivity {
         createdAt: act.replyTo.createdAt,
       }
       : null,
+    // The chips, and how many have seen it. Both default rather than being
+    // optional downstream: a row from before these existed draws an empty row
+    // and a zero, which is exactly what it means.
+    reactions: (act.reactions ?? []).map((r) => ({
+      emoji: r.emoji, userId: r.userId, userName: r.userName,
+    })),
+    readCount: act._count?.reads ?? 0,
   };
 }
 
