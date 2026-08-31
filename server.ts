@@ -46,6 +46,7 @@ import { processQueue } from "./src/server/services/messaging/messageService";
 import { scrapeRates } from "./src/server/rateSource";
 import { ensureRatesFresh } from "./src/server/services/rateRefresh";
 import { refreshHolidayCache } from "./src/server/services/holidayService";
+import { ensureSettingsPatches } from "./src/server/settings";
 import { ensureWorkflowSweepRanToday, runDueWorkflows } from "./src/server/services/workflowSweep";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 import { UPLOADS_DIR, ensureUploadsDir } from "./src/server/uploadsDir";
@@ -716,6 +717,17 @@ registerMessagingRoutes(app, routeDeps);
      * is what they fall back to anyway.
      */
     void refreshHolidayCache();
+
+    /*
+     * The entries a rule refers to by name, into a settings document seeded
+     * before they existed.
+     *
+     * Three follow-up results decide a proforma's commercial outcome, and a
+     * database seeded before them simply did not have them in the dropdown —
+     * the option could not be chosen, so the feature looked broken. Applied
+     * once and recorded by name, so removing one afterwards sticks.
+     */
+    void ensureSettingsPatches();
   });
 
   /*

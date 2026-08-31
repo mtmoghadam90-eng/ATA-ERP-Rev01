@@ -27,12 +27,16 @@ export type ProjectStatus =
 export interface OutcomeItem {
   status?: string | null;
   supplyMethod?: string | null;
+  /** Why this line was lost. Read by `deriveProjectLossReason`, below. */
+  lossReason?: string | null;
 }
 
 export interface OutcomeProforma {
   status?: string | null;
   isCancelled?: boolean | null;
   items?: OutcomeItem[] | null;
+  /** The document-level reason, used when the lines carry none of their own. */
+  lossReason?: string | null;
 }
 
 /**
@@ -171,6 +175,96 @@ export function deriveProjectStatus(proformas: StatusProforma[]): ProjectStatus 
   if (lost === items.length) return "باخته";
   if (won > 0) return "نیمه برنده";
   return "ارائه پیش‌فاکتور";
+}
+
+/**
+ * The one loss reason a project has, given its proformas.
+ *
+ * There were two places to record why a job was lost — the lines of its
+ * proformas, and a box on the project form — and both meant «why this project
+ * was lost». So a report of loss reasons found two answers for one project, or
+ * one answer in a place nobody had filled in.
+ *
+ * The proformas win, because that is where the decision is actually made: a
+ * project is lost line by line, and the project's own status is already derived
+ * from exactly these documents. The box on the project form stays for the case
+ * the proformas cannot answer — a job lost before any quotation was issued.
+ *
+ * Three answers, and the difference between the last two matters:
+ *
+ *  - a **string** — the reason the lines give.
+ *  - **`undefined`** — the proformas have nothing to say (there are none, or
+ *    what was lost carries no reason). The project keeps whatever it holds;
+ *    somebody may have typed it before the first quotation went out, and
+ *    blanking it would destroy the only answer there is.
+ *  - **`null`** — nothing was lost at all, so a stored reason is left over from
+ *    a status the project no longer has, and is cleared.
+ *
+ * Where several lines disagree the commonest wins, ties going to the first in
+ * document order — the report needs one value per project, and picking one
+ * deterministically is the whole point.
+ */
+export function deriveProjectLossReason(
+  proformas: StatusProforma[],
+): string | null | undefined {
+  if (!proformas || proformas.length === 0) return undefined;
+
+  const tally = new Map<string, number>();
+  const order: string[] = [];
+  let lostLines = 0;
+
+  const count = (raw: string | null | undefined) => {
+    const reason = (raw ?? "").trim();
+    if (!reason) return;
+    if (!tally.has(reason)) order.push(reason);
+    tally.set(reason, (tally.get(reason) ?? 0) + 1);
+  };
+
+  // The same documents the status is derived from. A superseded revision must
+  // not contribute a reason the live quotation disagrees with.
+  for (const pf of decidingProformas(proformas)) {
+    const lost = (pf.items ?? []).filter((i) => i.status === ITEM_LOST);
+    lostLines += lost.length;
+    for (const line of lost) count(line.lossReason);
+    /*
+     * The document's own reason counts only when something on it was actually
+     * lost. It is one vote against the lines' many, so it answers a document
+     * written off without per-line reasons and never overrules them.
+     */
+    if (lost.length > 0) count(pf.lossReason);
+  }
+
+  if (tally.size === 0) return lostLines > 0 ? undefined : null;
+
+  let best = order[0];
+  for (const reason of order) {
+    if ((tally.get(reason) ?? 0) > (tally.get(best) ?? 0)) best = reason;
+  }
+  return best;
+}
+
+/**
+ * The first line marked lost with no reason given, or null.
+ *
+ * The project's own loss reason is derived from these lines, so a line settled
+ * as «بازنده» with the box blank is a lost job whose reason nothing else can
+ * supply — the box on the project form no longer answers for a project that has
+ * a quotation. The outcome modal marks the field required, and this is the
+ * server saying the same thing: the browser is not the authority, and n8n drives
+ * the same endpoint.
+ *
+ * Returns the line's index so the caller can name it, since «یکی از ردیف‌ها»
+ * is not a message anybody can act on.
+ */
+export function lostLineWithoutReason(
+  outcomes: { status?: string | null; lossReason?: string | null }[],
+): number | null {
+  for (let i = 0; i < outcomes.length; i++) {
+    const o = outcomes[i];
+    if (o.status !== ITEM_LOST) continue;
+    if (!String(o.lossReason ?? "").trim()) return i;
+  }
+  return null;
 }
 
 /** True when a project status means the deal was won, wholly or partly. */

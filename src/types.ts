@@ -442,7 +442,18 @@ export interface Project {
   }[];
   description: string;
   customValues?: Record<string, any>;
+  /**
+   * Why the job was lost — **one** value per project.
+   *
+   * Derived from the lines of the project's proformas once it has any
+   * (`deriveProjectLossReason`), and typed on the project form only while it has
+   * none. Two places to record it meant a loss-reason report found two answers
+   * for one project; `proformaCount` below is what the form reads to know which
+   * of the two it is looking at.
+   */
   lossReason?: string;
+  /** How many quotations this project carries. Derived, never written back. */
+  proformaCount?: number;
 
   // New Requested Fields:
   salesExpert?: string;            // کارشناس فروش
@@ -773,7 +784,22 @@ export interface ERPSettings {
      */
     followUpResults?: string[];
   };
+  /**
+   * Why a project or a proforma line was lost.
+   *
+   * Note this is *not* `dropdownItems.followUpResults`: what the customer said
+   * on a call and why a job was lost are different lists and always have been.
+   */
   lossReasons: string[];
+  /**
+   * Named additions this document has already been given — see
+   * `src/utils/settingsPatches.ts`.
+   *
+   * The list is what makes a patch a one-off: an entry a rule needs by name is
+   * added once to a database seeded before it existed, and removing it
+   * afterwards sticks rather than being forced back every restart.
+   */
+  appliedPatches?: string[];
   activityCategories: { id: string; name: string; module: string; responsibleUserId?: string }[];
   sidebarModuleOrder?: string[];
   moduleResponsibles?: Record<string, string>;

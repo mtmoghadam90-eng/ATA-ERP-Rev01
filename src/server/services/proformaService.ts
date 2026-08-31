@@ -11,8 +11,8 @@ import { closeFollowUpTasks } from "./followUpService";
 import { isTerminalOutcome, versionRefusalReason } from "../../utils/salesFollowUp";
 import { describeProformaChanges, proformaChangeSentence } from "./proformaChanges";
 import {
-  ProformaOutcome, deriveProjectStatus, getProformaOutcome, getWonItems, isWonStatus,
-  outcomeWhere, statusWithoutProformas,
+  ProformaOutcome, deriveProjectLossReason, deriveProjectStatus, getProformaOutcome,
+  getWonItems, isWonStatus, outcomeWhere, statusWithoutProformas,
 } from "../proformaStatus";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
@@ -597,7 +597,10 @@ export async function syncProjectStatus(
     where: { projectId },
     select: {
       id: true, status: true, isCancelled: true, createdAt: true,
-      items: { select: { status: true, supplyMethod: true } },
+      // The reasons, document-level and per line: the project's own loss reason
+      // is derived from these rather than typed a second time on its form.
+      lossReason: true,
+      items: { select: { status: true, supplyMethod: true, lossReason: true } },
     },
   });
 
@@ -616,6 +619,17 @@ export async function syncProjectStatus(
   if (!nextStatus) return;
 
   const data: Record<string, unknown> = { status: nextStatus };
+
+  /*
+   * And its loss reason, from the same documents.
+   *
+   * `undefined` means the proformas have nothing to say — a job lost before any
+   * quotation went out keeps the reason somebody typed on the project form,
+   * which is the only place it could have been recorded. `null` means nothing
+   * is lost any more, so a reason left over from an earlier status goes.
+   */
+  const nextLossReason = deriveProjectLossReason(proformas);
+  if (nextLossReason !== undefined) data.lossReason = nextLossReason;
 
   if (isWonStatus(nextStatus)) {
     if (!project.winningDate) {

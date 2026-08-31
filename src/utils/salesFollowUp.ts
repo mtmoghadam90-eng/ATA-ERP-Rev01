@@ -394,6 +394,18 @@ export function completionRefusalReason(
     if (context.outcomeIsTerminal) {
       return "نتیجه تجاری این پیش‌فاکتور قبلاً مشخص شده است.";
     }
+    /*
+     * A loss is the one outcome that has to say why.
+     *
+     * The project's own loss reason is derived from these lines — it is no
+     * longer typed a second time on the project form — so a document settled as
+     * «باخته» with the box left empty is a lost job whose reason nothing else
+     * can supply, and «چرا پروژه‌ها را می‌بازیم» comes back blank for it.
+     * A win and a cancellation carry no reason by design.
+     */
+    if (input.settleOutcome === "LOST" && !String(input.settleLossReason ?? "").trim()) {
+      return "برای ثبت باخت، انتخاب دلیل باخت الزامی است.";
+    }
   }
 
   /*

@@ -50,6 +50,9 @@ export function rowToProject(row: ProjectRow): Project {
     // Printed on the row or written into the Excel export, and none of it used
     // to arrive — the row adapter stopped at the pipeline figures.
     lossReason: row.lossReason ?? undefined,
+    // Which of the two loss-reason paths this project is on: with a quotation
+    // out, the reason comes from its lines and the form's box is read-only.
+    proformaCount: row._count?.proformas ?? 0,
     closingDate: row.closingDateJalali ?? undefined,
     communicationMethod: row.communicationMethod ?? undefined,
     customerInquiryNumber: row.customerInquiryNumber ?? undefined,

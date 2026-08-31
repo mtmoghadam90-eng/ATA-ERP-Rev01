@@ -200,6 +200,13 @@ async function getProjectRecord(id: string, user: AuthUser) {
   return db.project.findFirst({
     where: visibility ? { AND: [{ id }, visibility] } : { id },
     include: {
+      // The same three counts the grid row carries, so the detail is not a
+      // narrower shape wearing the row's type. `proformas` is the one this
+      // screen reads: it decides who owns the project's loss reason — the
+      // proforma lines, or the box on the form.
+      _count: {
+        select: { items: true, proformas: true, categoryGroups: { where: { status: "جاری" } } },
+      },
       customer: { select: { id: true, companyName: true, customerType: true } },
       owner: { select: { id: true, fullName: true } },
       // The two key people are individuals, whose name lives in first/last —
@@ -581,6 +588,42 @@ export async function createProject(input: ProjectInput, user: AuthUser, todayJa
   return getProjectRecord(project.id, user);
 }
 
+/**
+ * Why an edit was refused, or null.
+ *
+ * `updateProject` answers `null` for "you may not touch this project", which a
+ * caller turns into 403. A refusal is a different thing — the save is legal and
+ * one field of it is not — so it carries its own reason and its own status.
+ */
+export interface ProjectWriteRefusal { refusal: string }
+
+/**
+ * A project's loss reason belongs to its proformas once it has any.
+ *
+ * The reason was recordable in two places and both meant the same thing, so a
+ * report of why jobs are lost found two answers for one project. The lines of
+ * the quotations are where the decision is actually made and where the project's
+ * own status already comes from, so once a proforma exists the box on the
+ * project form is no longer the authority — it is written by
+ * `deriveProjectLossReason` instead, and typing over it here is refused rather
+ * than silently ignored.
+ *
+ * Compared against what is stored, so re-saving a project that shows the derived
+ * value goes through untouched: the form sends the field back on every save of
+ * a lost project, and refusing that would make the record unsavable.
+ */
+export function lossReasonRefusal(
+  input: ProjectInput,
+  stored: string | null | undefined,
+  proformaCount: number,
+): string | null {
+  if (!("lossReason" in input) || proformaCount === 0) return null;
+  const next = (input.lossReason ?? "").trim();
+  if (next === (stored ?? "").trim()) return null;
+  return "علت باخت این پروژه از نتیجه ردیف‌های پیش‌فاکتورهای آن گرفته می‌شود. "
+    + "آن را در «ثبت نتیجه اقلام» همان پیش‌فاکتور ثبت کنید.";
+}
+
 export async function updateProject(id: string, input: ProjectInput, user: AuthUser, todayJalali: string) {
   const db = getDb();
   const visibility = visibilityClause(user);
@@ -588,6 +631,10 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
   // Get before state for audit log
   const before = await db.project.findUnique({ where: { id } });
   if (!before) return null;
+
+  const proformaCount = await db.proforma.count({ where: { projectId: id } });
+  const refusal = lossReasonRefusal(input, before.lossReason, proformaCount);
+  if (refusal) return { refusal } satisfies ProjectWriteRefusal;
 
   /*
    * Checkpoints ticked by this save, collected inside the transaction and acted

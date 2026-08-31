@@ -1,4 +1,5 @@
 import type { ERPSettings } from "../types";
+import { applySettingsPatches } from "../utils/settingsPatches";
 import { getDb } from "./db";
 
 /**
@@ -34,4 +35,40 @@ export async function loadSettings(): Promise<ERPSettings | undefined> {
 /** Drops the cache after a settings write, so the change is visible at once. */
 export function invalidateSettingsCache(): void {
   cached = null;
+}
+
+/**
+ * Gives the stored settings document the named additions it has not yet had.
+ *
+ * A default added to `seedData.ts` reaches a fresh installation and nothing
+ * else, so an entry a *rule* refers to by name — the three follow-up results
+ * `impliedSettlement` keys on — simply was not in the dropdown on any database
+ * seeded before it existed, and the feature read as broken rather than
+ * unconfigured. `src/utils/settingsPatches.ts` holds the rule and the record of
+ * what has been applied.
+ *
+ * Run at startup, and again on every settings save so a document written by a
+ * browser holding an older copy is patched on the way in rather than only after
+ * the next restart. It writes only when something changed, and never throws:
+ * this is not worth failing a boot or a save over.
+ */
+export async function ensureSettingsPatches(): Promise<string[]> {
+  try {
+    const settings = await loadSettings();
+    // Nothing seeded yet. `seedDb` writes the current defaults, so there is
+    // nothing to patch and writing a document here would race with it.
+    if (!settings) return [];
+
+    const patched = applySettingsPatches(settings);
+    if (!patched) return [];
+
+    await getDb().appSetting.update({
+      where: { id: "singleton" },
+      data: { data: JSON.stringify(patched.next) },
+    });
+    invalidateSettingsCache();
+    return patched.applied;
+  } catch {
+    return [];
+  }
 }
