@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, canSeeAllTasks } from "../auth";
+import { taskRelationKind } from "../../utils/taskRelations";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate } from "../dates";
 import { toJsonColumn, toNullableString } from "../childSync";
 import { notifyModuleResponsible } from "./notificationService";
@@ -75,6 +76,8 @@ export function buildTaskWhere(
     reminderDate?: unknown;
     reminderTime?: unknown;
     scope?: TaskScope;
+    /** «انجام‌شده‌ها را پنهان کن» — the board's declutter toggle. */
+    hideCompleted?: unknown;
   } = {},
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
@@ -104,6 +107,22 @@ export function buildTaskWhere(
   if (typeof extra.overdue === "string" && extra.overdue) {
     const today = jalaliToDate(extra.overdue);
     if (today) and.push({ dueDate: { lt: today }, status: { not: "انجام شده" } });
+  }
+
+  /*
+   * The board's «hide completed» toggle.
+   *
+   * A query filter and not a `.filter()` over the page: the list is paged on
+   * the server, so hiding rows after they arrive would empty a page of twenty
+   * done tasks and report the unfiltered total beside it.
+   *
+   * An explicit status choice wins. Somebody who has picked «انجام شده» from
+   * the dropdown is asking for exactly the thing the toggle hides, and honouring
+   * both would answer with nothing and explain nothing.
+   */
+  const hasExplicitStatus = Boolean(q.filters.status);
+  if (extra.hideCompleted === true && !hasExplicitStatus) {
+    and.push({ status: { not: "انجام شده" } });
   }
 
   // Filter for reminder notifications — exact date and time match
@@ -147,6 +166,8 @@ export async function listTasks(
     reminderDate?: unknown;
     reminderTime?: unknown;
     scope?: TaskScope;
+    /** «انجام‌شده‌ها را پنهان کن» — the board's declutter toggle. */
+    hideCompleted?: unknown;
   } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
@@ -191,12 +212,25 @@ async function withProjectContext<T extends {
   const projectIds = new Set<string>();
   const proformaIds = new Set<string>();
 
+  const customerIds = new Set<string>();
+
+  /*
+   * `taskRelationKind` reads both spellings.
+   *
+   * This loop used to compare against the Persian words alone, and every
+   * automated writer stores a Latin key — so each sales follow-up
+   * (`"proforma"`), and everything the workflow engine, the milestone
+   * automation and the assistant raise (`"project"`), came back with no project
+   * and no customer on the card at all. That is most of what is on this board.
+   */
   for (const row of rows) {
     if (!row.relatedToId) continue;
-    if (row.relatedToType === "پروژه") projectIds.add(row.relatedToId);
-    else if (row.relatedToType === "پیش‌فاکتور") proformaIds.add(row.relatedToId);
+    const kind = taskRelationKind(row.relatedToType);
+    if (kind === "project") projectIds.add(row.relatedToId);
+    else if (kind === "proforma") proformaIds.add(row.relatedToId);
+    else if (kind === "customer") customerIds.add(row.relatedToId);
   }
-  if (projectIds.size === 0 && proformaIds.size === 0) {
+  if (projectIds.size === 0 && proformaIds.size === 0 && customerIds.size === 0) {
     return rows.map((row) => ({ ...row, relatedProject: null }));
   }
 
@@ -205,7 +239,7 @@ async function withProjectContext<T extends {
     customer: { select: { companyName: true } },
   };
 
-  const [projects, proformas] = await Promise.all([
+  const [projects, proformas, customers] = await Promise.all([
     projectIds.size > 0
       ? db.project.findMany({ where: { id: { in: [...projectIds] } }, select: projectSelect })
       : Promise.resolve([]),
@@ -213,6 +247,14 @@ async function withProjectContext<T extends {
       ? db.proforma.findMany({
           where: { id: { in: [...proformaIds] } },
           select: { id: true, project: { select: projectSelect } },
+        })
+      : Promise.resolve([]),
+    // A task on a customer has no project, but the name is exactly what the
+    // person reading their list wants — so it is read and shown on its own.
+    customerIds.size > 0
+      ? db.customer.findMany({
+          where: { id: { in: [...customerIds] } },
+          select: { id: true, companyName: true },
         })
       : Promise.resolve([]),
   ]);
@@ -227,15 +269,27 @@ async function withProjectContext<T extends {
   const byProject = new Map(projects.map((p) => [p.id, toContext(p)]));
   const byProforma = new Map(
     proformas.filter((pf) => pf.project).map((pf) => [pf.id, toContext(pf.project!)]));
+  /*
+   * A customer with no project behind it. `code` and `name` are empty rather
+   * than filled with the customer's own name: the card prints them as the
+   * project, and a customer standing in for one would read as a project that
+   * does not exist.
+   */
+  const byCustomer = new Map(customers.map((c) => [c.id, {
+    id: c.id, code: "", name: "", customerName: c.companyName,
+  } as TaskProjectContext]));
 
-  return rows.map((row) => ({
-    ...row,
-    relatedProject: row.relatedToId
-      ? (row.relatedToType === "پروژه" ? byProject.get(row.relatedToId) ?? null
-        : row.relatedToType === "پیش‌فاکتور" ? byProforma.get(row.relatedToId) ?? null
-        : null)
-      : null,
-  }));
+  return rows.map((row) => {
+    const kind = row.relatedToId ? taskRelationKind(row.relatedToType) : null;
+    const source = kind === "project" ? byProject
+      : kind === "proforma" ? byProforma
+        : kind === "customer" ? byCustomer
+          : null;
+    return {
+      ...row,
+      relatedProject: source?.get(row.relatedToId!) ?? null,
+    };
+  });
 }
 
 export async function getTask(id: string, user: AuthUser) {
