@@ -141,33 +141,92 @@ body {
   }
 }
 
-/* Dark Theme Configuration */
+/* ======================================================================== */
+/*  The two themes, as one set of roles                                     */
+/* ======================================================================== */
+/*
+ * Every colour in the interface answers to one of the roles below, and both
+ * themes answer the same list. That is the point: the light layer at the foot
+ * of this file and the dark block underneath map the *same* utility classes to
+ * the *same* role names, so a value can no longer be corrected in one theme and
+ * left behind in the other — which is exactly how dark mode came to have
+ * borders at 1.09:1 while light mode's were being measured.
+ *
+ * The numbers in the comments are contrast ratios, recomputed by `test:rules`
+ * from this file rather than trusted from here.
+ */
 :root {
   --bg-app: #f8fafc;
   --bg-card: #ffffff;
   --bg-input: #ffffff;
-  --text-primary: #0f172a;
-  --text-secondary: #334155;
-  --text-muted: #64748b;
-  --border-primary: #e2e8f0;
-  --border-light: #f1f5f9;
   --bg-hover: #f1f5f9;
+
+  /* Text, weakest to strongest. `faint` is the one role deliberately below the
+     4.5 body-text threshold: it is icon strokes and disabled states. */
+  --text-faint: #8a99ac;      /* 2.90 on white — decorative only */
+  --text-muted: #616f85;      /* 5.10 on white · 4.87 on slate-50 */
+  --text-soft: #556275;       /* 6.19 on white */
+  --text-secondary: #334155;  /* 10.35 */
+  --text-primary: #0f172a;    /* 17.85 */
+
+  /* Borders. `edge` is the boundary of a control and is the only one held to
+     the 3:1 the contrast rule asks of a component; the rest are separators. */
+  --color-edge: #75889f;      /* 3.63 on white · 3.17 on a sunken surface */
+  --border-firm: #9aabbf;     /* 2.35 */
+  --border-card: #b9c6d5;     /* 1.74 */
+  --color-hairline: #c2cedb;  /* 1.60 */
+  --border-divider: #cfd9e4;  /* 1.43 */
+  /* Kept under its old name because the dark rules below already address it. */
+  --border-primary: #b9c6d5;
+  --border-light: #cfd9e4;
+
+  /* Status, which has to be read in a single glance. */
+  --text-info: #0369a1;       /* 5.93 */
+  --text-success: #047857;    /* 5.48 */
+  /* rose-600 clears 4.5 on white but not on the hover fill, where it lands at
+     4.29 — so this is a step past it rather than the obvious one. */
+  --text-danger: #d01741;     /* 5.41 white · 4.94 hover */
+  --text-warn: #b45309;       /* 5.02 */
+  --text-violet: #4338ca;     /* 8.28 */
 }
 
+/*
+ * The same roles on a dark ground.
+ *
+ * The text here was already sound — 5.71 to 18.03 across every surface — but
+ * the borders were not: `--border-primary` measured **1.09 to 1.41**, which is
+ * the same defect light mode had and which nobody had looked for, because the
+ * dark values were written by eye and never measured. The status colours were
+ * not addressed at all, so `text-sky-600` sat at 4.03 on a card and
+ * `text-indigo-600` at 2.62.
+ */
 .dark {
-  --bg-app: #0b111e;       /* Sleek warm dark background */
-  --bg-card: #151f32;      /* Elegant deep dark card */
-  --bg-input: #1b263b;     /* Input fields background */
-  --text-primary: #f8fafc;  /* Bright slate-50 text */
-  --text-secondary: #cbd5e1;/* Slate-300 secondary text */
-  --text-muted: #94a3b8;    /* Slate-400 muted text */
-  --border-primary: #232f45;/* Slate-700/800 dark border */
-  --border-light: #1c2638;  /* Subtly darker border */
-  --bg-hover: #1e293b;      /* Slate-700 hover background */
-  /* The same two roles on a dark ground: light enough to be found, dark
-     enough not to glare. */
-  --color-edge: #55697f;
-  --color-hairline: #2b3a4b;
+  --bg-app: #0b111e;
+  --bg-card: #151f32;
+  --bg-input: #1b263b;
+  --bg-hover: #1e293b;
+
+  --text-faint: #7b8ca0;      /* 4.79 on the card */
+  --text-muted: #94a3b8;      /* 6.43 */
+  --text-soft: #b0bfd0;       /* 8.80 */
+  --text-secondary: #cbd5e1;  /* 11.10 */
+  --text-primary: #f8fafc;    /* 15.76 */
+
+  --color-edge: #617a92;      /* was 2.91 on the card → 3.69 */
+  --border-firm: #42566e;     /* 2.19 */
+  --border-card: #33445a;     /* was 1.23 → 1.66 */
+  --color-hairline: #2b3a4b;  /* 1.42 */
+  --border-divider: #2b3a4b;
+  --border-primary: #33445a;
+  --border-light: #2b3a4b;
+
+  /* Lighter, not darker: on this ground the light theme's values invert the
+     direction. `sky-600` was 4.03 here and `indigo-600` 2.62. */
+  --text-info: #38bdf8;       /* 7.69 */
+  --text-success: #34d399;    /* 8.57 */
+  --text-danger: #fb7185;     /* 6.12 */
+  --text-warn: #fbbf24;       /* 9.87 */
+  --text-violet: #a5b4fc;     /* 8.27 */
 }
 
 /* Base Body Dark Styling */
@@ -219,7 +278,9 @@ body {
 .dark [role="dialog"] textarea {
   background-color: var(--bg-input) !important;
   color: var(--text-primary) !important;
-  border-color: var(--border-primary) !important;
+  /* The boundary of a control, held to 3:1 here as it is in light mode. It
+     used to be `--border-primary`, which measured 1.13 against this fill. */
+  border-color: var(--color-edge) !important;
 }
 
 .dark main input::placeholder,
@@ -253,15 +314,78 @@ body {
   color: var(--text-secondary) !important;
 }
 
+/*
+ * These two were one value here and two in light mode, so the ramp read as
+ * three steps on white and two in the dark. They are the same roles now.
+ */
 .dark main .text-slate-500,
-.dark main .text-slate-400,
 .dark main .text-gray-500,
-.dark main .text-gray-400,
 .dark [role="dialog"] .text-slate-500,
+.dark [role="dialog"] .text-gray-500 {
+  color: var(--text-soft) !important;
+}
+
+.dark main .text-slate-400,
+.dark main .text-gray-400,
 .dark [role="dialog"] .text-slate-400,
-.dark [role="dialog"] .text-gray-500,
 .dark [role="dialog"] .text-gray-400 {
   color: var(--text-muted) !important;
+}
+
+.dark main .text-slate-300,
+.dark main .text-gray-300,
+.dark [role="dialog"] .text-slate-300,
+.dark [role="dialog"] .text-gray-300 {
+  color: var(--text-faint) !important;
+}
+
+/*
+ * Status, which this block never addressed at all — so every one of these kept
+ * its light-mode value on a dark ground: `text-sky-600` measured 4.03 on a
+ * card and `text-indigo-600` 2.62. The light layer's answer is the wrong
+ * direction here, which is why they are roles rather than one value.
+ */
+.dark main .text-sky-700,
+.dark main .text-sky-600,
+.dark main .text-sky-500,
+.dark [role="dialog"] .text-sky-700,
+.dark [role="dialog"] .text-sky-600,
+.dark [role="dialog"] .text-sky-500 {
+  color: var(--text-info) !important;
+}
+
+.dark main .text-emerald-700,
+.dark main .text-emerald-600,
+.dark main .text-emerald-500,
+.dark [role="dialog"] .text-emerald-700,
+.dark [role="dialog"] .text-emerald-600,
+.dark [role="dialog"] .text-emerald-500 {
+  color: var(--text-success) !important;
+}
+
+.dark main .text-rose-700,
+.dark main .text-rose-600,
+.dark main .text-rose-500,
+.dark [role="dialog"] .text-rose-700,
+.dark [role="dialog"] .text-rose-600,
+.dark [role="dialog"] .text-rose-500 {
+  color: var(--text-danger) !important;
+}
+
+.dark main .text-amber-700,
+.dark main .text-amber-600,
+.dark main .text-amber-500,
+.dark [role="dialog"] .text-amber-700,
+.dark [role="dialog"] .text-amber-600,
+.dark [role="dialog"] .text-amber-500 {
+  color: var(--text-warn) !important;
+}
+
+.dark main .text-indigo-600,
+.dark main .text-indigo-500,
+.dark [role="dialog"] .text-indigo-600,
+.dark [role="dialog"] .text-indigo-500 {
+  color: var(--text-violet) !important;
 }
 
 /* Main Border Overrides */
@@ -370,14 +494,14 @@ body {
  * disabled states and decorative glyphs, and holding it to the text threshold
  * would make every one of those read as content.
  */
-html:not(.dark) .text-slate-300 { color: #8a99ac; }  /* 2.90 — decorative only */
-html:not(.dark) .text-slate-400 { color: #616f85; }  /* 5.10 white · 4.87 slate-50 */
-html:not(.dark) .text-slate-500 { color: #556275; }  /* 6.19 white · 5.92 slate-50 */
+html:not(.dark) .text-slate-300 { color: var(--text-faint); }
+html:not(.dark) .text-slate-400 { color: var(--text-muted); }
+html:not(.dark) .text-slate-500 { color: var(--text-soft); }
 
 html:not(.dark) .placeholder-slate-400::placeholder,
-html:not(.dark) .placeholder-slate-300::placeholder { color: #616f85; }
+html:not(.dark) .placeholder-slate-300::placeholder { color: var(--text-muted); }
 
-html:not(.dark) .hover\:text-slate-600:hover { color: #3d4a5c; }
+html:not(.dark) .hover\:text-slate-600:hover { color: var(--text-secondary); }
 
 /* ---- semantic colours: one step darker, so status reads at a glance ------- */
 /*
@@ -385,14 +509,14 @@ html:not(.dark) .hover\:text-slate-600:hover { color: #3d4a5c; }
  * to be legible in a single glance, and every one of them was below AA. A step
  * down the same ramp clears the threshold without changing the brand.
  */
-html:not(.dark) .text-sky-600     { color: #0369a1; }  /* was 4.10 → 5.93 */
-html:not(.dark) .text-sky-500     { color: #0369a1; }  /* was 2.77 → 5.93 */
-html:not(.dark) .text-emerald-600 { color: #047857; }  /* was 3.77 → 5.48 */
-html:not(.dark) .text-emerald-500 { color: #047857; }
-html:not(.dark) .text-rose-500    { color: #e11d48; }  /* was 3.67 → 4.70 */
-html:not(.dark) .text-amber-600   { color: #b45309; }  /* was 3.19 → 5.02 */
-html:not(.dark) .text-amber-500   { color: #b45309; }  /* was 2.15 → 5.02 */
-html:not(.dark) .text-indigo-600  { color: #4338ca; }
+html:not(.dark) .text-sky-600     { color: var(--text-info); }
+html:not(.dark) .text-sky-500     { color: var(--text-info); }
+html:not(.dark) .text-emerald-600 { color: var(--text-success); }
+html:not(.dark) .text-emerald-500 { color: var(--text-success); }
+html:not(.dark) .text-rose-500    { color: var(--text-danger); }
+html:not(.dark) .text-amber-600   { color: var(--text-warn); }
+html:not(.dark) .text-amber-500   { color: var(--text-warn); }
+html:not(.dark) .text-indigo-600  { color: var(--text-violet); }
 
 /* ---- borders: the two roles, mapped from the classes already in use ------ */
 /*
@@ -400,13 +524,13 @@ html:not(.dark) .text-indigo-600  { color: #4338ca; }
  * `200` are the outlines of cards and panels, which need to be found rather
  * than merely sensed. `slate-150` gets a value at all for the first time.
  */
-html:not(.dark) .border-slate-100 { border-color: #cfd9e4; }  /* was 1.10 → 1.43 */
-html:not(.dark) .border-slate-150 { border-color: #c2cedb; }  /* was currentColor */
-html:not(.dark) .border-slate-200 { border-color: #b9c6d5; }  /* was 1.23 → 1.74 */
-html:not(.dark) .border-slate-300 { border-color: #9aabbf; }  /* was 1.48 → 2.35 */
+html:not(.dark) .border-slate-100 { border-color: var(--border-divider); }
+html:not(.dark) .border-slate-150 { border-color: var(--color-hairline); }
+html:not(.dark) .border-slate-200 { border-color: var(--border-card); }
+html:not(.dark) .border-slate-300 { border-color: var(--border-firm); }
 
-html:not(.dark) .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: #cfd9e4; }
-html:not(.dark) .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: #b9c6d5; }
+html:not(.dark) .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: var(--border-divider); }
+html:not(.dark) .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: var(--border-card); }
 
 /*
  * The boundary of a control is the one border the standard is strict about

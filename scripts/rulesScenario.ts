@@ -6145,14 +6145,29 @@ head("Contrast: the palette was measured, and most of it did not pass");
   const css = readFileSync("src/index.css", "utf8");
   const WHITE = "#ffffff", SLATE50 = "#f8fafc", SLATE100 = "#f1f5f9";
 
-  /** The replacement this layer declares for a utility, or null. */
+  /*
+   * What the layer resolves a utility to.
+   *
+   * It names a role rather than a literal — which is the point of the roles —
+   * so the lookup has to follow that one hop. A check reading only for a hex
+   * would go quietly null the moment the indirection was introduced, and pass
+   * nothing while reporting nothing, which is what happened when it was.
+   */
+  const lightRole = (name: string): string | null =>
+    css.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{3,8})`, "i"))?.[1] ?? null;
+
   const declared = (selector: string, prop: string): string | null => {
-    const re = new RegExp(
-      `html:not\\(\\.dark\\)\\s+\\.${selector.replace(/\\/g, "\\\\")}[^{]*\\{[^}]*${prop}:\\s*(#[0-9a-f]{6})`,
-      "i",
-    );
-    return css.match(re)?.[1] ?? null;
+    const rule = css.match(new RegExp(
+      `html:not\\(\\.dark\\)\\s+\\.${selector}[^{]*\\{[^}]*${prop}:\\s*([^;}]+)`, "i",
+    ))?.[1]?.trim();
+    if (!rule) return null;
+    const role = rule.match(/var\(--([a-z-]+)\)/i)?.[1];
+    return role ? lightRole(role) : (rule.match(/#[0-9a-f]{3,8}/i)?.[0] ?? null);
   };
+
+  // The first definition in the file is the light one, so the hop must land on
+  // a light value — held against a role whose two themes are far apart.
+  eq("a role resolves to its light value", lightRole("text-primary"), "#0f172a");
 
   /*
    * Body text has to clear 4.5 on every ground it actually sits on — white, and
@@ -6251,6 +6266,109 @@ head("Contrast: the palette was measured, and most of it did not pass");
    */
   ok("and the slate scale itself is left alone",
     !/--color-slate-\d00\s*:/.test(css));
+
+  /* ------------------ every role, on every surface, in both themes ---------- */
+
+  /*
+   * The check that would have caught the dark theme.
+   *
+   * Light mode was measured and corrected; dark mode had never been measured at
+   * all, and its borders sat at 1.09–1.41 while the same defect was being fixed
+   * a few lines above them. Reading one theme is not reading the palette — so
+   * this walks both role sets against every surface each one is drawn on.
+   */
+  const roleSet = (block: string): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const m of block.matchAll(/--([a-z-]+):\s*(#[0-9a-f]{3,8})/gi)) out[m[1]] = m[2];
+    return out;
+  };
+  const between = (from: string, to: string) => {
+    const a = css.indexOf(from);
+    const b = css.indexOf(to, a + 1);
+    return a >= 0 && b > a ? css.slice(a, b) : "";
+  };
+
+  const light = roleSet(between("\n:root {", "\n}"));
+  const dark = roleSet(between("\n.dark {", "\n}"));
+
+  // A theme block that failed to parse would let every assertion below pass by
+  // iterating nothing.
+  ok("both role sets were read", Object.keys(light).length > 12 && Object.keys(dark).length > 12,
+    [Object.keys(light).length, Object.keys(dark).length]);
+  const missing = Object.keys(light).filter((k) => !(k in dark));
+  ok("and the two themes answer the same roles", missing.length === 0, missing);
+
+  /*
+   * Text against the surfaces it is actually drawn on. `faint` is excluded by
+   * name rather than by silence: it is decorative and has its own floor above.
+   */
+  const TEXT = ["text-muted", "text-soft", "text-secondary", "text-primary",
+    "text-info", "text-success", "text-danger", "text-warn", "text-violet"];
+  const SURFACES = ["bg-app", "bg-card", "bg-input", "bg-hover"];
+
+  for (const [theme, roles] of [["light", light], ["dark", dark]] as const) {
+    let worst = { pair: "", r: 99 };
+    for (const t of TEXT) {
+      for (const surface of SURFACES) {
+        const [fg, bg] = [roles[t], roles[surface]];
+        if (!fg || !bg) continue;
+        const value = contrast(fg, bg);
+        if (value < worst.r) worst = { pair: `${t} on ${surface}`, r: value };
+      }
+    }
+    ok(`${theme}: every text role clears AA on every surface`,
+      worst.r >= 4.5, `${worst.pair} = ${worst.r.toFixed(2)}`);
+  }
+
+  /*
+   * The control boundary, which is the one border the standard is strict about
+   * — and the one dark mode was drawing at 1.13 against a filled input.
+   */
+  for (const [theme, roles] of [["light", light], ["dark", dark]] as const) {
+    let worst = { pair: "", r: 99 };
+    for (const surface of SURFACES) {
+      const bg = roles[surface];
+      if (!bg) continue;
+      const value = contrast(roles["color-edge"], bg);
+      if (value < worst.r) worst = { pair: `edge on ${surface}`, r: value };
+    }
+    ok(`${theme}: the control edge clears 3:1 on every surface`,
+      worst.r >= 3, `${worst.pair} = ${worst.r.toFixed(2)}`);
+  }
+
+  /*
+   * Separators are not held to 3:1 — an edge-weight rule between every row of a
+   * list reads as noise — but 1.09:1 is not a separator, it is nothing. The
+   * floor is what «visible at all» costs.
+   */
+  for (const [theme, roles] of [["light", light], ["dark", dark]] as const) {
+    for (const role of ["border-card", "color-hairline", "border-divider", "border-firm"]) {
+      let worst = 99;
+      for (const surface of SURFACES) {
+        if (!roles[surface] || !roles[role]) continue;
+        worst = Math.min(worst, contrast(roles[role], roles[surface]));
+      }
+      ok(`${theme}: ${role} is visible on every surface`, worst >= 1.25, worst.toFixed(2));
+    }
+  }
+
+  /*
+   * `faint` is decorative in both themes and has no business creeping up to
+   * body weight or down to invisibility.
+   */
+  for (const [theme, roles] of [["light", light], ["dark", dark]] as const) {
+    const r = contrast(roles["text-faint"], roles["bg-card"]);
+    ok(`${theme}: the decorative text role stays in its band`, r >= 2.5 && r < 6, r.toFixed(2));
+  }
+
+  /*
+   * Both layers read roles rather than literals, which is what stops one theme
+   * being corrected and the other left behind — the exact way dark mode came to
+   * have borders at 1.09 while light mode's were being fixed.
+   */
+  const layerBody = layer.split("\n").filter((l) => l.startsWith("html:not(.dark)"));
+  const literals = layerBody.filter((l) => /:\s*#[0-9a-f]{3,8}/i.test(l));
+  ok("the light layer names roles, never literals", literals.length === 0, literals.slice(0, 3));
 
   // The compose bar, which is what was reported.
   const composer = readFileSync("src/components/ActivityComposer.tsx", "utf8");
