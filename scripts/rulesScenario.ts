@@ -6791,6 +6791,23 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   ok("the route passes the flag through", /hideCompleted:\s*req\.query\.hideCompleted === "true"/.test(route));
   const view = readFileSync("src/components/TasksView.tsx", "utf8");
   ok("and the screen has the button", /setFilter\('hideCompleted'/.test(view));
+
+  /*
+   * A task belongs to two people, and the card drew only one of them.
+   *
+   * `createdByUserId` is the second arm of `visibilityClause` and what «من
+   * ارجاع دادم» filters on, so a row showing under «همه وظایف» and in neither
+   * tab is one raised by somebody else for somebody else — and nothing on the
+   * card said so. It arrives on the row and is now printed.
+   */
+  const api = readFileSync("src/api/tasks.ts", "utf8");
+  ok("the creator's name reaches the client", /createdByName: row\.createdByName/.test(api));
+  ok("and the card prints it", /ارجاع‌دهنده:/.test(view));
+  // Absent is not a gap in the record: it is what an automation-raised task and
+  // every task written before the column existed both carry, so it is named.
+  ok("...naming the absent case rather than drawing a blank",
+    /task\.createdByName \|\| '[^']+'/.test(view));
+  ok("the list actually selects it", /createdByUserId: true, createdByName: true/.test(service));
 }
 
 /* ── One loss reason per project ─────────────────────────────────────────── */
