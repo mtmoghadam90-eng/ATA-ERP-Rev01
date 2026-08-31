@@ -545,3 +545,104 @@ html:not(.dark) select:not([multiple]),
 html:not(.dark) textarea:not([readonly]) {
   border-color: var(--color-edge);  /* 3.63:1 on white */
 }
+
+/* ======================================================================== */
+/*  Dark mode: the surfaces the class list never covered                    */
+/* ======================================================================== */
+/*
+ * Dark mode is a list of utility class names, and anything not on the list
+ * keeps its light value. That is not a small gap: **160 uses across 33 classes**
+ * were uncovered, and the worst of them — `bg-slate-50/50`, on 44 elements —
+ * is the header band of every dashboard card. A translucent near-white over a
+ * dark card renders as a light grey strip, with `text-slate-800` correctly
+ * mapped to near-white printed on top of it. Reported as «حالت تاریک خیلی
+ * ناخوانا شده», and it was: white text on light grey.
+ *
+ * The opacity variants are separate class names — `.bg-slate-50` and
+ * `.bg-slate-50\/50` share no rule — so covering the base never covered them.
+ *
+ * An attribute selector (`[class*="bg-slate-50/"]`) would have closed the
+ * whole family in one line and was rejected: 178 uses are `hover:` / `focus:` /
+ * `disabled:` variants, which it would match too, making every hover state
+ * permanent. So the list is explicit, generated from what the components
+ * actually use — and `test:rules` fails when a component introduces a light
+ * surface this file does not answer, which is the only thing that keeps an
+ * explicit list honest.
+ *
+ * Deliberately NOT covered: `bg-white/5`, `/10`, `/15` and `border-white/10`.
+ * Those are translucent overlays on coloured hero panels, drawn over a ground
+ * that is already dark in both themes — mapping them to a card colour would
+ * flatten the panel they sit on.
+ */
+
+/* -> --bg-app */
+.dark main .bg-slate-50\/20,
+.dark [role="dialog"] .bg-slate-50\/20,
+.dark main .bg-slate-50\/30,
+.dark [role="dialog"] .bg-slate-50\/30,
+.dark main .bg-slate-50\/40,
+.dark [role="dialog"] .bg-slate-50\/40,
+.dark main .bg-slate-50\/50,
+.dark [role="dialog"] .bg-slate-50\/50,
+.dark main .bg-slate-50\/55,
+.dark [role="dialog"] .bg-slate-50\/55,
+.dark main .bg-slate-50\/60,
+.dark [role="dialog"] .bg-slate-50\/60,
+.dark main .bg-slate-50\/70,
+.dark [role="dialog"] .bg-slate-50\/70,
+.dark main .bg-slate-50\/80,
+.dark [role="dialog"] .bg-slate-50\/80,
+.dark main .disabled\:bg-slate-50:disabled,
+.dark [role="dialog"] .disabled\:bg-slate-50:disabled,
+.dark main .hover\:bg-slate-50\/40:hover,
+.dark [role="dialog"] .hover\:bg-slate-50\/40:hover,
+.dark main .hover\:bg-slate-50\/50:hover,
+.dark [role="dialog"] .hover\:bg-slate-50\/50:hover,
+.dark main .hover\:bg-slate-50\/60:hover,
+.dark [role="dialog"] .hover\:bg-slate-50\/60:hover,
+.dark main .hover\:bg-slate-50\/80:hover,
+.dark [role="dialog"] .hover\:bg-slate-50\/80:hover {
+  background-color: var(--bg-app) !important;
+}
+
+/* -> --bg-input */
+.dark main .bg-slate-100\/55,
+.dark [role="dialog"] .bg-slate-100\/55,
+.dark main .bg-slate-100\/60,
+.dark [role="dialog"] .bg-slate-100\/60,
+.dark main .bg-slate-100\/70,
+.dark [role="dialog"] .bg-slate-100\/70,
+.dark main .bg-slate-200,
+.dark [role="dialog"] .bg-slate-200,
+.dark main .bg-slate-200\/60,
+.dark [role="dialog"] .bg-slate-200\/60,
+.dark main .bg-slate-200\/80,
+.dark [role="dialog"] .bg-slate-200\/80,
+.dark main .disabled\:bg-slate-100:disabled,
+.dark [role="dialog"] .disabled\:bg-slate-100:disabled,
+.dark main .disabled\:bg-slate-200:disabled,
+.dark [role="dialog"] .disabled\:bg-slate-200:disabled,
+.dark main .hover\:bg-slate-100\/50:hover,
+.dark [role="dialog"] .hover\:bg-slate-100\/50:hover,
+.dark main .hover\:bg-slate-100\/70:hover,
+.dark [role="dialog"] .hover\:bg-slate-100\/70:hover,
+.dark main .hover\:bg-slate-200:hover,
+.dark [role="dialog"] .hover\:bg-slate-200:hover,
+.dark main .hover\:bg-slate-200\/55:hover,
+.dark [role="dialog"] .hover\:bg-slate-200\/55:hover,
+.dark main .hover\:bg-slate-200\/80:hover,
+.dark [role="dialog"] .hover\:bg-slate-200\/80:hover,
+.dark main .read-only\:bg-slate-100:read-only,
+.dark [role="dialog"] .read-only\:bg-slate-100:read-only {
+  background-color: var(--bg-input) !important;
+}
+
+/* -> --bg-card */
+.dark main .focus\:bg-white:focus,
+.dark [role="dialog"] .focus\:bg-white:focus,
+.dark main .hover\:bg-white:hover,
+.dark [role="dialog"] .hover\:bg-white:hover,
+.dark main .md\:hover\:bg-white:hover,
+.dark [role="dialog"] .md\:hover\:bg-white:hover {
+  background-color: var(--bg-card) !important;
+}

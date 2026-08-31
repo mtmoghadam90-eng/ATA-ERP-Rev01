@@ -6300,7 +6300,14 @@ head("Contrast: the palette was measured, and most of it did not pass");
   // Or the slice below would be one character and the check would pass by
   // examining nothing.
   ok("the layer is where this check thinks it is", layerAt > 0);
-  const layer = css.slice(layerAt);
+  /*
+   * Bounded to the light layer. The dark block that follows it is full of
+   * `.dark main .bg-…` rules, and a slice running to the end of the file would
+   * read those as light-layer rules escaping their scope.
+   */
+  const layerEnd = css.indexOf("Dark mode: the surfaces");
+  ok("and it ends where the dark block begins", layerEnd > layerAt);
+  const layer = css.slice(layerAt, layerEnd);
   const scoped = layer.split("\n").filter((l) => /^html:not\(\.dark\)/.test(l));
   ok("and it is not empty", scoped.length > 10, scoped.length);
   const rules = layer.split("\n").filter((l) => /^\s*\.[a-z]/i.test(l));
@@ -6417,6 +6424,77 @@ head("Contrast: the palette was measured, and most of it did not pass");
   const layerBody = layer.split("\n").filter((l) => l.startsWith("html:not(.dark)"));
   const literals = layerBody.filter((l) => /:\s*#[0-9a-f]{3,8}/i.test(l));
   ok("the light layer names roles, never literals", literals.length === 0, literals.slice(0, 3));
+
+
+  /* --------- every light surface a component uses is answered in the dark ---- */
+
+  /*
+   * The check that would have caught the reported fault.
+   *
+   * Dark mode is a list of utility class names, and anything not on it keeps
+   * its light value. `bg-slate-50/50` — the header band of every dashboard
+   * card, on 44 elements — was never on that list, so it rendered as a
+   * translucent near-white strip over a dark card, with the correctly-mapped
+   * near-white heading printed on top of it. The opacity variants are separate
+   * class names: `.bg-slate-50` and `.bg-slate-50\/50` share no rule, so
+   * covering the base never covered them.
+   *
+   * An explicit list is only safe with something enforcing it, which is this.
+   */
+  const componentClasses = (): Map<string, number> => {
+    const out = new Map<string, number>();
+    const dir = "src/components";
+    for (const file of readdirSync(dir).filter((f) => f.endsWith(".tsx"))) {
+      const src = readFileSync(joinPath(dir, file), "utf8");
+      for (const m of src.matchAll(/class[Nn]ame="([^"]+)"/g)) {
+        for (const cls of m[1].split(/\s+/)) out.set(cls, (out.get(cls) ?? 0) + 1);
+      }
+    }
+    return out;
+  };
+
+  const darkBlock = css.slice(css.indexOf("/* Base Body Dark Styling */"));
+  const answered = new Set(
+    [...darkBlock.matchAll(/\.dark\s+(?:main|\[role="dialog"\])\s+\.([\w\\/.:-]+?)(?::[a-z-]+)?\s*[,{]/g)]
+      .map((m) => m[1].replace(/\\/g, "")),
+  );
+  ok("the dark block's class list was read", answered.size > 40, answered.size);
+
+  /*
+   * A light surface is `white`, `slate-50`, `slate-100` or `slate-200`, with or
+   * without an opacity suffix and with or without a state prefix. `slate-700`
+   * and darker are already dark in both themes and need no answer.
+   *
+   * The exceptions are translucent overlays on coloured hero panels — a ground
+   * that is dark in both themes — where mapping to a card colour would flatten
+   * the panel underneath.
+   */
+  const OVERLAY_EXCEPTIONS = [
+    "bg-white/5", "bg-white/10", "bg-white/15", "bg-white/40",
+    // The thumb of a toggle switch, not a surface: it is white on both themes
+    // in every interface that has one, and darkening it would leave the switch
+    // reading as permanently off.
+    "after:bg-white",
+  ];
+  const isLightSurface = (cls: string) =>
+    /^(?:[a-z-]+:)*bg-(?:white|slate-(?:50|100|200))(?:\/\d+)?$/.test(cls);
+
+  const unanswered = [...componentClasses()]
+    .filter(([cls]) => isLightSurface(cls) && !answered.has(cls)
+      && !OVERLAY_EXCEPTIONS.includes(cls))
+    .sort((a, b) => b[1] - a[1]);
+
+  ok("every light surface a component uses has a dark answer",
+    unanswered.length === 0, unanswered.slice(0, 6));
+
+  // Held against the class that actually shipped the fault, and against one
+  // that must not be swept in — a check matching nothing passes for the wrong
+  // reason, and one matching everything makes hover states permanent.
+  ok("the predicate recognises the class that broke", isLightSurface("bg-slate-50/50"));
+  ok("and its state-prefixed form", isLightSurface("hover:bg-slate-50/50"));
+  ok("but not a surface that is already dark", !isLightSurface("bg-slate-900/60"));
+  ok("nor a slate-500 fill, which the slash rule must not swallow",
+    !isLightSurface("bg-slate-500/20"));
 
   // The compose bar, which is what was reported.
   const composer = readFileSync("src/components/ActivityComposer.tsx", "utf8");
