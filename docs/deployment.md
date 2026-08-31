@@ -85,7 +85,7 @@ powershell -ExecutionPolicy Bypass -File E:\Apps\ATA-ERP-Rev01\scripts\deploy.ps
 
 | مرحله | کار | در صورت خطا |
 |---|---|---|
-| ۱ | پشتیبان‌گیری از `database.json` (۳۰ نسخه‌ی آخر نگه داشته می‌شود) | — |
+| ۱ | پشتیبان‌گیری از `database.json` قدیمی، اگر مانده باشد. **داده‌های SQL Server بکاپ نمی‌شوند** | — |
 | ۲ | نگه‌داشتن build فعلی برای بازگشت | — |
 | ۳ | `git fetch` + `reset --hard origin/main` | توقف |
 | ۴ | `npm install` | build قبلی برگردانده می‌شود |
@@ -121,14 +121,80 @@ Restart-ScheduledTask -TaskName "ATA-ERP"
 
 یا بهتر: روی کامپیوتر توسعه `git revert` بزن، push کن، و دوباره `deploy.ps1` را اجرا کن — تا تاریخچه تمیز بماند.
 
-## بازگرداندن داده از پشتیبان
+## دیدن و ویرایش مستقیم داده‌ها
+
+داده‌های کسب‌وکار در **SQL Server** هستند، نه در فایل. ابزارش SSMS است که روی همین
+سرور نصب است.
+
+### پیدا کردن دیتابیس درست
+
+نام سرور و دیتابیس را از روی حدس برندارید — مرجعش `DATABASE_URL` در `.env` خود
+سرور است. این دستور آدرس و نام دیتابیس و کاربر را نشان می‌دهد **بدون اینکه رمز را
+چاپ کند**:
+
+```powershell
+$line = (Select-String -Path 'E:\Apps\ATA-ERP-Rev01\.env' -Pattern '^DATABASE_URL').Line
+[regex]::Matches($line, 'sqlserver://[^;]+|database=[^;]+|user=[^;]+') | ForEach-Object { $_.Value }
+```
+
+اگر دیتابیس در Object Explorer دیده نمی‌شود، معمولاً یکی از این سه است — و این
+کوئری هر سه را روشن می‌کند:
+
+```sql
+SELECT @@SERVERNAME AS instance, SERVERPROPERTY('InstanceName') AS named_instance;
+SELECT name, state_desc FROM sys.databases ORDER BY name;
+```
+
+۱. **instance دیگری است.** یک سرور می‌تواند چند instance داشته باشد؛ برنامه ممکن
+است به `192.168.1.104\SQLEXPRESS` وصل باشد در حالی که SSMS به instance پیش‌فرض
+وصل شده. آنچه `DATABASE_URL` می‌گوید درست است.
+۲. **نامش چیز دیگری است.** `ata_erp` فقط نمونه‌ی داخل `.env.example` است.
+۳. **کاربر شما آن را نمی‌بیند.** Object Explorer فقط دیتابیس‌هایی را نشان می‌دهد که
+لاگین جاری اجازه‌اش را دارد. با Windows Authentication به‌عنوان ادمین وصل شوید.
+
+### قبل از هر تغییر دستی، بکاپ بگیرید
+
+`deploy.ps1` از SQL Server بکاپ **نمی‌گیرد** — خودش هم همین را می‌گوید. تنها چیزی
+که بکاپ می‌کند `database.json` قدیمی است، که دیگر هیچ داده‌ای در آن نیست.
+
+```sql
+BACKUP DATABASE [ata_erp] TO DISK = N'E:\Backups\ata_erp_manual.bak'
+WITH INIT, COMPRESSION, NAME = N'manual before edit';
+```
+
+### بازگرداندن
+
+برنامه باید متوقف باشد، وگرنه اتصال باز آن مانع بازگردانی می‌شود:
 
 ```powershell
 Stop-ScheduledTask -TaskName "ATA-ERP"
-Get-ChildItem "E:\Apps\ATA-ERP-Rev01\backups" | Sort-Object LastWriteTime -Descending | Select-Object -First 10 Name, LastWriteTime
-Copy-Item "E:\Apps\ATA-ERP-Rev01\backups\database-YYYYMMDD-HHMMSS.json" "E:\Apps\ATA-ERP-Rev01\database.json" -Force
+```
+
+```sql
+ALTER DATABASE [ata_erp] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+RESTORE DATABASE [ata_erp] FROM DISK = N'E:\Backups\ata_erp_manual.bak' WITH REPLACE;
+ALTER DATABASE [ata_erp] SET MULTI_USER;
+```
+
+```powershell
 Start-ScheduledTask -TaskName "ATA-ERP"
 ```
+
+### چه چیزی را دستی حذف نکنید
+
+حذف مستقیم منطق برنامه را دور می‌زند. جاهایی که این واقعاً هزینه دارد:
+
+| مورد | چرا |
+|---|---|
+| موجودی انبار | سطح موجودی و دفتر حرکات با هم نوشته می‌شوند؛ حذف یکی، آن دو را از هم جدا می‌کند |
+| پیش‌فاکتور | وضعیت پروژه از خطوط آن محاسبه و **ذخیره** می‌شود و کهنه جا می‌ماند |
+| شماره اسناد | از شماره‌های صادرشده شمرده می‌شوند؛ حذف یک سند شماره‌اش را دوباره قابل صدور می‌کند |
+| رتبه ارزش مشتری | تا `POST /api/customers/recalculate-value` اجرا نشود به‌روز نمی‌شود |
+
+پس تا جای ممکن از خود برنامه حذف کنید؛ حذف مستقیم برای موردی است که برنامه راهی
+نمی‌دهد (مثلاً یک سطر یتیم). برای دیدن «چه اتفاقی افتاد» هم اول
+**تنظیمات ← گزارش فعالیت‌ها** را ببینید: snapshot قبل و بعد هر تغییر آنجاست و
+خواندنش بی‌خطر است.
 
 ---
 
