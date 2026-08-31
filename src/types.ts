@@ -865,6 +865,21 @@ export interface ProjectActivity {
   replyTo?: {
     id: string; text: string; authorName?: string | null; createdAt?: string;
   } | null;
+  /**
+   * The one-press answers, one row per person per emoji.
+   *
+   * Carried with the feed because a chip row is drawn for every message on
+   * screen; `summarizeReactions` turns these into the chips.
+   */
+  reactions: { emoji: string; userId: string; userName?: string | null }[];
+  /**
+   * How many people have seen it — never *who*.
+   *
+   * The names are one request away (`activitiesApi.readers`) and are fetched
+   * when the eye is pressed: every reader of every message would be the largest
+   * thing in a feed response, and nobody looks at more than one at a time.
+   */
+  readCount: number;
 }
 
 export interface ProjectCategoryGroup {

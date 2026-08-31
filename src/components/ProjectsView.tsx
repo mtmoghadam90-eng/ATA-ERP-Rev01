@@ -35,6 +35,7 @@ import { useProjectActivities } from '../api/useProjectActivities';
 import { inboxApi, submitReferralReply } from '../api/inbox';
 import { tasksApi } from '../api/tasks';
 import ReferralThread from './ReferralThread';
+import MessageReactions from './MessageReactions';
 import ProjectFollowUpTab from './ProjectFollowUpTab';
 import ActivityComposer from './ActivityComposer';
 import CategoryMembersModal from './CategoryMembersModal';
@@ -301,6 +302,23 @@ export default function ProjectsView({
   const [editingGroupIdForEndDate, setEditingGroupIdForEndDate] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<any>({});
   const [customValues, setCustomValues] = useState<any>({});
+
+  /*
+   * «دیده شد» means the conversation was open, not that the project was.
+   *
+   * Every category this project has arrives with the feed and each stays folded
+   * until somebody opens it, so recording a receipt for everything fetched
+   * would claim people had read conversations they never unfolded — and the eye
+   * exists precisely to be believed. Only the expanded groups' messages are
+   * reported, and the hook sends each one once per session.
+   */
+  const markActivitiesRead = activityFeed.markRead;
+  React.useEffect(() => {
+    const onScreen = projectCategoryGroups
+      .filter((group) => !!expandedGroups[group.id])
+      .flatMap((group) => group.activities.map((activity) => activity.id));
+    markActivitiesRead(onScreen);
+  }, [projectCategoryGroups, expandedGroups, markActivitiesRead]);
 
   // Milestone & Automations UI States
   const [newMilestoneName, setNewMilestoneName] = useState("");
@@ -5436,6 +5454,27 @@ export default function ProjectsView({
                                           referrals screen to say so. Same
                                           component, same three server calls.
                                         */}
+                                        {/*
+                                          React, and see who has read it.
+
+                                          A one-press answer — «دیدم», «موافقم»,
+                                          «ممنون» — should not cost a message of
+                                          its own: a job's history is read top to
+                                          bottom, and a column of one-word
+                                          replies buries the work in it.
+                                        */}
+                                        <MessageReactions
+                                          activityId={act.id}
+                                          reactions={act.reactions}
+                                          readCount={act.readCount}
+                                          currentUserId={currentUser?.id}
+                                          nameOf={(userId) => users.find((u) => u.id === userId)?.fullName}
+                                          onToggle={(emoji) => activityFeed
+                                            .toggleReaction(act.id, emoji)
+                                            .catch((err) => reportActivityError(err, 'ثبت واکنش با خطا مواجه شد.'))}
+                                          loadReaders={() => projectsApi.activityReaders(act.id)}
+                                        />
+
                                         {(act.referrals ?? []).map((ref) => (
                                           <div key={ref.id} className="mt-2 bg-white rounded-lg p-3 border border-slate-150 space-y-2 text-right">
                                             <div className="flex justify-between items-center text-[9px] border-b border-slate-100 pb-1.5">

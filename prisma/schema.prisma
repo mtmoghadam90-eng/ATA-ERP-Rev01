@@ -552,25 +552,25 @@ model Project {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  items              ProjectItem[]
-  milestones         ProjectMilestone[]
-  proformas          Proforma[]
-  purchaseOrders     PurchaseOrder[]
-  transactions       Transaction[]
-  inquiries          SupplierInquiry[]
-  deliveries         PackagingDelivery[]
-  services           AfterSalesService[]
-  categoryGroups     ProjectCategoryGroup[]
+  items                ProjectItem[]
+  milestones           ProjectMilestone[]
+  proformas            Proforma[]
+  purchaseOrders       PurchaseOrder[]
+  transactions         Transaction[]
+  inquiries            SupplierInquiry[]
+  deliveries           PackagingDelivery[]
+  services             AfterSalesService[]
+  categoryGroups       ProjectCategoryGroup[]
   /// Who to write to about this job, and how.
   ///
   /// The contact is one of the customer's linked individuals; the channel is
   /// what they prefer. Both optional — a project that says nothing falls back
   /// to the customer's own details, which is what most jobs want.
-  messagingContactId String?                @db.NVarChar(36)
-  messagingChannel   String?                @db.NVarChar(20)
+  messagingContactId   String?                @db.NVarChar(36)
+  messagingChannel     String?                @db.NVarChar(20)
   /// Automation leaves this job alone. Manual sends still go out — the point is
   /// to exempt one project from company-wide rules, not to silence it.
-  suppressAutoMessages Boolean              @default(false)
+  suppressAutoMessages Boolean                @default(false)
 
   messages Message[]
 
@@ -692,10 +692,10 @@ model Proforma {
   /// `isCancelled` (see src/server/proformaStatus.ts), and a second column
   /// spelling them again is two sources of truth for one fact. This column
   /// answers only "is anybody still chasing this quotation, and if not why".
-  followUpState        String    @default("OPEN") @db.NVarChar(20)
+  followUpState       String    @default("OPEN") @db.NVarChar(20)
   /// Set with DEFERRED: the day the customer asked to be approached again.
-  deferredUntil        DateTime? @db.Date
-  deferredUntilJalali  String?   @db.NVarChar(10)
+  deferredUntil       DateTime? @db.Date
+  deferredUntilJalali String?   @db.NVarChar(10)
 
   /// The proforma this one revises, when it is explicitly a revision.
   ///
@@ -1288,11 +1288,70 @@ model ProjectActivity {
   /// request to two people — which the unique index forbade outright.
   referrals ProjectReferral[]
 
+  /// The one-press answers to this message, and who has seen it.
+  ///
+  /// Both are one row per person, never a JSON column on this row: two people
+  /// reacting at the same moment would be a read-modify-write race, and the
+  /// unique indexes below turn "press it twice to undo" and "mark it read
+  /// again" into things the database settles rather than the application.
+  reactions ActivityReaction[]
+  reads     ActivityRead[]
+
   @@index([groupId])
   @@index([createdAt])
   @@index([sourceId])
   @@index([replyToId])
   @@map("project_activities")
+}
+
+/// One person's one-press answer to one message.
+///
+/// `userId` is deliberately a plain column rather than a foreign key, the same
+/// shape as `tasks.createdByUserId`: a reaction must never be what stops an
+/// account being deleted, and `userName` is kept beside it so the history stays
+/// readable when one is. Identity is decided by the id — a renamed colleague is
+/// still the same person — and the name is only what is drawn.
+model ActivityReaction {
+  id         String          @id @default(uuid()) @db.NVarChar(36)
+  activityId String          @db.NVarChar(36)
+  activity   ProjectActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  userId   String  @db.NVarChar(36)
+  userName String? @db.NVarChar(200)
+
+  /// One of `ACTIVITY_REACTIONS` (src/utils/reactions.ts). The allowlist is
+  /// enforced on creation only, so a value stored before the list changed still
+  /// renders rather than vanishing from under whoever left it.
+  emoji String @db.NVarChar(16)
+
+  createdAt DateTime @default(now())
+
+  /// Pressing the same reaction twice is a removal, not a second row.
+  @@unique([activityId, userId, emoji])
+  @@index([activityId])
+  @@map("activity_reactions")
+}
+
+/// That one person has seen one message.
+///
+/// Written when the feed puts the message on screen, never by the author for
+/// their own message — "seen by" answers «did this reach anybody», and the
+/// person who wrote it is not an answer to that.
+model ActivityRead {
+  id         String          @id @default(uuid()) @db.NVarChar(36)
+  activityId String          @db.NVarChar(36)
+  activity   ProjectActivity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+
+  userId   String  @db.NVarChar(36)
+  userName String? @db.NVarChar(200)
+
+  readAt DateTime @default(now())
+
+  /// Seen once. The client re-reads the feed constantly; this is what makes
+  /// posting the same receipt again cost nothing.
+  @@unique([activityId, userId])
+  @@index([activityId])
+  @@map("activity_reads")
 }
 
 model ProjectReferral {
@@ -1369,10 +1428,10 @@ model Task {
   /// `followUpResult` is what the customer said — a value from
   /// `settings.dropdownItems.followUpResults` — and is **not** a loss reason and
   /// not a commercial outcome.
-  followUpResult   String?   @db.NVarChar(200)
-  completionNote   String?   @db.NVarChar(Max)
-  completedAt      DateTime? @db.Date
-  completedAtJalali String?  @db.NVarChar(10)
+  followUpResult    String?   @db.NVarChar(200)
+  completionNote    String?   @db.NVarChar(Max)
+  completedAt       DateTime? @db.Date
+  completedAtJalali String?   @db.NVarChar(10)
 
   priority String @default("متوسط") @db.NVarChar(20)
   status   String @default("در حال انجام") @db.NVarChar(30)
@@ -1522,7 +1581,7 @@ model Holiday {
   id String @id @default(uuid()) @db.NVarChar(36)
 
   /// `YYYY/MM/DD`, and the identity of the row — one answer per day.
-  dateJalali String @unique @db.NVarChar(10)
+  dateJalali String   @unique @db.NVarChar(10)
   /// The same day in the Gregorian calendar, for anything that queries a range.
   date       DateTime @db.Date
   /// Denormalised so a year can be counted and re-imported without parsing.
@@ -1772,17 +1831,17 @@ model AssistantAction {
 /// authenticating a request is one index seek rather than a bcrypt comparison
 /// against every row — on every call an integration makes.
 model ApiToken {
-  id   String @id @db.NVarChar(36)
-  name String @db.NVarChar(200)
+  id        String @id @db.NVarChar(36)
+  name      String @db.NVarChar(200)
   /// The first characters of the token, in the clear, to recognise it in the list.
-  prefix String @db.NVarChar(20)
+  prefix    String @db.NVarChar(20)
   /// SHA-256 of the token, hex.
   tokenHash String @unique @db.NVarChar(64)
 
   /// Whose permissions this token carries.
   userId String @db.NVarChar(36)
   /// read | full
-  scope String @db.NVarChar(10)
+  scope  String @db.NVarChar(10)
 
   isActive   Boolean   @default(true)
   expiresAt  DateTime?

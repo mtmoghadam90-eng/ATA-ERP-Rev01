@@ -7,7 +7,8 @@ import {
   ACTIVITY_SORTABLE, REFERRAL_FILTERABLE, REFERRAL_SORTABLE, categoryUsage, renameCategory,
   addActivity, addModuleNote, addReferralMessage, deleteActivity, deleteCategoryGroup,
   deleteModuleNote,
-  listActivities, listCategoryGroups, listModuleNotes, listReferrals,
+  listActivities, listActivityReaders, listCategoryGroups, listModuleNotes, listReferrals,
+  markActivitiesRead, toggleActivityReaction,
   reassignReferral,
   updateReferralAction,
   setReferralStatus, updateActivity, upsertCategoryGroup,
@@ -268,6 +269,62 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
       res.json({ success: true });
     } catch (err) {
       sendError(res, err, "DELETE /api/activities/:id");
+    }
+  });
+
+  /* ------------------- reactions and read receipts ----------------------- */
+
+  /*
+   * Registered before `/api/activities/:id/...` for the usual reason: with the
+   * order reversed, «read» is matched as an activity id and the request 404s on
+   * a record whose id is the literal string.
+   */
+  app.post("/api/activities/read", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const raw = (req.body as { activityIds?: unknown })?.activityIds;
+      const ids = Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string") : [];
+      // Reading is a read: a receipt is recorded for anybody who may see the
+      // message, which is the whole point of the eye.
+      res.json({ success: true, ...(await markActivitiesRead(ids, user)) });
+    } catch (err) {
+      sendError(res, err, "POST /api/activities/read");
+    }
+  });
+
+  app.get("/api/activities/:id/reads", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const outcome = await listActivityReaders(req.params.id, user);
+      if (outcome === "forbidden") return denied(res);
+      res.json({ success: true, ...outcome });
+    } catch (err) {
+      sendError(res, err, "GET /api/activities/:id/reads");
+    }
+  });
+
+  app.post("/api/activities/:id/reactions", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const emoji = (req.body as { emoji?: unknown })?.emoji;
+      const outcome = await toggleActivityReaction(
+        req.params.id, typeof emoji === "string" ? emoji : "", user);
+
+      if (outcome === "forbidden") return denied(res);
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "فعالیت یافت نشد." });
+        return;
+      }
+      if (outcome === "invalid") {
+        res.status(400).json({ success: false, error: "این واکنش در فهرست مجاز نیست." });
+        return;
+      }
+      res.json({ success: true, ...outcome });
+    } catch (err) {
+      sendError(res, err, "POST /api/activities/:id/reactions");
     }
   });
 
