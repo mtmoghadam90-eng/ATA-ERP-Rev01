@@ -273,6 +273,7 @@ export default function ProjectFollowUpTab({ projectId, settings }: Props) {
           resultOptions={resultOptions}
           userNames={userNames}
           outcomeIsTerminal={isTerminalOutcome(completing.outcome)}
+          lossReasons={settings.lossReasons ?? []}
           onClose={() => setCompleting(null)}
           onSubmit={async (body) => {
             await salesFollowUpApi.complete(completing.nextActionTaskId!, body);

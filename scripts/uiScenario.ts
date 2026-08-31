@@ -607,6 +607,7 @@ head("Follow-up completion: the button will not close a live quote with nothing 
       resultOptions: ["در حال بررسی فنی", "خرید به تعویق افتاد", "عدم پاسخ"],
       userNames: ["کارشناس فروش"],
       outcomeIsTerminal: false,
+      lossReasons: ['قیمت بالا', 'زمان تحویل'],
       onClose: () => {},
       onSubmit: async (body: unknown) => { submitted = body; },
     }));
@@ -655,6 +656,7 @@ head("Follow-up completion: the button will not close a live quote with nothing 
       resultOptions: ["در حال بررسی فنی"],
       userNames: ["کارشناس فروش"],
       outcomeIsTerminal: true,
+      lossReasons: ['قیمت بالا', 'زمان تحویل'],
       onClose: () => {},
       onSubmit: async () => {},
     }));

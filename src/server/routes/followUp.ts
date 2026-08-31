@@ -7,7 +7,7 @@ import {
   completeFollowUp, followUpSummary, listFollowUpQueue, projectFollowUpReport,
   reactivateFollowUp,
 } from "../services/followUpService";
-import type { FollowUpCompletionInput } from "../../utils/salesFollowUp";
+import { SETTLE_OUTCOMES, type FollowUpCompletionInput } from "../../utils/salesFollowUp";
 
 /**
  * The sales follow-up queue and the completion flow.
@@ -107,6 +107,18 @@ export function registerFollowUpRoutes(app: express.Express, deps: RouteDeps): v
         nextAssignedToName:
           typeof body.nextAssignedToName === "string" ? body.nextAssignedToName : null,
         deferredUntil: typeof body.deferredUntil === "string" ? body.deferredUntil : null,
+        /*
+         * The commercial outcome, when the person answered yes to being asked.
+         *
+         * Only ever what the body actually carries: a result string never
+         * decides this on the server's own initiative, because «تأیید نهایی
+         * خرید» on the phone can still mean two lines out of five.
+         */
+        settleOutcome: (SETTLE_OUTCOMES as readonly string[]).includes(String(body.settleOutcome))
+          ? (body.settleOutcome as FollowUpCompletionInput["settleOutcome"])
+          : null,
+        settleLossReason:
+          typeof body.settleLossReason === "string" ? body.settleLossReason : null,
       };
 
       const outcome = await completeFollowUp(req.params.taskId, input, user, getTodayShamsi());

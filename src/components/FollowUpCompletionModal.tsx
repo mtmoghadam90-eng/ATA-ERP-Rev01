@@ -4,7 +4,8 @@ import { AlertTriangle, CalendarClock, CheckCircle2, PhoneOff, X } from 'lucide-
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { SearchableSelect } from './SearchableSelect';
 import {
-  DEFAULT_FOLLOW_UP_RESULTS, FollowUpDecision, completionRefusalReason,
+  DEFAULT_FOLLOW_UP_RESULTS, FollowUpDecision, SETTLE_OUTCOMES, SETTLE_OUTCOME_LABELS,
+  SettleOutcome, completionRefusalReason, impliedSettlement,
 } from '../utils/salesFollowUp';
 import { getTodayShamsi, addDaysToShamsi } from '../dateUtils';
 import type { FollowUpRow, FollowUpCompletionBody } from '../api/salesFollowUp';
@@ -32,6 +33,8 @@ interface Props {
   userNames: string[];
   /** True when the proforma's outcome is already won, lost or cancelled. */
   outcomeIsTerminal: boolean;
+  /** `settings.lossReasons`, asked for only when a document is marked lost. */
+  lossReasons: string[];
   onClose: () => void;
   onSubmit: (body: FollowUpCompletionBody) => Promise<void>;
 }
@@ -54,13 +57,13 @@ const DECISIONS: { value: FollowUpDecision; label: string; hint: string; icon: t
   },
   {
     value: 'TERMINAL', label: 'بدون اقدام بعدی (نتیجه نهایی مشخص است)',
-    hint: 'فقط وقتی در دسترس است که نتیجه نهایی پیش‌فاکتور (برنده/باخته/لغو) قبلاً ثبت شده باشد.',
+    hint: 'وقتی نتیجه نهایی پیش‌فاکتور مشخص است — چه قبلاً ثبت شده باشد و چه همین‌جا ثبتش کنید.',
     icon: AlertTriangle,
   },
 ];
 
 export default function FollowUpCompletionModal({
-  row, resultOptions, userNames, outcomeIsTerminal, onClose, onSubmit,
+  row, resultOptions, userNames, outcomeIsTerminal, lossReasons, onClose, onSubmit,
 }: Props) {
   const today = getTodayShamsi();
 
@@ -71,6 +74,14 @@ export default function FollowUpCompletionModal({
   const [nextDueDate, setNextDueDate] = useState(addDaysToShamsi(today, 3));
   const [nextAssignee, setNextAssignee] = useState(row.salesExpert ?? '');
   const [deferredUntil, setDeferredUntil] = useState(addDaysToShamsi(today, 14));
+  /*
+   * Whether to also write the commercial outcome, and which.
+   *
+   * `null` is «only record what the customer said», which stays the default
+   * however decisive the result sounds — the screen asks, it does not decide.
+   */
+  const [settleOutcome, setSettleOutcome] = useState<SettleOutcome | null>(null);
+  const [settleLossReason, setSettleLossReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -92,6 +103,8 @@ export default function FollowUpCompletionModal({
     setNextDueDate(addDaysToShamsi(getTodayShamsi(), 3));
     setNextAssignee(row.salesExpert ?? '');
     setDeferredUntil(addDaysToShamsi(getTodayShamsi(), 14));
+    setSettleOutcome(null);
+    setSettleLossReason('');
     setError(null);
   }, [row.nextActionTaskId, row.proformaNumber, row.salesExpert]);
 
@@ -105,7 +118,12 @@ export default function FollowUpCompletionModal({
     nextDueDate: decision === 'NEXT_ACTION' ? nextDueDate : undefined,
     nextAssignedToName: decision === 'NEXT_ACTION' ? (nextAssignee || undefined) : undefined,
     deferredUntil: decision === 'DEFER' ? deferredUntil : undefined,
+    settleOutcome: settleOutcome ?? undefined,
+    settleLossReason: settleOutcome === 'LOST' ? (settleLossReason || undefined) : undefined,
   };
+
+  /** What this result implies, if anything. A suggestion — see the block below. */
+  const suggested = impliedSettlement(followUpResult);
 
   // The same pure rule the server runs, so the button cannot submit what the
   // server would refuse — and the server does not trust that it did not.
@@ -162,6 +180,98 @@ export default function FollowUpCompletionModal({
             </p>
           </div>
 
+          {/*
+            The question, asked only when the result actually implies an
+            outcome and the document is not already settled.
+
+            It is a question and not an action: «تأیید نهایی خرید» on the phone
+            can still mean two lines out of five, and only the person on the
+            call knows. Declining leaves the proforma exactly as it was, which
+            is what happened before this existed.
+          */}
+          {suggested && !outcomeIsTerminal && (
+            <div className="border border-sky-200 bg-sky-50/70 rounded-xl p-3.5 space-y-2.5">
+              <p className="text-[11px] font-bold text-sky-900 leading-relaxed">
+                این نتیجه یعنی تکلیف پیش‌فاکتور روشن شده. وضعیت تجاری آن را هم به
+                «{SETTLE_OUTCOME_LABELS[suggested]}» تغییر می‌دهید؟
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSettleOutcome(suggested)}
+                  id="follow-up-settle-yes"
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border transition ${
+                    settleOutcome
+                      ? 'bg-sky-500 text-white border-sky-500'
+                      : 'bg-white text-sky-700 border-sky-300 hover:bg-sky-100'
+                  }`}
+                >
+                  بله، وضعیت را به‌روز کن
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setSettleOutcome(null); setSettleLossReason(''); }}
+                  id="follow-up-settle-no"
+                  className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border transition ${
+                    settleOutcome
+                      ? 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'
+                      : 'bg-slate-700 text-white border-slate-700'
+                  }`}
+                >
+                  نه، فقط نتیجه ثبت شود
+                </button>
+              </div>
+
+              {settleOutcome && (
+                <div className="space-y-2 pt-1">
+                  {/*
+                    The suggestion is a starting point, not the answer: a call
+                    that ended in «باخت» may have been recorded under a result
+                    that suggests cancellation, and the person can correct it
+                    here without going back.
+                  */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {SETTLE_OUTCOMES.map((o) => (
+                      <button
+                        key={o}
+                        type="button"
+                        onClick={() => setSettleOutcome(o)}
+                        id={`follow-up-settle-${o}`}
+                        className={`px-2.5 py-1 rounded-md text-[10px] font-bold border transition ${
+                          settleOutcome === o
+                            ? 'bg-sky-600 text-white border-sky-600'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        {SETTLE_OUTCOME_LABELS[o]}
+                      </button>
+                    ))}
+                  </div>
+
+                  {settleOutcome === 'LOST' && (
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                        دلیل باخت
+                      </label>
+                      <SearchableSelect
+                        value={settleLossReason}
+                        onChange={setSettleLossReason}
+                        options={lossReasons.map((r) => ({ value: r, label: r }))}
+                        placeholder="-- انتخاب کنید --"
+                      />
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-sky-800/80 leading-relaxed">
+                    همه ردیف‌های این پیش‌فاکتور «{SETTLE_OUTCOME_LABELS[settleOutcome]}» می‌شوند و
+                    وضعیت پروژه دوباره محاسبه می‌شود. اگر بخشی از اقلام برنده شده، به‌جای این از
+                    «ثبت نتیجه اقلام» در خود پیش‌فاکتور استفاده کنید.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           <div>
             <label className="block text-[11px] font-bold text-slate-600 mb-1">یادداشت</label>
             <textarea
@@ -183,7 +293,13 @@ export default function FollowUpCompletionModal({
                 // Closing a live quotation with nothing planned is the hole this
                 // screen exists to close, so the option is not merely hidden —
                 // it is shown, disabled, with the reason.
-                const disabled = d.value === 'TERMINAL' && !outcomeIsTerminal;
+                /*
+                 * Settling the outcome here counts as settling it. The option
+                 * used to be greyed out at exactly the moment it was wanted —
+                 * the call where the customer confirms the purchase is the call
+                 * after which no next action is needed.
+                 */
+                const disabled = d.value === 'TERMINAL' && !outcomeIsTerminal && !settleOutcome;
                 return (
                   <button
                     key={d.value}
