@@ -188,9 +188,6 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
               <div><strong>آدرس شرکت:</strong> ${template.address || "-"}</div>
               <div><strong>تلفن تماس:</strong> ${template.phone || "-"}</div>
               <div><strong>پست الکترونیکی:</strong> ${template.email || "-"}</div>
-              ${template.website
-                ? `<div class="print-footer-site">${escapeHtml(template.website)}</div>`
-                : ""}
           </div>
       </div>`;
 
@@ -279,9 +276,16 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
           color: #1e293b;
           margin: 0;
       }
+      /*
+       * What the company does, and the web address under it, are one block of
+       * two secondary lines — so they are set at one tone and separated by
+       * size and tracking rather than by weight of ink. The tagline used to be
+       * #94a3b8, which measures 2.56:1: on a screen it is faint, and printed on
+       * paper it is close to absent.
+       */
       .subtitle {
           font-size: 11px;
-          color: #94a3b8;
+          color: #5c6a80;
           margin: 0;
       }
       .title-box {
@@ -623,15 +627,33 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
           align-items: center;
       }
       /*
-       * The website, printed in bold beside the rest of the bar.
+       * The web address, under the company name and what the company does.
        *
-       * Latin text inside an RTL line, so it carries its own direction: without
-       * it a trailing dot or a path segment is reordered and the address is
-       * printed wrong on a document that goes to a customer.
+       * It used to sit in the address bar at the foot of the page, in a flex
+       * row it shared with the address, the telephone and the email — so it
+       * was pushed to whichever end the wrapping left it and read as a fourth
+       * contact detail rather than as part of the company's own mark. In a
+       * letterhead it belongs with the name.
+       *
+       * Set a step below the line of business and tracked slightly wider: a
+       * Latin string set solid under Persian text reads as a dense block, and
+       * the extra letter-spacing is what makes it scan as an address. No
+       * second typeface — the document loads one, and a face that silently
+       * falls back at print time paginates differently from the one that was
+       * proofed.
+       *
+       * Latin inside an RTL block, so it carries its own direction: without
+       * that, a trailing dot or a path segment is reordered and the address
+       * prints wrong on a document that goes to a customer.
        */
-      .print-footer-site {
-          font-weight: 700;
-          color: #334155;
+      .company-site {
+          margin: 3px 0 0;
+          font-size: 10px;
+          font-weight: 600;
+          letter-spacing: 0.06em;
+          /* The same tone as the line above it — 5.49:1, legible in print —
+             and not the user-set title colour, which may be any shade at all. */
+          color: #5c6a80;
           direction: ltr;
           unicode-bidi: isolate;
       }
@@ -768,6 +790,9 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
                       <div>
                           <h4 class="company-name">${template.companyName}</h4>
                           <p class="subtitle">تامین تجهیزات اتوماسیون و ابزاردقیق</p>
+                          ${template.website
+                            ? `<p class="company-site">${escapeHtml(template.website)}</p>`
+                            : ""}
                       </div>
                       `
                           : ""

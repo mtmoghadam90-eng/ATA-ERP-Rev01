@@ -4103,6 +4103,54 @@ head("Printed proforma: the multi-page rules");
     /\.signatures \{[^}]*break-before:\s*avoid/.test(doc));
   ok("and still refuses to be split down the middle",
     /\.signatures \{[^}]*break-inside:\s*avoid/.test(doc));
+  /*
+   * The web address belongs with the company's name, not among the contact
+   * details.
+   *
+   * It used to sit in the address bar at the foot of the page, inside a wrapping
+   * flex row it shared with the address, the telephone and the email — so it was
+   * pushed to whichever end the wrap left it and read as a fourth contact
+   * detail. In a letterhead it is part of the mark.
+   */
+  const headerBlock = doc.slice(doc.indexOf('class="logo-box"'), doc.indexOf('class="title-box"'));
+  ok("the site is in the letterhead", /class="company-site"/.test(headerBlock));
+  ok("under the name and what the company does",
+    headerBlock.indexOf('class="company-name"') < headerBlock.indexOf('class="company-site"')
+    && headerBlock.indexOf('class="subtitle"') < headerBlock.indexOf('class="company-site"'));
+  ok("and no longer in the address bar",
+    !doc.includes("print-footer-site"));
+
+  /*
+   * A Latin string inside an RTL block. Without its own direction a trailing
+   * dot or a path segment is reordered, and the address prints wrong on a
+   * document that goes to a customer.
+   */
+  const siteRule = ruleBody(".company-site");
+  ok("it carries its own direction",
+    /direction:\s*ltr/.test(siteRule) && /unicode-bidi:\s*isolate/.test(siteRule), siteRule);
+  // Set by size and tracking rather than by a second typeface: the document
+  // loads one, and a face that silently falls back paginates differently from
+  // the one that was proofed.
+  ok("and is set in the document's own face",
+    !/font-family/.test(siteRule) && /letter-spacing/.test(siteRule), siteRule);
+
+  /*
+   * The two secondary lines are one block, so they are one tone. The tagline
+   * was #94a3b8 — 2.56:1, which on paper is close to absent.
+   */
+  const subtitleRule = ruleBody(".subtitle");
+  const toneOf = (rule: string) => rule.match(/color:\s*(#[0-9a-f]{6})/i)?.[1];
+  eq("the tagline and the address share a tone", toneOf(subtitleRule), toneOf(siteRule));
+  // Measured here rather than eyeballed: this block is read off paper, where a
+  // tone chosen on a backlit screen is the one that disappears.
+  const onWhite = (h: string) => {
+    const c = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 1.05 / (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] + 0.05);
+  };
+  const tone = toneOf(siteRule);
+  ok("which is legible in print", !!tone && onWhite(tone) >= 4.5,
+    tone && onWhite(tone).toFixed(2));
 
   /*
    * One set of dimensions for the seal strip. Every size in this block used to
@@ -4846,14 +4894,14 @@ head("Proforma form: a SKU created by the configurator is selectable");
   ok("and the rule itself is the pure one",
     /describeProductSpec\(/.test(src) && !/const storedLines = new Set/.test(src));
 
-  // The website is printed, and the field to set it exists.
-  const doc = readFileSync("src/utils/proformaDocument.ts", "utf8");
-  ok("the printed footer carries the website", /print-footer-site/.test(doc));
-  ok("in bold", /\.print-footer-site \{[^}]*font-weight: 700/.test(doc));
-  // Latin inside an RTL line reorders without this, and the address goes to a
-  // customer printed wrong.
-  ok("and isolated, so an RTL line does not reorder it",
-    /\.print-footer-site \{[^}]*unicode-bidi: isolate/.test(doc));
+  /*
+   * The website is printed, and the field to set it exists.
+   *
+   * Where it is printed is pinned in the printed-document section above, which
+   * measures the rendered letterhead rather than this file's text — it used to
+   * be checked here as `print-footer-site`, the address-bar copy it no longer
+   * has.
+   */
   const settingsSrc = readFileSync("src/components/SettingsView.tsx", "utf8");
   ok("general settings can edit it", /settings-company-website/.test(settingsSrc));
   ok("and saving keeps it", /\n\s+website,\n/.test(settingsSrc));
