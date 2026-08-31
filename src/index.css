@@ -51,6 +51,24 @@
   --color-brand-700: #0369a1;
   --color-brand-800: #07557e;
   --color-brand-900: #0c4869;
+
+  /*
+   * Two border roles, because a border does two different jobs.
+   *
+   * `edge` is a boundary the eye must find — the outline of a control, the top
+   * of the compose bar, the rule under a table head. It is 3.63:1 on white,
+   * which clears the 3:1 the WCAG contrast rule asks of a user-interface
+   * boundary. `hairline` is a divider *inside* a surface, where separation is
+   * already carried by spacing and alignment; at 1.60:1 it is deliberately
+   * below that threshold, because an edge-weight rule between every row of a
+   * list reads as noise.
+   *
+   * They are `@theme` colours rather than raw hex, so `border-edge` is a real
+   * utility and dark mode can restate the value below rather than every caller
+   * repeating a literal.
+   */
+  --color-edge: #75889f;
+  --color-hairline: #c2cedb;
 }
 
 /* The column alignment `font-mono` was really being used for. */
@@ -146,6 +164,10 @@ body {
   --border-primary: #232f45;/* Slate-700/800 dark border */
   --border-light: #1c2638;  /* Subtly darker border */
   --bg-hover: #1e293b;      /* Slate-700 hover background */
+  /* The same two roles on a dark ground: light enough to be found, dark
+     enough not to glare. */
+  --color-edge: #55697f;
+  --color-hairline: #2b3a4b;
 }
 
 /* Base Body Dark Styling */
@@ -300,3 +322,102 @@ body {
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3) !important;
 }
 
+
+/* ======================================================================== */
+/*  Contrast layer — light mode                                             */
+/* ======================================================================== */
+/*
+ * The palette was measured against WCAG 2.1 and most of it did not pass. Not
+ * as a handful of mistakes: as one palette repeated everywhere, so the fix
+ * belongs in one place rather than in 1427 class attributes.
+ *
+ * What was wrong, in the numbers that drove each value below:
+ *
+ *   text-slate-400  2.56:1 on white   (676 uses; AA needs 4.5)
+ *   text-slate-300  1.48:1            (68 uses)
+ *   border-slate-100 1.10:1           (479 uses — invisible)
+ *   border-slate-200 1.23:1           (948 uses — near invisible)
+ *   border-slate-150 —                (149 uses of a colour that does not
+ *                                      exist; Tailwind's slate ramp goes
+ *                                      100 → 200, so no rule was generated and
+ *                                      every one of those borders fell back to
+ *                                      `currentColor`, drawing in whatever text
+ *                                      colour it inherited)
+ *   text-sky-600    4.10 · emerald-600 3.77 · rose-500 3.67 · amber-600 3.19
+ *
+ * Two things this deliberately does NOT do.
+ *
+ * It does not redefine `--color-slate-*`. The same token is used as a text
+ * colour, a border and a *fill*: darkening `--color-slate-100` to fix 479
+ * borders would also darken 200 `bg-slate-100` surfaces, which is not the same
+ * question and not what anybody wants.
+ *
+ * And it does not try to separate two large surfaces by 3:1. In a light
+ * interface that is only reachable by making one of them obviously grey. The
+ * 3:1 threshold is about the *boundary* of a component, not its fill — so the
+ * separation is carried by `--color-edge`, and the surfaces stay as they are.
+ *
+ * Scoped to `html:not(.dark)` throughout. Dark mode already restates most of
+ * these through the block above, and a value chosen to be darker on white is
+ * the wrong direction on a dark ground.
+ */
+
+/* ---- text: the muted end of the ramp, which carried most of the failures -- */
+/*
+ * The ramp stays three legible steps — 5.10 → 6.19 → 7.58 — rather than
+ * collapsing into one weight. `slate-300` is the exception: at 2.90 it still
+ * does not reach 4.5, because it is not body text. It is icon strokes,
+ * disabled states and decorative glyphs, and holding it to the text threshold
+ * would make every one of those read as content.
+ */
+html:not(.dark) .text-slate-300 { color: #8a99ac; }  /* 2.90 — decorative only */
+html:not(.dark) .text-slate-400 { color: #616f85; }  /* 5.10 white · 4.87 slate-50 */
+html:not(.dark) .text-slate-500 { color: #556275; }  /* 6.19 white · 5.92 slate-50 */
+
+html:not(.dark) .placeholder-slate-400::placeholder,
+html:not(.dark) .placeholder-slate-300::placeholder { color: #616f85; }
+
+html:not(.dark) .hover\:text-slate-600:hover { color: #3d4a5c; }
+
+/* ---- semantic colours: one step darker, so status reads at a glance ------- */
+/*
+ * These are the colours that say «برنده», «باخته», «هشدار» — the ones that have
+ * to be legible in a single glance, and every one of them was below AA. A step
+ * down the same ramp clears the threshold without changing the brand.
+ */
+html:not(.dark) .text-sky-600     { color: #0369a1; }  /* was 4.10 → 5.93 */
+html:not(.dark) .text-sky-500     { color: #0369a1; }  /* was 2.77 → 5.93 */
+html:not(.dark) .text-emerald-600 { color: #047857; }  /* was 3.77 → 5.48 */
+html:not(.dark) .text-emerald-500 { color: #047857; }
+html:not(.dark) .text-rose-500    { color: #e11d48; }  /* was 3.67 → 4.70 */
+html:not(.dark) .text-amber-600   { color: #b45309; }  /* was 3.19 → 5.02 */
+html:not(.dark) .text-amber-500   { color: #b45309; }  /* was 2.15 → 5.02 */
+html:not(.dark) .text-indigo-600  { color: #4338ca; }
+
+/* ---- borders: the two roles, mapped from the classes already in use ------ */
+/*
+ * `slate-100` and `divide-slate-100` are dividers inside a surface; `150` and
+ * `200` are the outlines of cards and panels, which need to be found rather
+ * than merely sensed. `slate-150` gets a value at all for the first time.
+ */
+html:not(.dark) .border-slate-100 { border-color: #cfd9e4; }  /* was 1.10 → 1.43 */
+html:not(.dark) .border-slate-150 { border-color: #c2cedb; }  /* was currentColor */
+html:not(.dark) .border-slate-200 { border-color: #b9c6d5; }  /* was 1.23 → 1.74 */
+html:not(.dark) .border-slate-300 { border-color: #9aabbf; }  /* was 1.48 → 2.35 */
+
+html:not(.dark) .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: #cfd9e4; }
+html:not(.dark) .divide-slate-200 > :not([hidden]) ~ :not([hidden]) { border-color: #b9c6d5; }
+
+/*
+ * The boundary of a control is the one border the standard is strict about
+ * (WCAG 1.4.11), so form fields get the full 3:1 rather than the card weight.
+ *
+ * Written with enough specificity to beat the `border-slate-200` most of these
+ * fields also carry — the class selector above is (0,2,1) and this is (0,3,2),
+ * so the rule lands whichever order they end up in.
+ */
+html:not(.dark) input:not([type="checkbox"]):not([type="radio"]),
+html:not(.dark) select:not([multiple]),
+html:not(.dark) textarea:not([readonly]) {
+  border-color: var(--color-edge);  /* 3.63:1 on white */
+}
