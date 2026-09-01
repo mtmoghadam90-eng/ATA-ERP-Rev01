@@ -4,7 +4,7 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, canSeeAllTasks } from "../auth";
 import { taskRelationKind } from "../../utils/taskRelations";
 import {
-  BOARD_LANES, BoardLane, TASK_CANCELLED, TASK_DOING, TASK_DONE, TASK_TODO,
+  BoardLane, LANE_FILTERS, TASK_CANCELLED, TASK_DOING, TASK_DONE, TASK_TODO,
   laneWhere, taskLane, taskStatusForLane,
 } from "../../utils/workBoard";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate } from "../dates";
@@ -225,11 +225,19 @@ export function buildTaskWhere(
    * column as an exclusion, agreeing with `taskLane`'s own fallback: a status
    * nobody anticipated is open work, and open work must never be unfindable.
    */
-  const lane = typeof extra.lane === "string" ? extra.lane : "";
+  /*
+   * **Normalised, not merely read.** The screen sends the literal «all» when no
+   * column is chosen, and this took any non-empty string as a choice — so
+   * `Boolean("all")` was true, and the «hide completed» toggle below, which
+   * stands down for an explicit choice, stood down permanently. Anything that
+   * is not one of the four is no choice at all, which is also what an
+   * integration sending a value nobody defined should get.
+   */
+  const requested = typeof extra.lane === "string" ? extra.lane : "";
+  const lane = (LANE_FILTERS as readonly string[]).includes(requested) ? requested : "";
+
   if (lane === "CANCELLED") and.push({ status: TASK_CANCELLED });
-  else if ((BOARD_LANES as readonly string[]).includes(lane)) {
-    and.push(laneWhere(lane as BoardLane));
-  }
+  else if (lane) and.push(laneWhere(lane as BoardLane));
 
   /*
    * The board's «hide completed» toggle.
@@ -238,13 +246,17 @@ export function buildTaskWhere(
    * the server, so hiding rows after they arrive would empty a page of twenty
    * done tasks and report the unfiltered total beside it.
    *
+   * It hides the **whole last column**, cancelled work included: that column is
+   * what «انجام‌شده‌ها» means on this screen, and leaving the cancelled ones
+   * behind would be a button that half works.
+   *
    * An explicit column choice wins. Somebody who has picked «انجام شده» is
    * asking for exactly the thing the toggle hides, and honouring both would
    * answer with nothing and explain nothing.
    */
   const hasExplicitLane = Boolean(lane) || Boolean(q.filters.status);
   if (extra.hideCompleted === true && !hasExplicitLane) {
-    and.push({ status: { not: TASK_DONE } });
+    and.push({ status: { notIn: [TASK_DONE, TASK_CANCELLED] } });
   }
 
   // Filter for reminder notifications — exact date and time match
