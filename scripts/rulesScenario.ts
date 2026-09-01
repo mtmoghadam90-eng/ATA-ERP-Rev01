@@ -197,6 +197,9 @@ import {
   INQUIRY_WORKFLOW_STATUSES, PROJECT_STATUSES, PURCHASE_ORDER_STATUSES,
   deliveryWorkflowStatus, inquiryWorkflowStatus,
 } from "../src/utils/moduleStatuses";
+import {
+  STAGE_FOR_PO_STATUS, deriveProjectStage, resolveStage, stageRank,
+} from "../src/utils/projectStage";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -8524,6 +8527,202 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     /scope === "toMe" \|\| scope === "fromMe" \? scope : undefined/.test(tools));
 
   ok("the comment stripper left the tools intact", tools.length > 10000);
+}
+
+/* ==========================================================================
+ * «الان این پروژه در چه مرحله‌ای است؟»
+ *
+ * `status` is the sales outcome and cannot answer that — a project can be
+ * «برنده (موفق)» and «ترخیص گمرک» at the same time. The stage is a second
+ * derived column, and two rules decide it: the least-advanced open thing wins,
+ * and a person's override either pins or is used up.
+ * ========================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* -- before the sale -- */
+  eq("a project with nothing on it is new",
+    deriveProjectStage({ projectStatus: "جدید" }), "جدید");
+  eq("...and keeps what the form says",
+    deriveProjectStage({ projectStatus: "در حال مذاکره" }), "در حال مذاکره");
+  eq("a draft quotation is «تهیه پیش‌فاکتور»",
+    deriveProjectStage({ proformas: [{ status: "پیش‌نویس" }] }), "تهیه پیش‌فاکتور");
+  eq("one that has gone out is being chased",
+    deriveProjectStage({ proformas: [{ status: "ارسال شده" }] }), "پیگیری پیش‌فاکتور");
+  // A cancelled document is neither being written nor chased.
+  eq("a cancelled one does not count as sent",
+    deriveProjectStage({
+      proformas: [{ status: "ارسال شده", isCancelled: true }, { status: "پیش‌نویس" }],
+    }), "تهیه پیش‌فاکتور");
+
+  /* -- decided against -- */
+  eq("a lost project is lost", deriveProjectStage({ isLost: true }), "باخته");
+  eq("...and a cancelled one cancelled",
+    deriveProjectStage({ isCancelled: true, isWon: true }), "لغو شده");
+
+  /* -- the operational chain -- */
+  eq("won with nothing bought yet",
+    deriveProjectStage({ isWon: true }), "برنده — در انتظار تأمین");
+  eq("a purchase order's status is the project's stage",
+    deriveProjectStage({ isWon: true, purchaseOrders: [{ status: "ترخیص گمرک" }] }),
+    "ترخیص گمرک");
+
+  /*
+   * The rule that matters. A project is at the stage of the thing it is
+   * *waiting on*, not of the thing that happened to finish first — reading the
+   * furthest-along record would put «تحویل شده» on a job with two containers
+   * still at sea, and somebody would close it.
+   */
+  eq("three orders, and the slowest decides",
+    deriveProjectStage({
+      isWon: true,
+      purchaseOrders: [
+        { status: "ترخیص گمرک" },
+        { status: "حمل و ترانزیت" },
+        { status: "در حال حمل به انبار" },
+      ],
+    }), "حمل و ترانزیت");
+  eq("...whatever order they arrive in",
+    deriveProjectStage({
+      isWon: true,
+      purchaseOrders: [
+        { status: "حمل و ترانزیت" },
+        { status: "ترخیص گمرک" },
+      ],
+    }), "حمل و ترانزیت");
+  // A received order stops holding the project back; the packing list takes over.
+  eq("a received order hands over to the packing list",
+    deriveProjectStage({
+      isWon: true,
+      purchaseOrders: [{ status: "تحویل شده (رسید انبار)" }],
+      deliveries: [{ delivered: false }],
+    }), "بسته‌بندی و تحویل");
+  eq("...and one still in transit still holds it",
+    deriveProjectStage({
+      isWon: true,
+      purchaseOrders: [{ status: "تحویل شده (رسید انبار)" }, { status: "حمل و ترانزیت" }],
+      deliveries: [{ delivered: false }],
+    }), "حمل و ترانزیت");
+  eq("everything delivered is «تحویل شده»",
+    deriveProjectStage({
+      isWon: true,
+      purchaseOrders: [{ status: "تحویل شده (رسید انبار)" }],
+      deliveries: [{ delivered: true }],
+    }), "تحویل شده");
+  eq("...but not while one list is still open",
+    deriveProjectStage({
+      isWon: true,
+      deliveries: [{ delivered: true }, { delivered: false }],
+    }), "بسته‌بندی و تحویل");
+  eq("an open service record is the last stage",
+    deriveProjectStage({
+      isWon: true,
+      deliveries: [{ delivered: true }],
+      afterSales: [{ open: true }],
+    }), "خدمات پس از فروش");
+  eq("...and a closed one ends the project",
+    deriveProjectStage({
+      isWon: true,
+      deliveries: [{ delivered: true }],
+      afterSales: [{ open: false }],
+    }), "خاتمه‌یافته");
+  /*
+   * A status this build does not know must not be skipped: the order is open,
+   * and the safe thing to say is that supply is pending. Silently ignoring it
+   * would report a project as further along than it is.
+   */
+  eq("an unknown order status still holds the project",
+    deriveProjectStage({ isWon: true, purchaseOrders: [{ status: "چیز تازه" }] }),
+    "برنده — در انتظار تأمین");
+
+  /* -- the chain's own order -- */
+  ok("every stage the purchase order maps to is in the chain",
+    Object.values(STAGE_FOR_PO_STATUS).every((s) => stageRank(s) >= 0));
+  ok("the shipping stages are in the order the goods move",
+    stageRank("حواله و پرداخت به سازنده") < stageRank("در حال آماده‌سازی سازنده")
+    && stageRank("در حال آماده‌سازی سازنده") < stageRank("حمل و ترانزیت")
+    && stageRank("حمل و ترانزیت") < stageRank("ترخیص گمرک")
+    && stageRank("ترخیص گمرک") < stageRank("حمل به انبار")
+    && stageRank("حمل به انبار") < stageRank("بسته‌بندی و تحویل")
+    && stageRank("بسته‌بندی و تحویل") < stageRank("تحویل شده"));
+  eq("a stage this build does not know has no rank", stageRank("چیز تازه"), -1);
+
+  /* -- the override -- */
+  {
+    const derived = "حمل و ترانزیت" as const;
+    eq("no manual stage means the records decide",
+      resolveStage(derived, {}, true).stage, derived);
+    /*
+     * A `manualStageLocked` with no stage is not an override — honouring it
+     * would blank the column. The same trap `resolveRank` exists to avoid.
+     */
+    eq("a lock with nothing in it is not an override",
+      resolveStage(derived, { manualStageLocked: true }, true).stage, derived);
+    eq("a locked stage stands whatever the records do",
+      resolveStage(derived, { manualStage: "توقف پروژه", manualStageLocked: true }, true).stage,
+      "توقف پروژه");
+    ok("...and is never cleared",
+      resolveStage(derived, { manualStage: "توقف پروژه", manualStageLocked: true }, true)
+        .clearManual === false);
+    // Unlocked is «show this now»: drawing keeps it, the next event takes over.
+    eq("an unlocked stage shows while nothing has happened",
+      resolveStage(derived, { manualStage: "توقف پروژه" }, false).stage, "توقف پروژه");
+    eq("...and hands control back at the next recalculation",
+      resolveStage(derived, { manualStage: "توقف پروژه" }, true).stage, derived);
+    ok("...clearing itself as it goes",
+      resolveStage(derived, { manualStage: "توقف پروژه" }, true).clearManual === true);
+    // An override never hides what it overrode.
+    eq("the derived value is kept beside the manual one",
+      resolveStage(derived, { manualStage: "توقف پروژه", manualStageLocked: true }, true)
+        .derivedStage, derived);
+  }
+
+  /* -- and it is written where it can move -- */
+  const project = strip(readFileSync("src/server/services/projectService.ts", "utf8"));
+  ok("the stage is re-derived by its own function",
+    /export async function syncProjectStage\(/.test(project));
+  /*
+   * Written only on a real move, so `stageChangedAt` answers «since when has it
+   * been here» rather than «when was this project last saved».
+   */
+  ok("...and the date is stamped only when the stage moves",
+    /if \(resolved\.stage !== project\.stage\)/.test(project));
+  ok("...reading the outcome from the column, not deriving it twice",
+    /isWon: isWonStatus\(project\.status\)/.test(project));
+
+  // After `syncProjectStatus`, which writes the status the stage reads — and in
+  // the same transaction, so the two cannot be seen disagreeing.
+  const proforma = strip(readFileSync("src/server/services/proformaService.ts", "utf8"));
+  const syncAt = proforma.indexOf("export async function syncProjectStatus");
+  const body = proforma.slice(syncAt, syncAt + 3000);
+  ok("the proforma path re-derives the stage after the status",
+    body.indexOf("tx.project.update") < body.indexOf("syncProjectStage(tx, projectId"));
+
+  for (const [file, label] of [
+    ["src/server/services/purchaseOrderService.ts", "the purchase order"],
+    ["src/server/services/deliveryService.ts", "the packing list"],
+  ] as const) {
+    ok(`${label} moves it too`,
+      /syncProjectStage\(tx,/.test(strip(readFileSync(file, "utf8"))));
+  }
+
+  /*
+   * Derived, so not writable: a client that could set `stage` could tell the
+   * grid a project is somewhere its own records say it is not.
+   */
+  const route = strip(readFileSync("src/server/routes/projects.ts", "utf8"));
+  ok("the stage itself is not writable from a request",
+    /"manualStage", "manualStageLocked"/.test(route) && !/"stage",/.test(route));
+
+  const view = strip(readFileSync("src/components/ProjectsView.tsx", "utf8"));
+  ok("the grid draws it beside the status", /مرحله جاری/.test(view));
+  // Filtered on the server: filtering the page in hand answers for fifty rows
+  // and prints the unfiltered total beside them.
+  ok("...and filters it on the server", /list\.setFilter\('stage', value\)/.test(view));
+
+  ok("the comment stripper left these sources intact",
+    project.length > 10000 && view.length > 50000);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

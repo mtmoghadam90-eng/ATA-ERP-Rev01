@@ -41,6 +41,7 @@ import CategoryMembersModal from './CategoryMembersModal';
 import TaskFromMessageModal, { TaskDraft } from './TaskFromMessageModal';
 import { renderWithMentions } from './MentionText';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
+import { PROJECT_STAGES, stageRank } from '../utils/projectStage';
 import {
   BoardLane, REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, referralStatusForLane,
 } from '../utils/workBoard';
@@ -190,6 +191,15 @@ export default function ProjectsView({
   };
   const selectedStatus = list.filters.status;
   const setSelectedStatus = (value: string) => list.setFilter('status', value);
+  /*
+   * «مرحله جاری», filtered on the server like every other column here.
+   *
+   * It is a separate axis from the status, so it is a separate filter: a
+   * project can be «برنده (موفق)» and «ترخیص گمرک» at once, and asking for one
+   * must not narrow the other.
+   */
+  const selectedStage = list.filters.stage;
+  const setSelectedStage = (value: string) => list.setFilter('stage', value);
   const [groupToDelete, setGroupToDelete] = useState<any>(null);
   const [showModal, setShowModal] = useState(false);
   const [isProjectModalFullscreen, setIsProjectModalFullscreen] = useState(false);
@@ -409,6 +419,9 @@ export default function ProjectsView({
   const [code, setCode] = useState("");
   const [customerId, setCustomerId] = useState("");
   const [status, setStatus] = useState("جدید");
+  /** A stage set by hand, and whether it is pinned. Empty means automatic. */
+  const [manualStage, setManualStage] = useState("");
+  const [manualStageLocked, setManualStageLocked] = useState(false);
   const [description, setDescription] = useState("");
   const [itemsNeeded, setItemsNeeded] = useState<any[]>([]);
   const [lossReason, setLossReason] = useState("");
@@ -813,6 +826,8 @@ export default function ProjectsView({
     setCode("");
     setCustomerId(customers[0]?.id || "");
     setStatus("جدید");
+    setManualStage("");
+    setManualStageLocked(false);
     setDescription("");
     setCustomValues({});
     setItemsNeeded([]);
@@ -873,6 +888,8 @@ export default function ProjectsView({
     setCode(proj.code || "");
     setCustomerId(proj.customerId);
     setStatus(proj.status);
+    setManualStage(proj.manualStage ?? "");
+    setManualStageLocked(!!proj.manualStageLocked);
     setDescription(proj.description);
     setCustomValues(proj.customValues || {});
     setItemsNeeded(proj.itemsNeeded || []);
@@ -939,6 +956,14 @@ export default function ProjectsView({
       customerId,
       customerName,
       status,
+      /*
+       * The manual stage, and never `stage` itself — that is derived, and the
+       * server does not accept it. An empty box is «خودکار», sent as null so
+       * the derivation takes over rather than as absent, which would mean
+       * «not edited» and leave the old override standing.
+       */
+      manualStage: manualStage || null,
+      manualStageLocked: !!manualStage && manualStageLocked,
       description,
       customValues,
       itemsNeeded,
@@ -3063,6 +3088,25 @@ export default function ProjectsView({
     }
   };
 
+  /**
+   * The stage's colour, by which band of the chain it is in.
+   *
+   * Not a colour per stage: there are sixteen of them and a rainbow says
+   * nothing. Three bands — before the sale, decided against, and the work after
+   * a win — plus the one that means finished.
+   */
+  const getStageColor = (stage: string) => {
+    if (stage === 'باخته') return 'bg-red-50 text-red-700 border-red-200';
+    if (stage === 'لغو شده') return 'bg-amber-50 text-amber-700 border-amber-200';
+    if (stage === 'خاتمه‌یافته') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    const rank = stageRank(stage);
+    // Anything before «برنده — در انتظار تأمین» is still a sale being made.
+    if (rank >= 0 && rank < stageRank('برنده — در انتظار تأمین')) {
+      return 'bg-sky-50 text-sky-700 border-sky-200';
+    }
+    return 'bg-indigo-50 text-indigo-700 border-indigo-200';
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       
@@ -3209,6 +3253,15 @@ export default function ProjectsView({
                 <th className="p-3">ارزش پایپ‌لاین</th>
                 <th className="p-3 w-64">تاریخ‌های کلیدی</th>
                 <th className="p-3">وضعیت پروژه</th>
+                {/*
+                  «مرحله» is not «وضعیت».
+
+                  The status is how the sale went and the stage is where the
+                  work has got to — a project can be «برنده (موفق)» and «ترخیص
+                  گمرک» at the same time, and «الان در چه مرحله‌ای است؟» is
+                  answered only by the second.
+                */}
+                <th className="p-3">مرحله جاری</th>
                 <th className="p-3">فیلدهای سفارشی</th>
                 <th className="p-3 text-center w-24">عملیات</th>
               </tr>
@@ -3267,6 +3320,26 @@ export default function ProjectsView({
                     onChange={(e) => setColFilters({...colFilters, status: e.target.value})}
                     className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white text-center"
                   />
+                </th>
+                {/*
+                  A closed list, so a select rather than a box: the stages are
+                  fixed by `PROJECT_STAGES` and typing one by hand would only
+                  ever be a way of misspelling it. Filtered on the server —
+                  filtering the page in hand would answer for fifty rows and
+                  print the unfiltered total beside them.
+                */}
+                <th className="p-2">
+                  <select
+                    value={selectedStage}
+                    onChange={(e) => setSelectedStage(e.target.value)}
+                    id="project-stage-filter"
+                    className="w-full px-2 py-1 text-[11px] font-normal border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-sky-500 bg-white text-center"
+                  >
+                    <option value="all">همه مراحل</option>
+                    {PROJECT_STAGES.map((st) => (
+                      <option key={st} value={st}>{st}</option>
+                    ))}
+                  </select>
                 </th>
                 <th className="p-2"></th>
                 <th className="p-2"></th>
@@ -3433,6 +3506,31 @@ export default function ProjectsView({
                       <div className="text-[10px] text-rose-500 font-bold mt-1 max-w-[120px] mx-auto truncate" title={p.lossReason}>
                         علت: {p.lossReason}
                       </div>
+                    )}
+                  </td>
+
+                  {/* Current stage */}
+                  <td className="p-3 text-center">
+                    {p.stage ? (
+                      <>
+                        <span
+                          className={`px-2.5 py-1 rounded-full font-bold text-[10px] border inline-flex items-center gap-1 ${getStageColor(p.stage)}`}
+                          title={p.manualStage
+                            ? `این مرحله دستی ثبت شده است${p.manualStageLocked ? ' و قفل است' : ''}.`
+                            : 'به‌صورت خودکار از اسناد پروژه محاسبه می‌شود.'}
+                        >
+                          {/* An override never hides that it is one. */}
+                          {p.manualStage && <span className="text-[8px]">📌</span>}
+                          {p.stage}
+                        </span>
+                        {p.stageChangedAt && (
+                          <div className="text-[10px] text-slate-400 font-mono mt-1">
+                            از {p.stageChangedAt}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-[10px] text-slate-300">—</span>
                     )}
                   </td>
 
@@ -4021,6 +4119,54 @@ export default function ProjectsView({
                         <option key={idx} value={st}>{st}</option>
                       ))}
                     </select>
+                  </div>
+
+                  {/*
+                    «مرحله جاری», and the two different things overriding it means.
+
+                    The stage is derived from the project's own documents, so it
+                    is shown read-only with the derivation named. Setting one by
+                    hand is for what no record implies — «توقف پروژه توسط
+                    کارفرما» — and the switch beside it is the question the
+                    customer rank override asks for the same reason: pin this
+                    whatever happens, or show it now and let the documents take
+                    back over. Leaving an override in place for ever would print
+                    a stage the records beside it no longer agree with.
+                  */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500">مرحله جاری پروژه</label>
+                    <select
+                      value={manualStage}
+                      onChange={(e) => setManualStage(e.target.value)}
+                      id="project-manual-stage"
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
+                    >
+                      <option value="">خودکار (از اسناد پروژه)</option>
+                      {PROJECT_STAGES.map((st) => (
+                        <option key={st} value={st}>{st}</option>
+                      ))}
+                    </select>
+                    {manualStage ? (
+                      <label className="flex items-center gap-2 text-[11px] text-slate-600 pt-1 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={manualStageLocked}
+                          onChange={(e) => setManualStageLocked(e.target.checked)}
+                          id="project-manual-stage-locked"
+                          className="rounded border-slate-300"
+                        />
+                        <span>
+                          قفل شود (تا وقتی خودم برندارم ثابت بماند) — در غیر این صورت با اولین
+                          رویداد بعدی، محاسبه‌ی خودکار دوباره کنترل را می‌گیرد.
+                        </span>
+                      </label>
+                    ) : (
+                      <p className="text-[10px] text-slate-400 leading-relaxed pt-1">
+                        {editingProject?.stage
+                          ? `مرحله‌ی محاسبه‌شده: ${editingProject.stage}`
+                          : 'از پیش‌فاکتورها، سفارش‌های خرید، بسته‌بندی و خدمات پس از فروش محاسبه می‌شود.'}
+                      </p>
+                    )}
                   </div>
 
                   {/*

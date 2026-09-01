@@ -40,6 +40,12 @@ const WRITABLE: (keyof ProjectInput)[] = [
   "winningDate", "agreedDeliveryDate", "closingDate",
   "items", "milestones",
   "messagingContactId", "messagingChannel", "suppressAutoMessages",
+  /*
+   * The manual stage and its lock, but **not** `stage` itself — that is
+   * derived, and a client that could set it could tell the grid a project
+   * is somewhere its records say it is not.
+   */
+  "manualStage", "manualStageLocked",
 ];
 
 function pickInput(body: unknown): ProjectInput {

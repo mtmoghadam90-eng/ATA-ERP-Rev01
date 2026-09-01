@@ -12,6 +12,7 @@ import { getTodayShamsi } from "../../dateUtils";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
+import { syncProjectStage } from "./projectService";
 import { deliveryWorkflowStatus } from "../../utils/moduleStatuses";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 
@@ -304,6 +305,9 @@ export async function createDelivery(input: DeliveryInput, user: AuthUser, today
     });
     // Issuing the list is what takes the goods out of the warehouse.
     await reconcileDeliveryStock(tx, delivery.id, todayJalali);
+    // A packing list is «بسته‌بندی و تحویل» on the project's stage, and its
+    // actual delivery date is what turns that into «تحویل شده».
+    await syncProjectStage(tx, delivery.projectId, todayJalali);
     return tx.packagingDelivery.findUnique({
       where: { id: delivery.id },
       include: { items: { orderBy: { lineNo: "asc" } } },
@@ -402,6 +406,11 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
     // Only the difference between what this list has already issued and what it
     // now says, so an edit corrects the ledger rather than doubling it.
     await reconcileDeliveryStock(tx, id, todayJalali);
+
+    const row = await tx.packagingDelivery.findUnique({
+      where: { id }, select: { projectId: true },
+    });
+    await syncProjectStage(tx, row?.projectId ?? null, todayJalali);
 
     return tx.packagingDelivery.findUnique({
       where: { id },
@@ -626,6 +635,7 @@ export async function deleteDelivery(
     await tx.packingItem.deleteMany({ where: { deliveryId: id } });
     await reconcileDeliveryStock(tx, id, todayJalali);
     await tx.packagingDelivery.delete({ where: { id } });
+    await syncProjectStage(tx, existing.projectId, todayJalali);
   });
 
   // Audit log
@@ -837,6 +847,8 @@ export async function createService(input: ServiceInput, user: AuthUser, todayJa
       rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapServiceItem,
     });
     await applyServiceHeader(tx, service.id);
+    // An open service record is the last stage a delivered project can be at.
+    await syncProjectStage(tx, service.projectId, todayJalali);
 
     return tx.afterSalesService.findUnique({
       where: { id: service.id },
@@ -916,6 +928,11 @@ export async function updateService(id: string, input: ServiceInput, user: AuthU
     // Also on a save that sent no rows: the header still has to agree with what
     // is stored, and a caller may have edited only the record itself.
     await applyServiceHeader(tx, id);
+
+    const row = await tx.afterSalesService.findUnique({
+      where: { id }, select: { projectId: true },
+    });
+    await syncProjectStage(tx, row?.projectId ?? null, todayJalali);
 
     return tx.afterSalesService.findUnique({
       where: { id },

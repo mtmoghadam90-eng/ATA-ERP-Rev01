@@ -12,6 +12,7 @@ import { applyStockDelta } from "./productService";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
+import { syncProjectStage } from "./projectService";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 
 /**
@@ -685,6 +686,9 @@ export async function createPurchaseOrder(
     await pushActualCostToProformaLines(tx, po.id);
     await recordLastPurchaseCost(tx, po.id);
 
+    // Raising an order is what moves a won project out of «در انتظار تأمین».
+    await syncProjectStage(tx, po.projectId, todayJalali);
+
     return tx.purchaseOrder.findUnique({ where: { id: po.id }, include: { items: { orderBy: { lineNo: "asc" } } } });
   });
 
@@ -915,6 +919,16 @@ export async function updatePurchaseOrder(
     await pushActualCostToProformaLines(tx, id);
     await recordLastPurchaseCost(tx, id);
 
+    /*
+     * The project's current stage, which this order's status is most of.
+     *
+     * «حمل و ترانزیت», «ترخیص گمرک» and the rest are purchase-order statuses,
+     * so moving one is exactly what moves the project's stage. Inside the same
+     * transaction, so the two cannot be seen disagreeing.
+     */
+    const row = await tx.purchaseOrder.findUnique({ where: { id }, select: { projectId: true } });
+    await syncProjectStage(tx, row?.projectId ?? before?.projectId ?? null, todayJalali);
+
     return tx.purchaseOrder.findUnique({ where: { id }, include: { items: { orderBy: { lineNo: "asc" } } } });
   });
 
@@ -1032,6 +1046,8 @@ export async function deletePurchaseOrder(
     });
 
     await tx.purchaseOrder.delete({ where: { id } });
+    // The order is gone, so the stage it was holding the project at is too.
+    await syncProjectStage(tx, po?.projectId ?? null, todayJalali);
   });
 
   // Audit log
