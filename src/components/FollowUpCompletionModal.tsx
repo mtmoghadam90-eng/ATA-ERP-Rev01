@@ -50,9 +50,31 @@ interface Props {
    * the ranking counts from, so the whole lower half of this form is hidden and
    * a different endpoint is called.
    */
-  editing?: { taskId: string; followUpResult: string; completionNote: string } | null;
-  /** Correcting: writes the two columns and nothing else. */
+  editing?: {
+    taskId: string;
+    /**
+     * True once the chase is closed.
+     *
+     * Closed, there is one thing left to correct — what the customer said —
+     * and the form shows the recorded answer. Still open, there is no answer
+     * yet and what the person came to edit is the chase *itself*: what it is
+     * for, when it is due, whose it is. Opening a blank completion form for
+     * that is what «فرم خام» meant.
+     */
+    closed: boolean;
+    followUpResult: string;
+    completionNote: string;
+    title: string;
+    description: string;
+    dueDate: string;
+    assignee: string;
+  } | null;
+  /** Correcting a closed chase: writes the two columns and nothing else. */
   onSaveResult?: (body: { followUpResult: string; completionNote?: string }) => Promise<void>;
+  /** Editing an open chase: its own title, description, date and assignee. */
+  onSaveAction?: (body: {
+    title: string; description: string; dueDate: string; assignedToName: string;
+  }) => Promise<void>;
 }
 
 const DECISIONS: { value: FollowUpDecision; label: string; hint: string; icon: typeof CheckCircle2 }[] = [
@@ -80,10 +102,14 @@ const DECISIONS: { value: FollowUpDecision; label: string; hint: string; icon: t
 
 export default function FollowUpCompletionModal({
   row, resultOptions, userNames, outcomeIsTerminal, lossReasons, onClose, onSubmit,
-  editing = null, onSaveResult,
+  editing = null, onSaveResult, onSaveAction,
 }: Props) {
-  /** True while correcting a closed chase rather than closing an open one. */
+  /** Editing rather than completing — in one of the two shapes above. */
   const isEditing = !!editing;
+  /** A closed chase: only the recorded answer moves. */
+  const isCorrecting = editing?.closed === true;
+  /** An open chase: its own fields, pre-filled, and no result is recorded. */
+  const isEditingAction = isEditing && !isCorrecting;
   const today = getTodayShamsi();
 
   const [decision, setDecision] = useState<FollowUpDecision>('NEXT_ACTION');
@@ -125,16 +151,26 @@ export default function FollowUpCompletionModal({
     setDecision('NEXT_ACTION');
     setFollowUpResult(editing?.followUpResult ?? '');
     setCompletionNote(editing?.completionNote ?? '');
-    setNextTitle(`پیگیری پیش‌فاکتور ${row.proformaNumber}`);
-    setNextDescription('');
-    setNextDueDate(addDaysToShamsi(getTodayShamsi(), 3));
-    setNextAssignee(row.salesExpert ?? '');
+    /*
+      Editing an open chase, these four are the chase itself and are seeded
+      from it. Completing one, they describe the *next* task and start from the
+      usual defaults.
+    */
+    setNextTitle(editing && !editing.closed
+      ? editing.title
+      : `پیگیری پیش‌فاکتور ${row.proformaNumber}`);
+    setNextDescription(editing && !editing.closed ? editing.description : '');
+    setNextDueDate(editing && !editing.closed
+      ? editing.dueDate
+      : addDaysToShamsi(getTodayShamsi(), 3));
+    setNextAssignee(editing && !editing.closed
+      ? editing.assignee
+      : row.salesExpert ?? '');
     setDeferredUntil(addDaysToShamsi(getTodayShamsi(), 14));
     setSettleOutcome(null);
     setSettleLossReason('');
     setError(null);
-  }, [row.nextActionTaskId, row.proformaNumber, row.salesExpert,
-      editing?.taskId, editing?.followUpResult, editing?.completionNote]);
+  }, [row.nextActionTaskId, row.proformaNumber, row.salesExpert, editing]);
 
   const options = resultOptions.length > 0 ? resultOptions : DEFAULT_FOLLOW_UP_RESULTS;
 
@@ -168,16 +204,27 @@ export default function FollowUpCompletionModal({
     rules are about a decision, a date and an outcome, none of which is being
     taken again.
   */
-  const refusal = isEditing
-    ? (followUpResult.trim() ? null : 'ثبت نتیجه پیگیری الزامی است.')
-    : completionRefusalReason(body, { todayJalali: today, outcomeIsTerminal });
+  const refusal = isEditingAction
+    ? (nextTitle.trim()
+        ? (nextDueDate.trim() ? null : 'تاریخ اقدام الزامی است.')
+        : 'عنوان اقدام الزامی است.')
+    : isCorrecting
+      ? (followUpResult.trim() ? null : 'ثبت نتیجه پیگیری الزامی است.')
+      : completionRefusalReason(body, { todayJalali: today, outcomeIsTerminal });
 
   const submit = async () => {
     if (refusal) { setError(refusal); return; }
     setSaving(true);
     setError(null);
     try {
-      if (isEditing) {
+      if (isEditingAction) {
+        await onSaveAction?.({
+          title: nextTitle,
+          description: nextDescription,
+          dueDate: nextDueDate,
+          assignedToName: nextAssignee,
+        });
+      } else if (isCorrecting) {
         await onSaveResult?.({
           followUpResult,
           completionNote: completionNote || undefined,
@@ -200,7 +247,9 @@ export default function FollowUpCompletionModal({
         <div className="px-5 py-4 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>
             <h3 className="text-sm font-bold text-slate-800">
-              {isEditing ? 'ویرایش نتیجه پیگیری' : 'ثبت نتیجه پیگیری'}
+              {isEditingAction ? 'ویرایش اقدام پیگیری'
+                : isCorrecting ? 'ویرایش نتیجه پیگیری'
+                : 'ثبت نتیجه پیگیری'}
             </h3>
             <p className="text-[11px] text-slate-500 mt-1">
               <span className="font-mono font-bold">{row.proformaNumber}</span>
@@ -214,6 +263,12 @@ export default function FollowUpCompletionModal({
         </div>
 
         <div className="p-5 space-y-4 overflow-y-auto">
+          {/*
+            Editing an open chase records nothing: there has been no call yet,
+            and a result box on a form for «what should be done next» is what
+            made this read as a blank completion form.
+          */}
+          {!isEditingAction && (
           <div>
             <label className="block text-[11px] font-bold text-slate-600 mb-1">
               نتیجه پیگیری <span className="text-rose-500">*</span>
@@ -229,6 +284,7 @@ export default function FollowUpCompletionModal({
               این فهرست در تنظیمات قابل ویرایش است و «دلیل باخت» نیست.
             </p>
           </div>
+          )}
 
           {/*
             The question, asked only when the result actually implies an
@@ -332,6 +388,7 @@ export default function FollowUpCompletionModal({
             </div>
           )}
 
+          {!isEditingAction && (
           <div>
             <label className="block text-[11px] font-bold text-slate-600 mb-1">یادداشت</label>
             <textarea
@@ -343,6 +400,7 @@ export default function FollowUpCompletionModal({
               id="follow-up-note"
             />
           </div>
+          )}
 
           {/*
             «مرحله بعد چه باشد؟» is not a question that can be re-answered.
@@ -351,10 +409,17 @@ export default function FollowUpCompletionModal({
             task, on its own card, with its own edit box — one record to change
             rather than two that would then disagree.
           */}
-          {isEditing && (
+          {isCorrecting && (
             <p className="text-[10px] text-slate-500 bg-slate-50 border border-slate-150 rounded-xl p-2.5 leading-relaxed">
               فقط نتیجه و یادداشت این پیگیری اصلاح می‌شود. «اقدام بعدی» خودش یک وظیفه جداگانه است و
               از کارت خودش ویرایش می‌شود.
+            </p>
+          )}
+
+          {isEditingAction && (
+            <p className="text-[10px] text-slate-500 bg-slate-50 border border-slate-150 rounded-xl p-2.5 leading-relaxed">
+              این پیگیری هنوز باز است و نتیجه‌ای برایش ثبت نشده. اینجا خودِ اقدام ویرایش می‌شود؛
+              برای ثبت نتیجه، روی همین کارت دکمهٔ تیک را بزنید.
             </p>
           )}
 
@@ -400,7 +465,7 @@ export default function FollowUpCompletionModal({
           </div>
           )}
 
-          {!isEditing && decision === 'NEXT_ACTION' && (
+          {(isEditingAction || (!isEditing && decision === 'NEXT_ACTION')) && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-50 border border-slate-100 rounded-xl p-3">
               <div className="md:col-span-3">
                 <label className="block text-[11px] font-bold text-slate-600 mb-1">عنوان اقدام بعدی</label>

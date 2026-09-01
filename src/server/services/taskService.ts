@@ -3,6 +3,7 @@ import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, canSeeAllTasks } from "../auth";
 import { taskRelationKind } from "../../utils/taskRelations";
+import { resolveAssignee } from "./assigneeLookup";
 import {
   BoardLane, LANE_FILTERS, TASK_CANCELLED, TASK_DOING, TASK_DONE, TASK_TODO,
   laneWhere, taskLane, taskStatusForLane,
@@ -506,6 +507,48 @@ function scalarData(input: TaskInput): Record<string, unknown> {
 }
 
 /**
+ * The assignee columns a write should carry, resolved from the name.
+ *
+ * A task belongs to a person by **id**: `assignedToUserId` is what «به من
+ * ارجاع شده» filters on and half of what `visibilityClause` shows at all. Every
+ * form here hands over a *name* — the task form's picker sets `assignedTo` and
+ * never recomputes the id, so every edit sent `assignedToUserId: null` beside a
+ * perfectly good name and quietly detached the task from its owner: still
+ * «مسئول: فلانی» on the card, belonging to nobody, and gone from that person's
+ * own board. The same fault `resolveAssignee` was written for, on the one path
+ * a person drives by hand.
+ *
+ * The rules, in order:
+ *  - an explicit id wins — a caller that knows the account is not second-guessed;
+ *  - a name with no id is looked up, folding the spellings SQL Server's
+ *    collation treats as different characters (ی/ي, ک/ك, the half-space);
+ *  - a name that matches nobody falls back, because a task with no id is
+ *    invisible to everybody without «همه وظایف»;
+ *  - and an **empty** name is a deliberate «شخصی (بدون ارجاع)», so the id is
+ *    left alone rather than being invented from the fallback.
+ */
+async function assigneeColumns(
+  input: TaskInput,
+  fallbackUserId: string | null,
+): Promise<Record<string, unknown>> {
+  const explicitId = toNullableString(input.assignedToUserId, 36);
+  if (explicitId) return { assignedToUserId: explicitId };
+
+  const name = toNullableString(input.assignedToName, 200);
+  if (!name) {
+    // Nothing to resolve. On a create the caller still needs somebody, so the
+    // fallback applies there; on an update, «not edited» must stay that way.
+    return fallbackUserId ? { assignedToUserId: fallbackUserId } : {};
+  }
+
+  const resolved = await resolveAssignee(name, fallbackUserId);
+  return {
+    assignedToUserId: resolved.assignedToUserId,
+    assignedToName: resolved.assignedToName || name,
+  };
+}
+
+/**
  * The start and finish dates a status change implies.
  *
  * Two facts about a piece of work, recorded where the change happens rather
@@ -623,9 +666,18 @@ export async function createTask(input: TaskInput, user: AuthUser, todayJalali: 
        */
       status: TASK_TODO,
       ...scalarData(input),
-      // An unassigned task belongs to whoever raised it, so it appears in
-      // someone's list rather than nobody's.
-      assignedToUserId: input.assignedToUserId ?? user.id,
+      /*
+       * The account behind the name, and the creator only as a last resort.
+       *
+       * A task belongs to a person by **id** — that is what «به من ارجاع شده»
+       * filters on and half of what `visibilityClause` shows at all — while
+       * every form and every integration hands over a *name*. Falling straight
+       * back to `user.id` put a task raised for a colleague on the raiser's own
+       * board and nowhere else; `resolveAssignee` folds the spellings SQL
+       * Server's collation treats as different characters, and only an
+       * unmatched name lands on whoever raised it.
+       */
+      ...(await assigneeColumns(input, user.id)),
       /*
        * Taken from the session, never from the body.
        *
@@ -718,6 +770,17 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
   }
 
   const data = scalarData(input);
+  /*
+   * The account behind the name, so an edit does not detach the task.
+   *
+   * The task form's picker sets a *name* and never recomputes the id, so every
+   * save sent `assignedToUserId: null` next to a perfectly good name: the card
+   * still read «مسئول: فلانی» and the task belonged to nobody — invisible on
+   * that person's own board and in every tab but «همه وظایف». No fallback here:
+   * an update that names nobody is «not edited», and inventing an owner would
+   * quietly reassign a task somebody deliberately left personal.
+   */
+  Object.assign(data, await assigneeColumns(input, null));
   Object.assign(data, laneTimestamps(before, data.status as string | undefined, todayJalali));
 
   const task = await db.task.update({ where: { id }, data: data as Prisma.TaskUncheckedUpdateInput });
