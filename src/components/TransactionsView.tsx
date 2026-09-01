@@ -55,6 +55,7 @@ import { createCustomerWithLinks, findServerDuplicates } from '../api/customerAd
 import { projectToWriteInput, detailToProject } from '../api/projectAdapter';
 import { detailToProforma, proformaToWriteInput } from '../api/proformaAdapter';
 import NumberField from './NumberField';
+import { useProjectJump } from "../api/useProjectJump";
 
 /**
  * Transactions ledger and the per-project financial position.
@@ -64,6 +65,16 @@ import NumberField from './NumberField';
  * the per-project financial figures are their own paginated query.
  */
 interface TransactionsViewProps {
+  /**
+   * A project code this screen was opened with — see `openProjectIn` in
+   * `App.tsx`. Applied to the search box once and then cleared, so returning
+   * to the module later does not silently re-apply a filter nobody asked for.
+   */
+  projectJump?: string;
+  onProjectJumpApplied?: () => void;
+  /** Follows a project code printed on this screen back to «پروژه‌ها». */
+  onOpenProject?: (code: string) => void;
+
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
   settings: ERPSettings;
@@ -76,6 +87,7 @@ interface TransactionsViewProps {
 }
 
 export default function TransactionsView({
+  projectJump, onProjectJumpApplied, onOpenProject,
   initialPrintDocId,
   onClearInitialPrintDocId,
   settings,
@@ -85,6 +97,8 @@ export default function TransactionsView({
   const [showModal, setShowModal] = useState(false);
 
   const list = useTransactionList();
+  // The project code this screen was opened with, applied to its search box.
+  useProjectJump(projectJump, list.setSearch, onProjectJumpApplied);
   const search = list.search;
   const setSearch = list.setSearch;
 

@@ -64,6 +64,7 @@ import { projectsApi } from '../api/projects';
 import type { ProjectRow } from '../api/projects';
 import type { ProformaRow } from '../api/proformas';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
+import { useProjectJump } from "../api/useProjectJump";
 
 /**
  * Packing lists.
@@ -74,6 +75,16 @@ import type { useCategoryCompletion } from '../api/useCategoryCompletion';
  * list cannot do.
  */
 interface PackagingDeliveryViewProps {
+  /**
+   * A project code this screen was opened with — see `openProjectIn` in
+   * `App.tsx`. Applied to the search box once and then cleared, so returning
+   * to the module later does not silently re-apply a filter nobody asked for.
+   */
+  projectJump?: string;
+  onProjectJumpApplied?: () => void;
+  /** Follows a project code printed on this screen back to «پروژه‌ها». */
+  onOpenProject?: (code: string) => void;
+
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
   // Deliveries, projects, proformas, products and customers are no longer
@@ -84,6 +95,7 @@ interface PackagingDeliveryViewProps {
 }
 
 export default function PackagingDeliveryView({
+  projectJump, onProjectJumpApplied, onOpenProject,
   initialPrintDocId,
   onClearInitialPrintDocId,
   settings,
@@ -95,6 +107,8 @@ export default function PackagingDeliveryView({
   const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>({});
 
   const list = useDeliveryList();
+  // The project code this screen was opened with, applied to its search box.
+  useProjectJump(projectJump, list.setSearch, onProjectJumpApplied);
 
   /* The project picker drives the grid's filter as well as the form, so it stays
      enabled. The other two are declared below, where the form state they depend
