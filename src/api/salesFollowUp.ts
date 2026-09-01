@@ -158,6 +158,17 @@ export const salesFollowUpApi = {
     ),
 
   /**
+   * Corrects what was recorded on a chase that is already closed.
+   *
+   * Two columns and nothing else: the completion's other work — the task
+   * closing, the follow-up state, the replacement task, a settled sale — has
+   * already happened, and re-running any of it would raise a second next
+   * action or re-date a sale the ranking counts from.
+   */
+  updateResult: (taskId: string, body: { followUpResult: string; completionNote?: string }) =>
+    api.put<{ taskId: string }>(`/api/sales-follow-up/tasks/${taskId}/result`, body),
+
+  /**
    * One project's whole follow-up story, settled quotations included.
    *
    * The queue answers «what should the sales desk do next, across the

@@ -8126,5 +8126,99 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     /rounded-xl overflow-x-auto">/.test(inquiry));
 }
 
+/* ==========================================================================
+ * A follow-up is edited on its own form, and the badge counts the board
+ *
+ * Pressing «ویرایش» on a chase opened the task box — a title, a due date and a
+ * status, none of which is what a follow-up records — so a result picked in a
+ * hurry could only be corrected in the database. And the sidebar counted
+ * referrals in one direction while the board shows both.
+ * ========================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* -- the edit button opens the right form -- */
+  const view = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
+  ok("editing a follow-up opens the follow-up form",
+    /if \(task\.taskKind === 'SALES_FOLLOW_UP'\) \{\s*void openFollowUp\(/.test(view));
+  /*
+   * Correcting mode only for a closed one: an open chase has no recorded
+   * result to correct and is completed through `completeFollowUp`, which is
+   * what the same call opens for it.
+   */
+  ok("...in correcting mode only once it is closed",
+    /taskLane\(task\.status\) === 'DONE'/.test(view));
+  ok("...writing through the endpoint that touches two columns",
+    /salesFollowUpApi\.updateResult\(followUpRow\.taskId, body\)/.test(view));
+
+  /* -- and the form knows the difference -- */
+  const modal = strip(readFileSync("src/components/FollowUpCompletionModal.tsx", "utf8"));
+  ok("the modal has a correcting mode", /const isEditing = !!editing;/.test(modal));
+  /*
+   * The lower half is hidden because none of it may be answered again: the
+   * task is closed, the state has moved, the replacement exists as its own
+   * task, and the sale may already be settled.
+   */
+  for (const [what, pattern] of [
+    ["the next action", /\{!isEditing && decision === 'NEXT_ACTION' &&/],
+    ["the deferral", /\{!isEditing && decision === 'DEFER' &&/],
+    ["the settlement question", /\{suggested && !outcomeIsTerminal && !isEditing &&/],
+  ] as const) {
+    ok(`...and does not re-ask ${what}`, pattern.test(modal));
+  }
+  // Keyed on the task being worked on: correcting a closed chase, the row's
+  // own `nextActionTaskId` is the replacement, a different task.
+  ok("...seeded on the task being corrected",
+    /const key = editing\?\.taskId \?\? row\.nextActionTaskId;/.test(modal));
+
+  /* -- the server writes two columns, and refuses the rest -- */
+  const service = strip(readFileSync("src/server/services/followUpService.ts", "utf8"));
+  const correction = service.slice(service.indexOf("export async function updateFollowUpResult"));
+  const body = correction.slice(0, correction.indexOf("export async function followUpRowForTask"));
+  ok("the correction writes only the result and the note",
+    /data: \{ followUpResult, completionNote: toNullableString\(input\.completionNote\) \}/.test(body));
+  /*
+   * None of the completion's other work may run again — a second next action,
+   * or a re-dated sale the customer-value ranking counts from.
+   */
+  ok("...and nothing else",
+    !/tx\.task\.create/.test(body) && !/syncProjectStatus/.test(body)
+    && !/scheduleCustomerValueRecalculation/.test(body));
+  ok("...refusing a chase that is still open",
+    /!\(FINISHED_TASK_STATUSES as readonly string\[\]\)\.includes\(task\.status\)/.test(body));
+  ok("...and anything that is not a follow-up",
+    /task\.taskKind !== "SALES_FOLLOW_UP"/.test(body));
+  ok("...and a result nobody typed", /ثبت نتیجه پیگیری الزامی است/.test(body));
+  const route = strip(readFileSync("src/server/routes/followUp.ts", "utf8"));
+  ok("the route is a PUT, not a second complete",
+    /app\.put\("\/api\/sales-follow-up\/tasks\/:taskId\/result"/.test(route));
+
+  /* -- the badge counts what the board holds -- */
+  const badges = strip(readFileSync("src/api/useSidebarBadges.ts", "utf8"));
+  /*
+   * Every automation writes «در انتظار», a fourth value no dropdown ever
+   * offered; a hardcoded pair of closing words counted it only by luck.
+   * `taskLane` is the board's own rule and is an exclusion.
+   */
+  ok("open tasks are counted by the board's own lane rule",
+    /taskLane\(s\.status\) !== "DONE"/.test(badges));
+  ok("...not by a list of closing words written out here",
+    !/new Set\(\["انجام شده", "کنسل شده"\]\)/.test(badges));
+  // A referral belongs to two people exactly as a task does, and both appear
+  // on this user's board.
+  ok("referrals are counted in both directions",
+    /scope: "mine", open: "true"/.test(badges));
+  const activity = strip(readFileSync("src/server/services/activityService.ts", "utf8"));
+  ok("...and «mine» is that, on the server",
+    /and\.push\(\{ OR: \[\{ assignedToUserId: user\.id \}, \{ assignedByUserId: user\.id \}\] \}\)/
+      .test(activity));
+  const activityRoute = strip(readFileSync("src/server/routes/activities.ts", "utf8"));
+  ok("...reachable from the route", /req\.query\.scope === "mine" \? "mine"/.test(activityRoute));
+
+  ok("the comment stripper left these sources intact",
+    view.length > 10000 && modal.length > 4000 && body.length > 1000);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

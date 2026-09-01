@@ -37,6 +37,22 @@ interface Props {
   lossReasons: string[];
   onClose: () => void;
   onSubmit: (body: FollowUpCompletionBody) => Promise<void>;
+  /**
+   * Correcting what was recorded on a chase that is already closed.
+   *
+   * A follow-up and an ordinary task are different things, so «ویرایش» on one
+   * has to open the form it was filled in on rather than the task box. But a
+   * closed one has exactly two things left to correct — what the customer said
+   * and the note about the call — because everything else the completion did
+   * has already happened: the task is closed, the proforma's follow-up state
+   * moved, the replacement was raised and the sale may have been settled.
+   * Re-running any of that would raise a second next action or re-date a sale
+   * the ranking counts from, so the whole lower half of this form is hidden and
+   * a different endpoint is called.
+   */
+  editing?: { taskId: string; followUpResult: string; completionNote: string } | null;
+  /** Correcting: writes the two columns and nothing else. */
+  onSaveResult?: (body: { followUpResult: string; completionNote?: string }) => Promise<void>;
 }
 
 const DECISIONS: { value: FollowUpDecision; label: string; hint: string; icon: typeof CheckCircle2 }[] = [
@@ -64,7 +80,10 @@ const DECISIONS: { value: FollowUpDecision; label: string; hint: string; icon: t
 
 export default function FollowUpCompletionModal({
   row, resultOptions, userNames, outcomeIsTerminal, lossReasons, onClose, onSubmit,
+  editing = null, onSaveResult,
 }: Props) {
+  /** True while correcting a closed chase rather than closing an open one. */
+  const isEditing = !!editing;
   const today = getTodayShamsi();
 
   const [decision, setDecision] = useState<FollowUpDecision>('NEXT_ACTION');
@@ -95,11 +114,17 @@ export default function FollowUpCompletionModal({
    */
   const seededFor = useRef<string | null>(null);
   useEffect(() => {
-    if (seededFor.current === row.nextActionTaskId) return;
-    seededFor.current = row.nextActionTaskId;
+    /*
+      Keyed on the task being *worked on*. Correcting a closed chase, the row's
+      `nextActionTaskId` is a different task — the replacement that was raised
+      — so seeding on it would re-seed as soon as that one moved.
+    */
+    const key = editing?.taskId ?? row.nextActionTaskId;
+    if (seededFor.current === key) return;
+    seededFor.current = key;
     setDecision('NEXT_ACTION');
-    setFollowUpResult('');
-    setCompletionNote('');
+    setFollowUpResult(editing?.followUpResult ?? '');
+    setCompletionNote(editing?.completionNote ?? '');
     setNextTitle(`پیگیری پیش‌فاکتور ${row.proformaNumber}`);
     setNextDescription('');
     setNextDueDate(addDaysToShamsi(getTodayShamsi(), 3));
@@ -108,7 +133,8 @@ export default function FollowUpCompletionModal({
     setSettleOutcome(null);
     setSettleLossReason('');
     setError(null);
-  }, [row.nextActionTaskId, row.proformaNumber, row.salesExpert]);
+  }, [row.nextActionTaskId, row.proformaNumber, row.salesExpert,
+      editing?.taskId, editing?.followUpResult, editing?.completionNote]);
 
   const options = resultOptions.length > 0 ? resultOptions : DEFAULT_FOLLOW_UP_RESULTS;
 
@@ -137,14 +163,26 @@ export default function FollowUpCompletionModal({
 
   // The same pure rule the server runs, so the button cannot submit what the
   // server would refuse — and the server does not trust that it did not.
-  const refusal = completionRefusalReason(body, { todayJalali: today, outcomeIsTerminal });
+  /*
+    Correcting asks one thing of the form — a result — and the completion's own
+    rules are about a decision, a date and an outcome, none of which is being
+    taken again.
+  */
+  const refusal = isEditing
+    ? (followUpResult.trim() ? null : 'ثبت نتیجه پیگیری الزامی است.')
+    : completionRefusalReason(body, { todayJalali: today, outcomeIsTerminal });
 
   const submit = async () => {
     if (refusal) { setError(refusal); return; }
     setSaving(true);
     setError(null);
     try {
-      await onSubmit(body);
+      if (isEditing) {
+        await onSaveResult?.({
+          followUpResult,
+          completionNote: completionNote || undefined,
+        });
+      } else await onSubmit(body);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'ثبت نتیجه پیگیری با خطا مواجه شد.');
     } finally {
@@ -161,7 +199,9 @@ export default function FollowUpCompletionModal({
       <div className="bg-white rounded-2xl w-full max-w-2xl shadow-xl overflow-hidden flex flex-col max-h-[92vh]">
         <div className="px-5 py-4 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>
-            <h3 className="text-sm font-bold text-slate-800">ثبت نتیجه پیگیری</h3>
+            <h3 className="text-sm font-bold text-slate-800">
+              {isEditing ? 'ویرایش نتیجه پیگیری' : 'ثبت نتیجه پیگیری'}
+            </h3>
             <p className="text-[11px] text-slate-500 mt-1">
               <span className="font-mono font-bold">{row.proformaNumber}</span>
               {row.customerName ? ` — ${row.customerName}` : ''}
@@ -199,7 +239,7 @@ export default function FollowUpCompletionModal({
             call knows. Declining leaves the proforma exactly as it was, which
             is what happened before this existed.
           */}
-          {suggested && !outcomeIsTerminal && (
+          {suggested && !outcomeIsTerminal && !isEditing && (
             <div className="border border-sky-200 bg-sky-50/70 rounded-xl p-3.5 space-y-2.5">
               <p className="text-[11px] font-bold text-sky-900 leading-relaxed">
                 این نتیجه یعنی تکلیف پیش‌فاکتور روشن شده. وضعیت تجاری آن را هم به
@@ -304,6 +344,21 @@ export default function FollowUpCompletionModal({
             />
           </div>
 
+          {/*
+            «مرحله بعد چه باشد؟» is not a question that can be re-answered.
+
+            Correcting a closed chase, the next action already exists as its own
+            task, on its own card, with its own edit box — one record to change
+            rather than two that would then disagree.
+          */}
+          {isEditing && (
+            <p className="text-[10px] text-slate-500 bg-slate-50 border border-slate-150 rounded-xl p-2.5 leading-relaxed">
+              فقط نتیجه و یادداشت این پیگیری اصلاح می‌شود. «اقدام بعدی» خودش یک وظیفه جداگانه است و
+              از کارت خودش ویرایش می‌شود.
+            </p>
+          )}
+
+          {!isEditing && (
           <div>
             <span className="block text-[11px] font-bold text-slate-600 mb-2">
               مرحله بعد چه باشد؟ <span className="text-rose-500">*</span>
@@ -343,8 +398,9 @@ export default function FollowUpCompletionModal({
               })}
             </div>
           </div>
+          )}
 
-          {decision === 'NEXT_ACTION' && (
+          {!isEditing && decision === 'NEXT_ACTION' && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-50 border border-slate-100 rounded-xl p-3">
               <div className="md:col-span-3">
                 <label className="block text-[11px] font-bold text-slate-600 mb-1">عنوان اقدام بعدی</label>
@@ -390,7 +446,7 @@ export default function FollowUpCompletionModal({
             </div>
           )}
 
-          {decision === 'DEFER' && (
+          {!isEditing && decision === 'DEFER' && (
             <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
               <ShamsiDatePicker
                 label="پیگیری مجدد در تاریخ"
@@ -428,7 +484,7 @@ export default function FollowUpCompletionModal({
             id="follow-up-submit"
             className="px-5 py-2 text-xs font-bold bg-sky-500 hover:bg-sky-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition"
           >
-            {saving ? 'در حال ثبت…' : 'ثبت نتیجه'}
+            {saving ? 'در حال ثبت…' : isEditing ? 'ثبت ویرایش' : 'ثبت نتیجه'}
           </button>
         </div>
       </div>
