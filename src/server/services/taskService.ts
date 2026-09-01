@@ -560,12 +560,16 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
    * A sales follow-up is not finished with a tick.
    *
    * Ticking one closes the task and leaves the quotation with nobody on it and
-   * nothing recorded about why the customer said — which is the exact failure
+   * nothing recorded about what the customer said — which is the exact failure
    * the follow-up flow exists to prevent. So the generic path refuses the
-   * completion and points at the screen that asks the three questions. Every
-   * other edit of the task goes through unchanged, and the automatic closing
-   * (a won quotation, a superseded revision) writes with `updateMany` and is
-   * not affected.
+   * completion. Every other edit of the task goes through unchanged, and the
+   * automatic closing (a won quotation, a superseded revision) writes with
+   * `updateMany` and is not affected.
+   *
+   * The message names the button, not another module: the completion form is
+   * on the tasks screen now — the tick opens it — as well as on the sales
+   * follow-up queue. It used to send the reader to «پیش‌فاکتورها» to press a
+   * second button, which is the round trip the merged board removed.
    */
   if (
     before.taskKind === "SALES_FOLLOW_UP"
@@ -573,7 +577,7 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
     && before.status !== "انجام شده"
   ) {
     throw new Error(
-      "بستن پیگیری فروش از این صفحه ممکن نیست؛ از «پیگیری فروش» در ماژول پیش‌فاکتورها نتیجه پیگیری را ثبت کنید.",
+      "پیگیری فروش با «ثبت نتیجه پیگیری» بسته می‌شود، نه با تیک ساده؛ روی همین کارت آن را باز کنید.",
     );
   }
 

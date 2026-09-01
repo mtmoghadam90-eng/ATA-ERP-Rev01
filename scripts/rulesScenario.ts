@@ -7283,6 +7283,39 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   ok("a sales follow-up cannot be finished by moving it",
     /taskKind === "SALES_FOLLOW_UP" && lane === "DONE"/.test(taskService));
   ok("and a task is created in the first column", /status: TASK_TODO,/.test(taskService));
+
+  /*
+   * Recording a follow-up result without leaving the tasks screen.
+   *
+   * The bare tick is refused — closing one means recording what the customer
+   * said — and the refusal used to send the reader to «پیگیری فروش» in the
+   * proformas module to press a second button. That round trip is what the
+   * merge exists to remove, so both the board card and the list's tick open
+   * the same modal here.
+   */
+  const view = readFileSync("src/components/TasksView.tsx", "utf8");
+  ok("the list's tick opens the completion form for a follow-up",
+    /task\.taskKind === 'SALES_FOLLOW_UP' && task\.status !== 'انجام شده'/.test(view)
+    && /void openFollowUp\(task\.id\)/.test(view));
+  ok("...and the board card opens the same one",
+    /card\.taskKind === 'SALES_FOLLOW_UP' && taskLane\(card\.status\) !== 'DONE'/.test(view));
+  /*
+   * Submitted against the task that was pressed, never the row's own
+   * `nextActionTaskId`: the row is the quotation's and the completion is
+   * written against one task, and the two are the same only while the card
+   * pressed happens to be the open one.
+   */
+  ok("the completion is written against the task that was pressed",
+    /salesFollowUpApi\.complete\(followUpRow\.taskId, body\)/.test(view));
+  // One rule for «already decided», not a second list of the four outcomes.
+  ok("and «already settled» is the shared rule",
+    /isTerminalOutcome\(followUpRow\.row\.outcome\)/.test(view));
+  // The message names the button now, not another module.
+  const serviceCode = taskService.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  ok("the refusal no longer sends anybody to the proformas module",
+    !/ماژول پیش‌فاکتورها/.test(serviceCode));
+  ok("...and the stripper is not simply eating the file",
+    /SALES_FOLLOW_UP/.test(serviceCode));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

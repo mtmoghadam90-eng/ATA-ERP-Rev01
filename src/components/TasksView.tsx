@@ -13,7 +13,8 @@ import {
   Minimize2,
   Eye,
   EyeOff,
-  UserPlus
+  UserPlus,
+  Phone
 } from 'lucide-react';
 import { Task, Customer, Project, ERPSettings } from '../types';
 import type { User as AppUser } from '../types';
@@ -25,10 +26,11 @@ import ReferralsView from './ReferralsView';
 import ReferralThread from './ReferralThread';
 import FollowUpCompletionModal from './FollowUpCompletionModal';
 import {
-  BOARD_SORTS, BoardLane, BoardSort, SORT_LABELS, referralLane,
+  BOARD_SORTS, BoardLane, BoardSort, SORT_LABELS, referralLane, taskLane,
 } from '../utils/workBoard';
 import { ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
 import { salesFollowUpApi, type FollowUpRow } from '../api/salesFollowUp';
+import { isTerminalOutcome } from '../utils/salesFollowUp';
 import { compressImage } from '../imageUtils';
 import { useRevalidate } from '../api/liveData';
 import CustomFieldsForm from './CustomFieldsForm';
@@ -264,7 +266,15 @@ export default function TasksView({
 
   /** The referral whose thread is open, and the follow-up whose form is. */
   const [openReferral, setOpenReferral] = useState<ReferralRow | null>(null);
-  const [followUpRow, setFollowUpRow] = useState<FollowUpRow | null>(null);
+  /*
+   * The follow-up being recorded, and **which task** it is being recorded on.
+   *
+   * The row is the quotation's — its next action, its health — while the
+   * completion is written against one task. Submitting against the row's
+   * `nextActionTaskId` instead would be right only while that happens to be the
+   * card somebody pressed, and null the moment it is not.
+   */
+  const [followUpRow, setFollowUpRow] = useState<{ taskId: string; row: FollowUpRow } | null>(null);
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [isTaskModalFullscreen, setIsTaskModalFullscreen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -392,7 +402,19 @@ export default function TasksView({
     setIsTaskModalFullscreen(false);
   };
 
+  /*
+   * Ticking a task, except when ticking is not what finishes it.
+   *
+   * A sales follow-up is closed by recording what the customer said — the
+   * server refuses the bare tick, and used to point at «پیگیری فروش» in the
+   * proformas module, which meant leaving this screen to press a second button.
+   * The form opens here instead. Everything else ticks as it always did.
+   */
   const handleToggleComplete = (task: Task) => {
+    if (task.taskKind === 'SALES_FOLLOW_UP' && task.status !== 'انجام شده') {
+      void openFollowUp(task.id);
+      return;
+    }
     updateTask({
       ...task,
       status: task.status === 'انجام شده' ? 'در حال انجام' : 'انجام شده'
@@ -513,6 +535,28 @@ export default function TasksView({
   };
 
   /**
+   * Opens «ثبت نتیجه پیگیری» for one follow-up task.
+   *
+   * Shared by the board and the list, because both are this screen: a follow-up
+   * used to be refused here and the user sent to «پیگیری فروش» in the
+   * proformas module to press a second button — which is the round trip this
+   * merge exists to remove.
+   */
+  const openFollowUp = async (taskId: string) => {
+    setFollowUpLoading(true);
+    try {
+      // The row is derived — the next action, its date, the health — so it is
+      // built on the server rather than assembled out of what a card carries,
+      // which is how two screens come to disagree about a quotation.
+      setFollowUpRow({ taskId, row: await salesFollowUpApi.rowForTask(taskId) });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'دریافت اطلاعات پیگیری با خطا مواجه شد.');
+    } finally {
+      setFollowUpLoading(false);
+    }
+  };
+
+  /**
    * Opening a card.
    *
    * The whole reason for the merge: a referral is answered in its own thread
@@ -524,18 +568,13 @@ export default function TasksView({
       setOpenReferral(referrals.find((r) => r.id === card.id) ?? null);
       return;
     }
-    if (card.taskKind === 'SALES_FOLLOW_UP') {
-      setFollowUpLoading(true);
-      try {
-        // The row is derived — the next action, its date, the health — so it is
-        // built on the server rather than assembled out of what this card
-        // carries, which is how two screens come to disagree about a quotation.
-        setFollowUpRow(await salesFollowUpApi.rowForTask(card.id));
-      } catch (err) {
-        alert(err instanceof Error ? err.message : 'دریافت اطلاعات پیگیری با خطا مواجه شد.');
-      } finally {
-        setFollowUpLoading(false);
-      }
+    /*
+     * A follow-up that is still open opens its completion form; one already
+     * closed opens the ordinary edit box, because there is nothing left to
+     * record and `completeFollowUp` would refuse a second completion anyway.
+     */
+    if (card.taskKind === 'SALES_FOLLOW_UP' && taskLane(card.status) !== 'DONE') {
+      await openFollowUp(card.id);
       return;
     }
     const task = tasks.find((t) => t.id === card.id);
@@ -748,16 +787,31 @@ export default function TasksView({
             }`}
           >
             <div className="flex items-start gap-3.5 flex-1 w-full">
-              {/* Checkbox */}
+              {/*
+                The tick — except on a sales follow-up, where it opens the form
+                that records what the customer said. A plain tick is refused for
+                those by the server, and used to send the reader off to
+                «پیگیری فروش» in the proformas module to press a second button.
+                The title says which one this is before it is pressed.
+              */}
               <button
                 onClick={() => handleToggleComplete(task)}
+                title={task.taskKind === 'SALES_FOLLOW_UP' && task.status !== 'انجام شده'
+                  ? 'ثبت نتیجه پیگیری'
+                  : task.status === 'انجام شده' ? 'بازگرداندن به در حال انجام' : 'انجام شد'}
+                id={`task-complete-${task.id}`}
                 className={`mt-1 rounded-md flex items-center justify-center border transition flex-shrink-0 ${
                   task.status === 'انجام شده' 
                     ? 'bg-emerald-500 border-emerald-500 text-white' 
-                    : 'border-slate-300 hover:border-sky-500 w-5 h-5'
+                    : task.taskKind === 'SALES_FOLLOW_UP'
+                      ? 'border-sky-400 text-sky-600 hover:bg-sky-50 w-5 h-5'
+                      : 'border-slate-300 hover:border-sky-500 w-5 h-5'
                 }`}
               >
                 {task.status === 'انجام شده' && <CheckCircle2 size={14} />}
+                {task.status !== 'انجام شده' && task.taskKind === 'SALES_FOLLOW_UP' && (
+                  <Phone size={11} />
+                )}
               </button>
               
               <div className="space-y-1 flex-1 min-w-0">
@@ -1028,15 +1082,19 @@ export default function TasksView({
       */}
       {followUpRow && (
         <FollowUpCompletionModal
-          row={followUpRow}
+          row={followUpRow.row}
           resultOptions={settings.dropdownItems?.followUpResults ?? []}
           userNames={users.map((u) => u.fullName)}
-          outcomeIsTerminal={['تأیید شده (برنده)', 'باخته', 'لغو شده', 'نیمه برنده']
-            .includes(followUpRow.outcome)}
+          // The same rule the follow-up screen passes, not a second list of
+          // the four outcomes written out here.
+          outcomeIsTerminal={isTerminalOutcome(followUpRow.row.outcome)}
           lossReasons={settings.lossReasons ?? []}
           onClose={() => setFollowUpRow(null)}
           onSubmit={async (body) => {
-            await salesFollowUpApi.complete(followUpRow.nextActionTaskId!, body);
+            // Against the task that was pressed, never the row's own
+            // `nextActionTaskId`: they are the same only while the card
+            // happens to be the open one.
+            await salesFollowUpApi.complete(followUpRow.taskId, body);
             setFollowUpRow(null);
             list.refresh();
           }}
