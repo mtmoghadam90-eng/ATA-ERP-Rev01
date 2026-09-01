@@ -4,7 +4,7 @@ import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { formatMoney } from '../numUtils';
 import {
   Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, AlertTriangle, TrendingUp, X,
-  CornerUpLeft, ListChecks, RefreshCcw,
+  CornerUpLeft, ListChecks, RefreshCcw, Inbox,
   FileSpreadsheet, Clock, Sliders, User, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
  CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
   ChevronRight, Loader2, Image as ImageIcon, Maximize2, Minimize2, ArrowLeftRight, Flag, Zap,
@@ -32,16 +32,17 @@ import { Project, Customer, Product, ERPSettings, User as UserType } from '../ty
 import { ApiError } from '../api/client';
 import { projectsApi, type ProjectRow, type ProjectSummary } from '../api/projects';
 import { useProjectActivities } from '../api/useProjectActivities';
-import { inboxApi, submitReferralReply } from '../api/inbox';
+import { inboxApi } from '../api/inbox';
 import { tasksApi } from '../api/tasks';
-import ReferralThread from './ReferralThread';
 import MessageReactions from './MessageReactions';
 import ProjectFollowUpTab from './ProjectFollowUpTab';
 import ActivityComposer from './ActivityComposer';
 import CategoryMembersModal from './CategoryMembersModal';
 import TaskFromMessageModal, { TaskDraft } from './TaskFromMessageModal';
 import { renderWithMentions } from './MentionText';
-import { compressImage } from '../imageUtils';
+import {
+  BoardLane, REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, referralStatusForLane,
+} from '../utils/workBoard';
 import { projectDataGaps, projectGapFields } from '../utils/projectDataGaps';
 import { detailToProject, projectToWriteInput, rowToProject } from '../api/projectAdapter';
 import { firstOption, withStoredOption } from '../utils/selectOptions';
@@ -271,6 +272,25 @@ export default function ProjectsView({
     // a console nobody has open. The detail goes on the alert too.
     console.error(fallback, err);
     alert(`${fallback}\n\n${(err as Error)?.message ?? String(err)}`);
+  };
+
+  /**
+   * Closes or reopens one of the requests a message raised.
+   *
+   * The feed draws a request as a label, not a panel with a compose field of
+   * its own — the message and the mention already say who is being asked and
+   * what for. But a status nobody can move from the screen they read it on is a
+   * status nobody moves, so the label carries this one press for either party.
+   * `referralStatusForLane` is the same mapping the board uses, so the two
+   * screens cannot disagree about what a column means.
+   */
+  const setReferralLane = async (referralId: string, lane: BoardLane) => {
+    try {
+      await inboxApi.setReferralStatus(referralId, referralStatusForLane(lane));
+      activityFeed.refresh();
+    } catch (err) {
+      reportActivityError(err, 'ثبت وضعیت ارجاع با خطا مواجه شد.');
+    }
   };
 
   /**
@@ -2117,7 +2137,7 @@ export default function ProjectsView({
                 هیچ نقطه حیاتی برای این پروژه ثبت نشده است. ابتدا یک مورد در فرم بالا ثبت کنید.
               </div>
             ) : (
-              <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
+              <div className="space-y-3 pr-1">
                 {projectMilestones.map((m) => {
                   return (
                     <div
@@ -2336,7 +2356,7 @@ export default function ProjectsView({
                 هیچ قانون اتوماسیونی برای این پروژه تعریف نشده است.
               </div>
             ) : (
-              <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
+              <div className="space-y-3 pr-1">
                 {projectRules.map((rule) => {
                   const triggerMilestone = projectMilestones.find(m => m.id === rule.triggerMilestoneId);
                   return (
@@ -4814,7 +4834,7 @@ export default function ProjectsView({
                                   تعهدات زمان تحویل توافقی
                                 </span>
                                 {details.agreedItems.length > 0 ? (
-                                  <div className="space-y-1.5 max-h-[120px] overflow-y-auto pr-1">
+                                  <div className="space-y-1.5 pr-1">
                                     {details.agreedItems.map((item: any, i: number) => (
                                       <div key={i} className="flex justify-between items-center gap-2 bg-white p-1.5 rounded border border-slate-100 shadow-sm text-[11px]">
                                         <span className="text-slate-600 font-medium truncate max-w-[200px]" title={item.productName}>{item.productName}</span>
@@ -4837,7 +4857,7 @@ export default function ProjectsView({
                                   تاریخ تحویل قطعی (لجستیک)
                                 </span>
                                 {details.actualItems.length > 0 ? (
-                                  <div className="space-y-1.5 max-h-[120px] overflow-y-auto pr-1">
+                                  <div className="space-y-1.5 pr-1">
                                     {details.actualItems.map((item: any, i: number) => (
                                       <div key={i} className="flex justify-between items-center gap-2 bg-white p-1.5 rounded border border-slate-100 shadow-sm text-[11px]">
                                         <span className="text-slate-600 font-medium truncate max-w-[200px]" title={item.productName}>{item.productName}</span>
@@ -5542,48 +5562,72 @@ export default function ProjectsView({
                                           loadReaders={() => projectsApi.activityReaders(act.id)}
                                         />
 
-                                        {(act.referrals ?? []).map((ref) => (
-                                          <div key={ref.id} className="mt-2 bg-white rounded-lg p-3 border border-slate-150 space-y-2 text-right">
-                                            <div className="flex justify-between items-center text-[9px] border-b border-slate-100 pb-1.5">
-                                              <span className="text-sky-700 font-bold">
-                                                ارجاع به {ref.assignedTo || 'همکار'}
-                                              </span>
-                                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${
-                                                (ref.status || 'در انتظار اقدام') === 'در انتظار اقدام' ? 'bg-sky-50 text-sky-700 border border-sky-100 animate-pulse' : 'bg-emerald-50 text-emerald-800'
-                                              }`}>
-                                                {ref.status || 'در انتظار اقدام'}
-                                              </span>
-                                            </div>
+                                        {/*
+                                          A request, as a label rather than a box.
 
-                                            <ReferralThread
-                                              compact
-                                              referral={ref}
-                                              currentUserId={currentUser?.id}
-                                              formatDate={formatDateTimeToShamsi}
-                                              onPickAttachment={(file, done) => {
-                                                if (file.size > 2 * 1024 * 1024 && !file.type.startsWith('image/')) {
-                                                  alert('حداکثر حجم مجاز برای فایل‌های غیرتصویری ۲ مگابایت می‌باشد.');
-                                                  return;
-                                                }
-                                                compressImage(file, (dataUrl, sizeStr) => {
-                                                  done({ name: file.name, size: sizeStr, content: dataUrl });
-                                                });
-                                              }}
-                                              onSubmit={async (body) => {
-                                                const outcome = await submitReferralReply(ref.id, body);
-                                                if (outcome === 'nothing') {
-                                                  alert('لطفاً پیام خود را بنویسید.');
-                                                  return;
-                                                }
-                                                activityFeed.refresh();
-                                              }}
-                                              onEditAction={async (text) => {
-                                                await inboxApi.updateReferralAction(ref.id, text);
-                                                activityFeed.refresh();
-                                              }}
-                                            />
+                                          It used to be drawn as a panel under
+                                          the message repeating the message —
+                                          «اقدام خواسته‌شده» quoted the very
+                                          sentence two lines above it — with a
+                                          second compose field of its own. The
+                                          message and the mention already say
+                                          who is being asked and what for, so
+                                          all that is left to say is where the
+                                          request has got to.
+
+                                          Answering is the feed's own reply: the
+                                          server mirrors a reply by the assignee
+                                          into the referral's thread and marks
+                                          it picked up, so the inbox and the
+                                          board read the same conversation.
+                                        */}
+                                        {(act.referrals ?? []).length > 0 && (
+                                          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                            {(act.referrals ?? []).map((ref) => {
+                                              const status = ref.status || REFERRAL_PENDING;
+                                              const done = status === REFERRAL_DONE;
+                                              const mine = !!currentUser?.id
+                                                && (ref.assignedToUserId === currentUser.id
+                                                  || ref.assignedByUserId === currentUser.id);
+                                              return (
+                                                <span
+                                                  key={ref.id}
+                                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[9px] font-bold ${
+                                                    done
+                                                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                                                      : status === REFERRAL_DOING
+                                                        ? 'bg-amber-50 border-amber-200 text-amber-700'
+                                                        : 'bg-sky-50 border-sky-200 text-sky-700'
+                                                  }`}
+                                                  title={`ارجاع به ${ref.assignedTo || 'همکار'} — ${status}`}
+                                                >
+                                                  <Inbox size={9} />
+                                                  {ref.assignedTo || 'همکار'}: {status}
+                                                  {/*
+                                                    Closing it is one press, for
+                                                    either party. The panel that
+                                                    used to carry this button is
+                                                    gone, and a status nobody can
+                                                    move from the screen they
+                                                    read it on is a status nobody
+                                                    moves.
+                                                  */}
+                                                  {mine && (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => setReferralLane(ref.id, done ? 'TODO' : 'DONE')}
+                                                      className="p-0.5 -mr-0.5 rounded hover:opacity-70 transition"
+                                                      title={done ? 'بازگشایی ارجاع' : 'اتمام کار این ارجاع'}
+                                                      id={`activity-referral-toggle-${ref.id}`}
+                                                    >
+                                                      {done ? <RefreshCcw size={9} /> : <CheckCircle2 size={9} />}
+                                                    </button>
+                                                  )}
+                                                </span>
+                                              );
+                                            })}
                                           </div>
-                                        ))}
+                                        )}
                                       </div>
                                     ))
                                   )}

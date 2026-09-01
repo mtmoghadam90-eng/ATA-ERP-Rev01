@@ -25,6 +25,7 @@ import { NotificationRow, ReferralRow, inboxApi, submitReferralReply } from '../
 import ReferralThread, { ReferralComposerSubmit } from './ReferralThread';
 import { useRevalidate } from '../api/liveData';
 import { useUserDirectory } from '../api/useUserDirectory';
+import { REFERRAL_DONE, REFERRAL_PENDING, referralIsOpen } from '../utils/workBoard';
 
 /**
  * The inbox: referrals to and from the signed-in user, plus their notices.
@@ -273,8 +274,16 @@ export default function ReferralsView({
         referrals: [...g.referrals].sort((a, b) => time(a.referral.createdAt) - time(b.referral.createdAt)),
       }))
       .sort((a, b) => {
-        const pendingA = a.referrals.some(r => (r.referral.status || 'در انتظار اقدام') === 'در انتظار اقدام');
-        const pendingB = b.referrals.some(r => (r.referral.status || 'در انتظار اقدام') === 'در انتظار اقدام');
+        /*
+          Open, never the exact «در انتظار اقدام».
+
+          A referral has had a middle state since the board was merged in, and
+          an exact comparison files everything somebody has picked up with the
+          finished work — at the bottom of the list, which is the one place
+          work in progress must not be.
+        */
+        const pendingA = a.referrals.some(r => referralIsOpen(r.referral.status));
+        const pendingB = b.referrals.some(r => referralIsOpen(r.referral.status));
         if (pendingA && !pendingB) return -1;
         if (!pendingA && pendingB) return 1;
 
@@ -287,7 +296,7 @@ export default function ReferralsView({
   /** Waiting on me. Only meaningful on the toMe tab, which is where it shows. */
   const pendingToMeCount = React.useMemo(
     () => (activeTab === 'toMe'
-      ? referrals.filter(r => (r.status || 'در انتظار اقدام') === 'در انتظار اقدام').length
+      ? referrals.filter(r => referralIsOpen(r.status)).length
       : 0),
     [referrals, activeTab],
   );
@@ -698,7 +707,25 @@ export default function ReferralsView({
           </div>
         ) : (
           groupedReferrals.map(({ group, referrals }, idx) => {
-            const isPending = referrals.some(r => (r.referral.status || 'در انتظار اقدام') === 'در انتظار اقدام');
+            const isPending = referrals.some(r => referralIsOpen(r.referral.status));
+            /*
+              The badge says what the referral says.
+
+              It used to print one of two words chosen by the flag above, so a
+              referral somebody had picked up read «در انتظار اقدام» — the
+              middle state could not be shown at all. The group's own status is
+              printed when there is one of it, and the count when there are
+              several going different ways.
+            */
+            const openStatuses = Array.from(new Set(
+              referrals.filter(r => referralIsOpen(r.referral.status))
+                .map(r => r.referral.status || REFERRAL_PENDING),
+            ));
+            const statusLabel = !isPending
+              ? REFERRAL_DONE
+              : openStatuses.length === 1
+                ? openStatuses[0]
+                : `${openStatuses.length} اقدام باز`;
             // The project rides along with the row, joined by the server.
             const proj = group.projectId
               ? {
@@ -771,7 +798,7 @@ export default function ReferralsView({
                           ? 'bg-sky-50 text-sky-700 border-sky-100 animate-pulse' 
                           : 'bg-emerald-50 text-emerald-700 border-emerald-100'
                       }`}>
-                        {isPending ? 'در انتظار اقدام' : 'انجام شده'}
+                        {statusLabel}
                       </span>
                       <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
                         <Calendar size={12} />

@@ -881,7 +881,7 @@ export default function SupplierInquiriesView({
                               {/* Items List */}
                               <div className="space-y-1.5">
                                 <span className="text-[10px] font-bold text-slate-400 block border-b border-slate-100 pb-1">اقلام پیشنهاد شده</span>
-                                <div className="max-h-56 overflow-y-auto space-y-2 pr-1 scrollbar-thin">
+                                <div className="space-y-2 pr-1">
                                   {inq.items.map((item, index) => (
                                     <div key={item.id || index} className="p-2 bg-slate-50/50 hover:bg-slate-50 border border-slate-100 rounded-xl space-y-1 text-[11px]">
                                       <div className="flex justify-between items-start">
@@ -923,7 +923,7 @@ export default function SupplierInquiriesView({
                                 </div>
 
                                 {inq.steps && inq.steps.length > 0 ? (
-                                  <div className="space-y-2 max-h-32 overflow-y-auto pr-1">
+                                  <div className="space-y-2 pr-1">
                                     {inq.steps.map((step) => (
                                       <div key={step.id} className="relative pr-3 border-r-2 border-slate-200 space-y-0.5 text-[10px]">
                                         {/* Timeline indicator circle — sky for system-recorded steps */}
@@ -1893,7 +1893,7 @@ function InquiryFormInner({
           </button>
         </div>
 
-        <div className="border border-slate-150 rounded-xl overflow-x-auto max-h-80 overflow-y-auto">
+        <div className="border border-slate-150 rounded-xl overflow-x-auto">
           <table className="w-full text-right text-xs min-w-[950px]">
             <thead className="bg-slate-50 text-slate-500 font-bold sticky top-0 border-b border-slate-150 z-10">
               <tr>

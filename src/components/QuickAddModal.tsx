@@ -817,7 +817,7 @@ export default function QuickAddModal({
                     <label className="text-xs font-bold text-slate-700 block mb-1">
                       {custType === 'حقوقی' ? 'تعریف ارتباط با اشخاص حقیقی مرتبط' : 'تعریف ارتباط با شرکت‌های (حقوقی) مرتبط'}
                     </label>
-                    <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-lg p-2 bg-white space-y-1">
+                    <div className="border border-slate-200 rounded-lg p-2 bg-white space-y-1">
                       {customers
                         .filter(c => c.customerType === (custType === 'حقوقی' ? 'حقیقی' : 'حقوقی'))
                         .map(c => {

@@ -57,6 +57,8 @@ export interface ProductDetail extends ProductRow {
   features: string | null;
   configRules: string | null;
   images: string | null;
+  /** `[{name,size,url,kind}]` — the catalogue, datasheet and certificates. */
+  documents: string | null;
   priceCalc: string | null;
   /** What it last actually cost to land. Blanked for users without `costs`. */
   lastPurchaseCostRial: string | null;
@@ -127,6 +129,7 @@ export interface ProductWriteInput {
   features?: unknown;
   configRules?: unknown;
   images?: unknown;
+  documents?: unknown;
   priceCalc?: unknown;
   customValues?: unknown;
   variants?: Record<string, unknown>[];

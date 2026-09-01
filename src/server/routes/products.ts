@@ -24,7 +24,7 @@ const WRITABLE: (keyof ProductInput)[] = [
   "code", "name", "displayName", "category", "brand", "modelNumber", "unit",
   "description", "supplyType", "hasVariants", "stockLevel", "minStockLevel",
   "basePriceRial", "priceForeign", "currencyForeign",
-  "features", "configRules", "images", "priceCalc", "customValues", "variants",
+  "features", "configRules", "images", "documents", "priceCalc", "customValues", "variants",
 ];
 
 function pickInput(body: unknown): ProductInput {

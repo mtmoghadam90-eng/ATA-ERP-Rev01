@@ -1987,7 +1987,7 @@ export default function PurchaseOrdersView({
                 </div>
 
                 {/* Row layout */}
-                <div className="space-y-2.5 max-h-56 overflow-y-auto pl-1">
+                <div className="space-y-2.5 pl-1">
                   {items.map((item, idx) => (
                     <div key={idx} className="grid grid-cols-1 md:grid-cols-12 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-150 items-start">
                       

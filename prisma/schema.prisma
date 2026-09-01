@@ -385,6 +385,14 @@ model Product {
   features     String? @db.NVarChar(Max)
   configRules  String? @db.NVarChar(Max)
   images       String? @db.NVarChar(Max)
+  /// The catalogue, the datasheet and the certificates: `[{name,size,url,kind}]`.
+  ///
+  /// `images` answers «what does it look like» and nothing else; what a sales
+  /// engineer reaches for when quoting is the manufacturer's literature, which
+  /// had nowhere to live. One column rather than a table because it is a short
+  /// list, never queried across products, and a table would be a join on every
+  /// read of the catalogue. `src/utils/productDocuments.ts` is the only reader.
+  documents    String? @db.NVarChar(Max)
   priceCalc    String? @db.NVarChar(Max)
   customValues String? @db.NVarChar(Max)
 

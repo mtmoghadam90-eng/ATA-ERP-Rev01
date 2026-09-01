@@ -2270,7 +2270,7 @@ export default function CustomersView({
                 )}
 
                 {/* Candidate checklist container */}
-                <div className="max-h-40 overflow-y-auto border border-slate-100 rounded-lg divide-y divide-slate-100 bg-white">
+                <div className="border border-slate-100 rounded-lg divide-y divide-slate-100 bg-white">
                   {relationCandidates.length > 0 ? (
                     relationCandidates.map(rc => {
                       const isChecked = selectedLinks.includes(rc.id);
