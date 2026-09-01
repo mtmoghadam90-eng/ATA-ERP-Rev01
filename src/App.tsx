@@ -65,10 +65,10 @@ export default function App() {
   /*
    * Which tab of «وظایف و پیگیری» the header icons open.
    *
-   * «کارتابل ارجاعات» was a module of its own and is a tab in there now, so
-   * the inbox icon and the bell say which tab rather than which screen. Both
-   * icons stay: they are how people reach their referrals and their notices
-   * from anywhere in the application.
+   * «کارتابل ارجاعات» was a module of its own and its records are cards on the
+   * work board now, so the inbox icon opens the board and the bell opens the
+   * notices. Both icons stay: they are how people reach their work and their
+   * notices from anywhere in the application.
    */
   const [referralsTab, setReferralsTab] = useState<'board' | 'inbox' | 'notifications'>('board');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
@@ -601,8 +601,8 @@ export default function App() {
                </button>
                <button 
                  className="relative text-slate-500 hover:text-amber-600 transition p-1"
-                 onClick={() => { setReferralsTab('inbox'); setActiveView('tasks'); }}
-                 title="ارجاعات کار (نیاز به اقدام)"
+                 onClick={() => { setReferralsTab('board'); setActiveView('tasks'); }}
+                 title="کارهای ارجاع‌شده به من (تخته کار)"
                >
                  <Inbox size={22} />
                  {badges.pendingReferrals > 0 && (

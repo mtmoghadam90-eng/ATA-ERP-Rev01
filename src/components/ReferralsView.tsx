@@ -45,6 +45,15 @@ interface ReferralsViewProps {
    * the page title, which the screen around it already prints.
    */
   embedded?: boolean;
+  /**
+   * Draw the notices alone, with no tab row of its own.
+   *
+   * The referrals half of this screen is the board now — a referral *is* a
+   * task there, with the same filters and the same columns — so what is left to
+   * embed is the notification panel, and a tab row offering two things that are
+   * no longer here would be three ways to reach one of them.
+   */
+  notificationsOnly?: boolean;
   settings: ERPSettings;
   currentUser: User | null;
   onViewProjectActivities?: (projectId: string) => void;
@@ -55,6 +64,7 @@ export default function ReferralsView({
   settings,
   initialTab,
   embedded,
+  notificationsOnly,
   currentUser,
   onViewProjectActivities,
   onViewCustomerDetails
@@ -62,7 +72,10 @@ export default function ReferralsView({
   const currentUserName = currentUser?.fullName || '';
   const { users } = useUserDirectory();
 
-  const [activeTab, setActiveTab] = useState<'toMe' | 'fromMe' | 'notifications'>(initialTab || 'toMe');
+  const [tab, setActiveTab] = useState<'toMe' | 'fromMe' | 'notifications'>(initialTab || 'toMe');
+  // With only the notices drawn there is nothing else this could be, and a
+  // stale value from before the prop was set would render an empty screen.
+  const activeTab = notificationsOnly ? 'notifications' as const : tab;
   React.useEffect(() => {
     if (initialTab) {
       setActiveTab(initialTab);
@@ -421,8 +434,8 @@ export default function ReferralsView({
 
       {/* Controls: Tabs & Project Filter */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-200 pb-1">
-        {/* Tabs */}
-        <div className="flex gap-2">
+        {/* Tabs — none of them when the notices are all that is drawn. */}
+        <div className={`flex gap-2 ${notificationsOnly ? 'hidden' : ''}`}>
           <button
             onClick={() => setActiveTab('toMe')}
             className={`py-3 px-6 text-sm font-bold border-b-2 transition flex items-center gap-2 ${

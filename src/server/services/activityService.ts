@@ -895,6 +895,34 @@ export async function listReferrals(
    */
   if (filters.open) and.push({ status: { not: REFERRAL_DONE } });
 
+  /*
+   * The same box that searches the tasks searches these.
+   *
+   * A referral is a card on the board beside the tasks, so one search field has
+   * to answer for both — and what people type is the job, not the sentence: a
+   * project code, a customer, a colleague's name. `actionRequired` is the
+   * request itself and the message it was raised from is the text people
+   * actually read, so both are matched, and the project and its customer are
+   * reached through the relation the same way the transactions ledger does it.
+   */
+  const search = searchClause(q.search, ["actionRequired", "assignedToName", "assignedByName"]);
+  if (search) {
+    const term = q.search;
+    const activityText = searchClause(term, ["text"]);
+    const projectMatch = searchClause(term, ["code", "name"]);
+    const customerMatch = searchClause(term, ["companyName"]);
+    and.push({
+      OR: [
+        ...search.OR,
+        ...(activityText ? [{ activity: activityText }] : []),
+        ...(projectMatch
+          ? [{ activity: { group: { project: projectMatch } } }] : []),
+        ...(customerMatch
+          ? [{ activity: { group: { project: { customer: customerMatch } } } }] : []),
+      ],
+    });
+  }
+
   const where = and.length === 0 ? {} : { AND: and };
 
   const [rows, total] = await Promise.all([

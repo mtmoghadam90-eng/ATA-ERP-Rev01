@@ -28,7 +28,8 @@ import ReferralsView from './ReferralsView';
 import ReferralThread from './ReferralThread';
 import FollowUpCompletionModal from './FollowUpCompletionModal';
 import {
-  BOARD_SORTS, BoardLane, BoardSort, SORT_LABELS, referralLane, taskLane,
+  BOARD_SORTS, BoardLane, BoardSort, SORT_LABELS, referralPassesTaskFilters,
+  sortBoardCards, taskLane,
 } from '../utils/workBoard';
 import { ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
 import { salesFollowUpApi, type FollowUpRow } from '../api/salesFollowUp';
@@ -223,15 +224,6 @@ export default function TasksView({
    */
   const [mainTab, setMainTab] = useState<'board' | 'list' | 'inbox'>(
     initialTab === 'inbox' || initialTab === 'notifications' ? 'inbox' : 'board');
-  /*
-   * Which of the embedded inbox's own tabs to open on.
-   *
-   * The bell in the header goes straight to the notices and the inbox icon to
-   * «به من ارجاع شده» — both were pointed at the referrals module, which no
-   * longer has a page of its own.
-   */
-  const [inboxTab] = useState<'toMe' | 'fromMe' | 'notifications'>(
-    initialTab === 'notifications' ? 'notifications' : 'toMe');
   const [boardSort, setBoardSort] = useState<BoardSort>('date');
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [movingCards, setMovingCards] = useState(false);
@@ -253,18 +245,22 @@ export default function TasksView({
   useRevalidate(['referrals', 'activities'], refreshReferrals);
 
   React.useEffect(() => {
-    if (mainTab !== 'board') return;
+    // Both views draw referrals; only the notices tab does not.
+    if (mainTab === 'inbox') return;
     const controller = new AbortController();
     inboxApi
       .referrals({
         scope: selectedScope === 'all' ? undefined : selectedScope,
         all: selectedScope === 'all' ? 'true' : undefined,
+        // The same box that searches the tasks. It reaches the request, the two
+        // colleagues, the project and its customer — see `listReferrals`.
+        search: search || undefined,
         pageSize: 200,
       } as Record<string, string | number | undefined>, controller.signal)
       .then((data) => setReferrals(data.rows))
       .catch(() => { /* the board still draws its tasks */ });
     return () => controller.abort();
-  }, [mainTab, selectedScope, referralReload]);
+  }, [mainTab, selectedScope, search, referralReload]);
 
   /** The referral whose thread is open, and the follow-up whose form is. */
   const [openReferral, setOpenReferral] = useState<ReferralRow | null>(null);
@@ -468,7 +464,30 @@ export default function TasksView({
       context: task.relatedProject ?? null,
     }));
 
-    const referralCards: BoardCard[] = referrals.map((ref) => ({
+    /*
+     * The referrals the filter bar leaves standing.
+     *
+     * One bar has to mean something for both kinds of record, and the rule is
+     * the same throughout: a record is filtered on the value it effectively
+     * has. `referralPassesTaskFilters` is where that is written down — a
+     * referral answers the status filter through its column, counts as
+     * «متوسط», is always about a project, and drops out of a question about a
+     * due date, which it does not have.
+     */
+    const referralCards: BoardCard[] = referrals.filter((ref) =>
+      referralPassesTaskFilters(
+        { status: ref.status, assignedToUserId: ref.assignedToUserId },
+        {
+          status: list.filters.status,
+          priority: list.filters.priority,
+          assignedToUserId: list.filters.assignedToUserId,
+          relatedToType: list.filters.relatedToType,
+          overdue: list.filters.overdue,
+          dateFrom: list.filters.dateFrom,
+          dateTo: list.filters.dateTo,
+          hideCompleted: list.filters.hideCompleted,
+        },
+      )).map((ref) => ({
       kind: 'referral',
       id: ref.id,
       // The message itself is the request — there is no separate «what should
@@ -488,16 +507,14 @@ export default function TasksView({
       replies: ref.messages?.length ?? 0,
     }));
 
-    /*
-     * The declutter toggle collapses the finished column rather than dropping
-     * rows: on a board «hide completed» is «do not show me that column», and
-     * the tasks half is already excluded by the server's own query.
-     */
-    const all = [...taskCards, ...referralCards];
-    return hideCompleted
-      ? all.filter((c) => !(c.kind === 'referral' && referralLane(c.status) === 'DONE'))
-      : all;
-  }, [tasks, referrals, hideCompleted]);
+    return [...taskCards, ...referralCards];
+  }, [tasks, referrals, list.filters]);
+
+  /** Just the referral half, for the list view to draw after the tasks. */
+  const listReferralCards = React.useMemo(
+    () => boardCards.filter((c) => c.kind === 'referral'),
+    [boardCards],
+  );
 
   const toggleCard = (key: string) => setSelectedCards((current) => {
     const next = new Set(current);
@@ -623,7 +640,7 @@ export default function TasksView({
         {([
           { key: 'board' as const, label: 'تخته کار', icon: LayoutGrid },
           { key: 'list' as const, label: 'فهرست وظایف', icon: ListTodo },
-          { key: 'inbox' as const, label: 'کارتابل و اعلان‌ها', icon: Inbox },
+          { key: 'inbox' as const, label: 'اعلان‌ها', icon: Bell },
         ]).map((tab) => (
           <button
             key={tab.key}
@@ -642,10 +659,18 @@ export default function TasksView({
         ))}
       </div>
 
+      {/*
+        The notices, alone.
+
+        There is no «کارتابل» tab any more: a referral **is** a task on the two
+        views beside this one, with the same filters, the same columns and the
+        same search — so a second list of the same records under another name
+        would be two places to look again, which is what the merge removed.
+      */}
       {mainTab === 'inbox' ? (
         <ReferralsView
           embedded
-          initialTab={inboxTab}
+          notificationsOnly
           currentUser={currentUser}
           settings={settings}
         />
@@ -759,10 +784,10 @@ export default function TasksView({
         it arrived, and how urgent it is. A referral carries no priority and
         sorts as «متوسط»; see `PRIORITY_ORDER`.
       */}
-      {mainTab === 'board' && (
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-100">
+      {/* Shown for both views: the list orders its referrals by it too. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-100">
           <div className="flex items-center gap-2">
-            <span className="text-[11px] font-bold text-slate-500">ترتیب ستون‌ها:</span>
+            <span className="text-[11px] font-bold text-slate-500">ترتیب:</span>
             {BOARD_SORTS.map((option) => (
               <button
                 key={option}
@@ -779,13 +804,14 @@ export default function TasksView({
               </button>
             ))}
           </div>
-          <span className="text-[11px] text-slate-500">
-            {selectedCards.size > 0
-              ? `${selectedCards.size} مورد انتخاب شده — ستون مقصد را بزنید.`
-              : 'موارد را تیک بزنید و سپس «انتقال به اینجا» را در ستون مقصد بزنید.'}
-          </span>
-        </div>
-      )}
+          {mainTab === 'board' && (
+            <span className="text-[11px] text-slate-500">
+              {selectedCards.size > 0
+                ? `${selectedCards.size} مورد انتخاب شده — ستون مقصد را بزنید.`
+                : 'موارد را تیک بزنید و سپس «انتقال به اینجا» را در ستون مقصد بزنید.'}
+            </span>
+          )}
+      </div>
 
       {mainTab === 'board' && (
         <WorkBoard
@@ -980,7 +1006,65 @@ export default function TasksView({
           </div>
         )}
 
-        {filteredTasks.length === 0 && !list.initialLoading && !list.error && (
+        {/*
+          The referrals, in the list too.
+
+          There is no «کارتابل» tab any more, so a referral that appeared only
+          on the board would be invisible to anybody who prefers this view —
+          which is the two-places-to-look problem the merge removed, put back.
+          The same filters decide which of them are here, and the same order.
+        */}
+        {sortBoardCards(listReferralCards, boardSort).map((card) => (
+          <div
+            key={card.id}
+            id={`referral-row-${card.id}`}
+            className="bg-white rounded-2xl border border-indigo-100 p-4 sm:p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-sm transition"
+          >
+            <div className="flex items-start gap-3.5 flex-1 w-full">
+              <button
+                onClick={() => setOpenReferral(referrals.find((r) => r.id === card.id) ?? null)}
+                title="باز کردن گفتگوی ارجاع"
+                className="mt-1 w-5 h-5 rounded-md flex items-center justify-center border border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition flex-shrink-0"
+              >
+                <Inbox size={11} />
+              </button>
+              <div className="space-y-1 flex-1 min-w-0">
+                <h4 className="font-bold text-sm leading-snug break-words text-slate-800">
+                  {card.title}
+                </h4>
+                {card.context && (
+                  <div className="text-[10px] text-sky-700 flex flex-wrap items-center gap-1">
+                    {card.context.code && <span className="font-mono font-bold">{card.context.code}</span>}
+                    {card.context.name && <span className="truncate">{card.context.name}</span>}
+                    {card.context.customerName && (
+                      <span className="text-slate-500">— {card.context.customerName}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-start md:justify-end text-xs pt-3 md:pt-0 border-t border-slate-100 md:border-t-0">
+              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full border bg-indigo-50 border-indigo-200 text-indigo-700">
+                ارجاع کار
+              </span>
+              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full border bg-slate-50 border-slate-200 text-slate-600">
+                وضعیت: {card.status}
+              </span>
+              <div className="text-[11px] text-slate-400 flex items-center gap-1.5 font-sans bg-slate-50 px-2 py-1 rounded border">
+                <User size={12} />
+                <span>مسئول: {card.assignedTo || '—'}</span>
+              </div>
+              <div className="text-[11px] text-slate-400 flex items-center gap-1.5 font-sans bg-slate-50 px-2 py-1 rounded border">
+                <UserPlus size={12} />
+                <span>ارجاع‌دهنده: {card.createdBy || '—'}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {filteredTasks.length === 0 && listReferralCards.length === 0
+          && !list.initialLoading && !list.error && (
           <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200">
             <ListTodo className="mx-auto text-slate-300 mb-2" size={40} />
             وظیفه فعالی یافت نشد.
