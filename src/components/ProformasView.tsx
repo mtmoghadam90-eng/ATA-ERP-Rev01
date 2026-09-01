@@ -78,6 +78,8 @@ import ModuleNotesSection from "./ModuleNotesSection";
 import CustomerAgreementAlert from "./CustomerAgreementAlert";
 import { isFieldRequired, renderFieldLabelWithAsterisk } from "../utils/requiredFields";
 import { buildCustomerOptions, buildCustomerOptionsFromSubset } from "../utils/customerLabel";
+import { useProjectJump } from "../api/useProjectJump";
+import ProjectCodeLink from "./ProjectCodeLink";
 import { renderProformaDocument } from "../utils/proformaDocument";
 import { getContactInfoError } from "../utils/customerValidation";
 import { getCodeError, cleanCode } from "../utils/documentCodes";
@@ -109,6 +111,16 @@ import type { useCategoryCompletion } from "../api/useCategoryCompletion";
  * rows by customer, neither of which requires the whole table.
  */
 interface ProformasViewProps {
+  /**
+   * A project code this screen was opened with — see `openProjectIn` in
+   * `App.tsx`. Applied to the search box once and then cleared, so returning
+   * to the module later does not silently re-apply a filter nobody asked for.
+   */
+  projectJump?: string;
+  onProjectJumpApplied?: () => void;
+  /** Follows a project code printed on this screen back to «پروژه‌ها». */
+  onOpenProject?: (code: string) => void;
+
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
   settings: ERPSettings;
@@ -123,6 +135,7 @@ interface ProformasViewProps {
   categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
 export default function ProformasView({
+  projectJump, onProjectJumpApplied, onOpenProject,
   initialPrintDocId,
   onClearInitialPrintDocId,
   settings,
@@ -134,6 +147,8 @@ export default function ProformasView({
   const { rates: exchangeRates } = useExchangeRates();
 
   const list = useProformaList();
+  // The project code this screen was opened with, applied to its search box.
+  useProjectJump(projectJump, list.setSearch, onProjectJumpApplied);
   const search = list.search;
   const setSearch = list.setSearch;
 
@@ -2805,10 +2820,24 @@ export default function ProformasView({
                     )}
                   </div>
                   <div>
-                    <h3 className="font-bold text-sm text-slate-900">
+                    {/*
+                      The code is the link: one gesture from a quotation to the
+                      job it belongs to, which used to mean remembering the code
+                      and typing it into another module's search box.
+                    */}
+                    <h3 className="font-bold text-sm text-slate-900 flex items-center gap-1.5 flex-wrap">
                       {isNoProject
                         ? "پیش‌فاکتورهای عمومی و خرید مستقیم (بدون پروژه)"
-                        : `پروژه: ${project?.name || "نامشخص"} (${project?.code || ""})`}
+                        : (
+                          <>
+                            <span>پروژه: {project?.name || "نامشخص"}</span>
+                            <ProjectCodeLink
+                              code={project?.code}
+                              onOpen={onOpenProject}
+                              className="font-mono text-xs text-sky-700"
+                            />
+                          </>
+                        )}
                     </h3>
                     <p className="text-[11px] text-slate-500 mt-0.5">
                       {isNoProject

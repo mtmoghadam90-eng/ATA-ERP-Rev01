@@ -62,6 +62,7 @@ import { createCustomerWithLinks } from '../api/customerAdapter';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import CostAccessNotice from './CostAccessNotice';
 import { canSeeCosts } from '../utils/permissions';
+import { useProjectJump } from "../api/useProjectJump";
 
 /**
  * Purchase orders screen.
@@ -71,6 +72,16 @@ import { canSeeCosts } from '../utils/permissions';
  * rate, and reaching the received status reconciles stock against the ledger.
  */
 interface PurchaseOrdersViewProps {
+  /**
+   * A project code this screen was opened with — see `openProjectIn` in
+   * `App.tsx`. Applied to the search box once and then cleared, so returning
+   * to the module later does not silently re-apply a filter nobody asked for.
+   */
+  projectJump?: string;
+  onProjectJumpApplied?: () => void;
+  /** Follows a project code printed on this screen back to «پروژه‌ها». */
+  onOpenProject?: (code: string) => void;
+
   initialPrintDocId?: string;
   onClearInitialPrintDocId?: () => void;
   // The winning inquiries are no longer a prop either — this screen fetches
@@ -85,6 +96,7 @@ interface PurchaseOrdersViewProps {
 }
 
 export default function PurchaseOrdersView({
+  projectJump, onProjectJumpApplied, onOpenProject,
   initialPrintDocId,
   onClearInitialPrintDocId,
   settings,
@@ -110,6 +122,8 @@ export default function PurchaseOrdersView({
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   const list = usePurchaseOrderList();
+  // The project code this screen was opened with, applied to its search box.
+  useProjectJump(projectJump, list.setSearch, onProjectJumpApplied);
   const search = list.search;
   const setSearch = list.setSearch;
 

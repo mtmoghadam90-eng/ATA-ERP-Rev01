@@ -47,6 +47,9 @@ import { applySettingsPatches } from "../src/utils/settingsPatches";
 import { ACTIVITY_REACTIONS, isAllowedReaction, summarizeReactions } from "../src/utils/reactions";
 import { readViewPreferences, writeViewPreferences } from "../src/utils/viewPreferences";
 import {
+  PROJECT_LINKED_MODULES, isProjectLinkedModule, moduleForCategory,
+} from "../src/utils/projectLinks";
+import {
   REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, TASK_CANCELLED, TASK_DOING, TASK_DONE,
   TASK_TODO, BOARD_SORTS, SORT_LABELS, effectivePriority, referralIsOpen, referralLane,
   referralPassesTaskFilters, laneWhere, serverOrderFor, sortBoardCards, taskLane,
@@ -7659,6 +7662,77 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    */
   ok("...and the remembered order is applied to the query once",
     /appliedRememberedOrder/.test(view));
+}
+
+/* ── A project code is a link, everywhere it is printed ──────────────────── */
+{
+  /*
+   * A code appeared on almost every screen and was ink: reading one meant
+   * remembering it, opening «پروژه‌ها» and typing it into the search box.
+   * One rule now — the code is a link, and it opens a module already filtered
+   * to that job. The **code** travels, not the id: every one of those screens
+   * searches by text, no two projects share a code, and several are genuinely
+   * called the same thing.
+   */
+  ok("every module a project links into is a real module",
+    PROJECT_LINKED_MODULES.every((id) => APP_MODULES.some((m) => m.id === id)),
+    PROJECT_LINKED_MODULES.filter((id) => !APP_MODULES.some((m) => m.id === id)));
+  ok("...and nothing without documents on a job is among them",
+    !isProjectLinkedModule("dashboard") && !isProjectLinkedModule("settings")
+    && !isProjectLinkedModule("users"));
+
+  /* -- which module an activity category opens -- */
+  eq("«استعلام قیمت» goes to the inquiries", moduleForCategory("استعلام قیمت"), "supplierInquiries");
+  /*
+   * First match wins, in the order the table is written — «استعلام خرید» is an
+   * inquiry, and putting purchase orders first would send it to the wrong
+   * module. The order is the specificity, so it is data and not an accident.
+   */
+  eq("«استعلام خرید» is an inquiry, not an order",
+    moduleForCategory("استعلام خرید"), "supplierInquiries");
+  eq("«سفارش خرید خارجی» goes to the orders", moduleForCategory("سفارش خرید خارجی"), "purchaseOrders");
+  eq("«ارسال و تحویل» goes to packing", moduleForCategory("ارسال و تحویل"), "packagingDelivery");
+  eq("«صدور پیش‌فاکتور» goes to the quotations",
+    moduleForCategory("صدور پیش‌فاکتور"), "proformas");
+  eq("«امور مالی» goes to the ledger", moduleForCategory("امور مالی"), "transactions");
+  /*
+   * The categories are `settings.activityCategories` — a company's own editable
+   * list with no fixed id — so a name nothing matches gets no link. A wrong
+   * link is worse than none.
+   */
+  eq("a category nothing matches gets no link", moduleForCategory("جلسه با کارفرما"), null);
+  eq("...and neither does an empty one", moduleForCategory(""), null);
+  ok("every category target is itself linkable",
+    ["استعلام", "خرید", "ارسال", "پیش‌فاکتور", "مالی", "گارانتی"]
+      .every((name) => {
+        const target = moduleForCategory(name);
+        return target === null || isProjectLinkedModule(target);
+      }));
+
+  /* -- the hand-off itself -- */
+  const app = readFileSync("src/App.tsx", "utf8");
+  ok("the code is handed between views, not held in one",
+    /const \[projectJump, setProjectJump\]/.test(app));
+  const jump = readFileSync("src/api/useProjectJump.ts", "utf8");
+  /*
+   * Cleared as soon as it is applied. Left in place, coming back to the module
+   * hours later through the sidebar would silently re-apply a filter nobody
+   * asked for — and a screen that filters itself for reasons the reader cannot
+   * see is worse than one that does not filter at all.
+   */
+  ok("...and cleared once applied", /onApplied\?\.\(\)/.test(jump));
+  // Listing the callbacks would re-apply the filter on every render of the
+  // screen above, which rebuilds them.
+  ok("...once, not on every render of the screen above", /\}, \[term\]\);/.test(jump));
+
+  const link = readFileSync("src/components/ProjectCodeLink.tsx", "utf8");
+  // Codes sit inside rows that open their own record.
+  ok("following a code does not also open the row it sits in",
+    /e\.stopPropagation\(\)/.test(link));
+  // Which is what makes it safe in a printed document and on a screen nobody
+  // has wired up yet.
+  ok("...and with no handler it is the plain text it always was",
+    /if \(!onOpen\) return <span/.test(link));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

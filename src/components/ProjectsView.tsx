@@ -56,6 +56,18 @@ import { productsApi } from '../api/products';
 import { createCustomerWithLinks } from '../api/customerAdapter';
 import { productToWriteInput, detailToProduct } from '../api/productAdapter';
 import SatisfactionLettersModal from './SatisfactionLettersModal';
+import { useProjectJump } from "../api/useProjectJump";
+import { moduleForCategory } from "../utils/projectLinks";
+import { APP_MODULES } from "../appModules";
+
+/**
+ * What the sidebar calls each module, so a link reads as the place it goes.
+ *
+ * Read from the one catalogue rather than spelled out here: a module renamed in
+ * `appModules.ts` must not leave a link saying the old name.
+ */
+const MODULE_NAMES: Record<string, string> =
+  Object.fromEntries(APP_MODULES.map((m) => [m.id, m.name]));
 
 /**
  * Projects screen.
@@ -68,6 +80,24 @@ import SatisfactionLettersModal from './SatisfactionLettersModal';
  * project's category groups.
  */
 export interface ProjectsViewProps {
+  /**
+   * A project code this screen was opened with — see `openProjectIn` in
+   * `App.tsx`. Applied to the search box once and then cleared, so returning
+   * to the module later does not silently re-apply a filter nobody asked for.
+   */
+  projectJump?: string;
+  onProjectJumpApplied?: () => void;
+  /** Follows a project code printed on this screen back to «پروژه‌ها». */
+  onOpenProject?: (code: string) => void;
+  /**
+   * Opens another module, filtered to this project.
+   *
+   * The other direction of the same rule: from a job to the documents raised
+   * on it. The **code** travels, because that is what every one of those
+   * screens searches by.
+   */
+  onOpenModuleForProject?: (view: string, code: string) => void;
+
   onOpenDocument?: any;
   settings: ERPSettings;
   currentUser: UserType | null;
@@ -77,12 +107,15 @@ export interface ProjectsViewProps {
 }
 
 export default function ProjectsView({
+  projectJump, onProjectJumpApplied, onOpenProject, onOpenModuleForProject,
   onOpenDocument,
   settings,
   currentUser,
   initialSelectedProjectId, onClearInitialSelectedProject
 }: ProjectsViewProps) {
   const list = useProjectList();
+  // The project code this screen was opened with, applied to its search box.
+  useProjectJump(projectJump, list.setSearch, onProjectJumpApplied);
   const search = list.search;
   const setSearch = list.setSearch;
 
@@ -5090,6 +5123,40 @@ export default function ProjectsView({
                                   <span className="bg-sky-100 text-sky-950 text-xs font-bold px-2.5 py-1 rounded-md border border-sky-200">
                                     {group.categoryName}
                                   </span>
+                                  {/*
+                                    Straight to where that kind of work is
+                                    actually recorded, filtered to this job.
+
+                                    The category names the work — «استعلام»,
+                                    «خرید», «ارسال» — and `moduleForCategory`
+                                    matches on the words rather than on an id,
+                                    because the categories are the company's own
+                                    editable list with no fixed id to key on. A
+                                    category nothing matches simply gets no
+                                    link: a wrong one is worse than none.
+                                  */}
+                                  {(() => {
+                                    const target = moduleForCategory(group.categoryName);
+                                    const code = selectedProjectForActivities?.code;
+                                    if (!target || !code || !onOpenModuleForProject) return null;
+                                    return (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          // The header toggles the category open; going to
+                                          // another module is a different intent.
+                                          e.stopPropagation();
+                                          onOpenModuleForProject(target, code);
+                                        }}
+                                        title={`رفتن به «${MODULE_NAMES[target] ?? target}» برای پروژه ${code}`}
+                                        data-category-link={target}
+                                        className="text-[10px] font-bold text-sky-700 hover:text-sky-900 hover:underline inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-sky-200 bg-white transition"
+                                      >
+                                        <ExternalLink size={9} />
+                                        {MODULE_NAMES[target] ?? target}
+                                      </button>
+                                    );
+                                  })()}
                                   <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
                                     isGroupClosed ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-800 animate-pulse'
                                   }`}>

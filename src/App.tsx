@@ -74,6 +74,30 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
   const [selectedProjectIdForActivities, setSelectedProjectIdForActivities] = useState<string | null>(null);
   const [selectedCustomerNameForSearch, setSelectedCustomerNameForSearch] = useState<string | null>(null);
+
+  /*
+   * Following a project code into a module.
+   *
+   * One rule across the application: a project code is a link, and it opens a
+   * module already filtered to that job. The **code** travels rather than the
+   * id, because every one of those screens searches by text — and because
+   * several projects here are genuinely called the same thing, while no two
+   * share a code.
+   *
+   * Held here rather than in each view because it is a hand-off *between*
+   * views: the code has to survive the switch, and be cleared by whoever
+   * consumed it so that going back to the module later does not silently
+   * re-apply a filter nobody asked for.
+   */
+  const [projectJump, setProjectJump] = useState<{ view: string; term: string } | null>(null);
+  const openProjectIn = (view: string, term: string) => {
+    if (!term) return;
+    setProjectJump({ view, term });
+    setActiveView(view);
+  };
+  /** The term this view was opened with, if it was the one asked for. */
+  const jumpFor = (view: string) => (projectJump?.view === view ? projectJump.term : undefined);
+  const clearJump = () => setProjectJump(null);
   const [calendarOpen, setCalendarOpen] = useState<boolean>(false);
   const [triggeredReminders, setTriggeredReminders] = useState<string[]>([]);
   const [activeReminderTask, setActiveReminderTask] = useState<any>(null);
@@ -428,6 +452,9 @@ export default function App() {
       case 'proformas':
         return (
           <ProformasView
+            projectJump={jumpFor('proformas')}
+            onProjectJumpApplied={clearJump}
+            onOpenProject={(code) => openProjectIn('projects', code)}
             initialPrintDocId={printDocumentRequest?.module === 'proformas' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
             // Reads its own data from the API; the projects and customers it
@@ -441,6 +468,9 @@ export default function App() {
       case 'purchaseOrders':
         return (
           <PurchaseOrdersView
+            projectJump={jumpFor('purchaseOrders')}
+            onProjectJumpApplied={clearJump}
+            onOpenProject={(code) => openProjectIn('projects', code)}
             initialPrintDocId={printDocumentRequest?.module === 'purchaseOrders' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
             // Reads its own data from the API; landed cost and the stock
@@ -461,6 +491,10 @@ export default function App() {
           // — which it now loads per open project instead of being handed every
           // project's category groups to filter.
           <ProjectsView
+            onOpenModuleForProject={openProjectIn}
+            projectJump={jumpFor('projects')}
+            onProjectJumpApplied={clearJump}
+            onOpenProject={(code) => openProjectIn('projects', code)}
             onOpenDocument={handleOpenDocument}
             settings={store.settings}
             currentUser={store.currentUser}
@@ -470,7 +504,10 @@ export default function App() {
         );
       case 'transactions':
         return (
-          <TransactionsView 
+          <TransactionsView
+            projectJump={jumpFor('transactions')}
+            onProjectJumpApplied={clearJump}
+            onOpenProject={(code) => openProjectIn('projects', code)} 
             initialPrintDocId={printDocumentRequest?.module === 'transactions' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
             // Reads its own data from the API; the per-project financial
@@ -500,6 +537,9 @@ export default function App() {
       case 'packagingDelivery':
         return (
           <PackagingDeliveryView
+            projectJump={jumpFor('packagingDelivery')}
+            onProjectJumpApplied={clearJump}
+            onOpenProject={(code) => openProjectIn('projects', code)}
             initialPrintDocId={printDocumentRequest?.module === 'packagingDelivery' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
             settings={store.settings}
