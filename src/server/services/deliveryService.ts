@@ -12,6 +12,7 @@ import { getTodayShamsi } from "../../dateUtils";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
+import { deliveryWorkflowStatus } from "../../utils/moduleStatuses";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 
 /**
@@ -424,9 +425,14 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
     );
 
     // Workflow rules for status change
-    const getDeliveryStatus = (d: any) => (d?.actualDeliveryDate ? 'تحویل شده' : 'در حال آماده‌سازی');
-    const oldStatus = getDeliveryStatus(before);
-    const newStatus = getDeliveryStatus(delivery);
+    /*
+     * A packing list has no status column, so this is derived — and the rule
+     * editor used to offer seven values against these two. Both sides read
+     * `deliveryWorkflowStatus` now, so the list cannot be longer than what can
+     * actually be emitted.
+     */
+    const oldStatus = deliveryWorkflowStatus(before);
+    const newStatus = deliveryWorkflowStatus(delivery);
 
     if (oldStatus !== newStatus) {
       await processWorkflowRules(

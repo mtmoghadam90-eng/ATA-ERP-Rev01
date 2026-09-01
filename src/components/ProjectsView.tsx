@@ -40,6 +40,7 @@ import ActivityComposer from './ActivityComposer';
 import CategoryMembersModal from './CategoryMembersModal';
 import TaskFromMessageModal, { TaskDraft } from './TaskFromMessageModal';
 import { renderWithMentions } from './MentionText';
+import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import {
   BoardLane, REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, referralStatusForLane,
 } from '../utils/workBoard';
@@ -105,6 +106,8 @@ export interface ProjectsViewProps {
   users?: UserType[];
   initialSelectedProjectId?: string | null;
   onClearInitialSelectedProject?: () => void;
+  /** Asks about closing the proforma activity category when a follow-up settles a sale. */
+  categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
 
 export default function ProjectsView({
@@ -112,7 +115,8 @@ export default function ProjectsView({
   onOpenDocument,
   settings,
   currentUser,
-  initialSelectedProjectId, onClearInitialSelectedProject
+  initialSelectedProjectId, onClearInitialSelectedProject,
+  categoryCompletion,
 }: ProjectsViewProps) {
   const list = useProjectList();
   // The project code this screen was opened with, applied to its search box.
@@ -5704,6 +5708,7 @@ export default function ProjectsView({
                   <ProjectFollowUpTab
                     projectId={selectedProjectForActivities.id}
                     settings={settings}
+                    categoryCompletion={categoryCompletion}
                   />
                 ) : null
               ) : modalTab === 'documents' ? (

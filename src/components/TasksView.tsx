@@ -33,7 +33,9 @@ import {
 } from '../utils/workBoard';
 import { ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
 import { salesFollowUpApi, type FollowUpRow } from '../api/salesFollowUp';
-import { isTerminalOutcome } from '../utils/salesFollowUp';
+import { isTerminalOutcome, settlementCategoryPrompt } from '../utils/salesFollowUp';
+import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
+import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import { compressImage } from '../imageUtils';
 import { useRevalidate } from '../api/liveData';
 import { readViewPreferences, writeViewPreferences } from '../utils/viewPreferences';
@@ -77,12 +79,15 @@ interface TasksViewProps {
    * which is a tab here now — so they say which tab rather than which screen.
    */
   initialTab?: 'board' | 'inbox' | 'notifications';
+  /** Asks about closing the project's proforma activity category on a settlement. */
+  categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
 
 export default function TasksView({
   settings,
   currentUser,
   initialTab,
+  categoryCompletion,
 }: TasksViewProps) {
   // Declared before the pickers below, which are disabled while it is closed.
   const [showModal, setShowModal] = useState(false);
@@ -1423,9 +1428,18 @@ export default function TasksView({
             // Against the task that was pressed, never the row's own
             // `nextActionTaskId`: they are the same only while the card
             // happens to be the open one.
-            await salesFollowUpApi.complete(followUpRow.taskId, body);
+            const outcome = await salesFollowUpApi.complete(followUpRow.taskId, body);
             setFollowUpRow(null);
             list.refresh();
+            /*
+              Settling a sale here is the same event as settling it in the
+              proforma's own outcome modal, which has always gone on to ask
+              whether the project's «پیش‌فاکتور» activity category is finished
+              with. Reaching that state through this door asked nothing, so a
+              job could be won and its category left open for ever.
+            */
+            const prompt = settlementCategoryPrompt(outcome, ACTIVITY_CATEGORY.PROFORMAS);
+            if (prompt) categoryCompletion?.promptCompletion(prompt);
           }}
         />
       )}

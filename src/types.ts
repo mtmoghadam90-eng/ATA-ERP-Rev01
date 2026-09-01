@@ -1176,6 +1176,16 @@ export interface WorkflowRule {
     | 'transaction_created'
     | 'task_created'
     | 'task_status_change'
+    /**
+     * A task reaching «انجام شده».
+     *
+     * `updateTask` has emitted this since the module was written and the rule
+     * editor offered it nowhere, so the one task event people actually want to
+     * automate on — «وقتی این کار تمام شد، کار بعدی را باز کن» — could not be
+     * chosen. It is narrower than `task_status_change` on purpose: that one
+     * fires on every move, including back out of the done column.
+     */
+    | 'task_completed'
     | 'referral_created'
     | 'referral_status_change'
     /**

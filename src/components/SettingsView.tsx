@@ -49,6 +49,10 @@ import type { ProjectRow } from '../api/projects';
 import RatesView from './RatesView';
 import { decompressLZW } from '../utils/compress';
 import { SCHEDULE_SUBJECTS, describeSchedule } from '../utils/workflowSchedule';
+import {
+  SCHEDULE_MODEL_FIELDS, WORKFLOW_TRIGGERS, defaultConditionField, triggerFields,
+  triggerGroups, triggerLabel,
+} from '../utils/workflowTriggers';
 import ConfirmModal from './ConfirmModal';
 import { uploadFile } from '../imageUtils';
 import { REQUIRED_FIELDS_METADATA, DEFAULT_REQUIRED_FIELDS } from '../utils/requiredFields';
@@ -3279,19 +3283,11 @@ export default function SettingsView({
                       value={editingRule.triggerType}
                       onChange={(e) => {
                         const val = e.target.value as any;
-                        let defaultField = 'status';
-                        let defaultValue = '';
-                        if (val.endsWith('_status_change')) {
-                          defaultField = 'newStatus';
-                        } else if (val.endsWith('_outcome_change')) {
-                          defaultField = 'newOutcome';
-                        } else if (val === 'product_low_stock' || val === 'product_created') {
-                          defaultField = 'stockLevel';
-                        } else if (val === 'customer_created') {
-                          defaultField = 'type';
-                        } else if (val === 'transaction_created') {
-                          defaultField = 'type';
-                        }
+                        // The trigger's own first field, from the catalogue —
+                        // not a chain of suffix guesses with `status` as the
+                        // fallback, which was wrong for most triggers.
+                        const defaultField = defaultConditionField(val);
+                        const defaultValue = '';
                         setEditingRule({
                           ...editingRule,
                           triggerType: val,
@@ -3308,47 +3304,21 @@ export default function SettingsView({
                       }}
                       className="w-full text-xs md:text-sm border border-slate-200 rounded-xl p-3 focus:outline-none focus:border-sky-500 bg-white"
                     >
-                      <optgroup label="پیش‌فاکتورها و پروژه‌ها">
-                        <option value="proforma_created">ایجاد پیش‌فاکتور جدید</option>
-                        <option value="proforma_outcome_change">تغییر وضعیت نهایی پیش‌فاکتور</option>
-                        {/* The stored status — «ارسال شده» and the like — which
-                            is a different event from the derived commercial
-                            outcome above and is what a follow-up rule hangs on. */}
-                        <option value="proforma_status_change">تغییر وضعیت ثبت‌شده پیش‌فاکتور (مثلاً ارسال شده)</option>
-                        <option value="project_created">ایجاد پروژه جدید</option>
-                        <option value="project_status_change">تغییر وضعیت پروژه</option>
-                      </optgroup>
-                      <optgroup label="خرید و تأمین‌کنندگان">
-                        <option value="customer_created">ثبت مشتری جدید</option>
-                        <option value="customer_updated">ویرایش اطلاعات مشتری</option>
-                        <option value="supplier_created">ثبت تامین‌کننده جدید</option>
-                        <option value="supplier_inquiry_created">ثبت استعلام قیمت جدید</option>
-                        <option value="supplier_inquiry_status_change">تغییر وضعیت استعلام تامین‌کننده</option>
-                        <option value="purchase_order_created">ثبت سفارش خرید جدید</option>
-                        <option value="purchase_order_status_change">تغییر وضعیت سفارش خرید</option>
-                      </optgroup>
-                      <optgroup label="کالاها و انبار">
-                        <option value="product_created">ثبت کالای جدید</option>
-                        <option value="product_low_stock">کاهش موجودی کالا به کمتر از حد مجاز</option>
-                        <option value="packaging_delivery_created">ثبت بسته‌بندی و تحویل</option>
-                        <option value="packaging_delivery_status_change">تغییر وضعیت بسته‌بندی و تحویل</option>
-                      </optgroup>
-                      <optgroup label="خدمات پس از فروش">
-                        <option value="after_sales_service_created">ثبت درخواست خدمات پس از فروش جدید</option>
-                        <option value="after_sales_service_status_change">تغییر وضعیت خدمات پس از فروش</option>
-                      </optgroup>
-                      <optgroup label="مالی و پرداخت‌ها">
-                        <option value="transaction_created">ثبت تراکنش مالی جدید</option>
-                      </optgroup>
-                      <optgroup label="وظایف و ارجاعات">
-                        <option value="task_created">ایجاد وظیفه جدید</option>
-                        <option value="task_status_change">تغییر وضعیت وظیفه</option>
-                        <option value="referral_created">ارجاع کار جدید به پرسنل</option>
-                        <option value="referral_status_change">تغییر وضعیت ارجاع کار</option>
-                      </optgroup>
-                      <optgroup label="زمان‌بندی (بدون نیاز به رویداد)">
-                        <option value="time_elapsed">گذشت تعداد مشخصی روز از یک تاریخ</option>
-                      </optgroup>
+                      {/*
+                        Built from `WORKFLOW_TRIGGERS`, which is also what the
+                        condition editor and the rule cards read. There were
+                        three hand-written copies of this list and they drifted:
+                        `task_completed` was fired by the engine and appeared in
+                        none of them.
+                      */}
+                      {triggerGroups().map((group) => (
+                        <optgroup key={group.group} label={group.group}>
+                          {group.triggers.map((id) => (
+                            <option key={id} value={id}>{WORKFLOW_TRIGGERS[id].label}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+
                     </select>
                   </div>
                 </div>
@@ -3447,38 +3417,17 @@ export default function SettingsView({
                     <button
                       type="button"
                       onClick={() => {
-                        const fieldMap: Record<string, string> = {
-                          proforma_created: 'status',
-                          proforma_outcome_change: 'newOutcome',
-                          proforma_status_change: 'newStatus',
-                          project_created: 'status',
-                          project_status_change: 'newStatus',
-                          customer_created: 'type',
-                          customer_updated: 'newStatus',
-                          supplier_created: 'city',
-                          supplier_inquiry_created: 'status',
-                          supplier_inquiry_status_change: 'newStatus',
-                          purchase_order_created: 'status',
-                          purchase_order_status_change: 'newStatus',
-                          product_created: 'stockLevel',
-                          product_low_stock: 'stockLevel',
-                          packaging_delivery_created: 'action',
-                          packaging_delivery_status_change: 'status',
-                          after_sales_service_created: 'status',
-                          after_sales_service_status_change: 'newStatus',
-                          transaction_created: 'type',
-                          task_created: 'status',
-                          task_status_change: 'newStatus',
-                          referral_created: 'status',
-                          referral_status_change: 'newStatus',
-                        };
                         const conds = editingRule.conditions || [];
                         setEditingRule({
                           ...editingRule,
                           conditions: [
                             ...conds,
-                            { field: fieldMap[editingRule.triggerType] || 'status', operator: 'equals', value: '' }
-                          ]
+                            // The trigger's own first field. The map this
+                            // replaced was a fourth copy of the catalogue and
+                            // named `newStatus` for triggers whose payload has
+                            // no such key.
+                            { field: defaultConditionField(editingRule.triggerType), operator: 'equals', value: '' },
+                          ],
                         });
                       }}
                       className="text-sky-600 hover:text-sky-700 text-xs font-bold flex items-center gap-1"
@@ -3495,172 +3444,41 @@ export default function SettingsView({
                   ) : (
                     <div className="space-y-3">
                       {editingRule.conditions.map((cond, condIdx) => {
-                        // Options for select
-                        let fieldOptions: { value: string; label: string }[] = [];
-                        let valueOptions: string[] = [];
+                        /*
+                          One catalogue, not a forty-branch chain of hand-typed
+                          lists beside it.
 
-                        if (editingRule.triggerType === 'packaging_delivery_created') {
-                          fieldOptions = [
-                            { value: 'action', label: 'عملیات' }
-                          ];
-                          valueOptions = ['ایجاد'];
-                        } else if (editingRule.triggerType === 'packaging_delivery_status_change') {
-                          fieldOptions = [
-                            { value: 'status', label: 'وضعیت جدید' },
-                            { value: 'oldStatus', label: 'وضعیت قبلی' }
-                          ];
-                          valueOptions = ['پیش‌نویس', 'آماده بسته‌بندی', 'بسته‌بندی شده', 'آماده ارسال', 'ارسال شده', 'تحویل شده', 'لغو شده'];
-                        } else if (editingRule.triggerType === 'supplier_inquiry_status_change') {
-                          fieldOptions = [
-                            { value: 'newStatus', label: 'وضعیت جدید' },
-                            { value: 'oldStatus', label: 'وضعیت قبلی' }
-                          ];
-                          valueOptions = ['پیش‌نویس', 'ارسال شده', 'در انتظار پاسخ', 'پاسخ داده شده', 'لغو شده', 'برنده', 'بازنده'];
-                        } else if (editingRule.triggerType === 'supplier_inquiry_created') {
-                          fieldOptions = [
-                            { value: 'status', label: 'وضعیت' },
-                            { value: 'price', label: 'قیمت استعلام' }
-                          ];
-                          valueOptions = ['پیش‌نویس', 'ارسال شده', 'در انتظار پاسخ', 'پاسخ داده شده', 'لغو شده', 'برنده', 'بازنده'];
-                        } else if (editingRule.triggerType === 'after_sales_service_status_change') {
-                          fieldOptions = [
-                            { value: 'newStatus', label: 'وضعیت جدید' },
-                            { value: 'oldStatus', label: 'وضعیت قبلی' }
-                          ];
-                          valueOptions = ['در حال بررسی', 'در حال تعمیر/خدمات', 'تکمیل شده', 'تحویل داده شده'];
-                        } else if (editingRule.triggerType === 'after_sales_service_created') {
-                          fieldOptions = [
-                            { value: 'status', label: 'وضعیت خدمات' }
-                          ];
-                          valueOptions = ['در حال بررسی', 'در حال تعمیر/خدمات', 'تکمیل شده', 'تحویل داده شده'];
-                        } else if (editingRule.triggerType === 'proforma_outcome_change') {
-                          fieldOptions = [
-                            { value: 'newOutcome', label: 'وضعیت نهایی جدید پیش‌فاکتور' },
-                            { value: 'oldOutcome', label: 'وضعیت نهایی قبلی پیش‌فاکتور' },
-                            { value: 'proformaAmount', label: 'مبلغ پیش‌فاکتور' }
-                          ];
-                          valueOptions = ['تأیید شده (برنده)', 'نیمه برنده', 'باخته', 'لغو شده', 'در حال بررسی', 'پیش‌نویس'];
-                        } else if (editingRule.triggerType === 'proforma_status_change') {
-                          // The stored column, so the values are the document
-                          // statuses a user picks on the form — not the derived
-                          // outcomes above, which never include «ارسال شده».
-                          fieldOptions = [
-                            { value: 'newStatus', label: 'وضعیت جدید ثبت‌شده' },
-                            { value: 'oldStatus', label: 'وضعیت قبلی ثبت‌شده' },
-                            { value: 'proformaAmount', label: 'مبلغ پیش‌فاکتور' }
-                          ];
-                          valueOptions = settings.dropdownItems?.proformaStatuses?.length
-                            ? settings.dropdownItems.proformaStatuses
-                            : ['پیش‌نویس', 'ارسال شده'];
-                        } else if (editingRule.triggerType === 'proforma_created') {
-                          fieldOptions = [
-                            { value: 'status', label: 'وضعیت پیش‌فاکتور' },
-                            { value: 'totalAmount', label: 'مبلغ کل' }
-                          ];
-                          valueOptions = ['تأیید شده (برنده)', 'نیمه برنده', 'باخته', 'لغو شده', 'در حال بررسی', 'پیش‌نویس'];
-                        } else if (editingRule.triggerType === 'project_status_change') {
-                          fieldOptions = [
-                            { value: 'newStatus', label: 'وضعیت جدید پروژه' },
-                            { value: 'oldStatus', label: 'وضعیت قبلی پروژه' }
-                          ];
-                          valueOptions = ['پیشنهاد فنی مالی', 'در دست بررسی', 'برنده شده', 'باخته شده'];
-                        } else if (editingRule.triggerType === 'project_created') {
-                          fieldOptions = [
-                            { value: 'status', label: 'وضعیت پروژه' }
-                          ];
-                          valueOptions = ['پیشنهاد فنی مالی', 'در دست بررسی', 'برنده شده', 'باخته شده'];
-                        } else if (editingRule.triggerType === 'purchase_order_status_change') {
-                          fieldOptions = [
-                            { value: 'newStatus', label: 'وضعیت جدید سفارش خرید' },
-                            { value: 'oldStatus', label: 'وضعیت قبلی سفارش خرید' }
-                          ];
-                          valueOptions = ['پیش‌نویس', 'در انتظار تأیید', 'تأیید شده', 'ارسال شده', 'تحویل شده (رسید انبار)', 'لغو شده'];
-                        } else if (editingRule.triggerType === 'purchase_order_created') {
-                          fieldOptions = [
-                            { value: 'status', label: 'وضعیت سفارش خرید' },
-                            { value: 'totalAmount', label: 'مبلغ کل' }
-                          ];
-                          valueOptions = ['پیش‌نویس', 'در انتظار تأیید', 'تأیید شده', 'ارسال شده', 'تحویل شده (رسید انبار)', 'لغو شده'];
-                        } else if (editingRule.triggerType === 'customer_created') {
-                          fieldOptions = [
-                            { value: 'type', label: 'نوع مشتری' },
-                            { value: 'city', label: 'شهر' }
-                          ];
-                          valueOptions = ['حقوقی', 'حقیقی'];
-                        } else if (editingRule.triggerType === 'customer_updated') {
-                          fieldOptions = [
-                            { value: 'newStatus', label: 'نوع جدید مشتری' },
-                            { value: 'oldType', label: 'نوع قبلی مشتری' },
-                            { value: 'city', label: 'شهر' }
-                          ];
-                          valueOptions = ['حقوقی', 'حقیقی'];
-                        } else if (editingRule.triggerType === 'supplier_created') {
-                          fieldOptions = [
-                            { value: 'country', label: 'کشور' }
-                          ];
-                          valueOptions = [];
-                        } else if (editingRule.triggerType === 'product_created' || editingRule.triggerType === 'product_low_stock') {
-                          fieldOptions = [
-                            { value: 'stockLevel', label: 'موجودی' },
-                            { value: 'minStockLevel', label: 'حداقل موجودی' }
-                          ];
-                          valueOptions = [];
-                        } else if (editingRule.triggerType === 'transaction_created') {
-                          fieldOptions = [
-                            { value: 'type', label: 'نوع تراکنش' },
-                            { value: 'paymentType', label: 'روش پرداخت' },
-                            { value: 'amountRIYAL', label: 'مبلغ ریالی' }
-                          ];
-                          valueOptions = ['دریافت', 'پرداخت', 'چک', 'حواله', 'نقدی', 'کارت به کارت', 'سایر'];
-                        } else if (editingRule.triggerType === 'task_created') {
-                          fieldOptions = [
-                            { value: 'status', label: 'وضعیت' },
-                            { value: 'priority', label: 'اولویت' }
-                          ];
-                          valueOptions = ['در انتظار', 'در حال انجام', 'تکمیل شده', 'کم', 'متوسط', 'زیاد', 'بحرانی'];
-                        } else if (editingRule.triggerType === 'task_status_change') {
-                          fieldOptions = [
-                            { value: 'newStatus', label: 'وضعیت جدید' },
-                            { value: 'oldStatus', label: 'وضعیت قبلی' }
-                          ];
-                          valueOptions = ['در انتظار', 'در حال انجام', 'تکمیل شده'];
-                        } else if (editingRule.triggerType === 'referral_created') {
-                          fieldOptions = [
-                            { value: 'status', label: 'وضعیت ارجاع' }
-                          ];
-                          valueOptions = ['در انتظار اقدام', 'در حال انجام', 'انجام شده', 'لغو شده'];
-                        } else if (editingRule.triggerType === 'referral_status_change') {
-                          fieldOptions = [
-                            { value: 'newStatus', label: 'وضعیت جدید' },
-                            { value: 'oldStatus', label: 'وضعیت قبلی' }
-                          ];
-                          valueOptions = ['در انتظار اقدام', 'در حال انجام', 'انجام شده', 'لغو شده'];
-                        } else if (editingRule.triggerType === 'time_elapsed') {
-                          // A scheduled rule matches against the record itself,
-                          // so the fields are that record's own — which record
-                          // depends on the date the schedule counts from.
-                          const model = SCHEDULE_SUBJECTS[editingRule.schedule?.subject || 'proforma_sent']?.model;
-                          if (model === 'proforma') {
-                            fieldOptions = [
-                              { value: 'status', label: 'وضعیت ارسال پیش‌فاکتور' },
-                              { value: 'currency', label: 'ارز سند' },
-                              { value: 'finalAmount', label: 'مبلغ نهایی' },
-                            ];
-                            valueOptions = ['پیش‌نویس', 'ارسال شده', 'در انتظار پاسخ مشتری'];
-                          } else if (model === 'project') {
-                            fieldOptions = [{ value: 'status', label: 'وضعیت پروژه' }];
-                            valueOptions = ['جدید', 'در حال مذاکره', 'ارائه پیش‌فاکتور', 'برنده (موفق)', 'باخته', 'لغو شده'];
-                          } else if (model === 'purchaseOrder') {
-                            fieldOptions = [{ value: 'status', label: 'وضعیت سفارش خرید' }];
-                            valueOptions = ['پیش‌نویس', 'ثبت شده', 'در حال تولید', 'حمل شده', 'ترخیص', 'تحویل شده'];
-                          } else if (model === 'supplierInquiry') {
-                            fieldOptions = [{ value: 'isWinner', label: 'آفر برنده است' }];
-                            valueOptions = ['true', 'false'];
-                          } else {
-                            fieldOptions = [{ value: 'actualDeliveryDateJalali', label: 'تاریخ تحویل قطعی' }];
-                            valueOptions = [];
-                          }
-                        }
+                          Every list here was written out by hand and drifted
+                          from what the services actually emit: the purchase
+                          order offered three statuses this application has
+                          never stored, the project four that do not exist, the
+                          delivery seven where the engine emits two. A condition
+                          on any of them matched nothing — silently, because a
+                          rule that never fires looks exactly like a rule
+                          waiting for its event.
+                        */
+                        const fieldOptions = editingRule.triggerType === 'time_elapsed'
+                          // A scheduled rule matches the record itself, so its
+                          // fields depend on which record the date belongs to.
+                          ? (SCHEDULE_MODEL_FIELDS[
+                              SCHEDULE_SUBJECTS[editingRule.schedule?.subject || 'proforma_sent']?.model ?? ''
+                            ] ?? SCHEDULE_MODEL_FIELDS.delivery)
+                          : triggerFields(editingRule.triggerType);
+
+                        /*
+                          The stored proforma status list is the company's own,
+                          so `settings` wins over the catalogue's default pair —
+                          the one place a user-editable list beats it.
+                        */
+                        const storedProformaStatuses = settings.dropdownItems?.proformaStatuses;
+                        const isStoredProformaStatus =
+                          editingRule.triggerType === 'proforma_status_change'
+                          && (cond.field === 'newStatus' || cond.field === 'oldStatus');
+
+                        const valueOptions: readonly string[] =
+                          isStoredProformaStatus && storedProformaStatuses?.length
+                            ? storedProformaStatuses
+                            : (fieldOptions.find((f) => f.value === cond.field)?.options ?? []);
 
                         return (
                           <div key={condIdx} className="flex flex-wrap items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-150 animate-fade-in text-xs">
@@ -4251,16 +4069,12 @@ export default function SettingsView({
                 ) : (
                   <div className="grid grid-cols-1 gap-4">
                     {(settings.workflows || []).map((rule) => {
-                      const triggerLabelMap: Record<string, string> = {
-                        proforma_outcome_change: 'تغییر وضعیت نهایی پیش‌فاکتور',
-                        proforma_status_change: 'تغییر وضعیت ثبت‌شده پیش‌فاکتور',
-                        project_status_change: 'تغییر وضعیت پروژه',
-                        purchase_order_status_change: 'تغییر وضعیت سفارش خرید',
-                        packaging_delivery_created: 'ثبت بسته‌بندی و تحویل',
-                        supplier_inquiry_status_change: 'تغییر وضعیت استعلام تامین‌کننده',
-                        after_sales_service_status_change: 'تغییر وضعیت خدمات پس از فروش',
-                        time_elapsed: 'زمان‌بندی‌شده',
-                      };
+                      /*
+                        The third copy of the trigger names, gone. It knew eight
+                        of the twenty-four, so every other rule printed its raw
+                        English id on the card — `triggerLabel` falls back to
+                        that only for a trigger stored by an older build.
+                      */
                       // A scheduled rule is described by its schedule, which is
                       // the only thing that makes one of them distinguishable
                       // from another in a list.
@@ -4284,7 +4098,7 @@ export default function SettingsView({
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-6 gap-y-1 text-xs text-slate-600">
                               <div>
                                 <span className="font-bold text-slate-500">رویداد:</span>{' '}
-                                {scheduleLabel || triggerLabelMap[rule.triggerType] || rule.triggerType}
+                                {scheduleLabel || triggerLabel(rule.triggerType)}
                               </div>
                               <div>
                                 <span className="font-bold text-slate-500">تعداد شرط‌ها:</span> {rule.conditions?.length || 0} مورد
@@ -4299,7 +4113,7 @@ export default function SettingsView({
                               <span className="font-bold text-sky-600">فرآیند: </span>
                               {scheduleLabel
                                 ? <><span className="text-slate-800 font-bold">{scheduleLabel}</span>،</>
-                                : <>در زمان وقوع <span className="text-slate-800 font-bold">{triggerLabelMap[rule.triggerType] || rule.triggerType}</span>،</>}
+                                : <>در زمان وقوع <span className="text-slate-800 font-bold">{triggerLabel(rule.triggerType)}</span>،</>}
                               {rule.conditions && rule.conditions.length > 0 ? (
                                 <>
                                   {' '}اگر{' '}

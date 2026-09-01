@@ -145,6 +145,9 @@ export async function createSupplier(input: SupplierInput, user: AuthUser, today
       supplierName: supplier.name,
       companyName: supplier.name,
       country: supplier.country,
+      // Offered as a condition field; a field the editor offers and the payload
+      // omits is a rule that silently never matches.
+      city: supplier.city,
     },
     user,
   );

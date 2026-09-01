@@ -2725,7 +2725,9 @@ export default function ProformasView({
 
       {/* The follow-up queue reads its own endpoint and is held off until it is
           opened — a list hook fetches on mount. */}
-      {mainTab === 'follow-up' && <SalesFollowUpTab active settings={settings} />}
+      {mainTab === 'follow-up' && (
+        <SalesFollowUpTab active settings={settings} categoryCompletion={categoryCompletion} />
+      )}
 
       {mainTab === 'documents' && (
       <>

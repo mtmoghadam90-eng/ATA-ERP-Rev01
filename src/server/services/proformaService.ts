@@ -785,6 +785,16 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
         finalAmount: proforma.finalAmount,
         totalAmount: proforma.totalAmount,
         currency: proforma.currency,
+        /*
+         * The stored status, which this event never carried.
+         *
+         * The rule editor offered a `status` condition here against six derived
+         * *outcome* values — a field the payload did not have, holding values a
+         * new document could not be in — so every such rule matched nothing.
+         * A new proforma is «پیش‌نویس» or «ارسال شده» and nothing else, which
+         * is what the editor offers now.
+         */
+        status: proforma.status,
       },
       user,
     );
