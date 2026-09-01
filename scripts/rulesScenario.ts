@@ -7875,8 +7875,12 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    * Reset with the rest, or the previous follow-up's next action is proposed
    * for the one after it. Same family as every other field seeded here.
    */
-  ok("...and cleared when the modal is seeded for another follow-up",
-    /setNextDescription\(''\);/.test(modal));
+  /*
+   * Blank when a next action is being *planned*, and the chase's own words when
+   * an open one is being edited — two different questions, one field.
+   */
+  ok("...and seeded from the chase, or blank, per what is being edited",
+    /setNextDescription\(editing && !editing\.closed \? editing\.description : ''\);/.test(modal));
 
   /* -- the row has to carry the note, or the card cannot draw it -- */
   const api = strip(readFileSync("src/api/tasks.ts", "utf8"));
@@ -8161,7 +8165,13 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    * task, and the sale may already be settled.
    */
   for (const [what, pattern] of [
-    ["the next action", /\{!isEditing && decision === 'NEXT_ACTION' &&/],
+    /*
+     * The block is shown when an *open* chase is being edited — those four
+     * fields are the chase — and never when a closed one is corrected, where
+     * the next action already exists as its own task with its own card.
+     */
+    ["the next action",
+      /\{\(isEditingAction \|\| \(!isEditing && decision === 'NEXT_ACTION'\)\) &&/],
     ["the deferral", /\{!isEditing && decision === 'DEFER' &&/],
     ["the settlement question", /\{suggested && !outcomeIsTerminal && !isEditing &&/],
   ] as const) {
@@ -8218,6 +8228,64 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
 
   ok("the comment stripper left these sources intact",
     view.length > 10000 && modal.length > 4000 && body.length > 1000);
+}
+
+/* ==========================================================================
+ * A task edited by hand kept its name and lost its owner
+ *
+ * `resolveAssignee` was written for the four automations that raise tasks from
+ * a name. The one path a *person* drives had the identical fault and was
+ * missed: the task form's picker sets `assignedTo` and never recomputes the id,
+ * so every save sent `assignedToUserId: null` beside a perfectly good name —
+ * the card still read «مسئول: فلانی» and the task belonged to nobody, gone from
+ * that person's own board and from every tab but «همه وظایف».
+ * ========================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const service = strip(readFileSync("src/server/services/taskService.ts", "utf8"));
+
+  ok("the task service resolves an assignee name to an account",
+    /async function assigneeColumns\(/.test(service)
+    && /await resolveAssignee\(name, fallbackUserId\)/.test(service));
+  ok("...on create", /\.\.\.\(await assigneeColumns\(input, user\.id\)\)/.test(service));
+  /*
+   * No fallback on an update: an edit that names nobody is «not edited», and
+   * inventing an owner would reassign a task somebody deliberately left
+   * personal. On a create there has to be somebody, so the raiser stands in.
+   */
+  ok("...and on update, with no fallback owner",
+    /Object\.assign\(data, await assigneeColumns\(input, null\)\)/.test(service));
+  ok("...and the old straight-to-the-creator line is gone",
+    !/assignedToUserId: input\.assignedToUserId \?\? user\.id/.test(service));
+  // An explicit id is not second-guessed, and an empty name is a deliberate
+  // «شخصی (بدون ارجاع)» rather than something to look up.
+  ok("an explicit id wins over the name",
+    /const explicitId = toNullableString\(input\.assignedToUserId, 36\);\s*if \(explicitId\) return/
+      .test(service));
+
+  /*
+   * The screen's half: sending a stale id beside a changed name would keep the
+   * task with the old owner under the new one's name, because an explicit id
+   * wins on the server.
+   */
+  const view = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
+  ok("a renamed assignee is sent without the stale id",
+    /assignedToUserId: body\.assignedToName === \(task\.assignedTo \?\? ''\)/.test(view));
+
+  /* -- and the edit button always carries the chase -- */
+  ok("editing a follow-up always passes its current state",
+    /void openFollowUp\(task\.id, \{\s*closed: taskLane\(task\.status\) === 'DONE',/.test(view));
+  const modal = strip(readFileSync("src/components/FollowUpCompletionModal.tsx", "utf8"));
+  ok("the modal tells the two edit shapes apart",
+    /const isCorrecting = editing\?\.closed === true;/.test(modal)
+    && /const isEditingAction = isEditing && !isCorrecting;/.test(modal));
+  // An open chase has had no call, so there is nothing to record on it.
+  ok("...and records no result on a chase that is still open",
+    /\{!isEditingAction && \(/.test(modal));
+
+  ok("the comment stripper left these sources intact",
+    service.length > 10000 && view.length > 10000 && modal.length > 4000);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

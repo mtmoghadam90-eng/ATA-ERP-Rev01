@@ -337,7 +337,11 @@ export default function TasksView({
       completion did has already happened, so only the result and the note are
       editable and a different endpoint writes them.
     */
-    editing?: { taskId: string; followUpResult: string; completionNote: string };
+    editing?: {
+      taskId: string; closed: boolean;
+      followUpResult: string; completionNote: string;
+      title: string; description: string; dueDate: string; assignee: string;
+    };
   } | null>(null);
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [isTaskModalFullscreen, setIsTaskModalFullscreen] = useState(false);
@@ -388,15 +392,23 @@ export default function TasksView({
      * mode, where only the result and the note can move.
      */
     if (task.taskKind === 'SALES_FOLLOW_UP') {
-      void openFollowUp(
-        task.id,
-        taskLane(task.status) === 'DONE'
-          ? {
-              followUpResult: task.followUpResult ?? '',
-              completionNote: task.completionNote ?? '',
-            }
-          : undefined,
-      );
+      /*
+       * Always with the chase's own state, never empty.
+       *
+       * Passing nothing for an open one opened the completion form with every
+       * box blank — which is right for *recording a call* and is not what
+       * «ویرایش» means. Closed, the form shows the recorded answer; open, it
+       * shows the chase itself: what it is for, when it is due, whose it is.
+       */
+      void openFollowUp(task.id, {
+        closed: taskLane(task.status) === 'DONE',
+        followUpResult: task.followUpResult ?? '',
+        completionNote: task.completionNote ?? '',
+        title: task.title,
+        description: task.description ?? '',
+        dueDate: task.dueDate,
+        assignee: task.assignedTo ?? '',
+      });
       return;
     }
     setEditingTask(task);
@@ -647,8 +659,12 @@ export default function TasksView({
    */
   const openFollowUp = async (
     taskId: string,
-    /** The recorded answer, when a closed chase is being corrected. */
-    editing?: { followUpResult: string; completionNote: string },
+    /** The chase as it stands, when one is being edited rather than completed. */
+    editing?: {
+      closed: boolean;
+      followUpResult: string; completionNote: string;
+      title: string; description: string; dueDate: string; assignee: string;
+    },
   ) => {
     setFollowUpLoading(true);
     try {
@@ -1372,6 +1388,36 @@ export default function TasksView({
             await salesFollowUpApi.updateResult(followUpRow.taskId, body);
             setFollowUpRow(null);
             list.refresh();
+          }}
+          /*
+            An open chase's own fields go through the ordinary task update —
+            the server refuses only the bare *tick* on a follow-up, not an edit
+            of what it is for. The assignee travels as a name and the server
+            resolves it to an account, so a rename here cannot leave the task
+            belonging to nobody.
+          */
+          onSaveAction={async (body) => {
+            const task = tasks.find((t) => t.id === followUpRow.taskId);
+            if (task) {
+              await updateTask({
+                ...task,
+                title: body.title,
+                description: body.description,
+                dueDate: body.dueDate,
+                assignedTo: body.assignedToName,
+                /*
+                  The stored id is only right while the name has not moved. Sent
+                  alongside a different name it wins — an explicit id is not
+                  second-guessed — and the task would stay with the old owner
+                  under the new one's name. Dropping it asks the server to look
+                  the name up, which is the whole point of `resolveAssignee`.
+                */
+                assignedToUserId: body.assignedToName === (task.assignedTo ?? '')
+                  ? task.assignedToUserId
+                  : undefined,
+              });
+            }
+            setFollowUpRow(null);
           }}
           onSubmit={async (body) => {
             // Against the task that was pressed, never the row's own

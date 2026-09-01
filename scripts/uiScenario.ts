@@ -980,6 +980,118 @@ head("The work board: two kinds of card, three columns");
   host9.remove();
 }
 
+/*
+ * «ویرایش» on a follow-up opens the form it was filled in on, carrying what is
+ * already recorded.
+ *
+ * It used to open the ordinary task box — a title, a due date and a status,
+ * none of which is what a chase records. Then it opened the completion form
+ * with every box blank, which is right for *recording a call* and is not what
+ * editing means. There are three shapes here and only a render can show that
+ * each one arrives populated: a rule test sees the props, not the boxes.
+ */
+head("Follow-up editing: the form opens carrying the follow-up");
+
+{
+  const ROW = {
+    id: "pf-1", proformaNumber: "PF-1405-08", customerId: "c1",
+    customerName: "پالایش نفت اصفهان", projectId: "p1", projectCode: "PRJ-1",
+    projectName: "ابزار دقیق", salesExpert: "کارشناس فروش",
+    expectedCloseDateJalali: null, finalAmount: "1000", currency: "ریال",
+    status: "ارسال شده", outcome: "جاری", sentDateJalali: "1405/06/01",
+    issueDateJalali: "1405/06/01", ageDays: 9, followUpState: "OPEN" as const,
+    deferredUntilJalali: null, nextAction: "تماس با مشتری",
+    nextActionDueDateJalali: "1405/06/09", nextActionAssignee: "کارشناس فروش",
+    nextActionTaskId: "task-NEXT", lastFollowUpDateJalali: null,
+    lastFollowUpResult: null, followUpHealth: "OVERDUE" as const,
+  };
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  const open = async (editing: unknown) => {
+    const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(React.createElement(FollowUpCompletionModal, {
+        row: ROW as never,
+        resultOptions: ["در حال بررسی فنی", "خرید به تعویق افتاد"],
+        userNames: ["کارشناس فروش", "مریم کاظمی"],
+        outcomeIsTerminal: false,
+        lossReasons: [],
+        onClose: () => {},
+        onSubmit: async () => {},
+        onSaveResult: async () => {},
+        onSaveAction: async () => {},
+        editing,
+      } as never));
+    });
+    await settle();
+    return {
+      host,
+      close: () => { act(() => { root.unmount(); }); host.remove(); },
+      value: (sel: string) => (host.querySelector(sel) as HTMLInputElement | null)?.value,
+      text: (sel: string) => (host.querySelector(sel)?.textContent ?? "").trim(),
+    };
+  };
+
+  /* -- an open chase: its own fields, and nothing about a call that has not
+        happened -- */
+  {
+    const m = await open({
+      taskId: "t-open", closed: false, followUpResult: "", completionNote: "",
+      title: "قیمت رقیب را بگیر", description: "با واحد فنی هماهنگ کن",
+      dueDate: "1405/06/20", assignee: "مریم کاظمی",
+    });
+    ok("an open chase opens as an edit of the action", m.text("h3") === "ویرایش اقدام پیگیری");
+    ok("...with its own title", m.value("#next-action-title") === "قیمت رقیب را بگیر",
+      m.value("#next-action-title"));
+    ok("...and its own description",
+      m.value("#next-action-description") === "با واحد فنی هماهنگ کن",
+      m.value("#next-action-description"));
+    // No call has happened, so there is nothing to record — a result box here
+    // is exactly what made this read as a blank completion form.
+    ok("...and no result box", m.value("#follow-up-note") === undefined);
+    ok("...and the button is ready", !(m.host.querySelector("#follow-up-submit") as HTMLButtonElement).disabled);
+    m.close();
+  }
+
+  /* -- a closed chase: the recorded answer, and nothing that may be re-run -- */
+  {
+    const m = await open({
+      taskId: "t-done", closed: true, followUpResult: "در حال بررسی فنی",
+      completionNote: "مشتری گفت تا هفته بعد", title: "x", description: "y",
+      dueDate: "1405/06/09", assignee: "کارشناس فروش",
+    });
+    ok("a closed chase opens as a correction", m.text("h3") === "ویرایش نتیجه پیگیری");
+    ok("...carrying the note that was recorded",
+      m.value("#follow-up-note") === "مشتری گفت تا هفته بعد", m.value("#follow-up-note"));
+    // The value is real; the box renders the matching option, so a result the
+    // dropdown no longer has would show the placeholder instead.
+    ok("...and the result that was chosen",
+      m.host.textContent?.includes("در حال بررسی فنی") === true);
+    /*
+     * The next action is its own task with its own card. Re-offering it here
+     * would raise a second one, and re-offering the settlement would re-date a
+     * sale the customer-value ranking counts from.
+     */
+    ok("...and offering neither a next action nor a decision",
+      m.value("#next-action-title") === undefined
+      && m.host.querySelector("#follow-up-decision-TERMINAL") === null);
+    m.close();
+  }
+
+  /* -- no editing: the completion form, unchanged -- */
+  {
+    const m = await open(null);
+    ok("completing still opens the completion form", m.text("h3") === "ثبت نتیجه پیگیری");
+    ok("...with the decision block", !!m.host.querySelector("#follow-up-decision-TERMINAL"));
+    ok("...and nothing to submit until a result is chosen",
+      (m.host.querySelector("#follow-up-submit") as HTMLButtonElement).disabled === true);
+    m.close();
+  }
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
