@@ -70,6 +70,27 @@ export function taskLane(status: string | null | undefined): BoardLane {
  * accident — and a card already cancelled that is dropped back into the same
  * column keeps what it has, which is why the current status is an argument.
  */
+/**
+ * The query that finds one column, as a clause on `tasks.status`.
+ *
+ * **The middle column is an exclusion, and that is the whole point.** Every
+ * automation here raises its task as «در انتظار» — the workflow engine, the
+ * milestone rules, the sales follow-up and the assistant — a fourth value no
+ * screen has ever offered and `TASK_STATUSES` does not name. `taskLane` already
+ * put it in the open column, but the status *filter* was an exact match on the
+ * three the dropdown listed, so choosing «در حال انجام» asked for a string none
+ * of those tasks carried and answered with nothing at all.
+ *
+ * Written as «not one of the other three» rather than as a list of the values
+ * that mean in-progress, so it agrees with `taskLane`'s own fallback: a status
+ * nobody anticipated is open work, and open work must never be unfindable.
+ */
+export function laneWhere(lane: BoardLane): Record<string, unknown> {
+  if (lane === "TODO") return { status: TASK_TODO };
+  if (lane === "DONE") return { status: { in: [TASK_DONE, TASK_CANCELLED] } };
+  return { status: { notIn: [TASK_TODO, TASK_DONE, TASK_CANCELLED] } };
+}
+
 export function taskStatusForLane(lane: BoardLane, current?: string | null): string {
   if (lane === "TODO") return TASK_TODO;
   if (lane === "DOING") return TASK_DOING;
@@ -233,8 +254,8 @@ export function sortBoardCards<T extends BoardCardOrder>(cards: T[], by: BoardSo
  * than disappearing from every choice.
  */
 export interface TaskFilterState {
-  /** A task status, or «all». Matched through the lane, not by the word. */
-  status?: string;
+  /** A column, or «all» — never a raw status. See `laneWhere`. */
+  lane?: string;
   priority?: string;
   assignedToUserId?: string;
   /** «پروژه», «پیش‌فاکتور», … or «all». A referral is always about a project. */
@@ -252,6 +273,17 @@ export interface ReferralFilterSubject {
   hasProject?: boolean;
 }
 
+/** The four choices the status filter offers, as the columns they select. */
+export const LANE_FILTERS = ["TODO", "DOING", "DONE", "CANCELLED"] as const;
+export type LaneFilter = (typeof LANE_FILTERS)[number];
+
+export const LANE_FILTER_LABELS: Record<LaneFilter, string> = {
+  TODO: "برای انجام",
+  DOING: "در حال انجام",
+  DONE: "انجام شده",
+  CANCELLED: "کنسل شده",
+};
+
 const ANY = (value: string | undefined) => !value || value === "all";
 
 export function referralPassesTaskFilters(
@@ -261,14 +293,14 @@ export function referralPassesTaskFilters(
   const lane = referralLane(referral.status);
 
   /*
-   * The status filter names a *task* status; a referral's own words are
-   * different. Both are mapped to a column, which is the thing the two kinds
-   * share — so choosing «انجام شده» shows the closed referrals too, and
-   * choosing «کنسل شده» shows none, because a referral cannot be cancelled.
+   * The filter names a **column**, which is the thing the two kinds share —
+   * their own status words are different. So choosing «انجام شده» shows the
+   * closed referrals too, and «کنسل شده» shows none, because a referral cannot
+   * be cancelled.
    */
-  if (!ANY(filters.status)) {
-    if (filters.status === TASK_CANCELLED) return false;
-    if (taskLane(filters.status) !== lane) return false;
+  if (!ANY(filters.lane)) {
+    if (filters.lane === "CANCELLED") return false;
+    if (filters.lane !== lane) return false;
   }
 
   // «انجام‌شده‌ها را پنهان کن» hides the finished column's referrals too.

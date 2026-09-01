@@ -21,7 +21,16 @@ export type TaskScope = "toMe" | "fromMe" | "all";
 
 export interface TaskListFilters {
   scope: TaskScope;
-  status: string;
+  /**
+   * Which **column**, never a raw status.
+   *
+   * It used to be the status word, matched exactly — and every automation
+   * raises its task as «در انتظار», a fourth value no dropdown has ever
+   * offered, so choosing «در حال انجام» asked for a string those tasks did not
+   * carry and answered with nothing. `laneWhere` on the server turns a column
+   * into the query that finds it, with the middle one written as an exclusion.
+   */
+  lane: string;
   priority: string;
   assignedToUserId: string;
   relatedToType: string;
@@ -42,7 +51,7 @@ const EMPTY_FILTERS: TaskListFilters = {
   // Opens on what was given to me, which is what somebody signing in wants to
   // know. «از طرف من» and «همه» are one click away.
   scope: "toMe",
-  status: "all",
+  lane: "all",
   priority: "all",
   assignedToUserId: "all",
   relatedToType: "all",
@@ -59,7 +68,7 @@ export function useTaskList(initialSearch = "") {
 
   const params = useMemo(() => ({
     scope: filters.scope === "all" ? undefined : filters.scope,
-    status: filters.status,
+    lane: filters.lane,
     priority: filters.priority,
     assignedToUserId: filters.assignedToUserId,
     relatedToType: filters.relatedToType,
@@ -100,7 +109,7 @@ export function useTaskList(initialSearch = "") {
   const clearFilters = () => setFilters(EMPTY_FILTERS);
 
   const hasActiveFilters =
-    filters.scope !== "toMe" || filters.status !== "all" || filters.priority !== "all"
+    filters.scope !== "toMe" || filters.lane !== "all" || filters.priority !== "all"
     || filters.assignedToUserId !== "all" || filters.relatedToType !== "all"
     || filters.overdue || filters.hideCompleted || !!filters.dateFrom || !!filters.dateTo;
 

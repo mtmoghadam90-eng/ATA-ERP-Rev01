@@ -48,7 +48,8 @@ import { ACTIVITY_REACTIONS, isAllowedReaction, summarizeReactions } from "../sr
 import {
   REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, TASK_CANCELLED, TASK_DOING, TASK_DONE,
   TASK_TODO, BOARD_SORTS, SORT_LABELS, effectivePriority, referralIsOpen, referralLane,
-  referralPassesTaskFilters, serverOrderFor, sortBoardCards, taskLane, taskStatusForLane,
+  referralPassesTaskFilters, laneWhere, serverOrderFor, sortBoardCards, taskLane,
+  taskStatusForLane,
 } from "../src/utils/workBoard";
 import { TASK_SORTABLE, laneTimestamps } from "../src/server/services/taskService";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
@@ -5196,11 +5197,16 @@ head("Tasks board: the status filter and the job behind a task");
   const service = readFileSync("src/server/services/taskService.ts", "utf8");
   const view = readFileSync("src/components/TasksView.tsx", "utf8");
 
-  // The list is paged, so narrowing what the browser holds would filter one
-  // page and call it the answer.
-  ok("status is filtered on the server", /TASK_FILTERABLE = \[[^\]]*"status"/.test(service));
+  /*
+   * The list is paged, so narrowing what the browser holds would filter one
+   * page and call it the answer. The dropdown names a **column** now rather
+   * than a status word — see `laneWhere` — because every automation raises its
+   * task as «در انتظار», which the three literal statuses never covered.
+   */
+  ok("the column is filtered on the server", /lane: req\.query\.lane/.test(
+    readFileSync("src/server/routes/tasks.ts", "utf8")));
   ok("and the screen sends it rather than filtering the page",
-    /list\.setFilter\('status', value\)/.test(view)
+    /list\.setFilter\('lane', value\)/.test(view)
     && !/filteredTasks = tasks\.filter/.test(view));
   ok("the filter is on the screen", /task-status-filter/.test(view));
 
@@ -6787,14 +6793,63 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     !clauses(buildTaskWhere(query({}), user, {})).includes('"انجام شده"'));
   // Asking for «انجام شده» from the dropdown and being answered with nothing
   // would be a screen that explains none of it.
-  ok("an explicit status wins over the toggle",
-    !clauses(buildTaskWhere(query({ status: "انجام شده" }), user, { hideCompleted: true }))
+  ok("an explicit column wins over the toggle",
+    !clauses(buildTaskWhere(query({}), user, { hideCompleted: true, lane: "DONE" }))
       .includes('{"status":{"not":"انجام شده"}}'));
   // Read strictly, so a caller that sends nothing gets the whole list.
   ok("...and only a real true hides anything",
     !clauses(buildTaskWhere(query({}), user, { hideCompleted: "false" })).includes('"انجام شده"'));
 
+  /* -- the column filter, which used to be an exact status match -- */
+  /*
+   * Every automation here raises its task as «در انتظار» — the workflow
+   * engine, the milestone rules, the sales follow-up and the assistant. It is a
+   * fourth value `TASK_STATUSES` does not name and no dropdown ever offered, so
+   * a filter that matched the literal «در حال انجام» asked for a string those
+   * tasks did not carry and answered with nothing at all, on a board full of
+   * them. That is what was reported.
+   */
+  const laneClause = (lane: string) =>
+    clauses(buildTaskWhere(query({}), user, { lane }));
+  ok("the middle column is written as an exclusion, not as one word",
+    laneClause("DOING").includes('"notIn"') && !laneClause("DOING").includes('"در حال انجام"'),
+    laneClause("DOING"));
+  // Which is the whole point: it agrees with `taskLane`'s own fallback.
+  /*
+   * Read defensively: if the clause ever goes back to an exact match this must
+   * report a failed check, not throw — a stack trace names the line and not the
+   * rule that was broken.
+   */
+  const excluded = ((laneWhere("DOING") as { status?: { notIn?: string[] } }).status?.notIn) ?? null;
+  ok("...so «در انتظار» is found by it",
+    !!excluded && !excluded.includes("در انتظار") && taskLane("در انتظار") === "DOING");
+  ok("...and so is any status nobody has thought of yet",
+    !!excluded && !excluded.includes("منتظر تأیید") && taskLane("منتظر تأیید") === "DOING");
+  ok("the first column is the one exact match there is",
+    laneClause("TODO").includes('{"status":"برای انجام"}'), laneClause("TODO"));
+  // A cancelled task is finished work and sits in the last column with the
+  // done ones, so asking for that column finds both.
+  ok("the last column holds the cancelled ones too",
+    laneClause("DONE").includes('"انجام شده"') && laneClause("DONE").includes('"کنسل شده"'));
+  ok("...and «کنسل شده» on its own is exactly that",
+    laneClause("CANCELLED") === JSON.stringify([{ status: "کنسل شده" }]), laneClause("CANCELLED"));
+  ok("an invented column filters nothing rather than everything",
+    !laneClause("SOMEDAY").includes("status"), laneClause("SOMEDAY"));
+
+  // And the writers now name the value the board knows.
+  for (const [what, file] of [
+    ["the sales follow-up", "src/server/services/followUpService.ts"],
+    ["the workflow engine", "src/server/services/workflowService.ts"],
+    ["the milestone automation", "src/server/services/milestoneAutomation.ts"],
+    ["the assistant", "src/server/services/assistant/actions.ts"],
+  ] as const) {
+    const source = readFileSync(file, "utf8");
+    ok(`${what} raises a task as «برای انجام»`,
+      /status: TASK_TODO,/.test(source) && !/status: "در انتظار"/.test(source));
+  }
+
   const route = readFileSync("src/server/routes/tasks.ts", "utf8");
+  ok("the route passes the column through", /lane: req\.query\.lane/.test(route));
   ok("the route passes the flag through", /hideCompleted:\s*req\.query\.hideCompleted === "true"/.test(route));
 
   /* -- searching by the job, not only by the task's own words -- */
@@ -7354,17 +7409,17 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    * The status filter names a *task* status and a referral's own words are
    * different; both map to a column, which is what the two kinds share.
    */
-  ok("a task status matches a referral through the column",
-    passes(REFERRAL_DONE, { status: TASK_DONE })
-    && !passes(REFERRAL_PENDING, { status: TASK_DONE }));
+  ok("the column filter matches a referral through its own column",
+    passes(REFERRAL_DONE, { lane: "DONE" })
+    && !passes(REFERRAL_PENDING, { lane: "DONE" }));
   ok("...and «برای انجام» finds the pending ones",
-    passes(REFERRAL_PENDING, { status: TASK_TODO })
-    && !passes(REFERRAL_DONE, { status: TASK_TODO }));
+    passes(REFERRAL_PENDING, { lane: "TODO" })
+    && !passes(REFERRAL_DONE, { lane: "TODO" }));
   // A referral cannot be cancelled, so that choice shows none of them rather
   // than showing all of them.
   ok("«کنسل شده» matches no referral at all",
-    !passes(REFERRAL_PENDING, { status: TASK_CANCELLED })
-    && !passes(REFERRAL_DONE, { status: TASK_CANCELLED }));
+    !passes(REFERRAL_PENDING, { lane: "CANCELLED" })
+    && !passes(REFERRAL_DONE, { lane: "CANCELLED" }));
   ok("the declutter toggle hides the closed ones",
     !passes(REFERRAL_DONE, { hideCompleted: true })
     && passes(REFERRAL_PENDING, { hideCompleted: true }));

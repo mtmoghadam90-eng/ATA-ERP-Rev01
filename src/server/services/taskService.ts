@@ -4,7 +4,8 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, canSeeAllTasks } from "../auth";
 import { taskRelationKind } from "../../utils/taskRelations";
 import {
-  BoardLane, TASK_DOING, TASK_TODO, taskLane, taskStatusForLane,
+  BOARD_LANES, BoardLane, TASK_CANCELLED, TASK_DOING, TASK_DONE, TASK_TODO,
+  laneWhere, taskLane, taskStatusForLane,
 } from "../../utils/workBoard";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate } from "../dates";
 import { toJsonColumn, toNullableString } from "../childSync";
@@ -157,6 +158,8 @@ export function buildTaskWhere(
     scope?: TaskScope;
     /** «انجام‌شده‌ها را پنهان کن» — the board's declutter toggle. */
     hideCompleted?: unknown;
+    /** One of `BOARD_LANES`, or «CANCELLED». See `laneWhere`. */
+    lane?: unknown;
     /**
      * Records whose own fields match the search term — a project by code, name
      * or customer, a proforma on such a project, a customer by name.
@@ -213,19 +216,35 @@ export function buildTaskWhere(
   }
 
   /*
+   * Which column, as a clause on the status.
+   *
+   * **Not an exact match on the status**, which is what this used to be. Every
+   * automation raises its task as «در انتظار» — a fourth value no screen has
+   * ever offered — so asking for the literal «در حال انجام» answered with
+   * nothing at all for a board full of them. `laneWhere` writes the middle
+   * column as an exclusion, agreeing with `taskLane`'s own fallback: a status
+   * nobody anticipated is open work, and open work must never be unfindable.
+   */
+  const lane = typeof extra.lane === "string" ? extra.lane : "";
+  if (lane === "CANCELLED") and.push({ status: TASK_CANCELLED });
+  else if ((BOARD_LANES as readonly string[]).includes(lane)) {
+    and.push(laneWhere(lane as BoardLane));
+  }
+
+  /*
    * The board's «hide completed» toggle.
    *
    * A query filter and not a `.filter()` over the page: the list is paged on
    * the server, so hiding rows after they arrive would empty a page of twenty
    * done tasks and report the unfiltered total beside it.
    *
-   * An explicit status choice wins. Somebody who has picked «انجام شده» from
-   * the dropdown is asking for exactly the thing the toggle hides, and honouring
-   * both would answer with nothing and explain nothing.
+   * An explicit column choice wins. Somebody who has picked «انجام شده» is
+   * asking for exactly the thing the toggle hides, and honouring both would
+   * answer with nothing and explain nothing.
    */
-  const hasExplicitStatus = Boolean(q.filters.status);
-  if (extra.hideCompleted === true && !hasExplicitStatus) {
-    and.push({ status: { not: "انجام شده" } });
+  const hasExplicitLane = Boolean(lane) || Boolean(q.filters.status);
+  if (extra.hideCompleted === true && !hasExplicitLane) {
+    and.push({ status: { not: TASK_DONE } });
   }
 
   // Filter for reminder notifications — exact date and time match
@@ -275,6 +294,8 @@ export async function listTasks(
     scope?: TaskScope;
     /** «انجام‌شده‌ها را پنهان کن» — the board's declutter toggle. */
     hideCompleted?: unknown;
+    /** One of `BOARD_LANES`, or «CANCELLED». See `laneWhere`. */
+    lane?: unknown;
   } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();

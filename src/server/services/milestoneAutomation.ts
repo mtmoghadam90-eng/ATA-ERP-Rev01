@@ -6,6 +6,7 @@ import { toNullableString } from "../childSync";
 import { addDaysToShamsi } from "../../dateUtils";
 import { sameCategory } from "../../utils/activityCategories";
 import { notifyModuleResponsible, notifyUser } from "./notificationService";
+import { TASK_TODO } from "../../utils/workBoard";
 
 /**
  * The project's own milestones and their automation rules.
@@ -146,7 +147,7 @@ export async function runMilestoneRules(
               ["dueDate"],
             ),
             priority: toNullableString(rule.priority, 20) ?? "متوسط",
-            status: "در انتظار",
+            status: TASK_TODO,
             assignedToUserId: assignee.assignedToUserId,
             assignedToName: assignee.assignedToName,
             relatedToType: "project",
