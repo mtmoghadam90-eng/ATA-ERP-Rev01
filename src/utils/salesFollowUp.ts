@@ -334,6 +334,20 @@ export interface FollowUpCompletionInput {
   completionNote?: string | null;
   /** NEXT_ACTION: the task to raise in place of this one. */
   nextTitle?: string | null;
+  /**
+   * What the next chase is actually for, in the person's own words.
+   *
+   * A title is «پیگیری پیش‌فاکتور ۱۴۰۴-۱۲», which every follow-up on the
+   * document shares; what has to be done next — «قیمت رقیب را بگیر و تخفیف
+   * ۵٪ را پیشنهاد کن» — had nowhere to go, so it was written into the note
+   * about the call that just happened and read on the wrong card.
+   *
+   * Absent is not the same as empty: a caller that does not send the field at
+   * all (n8n drives this endpoint too) keeps the old behaviour of carrying the
+   * completion note forward as the new task's description, while an empty box
+   * on the form is a person saying there is nothing more to add.
+   */
+  nextDescription?: string | null;
   nextDueDate?: string | null;
   nextAssignedToName?: string | null;
   /** DEFER: the day the customer asked to be approached again. */

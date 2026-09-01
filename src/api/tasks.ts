@@ -28,6 +28,9 @@ export interface TaskRow {
   completedAtJalali?: string | null;
   /** GENERAL | SALES_FOLLOW_UP — what pressing the card on the board does. */
   taskKind?: string | null;
+  /** What the customer said, and the note about the call that closed this. */
+  followUpResult?: string | null;
+  completionNote?: string | null;
   /**
    * The job behind the task, resolved on the server.
    *
@@ -134,6 +137,15 @@ export function rowToTask(row: TaskRow): Task {
     startedAt: row.startedAtJalali ?? undefined,
     completedAt: row.completedAtJalali ?? undefined,
     taskKind: row.taskKind ?? undefined,
+    /*
+      What came of the chase, printed on the card.
+
+      A follow-up's two halves are on two different rows — the note belongs to
+      the call that ended, the description to the one being asked for — and the
+      card had neither, so a completed follow-up said only «انجام شده».
+    */
+    followUpResult: row.followUpResult ?? undefined,
+    completionNote: row.completionNote ?? undefined,
     createdAt: row.createdAt,
     relatedProject: row.relatedProject ?? undefined,
     priority: row.priority as Task["priority"],

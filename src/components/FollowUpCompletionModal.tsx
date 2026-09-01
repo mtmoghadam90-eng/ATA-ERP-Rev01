@@ -71,6 +71,7 @@ export default function FollowUpCompletionModal({
   const [followUpResult, setFollowUpResult] = useState('');
   const [completionNote, setCompletionNote] = useState('');
   const [nextTitle, setNextTitle] = useState(`پیگیری پیش‌فاکتور ${row.proformaNumber}`);
+  const [nextDescription, setNextDescription] = useState('');
   const [nextDueDate, setNextDueDate] = useState(addDaysToShamsi(today, 3));
   const [nextAssignee, setNextAssignee] = useState(row.salesExpert ?? '');
   const [deferredUntil, setDeferredUntil] = useState(addDaysToShamsi(today, 14));
@@ -100,6 +101,7 @@ export default function FollowUpCompletionModal({
     setFollowUpResult('');
     setCompletionNote('');
     setNextTitle(`پیگیری پیش‌فاکتور ${row.proformaNumber}`);
+    setNextDescription('');
     setNextDueDate(addDaysToShamsi(getTodayShamsi(), 3));
     setNextAssignee(row.salesExpert ?? '');
     setDeferredUntil(addDaysToShamsi(getTodayShamsi(), 14));
@@ -115,6 +117,14 @@ export default function FollowUpCompletionModal({
     followUpResult,
     completionNote: completionNote || undefined,
     nextTitle: decision === 'NEXT_ACTION' ? nextTitle : undefined,
+    /*
+      Sent even when empty, and only for this decision.
+
+      An empty box is a person saying there is nothing more to add, which the
+      server must not confuse with the field being absent — that means «old
+      caller», and keeps carrying the completion note onto the next task.
+    */
+    nextDescription: decision === 'NEXT_ACTION' ? nextDescription : undefined,
     nextDueDate: decision === 'NEXT_ACTION' ? nextDueDate : undefined,
     nextAssignedToName: decision === 'NEXT_ACTION' ? (nextAssignee || undefined) : undefined,
     deferredUntil: decision === 'DEFER' ? deferredUntil : undefined,
@@ -344,6 +354,19 @@ export default function FollowUpCompletionModal({
                   onChange={(e) => setNextTitle(e.target.value)}
                   className="w-full border border-slate-200 rounded-lg p-2.5 text-xs bg-white"
                   id="next-action-title"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  شرح اقدام بعدی
+                </label>
+                <textarea
+                  value={nextDescription}
+                  onChange={(e) => setNextDescription(e.target.value)}
+                  rows={2}
+                  placeholder="دقیقاً چه کاری باید انجام شود…"
+                  className="w-full border border-slate-200 rounded-lg p-2.5 text-xs bg-white focus:outline-none focus:border-sky-400"
+                  id="next-action-description"
                 />
               </div>
               <div className="md:col-span-2">

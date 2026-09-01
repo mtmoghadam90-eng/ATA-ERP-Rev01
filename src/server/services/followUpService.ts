@@ -241,10 +241,24 @@ export async function completeFollowUp(
        */
       const assignee = await resolveAssignee(assigneeName, task.assignedToUserId, tx);
 
+      /*
+       * The next chase's own words, not the last call's.
+       *
+       * `completionNote` is what happened on the call that just ended, and it
+       * used to be copied onto the replacement — so the card telling somebody
+       * what to do next described what somebody else had already done. The
+       * field wins where it was sent; a caller that omits it entirely (n8n
+       * drives this endpoint too) keeps the carry-forward, and DEFER has no
+       * box to type one into, so it keeps it as the only context it has.
+       */
+      const nextDescription = input.nextDescription != null
+        ? String(input.nextDescription)
+        : completionNote ?? "";
+
       const next = await tx.task.create({
         data: {
           title,
-          description: completionNote ?? "",
+          description: nextDescription,
           taskKind: "SALES_FOLLOW_UP",
           relatedToType: "proforma",
           relatedToId: proformaId,

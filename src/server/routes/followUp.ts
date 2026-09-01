@@ -134,6 +134,12 @@ export function registerFollowUpRoutes(app: express.Express, deps: RouteDeps): v
         followUpResult: typeof body.followUpResult === "string" ? body.followUpResult : null,
         completionNote: typeof body.completionNote === "string" ? body.completionNote : null,
         nextTitle: typeof body.nextTitle === "string" ? body.nextTitle : null,
+        /*
+         * Undefined when the caller did not send the field at all, which is
+         * not the same as an empty one — see `FollowUpCompletionInput`.
+         */
+        nextDescription:
+          typeof body.nextDescription === "string" ? body.nextDescription : undefined,
         nextDueDate: typeof body.nextDueDate === "string" ? body.nextDueDate : null,
         nextAssignedToName:
           typeof body.nextAssignedToName === "string" ? body.nextAssignedToName : null,

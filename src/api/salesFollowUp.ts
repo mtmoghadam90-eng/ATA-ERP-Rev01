@@ -59,6 +59,8 @@ export interface FollowUpCompletionBody {
   followUpResult: string;
   completionNote?: string;
   nextTitle?: string;
+  /** «شرح اقدام بعدی» — what the next chase is for. See the input type. */
+  nextDescription?: string;
   nextDueDate?: string;
   nextAssignedToName?: string;
   deferredUntil?: string;
