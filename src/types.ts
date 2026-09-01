@@ -10,6 +10,9 @@ import type { CustomerValueMetricsRow } from './api/customers';
 // Where a line's cost came from — the rules live with the arithmetic that reads
 // them, so a source cannot be spelled one way here and another there.
 import type { CostSource } from './utils/costOfGoods';
+// A product's catalogue and datasheet files, with the rules that read them.
+export type { ProductDocument, ProductDocumentKind } from './utils/productDocuments';
+import type { ProductDocument } from './utils/productDocuments';
 
 export interface ModuleNote {
   id: string;
@@ -203,6 +206,14 @@ export interface Product {
   minStockLevel: number; // Threshold for reordering
   supplyType?: 'INVENTORY' | 'ORDER';
   images?: string[]; // فایل های تصویر
+  /**
+   * The catalogue, the datasheet and the certificates.
+   *
+   * `images` answers «what does it look like»; this is the manufacturer's
+   * literature a sales engineer actually reaches for when quoting, which used
+   * to live on somebody's desktop. `src/utils/productDocuments.ts` is the rule.
+   */
+  documents?: ProductDocument[];
   customValues?: Record<string, any>;
   features?: ProductFeature[]; // ویژگی‌های قابل تنظیم
   hasVariants?: boolean;

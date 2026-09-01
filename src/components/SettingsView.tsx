@@ -1143,7 +1143,7 @@ export default function SettingsView({
                       <h4 className="font-bold text-slate-800 text-sm">{mod.name}</h4>
                     </div>
 
-                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                    <div className="space-y-3 pr-1">
                       {mod.fields.map((field) => {
                         const isRequired = !!modFields[field.key];
                         return (
@@ -2986,7 +2986,7 @@ export default function SettingsView({
                           <span className="w-1.5 h-1.5 bg-rose-500 rounded-full"></span>
                           مشخصات رکورد حذف شده:
                         </span>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] bg-white p-2.5 rounded border border-rose-100/50 text-slate-600 font-medium leading-relaxed max-h-48 overflow-y-auto">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] bg-white p-2.5 rounded border border-rose-100/50 text-slate-600 font-medium leading-relaxed">
                           {Object.entries(beforeObj)
                             .filter(([_, v]) => v !== null && v !== undefined && typeof v !== 'object')
                             .map(([k, v]) => {
@@ -3014,7 +3014,7 @@ export default function SettingsView({
                           <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
                           مشخصات رکورد ثبت شده:
                         </span>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] bg-white p-2.5 rounded border border-emerald-100/50 text-slate-600 font-medium leading-relaxed max-h-48 overflow-y-auto">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] bg-white p-2.5 rounded border border-emerald-100/50 text-slate-600 font-medium leading-relaxed">
                           {Object.entries(afterObj)
                             .filter(([_, v]) => v !== null && v !== undefined && typeof v !== 'object')
                             .map(([k, v]) => {

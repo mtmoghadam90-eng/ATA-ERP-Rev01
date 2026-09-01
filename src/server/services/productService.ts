@@ -5,6 +5,7 @@ import { AuthUser, canSeeCosts, hasPermission } from "../auth";
 import { redactProduct, stripProductCostInput } from "../costs";
 import { jalaliToDate, normalizeJalali } from "../dates";
 import { toJsonColumn, toNullableString, toNumber } from "../childSync";
+import { normalizeProductDocuments } from "../../utils/productDocuments";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
@@ -520,6 +521,8 @@ export interface ProductInput {
   features?: unknown;
   configRules?: unknown;
   images?: unknown;
+  /** `[{name,size,url,kind}]` — see `src/utils/productDocuments.ts`. */
+  documents?: unknown;
   priceCalc?: unknown;
   customValues?: unknown;
   variants?: ProductVariantInput[];
@@ -552,6 +555,17 @@ function scalarData(input: ProductInput): Record<string, unknown> {
   if ("features" in input) set("features", toJsonColumn(input.features));
   if ("configRules" in input) set("configRules", toJsonColumn(input.configRules));
   if ("images" in input) set("images", toJsonColumn(input.images));
+  /*
+   * Normalised before it is stored, never taken as sent.
+   *
+   * The list reaches the server from a browser, so a dead entry with no URL or
+   * a kind nobody declared would otherwise be written straight onto the
+   * catalogue. Absent means «not edited», the same rule the line grids follow:
+   * a caller correcting a price must not silently detach the datasheet.
+   */
+  if ("documents" in input) {
+    set("documents", toJsonColumn(normalizeProductDocuments(input.documents)));
+  }
   if ("priceCalc" in input) set("priceCalc", toJsonColumn(input.priceCalc));
   if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
 

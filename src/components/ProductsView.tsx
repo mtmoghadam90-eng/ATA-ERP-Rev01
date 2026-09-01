@@ -19,6 +19,7 @@ import {
   ScanSearch,
   AlertTriangle,
   CheckCircle2,
+  Paperclip,
   Loader2
 } from 'lucide-react';
 import { Product, ProductVariant, ERPSettings, ProductFeature, ProductConfigRule, User } from '../types';
@@ -32,6 +33,10 @@ import PriceCalculatorModal from './PriceCalculatorModal';
 import { generateSku, isOptionExcludedByRules, decodeSku, DecodedSkuResult } from '../utils/skuUtils';
 import { getCodeError } from '../utils/documentCodes';
 import { uploadFile, downloadFileFromServer } from '../imageUtils';
+import {
+  MAX_PRODUCT_DOCUMENTS, PRODUCT_DOCUMENT_KINDS, PRODUCT_DOCUMENT_KIND_LABELS,
+  ProductDocument, ProductDocumentKind, documentsByKind,
+} from '../utils/productDocuments';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
@@ -244,6 +249,9 @@ export default function ProductsView({
   const [brand, setBrand] = useState('');
   const [description, setDescription] = useState('');
   const [images, setImages] = useState<string[]>([]);
+  const [documents, setDocuments] = useState<ProductDocument[]>([]);
+  /** Which kind the next upload is filed under. */
+  const [documentKind, setDocumentKind] = useState<ProductDocumentKind>('CATALOGUE');
   const [supplyType, setSupplyType] = useState<'INVENTORY' | 'ORDER'>('INVENTORY');
   const [initialStock, setInitialStock] = useState<string>('0');
   const [features, setFeatures] = useState<ProductFeature[]>([]);
@@ -451,6 +459,8 @@ export default function ProductsView({
     setBrand(full.brand || '');
     setDescription(full.description);
     setImages(full.images || []);
+    setDocuments(full.documents || []);
+    setDocumentKind('CATALOGUE');
     setSupplyType(full.supplyType === 'ORDER' ? 'ORDER' : 'INVENTORY');
     setCustomValues(full.customValues || {});
     setFeatures(full.features || []);
@@ -503,6 +513,14 @@ export default function ProductsView({
     setBrand(prod.brand || '');
     setDescription(prod.description);
     setImages(prod.images || []);
+    /*
+      A copy carries the literature: it is the same equipment, and the whole
+      point of copying a catalogue item is not to re-enter what is identical.
+      The files themselves are not re-uploaded — both records point at the same
+      `/uploads/...` path, which is what a shared datasheet actually is.
+    */
+    setDocuments(prod.documents ? prod.documents.map((d) => ({ ...d })) : []);
+    setDocumentKind('CATALOGUE');
     setSupplyType(prod.supplyType === 'ORDER' ? 'ORDER' : 'INVENTORY');
     setInitialStock('0');
     setCustomValues(prod.customValues ? { ...prod.customValues } : {});
@@ -798,6 +816,7 @@ export default function ProductsView({
                 features: parseFeatureSpec(item.featuresRaw),
                 configRules: null,
                 images: null,
+                documents: null,
                 priceCalc: null,
                 basePriceRial: item.priceRIYAL ? String(item.priceRIYAL) : null,
                 priceForeign: item.priceForeign ? String(item.priceForeign) : null,
@@ -883,6 +902,7 @@ export default function ProductsView({
         brand,
         description,
         images,
+        documents,
         supplyType,
         code: productCode.trim(),
         customValues,
@@ -906,6 +926,7 @@ export default function ProductsView({
         brand,
         description,
         images,
+        documents,
         supplyType,
         code: productCode.trim(),
         modelNumber: "N/A",
@@ -1670,6 +1691,117 @@ export default function ProductsView({
                           >
                             <X size={10} />
                           </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/*
+                  The manufacturer's literature.
+
+                  `images` above answers «what does it look like» and nothing
+                  else; what a sales engineer reaches for when quoting is the
+                  catalogue and the datasheet, and those had nowhere to live —
+                  so they sat on somebody's desktop, or were attached to
+                  whichever project happened to need them first.
+
+                  The kind is chosen *before* the file is picked, because it is
+                  what the reader groups by and a file renamed later must not
+                  stop being a datasheet.
+                */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-slate-500">کاتالوگ، دیتاشیت و مدارک فنی</label>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={documentKind}
+                      onChange={(e) => setDocumentKind(e.target.value as ProductDocumentKind)}
+                      className="border border-slate-200 rounded-lg px-3 py-2 text-xs bg-white outline-none focus:border-sky-500"
+                      id="product-document-kind"
+                      title="نوع سندی که در ادامه بارگذاری می‌کنید"
+                    >
+                      {PRODUCT_DOCUMENT_KINDS.map((kind) => (
+                        <option key={kind} value={kind}>{PRODUCT_DOCUMENT_KIND_LABELS[kind]}</option>
+                      ))}
+                    </select>
+
+                    <div className="relative flex-1 min-w-[220px] border-2 border-dashed border-slate-250 hover:border-sky-500 rounded-xl px-4 py-2.5 transition text-center cursor-pointer bg-slate-50/50 hover:bg-slate-50">
+                      <input
+                        type="file"
+                        multiple
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.dwg,image/*"
+                        disabled={documents.length >= MAX_PRODUCT_DOCUMENTS}
+                        onChange={async (e) => {
+                          const files = e.target.files;
+                          if (files) {
+                            for (const file of Array.from(files) as File[]) {
+                              if (documents.length >= MAX_PRODUCT_DOCUMENTS) break;
+                              try {
+                                /*
+                                  A Latin folder name, deliberately: the upload
+                                  route sanitizes it with [^a-zA-Z0-9_-], so a
+                                  Persian one reduces to an empty string and the
+                                  file lands in the uploads root instead —
+                                  silently. The Persian names are the labels
+                                  above, which are a grouping and not a folder.
+                                */
+                                const url = await uploadFile(file, 'product-docs');
+                                setDocuments((prev) => [...prev, {
+                                  name: file.name,
+                                  size: `${Math.max(1, Math.round(file.size / 1024))} KB`,
+                                  url,
+                                  kind: documentKind,
+                                }]);
+                              } catch (err: any) {
+                                alert(err.message || 'خطا در بارگذاری سند محصول');
+                              }
+                            }
+                          }
+                          if (e.target) e.target.value = '';
+                        }}
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10 disabled:cursor-not-allowed"
+                      />
+                      <div className="text-[11px] font-bold text-slate-700">
+                        انتخاب یا رها کردن فایل ({PRODUCT_DOCUMENT_KIND_LABELS[documentKind]})
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        PDF، Word، Excel، نقشه یا تصویر — حداکثر {MAX_PRODUCT_DOCUMENTS} سند برای هر کالا
+                      </div>
+                    </div>
+                  </div>
+
+                  {documents.length > 0 && (
+                    <div className="space-y-2 pt-1">
+                      {documentsByKind(documents).map((group) => (
+                        <div key={group.kind} className="border border-slate-150 rounded-xl p-2.5 bg-slate-50/40 space-y-1.5">
+                          <span className="text-[10px] font-bold text-slate-500 block">
+                            {group.label} ({group.files.length})
+                          </span>
+                          {group.files.map((doc) => (
+                            <div key={doc.url} className="flex items-center justify-between gap-2 bg-white border border-slate-150 rounded-lg px-2.5 py-1.5">
+                              <a
+                                href={doc.url}
+                                download={doc.name}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="flex items-center gap-1.5 min-w-0 text-[11px] font-bold text-sky-700 hover:text-sky-800"
+                                title="دانلود سند"
+                              >
+                                <Paperclip size={11} className="flex-shrink-0" />
+                                <span className="truncate">{doc.name}</span>
+                                {doc.size && <span className="text-slate-400 font-normal flex-shrink-0">({doc.size})</span>}
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => setDocuments((prev) => prev.filter((d) => d.url !== doc.url))}
+                                className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition flex-shrink-0"
+                                title="حذف سند از این کالا"
+                              >
+                                <X size={11} />
+                              </button>
+                            </div>
+                          ))}
                         </div>
                       ))}
                     </div>

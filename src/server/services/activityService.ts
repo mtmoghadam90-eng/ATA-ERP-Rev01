@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { parseMentions } from "../../utils/mentions";
 import { isAllowedReaction } from "../../utils/reactions";
 import {
-  BoardLane, REFERRAL_DONE, REFERRAL_PENDING, referralLane, referralStatusForLane,
+  BoardLane, REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, referralLane, referralStatusForLane,
 } from "../../utils/workBoard";
 import {
   activityRecipients, noticeExcerpt, parseMemberIds, serializeMemberIds,
@@ -421,13 +421,41 @@ export async function addActivity(
    * job the reader cannot see.
    */
   let replyToId: string | null = null;
+  /*
+   * The requests on the message being answered that belong to this author.
+   *
+   * Replying to a message you were named in *is* answering the referral — the
+   * feed no longer draws a box with its own compose field, because the message
+   * and the mention already say everything the box repeated. So the reply is
+   * mirrored into the referral's thread and the request is marked as picked up:
+   * the inbox, the board and whoever raised it all read the same conversation
+   * whichever screen it was written from.
+   */
+  let answering: { id: string; status: string; assignedToUserId: string | null }[] = [];
   const requestedReply = toNullableString(input.replyToId, 36);
   if (requestedReply) {
     const parent = await db.projectActivity.findFirst({
       where: { id: requestedReply, groupId: input.groupId },
-      select: { id: true },
+      select: {
+        id: true,
+        /*
+         * Either party, not only the assignee: whoever raised the request reads
+         * the answer in the feed and says «این آن چیزی نیست که خواستم» there,
+         * and that belongs in the thread as much as the answer does. Only the
+         * assignee replying moves the status, though — somebody chasing their
+         * own request has not picked anything up.
+         */
+        referrals: {
+          where: {
+            status: { not: REFERRAL_DONE },
+            OR: [{ assignedToUserId: user.id }, { assignedByUserId: user.id }],
+          },
+          select: { id: true, status: true, assignedToUserId: true },
+        },
+      },
     });
     replyToId = parent?.id ?? null;
+    answering = parent?.referrals ?? [];
   }
 
   /*
@@ -507,8 +535,34 @@ export async function addActivity(
       }));
     }
 
+    /*
+     * The same words, into the thread of every request being answered.
+     *
+     * In the same transaction as the message: a reply that reached the feed and
+     * not the referral would leave the person who asked looking at «در انتظار
+     * اقدام» under a message that plainly answers them. `startedAt` is stamped
+     * once and never cleared, the same rule `setReferralStatus` follows.
+     */
+    for (const request of answering) {
+      await tx.referralMessage.create({
+        data: {
+          referralId: request.id,
+          text,
+          responderUserId: user.id,
+          responderName: author?.fullName ?? null,
+        } as Prisma.ReferralMessageUncheckedCreateInput,
+      });
+      if (request.assignedToUserId === user.id && request.status !== REFERRAL_DOING) {
+        await tx.projectReferral.update({
+          where: { id: request.id },
+          data: { status: REFERRAL_DOING, startedAt: new Date() },
+        });
+      }
+    }
+
     return {
       created,
+      answered: answering,
       activity: await tx.projectActivity.findUnique({
         where: { id: activity.id },
         include: ACTIVITY_INCLUDE,
@@ -525,6 +579,39 @@ export async function addActivity(
    * side effect here.
    */
   await afterCommit("activity mentions", async () => {
+    /*
+     * Whoever asked, told that they have been answered.
+     *
+     * The message's own notices reach the people the *category* follows and the
+     * people it names — and the person who raised the referral is usually
+     * neither, so without this the answer would be as silent as it was before
+     * a reply notified anybody at all. Same shape as `addReferralMessage`.
+     */
+    for (const request of result.answered) {
+      const parties = await db.projectReferral.findUnique({
+        where: { id: request.id },
+        select: { assignedByUserId: true, assignedToUserId: true },
+      });
+      // The counterpart, whichever side wrote. `notifyUser` refuses to notify
+      // the author anyway, but working it out here keeps the message honest.
+      const counterpart = user.id === parties?.assignedByUserId
+        ? parties?.assignedToUserId
+        : parties?.assignedByUserId;
+      if (counterpart) {
+        await notifyUser({
+          userId: counterpart,
+          module: "ارجاعات",
+          title: "پاسخ جدید به ارجاع",
+          description:
+            `${author?.fullName ?? "یک همکار"} به ارجاع در پروژه ${
+              group.project.code ?? ""} پاسخ داد: ` +
+            (text.length > 160 ? `${text.slice(0, 160)}…` : text),
+          projectId: group.project.id,
+          actorUserId: user.id,
+        });
+      }
+    }
+
     for (const referral of result.created) {
       if (referral.assignedToUserId) {
         await notifyUser({
@@ -622,7 +709,7 @@ export async function updateActivity(
 
   const activity = await db.projectActivity.findUnique({
     where: { id },
-    select: { id: true, authorUserId: true },
+    select: { id: true, authorUserId: true, text: true },
   });
   if (!activity) return "not-found";
   if (activity.authorUserId !== user.id && !user.isSystemAdmin) return "forbidden";
@@ -635,6 +722,24 @@ export async function updateActivity(
         ? {}
         : attachmentColumns(normalizeAttachments(attachments))),
     },
+  });
+
+  /*
+   * The requests the message raised say the same thing it does.
+   *
+   * A mention's `actionRequired` *is* the message — one text, not two that
+   * drift apart — but editing the message only rewrote one of the copies, so
+   * the inbox went on quoting a sentence the feed no longer contains. That was
+   * survivable while the feed drew the referral's own text beside it and is not
+   * now: the feed shows only a status label, so a divergence is invisible.
+   *
+   * Only where the copy still matches what was there. A referrer who corrected
+   * the request through `updateReferralAction` said something deliberate, and
+   * this must not quietly undo it.
+   */
+  await db.projectReferral.updateMany({
+    where: { activityId: id, actionRequired: activity.text },
+    data: { actionRequired: trimmed },
   });
   return {
     activity: await db.projectActivity.findUnique({

@@ -1,6 +1,7 @@
 import type { Product, ProductVariant } from "../types";
 import type { ProductDetail, ProductRow, ProductWriteInput, ProductVariantRow } from "./products";
 import { assertComplete, markComplete, markPartial } from "./partial";
+import { parseProductDocuments } from "../utils/productDocuments";
 
 /**
  * Translation between the products API and the `Product` shape the view was
@@ -100,6 +101,12 @@ export function detailToProduct(detail: ProductDetail): Product {
     features: parseJson(detail.features, [] as Product["features"]),
     configRules: parseJson(detail.configRules, [] as Product["configRules"]),
     images: parseJson(detail.images, [] as string[]),
+    /*
+      Read through the same pure rule the server writes with, so a row stored
+      before the kinds existed — or one hand-edited in the database — cannot put
+      an entry with no URL or an unknown kind onto the screen.
+    */
+    documents: parseProductDocuments(detail.documents),
     ...lastPurchaseOf(detail),
     variants: (detail.variants ?? []).map(variantToClient),
     // The price calculator's inputs are stored together as one blob and spread
@@ -200,6 +207,7 @@ export function productToWriteInput(product: Partial<Product>): ProductWriteInpu
     features: product.features,
     configRules: product.configRules,
     images: product.images,
+    documents: product.documents,
     priceCalc: priceCalcOf(product),
     customValues: product.customValues,
     variants: (product.variants ?? []).map((v) => {

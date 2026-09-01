@@ -184,6 +184,9 @@ import {
 import {
   addDaysToShamsi as addDays, holidayReason, setHolidayCalendar, toGregorianStr,
 } from "../src/dateUtils";
+import {
+  MAX_PRODUCT_DOCUMENTS, documentsByKind, normalizeProductDocuments, parseProductDocuments,
+} from "../src/utils/productDocuments";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -5087,16 +5090,22 @@ head("Referrals: the thread is one component, sided by account");
   ok("the edit draft is seeded once per referral, not per render",
     /seededFor\.current === referral\.id/.test(thread));
 
+  /*
+   * The thread is drawn wherever a referral is *opened* — the inbox and the
+   * board — and deliberately no longer in the project's own feed, which shows a
+   * status label instead. See the block on the feed's request label below.
+   */
   for (const [file, label] of [
     ["src/components/ReferralsView.tsx", "the referrals screen"],
-    ["src/components/ProjectsView.tsx", "the project activity feed"],
+    ["src/components/TasksView.tsx", "the tasks board"],
   ] as const) {
     const src = readFileSync(file, "utf8");
     ok(`${label} draws the shared thread`, /<ReferralThread/.test(src));
     ok(`${label} uses the shared reply sequence`, /submitReferralReply\(/.test(src));
-    // Reopening from where the answer is read is the whole request.
-    ok(`${label} can correct the request`, /updateReferralAction\(/.test(src));
   }
+  // Reopening from where the answer is read is the whole request.
+  ok("the referrals screen can correct the request",
+    /updateReferralAction\(/.test(readFileSync("src/components/ReferralsView.tsx", "utf8")));
 
   // Only the person who raised it: the assignee rewriting their own
   // instructions is how a referral gets marked done against a request nobody
@@ -7904,6 +7913,217 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   // vacuously against an empty string.
   ok("the comment stripper left the sources intact",
     service.length > 4000 && view.length > 4000 && modal.length > 2000);
+}
+
+/* ==========================================================================
+ * A request is a label, and «open» is not one status
+ *
+ * The feed drew a referral as a panel under the message repeating the message,
+ * with a compose field of its own — so the request was said twice and answered
+ * in a second place. It is a status label now, and the feed's own reply is the
+ * answer. Alongside that: `ReferralThread` compared the status against the
+ * literal «در انتظار اقدام», and a referral has had a middle state since the
+ * board was merged in — so picking one up took «ثبت اتمام کار» away from the
+ * assignee and left no way to close it at all.
+ * ========================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* -- open is an exclusion, in every screen that asks -- */
+  const thread = strip(readFileSync("src/components/ReferralThread.tsx", "utf8"));
+  ok("the thread asks whether the referral is open",
+    /referralIsOpen\(referral\.status\)/.test(thread));
+  ok("...and the assignee can close an open one",
+    /\{isOpen && isAssignee &&/.test(thread));
+  ok("...while reopening is offered only once it is closed",
+    /\{!isOpen && isReferrer &&/.test(thread));
+  /*
+   * The literal is what broke: an exact comparison files everything somebody
+   * has picked up with the finished work.
+   */
+  ok("no screen compares the status against the pending literal",
+    ["src/components/ReferralThread.tsx", "src/components/ReferralsView.tsx"]
+      .every((file) => !/=== *['"]در انتظار اقدام['"]/.test(
+        strip(readFileSync(file, "utf8")))));
+  const inbox = strip(readFileSync("src/components/ReferralsView.tsx", "utf8"));
+  ok("the inbox counts and orders by the same rule",
+    /referralIsOpen\(r\.status\)/.test(inbox)
+    && /referralIsOpen\(r\.referral\.status\)/.test(inbox));
+  // A two-word badge cannot say the middle state at all.
+  ok("...and prints the status rather than one of two words",
+    /\{statusLabel\}/.test(inbox) && !/\? *['"]در انتظار اقدام['"] *:/.test(inbox));
+
+  /* -- the feed: a label, and no second conversation -- */
+  const feed = strip(readFileSync("src/components/ProjectsView.tsx", "utf8"));
+  ok("the feed no longer draws a thread of its own",
+    !/<ReferralThread/.test(feed));
+  ok("...and shows the request's status beside the message",
+    /ref\.status \|\| REFERRAL_PENDING/.test(feed));
+  /*
+   * A status nobody can move from the screen they read it on is a status
+   * nobody moves — so the label keeps one press, through the board's own
+   * mapping rather than a status word written out here.
+   */
+  ok("...with one press to close or reopen it",
+    /setReferralLane\(ref\.id, done \? 'TODO' : 'DONE'\)/.test(feed));
+  ok("...mapped through the board's own rule",
+    /referralStatusForLane\(lane\)/.test(feed));
+
+  /* -- the reply is the answer -- */
+  const service = strip(readFileSync("src/server/services/activityService.ts", "utf8"));
+  ok("a reply is mirrored into the thread of the request it answers",
+    /tx\.referralMessage\.create/.test(service));
+  /*
+   * Either party may write into the thread; only the assignee replying moves
+   * the status, because somebody chasing their own request has picked nothing
+   * up. And a done referral is never reopened by a reply.
+   */
+  ok("...by either party",
+    /OR: \[\{ assignedToUserId: user\.id \}, \{ assignedByUserId: user\.id \}\]/.test(service));
+  ok("...but only the assignee moves it to «در حال اقدام»",
+    /request\.assignedToUserId === user\.id && request\.status !== REFERRAL_DOING/.test(service));
+  ok("...and a finished request is not reopened by one",
+    /status: \{ not: REFERRAL_DONE \}/.test(service));
+  // In the same transaction: a reply in the feed and «در انتظار اقدام» in the
+  // inbox is the disagreement this whole change exists to prevent.
+  ok("...inside the message's own transaction",
+    service.indexOf("tx.referralMessage.create") > service.indexOf("db.$transaction")
+    && service.indexOf("tx.referralMessage.create") < service.indexOf("await afterCommit"));
+
+  /*
+   * The request *is* the message, so editing one has to edit the other — and
+   * only where the copy still matches, or a referrer's deliberate correction
+   * through `updateReferralAction` would be silently undone.
+   */
+  ok("editing the message keeps the requests it raised in step",
+    /where: \{ activityId: id, actionRequired: activity\.text \}/.test(service));
+
+  // The stripper must not be eating the files.
+  ok("the comment stripper left these sources intact",
+    feed.length > 10000 && service.length > 10000 && thread.length > 4000);
+}
+
+/* ==========================================================================
+ * A product's own literature, and one scrollbar per screen
+ * ========================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* -- the documents themselves -- */
+  eq("a document with no URL is not a document",
+    normalizeProductDocuments([{ name: "کاتالوگ" }]).length, 0);
+  eq("...and the same file picked twice is one",
+    normalizeProductDocuments([
+      { name: "a", url: "/uploads/x.pdf", kind: "CATALOGUE" },
+      { name: "b", url: "/uploads/x.pdf", kind: "DATASHEET" },
+    ]).length, 1);
+  /*
+   * An unknown kind becomes OTHER rather than being dropped: the list may gain
+   * an entry and lose one, and a file filed under a kind that no longer exists
+   * is still the file somebody uploaded.
+   */
+  eq("a kind nobody declared is filed, not discarded",
+    normalizeProductDocuments([{ url: "/uploads/x.pdf", kind: "BROCHURE" }])[0].kind, "OTHER");
+  eq("...and so is a missing one",
+    normalizeProductDocuments([{ url: "/uploads/x.pdf" }])[0].kind, "OTHER");
+  eq("a lower-case kind is the same kind",
+    normalizeProductDocuments([{ url: "/uploads/x.pdf", kind: "datasheet" }])[0].kind, "DATASHEET");
+  eq("a nameless entry is named from its own path",
+    normalizeProductDocuments([{ url: "/uploads/product-docs/dp-flow.pdf" }])[0].name,
+    "dp-flow.pdf");
+  ok("the list is capped",
+    normalizeProductDocuments(
+      Array.from({ length: MAX_PRODUCT_DOCUMENTS + 5 },
+        (_, i) => ({ url: `/uploads/${i}.pdf` })),
+    ).length === MAX_PRODUCT_DOCUMENTS);
+  // A malformed column reads as empty and never throws: a product whose JSON
+  // cannot be parsed must still open.
+  eq("a broken column is an empty list", parseProductDocuments("{not json").length, 0);
+  eq("...and so is an absent one", parseProductDocuments(null).length, 0);
+  eq("a stored array is read directly",
+    parseProductDocuments([{ url: "/uploads/x.pdf", kind: "CATALOGUE" }]).length, 1);
+  // Grouped in the order the kinds are declared, and an empty kind is omitted
+  // rather than drawn as an empty heading.
+  {
+    const groups = documentsByKind(normalizeProductDocuments([
+      { url: "/uploads/b.pdf", kind: "DATASHEET" },
+      { url: "/uploads/a.pdf", kind: "CATALOGUE" },
+    ]));
+    eq("groups follow the declared order", groups.map((g) => g.kind).join(","),
+      "CATALOGUE,DATASHEET");
+    eq("...and an empty kind is not drawn", groups.length, 2);
+  }
+
+  /* -- it reaches the database, and comes back -- */
+  const service = strip(readFileSync("src/server/services/productService.ts", "utf8"));
+  /*
+   * Normalised on the way in, never taken as sent: the list arrives from a
+   * browser, so a dead entry or an invented kind would otherwise be written
+   * straight onto the catalogue.
+   */
+  ok("the service normalises before it stores",
+    /set\("documents", toJsonColumn\(normalizeProductDocuments\(input\.documents\)\)\)/.test(service));
+  const route = strip(readFileSync("src/server/routes/products.ts", "utf8"));
+  ok("...and the route lets the field through",
+    /"documents"/.test(route));
+  const adapter = strip(readFileSync("src/api/productAdapter.ts", "utf8"));
+  ok("the client reads it through the same pure rule",
+    /parseProductDocuments\(detail\.documents\)/.test(adapter));
+  ok("...and writes it back", /documents: product\.documents/.test(adapter));
+  const migration = readFileSync(
+    "prisma/migrations/20260910000000_product_documents/migration.sql", "utf8");
+  ok("the column is added, guarded",
+    /IF COL_LENGTH\('dbo\.products', 'documents'\) IS NULL/.test(migration));
+  ok("...with no GO and no DML", !/\bGO\b/.test(migration) && !/UPDATE /i.test(migration));
+
+  const view = strip(readFileSync("src/components/ProductsView.tsx", "utf8"));
+  /*
+   * A Latin folder name, deliberately: `/api/upload` sanitizes it with
+   * [^a-zA-Z0-9_-], so a Persian one reduces to an empty string and the file
+   * lands in the uploads root instead — silently.
+   */
+  ok("the upload names a Latin folder",
+    /uploadFile\(file, 'product-docs'\)/.test(view));
+  ok("...and the kind is chosen before the file",
+    /id="product-document-kind"/.test(view));
+  ok("...and the list is saved with the product",
+    /documents,/.test(view));
+
+  /* -- one scrollbar -- */
+  /*
+   * A form that scrolls inside a modal that scrolls is two scrollbars, and the
+   * inner one is a window onto a list the reader cannot see the shape of. The
+   * outer body still scrolls — removing *that* would clip the form — which is
+   * the half of this that has to be asserted, or the check passes on a screen
+   * somebody has broken the other way.
+   */
+  for (const [file, outer] of [
+    ["src/components/SupplierInquiriesView.tsx", /p-6 overflow-y-auto/],
+    ["src/components/PurchaseOrdersView.tsx", /p-6 space-y-6 overflow-y-auto/],
+    ["src/components/CustomersView.tsx", /p-6 space-y-5 overflow-y-auto/],
+    ["src/components/UsersView.tsx", null],
+    ["src/components/QuickAddModal.tsx", null],
+    ["src/components/ProjectsView.tsx", /p-6 space-y-6 overflow-y-auto/],
+  ] as const) {
+    const src = strip(readFileSync(file, "utf8"));
+    const name = file.split("/").pop();
+    /*
+     * A dropdown is not a form section: an absolutely-positioned popover over
+     * five hundred options has to scroll, and always did.
+     */
+    const inner = src.split("\n").filter((line) =>
+      /overflow-y-auto/.test(line) && /max-h-/.test(line)
+      && !/absolute/.test(line) && !/p-6 /.test(line) && !/flex-1/.test(line));
+    eq(`${name} has no inner scroll inside its form`, inner.length, 0);
+    if (outer) ok(`${name} still scrolls as a whole`, outer.test(src));
+  }
+  // The one the user named. Horizontal stays: the goods table is 950px wide and
+  // that is a different axis from the complaint.
+  const inquiry = readFileSync("src/components/SupplierInquiriesView.tsx", "utf8");
+  ok("the inquiry's goods table scrolls sideways and not down",
+    /rounded-xl overflow-x-auto">/.test(inquiry));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

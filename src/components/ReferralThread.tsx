@@ -3,6 +3,8 @@ import {
   CheckCircle2, MessageSquare, Paperclip, Pencil, RefreshCcw, Send, X,
 } from 'lucide-react';
 
+import { referralIsOpen } from '../utils/workBoard';
+
 /**
  * A referral, read as the conversation it actually is.
  *
@@ -69,13 +71,24 @@ interface Props {
   compact?: boolean;
 }
 
-const PENDING = 'در انتظار اقدام';
-
 export default function ReferralThread({
   referral, currentUserId, formatDate, users = [],
   onPickAttachment, onSubmit, onEditAction, compact = false,
 }: Props) {
-  const isPending = (referral.status || PENDING) === PENDING;
+  /*
+   * Open, which is not the same question as «در انتظار اقدام».
+   *
+   * This compared the status against that one literal, and a referral has had a
+   * middle state since the board was merged in — so the moment somebody picked
+   * a referral up, «ثبت اتمام کار» vanished for the assignee and «ثبت پاسخ و
+   * ارجاع مجدد» appeared for the referrer against a referral that was not
+   * finished. There was then no way to close it from the thread at all, which
+   * is exactly how it was reported.
+   *
+   * `referralIsOpen` is the same exclusion the inbox badge and the board use: a
+   * status nobody anticipated counts as open rather than silently closing.
+   */
+  const isOpen = referralIsOpen(referral.status);
   const isAssignee = !!currentUserId && referral.assignedToUserId === currentUserId;
   const isReferrer = !!currentUserId && referral.assignedByUserId === currentUserId;
 
@@ -322,7 +335,7 @@ export default function ReferralThread({
                 ارسال پیام
               </button>
 
-              {isPending && isAssignee && (
+              {isOpen && isAssignee && (
                 <button
                   type="button"
                   onClick={() => void send('done')}
@@ -345,7 +358,7 @@ export default function ReferralThread({
                 project's own activity feed, which is where the answer is
                 usually seen first.
               */}
-              {!isPending && isReferrer && (
+              {!isOpen && isReferrer && (
                 <button
                   type="button"
                   onClick={() => void send('reopen')}

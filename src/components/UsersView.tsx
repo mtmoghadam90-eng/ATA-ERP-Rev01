@@ -672,7 +672,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-60 overflow-y-auto p-1 border border-slate-100 rounded-lg bg-slate-50/50">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-1 border border-slate-100 rounded-lg bg-slate-50/50">
                   {moduleList.map((mod) => {
                     const isChecked = role === 'admin' ? true : permissions[mod.id as keyof typeof permissions];
                     return (
@@ -897,7 +897,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-60 overflow-y-auto p-1 border border-slate-100 rounded-lg bg-slate-50/50">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-1 border border-slate-100 rounded-lg bg-slate-50/50">
                   {moduleList.map((mod) => {
                     const isChecked = (role === 'admin' || selectedUser.isSystemAdmin) ? true : permissions[mod.id as keyof typeof permissions];
                     return (

@@ -602,7 +602,7 @@ export default function AfterSalesServicesView({
               {service.items && service.items.length > 0 ? (
                 <div className="mt-5 border-t border-slate-100 pt-4 space-y-3">
                   <span className="text-xs font-extrabold text-slate-400 block mb-2">لیست اقلام و وضعیت‌ها:</span>
-                  <div className="space-y-2.5 max-h-[250px] overflow-y-auto pr-1">
+                  <div className="space-y-2.5 pr-1">
                     {service.items.map((item, idx) => (
                       <div key={item.id || idx} className="p-3 bg-slate-50 rounded-xl border border-slate-150 space-y-2 hover:bg-slate-100/50 transition-colors">
                         <div className="flex justify-between items-start gap-2">
