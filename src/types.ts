@@ -590,6 +590,13 @@ export interface Task {
   completedAt?: string;
   /** GENERAL | SALES_FOLLOW_UP — what pressing the card does. */
   taskKind?: string;
+  /**
+   * A closed sales follow-up's answer: what the customer said, and the note
+   * about the call. Written only by `completeFollowUp`; the ordinary task
+   * editor never touches either, which is why neither is in `WRITABLE`.
+   */
+  followUpResult?: string;
+  completionNote?: string;
   /** When it was raised. What «تاریخ ارجاع» sorts the board by. */
   createdAt?: string;
   /** The job behind the task — code, name and customer — joined by the server. */

@@ -908,9 +908,9 @@ export default function TasksView({
             <div
               key={card.id}
               id={`referral-row-${card.id}`}
-              className="bg-white rounded-2xl border border-indigo-100 p-4 sm:p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-sm transition"
+              className="bg-white rounded-2xl border border-indigo-100 p-4 sm:p-5 flex flex-col gap-3 hover:shadow-sm transition"
             >
-              <div className="flex items-start gap-3.5 flex-1 w-full">
+              <div className="flex items-start gap-3.5 w-full">
                 <button
                   onClick={() => setOpenReferral(referrals.find((r) => r.id === card.id) ?? null)}
                   title="باز کردن گفتگوی ارجاع"
@@ -934,7 +934,7 @@ export default function TasksView({
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-start md:justify-end text-xs pt-3 md:pt-0 border-t border-slate-100 md:border-t-0">
+              <div className="flex flex-wrap items-center gap-2 w-full text-xs pt-3 border-t border-slate-100">
                 <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full border bg-indigo-50 border-indigo-200 text-indigo-700">
                   ارجاع کار
                 </span>
@@ -957,13 +957,22 @@ export default function TasksView({
           const task = taskById.get(card.id);
           if (!task) return null;
           return (
+          /*
+            A stack, not two columns.
+
+            The card used to put the title on the left and every badge on the
+            right, which gave the description whatever width the badges left it
+            — a paragraph rendered as a tall thin ribbon, and a follow-up's own
+            words are the longest thing on it. So the text runs the full width
+            of the card and the badges sit in one wrapped row beneath.
+          */
           <div 
             key={task.id} 
-            className={`bg-white rounded-2xl border p-4 sm:p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-sm transition ${
+            className={`bg-white rounded-2xl border p-4 sm:p-5 flex flex-col gap-3 hover:shadow-sm transition ${
               task.status === 'انجام شده' ? 'border-emerald-100 bg-emerald-50/10' : 'border-slate-100'
             }`}
           >
-            <div className="flex items-start gap-3.5 flex-1 w-full">
+            <div className="flex items-start gap-3.5 w-full">
               {/*
                 The tick — except on a sales follow-up, where it opens the form
                 that records what the customer said. A plain tick is refused for
@@ -995,8 +1004,6 @@ export default function TasksView({
                 <h4 className={`font-bold text-sm leading-snug break-words ${task.status === 'انجام شده' ? 'line-through text-slate-400' : 'text-slate-800'}`}>
                   {task.title}
                 </h4>
-                <p className="text-xs text-slate-500 break-words">{task.description}</p>
-                
                 {/*
                   The job, not just its label.
 
@@ -1046,11 +1053,56 @@ export default function TasksView({
               </div>
             </div>
 
+            {/*
+              The two halves of a follow-up, which live on two different rows.
+
+              `description` is what this task is *for* — on a sales follow-up it
+              is «شرح اقدام بعدی», typed by whoever closed the previous chase —
+              and `completionNote` is what came of this one once it was closed.
+              Neither was drawn at all, so a completed follow-up said «انجام
+              شده» and nothing about what the customer had actually said.
+
+              `whitespace-pre-line` because both are typed into a textarea and
+              the line breaks are the writer's own.
+            */}
+            {(task.description || task.completionNote) && (
+              <div className="w-full space-y-2 pr-8 sm:pr-9">
+                {task.description && (
+                  <div className="w-full">
+                    <span className="block text-[10px] font-bold text-slate-400 mb-0.5">
+                      {task.taskKind === 'SALES_FOLLOW_UP' ? 'شرح اقدام بعدی' : 'شرح'}
+                    </span>
+                    <p className="text-xs text-slate-600 break-words whitespace-pre-line leading-relaxed">
+                      {task.description}
+                    </p>
+                  </div>
+                )}
+
+                {task.completionNote && (
+                  <div className="w-full bg-emerald-50/40 border border-emerald-100 rounded-xl px-3 py-2">
+                    <span className="block text-[10px] font-bold text-emerald-700 mb-0.5">
+                      شرح اقدام انجام‌شده
+                    </span>
+                    <p className="text-xs text-slate-600 break-words whitespace-pre-line leading-relaxed">
+                      {task.completionNote}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Meta */}
-            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-start md:justify-end text-xs pt-3 md:pt-0 border-t border-slate-100 md:border-t-0">
+            <div className="flex flex-wrap items-center gap-2 w-full text-xs pt-3 border-t border-slate-100">
               <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${getPriorityClass(task.priority)}`}>
                 اولویت: {task.priority}
               </span>
+
+              {/* What the customer said, when this was a chase that closed. */}
+              {task.followUpResult && (
+                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full border bg-sky-50 border-sky-200 text-sky-700">
+                  نتیجه: {task.followUpResult}
+                </span>
+              )}
 
               <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${getStatusBadge(task.status)}`}>
                 وضعیت: {task.status}

@@ -7816,5 +7816,95 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   }
 }
 
+/* ==========================================================================
+ * «شرح اقدام بعدی», and the card that has room to print it
+ *
+ * A follow-up's two halves live on two different rows — the note about the
+ * call that ended is on the task being closed, and what to do next belongs to
+ * the one being raised — and neither had anywhere to go. The next task's
+ * description was a copy of the previous call's note, so the card telling
+ * somebody what to do described what somebody else had already done; and the
+ * card drew no description at all, so a completed chase said «انجام شده» and
+ * nothing about what the customer had said.
+ * ========================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* -- the field reaches the task that is raised -- */
+  const service = strip(readFileSync("src/server/services/followUpService.ts", "utf8"));
+  ok("the next task carries its own description",
+    /description: nextDescription,/.test(service));
+  /*
+   * Absent is not empty. A caller that never sends the field — n8n drives this
+   * endpoint too — keeps the old carry-forward, while an empty box on the form
+   * is a person saying there is nothing to add and must not silently print the
+   * last call's note on the next card.
+   */
+  ok("...taken from the body when it was sent at all",
+    /input\.nextDescription != null/.test(service));
+  ok("...and falling back to the completion note when it was not",
+    /: completionNote \?\? ""/.test(service));
+
+  const route = strip(readFileSync("src/server/routes/followUp.ts", "utf8"));
+  /*
+   * `null` would collapse the two cases the service distinguishes: the route
+   * has to pass «the caller said nothing» through as undefined.
+   */
+  ok("the route keeps «not sent» distinct from «sent empty»",
+    /nextDescription:\s*\n?\s*typeof body\.nextDescription === "string" \? body\.nextDescription : undefined/
+      .test(route));
+
+  /* -- the box, and its seeding -- */
+  const modal = strip(readFileSync("src/components/FollowUpCompletionModal.tsx", "utf8"));
+  ok("the modal has a box to type it into",
+    /id="next-action-description"/.test(modal));
+  ok("...bound to its own state", /setNextDescription\(e\.target\.value\)/.test(modal));
+  ok("...sent only with the decision that raises a next action",
+    /nextDescription: decision === 'NEXT_ACTION' \? nextDescription : undefined/.test(modal));
+  /*
+   * Reset with the rest, or the previous follow-up's next action is proposed
+   * for the one after it. Same family as every other field seeded here.
+   */
+  ok("...and cleared when the modal is seeded for another follow-up",
+    /setNextDescription\(''\);/.test(modal));
+
+  /* -- the row has to carry the note, or the card cannot draw it -- */
+  const api = strip(readFileSync("src/api/tasks.ts", "utf8"));
+  ok("the list row carries what came of the chase",
+    /followUpResult: row\.followUpResult \?\? undefined/.test(api)
+    && /completionNote: row\.completionNote \?\? undefined/.test(api));
+  const taskService = strip(readFileSync("src/server/services/taskService.ts", "utf8"));
+  ok("...and the server actually selects them",
+    /followUpResult: true/.test(taskService) && /completionNote: true/.test(taskService));
+  /*
+   * Neither is writable by the ordinary task editor: `completeFollowUp` is the
+   * only thing that may say what a customer said, and the generic update
+   * refuses to tick a follow-up at all.
+   */
+  const taskRoute = strip(readFileSync("src/server/routes/tasks.ts", "utf8"));
+  ok("...but neither is writable from the task form",
+    !/"completionNote"/.test(taskRoute) && !/"followUpResult"/.test(taskRoute));
+
+  /* -- the card prints both, full width -- */
+  const view = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
+  ok("the card draws the next action's description", /\{task\.description\}/.test(view));
+  ok("...and the note about the chase that closed", /\{task\.completionNote\}/.test(view));
+  /*
+   * The layout is the reported fault, not the missing text: side by side with
+   * the badges, a paragraph rendered as a tall thin ribbon. The badges sit in a
+   * wrapped row beneath now, so nothing on the card is a narrow column.
+   */
+  ok("...with nothing pinned into a side column",
+    !/md:justify-end/.test(view) && !/w-full md:w-auto justify-start/.test(view));
+  // Typed into a textarea, so the writer's own line breaks are theirs.
+  ok("...and the writer's line breaks kept", /whitespace-pre-line/.test(view));
+
+  // The stripper must not be eating the file: every check above would pass
+  // vacuously against an empty string.
+  ok("the comment stripper left the sources intact",
+    service.length > 4000 && view.length > 4000 && modal.length > 2000);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
