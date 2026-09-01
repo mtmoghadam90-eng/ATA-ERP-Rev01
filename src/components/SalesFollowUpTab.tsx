@@ -16,6 +16,9 @@ import {
   isTerminalOutcome,
 } from '../utils/salesFollowUp';
 import type { ERPSettings } from '../types';
+import { settlementCategoryPrompt } from '../utils/salesFollowUp';
+import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
+import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 
 /**
  * «پیگیری فروش» — the quotations somebody should be chasing, in the order they
@@ -38,6 +41,8 @@ import type { ERPSettings } from '../types';
 interface Props {
   active: boolean;
   settings: ERPSettings;
+  /** Asks about closing the project's proforma activity category on a settlement. */
+  categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
 
 const KPI_TILES: {
@@ -61,7 +66,7 @@ const HEALTH_BADGE: Record<FollowUpHealth, string> = {
   NO_RESPONSE: 'bg-slate-100 text-slate-500 border-slate-200',
 };
 
-export default function SalesFollowUpTab({ active, settings }: Props) {
+export default function SalesFollowUpTab({ active, settings, categoryCompletion }: Props) {
   const [health, setHealth] = useState<FollowUpHealth | 'all'>('all');
   const params = useMemo(() => ({ health: health === 'all' ? undefined : health }), [health]);
 
@@ -88,9 +93,12 @@ export default function SalesFollowUpTab({ active, settings }: Props) {
 
   const submitCompletion = async (body: Parameters<typeof salesFollowUpApi.complete>[1]) => {
     if (!completing?.nextActionTaskId) return;
-    await salesFollowUpApi.complete(completing.nextActionTaskId, body);
+    const outcome = await salesFollowUpApi.complete(completing.nextActionTaskId, body);
     setCompleting(null);
     queueList.refresh();
+    // The same question the proforma's outcome modal asks after a settlement.
+    const prompt = settlementCategoryPrompt(outcome, ACTIVITY_CATEGORY.PROFORMAS);
+    if (prompt) categoryCompletion?.promptCompletion(prompt);
   };
 
   const submitReactivation = async () => {

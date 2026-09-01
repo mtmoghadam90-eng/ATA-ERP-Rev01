@@ -516,3 +516,58 @@ export function versionRefusalReason(source: {
   }
   return null;
 }
+
+/* ------------------- settling and the activity category ------------------- */
+
+/** What the screen needs to ask about closing the proforma activity category. */
+export interface SettlementCategoryPrompt {
+  projectId: string;
+  categoryName: string;
+  message: string;
+}
+
+const SETTLE_SENTENCE: Record<SettleOutcome, string> = {
+  WON: "تایید شد (برنده)",
+  LOST: "باخته شد",
+  CANCELLED: "لغو شد",
+};
+
+/**
+ * The question to ask after a follow-up settled a quotation.
+ *
+ * Settling a sale from the follow-up form is the *same event* as settling it in
+ * the proforma's own outcome modal — every line is stamped, the project's
+ * status is re-derived, the customer-value ranking is rescheduled — and that
+ * modal has always gone on to ask whether the project's «پیش‌فاکتور» activity
+ * category is finished with. Reaching the same state through the other door
+ * asked nothing, so a job could be won and its activity category left open for
+ * ever with nobody to notice.
+ *
+ * Null in the two cases where there is nothing to ask:
+ *  - nothing was settled (the ordinary «فقط نتیجه ثبت شود»), and
+ *  - the quotation belongs to no project, so there is no category to close.
+ *
+ * It builds the prompt and does not close anything: the answer is a person's,
+ * and `useCategoryCompletion` is what acts on it.
+ */
+export function settlementCategoryPrompt(
+  result: {
+    settledOutcome?: SettleOutcome | null;
+    projectId?: string | null;
+    proformaNumber?: string | null;
+  },
+  categoryName: string,
+): SettlementCategoryPrompt | null {
+  const outcome = result.settledOutcome;
+  if (!outcome || !SETTLE_SENTENCE[outcome]) return null;
+  if (!result.projectId) return null;
+
+  const number = String(result.proformaNumber ?? "").trim();
+  const subject = number ? `پیش‌فاکتور ${number}` : "این پیش‌فاکتور";
+  return {
+    projectId: result.projectId,
+    categoryName,
+    message: `${subject} از طریق ثبت نتیجه پیگیری ${SETTLE_SENTENCE[outcome]}. `
+      + "آیا می‌خواهید وضعیت فعالیت‌های پیش‌فاکتور این پروژه را به «اتمام کار» تغییر دهید؟",
+  };
+}

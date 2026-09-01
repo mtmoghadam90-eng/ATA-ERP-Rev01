@@ -13,6 +13,9 @@ import { formatMoney } from '../numUtils';
 import { addDaysToShamsi, getTodayShamsi } from '../dateUtils';
 import { isTerminalOutcome } from '../utils/salesFollowUp';
 import type { ERPSettings } from '../types';
+import { settlementCategoryPrompt } from '../utils/salesFollowUp';
+import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
+import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 
 /**
  * One project's sales follow-up, on the project itself.
@@ -31,6 +34,8 @@ import type { ERPSettings } from '../types';
 interface Props {
   projectId: string;
   settings: ERPSettings;
+  /** Asks about closing the project's proforma activity category on a settlement. */
+  categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
 
 const HEALTH_TONE: Record<string, string> = {
@@ -51,7 +56,7 @@ const HEALTH_LABEL: Record<string, string> = {
   NO_RESPONSE: 'بدون پاسخ',
 };
 
-export default function ProjectFollowUpTab({ projectId, settings }: Props) {
+export default function ProjectFollowUpTab({ projectId, settings, categoryCompletion }: Props) {
   const [report, setReport] = useState<ProjectFollowUpReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -276,7 +281,10 @@ export default function ProjectFollowUpTab({ projectId, settings }: Props) {
           lossReasons={settings.lossReasons ?? []}
           onClose={() => setCompleting(null)}
           onSubmit={async (body) => {
-            await salesFollowUpApi.complete(completing.nextActionTaskId!, body);
+            const outcome = await salesFollowUpApi.complete(completing.nextActionTaskId!, body);
+            // The same question the proforma's outcome modal asks after a settlement.
+            const prompt = settlementCategoryPrompt(outcome, ACTIVITY_CATEGORY.PROFORMAS);
+            if (prompt) categoryCompletion?.promptCompletion(prompt);
             setCompleting(null);
             await load();
           }}

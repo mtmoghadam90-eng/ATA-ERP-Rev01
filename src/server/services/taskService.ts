@@ -723,6 +723,13 @@ export async function createTask(input: TaskInput, user: AuthUser, todayJalali: 
       title: task.title,
       assignedTo: task.assignedToUserId,
       priority: task.priority,
+      /*
+       * Which kind of task this is, so a rule can fire on the ones people
+       * raise and not on the follow-ups the engine raises itself — which is
+       * also what keeps a «when a task is created, create a task» rule from
+       * feeding itself.
+       */
+      taskKind: task.taskKind,
       dueDate: task.dueDateJalali,
       projectId: task.relatedToType === "project" ? task.relatedToId : undefined,
     },

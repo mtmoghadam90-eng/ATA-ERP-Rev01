@@ -491,6 +491,7 @@ export default function App() {
           // — which it now loads per open project instead of being handed every
           // project's category groups to filter.
           <ProjectsView
+            categoryCompletion={categoryCompletion}
             onOpenModuleForProject={openProjectIn}
             projectJump={jumpFor('projects')}
             onProjectJumpApplied={clearJump}
@@ -521,6 +522,7 @@ export default function App() {
           // Reads its own data from the API, scoped by assignment. «کارتابل
           // ارجاعات» is a tab in here now rather than a module of its own.
           <TasksView
+            categoryCompletion={categoryCompletion}
             settings={store.settings}
             currentUser={store.currentUser}
             initialTab={referralsTab}

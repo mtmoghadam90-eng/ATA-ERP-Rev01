@@ -18,6 +18,7 @@ import {
   AUTO_CLOSE_NOTE, CHASEABLE_OUTCOMES, FINISHED_TASK_STATUSES, FollowUpCompletionInput,
   FollowUpHealth, completionRefusalReason, followUpActivityText, followUpHealthOf,
   healthRank, isTerminalOutcome, normalizeFollowUpState, stateAfterDecision,
+  type SettleOutcome,
 } from "../../utils/salesFollowUp";
 import { TASK_TODO } from "../../utils/workBoard";
 import { resolveAssignee } from "./assigneeLookup";
@@ -133,7 +134,21 @@ export async function closeFollowUpTasks(
 /* --------------------------- completing a follow-up ------------------------ */
 
 export type CompleteOutcome =
-  | { ok: true; taskId: string; nextTaskId: string | null; followUpState: string }
+  | {
+      ok: true;
+      taskId: string;
+      nextTaskId: string | null;
+      followUpState: string;
+      /**
+       * The commercial outcome this completion wrote, if any, plus the job it
+       * belongs to — so the screen can ask the one question the proforma's own
+       * outcome modal asks after a settlement: is the project's «پیش‌فاکتور»
+       * activity category finished with?
+       */
+      settledOutcome: SettleOutcome | null;
+      projectId: string | null;
+      proformaNumber: string;
+    }
   | { ok: false; reason: string; code?: "not-found" | "forbidden" | "invalid" };
 
 /**
@@ -377,6 +392,19 @@ export async function completeFollowUp(
     taskId,
     nextTaskId: result.nextTaskId,
     followUpState: nextState,
+    /*
+     * What was written onto the quotation, and the job it belongs to.
+     *
+     * Settling a sale from here is the same event as settling it in the
+     * proforma's own outcome modal, and that one asks whether the project's
+     * «پیش‌فاکتور» activity category is finished with. The screen needs both
+     * facts to ask the same question; deriving them in the browser would mean
+     * a second reading of `impliedSettlement` *and* of whether the person
+     * actually answered yes, which is exactly how two screens come to disagree.
+     */
+    settledOutcome: settleOutcome ?? null,
+    projectId: proforma.projectId ?? null,
+    proformaNumber: proforma.proformaNumber,
   };
 }
 
@@ -508,7 +536,19 @@ export async function reactivateFollowUp(
     );
   });
 
-  return { ok: true, taskId: created.id, nextTaskId: created.id, followUpState: "OPEN" };
+  /*
+   * Reactivation settles nothing — it puts a quotation back on somebody's list
+   * — so there is no category to ask about here.
+   */
+  return {
+    ok: true,
+    taskId: created.id,
+    nextTaskId: created.id,
+    followUpState: "OPEN",
+    settledOutcome: null,
+    projectId: proforma.projectId ?? null,
+    proformaNumber: proforma.proformaNumber,
+  };
 }
 
 /* --------------------------------- the queue ------------------------------- */

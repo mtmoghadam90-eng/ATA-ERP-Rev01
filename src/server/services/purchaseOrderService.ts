@@ -720,6 +720,9 @@ export async function createPurchaseOrder(
         supplierId: po.supplierId,
         projectId: po.projectId,
         totalAmount: po.landedCostRial?.toString(),
+        // The rule editor offers a status condition here and the payload never
+        // carried one, so every such rule matched nothing.
+        status: po.status,
       },
       user,
     );

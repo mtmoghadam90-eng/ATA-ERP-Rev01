@@ -153,9 +153,20 @@ export const salesFollowUpApi = {
    * followed up with nothing chasing it.
    */
   complete: (taskId: string, body: FollowUpCompletionBody) =>
-    api.post<{ taskId: string; nextTaskId: string | null; followUpState: string }>(
-      `/api/sales-follow-up/tasks/${taskId}/complete`, body,
-    ),
+    api.post<{
+      taskId: string;
+      nextTaskId: string | null;
+      followUpState: string;
+      /**
+       * What the completion wrote onto the quotation, and the job it belongs
+       * to — `settlementCategoryPrompt` turns these into the question about
+       * closing the project's «پیش‌فاکتور» activity category, which is the
+       * same question the proforma's own outcome modal asks.
+       */
+      settledOutcome: SettleOutcome | null;
+      projectId: string | null;
+      proformaNumber: string;
+    }>(`/api/sales-follow-up/tasks/${taskId}/complete`, body),
 
   /**
    * Corrects what was recorded on a chase that is already closed.

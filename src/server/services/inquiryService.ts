@@ -15,6 +15,7 @@ import {
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
+import { inquiryWorkflowStatus } from "../../utils/moduleStatuses";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 import {
   HistorySummary, discountKeepFraction, netUnitPrice, summarizeHistory,
@@ -597,17 +598,13 @@ export async function updateInquiry(
       todayJalali,
     );
 
-    // Workflow rules for status change
-    // Determine status from inquiry state
-    const getInquiryStatus = (inq: any) => {
-      if (inq.isWinner) return "برنده";
-      if (inq.offerConfirmed) return "پیشنهاد نهایی";
-      const hasPrice = inq.items?.some((item: any) => item.priceForeign || item.priceRial);
-      return hasPrice ? "پیشنهاد اولیه" : "ارسال شده";
-    };
-
-    const oldStatus = getInquiryStatus(beforeAudit);
-    const newStatus = getInquiryStatus(inquiry);
+    /*
+     * An inquiry has no status column either — its state is where the offer has
+     * got to. Four values, and the rule editor used to offer seven invented
+     * ones; `inquiryWorkflowStatus` is the single rule both sides read.
+     */
+    const oldStatus = inquiryWorkflowStatus(beforeAudit as never);
+    const newStatus = inquiryWorkflowStatus(inquiry as never);
 
     if (oldStatus !== newStatus) {
       await processWorkflowRules(

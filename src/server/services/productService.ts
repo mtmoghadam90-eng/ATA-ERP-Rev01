@@ -766,6 +766,8 @@ export async function createProduct(
         category: product.category,
         brand: product.brand,
         stockLevel: product.stockLevel,
+        // Offered beside `stockLevel` as a condition field, and missing here.
+        minStockLevel: product.minStockLevel,
       },
       user,
     );

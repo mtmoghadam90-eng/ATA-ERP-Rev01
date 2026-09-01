@@ -54,7 +54,7 @@ import {
   REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, TASK_CANCELLED, TASK_DOING, TASK_DONE,
   TASK_TODO, BOARD_SORTS, SORT_LABELS, effectivePriority, referralIsOpen, referralLane,
   referralPassesTaskFilters, laneWhere, serverOrderFor, sortBoardCards, taskLane,
-  taskStatusForLane,
+  taskStatusForLane, REFERRAL_STATUSES, TASK_STATUSES,
 } from "../src/utils/workBoard";
 import { TASK_SORTABLE, laneTimestamps } from "../src/server/services/taskService";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
@@ -163,6 +163,7 @@ import {
   isChaseableOutcome, normalizeFollowUpState, normalizeTaskKind, stateAfterDecision,
   versionRefusalReason, impliedSettlement,
   RESULT_PURCHASE_CONFIRMED, RESULT_PURCHASE_CANCELLED, RESULT_LOST_TO_COMPETITOR,
+  settlementCategoryPrompt,
 } from "../src/utils/salesFollowUp";
 import { chaseableWhere } from "../src/server/services/followUpService";
 import {
@@ -187,6 +188,15 @@ import {
 import {
   MAX_PRODUCT_DOCUMENTS, documentsByKind, normalizeProductDocuments, parseProductDocuments,
 } from "../src/utils/productDocuments";
+import {
+  WORKFLOW_TRIGGERS, conditionValues, triggerFields,
+} from "../src/utils/workflowTriggers";
+import {
+  DELIVERY_DELIVERED, DELIVERY_PREPARING, DELIVERY_WORKFLOW_STATUSES,
+  INQUIRY_FINAL_OFFER, INQUIRY_INITIAL_OFFER, INQUIRY_SENT, INQUIRY_WINNER,
+  INQUIRY_WORKFLOW_STATUSES, PROJECT_STATUSES, PURCHASE_ORDER_STATUSES,
+  deliveryWorkflowStatus, inquiryWorkflowStatus,
+} from "../src/utils/moduleStatuses";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -8286,6 +8296,184 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
 
   ok("the comment stripper left these sources intact",
     service.length > 10000 && view.length > 10000 && modal.length > 4000);
+}
+
+/* ==========================================================================
+ * Workflow triggers, against what the services actually emit
+ *
+ * The rule editor's value lists were hand-typed beside the modules and drifted
+ * — the purchase order offered three statuses this application has never
+ * stored, the project four that do not exist, the delivery seven where the
+ * engine emits two. A condition on any of them matched nothing, silently, and
+ * a rule that never fires looks exactly like one waiting for its event.
+ * ========================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* -- the catalogue answers for every trigger, and only for real ones -- */
+  const union = strip(readFileSync("src/types.ts", "utf8"));
+  /*
+   * The declaration itself, sliced out rather than matched by a suffix rule —
+   * a suffix rule missed `customer_updated` and would miss the next trigger
+   * named in some other shape, which is the whole failure mode being tested.
+   */
+  const at = union.indexOf("triggerType:");
+  const block = union.slice(at, union.indexOf(";", at));
+  const declared = [...block.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  ok("the trigger union was found at all", declared.length > 15, declared.length);
+  for (const id of declared) {
+    ok(`«${id}» has a catalogue entry`,
+      !!WORKFLOW_TRIGGERS[id as keyof typeof WORKFLOW_TRIGGERS]);
+  }
+  // And nothing invented: every catalogue key is a real trigger type.
+  ok("the catalogue names no trigger the union does not",
+    Object.keys(WORKFLOW_TRIGGERS).every((id) => declared.includes(id)),
+    Object.keys(WORKFLOW_TRIGGERS).filter((id) => !declared.includes(id)));
+
+  /* -- the values are the modules' own, not a second typing of them -- */
+  eq("the purchase order offers its real statuses",
+    conditionValues("purchase_order_status_change", "newStatus").join("|"),
+    PURCHASE_ORDER_STATUSES.join("|"));
+  /*
+   * The three words that were offered and have never been stored. Held by name
+   * because that is the actual reported fault, and a list that merely "has
+   * seven entries" would pass with them still in it.
+   */
+  for (const invented of ["در انتظار تأیید", "تأیید شده", "ارسال شده"]) {
+    ok(`«${invented}» is not offered as a purchase-order status`,
+      !conditionValues("purchase_order_status_change", "newStatus").includes(invented));
+  }
+  eq("the project offers its real statuses",
+    conditionValues("project_status_change", "newStatus").join("|"),
+    PROJECT_STATUSES.join("|"));
+  ok("...and none of the four invented ones",
+    ["پیشنهاد فنی مالی", "در دست بررسی", "برنده شده", "باخته شده"]
+      .every((v) => !conditionValues("project_status_change", "newStatus").includes(v)));
+
+  /*
+   * A delivery and an inquiry have no status column: the engine derives one.
+   * The list therefore cannot be longer than what can be emitted, which is what
+   * these two hold — seven were offered against two, and seven against four.
+   */
+  eq("the delivery offers only what it can emit",
+    conditionValues("packaging_delivery_status_change", "newStatus").join("|"),
+    DELIVERY_WORKFLOW_STATUSES.join("|"));
+  eq("...produced by the same rule the service uses",
+    deliveryWorkflowStatus({ actualDeliveryDate: new Date() }), DELIVERY_DELIVERED);
+  eq("...and the other side of it", deliveryWorkflowStatus({}), DELIVERY_PREPARING);
+  eq("the inquiry offers only what it can emit",
+    conditionValues("supplier_inquiry_status_change", "newStatus").join("|"),
+    INQUIRY_WORKFLOW_STATUSES.join("|"));
+  eq("a won inquiry is «برنده»", inquiryWorkflowStatus({ isWinner: true }), INQUIRY_WINNER);
+  eq("...a confirmed offer is final", inquiryWorkflowStatus({ offerConfirmed: true }),
+    INQUIRY_FINAL_OFFER);
+  eq("...a priced one is an initial offer",
+    inquiryWorkflowStatus({ items: [{ priceRial: 10 }] }), INQUIRY_INITIAL_OFFER);
+  eq("...and one nobody has answered is merely sent",
+    inquiryWorkflowStatus({ items: [] }), INQUIRY_SENT);
+
+  // Tasks and referrals read the board's own lists, so the words a column can
+  // hold and the words a rule can ask for cannot drift apart.
+  eq("tasks offer the board's own statuses",
+    conditionValues("task_status_change", "newStatus").join("|"), TASK_STATUSES.join("|"));
+  eq("referrals offer theirs",
+    conditionValues("referral_status_change", "newStatus").join("|"),
+    REFERRAL_STATUSES.join("|"));
+  ok("...and not «در حال انجام», which a referral never holds",
+    !conditionValues("referral_status_change", "newStatus").includes("در حال انجام"));
+
+  /* -- every field offered is a key the service actually puts on the event -- */
+  const services: Record<string, string> = {
+    proforma_created: "src/server/services/proformaService.ts",
+    purchase_order_created: "src/server/services/purchaseOrderService.ts",
+    supplier_created: "src/server/services/supplierService.ts",
+    product_created: "src/server/services/productService.ts",
+    task_created: "src/server/services/taskService.ts",
+    customer_updated: "src/server/services/customerService.ts",
+  };
+  for (const [trigger, file] of Object.entries(services)) {
+    const src = strip(readFileSync(file, "utf8"));
+    const at = src.indexOf(`"${trigger}"`);
+    const payload = src.slice(at, src.indexOf("user,", at));
+    for (const field of triggerFields(trigger)) {
+      ok(`${trigger} emits «${field.value}»`,
+        new RegExp(`\\b${field.value}:`).test(payload), payload.slice(0, 200));
+    }
+  }
+  /*
+   * The two that were plainly wrong: `proforma_created` offered a `status`
+   * condition against a payload that carried none, and `customer_updated`
+   * offered `newStatus` where the key is `type`.
+   */
+  ok("customer_updated no longer offers a key it does not emit",
+    !triggerFields("customer_updated").some((f) => f.value === "newStatus"));
+
+  /* -- and the screen holds no copy of any of it -- */
+  const view = strip(readFileSync("src/components/SettingsView.tsx", "utf8"));
+  ok("the trigger dropdown is built from the catalogue",
+    /triggerGroups\(\)\.map/.test(view));
+  ok("...the rule cards read its labels", /triggerLabel\(rule\.triggerType\)/.test(view));
+  ok("...the conditions read its fields", /triggerFields\(editingRule\.triggerType\)/.test(view));
+  ok("...and a new condition starts on its first field",
+    /defaultConditionField\(editingRule\.triggerType\)/.test(view));
+  // The three copies that drifted.
+  ok("no second copy of the trigger names survives",
+    !/triggerLabelMap/.test(view) && !/purchase_order_status_change: 'newStatus'/.test(view));
+  ok("no hand-typed status list survives in the editor",
+    !/'تحویل شده \(رسید انبار\)', 'لغو شده'/.test(view)
+    && !/'پیشنهاد فنی مالی'/.test(view));
+
+  ok("the comment stripper left the screen intact", view.length > 50000);
+}
+
+/* ==========================================================================
+ * Settling a sale from the follow-up asks the same question the outcome modal
+ * has always asked
+ * ========================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  const won = settlementCategoryPrompt(
+    { settledOutcome: "WON", projectId: "p1", proformaNumber: "PF-1405-08" },
+    "پیش‌فاکتورها و مهندسی فروش",
+  );
+  ok("a settled sale produces a prompt", !!won);
+  ok("...naming the document", won?.message.includes("PF-1405-08") === true);
+  ok("...and the category to close", won?.categoryName === "پیش‌فاکتورها و مهندسی فروش");
+  eq("...on the right project", won?.projectId, "p1");
+  ok("a loss says so", settlementCategoryPrompt(
+    { settledOutcome: "LOST", projectId: "p1", proformaNumber: "x" }, "c")
+    ?.message.includes("باخته") === true);
+  /*
+   * Two cases with nothing to ask: nothing was settled — the ordinary «فقط
+   * نتیجه ثبت شود» — and a quotation with no project, which has no activity
+   * category to close.
+   */
+  eq("recording only a result asks nothing",
+    settlementCategoryPrompt({ settledOutcome: null, projectId: "p1" }, "c"), null);
+  eq("...and neither does a quotation with no project",
+    settlementCategoryPrompt({ settledOutcome: "WON", projectId: null }, "c"), null);
+
+  /* -- the server hands the screen both facts -- */
+  const service = strip(readFileSync("src/server/services/followUpService.ts", "utf8"));
+  ok("the completion reports what it settled",
+    /settledOutcome: settleOutcome \?\? null/.test(service));
+  ok("...and the job it belongs to", /projectId: proforma\.projectId \?\? null/.test(service));
+
+  /* -- and every screen that completes a follow-up asks -- */
+  for (const file of [
+    "src/components/TasksView.tsx",
+    "src/components/SalesFollowUpTab.tsx",
+    "src/components/ProjectFollowUpTab.tsx",
+  ]) {
+    const src = strip(readFileSync(file, "utf8"));
+    const name = file.split("/").pop();
+    ok(`${name} asks about the category after a settlement`,
+      /settlementCategoryPrompt\(outcome, ACTIVITY_CATEGORY\.PROFORMAS\)/.test(src)
+      && /categoryCompletion\?\.promptCompletion\(prompt\)/.test(src));
+  }
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
