@@ -6,6 +6,7 @@ import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { scrubProductRefs } from "../refIntegrity";
+import { syncProjectStage } from "./projectService";
 import { afterCommit } from "../afterCommit";
 import { closeFollowUpTasks } from "./followUpService";
 import { isTerminalOutcome, versionRefusalReason } from "../../utils/salesFollowUp";
@@ -643,6 +644,16 @@ export async function syncProjectStatus(
   }
 
   await tx.project.update({ where: { id: projectId }, data });
+
+  /*
+   * And the stage, from the status this just wrote.
+   *
+   * Here rather than at each of the seven call sites, because the stage reads
+   * the outcome — «are we past the sale yet» — and running it before this
+   * update would derive it from the status the project had a moment ago. One
+   * call, one guaranteed order.
+   */
+  await syncProjectStage(tx, projectId, todayJalali);
 }
 
 /**

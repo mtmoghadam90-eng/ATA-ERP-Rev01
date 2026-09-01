@@ -440,6 +440,23 @@ export interface Project {
   estimatedValueRIYAL?: number; // Optional/legacy
   probabilityPercent?: number; // Optional/legacy
   status: 'جدید' | 'در حال مذاکره' | 'ارائه پیش‌فاکتور' | 'برنده (موفق)' | 'باخته' | 'لغو شده' | 'نیمه برنده';
+  /**
+   * «مرحله‌ی جاری» — where the *work* has got to, as opposed to how the sale
+   * went.
+   *
+   * `status` above is the commercial outcome and every report reads it that
+   * way. This answers «الان این پروژه در چه مرحله‌ای است؟» across the whole
+   * chain — quoting, chasing, ordering, shipping, customs, packing, delivery,
+   * service. Derived and written by the server; `src/utils/projectStage.ts` is
+   * the rule.
+   */
+  stage?: string;
+  /** Since when it has been at that stage, in Shamsi. */
+  stageChangedAt?: string;
+  /** A stage a person set by hand — «توقف پروژه» and the like. */
+  manualStage?: string;
+  /** True pins it; false shows it once and hands control back. */
+  manualStageLocked?: boolean;
   itemsNeeded?: {
     productId: string;
   variantId?: string; // can be 'generic' if not matching a specific warehouse product

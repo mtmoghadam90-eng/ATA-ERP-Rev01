@@ -5,6 +5,8 @@ import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } from "../dates";
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { scrubProductRefs } from "../refIntegrity";
+import { deriveProjectStage, resolveStage } from "../../utils/projectStage";
+import { isWonStatus } from "../proformaStatus";
 import { summarizeProject, summarizeProjects } from "./projectSummary";
 // The custom-field clause is identical for every module; defined once with customers.
 import { customFieldClause } from "./customerService";
@@ -25,10 +27,15 @@ import { processWorkflowRules } from "./workflowService";
 export const PROJECT_SORTABLE = [
   "code", "name", "status", "creationDate", "expectedCloseDate",
   "estimatedValueRial", "createdAt", "updatedAt",
+  // «مرحله» and how long it has been there. Sorting by the stage sorts
+  // alphabetically, which is not the chain's order — the screen orders by the
+  // date instead, which is what «کدام پروژه‌ها گیر کرده‌اند» actually asks.
+  "stage", "stageChangedAt",
 ] as const;
 
 export const PROJECT_FILTERABLE = [
   "status", "customerId", "ownerUserId", "marketingChannel", "leadQuality",
+  "stage",
 ] as const;
 
 const SEARCH_FIELDS = [
@@ -105,6 +112,12 @@ const LIST_SELECT = {
   code: true,
   name: true,
   status: true,
+  // Where the work has got to, beside how the sale went. Derived; see
+  // `syncProjectStage`.
+  stage: true,
+  stageChangedAtJalali: true,
+  manualStage: true,
+  manualStageLocked: true,
   customerId: true,
   creationDate: true,
   creationDateJalali: true,
@@ -285,6 +298,86 @@ export async function projectSummary(user: AuthUser) {
   };
 }
 
+/* ------------------------------ current stage ------------------------------ */
+
+/**
+ * Re-derives «مرحله‌ی جاری» from everything the project has.
+ *
+ * Called **inside** the writing transaction, like `syncProjectStatus`, so the
+ * stage can never be seen disagreeing with the records it came from. One read
+ * of four narrow projections — the rule needs a status per record and nothing
+ * else, so this stays cheap enough to run on every write that could move it.
+ *
+ * It writes only when the stage actually changes, which is what makes
+ * `stageChangedAt` mean «since when has it been here» rather than «when was
+ * this project last saved».
+ */
+export async function syncProjectStage(
+  tx: Prisma.TransactionClient,
+  projectId: string | null | undefined,
+  todayJalali: string,
+): Promise<void> {
+  if (!projectId) return;
+
+  const project = await tx.project.findUnique({
+    where: { id: projectId },
+    select: {
+      status: true, stage: true, manualStage: true, manualStageLocked: true,
+    },
+  });
+  if (!project) return;
+
+  const [proformas, orders, deliveries, afterSales] = await Promise.all([
+    tx.proforma.findMany({
+      where: { projectId },
+      select: { status: true, isCancelled: true },
+    }),
+    tx.purchaseOrder.findMany({ where: { projectId }, select: { status: true } }),
+    tx.packagingDelivery.findMany({
+      where: { projectId },
+      select: { actualDeliveryDate: true },
+    }),
+    tx.afterSalesService.findMany({ where: { projectId }, select: { status: true } }),
+  ]);
+
+  const derived = deriveProjectStage({
+    projectStatus: project.status,
+    proformas,
+    /*
+     * The sales outcome, read from the column `syncProjectStatus` has already
+     * written in this same transaction — not derived a second time here. Two
+     * readings of «did we win» is exactly how two columns come to disagree.
+     */
+    isWon: isWonStatus(project.status),
+    isLost: project.status === "باخته",
+    isCancelled: project.status === "لغو شده",
+    purchaseOrders: orders,
+    deliveries: deliveries.map((d) => ({ delivered: !!d.actualDeliveryDate })),
+    // «تحویل داده شده» is the one status that closes an after-sales record.
+    afterSales: afterSales.map((s) => ({ open: s.status !== "تحویل داده شده" })),
+  });
+
+  const resolved = resolveStage(derived, project, true);
+
+  const data: Record<string, unknown> = {};
+  if (resolved.stage !== project.stage) {
+    data.stage = resolved.stage;
+    // Only on a real move, so the date answers «since when», not «last saved».
+    data.stageChangedAt = new Date();
+    data.stageChangedAtJalali = normalizeJalali(todayJalali);
+  }
+  /*
+   * An unlocked override is used up by the first recalculation after it: it
+   * was «show this now», not «pin this». Leaving it would print a stage the
+   * records beside it no longer agree with.
+   */
+  if (resolved.clearManual) data.manualStage = null;
+
+  if (Object.keys(data).length > 0) {
+    await tx.project.update({ where: { id: projectId }, data });
+  }
+}
+
 /* --------------------------------- writes --------------------------------- */
 
 export interface ProjectItemInput {
@@ -354,6 +447,15 @@ export interface ProjectInput extends ProjectScalarInput {
   closingDate?: string | null;
   items?: ProjectItemInput[];
   milestones?: ProjectMilestoneInput[];
+  /**
+   * A stage a person set by hand, and whether it is pinned.
+   *
+   * `stage` itself is not here on purpose: it is derived, and a client that
+   * could set it could tell the grid a project is somewhere its own records say
+   * it is not. See `resolveStage`.
+   */
+  manualStage?: string | null;
+  manualStageLocked?: boolean;
 }
 
 /** Maps the scalar half of an input to Prisma column values. */
@@ -386,6 +488,8 @@ function scalarData(input: ProjectInput): Record<string, unknown> {
   if ("messagingContactId" in input) set("messagingContactId", toNullableString(input.messagingContactId, 36));
   if ("messagingChannel" in input) set("messagingChannel", toNullableString(input.messagingChannel, 20));
   if ("suppressAutoMessages" in input) set("suppressAutoMessages", !!input.suppressAutoMessages);
+  if ("manualStage" in input) set("manualStage", toNullableString(input.manualStage, 60));
+  if ("manualStageLocked" in input) set("manualStageLocked", !!input.manualStageLocked);
   if ("financialContact" in input) set("financialContact", toNullableString(input.financialContact, 200));
   if ("technicalContact" in input) set("technicalContact", toNullableString(input.technicalContact, 200));
   if ("endUser" in input) set("endUser", toNullableString(input.endUser, 200));
@@ -541,6 +645,10 @@ export async function createProject(input: ProjectInput, user: AuthUser, todayJa
       delegate: tx.projectItem, parentWhere: { projectId: project.id },
       rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapItem,
     });
+
+    // So a new project has a stage from the moment it exists, rather than a
+    // blank column until something happens to it.
+    await syncProjectStage(tx, project.id, todayJalali);
     await syncMilestones(tx, project.id, input.milestones ?? []);
 
     return project;
@@ -666,6 +774,14 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
     if (input.milestones !== undefined) {
       completedNow = await syncMilestones(tx, id, input.milestones);
     }
+
+    /*
+     * The stage, from what this save left the project as.
+     *
+     * A person moving «جدید» to «در حال مذاکره» by hand moves the stage too,
+     * and so does setting or clearing a manual stage on the form.
+     */
+    await syncProjectStage(tx, id, todayJalali);
 
     return project;
   });

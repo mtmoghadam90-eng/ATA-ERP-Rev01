@@ -101,6 +101,16 @@ export interface ProjectRow {
   code: string;
   name: string;
   status: string;
+  /**
+   * «مرحله‌ی جاری» — where the work has got to, as opposed to how the sale
+   * went. Derived and written by the server; see `src/utils/projectStage.ts`.
+   */
+  stage: string | null;
+  /** Since when it has been at that stage. */
+  stageChangedAtJalali: string | null;
+  /** A stage somebody set by hand, and whether it is pinned. */
+  manualStage: string | null;
+  manualStageLocked: boolean;
   customerId: string;
   creationDate: string | null;
   creationDateJalali: string | null;
@@ -202,6 +212,13 @@ export interface ProjectWriteInput {
   name?: string;
   customerId?: string;
   status?: string;
+  /**
+   * A stage set by hand. `stage` itself is not writable — it is derived, and a
+   * client that could set it could tell the grid a project is somewhere its own
+   * records say it is not.
+   */
+  manualStage?: string | null;
+  manualStageLocked?: boolean;
   lossReason?: string | null;
   description?: string | null;
   estimatedValueRial?: unknown;

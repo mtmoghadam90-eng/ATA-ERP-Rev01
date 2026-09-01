@@ -510,6 +510,22 @@ model Project {
   customer   Customer @relation("ProjectCustomer", fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   status      String  @db.NVarChar(50)
+  /// Where the *work* has got to, as opposed to how the sale went.
+  ///
+  /// `status` is the commercial outcome and everything reads it that way — the
+  /// dashboard's win rate, `isWonStatus`, the workflow triggers. Putting «در
+  /// حال ترخیص» in there would take a won project out of the won set the moment
+  /// its goods shipped. So the stage is its own derived column, written by
+  /// `syncProjectStage` in the same transaction as whatever moved it.
+  /// `src/utils/projectStage.ts` is the rule.
+  stage             String?   @db.NVarChar(60)
+  stageChangedAt    DateTime?
+  stageChangedAtJalali String? @db.NVarChar(10)
+  /// A stage a person set by hand — «توقف پروژه توسط کارفرما» and the like,
+  /// which no record implies. Locked pins it for good; unlocked shows it now
+  /// and hands control back at the next recalculation, clearing this.
+  manualStage       String?   @db.NVarChar(60)
+  manualStageLocked Boolean   @default(false)
   lossReason  String? @db.NVarChar(300)
   description String? @db.NVarChar(Max)
 

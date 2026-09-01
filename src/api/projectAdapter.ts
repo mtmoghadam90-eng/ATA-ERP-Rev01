@@ -31,6 +31,11 @@ export function rowToProject(row: ProjectRow): Project {
     code: row.code,
     name: row.name,
     status: row.status as Project["status"],
+    // Where the work has got to. Derived server-side; read-only here.
+    stage: row.stage ?? undefined,
+    stageChangedAt: row.stageChangedAtJalali ?? undefined,
+    manualStage: row.manualStage ?? undefined,
+    manualStageLocked: row.manualStageLocked ?? false,
     customerId: row.customerId,
     // The view reads this directly; on the server it is a join, not a column.
     customerName: row.customer?.companyName ?? "",
@@ -155,6 +160,10 @@ export function projectToWriteInput(
     name: project.name,
     customerId: project.customerId,
     status: project.status,
+    // The manual half of the stage. `stage` itself is derived and is not
+    // in the route's allowlist, so sending it would be dropped anyway.
+    manualStage: project.manualStage ?? null,
+    manualStageLocked: project.manualStageLocked,
     lossReason: project.lossReason ?? null,
     description: project.description ?? null,
     estimatedValueRial: project.estimatedValueRIYAL ?? null,

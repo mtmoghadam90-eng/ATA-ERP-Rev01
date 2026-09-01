@@ -12,6 +12,8 @@ import { ProjectRow } from "./projects";
 
 export interface ProjectListFilters {
   status: string;
+  /** «مرحله جاری» — a separate axis from the status; see `projectStage.ts`. */
+  stage: string;
   customerId: string;
   ownerUserId: string;
   marketingChannel: string;
@@ -23,6 +25,7 @@ export interface ProjectListFilters {
 
 const EMPTY_FILTERS: ProjectListFilters = {
   status: "all",
+  stage: "all",
   customerId: "all",
   ownerUserId: "all",
   marketingChannel: "all",
@@ -38,6 +41,7 @@ export function useProjectList(initialSearch = "") {
   const params = useMemo(() => {
     const out: Record<string, string | undefined> = {
       status: filters.status,
+      stage: filters.stage,
       customerId: filters.customerId,
       ownerUserId: filters.ownerUserId,
       marketingChannel: filters.marketingChannel,
