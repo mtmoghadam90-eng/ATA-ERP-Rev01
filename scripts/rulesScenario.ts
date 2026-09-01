@@ -6788,14 +6788,39 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     JSON.stringify((where.AND as unknown[]) ?? []);
   ok("the toggle drops the completed rows in the query",
     clauses(buildTaskWhere(query({}), user, { hideCompleted: true }))
-      .includes('{"status":{"not":"انجام شده"}}'));
+      .includes('{"status":{"notIn":["انجام شده","کنسل شده"]}}'));
   ok("...and off, it drops nothing",
     !clauses(buildTaskWhere(query({}), user, {})).includes('"انجام شده"'));
   // Asking for «انجام شده» from the dropdown and being answered with nothing
   // would be a screen that explains none of it.
+  const hidden = '{"status":{"notIn":["انجام شده","کنسل شده"]}}';
   ok("an explicit column wins over the toggle",
     !clauses(buildTaskWhere(query({}), user, { hideCompleted: true, lane: "DONE" }))
-      .includes('{"status":{"not":"انجام شده"}}'));
+      .includes(hidden));
+  /*
+   * **The shape the screen actually sends.** `lane` is read straight off the
+   * query string, so the literal «all» arrives when no column is chosen — and
+   * this took any non-empty string as a choice, so `Boolean("all")` was true
+   * and the toggle stood down permanently. It is normalised against the four
+   * now, which is also what an integration sending a value nobody defined
+   * should get.
+   */
+  ok("«all» is not a column, so the toggle still works",
+    clauses(buildTaskWhere(query({}), user, { hideCompleted: true, lane: "all" }))
+      .includes(hidden),
+    clauses(buildTaskWhere(query({}), user, { hideCompleted: true, lane: "all" })));
+  ok("...and neither is anything else nobody defined",
+    clauses(buildTaskWhere(query({}), user, { hideCompleted: true, lane: "SOMEDAY" }))
+      .includes(hidden));
+  ok("«all» filters no column either",
+    !clauses(buildTaskWhere(query({}), user, { lane: "all" })).includes("status"));
+  /*
+   * The whole last column, cancelled work included: that column is what
+   * «انجام‌شده‌ها» means on this screen, and leaving the cancelled ones behind
+   * would be a button that half works.
+   */
+  ok("the toggle hides the whole last column, cancelled work included",
+    clauses(buildTaskWhere(query({}), user, { hideCompleted: true })).includes(hidden));
   // Read strictly, so a caller that sends nothing gets the whole list.
   ok("...and only a real true hides anything",
     !clauses(buildTaskWhere(query({}), user, { hideCompleted: "false" })).includes('"انجام شده"'));
