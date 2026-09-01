@@ -49,6 +49,7 @@ import { readViewPreferences, writeViewPreferences } from "../src/utils/viewPref
 import {
   PROJECT_LINKED_MODULES, isProjectLinkedModule, moduleForCategory,
 } from "../src/utils/projectLinks";
+import { matchAssignee, nameKey } from "../src/utils/assigneeName";
 import {
   REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, TASK_CANCELLED, TASK_DOING, TASK_DONE,
   TASK_TODO, BOARD_SORTS, SORT_LABELS, effectivePriority, referralIsOpen, referralLane,
@@ -7733,6 +7734,86 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   // has wired up yet.
   ok("...and with no handler it is the plain text it always was",
     /if \(!onOpen\) return <span/.test(link));
+}
+
+/* ── A task assigned by name has to reach an account ─────────────────────── */
+{
+  /*
+   * Every automation is handed a **name** — `project.salesExpert`, a workflow
+   * rule's assignee box, a milestone's — and has to find the account behind it,
+   * because a task belongs to a person by id: `assignedToUserId` is what «به من
+   * ارجاع شده» filters on and half of what `visibilityClause` shows at all.
+   *
+   * The lookup was an exact string comparison, which is not the same question.
+   * A miss left the task with the name on it and **no id**: assigned on the
+   * card, belonging to nobody, missing from its own assignee's board and from
+   * every board but «همه وظایف». That is exactly how it was reported — one
+   * «پیگیری مجدد» card present under «همه وظایف» and absent under «به من ارجاع
+   * شده», identical to its neighbours in every visible way.
+   */
+  const directory = [
+    { id: "u1", fullName: "محمد توکل مقدم", username: "mtm" },
+    { id: "u2", fullName: "مریم کاظمی", username: "mk" },
+  ];
+  const found = (name: string) => matchAssignee(name, directory)?.id ?? null;
+
+  eq("an exact name matches", found("محمد توکل مقدم"), "u1");
+  // The pairs SQL Server's collation treats as different characters, which is
+  // the whole reason `searchClause` exists.
+  eq("...and so does the Arabic ی", found("محمد توكل مقدم"), "u1");
+  // A name written with the half-space (ZWNJ) is the same name; the collation
+  // says otherwise, which is precisely what folding it away is for.
+  eq("...and a half-space between the words", found("محمد\u200cتوکل\u200cمقدم"), "u1");
+  eq("...and a doubled space", found("محمد  توکل   مقدم"), "u1");
+  eq("...and surrounding whitespace", found("  محمد توکل مقدم  "), "u1");
+  eq("a username still matches", found("mk"), "u2");
+  eq("somebody who is not on the system matches nothing", found("علی رضایی"), null);
+  eq("...and neither does an empty name", found(""), null);
+  eq("...or a missing one", matchAssignee(null, directory), null);
+  /*
+   * The full name wins over a username that reduces to the same key: one is a
+   * person's name and the other is an account label, and picking the first
+   * exact hit keeps the answer independent of the order the rows came back in.
+   */
+  eq("a full name beats another account's username",
+    matchAssignee("مریم کاظمی", [
+      { id: "x", fullName: "somebody", username: "مریم کاظمی" },
+      { id: "u2", fullName: "مریم کاظمی", username: "mk" },
+    ])?.id, "u2");
+
+  // `nameKey` is length-agnostic but must not collapse two different people.
+  ok("two different names do not fold together",
+    nameKey("محمد توکل مقدم") !== nameKey("محمد توکلی مقدم"));
+
+  /* -- the writers -- */
+  const lookup = readFileSync("src/server/services/assigneeLookup.ts", "utf8");
+  /*
+   * The fallback is the important half: a task nobody matched must still land
+   * on somebody's board, or it is invisible to everybody without «همه وظایف»
+   * — an automation-raised task has no creator either.
+   */
+  ok("an unmatched name falls back to whoever the caller named",
+    /assignedToUserId: fallbackUserId \?\? null/.test(lookup));
+
+  const followUp = readFileSync("src/server/services/followUpService.ts", "utf8");
+  // This is the path it was reported on: reactivation had no fallback at all.
+  ok("reactivating a follow-up gives it to the person reactivating it",
+    /resolveAssignee\(assigneeName, user\.id, tx\)/.test(followUp));
+  ok("...and the next follow-up stays with whoever has this one",
+    /resolveAssignee\(assigneeName, task\.assignedToUserId, tx\)/.test(followUp));
+  // Four copies of one exact-match query, gone.
+  const followUpCode = followUp.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  ok("no writer spells the lookup out again",
+    !/OR: \[\{ fullName:/.test(followUpCode));
+  for (const file of [
+    "src/server/services/workflowService.ts",
+    "src/server/services/milestoneAutomation.ts",
+  ]) {
+    const source = readFileSync(file, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    ok(`${file.split("/").pop()} goes through the shared lookup`,
+      /sharedResolveAssignee\(name\)/.test(source) && !/OR: \[\{ fullName:/.test(source));
+  }
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
