@@ -1168,6 +1168,12 @@ export interface WorkflowRule {
     | 'customer_updated'
     | 'project_created'
     | 'project_status_change'
+    /**
+     * «مرحله جاری» moving — where the *work* has got to, which is a different
+     * event from the sales outcome above. A project reaching «ترخیص گمرک» is
+     * the thing procurement wants automated, and `status` cannot say it.
+     */
+    | 'project_stage_change'
     | 'proforma_created'
     | 'proforma_outcome_change'
     /**

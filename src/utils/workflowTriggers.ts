@@ -41,6 +41,7 @@ import {
   PURCHASE_ORDER_STATUSES, TRANSACTION_TYPES,
 } from "./moduleStatuses";
 import { REFERRAL_STATUSES, TASK_STATUSES } from "./workBoard";
+import { PROJECT_STAGES } from "./projectStage";
 
 export type WorkflowTriggerType = WorkflowRule["triggerType"];
 
@@ -133,6 +134,20 @@ export const WORKFLOW_TRIGGERS: Record<WorkflowTriggerType, TriggerSpec> = {
     fields: [
       { value: "newStatus", label: "وضعیت جدید پروژه", options: PROJECT_STATUSES },
       { value: "oldStatus", label: "وضعیت قبلی پروژه", options: PROJECT_STATUSES },
+    ],
+  },
+  project_stage_change: {
+    label: "تغییر مرحله جاری پروژه (مثلاً رسیدن به ترخیص گمرک)",
+    group: G.SALES,
+    /*
+     * The stage, not the status. They are two axes — a project is «برنده
+     * (موفق)» and «ترخیص گمرک» at the same time — so the outcome rides along
+     * as a field rather than being conflated with the stage.
+     */
+    fields: [
+      { value: "newStage", label: "مرحله جدید", options: PROJECT_STAGES },
+      { value: "oldStage", label: "مرحله قبلی", options: PROJECT_STAGES },
+      { value: "status", label: "وضعیت تجاری پروژه", options: PROJECT_STATUSES },
     ],
   },
 

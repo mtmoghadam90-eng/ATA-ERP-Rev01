@@ -687,7 +687,7 @@ export async function createPurchaseOrder(
     await recordLastPurchaseCost(tx, po.id);
 
     // Raising an order is what moves a won project out of «در انتظار تأمین».
-    await syncProjectStage(tx, po.projectId, todayJalali);
+    await syncProjectStage(tx, po.projectId, todayJalali, user);
 
     return tx.purchaseOrder.findUnique({ where: { id: po.id }, include: { items: { orderBy: { lineNo: "asc" } } } });
   });
@@ -927,7 +927,7 @@ export async function updatePurchaseOrder(
      * transaction, so the two cannot be seen disagreeing.
      */
     const row = await tx.purchaseOrder.findUnique({ where: { id }, select: { projectId: true } });
-    await syncProjectStage(tx, row?.projectId ?? before?.projectId ?? null, todayJalali);
+    await syncProjectStage(tx, row?.projectId ?? before?.projectId ?? null, todayJalali, user);
 
     return tx.purchaseOrder.findUnique({ where: { id }, include: { items: { orderBy: { lineNo: "asc" } } } });
   });
@@ -1047,7 +1047,7 @@ export async function deletePurchaseOrder(
 
     await tx.purchaseOrder.delete({ where: { id } });
     // The order is gone, so the stage it was holding the project at is too.
-    await syncProjectStage(tx, po?.projectId ?? null, todayJalali);
+    await syncProjectStage(tx, po?.projectId ?? null, todayJalali, user);
   });
 
   // Audit log

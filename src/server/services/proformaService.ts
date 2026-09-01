@@ -591,6 +591,8 @@ export async function syncProjectStatus(
   tx: Prisma.TransactionClient,
   projectId: string | null | undefined,
   todayJalali: string,
+  /** Passed through to the stage trigger; see `syncProjectStage`. */
+  user?: AuthUser,
 ): Promise<void> {
   if (!projectId) return;
 
@@ -653,7 +655,7 @@ export async function syncProjectStatus(
    * update would derive it from the status the project had a moment ago. One
    * call, one guaranteed order.
    */
-  await syncProjectStage(tx, projectId, todayJalali);
+  await syncProjectStage(tx, projectId, todayJalali, user);
 }
 
 /**
@@ -754,7 +756,7 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
       await reconcileProformaStock(tx, null, fullProforma, todayJalali);
     }
 
-    await syncProjectStatus(tx, proforma.projectId, todayJalali);
+    await syncProjectStatus(tx, proforma.projectId, todayJalali, user);
     return proforma;
   });
 
@@ -966,9 +968,9 @@ export async function updateProforma(
 
     // Re-derive both projects when the proforma was moved between them, or the
     // old project keeps a status derived from a proforma it no longer has.
-    await syncProjectStatus(tx, proforma.projectId, todayJalali);
+    await syncProjectStatus(tx, proforma.projectId, todayJalali, user);
     if (existing.projectId && existing.projectId !== proforma.projectId) {
-      await syncProjectStatus(tx, existing.projectId, todayJalali);
+      await syncProjectStatus(tx, existing.projectId, todayJalali, user);
     }
 
     const afterLabels = await readLabels(tx, proforma.customerId, proforma.projectId);
@@ -1195,7 +1197,7 @@ export async function deleteProforma(
 
     await tx.proforma.delete({ where: { id } });
     // The project's status was derived partly from this proforma.
-    await syncProjectStatus(tx, existing.projectId, todayJalali);
+    await syncProjectStatus(tx, existing.projectId, todayJalali, user);
   });
 
   scheduleCustomerValueRecalculation();
@@ -1287,7 +1289,7 @@ export async function cancelSupersededVersion(
       where: { id: previous.id },
       data: { isCancelled: true },
     });
-    await syncProjectStatus(tx, previous.projectId, todayJalali);
+    await syncProjectStatus(tx, previous.projectId, todayJalali, user);
     // Nobody should be chasing a quotation that has been replaced.
     await closeFollowUpTasks(
       tx,
@@ -1360,7 +1362,7 @@ export async function setItemOutcomes(
       if (updated.count === 0) return "not-found";
     }
 
-    await syncProjectStatus(tx, existing.projectId, todayJalali);
+    await syncProjectStatus(tx, existing.projectId, todayJalali, user);
 
     /*
      * This is the screen where a quotation is actually won or lost.

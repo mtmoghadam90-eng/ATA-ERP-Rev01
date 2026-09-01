@@ -6,6 +6,7 @@ import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } fr
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { scrubProductRefs } from "../refIntegrity";
 import { deriveProjectStage, resolveStage } from "../../utils/projectStage";
+import { scheduleProjectStageTrigger } from "./projectStageEvents";
 import { isWonStatus } from "../proformaStatus";
 import { summarizeProject, summarizeProjects } from "./projectSummary";
 // The custom-field clause is identical for every module; defined once with customers.
@@ -316,6 +317,13 @@ export async function syncProjectStage(
   tx: Prisma.TransactionClient,
   projectId: string | null | undefined,
   todayJalali: string,
+  /**
+   * Who caused the move, for the workflow rules it fires.
+   *
+   * Optional because the automatic sweeps and the backfill have nobody acting;
+   * `processWorkflowRules` already takes an absent user.
+   */
+  user?: AuthUser,
 ): Promise<void> {
   if (!projectId) return;
 
@@ -375,6 +383,19 @@ export async function syncProjectStage(
 
   if (Object.keys(data).length > 0) {
     await tx.project.update({ where: { id: projectId }, data });
+  }
+
+  /*
+   * And tell the workflow engine, after this transaction commits.
+   *
+   * Queued rather than fired here: a rule creates tasks and sends messages,
+   * reads rows this transaction has not released, and anything it throws would
+   * roll back a save that was otherwise fine. The drain re-reads the project
+   * and drops the event if the stage is not what it queued, so a rollback after
+   * this point fires nothing. See `projectStageEvents.ts`.
+   */
+  if (data.stage) {
+    scheduleProjectStageTrigger(projectId, project.stage, String(data.stage), user);
   }
 }
 
@@ -648,7 +669,7 @@ export async function createProject(input: ProjectInput, user: AuthUser, todayJa
 
     // So a new project has a stage from the moment it exists, rather than a
     // blank column until something happens to it.
-    await syncProjectStage(tx, project.id, todayJalali);
+    await syncProjectStage(tx, project.id, todayJalali, user);
     await syncMilestones(tx, project.id, input.milestones ?? []);
 
     return project;
@@ -781,7 +802,7 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
      * A person moving «جدید» to «در حال مذاکره» by hand moves the stage too,
      * and so does setting or clearing a manual stage on the form.
      */
-    await syncProjectStage(tx, id, todayJalali);
+    await syncProjectStage(tx, id, todayJalali, user);
 
     return project;
   });

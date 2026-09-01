@@ -198,7 +198,7 @@ import {
   deliveryWorkflowStatus, inquiryWorkflowStatus,
 } from "../src/utils/moduleStatuses";
 import {
-  STAGE_FOR_PO_STATUS, deriveProjectStage, resolveStage, stageRank,
+  PROJECT_STAGES, STAGE_FOR_PO_STATUS, deriveProjectStage, resolveStage, stageRank,
 } from "../src/utils/projectStage";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -6740,7 +6740,7 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     /settleOutcome === "CANCELLED" \? \{ isCancelled: true \}/.test(body));
   // The same function the outcome modal calls, so the two cannot disagree.
   ok("and the project is re-derived through the shared rule",
-    /syncProjectStatus\(tx, proforma\.projectId, todayJalali\)/.test(body));
+    /syncProjectStatus\(tx, proforma\.projectId, todayJalali, user\)/.test(body));
   ok("a loss reason is written only onto a loss",
     /settleOutcome === "LOST"\s*\?\s*toNullableString\(input\.settleLossReason/.test(body));
   // Marking a quotation won is exactly what turns it into a sale.
@@ -8723,6 +8723,61 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
 
   ok("the comment stripper left these sources intact",
     project.length > 10000 && view.length > 50000);
+}
+
+/* ==========================================================================
+ * «تغییر مرحله جاری پروژه» as a workflow trigger
+ *
+ * The one procurement actually wants to automate on — «وقتی رسید ترخیص گمرک،
+ * به مسئول تدارکات وظیفه بده» — and `project_status_change` cannot say it: the
+ * status is the sales outcome and does not move when goods clear customs.
+ * ========================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* -- it is a real trigger, offering the real stages -- */
+  ok("the catalogue knows the stage trigger", !!WORKFLOW_TRIGGERS.project_stage_change);
+  eq("...offering the stages themselves",
+    conditionValues("project_stage_change", "newStage").join("|"),
+    PROJECT_STAGES.join("|"));
+  /*
+   * The outcome rides along as a field rather than being conflated with the
+   * stage: they are two axes, and a project is «برنده (موفق)» and «ترخیص گمرک»
+   * at the same time.
+   */
+  eq("...with the sales outcome beside it",
+    conditionValues("project_stage_change", "status").join("|"),
+    PROJECT_STATUSES.join("|"));
+
+  /* -- fired after the transaction, and only for a move that survived it -- */
+  const events = strip(readFileSync("src/server/services/projectStageEvents.ts", "utf8"));
+  ok("the trigger is queued rather than fired in the transaction",
+    /setTimeout\(/.test(events) && /processWorkflowRules\(\s*"project_stage_change"/.test(events));
+  /*
+   * The important half. A transaction that rolls back after queueing would
+   * otherwise fire a trigger for a move that never happened — the drain
+   * re-reads the project and drops the event when the stored stage does not
+   * match. A delay alone would not give that.
+   */
+  ok("...and dropped if the stage is no longer what was queued",
+    /if \(!project \|\| project\.stage !== move\.to\) continue;/.test(events));
+  // Detached from any request: a failing rule must not fail a save.
+  ok("...and can never fail the write that caused it",
+    /console\.error\("project stage trigger failed:"/.test(events));
+  // A save that moves the stage twice is one event, as a person would describe it.
+  ok("...with the first «from» and the last «to»",
+    /from: existing \? existing\.from : from/.test(events));
+
+  const project = strip(readFileSync("src/server/services/projectService.ts", "utf8"));
+  ok("the stage sync queues the move it just wrote",
+    /scheduleProjectStageTrigger\(projectId, project\.stage, String\(data\.stage\), user\)/
+      .test(project));
+  // Only on a real move: `data.stage` is set only when the stage changed.
+  ok("...only when the stage actually moved", /if \(data\.stage\) \{/.test(project));
+
+  ok("the comment stripper left these sources intact",
+    events.length > 1500 && project.length > 10000);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
