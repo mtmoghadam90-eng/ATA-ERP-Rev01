@@ -15,7 +15,6 @@ import { getTodayShamsi, formatDateTimeToShamsi } from '../dateUtils';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
 import { uploadFile, downloadFileFromServer } from '../imageUtils';
-import CustomFieldsDetailView from './CustomFieldsDetailView';
 import { exportToCSV } from '../excelUtils';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
@@ -3262,7 +3261,6 @@ export default function ProjectsView({
                   answered only by the second.
                 */}
                 <th className="p-3">مرحله جاری</th>
-                <th className="p-3">فیلدهای سفارشی</th>
                 <th className="p-3 text-center w-24">عملیات</th>
               </tr>
               {/* Column Filters Row */}
@@ -3341,7 +3339,6 @@ export default function ProjectsView({
                     ))}
                   </select>
                 </th>
-                <th className="p-2"></th>
                 <th className="p-2"></th>
               </tr>
             </thead>
@@ -3532,15 +3529,6 @@ export default function ProjectsView({
                     ) : (
                       <span className="text-[10px] text-slate-300">—</span>
                     )}
-                  </td>
-
-                  {/* Custom Fields */}
-                  <td className="p-3">
-                    <CustomFieldsDetailView
-                      module="projects"
-                      customFields={settings?.customFields || []}
-                      customValues={p.customValues}
-                    />
                   </td>
 
                   {/* Actions */}
