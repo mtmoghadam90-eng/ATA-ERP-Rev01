@@ -47,7 +47,8 @@ import { applySettingsPatches } from "../src/utils/settingsPatches";
 import { ACTIVITY_REACTIONS, isAllowedReaction, summarizeReactions } from "../src/utils/reactions";
 import {
   REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, TASK_CANCELLED, TASK_DOING, TASK_DONE,
-  TASK_TODO, referralIsOpen, referralLane, sortBoardCards, taskLane, taskStatusForLane,
+  TASK_TODO, BOARD_SORTS, SORT_LABELS, effectivePriority, referralIsOpen, referralLane,
+  referralPassesTaskFilters, sortBoardCards, taskLane, taskStatusForLane,
 } from "../src/utils/workBoard";
 import { laneTimestamps } from "../src/server/services/taskService";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
@@ -7265,6 +7266,26 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     card("mid-referral", "2026-02-01"),
   ];
   eq("by date, newest first", order(sortBoardCards(cards, "date")), "new-low,mid-referral,old-urgent");
+
+  /*
+   * By due date, soonest first — and a card with **no** due date sorts last.
+   * Shamsi dates compare as strings, so an empty one would come before every
+   * real date and put everything undated at the top of a column somebody opened
+   * precisely to see what is due soonest. A referral has no due date at all.
+   */
+  const due = [
+    { id: "later", createdAt: "2026-01-01", dueDate: "1405/08/01" },
+    { id: "none", createdAt: "2026-05-01" },
+    { id: "soon", createdAt: "2026-02-01", dueDate: "1405/06/12" },
+  ];
+  eq("by due date, soonest first with the undated last",
+    order(sortBoardCards(due, "due")), "soon,later,none");
+  eq("...and two undated cards fall back to the date order",
+    order(sortBoardCards([
+      { id: "a", createdAt: "2026-01-01" }, { id: "b", createdAt: "2026-07-01" },
+    ], "due")), "b,a");
+  ok("«تاریخ سررسید» is one of the three orders offered",
+    (BOARD_SORTS as readonly string[]).includes("due") && !!SORT_LABELS.due);
   /*
    * A referral carries no priority at all and sorts as «متوسط» — the middle of
    * the ladder, not the bottom: a colleague asking for something by name is not
@@ -7282,6 +7303,67 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   // The caller is holding React state.
   ok("the input is never reordered in place",
     (() => { const input = [...cards]; sortBoardCards(input, "priority"); return input[0].id === "old-urgent"; })());
+
+  /* -- one filter bar, two record types -- */
+  /*
+   * The rule throughout: a record is filtered on the value it effectively has.
+   * Where it has none the question does not describe it, so it drops out —
+   * except priority, where the ladder already defines a default.
+   */
+  const ref = (status: string, extra: Record<string, unknown> = {}) =>
+    ({ status, ...extra });
+  const passes = (status: string, filters: Record<string, unknown>) =>
+    referralPassesTaskFilters(ref(status) as never, filters as never);
+
+  ok("with nothing filtered every referral is shown",
+    passes(REFERRAL_PENDING, {}) && passes(REFERRAL_DONE, {}));
+  /*
+   * The status filter names a *task* status and a referral's own words are
+   * different; both map to a column, which is what the two kinds share.
+   */
+  ok("a task status matches a referral through the column",
+    passes(REFERRAL_DONE, { status: TASK_DONE })
+    && !passes(REFERRAL_PENDING, { status: TASK_DONE }));
+  ok("...and «برای انجام» finds the pending ones",
+    passes(REFERRAL_PENDING, { status: TASK_TODO })
+    && !passes(REFERRAL_DONE, { status: TASK_TODO }));
+  // A referral cannot be cancelled, so that choice shows none of them rather
+  // than showing all of them.
+  ok("«کنسل شده» matches no referral at all",
+    !passes(REFERRAL_PENDING, { status: TASK_CANCELLED })
+    && !passes(REFERRAL_DONE, { status: TASK_CANCELLED }));
+  ok("the declutter toggle hides the closed ones",
+    !passes(REFERRAL_DONE, { hideCompleted: true })
+    && passes(REFERRAL_PENDING, { hideCompleted: true }));
+
+  /*
+   * A referral has no priority and counts as «متوسط» — the same value it sorts
+   * by — so it answers one choice rather than vanishing from every one or
+   * surviving all of them.
+   */
+  ok("a referral counts as «متوسط» for the priority filter",
+    passes(REFERRAL_PENDING, { priority: "متوسط" })
+    && !passes(REFERRAL_PENDING, { priority: "فوری" }));
+  eq("...the same value it is ordered by", effectivePriority(undefined), "متوسط");
+  eq("...and a real priority is left alone", effectivePriority("فوری"), "فوری");
+
+  ok("the assignee filter reads the referral's own column",
+    referralPassesTaskFilters(
+      { status: REFERRAL_PENDING, assignedToUserId: "u1" }, { assignedToUserId: "u1" })
+    && !referralPassesTaskFilters(
+      { status: REFERRAL_PENDING, assignedToUserId: "u2" }, { assignedToUserId: "u1" }));
+  // Every referral is raised from a message on a project.
+  ok("a referral answers «پروژه» and no other kind",
+    passes(REFERRAL_PENDING, { relatedToType: "پروژه" })
+    && !passes(REFERRAL_PENDING, { relatedToType: "پیش‌فاکتور" }));
+  /*
+   * Both of these ask about a **due date**, which a referral does not have: it
+   * is not late, and it is not inside any window.
+   */
+  ok("a question about a due date leaves it out",
+    !passes(REFERRAL_PENDING, { overdue: true })
+    && !passes(REFERRAL_PENDING, { dateFrom: "1405/06/01" })
+    && !passes(REFERRAL_PENDING, { dateTo: "1405/06/30" }));
 
   /* -- the two dates -- */
   const started = { status: TASK_TODO, startedAt: null };
@@ -7339,6 +7421,21 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    * the same modal here.
    */
   const view = readFileSync("src/components/TasksView.tsx", "utf8");
+  /*
+   * There is no «کارتابل» tab: a referral *is* a task on the two views beside
+   * the notices, so a second list of the same records under another name would
+   * be two places to look again — the thing the merge removed.
+   */
+  ok("the notices are their own tab and the inbox is not",
+    /notificationsOnly/.test(view) && !/کارتابل و اعلان‌ها/.test(view));
+  // Both views draw them, or the list would hide work from anybody who prefers
+  // it — the two-places-to-look problem, put back.
+  ok("the list draws the referrals too", /referral-row-\$\{card\.id\}/.test(view));
+  ok("...and only the notices tab skips fetching them",
+    /if \(mainTab === 'inbox'\) return;/.test(view));
+  ok("one filter bar decides which of them are shown",
+    /referralPassesTaskFilters\(/.test(view));
+
   ok("the list's tick opens the completion form for a follow-up",
     /task\.taskKind === 'SALES_FOLLOW_UP' && task\.status !== 'انجام شده'/.test(view)
     && /void openFollowUp\(task\.id\)/.test(view));
