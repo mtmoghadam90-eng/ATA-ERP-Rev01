@@ -14,6 +14,7 @@ import { createProforma, ProformaInput, ProformaItemInput } from "../proformaSer
 import { createDelivery, getDeliveryRemaining, DeliveryInput } from "../deliveryService";
 import { nextPackingListNumber, nextProformaNumber } from "../../documentNumberSpecs";
 import type { ChatToolDefinition } from "./provider";
+import { TASK_TODO } from "../../../utils/workBoard";
 
 /**
  * The writes the assistant may propose.
@@ -371,7 +372,7 @@ const proposeProforma: AssistantActionImpl = {
         costCurrency: currency,
         costSource: costNone ? COST_SOURCES.NONE : (hasCost ? COST_SOURCES.MANUAL : undefined),
         techSpecs: str(row.techSpecs) || null,
-        status: "در انتظار",
+        status: TASK_TODO,
       });
     }
 

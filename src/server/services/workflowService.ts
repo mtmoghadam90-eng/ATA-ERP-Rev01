@@ -25,6 +25,7 @@ import { FINISHED_TASK_STATUSES, normalizeTaskKind } from "../../utils/salesFoll
  */
 export type { WorkflowRule } from "../../types";
 import type { WorkflowRule } from "../../types";
+import { TASK_TODO } from "../../utils/workBoard";
 
 
 /**
@@ -221,7 +222,7 @@ export async function executeRule(
             description: replaceTemplateVars(config.descTemplate, enrichedPayload) || "",
             ...expandDateFields({ dueDate }, ["dueDate"]),
             priority: config.priority || "متوسط",
-            status: "در انتظار",
+            status: TASK_TODO,
             taskKind,
             assignedToUserId: assignee.assignedToUserId,
             assignedToName: assignee.assignedToName,

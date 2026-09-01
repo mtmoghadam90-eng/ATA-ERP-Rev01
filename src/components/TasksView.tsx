@@ -28,8 +28,8 @@ import ReferralsView from './ReferralsView';
 import ReferralThread from './ReferralThread';
 import FollowUpCompletionModal from './FollowUpCompletionModal';
 import {
-  BOARD_SORTS, BoardLane, BoardSort, SORT_LABELS, referralPassesTaskFilters,
-  serverOrderFor, sortBoardCards, taskLane,
+  BOARD_SORTS, BoardLane, BoardSort, LANE_FILTERS, LANE_FILTER_LABELS, SORT_LABELS,
+  referralPassesTaskFilters, serverOrderFor, sortBoardCards, taskLane,
 } from '../utils/workBoard';
 import { ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
 import { salesFollowUpApi, type FollowUpRow } from '../api/salesFollowUp';
@@ -187,8 +187,8 @@ export default function TasksView({
    * would filter one page and call it the answer — «انجام نشده» would show
    * whatever open tasks were on page one and nothing else.
    */
-  const selectedStatus = list.filters.status;
-  const setSelectedStatus = (value: string) => list.setFilter('status', value);
+  const selectedLane = list.filters.lane;
+  const setSelectedLane = (value: string) => list.setFilter('lane', value);
 
   // The declutter toggle. The server drops the completed rows from the query,
   // so this is only what the button draws.
@@ -489,7 +489,7 @@ export default function TasksView({
       referralPassesTaskFilters(
         { status: ref.status, assignedToUserId: ref.assignedToUserId },
         {
-          status: list.filters.status,
+          lane: list.filters.lane,
           priority: list.filters.priority,
           assignedToUserId: list.filters.assignedToUserId,
           relatedToType: list.filters.relatedToType,
@@ -749,15 +749,25 @@ export default function TasksView({
 
         <div className="relative w-full md:w-52 flex items-center gap-2">
           <select
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
+            value={selectedLane}
+            onChange={(e) => setSelectedLane(e.target.value)}
             id="task-status-filter"
             className="w-full border border-slate-200 rounded-lg text-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition appearance-none text-right bg-white"
           >
+            {/*
+              The columns, not the status words.
+
+              It used to list three literal statuses — and every automation
+              raises its task as «در انتظار», which was on none of them, so
+              choosing «در حال انجام» asked for a string those tasks did not
+              carry and showed nothing at all. Each choice is a column now, and
+              the middle one is «everything that is not one of the other three»,
+              so a status nobody anticipated is still findable.
+            */}
             <option value="all">همه وضعیت‌ها</option>
-            <option value="در حال انجام">انجام نشده (در حال انجام)</option>
-            <option value="انجام شده">انجام شده</option>
-            <option value="کنسل شده">کنسل شده</option>
+            {LANE_FILTERS.map((lane) => (
+              <option key={lane} value={lane}>{LANE_FILTER_LABELS[lane]}</option>
+            ))}
           </select>
         </div>
 
@@ -773,12 +783,12 @@ export default function TasksView({
         <button
           type="button"
           onClick={() => list.setFilter('hideCompleted', !hideCompleted)}
-          disabled={selectedStatus !== 'all'}
-          title={selectedStatus !== 'all'
+          disabled={selectedLane !== 'all'}
+          title={selectedLane !== 'all'
             ? 'وضعیت به‌صورت مشخص انتخاب شده است'
             : hideCompleted ? 'نمایش وظایف انجام‌شده' : 'پنهان کردن وظایف انجام‌شده'}
           className={`w-full md:w-auto flex items-center justify-center gap-2 border rounded-lg text-sm py-2 px-3 transition whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed ${
-            hideCompleted && selectedStatus === 'all'
+            hideCompleted && selectedLane === 'all'
               ? 'bg-sky-50 border-sky-500 text-sky-700'
               : 'bg-white border-slate-200 text-slate-600 hover:border-sky-500'
           }`}

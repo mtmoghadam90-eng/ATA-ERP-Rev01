@@ -19,6 +19,7 @@ import {
   FollowUpHealth, completionRefusalReason, followUpActivityText, followUpHealthOf,
   healthRank, isTerminalOutcome, normalizeFollowUpState, stateAfterDecision,
 } from "../../utils/salesFollowUp";
+import { TASK_TODO } from "../../utils/workBoard";
 
 /**
  * Chasing quotations: the server half.
@@ -246,7 +247,7 @@ export async function completeFollowUp(
           relatedToId: proformaId,
           relatedToName: proforma.proformaNumber,
           priority: task.priority,
-          status: "در انتظار",
+          status: TASK_TODO,
           ...expandDateFields({ dueDate }, ["dueDate"]),
           assignedToUserId: assignee?.id ?? task.assignedToUserId,
           assignedToName: assignee?.fullName ?? assigneeName ?? task.assignedToName,
@@ -452,7 +453,7 @@ export async function reactivateFollowUp(
         relatedToId: proformaId,
         relatedToName: proforma.proformaNumber,
         priority: "متوسط",
-        status: "در انتظار",
+        status: TASK_TODO,
         ...expandDateFields({ dueDate }, ["dueDate"]),
         assignedToUserId: assignee?.id ?? null,
         assignedToName: assignee?.fullName ?? assigneeName,
