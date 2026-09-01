@@ -50,6 +50,8 @@ export interface UseListResult<T> {
   setPageSize: (size: number) => void;
   sort: string | undefined;
   order: "asc" | "desc";
+  /** Sets the column and direction outright, and returns to the first page. */
+  setSortOrder: (column: string | undefined, direction: "asc" | "desc") => void;
   /** Sets the sort column, flipping direction when it is already selected. */
   toggleSort: (column: string) => void;
   /** Re-runs the current query — call after a create, edit or delete. */
@@ -176,6 +178,22 @@ export function useList<T>(options: UseListOptions): UseListResult<T> {
     setPageSizeState(Math.min(Math.max(1, size), MAX_PAGE_SIZE));
   }, []);
 
+  /**
+   * Sets the column and the direction outright.
+   *
+   * `toggleSort` is for a grid header, where pressing the same column flips it.
+   * A control that offers «newest first» and «soonest first» as two named
+   * choices is saying both halves at once, and flipping one of them silently
+   * would answer a question nobody asked.
+   */
+  const setSortOrder = useCallback((column: string | undefined, direction: "asc" | "desc") => {
+    setSort(column);
+    setOrder(direction);
+    // A different order is a different first page: staying on page four of the
+    // old one shows a slice of the middle and calls it the top.
+    setPage(1);
+  }, []);
+
   const toggleSort = useCallback((column: string) => {
     setSort((current) => {
       if (current === column) {
@@ -200,9 +218,9 @@ export function useList<T>(options: UseListOptions): UseListResult<T> {
       rows, total, page, pageSize, totalPages,
       loading, initialLoading, error, meta,
       search, setSearch, setPage, setPageSize,
-      sort, order, toggleSort, refresh,
+      sort, order, toggleSort, setSortOrder, refresh,
     }),
     [rows, total, page, pageSize, totalPages, loading, initialLoading, error, meta,
-      search, setSearch, setPage, setPageSize, sort, order, toggleSort, refresh],
+      search, setSearch, setPage, setPageSize, sort, order, toggleSort, setSortOrder, refresh],
   );
 }

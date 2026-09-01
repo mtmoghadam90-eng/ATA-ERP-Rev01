@@ -29,7 +29,7 @@ import ReferralThread from './ReferralThread';
 import FollowUpCompletionModal from './FollowUpCompletionModal';
 import {
   BOARD_SORTS, BoardLane, BoardSort, SORT_LABELS, referralPassesTaskFilters,
-  sortBoardCards, taskLane,
+  serverOrderFor, sortBoardCards, taskLane,
 } from '../utils/workBoard';
 import { ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
 import { salesFollowUpApi, type FollowUpRow } from '../api/salesFollowUp';
@@ -224,7 +224,21 @@ export default function TasksView({
    */
   const [mainTab, setMainTab] = useState<'board' | 'list' | 'inbox'>(
     initialTab === 'inbox' || initialTab === 'notifications' ? 'inbox' : 'board');
-  const [boardSort, setBoardSort] = useState<BoardSort>('date');
+  const [boardSort, setBoardSortState] = useState<BoardSort>('date');
+  /*
+   * Changing the order also changes which page to ask for.
+   *
+   * The sort runs over the rows in hand, so the server has to have handed back
+   * the right ones first — otherwise the top of a column is a slice of the
+   * middle, which is the fault the follow-up queue was corrected for.
+   * `serverOrderFor` says what SQL can do; priority it cannot, because the
+   * ladder is not alphabetical.
+   */
+  const setBoardSort = (by: BoardSort) => {
+    setBoardSortState(by);
+    const { sort, order } = serverOrderFor(by);
+    list.setSortOrder(sort, order);
+  };
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [movingCards, setMovingCards] = useState(false);
 
@@ -437,9 +451,6 @@ export default function TasksView({
     }
   };
 
-  // The server searched, filtered by priority, sorted and paged this already.
-  const filteredTasks = tasks;
-
   /*
    * The two record types, as one list of cards.
    *
@@ -510,10 +521,10 @@ export default function TasksView({
     return [...taskCards, ...referralCards];
   }, [tasks, referrals, list.filters]);
 
-  /** Just the referral half, for the list view to draw after the tasks. */
-  const listReferralCards = React.useMemo(
-    () => boardCards.filter((c) => c.kind === 'referral'),
-    [boardCards],
+  /** The page's tasks by id, so one ordered list of cards can find its row. */
+  const taskById = React.useMemo(
+    () => new Map(tasks.map((t) => [t.id, t])),
+    [tasks],
   );
 
   const toggleCard = (key: string) => setSelectedCards((current) => {
@@ -827,7 +838,74 @@ export default function TasksView({
 
       {/* List */}
       <div className={`grid grid-cols-1 gap-4 ${mainTab === 'board' ? 'hidden' : ''}`}>
-        {filteredTasks.map((task) => (
+        {/*
+          One order over both kinds of row.
+
+          The tasks used to be drawn in whatever order the server returned and
+          the referrals sorted after them, so «ترتیب» moved half the screen and
+          left the other half where it was — and the two halves were two blocks,
+          which is the shape the merge exists to remove. They are one list.
+
+          It orders the **page in hand**, which is two hundred rows; the
+          pagination below moves between pages. That is the same bound the board
+          works under, and the reason both are honest about it.
+        */}
+        {sortBoardCards(boardCards, boardSort).map((card) => {
+          if (card.kind === 'referral') {
+            return (
+
+            <div
+              key={card.id}
+              id={`referral-row-${card.id}`}
+              className="bg-white rounded-2xl border border-indigo-100 p-4 sm:p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-sm transition"
+            >
+              <div className="flex items-start gap-3.5 flex-1 w-full">
+                <button
+                  onClick={() => setOpenReferral(referrals.find((r) => r.id === card.id) ?? null)}
+                  title="باز کردن گفتگوی ارجاع"
+                  className="mt-1 w-5 h-5 rounded-md flex items-center justify-center border border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition flex-shrink-0"
+                >
+                  <Inbox size={11} />
+                </button>
+                <div className="space-y-1 flex-1 min-w-0">
+                  <h4 className="font-bold text-sm leading-snug break-words text-slate-800">
+                    {card.title}
+                  </h4>
+                  {card.context && (
+                    <div className="text-[10px] text-sky-700 flex flex-wrap items-center gap-1">
+                      {card.context.code && <span className="font-mono font-bold">{card.context.code}</span>}
+                      {card.context.name && <span className="truncate">{card.context.name}</span>}
+                      {card.context.customerName && (
+                        <span className="text-slate-500">— {card.context.customerName}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-start md:justify-end text-xs pt-3 md:pt-0 border-t border-slate-100 md:border-t-0">
+                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full border bg-indigo-50 border-indigo-200 text-indigo-700">
+                  ارجاع کار
+                </span>
+                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full border bg-slate-50 border-slate-200 text-slate-600">
+                  وضعیت: {card.status}
+                </span>
+                <div className="text-[11px] text-slate-400 flex items-center gap-1.5 font-sans bg-slate-50 px-2 py-1 rounded border">
+                  <User size={12} />
+                  <span>مسئول: {card.assignedTo || '—'}</span>
+                </div>
+                <div className="text-[11px] text-slate-400 flex items-center gap-1.5 font-sans bg-slate-50 px-2 py-1 rounded border">
+                  <UserPlus size={12} />
+                  <span>ارجاع‌دهنده: {card.createdBy || '—'}</span>
+                </div>
+              </div>
+            </div>
+            );
+          }
+
+          const task = taskById.get(card.id);
+          if (!task) return null;
+          return (
           <div 
             key={task.id} 
             className={`bg-white rounded-2xl border p-4 sm:p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-sm transition ${
@@ -986,7 +1064,8 @@ export default function TasksView({
             </div>
 
           </div>
-        ))}
+          );
+        })}
 
         {/* Nothing to report before the first response — "none found" while
             loading reads as an empty board. */}
@@ -1006,65 +1085,7 @@ export default function TasksView({
           </div>
         )}
 
-        {/*
-          The referrals, in the list too.
-
-          There is no «کارتابل» tab any more, so a referral that appeared only
-          on the board would be invisible to anybody who prefers this view —
-          which is the two-places-to-look problem the merge removed, put back.
-          The same filters decide which of them are here, and the same order.
-        */}
-        {sortBoardCards(listReferralCards, boardSort).map((card) => (
-          <div
-            key={card.id}
-            id={`referral-row-${card.id}`}
-            className="bg-white rounded-2xl border border-indigo-100 p-4 sm:p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:shadow-sm transition"
-          >
-            <div className="flex items-start gap-3.5 flex-1 w-full">
-              <button
-                onClick={() => setOpenReferral(referrals.find((r) => r.id === card.id) ?? null)}
-                title="باز کردن گفتگوی ارجاع"
-                className="mt-1 w-5 h-5 rounded-md flex items-center justify-center border border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition flex-shrink-0"
-              >
-                <Inbox size={11} />
-              </button>
-              <div className="space-y-1 flex-1 min-w-0">
-                <h4 className="font-bold text-sm leading-snug break-words text-slate-800">
-                  {card.title}
-                </h4>
-                {card.context && (
-                  <div className="text-[10px] text-sky-700 flex flex-wrap items-center gap-1">
-                    {card.context.code && <span className="font-mono font-bold">{card.context.code}</span>}
-                    {card.context.name && <span className="truncate">{card.context.name}</span>}
-                    {card.context.customerName && (
-                      <span className="text-slate-500">— {card.context.customerName}</span>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-start md:justify-end text-xs pt-3 md:pt-0 border-t border-slate-100 md:border-t-0">
-              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full border bg-indigo-50 border-indigo-200 text-indigo-700">
-                ارجاع کار
-              </span>
-              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full border bg-slate-50 border-slate-200 text-slate-600">
-                وضعیت: {card.status}
-              </span>
-              <div className="text-[11px] text-slate-400 flex items-center gap-1.5 font-sans bg-slate-50 px-2 py-1 rounded border">
-                <User size={12} />
-                <span>مسئول: {card.assignedTo || '—'}</span>
-              </div>
-              <div className="text-[11px] text-slate-400 flex items-center gap-1.5 font-sans bg-slate-50 px-2 py-1 rounded border">
-                <UserPlus size={12} />
-                <span>ارجاع‌دهنده: {card.createdBy || '—'}</span>
-              </div>
-            </div>
-          </div>
-        ))}
-
-        {filteredTasks.length === 0 && listReferralCards.length === 0
-          && !list.initialLoading && !list.error && (
+        {boardCards.length === 0 && !list.initialLoading && !list.error && (
           <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-200">
             <ListTodo className="mx-auto text-slate-300 mb-2" size={40} />
             وظیفه فعالی یافت نشد.

@@ -293,3 +293,23 @@ export function referralPassesTaskFilters(
 
   return true;
 }
+
+/**
+ * The server-side ordering a board sort implies, or null when there is none.
+ *
+ * The page has to be the right page before it is ordered: the sort runs over
+ * the two hundred rows in hand, so if the server handed back the wrong two
+ * hundred, the top of the column is a slice of the middle — the same fault the
+ * sales follow-up queue was corrected for.
+ *
+ * **Priority deliberately returns null.** SQL orders «فوری», «بالا», «متوسط»
+ * and «پایین» by collation, which is alphabetical and has nothing to do with
+ * urgency; only `PRIORITY_ORDER` knows that, and it is not a thing a database
+ * can be asked. The due-date order stands in, which at least puts the pressing
+ * work on the first page.
+ */
+export function serverOrderFor(by: BoardSort): { sort: string; order: "asc" | "desc" } {
+  if (by === "date") return { sort: "createdAt", order: "desc" };
+  // Soonest first, and the page sort moves the undated to the end afterwards.
+  return { sort: "dueDate", order: "asc" };
+}

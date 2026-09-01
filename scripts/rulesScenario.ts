@@ -48,9 +48,9 @@ import { ACTIVITY_REACTIONS, isAllowedReaction, summarizeReactions } from "../sr
 import {
   REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, TASK_CANCELLED, TASK_DOING, TASK_DONE,
   TASK_TODO, BOARD_SORTS, SORT_LABELS, effectivePriority, referralIsOpen, referralLane,
-  referralPassesTaskFilters, sortBoardCards, taskLane, taskStatusForLane,
+  referralPassesTaskFilters, serverOrderFor, sortBoardCards, taskLane, taskStatusForLane,
 } from "../src/utils/workBoard";
-import { laneTimestamps } from "../src/server/services/taskService";
+import { TASK_SORTABLE, laneTimestamps } from "../src/server/services/taskService";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
 import { lossReasonRefusal } from "../src/server/services/projectService";
 import type { ERPSettings } from "../src/types";
@@ -7286,6 +7286,39 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     ], "due")), "b,a");
   ok("«تاریخ سررسید» is one of the three orders offered",
     (BOARD_SORTS as readonly string[]).includes("due") && !!SORT_LABELS.due);
+
+  /*
+   * The page has to be the right page before it is ordered. The sort runs over
+   * the rows in hand, so if the server handed back the wrong two hundred the
+   * top of a column is a slice of the middle — the fault the follow-up queue
+   * was corrected for.
+   */
+  eq("«تاریخ ارجاع» asks the server for the newest first",
+    JSON.stringify(serverOrderFor("date")), '{"sort":"createdAt","order":"desc"}');
+  eq("«تاریخ سررسید» asks for the soonest first",
+    JSON.stringify(serverOrderFor("due")), '{"sort":"dueDate","order":"asc"}');
+  /*
+   * Priority cannot be asked of SQL at all: it orders «فوری», «بالا», «متوسط»
+   * and «پایین» by collation, which is alphabetical and has nothing to do with
+   * urgency. The due-date order stands in, so at least the pressing work is on
+   * the first page, and `PRIORITY_ORDER` does the rest.
+   */
+  eq("...and priority falls back to it, because SQL cannot rank urgency",
+    serverOrderFor("priority").sort, "dueDate");
+  ok("every offered order names a column the endpoint allows",
+    BOARD_SORTS.every((by) =>
+      (TASK_SORTABLE as readonly string[]).includes(serverOrderFor(by).sort)));
+
+  const listView = readFileSync("src/components/TasksView.tsx", "utf8");
+  /*
+   * One order over both kinds of row. The tasks used to be drawn in whatever
+   * order the server returned and the referrals sorted after them, so «ترتیب»
+   * moved half the screen and left the other half where it was.
+   */
+  ok("the list draws one sorted list, not tasks then referrals",
+    /sortBoardCards\(boardCards, boardSort\)\.map/.test(listView)
+    && !/sortBoardCards\(listReferralCards/.test(listView));
+  ok("...and changing it re-asks the server", /list\.setSortOrder\(sort, order\)/.test(listView));
   /*
    * A referral carries no priority at all and sorts as «متوسط» — the middle of
    * the ladder, not the bottom: a colleague asking for something by name is not
