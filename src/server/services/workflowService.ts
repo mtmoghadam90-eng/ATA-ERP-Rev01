@@ -26,6 +26,7 @@ import { FINISHED_TASK_STATUSES, normalizeTaskKind } from "../../utils/salesFoll
 export type { WorkflowRule } from "../../types";
 import type { WorkflowRule } from "../../types";
 import { TASK_TODO } from "../../utils/workBoard";
+import { resolveAssignee as sharedResolveAssignee } from "./assigneeLookup";
 
 
 /**
@@ -48,18 +49,18 @@ import { TASK_TODO } from "../../utils/workBoard";
 async function resolveAssignee(
   name: string,
 ): Promise<{ assignedToUserId: string | null; assignedToName: string }> {
-  const trimmed = (name || "").trim();
-  if (!trimmed) return { assignedToUserId: null, assignedToName: "" };
-
-  const match = await getDb().user.findFirst({
-    where: { OR: [{ fullName: trimmed }, { username: trimmed }] },
-    select: { id: true, fullName: true },
-  });
-
-  return {
-    assignedToUserId: match?.id ?? null,
-    assignedToName: match?.fullName || trimmed,
-  };
+  /*
+   * Delegated, because this was the same exact-match query written out in four
+   * places. An exact comparison is not the same question as «is this that
+   * person»: SQL Server's collation treats ی/ي and the half-space as different
+   * characters, so one differently-typed name left the task with a name and no
+   * id — assigned on the card and belonging to nobody.
+   *
+   * No fallback here: an automation raising a task for a rule that names
+   * somebody who is not on the system has nobody obvious to give it to, and
+   * `notifyModuleResponsible` still tells the module's owner it exists.
+   */
+  return sharedResolveAssignee(name);
 }
 
 /**

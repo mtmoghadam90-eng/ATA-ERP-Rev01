@@ -20,6 +20,7 @@ import {
   healthRank, isTerminalOutcome, normalizeFollowUpState, stateAfterDecision,
 } from "../../utils/salesFollowUp";
 import { TASK_TODO } from "../../utils/workBoard";
+import { resolveAssignee } from "./assigneeLookup";
 
 /**
  * Chasing quotations: the server half.
@@ -231,12 +232,14 @@ export async function completeFollowUp(
       const assigneeName = toNullableString(input.nextAssignedToName, 200)
         ?? proforma.project?.salesExpert
         ?? task.assignedToName;
-      const assignee = assigneeName
-        ? await tx.user.findFirst({
-            where: { OR: [{ fullName: assigneeName }, { username: assigneeName }] },
-            select: { id: true, fullName: true },
-          })
-        : null;
+      /*
+       * Matched on the folded name, and falling back to whoever has this task.
+       *
+       * An exact comparison is not the same question — see `assigneeName.ts` —
+       * and a miss used to leave the next follow-up with a name and no id: it
+       * read as assigned on the card and belonged to nobody.
+       */
+      const assignee = await resolveAssignee(assigneeName, task.assignedToUserId, tx);
 
       const next = await tx.task.create({
         data: {
@@ -249,8 +252,8 @@ export async function completeFollowUp(
           priority: task.priority,
           status: TASK_TODO,
           ...expandDateFields({ dueDate }, ["dueDate"]),
-          assignedToUserId: assignee?.id ?? task.assignedToUserId,
-          assignedToName: assignee?.fullName ?? assigneeName ?? task.assignedToName,
+          assignedToUserId: assignee.assignedToUserId,
+          assignedToName: assignee.assignedToName || task.assignedToName,
         } as Prisma.TaskUncheckedCreateInput,
       });
       nextTaskId = next.id;
@@ -438,12 +441,17 @@ export async function reactivateFollowUp(
     });
     if (open) return null;
 
-    const assignee = assigneeName
-      ? await tx.user.findFirst({
-          where: { OR: [{ fullName: assigneeName }, { username: assigneeName }] },
-          select: { id: true, fullName: true },
-        })
-      : null;
+    /*
+     * The same fold, and a fallback this path did not have at all.
+     *
+     * This is where it was reported: a reactivated follow-up whose sales expert
+     * did not match an account character for character was created with the
+     * name on it and `assignedToUserId: null` — so it looked exactly like the
+     * others, and was missing from «به من ارجاع شده» and from every board but
+     * «همه وظایف». The person reactivating it takes it if nobody matches, which
+     * is at worst one reassignment and never a task belonging to nobody.
+     */
+    const assignee = await resolveAssignee(assigneeName, user.id, tx);
 
     const task = await tx.task.create({
       data: {
@@ -455,8 +463,8 @@ export async function reactivateFollowUp(
         priority: "متوسط",
         status: TASK_TODO,
         ...expandDateFields({ dueDate }, ["dueDate"]),
-        assignedToUserId: assignee?.id ?? null,
-        assignedToName: assignee?.fullName ?? assigneeName,
+        assignedToUserId: assignee.assignedToUserId,
+        assignedToName: assignee.assignedToName,
       } as Prisma.TaskUncheckedCreateInput,
     });
 

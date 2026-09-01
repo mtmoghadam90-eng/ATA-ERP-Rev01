@@ -13,6 +13,7 @@
     "sync:report": "tsx scripts/sync-reporting.ts",
     "seed:db": "tsx scripts/seedDb.ts",
     "fix:project-loss-reasons": "tsx scripts/backfillProjectLossReasons.ts",
+    "fix:task-assignees": "tsx scripts/backfillTaskAssignees.ts",
     "db:deploy": "prisma migrate deploy",
     "db:generate": "prisma generate",
     "test:rules": "tsx scripts/rulesScenario.ts",
