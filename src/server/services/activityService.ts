@@ -976,13 +976,23 @@ export const REFERRAL_FILTERABLE = ["status", "assignedToUserId"] as const;
 export async function listReferrals(
   q: ListQuery,
   user: AuthUser,
-  filters: { mine?: boolean; scope?: "toMe" | "fromMe"; open?: boolean } = {},
+  filters: { mine?: boolean; scope?: "toMe" | "fromMe" | "mine"; open?: boolean } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
   const and: Record<string, unknown>[] = [];
 
   if (filters.scope === "fromMe") {
     and.push({ assignedByUserId: user.id });
+  } else if (filters.scope === "mine") {
+    /*
+     * Both directions, which is what a referral being «mine» actually means.
+     *
+     * A referral belongs to two people exactly as a task does — the one it was
+     * given to and the one who gave it — and `visibilityClause` says so for
+     * tasks. The sidebar badge asked only for `toMe`, so a request somebody
+     * raised and is waiting on sat on their own board and in nobody's count.
+     */
+    and.push({ OR: [{ assignedToUserId: user.id }, { assignedByUserId: user.id }] });
   } else if (filters.scope === "toMe" || filters.mine || !canSeeProjects(user)) {
     and.push({ assignedToUserId: user.id });
   }

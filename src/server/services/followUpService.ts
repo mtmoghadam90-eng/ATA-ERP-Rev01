@@ -719,6 +719,94 @@ async function buildQueueRows(
  * `completeFollowUp` is — you must be its assignee, or hold the permission.
  * Otherwise somebody could be given a follow-up and be unable to open it.
  */
+/**
+ * Corrects what was recorded on a chase that is already closed.
+ *
+ * A follow-up and an ordinary task are different things, so pressing «ویرایش»
+ * on one has to open the form it was filled in on — and for a closed one there
+ * is exactly one thing left to correct: what the customer said, and the note
+ * about the call. Somebody picked «تماس گرفته شد؛ پاسخی نداد» when they meant
+ * «قیمت رقیب را دارند», and the only way back was the database.
+ *
+ * Deliberately **not** `completeFollowUp` with different arguments. That
+ * function closes a task, moves the proforma's follow-up state, raises the
+ * replacement and may settle the sale — every one of which has already
+ * happened here, and re-running any of it would raise a second next action or
+ * re-date a sale the customer-value ranking counts from. This writes two
+ * columns and nothing else.
+ *
+ * The next action is not editable from here either: it is its own task, on its
+ * own card, with its own edit box. One record to change rather than two.
+ */
+export async function updateFollowUpResult(
+  taskId: string,
+  input: { followUpResult?: string | null; completionNote?: string | null },
+  user: AuthUser,
+): Promise<
+  | { ok: true; taskId: string }
+  | { ok: false; reason: string; code: "not-found" | "forbidden" | "invalid" }
+> {
+  const db = getDb();
+  const task = await db.task.findUnique({
+    where: { id: taskId },
+    select: {
+      id: true, taskKind: true, status: true, assignedToUserId: true, createdByUserId: true,
+      followUpResult: true, completionNote: true,
+    },
+  });
+  if (!task || task.taskKind !== "SALES_FOLLOW_UP") {
+    return { ok: false, reason: "پیگیری فروش یافت نشد.", code: "not-found" };
+  }
+  /*
+   * The same two people a task belongs to, plus anybody who may see the sales
+   * desk's own screen. Written out rather than reusing the queue's check
+   * because a follow-up raised for somebody else is still theirs to correct.
+   */
+  const involved = task.assignedToUserId === user.id || task.createdByUserId === user.id;
+  if (!involved && !hasPermission(user, "proformas")) {
+    return { ok: false, reason: "این پیگیری به شما ارجاع نشده است.", code: "forbidden" };
+  }
+  /*
+   * Only a closed one. An open follow-up has no recorded result to correct —
+   * it is completed through `completeFollowUp`, which is what the same button
+   * opens for it, and letting a result be written here would leave a quotation
+   * with an answer and nothing chasing it.
+   */
+  if (!(FINISHED_TASK_STATUSES as readonly string[]).includes(task.status)) {
+    return {
+      ok: false,
+      reason: "این پیگیری هنوز باز است؛ نتیجه آن با فرم «ثبت نتیجه پیگیری» ثبت می‌شود.",
+      code: "invalid",
+    };
+  }
+
+  const followUpResult = toNullableString(input.followUpResult, 200);
+  if (!followUpResult) {
+    return { ok: false, reason: "ثبت نتیجه پیگیری الزامی است.", code: "invalid" };
+  }
+
+  await db.task.update({
+    where: { id: taskId },
+    data: { followUpResult, completionNote: toNullableString(input.completionNote) },
+  });
+
+  await afterCommit("follow-up result correction", async () => {
+    await logAction(
+      {
+        action: "UPDATE",
+        module: "وظایف",
+        entityId: taskId,
+        description: `اصلاح نتیجه پیگیری: ${task.followUpResult ?? "-"} ← ${followUpResult}`,
+        beforeState: task,
+      },
+      user,
+      getTodayShamsi(),
+    );
+  });
+
+  return { ok: true, taskId };
+}
+
 export async function followUpRowForTask(
   taskId: string,
   user: AuthUser,

@@ -327,7 +327,18 @@ export default function TasksView({
    * `nextActionTaskId` instead would be right only while that happens to be the
    * card somebody pressed, and null the moment it is not.
    */
-  const [followUpRow, setFollowUpRow] = useState<{ taskId: string; row: FollowUpRow } | null>(null);
+  const [followUpRow, setFollowUpRow] = useState<{
+    taskId: string;
+    row: FollowUpRow;
+    /*
+      Set when a *closed* chase is being corrected rather than an open one
+      completed. A follow-up and an ordinary task are different things, so
+      «ویرایش» on one opens the form it was filled in on — but everything the
+      completion did has already happened, so only the result and the note are
+      editable and a different endpoint writes them.
+    */
+    editing?: { taskId: string; followUpResult: string; completionNote: string };
+  } | null>(null);
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [isTaskModalFullscreen, setIsTaskModalFullscreen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -367,6 +378,27 @@ export default function TasksView({
   };
 
   const handleOpenEdit = (task: Task) => {
+    /*
+     * A follow-up is edited on the form it was filled in on.
+     *
+     * The pencil opened the task box — a title, a due date and a status, none
+     * of which is what a chase records — and there was no way at all to correct
+     * a result somebody had picked in a hurry. An open one opens the completion
+     * form (the same thing the tick does); a closed one opens it in correcting
+     * mode, where only the result and the note can move.
+     */
+    if (task.taskKind === 'SALES_FOLLOW_UP') {
+      void openFollowUp(
+        task.id,
+        taskLane(task.status) === 'DONE'
+          ? {
+              followUpResult: task.followUpResult ?? '',
+              completionNote: task.completionNote ?? '',
+            }
+          : undefined,
+      );
+      return;
+    }
     setEditingTask(task);
     setTitle(task.title);
     setDescription(task.description);
@@ -613,13 +645,21 @@ export default function TasksView({
    * proformas module to press a second button — which is the round trip this
    * merge exists to remove.
    */
-  const openFollowUp = async (taskId: string) => {
+  const openFollowUp = async (
+    taskId: string,
+    /** The recorded answer, when a closed chase is being corrected. */
+    editing?: { followUpResult: string; completionNote: string },
+  ) => {
     setFollowUpLoading(true);
     try {
       // The row is derived — the next action, its date, the health — so it is
       // built on the server rather than assembled out of what a card carries,
       // which is how two screens come to disagree about a quotation.
-      setFollowUpRow({ taskId, row: await salesFollowUpApi.rowForTask(taskId) });
+      setFollowUpRow({
+        taskId,
+        row: await salesFollowUpApi.rowForTask(taskId),
+        editing: editing ? { taskId, ...editing } : undefined,
+      });
     } catch (err) {
       alert(err instanceof Error ? err.message : 'دریافت اطلاعات پیگیری با خطا مواجه شد.');
     } finally {
@@ -640,9 +680,10 @@ export default function TasksView({
       return;
     }
     /*
-     * A follow-up that is still open opens its completion form; one already
-     * closed opens the ordinary edit box, because there is nothing left to
-     * record and `completeFollowUp` would refuse a second completion anyway.
+     * A follow-up that is still open opens its completion form. A closed one
+     * goes through `handleOpenEdit`, which opens the same form in correcting
+     * mode — `completeFollowUp` would refuse a second completion, but the
+     * result and the note are still somebody's to fix.
      */
     if (card.taskKind === 'SALES_FOLLOW_UP' && taskLane(card.status) !== 'DONE') {
       await openFollowUp(card.id);
@@ -1320,6 +1361,18 @@ export default function TasksView({
           outcomeIsTerminal={isTerminalOutcome(followUpRow.row.outcome)}
           lossReasons={settings.lossReasons ?? []}
           onClose={() => setFollowUpRow(null)}
+          editing={followUpRow.editing ?? null}
+          /*
+            A different endpoint, deliberately: the completion closed the task,
+            moved the proforma's follow-up state, raised the replacement and may
+            have settled the sale, and re-running any of that would raise a
+            second next action or re-date a sale the ranking counts from.
+          */
+          onSaveResult={async (body) => {
+            await salesFollowUpApi.updateResult(followUpRow.taskId, body);
+            setFollowUpRow(null);
+            list.refresh();
+          }}
           onSubmit={async (body) => {
             // Against the task that was pressed, never the row's own
             // `nextActionTaskId`: they are the same only while the card

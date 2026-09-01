@@ -5,7 +5,7 @@ import { getTodayShamsi } from "../../dateUtils";
 import {
   FOLLOW_UP_FILTERABLE, FOLLOW_UP_SORTABLE,
   completeFollowUp, followUpRowForTask, followUpSummary, listFollowUpQueue, projectFollowUpReport,
-  reactivateFollowUp,
+  reactivateFollowUp, updateFollowUpResult,
 } from "../services/followUpService";
 import { SETTLE_OUTCOMES, type FollowUpCompletionInput } from "../../utils/salesFollowUp";
 
@@ -167,6 +167,37 @@ export function registerFollowUpRoutes(app: express.Express, deps: RouteDeps): v
       res.json({ success: true, ...outcome });
     } catch (err) {
       sendError(res, err, "POST /api/sales-follow-up/tasks/:taskId/complete");
+    }
+  });
+
+  /**
+   * Corrects the result recorded on a chase that is already closed.
+   *
+   * Two columns and nothing else — see `updateFollowUpResult`. It is a PUT
+   * rather than a second POST to `/complete` precisely because none of the
+   * completion's other work may run again.
+   */
+  app.put("/api/sales-follow-up/tasks/:taskId/result", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const outcome = await updateFollowUpResult(
+        req.params.taskId,
+        {
+          followUpResult: typeof body.followUpResult === "string" ? body.followUpResult : null,
+          completionNote: typeof body.completionNote === "string" ? body.completionNote : null,
+        },
+        user,
+      );
+      if (outcome.ok === false) {
+        const status = outcome.code === "not-found" ? 404 : outcome.code === "forbidden" ? 403 : 400;
+        res.status(status).json({ success: false, error: outcome.reason });
+        return;
+      }
+      res.json({ success: true, ...outcome });
+    } catch (err) {
+      sendError(res, err, "PUT /api/sales-follow-up/tasks/:taskId/result");
     }
   });
 

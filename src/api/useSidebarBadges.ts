@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ListResponse, api } from "./client";
 import { useRevalidate } from "./liveData";
+import { taskLane } from "../utils/workBoard";
 
 /**
  * The counts on the sidebar and in the header.
@@ -20,7 +21,13 @@ export interface SidebarBadges {
   openTasks: number;
   /** Products at or below their own minimum. */
   lowStock: number;
-  /** Referrals assigned to this user and still awaiting action. */
+  /**
+   * Referrals still open that belong to this user — in either direction.
+   *
+   * A referral belongs to two people exactly as a task does, and both appear
+   * on this user's board; counting only the ones assigned *to* them left a
+   * request they raised and are waiting on out of the figure entirely.
+   */
   pendingReferrals: number;
   /** Unread notices addressed to this user. */
   unreadNotifications: number;
@@ -44,15 +51,23 @@ export function useSidebarBadges(enabled: boolean): SidebarBadges {
         // «still open», not the exact «در انتظار اقدام» this used to ask for:
         // a referral picked up now carries a middle status, and an exact filter
         // would have made it vanish from the count of what is on your plate.
-        { scope: "toMe", open: "true", pageSize: 1 }, signal),
+        // «mine» is both directions — see `pendingReferrals` above.
+        { scope: "mine", open: "true", pageSize: 1 }, signal),
       api.get<ListResponse<unknown> & { unread: number }>("/api/notifications",
         { pageSize: 1 }, signal),
     ]);
 
-    const closed = new Set(["انجام شده", "کنسل شده"]);
     setBadges({
+      /*
+       * Everything the board's open columns hold: an ordinary task, one an
+       * automation raised, a sales follow-up, one this user logged for
+       * themselves. `taskLane` is the same rule the board draws by, and it is
+       * an exclusion — every automation writes «در انتظار», a fourth value no
+       * dropdown ever offered, and a hardcoded list of the two closing words
+       * counted it only by luck.
+       */
       openTasks: tasks.summary.byStatus
-        .filter((s) => !closed.has(s.status))
+        .filter((s) => taskLane(s.status) !== "DONE")
         .reduce((sum, s) => sum + s.count, 0),
       lowStock: dashboard.summary.counts.lowStock,
       pendingReferrals: referrals.total,

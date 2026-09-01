@@ -348,7 +348,10 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
       // still refuses that for a user without the projects permission. `scope`
       // picks between the two inbox tabs and always stays self-scoped.
       const scope = req.query.scope === "fromMe" ? "fromMe"
-        : req.query.scope === "toMe" ? "toMe" : undefined;
+        : req.query.scope === "toMe" ? "toMe"
+        // «mine» is both directions at once, which is what the sidebar badge
+        // counts: a referral belongs to two people, exactly as a task does.
+        : req.query.scope === "mine" ? "mine" : undefined;
       const result = await listReferrals(q, user, {
         mine: req.query.all !== "true",
         scope,
