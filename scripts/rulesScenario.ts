@@ -8476,5 +8476,55 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   }
 }
 
+/* ==========================================================================
+ * The assistant knows about the modules that have been built since it was
+ *
+ * Its tools were written before the sales follow-up queue, the merged board
+ * and the referrals existed, so «چه پیگیری‌هایی عقب افتاده» had nothing to
+ * answer with — and `search_tasks` filtered on an exact status word, the same
+ * fault the board's own dropdown had.
+ * ========================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const tools = strip(readFileSync("src/server/services/assistant/tools.ts", "utf8"));
+
+  for (const name of [
+    "sales_follow_up_queue", "follow_up_summary", "project_follow_ups", "search_referrals",
+  ]) {
+    ok(`the assistant has a «${name}» tool`, new RegExp(`name: "${name}"`).test(tools));
+  }
+
+  /*
+   * Through the same services the screens use, never a read of the tables.
+   *
+   * Every figure on a follow-up row is derived — the next action, its date,
+   * whether it is overdue — so assembling it here would be a second copy of
+   * the ranking, which is how two answers to one question come about. It is
+   * also what keeps record-level visibility and the `proformas` permission
+   * holding for the assistant exactly as they do on the screen.
+   */
+  ok("...answered by the follow-up service itself",
+    /listFollowUpQueue\(q, ctx\.user/.test(tools)
+    && /projectFollowUpReport\(str\(args\.projectId\), ctx\.user\)/.test(tools)
+    && /followUpSummary\(ctx\.user, ctx\.todayJalali\)/.test(tools));
+  ok("...and referrals by theirs", /listReferrals\(q, ctx\.user/.test(tools));
+  // A refusal is reported rather than swallowed into an empty list, which reads
+  // as «there is nothing» instead of «you may not see this».
+  ok("a permission refusal is said, not shown as emptiness",
+    /اجازه دیدن پیگیری‌های فروش را ندارد/.test(tools));
+
+  /*
+   * The board's column, not a status word: every automation writes «در
+   * انتظار», so an exact filter answered with nothing on a board full of them.
+   */
+  ok("the tasks tool filters by the board's own column",
+    /lane: str\(args\.lane\) \|\| undefined/.test(tools));
+  ok("...and can be scoped the way the tabs are",
+    /scope === "toMe" \|\| scope === "fromMe" \? scope : undefined/.test(tools));
+
+  ok("the comment stripper left the tools intact", tools.length > 10000);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
