@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Plus, 
   Search, 
@@ -36,6 +36,7 @@ import { salesFollowUpApi, type FollowUpRow } from '../api/salesFollowUp';
 import { isTerminalOutcome } from '../utils/salesFollowUp';
 import { compressImage } from '../imageUtils';
 import { useRevalidate } from '../api/liveData';
+import { readViewPreferences, writeViewPreferences } from '../utils/viewPreferences';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import QuickAddModal from './QuickAddModal';
@@ -85,7 +86,7 @@ export default function TasksView({
 }: TasksViewProps) {
   // Declared before the pickers below, which are disabled while it is closed.
   const [showModal, setShowModal] = useState(false);
-  const list = useTaskList();
+  const list = useTaskList("", currentUser?.id);
   const search = list.search;
   const setSearch = list.setSearch;
 
@@ -222,9 +223,31 @@ export default function TasksView({
    * notification panel) came with it unchanged. The board is the day-to-day
    * view over both kinds of work; the list is what this screen always was.
    */
-  const [mainTab, setMainTab] = useState<'board' | 'list' | 'inbox'>(
-    initialTab === 'inbox' || initialTab === 'notifications' ? 'inbox' : 'board');
-  const [boardSort, setBoardSortState] = useState<BoardSort>('date');
+  /*
+   * The view and the order, remembered for whoever is signed in.
+   *
+   * The filters live in `useTaskList`; these two are the screen's own, and they
+   * are the same kind of thing — how one person likes to look at it. An
+   * `initialTab` from the header icons still wins, because that is somebody
+   * saying where to go right now.
+   */
+  const [viewPrefs, setViewPrefs] = useState(() => readViewPreferences(
+    'tasks.view', currentUser?.id, { mainTab: 'board', boardSort: 'date' }));
+  useEffect(() => {
+    writeViewPreferences('tasks.view', currentUser?.id, viewPrefs);
+  }, [viewPrefs, currentUser?.id]);
+
+  const [mainTab, setMainTabState] = useState<'board' | 'list' | 'inbox'>(
+    initialTab === 'inbox' || initialTab === 'notifications' ? 'inbox'
+      : (viewPrefs.mainTab as 'board' | 'list' | 'inbox'));
+  const setMainTab = (tab: 'board' | 'list' | 'inbox') => {
+    setMainTabState(tab);
+    setViewPrefs((prev) => ({ ...prev, mainTab: tab }));
+  };
+  const [boardSort, setBoardSortState] = useState<BoardSort>(
+    (BOARD_SORTS as readonly string[]).includes(viewPrefs.boardSort)
+      ? viewPrefs.boardSort as BoardSort
+      : 'date');
   /*
    * Changing the order also changes which page to ask for.
    *
@@ -234,8 +257,26 @@ export default function TasksView({
    * `serverOrderFor` says what SQL can do; priority it cannot, because the
    * ladder is not alphabetical.
    */
+  /*
+   * The remembered order has to reach the server too, once, on the way in.
+   *
+   * `serverOrderFor` runs when the control is pressed — but nobody presses it
+   * after a refresh, so a board remembered as «تاریخ ارجاع» would ask for the
+   * default `dueDate asc` page and then sort those rows by arrival: the top of
+   * a column would be a slice of the middle, exactly the thing the order was
+   * pushed to the server to avoid.
+   */
+  const appliedRememberedOrder = React.useRef(false);
+  useEffect(() => {
+    if (appliedRememberedOrder.current) return;
+    appliedRememberedOrder.current = true;
+    const { sort, order } = serverOrderFor(boardSort);
+    list.setSortOrder(sort, order);
+  }, [boardSort, list]);
+
   const setBoardSort = (by: BoardSort) => {
     setBoardSortState(by);
+    setViewPrefs((prev) => ({ ...prev, boardSort: by }));
     const { sort, order } = serverOrderFor(by);
     list.setSortOrder(sort, order);
   };
