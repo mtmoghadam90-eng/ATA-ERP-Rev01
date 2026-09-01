@@ -68,6 +68,82 @@ export function scopeClause(
   return undefined;
 }
 
+/**
+ * How many related records one search term may pull in.
+ *
+ * A bound rather than a page: the ids go into an `IN (…)` list, and a term like
+ * «ا» would otherwise name every project in the company. Generous enough that a
+ * real search — a code, a customer, a few words of a job name — is never
+ * truncated in practice.
+ */
+const RELATED_SCAN_LIMIT = 500;
+
+/**
+ * The records a search term names, for the polymorphic `relatedToId`.
+ *
+ * A task points at a project, a quotation or a customer through
+ * `relatedToType`/`relatedToId`, which is not a relation — so Prisma cannot
+ * filter through it and the ids have to be found first. Three cheap reads, and
+ * only when there is something to search for.
+ *
+ * What this makes findable, and could not be before: a **project code**, a
+ * project **name**, and the **customer** behind either — none of which is on
+ * the task's own row. `relatedToName` is one string the browser resolved out of
+ * a picker at save time, so searching a job code found a task only if somebody
+ * happened to have typed the code into that field.
+ *
+ * A quotation is reached two ways, because both are what people type: its own
+ * number, and the code or name of the job it belongs to.
+ */
+export async function relatedIdsForSearch(term: string): Promise<string[]> {
+  const trimmed = String(term ?? "").trim();
+  if (!trimmed) return [];
+
+  const db = getDb();
+  /*
+   * Every match goes through `searchClause`, never a bare `contains`.
+   *
+   * SQL Server's collation treats ی/ي, ک/ك and the two digit sets as different
+   * characters, so a hand-written `contains` silently misses rows a user can
+   * see on the screen in front of them.
+   */
+  const projectMatch = searchClause(trimmed, ["code", "name"]);
+  const customerMatch = searchClause(trimmed, ["companyName"]);
+  const proformaMatch = searchClause(trimmed, ["proformaNumber"]);
+  if (!projectMatch || !customerMatch || !proformaMatch) return [];
+
+  const [customers, projects] = await Promise.all([
+    db.customer.findMany({
+      where: customerMatch, select: { id: true }, take: RELATED_SCAN_LIMIT,
+    }),
+    db.project.findMany({
+      // The job itself, or the customer it belongs to — «تسک‌های پتروشیمی فلان»
+      // is a search for the customer, and the project carries the foreign key.
+      where: { OR: [projectMatch, { customer: customerMatch }] },
+      select: { id: true },
+      take: RELATED_SCAN_LIMIT,
+    }),
+  ]);
+
+  const projectIds = projects.map((p) => p.id);
+  const proformas = await db.proforma.findMany({
+    where: {
+      OR: [
+        proformaMatch,
+        ...(projectIds.length > 0 ? [{ projectId: { in: projectIds } }] : []),
+      ],
+    },
+    select: { id: true },
+    take: RELATED_SCAN_LIMIT,
+  });
+
+  return [...new Set([
+    ...projectIds,
+    ...proformas.map((p) => p.id),
+    ...customers.map((c) => c.id),
+  ])];
+}
+
 export function buildTaskWhere(
   q: ListQuery,
   user: AuthUser,
@@ -81,6 +157,15 @@ export function buildTaskWhere(
     scope?: TaskScope;
     /** «انجام‌شده‌ها را پنهان کن» — the board's declutter toggle. */
     hideCompleted?: unknown;
+    /**
+     * Records whose own fields match the search term — a project by code, name
+     * or customer, a proforma on such a project, a customer by name.
+     *
+     * Resolved by `relatedIdsForSearch` before the clause is built, because the
+     * link they are matched against is polymorphic and Prisma has no relation
+     * to filter through.
+     */
+    relatedIds?: string[];
   } = {},
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
@@ -91,8 +176,23 @@ export function buildTaskWhere(
   const scoped = scopeClause(user, extra.scope);
   if (scoped) and.push(scoped);
 
+  /*
+   * The task's own columns, plus the records it points at.
+   *
+   * `relatedToName` is one string the browser resolved out of a picker at save
+   * time, so searching «ATA-1404-012» found a task only if somebody happened to
+   * have typed the code into that field — and the project's *customer* was not
+   * reachable at all. `relatedToType`/`relatedToId` is a polymorphic link with
+   * no relation for Prisma to filter through, so the ids are resolved first
+   * (`relatedIdsForSearch`) and offered to the clause here.
+   */
   const search = searchClause(q.search, SEARCH_FIELDS);
-  if (search) and.push(search);
+  const relatedIds = extra.relatedIds ?? [];
+  if (search && relatedIds.length > 0) {
+    and.push({ OR: [...search.OR, { relatedToId: { in: relatedIds } }] });
+  } else if (search) {
+    and.push(search);
+  }
 
   for (const [field, value] of Object.entries(q.filters)) {
     and.push({ [field]: value });
@@ -178,7 +278,10 @@ export async function listTasks(
   } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
-  const where = buildTaskWhere(q, user, extra);
+  // The projects, quotations and customers the term names, so a search for a
+  // job code or a customer finds the tasks attached to them.
+  const relatedIds = await relatedIdsForSearch(q.search);
+  const where = buildTaskWhere(q, user, { ...extra, relatedIds });
   const orderBy = q.sort ? { [q.sort]: q.order } : [{ dueDate: "asc" as const }, { createdAt: "desc" as const }];
 
   const [rows, total] = await Promise.all([

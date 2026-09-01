@@ -14,7 +14,9 @@ import {
   Eye,
   EyeOff,
   UserPlus,
-  Phone
+  Phone,
+  LayoutGrid,
+  Inbox
 } from 'lucide-react';
 import { Task, Customer, Project, ERPSettings } from '../types';
 import type { User as AppUser } from '../types';
@@ -608,23 +610,33 @@ export default function TasksView({
         reimplemented, so nothing it could do was lost in the move, its own
         notifications tab included.
       */}
-      <div className="flex flex-wrap items-center gap-2" id="task-main-tabs">
+      {/*
+        Drawn as tabs, not as chips.
+
+        Rounded pills read as filters — something you switch on beside other
+        things you switch on — and these are not: they are three different
+        screens, one at a time. An underlined row sitting on a rule is what
+        every other tabbed surface here uses (the referrals inbox below it
+        included), so the two do not argue about which is which.
+      */}
+      <div className="border-b border-edge flex items-center gap-1 overflow-x-auto" id="task-main-tabs">
         {([
-          { key: 'board' as const, label: 'تخته کار' },
-          { key: 'list' as const, label: 'فهرست وظایف' },
-          { key: 'inbox' as const, label: 'کارتابل و اعلان‌ها' },
+          { key: 'board' as const, label: 'تخته کار', icon: LayoutGrid },
+          { key: 'list' as const, label: 'فهرست وظایف', icon: ListTodo },
+          { key: 'inbox' as const, label: 'کارتابل و اعلان‌ها', icon: Inbox },
         ]).map((tab) => (
           <button
             key={tab.key}
             type="button"
             onClick={() => setMainTab(tab.key)}
             id={`task-main-tab-${tab.key}`}
-            className={`px-3.5 py-1.5 text-xs font-bold rounded-xl border transition ${
+            className={`py-2.5 px-4 text-sm font-bold border-b-2 -mb-px transition whitespace-nowrap flex items-center gap-2 ${
               mainTab === tab.key
-                ? 'bg-slate-800 border-slate-800 text-white shadow-sm'
-                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                ? 'border-sky-500 text-sky-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
+            <tab.icon size={15} />
             {tab.label}
           </button>
         ))}
@@ -639,8 +651,18 @@ export default function TasksView({
         />
       ) : (<>
 
-      {/* Whose tasks. Enforced on the server; this picks between the halves. */}
-      <div className="flex flex-wrap items-center gap-2" id="task-scope-tabs">
+      {/*
+        Whose tasks. Enforced on the server; this picks between the halves.
+
+        A segmented control rather than a second row of tabs: this narrows what
+        the view above shows, which is a different kind of choice from picking
+        the view itself, and two identical rows stacked would leave nothing
+        saying which is which.
+      */}
+      <div
+        className="inline-flex items-center rounded-xl border border-slate-200 bg-slate-50 p-0.5"
+        id="task-scope-tabs"
+      >
         {([
           { key: 'toMe' as const, label: 'به من ارجاع شده' },
           { key: 'fromMe' as const, label: 'من ارجاع دادم' },
@@ -651,10 +673,10 @@ export default function TasksView({
             type="button"
             onClick={() => list.setFilter('scope', tab.key)}
             id={`task-scope-${tab.key}`}
-            className={`px-3.5 py-1.5 text-xs font-bold rounded-xl border transition ${
+            className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition ${
               selectedScope === tab.key
-                ? 'bg-sky-500 border-sky-500 text-white shadow-sm'
-                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                ? 'bg-white text-sky-700 shadow-sm border border-slate-200'
+                : 'text-slate-500 hover:text-slate-800'
             }`}
           >
             {tab.label}
@@ -668,7 +690,7 @@ export default function TasksView({
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
           <input
             type="text"
-            placeholder="جستجو در عنوان پیگیری، مخاطب یا شرح وظیفه..."
+            placeholder="جستجو در عنوان، شرح، مسئول، کد یا نام پروژه، مشتری و شماره پیش‌فاکتور..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pr-10 pl-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition text-right"

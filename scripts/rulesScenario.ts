@@ -6795,6 +6795,51 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
 
   const route = readFileSync("src/server/routes/tasks.ts", "utf8");
   ok("the route passes the flag through", /hideCompleted:\s*req\.query\.hideCompleted === "true"/.test(route));
+
+  /* -- searching by the job, not only by the task's own words -- */
+  /*
+   * `relatedToName` is one string the browser resolved out of a picker at save
+   * time, so a search for a project code found a task only if somebody happened
+   * to have typed the code into that field — and the customer behind the job
+   * was not reachable at all. The link is polymorphic, so the ids are resolved
+   * first and offered to the clause.
+   */
+  const withRelated = clauses(buildTaskWhere(
+    { ...query({}), search: "ATA-1404" }, user, { relatedIds: ["p1", "p2"] }));
+  ok("a search reaches the records a task points at",
+    withRelated.includes('{"relatedToId":{"in":["p1","p2"]}}'), withRelated);
+  /*
+   * Widening, never narrowing — and specifically in the **same** OR as the
+   * task's own columns. As a sibling AND it would mean «matches the words *and*
+   * belongs to a matching job», which answers nothing for a task whose title
+   * does not repeat its project's name: almost all of them.
+   */
+  const searchBranch = (JSON.parse(withRelated) as Record<string, unknown>[])
+    .find((c) => Array.isArray((c as { OR?: unknown[] }).OR)
+      && JSON.stringify(c).includes("relatedToId")) as { OR: Record<string, unknown>[] } | undefined;
+  ok("...in the same OR as the task's own columns",
+    !!searchBranch
+    && searchBranch.OR.some((b) => "title" in b)
+    && searchBranch.OR.some((b) => "assignedToName" in b),
+    withRelated);
+  ok("with nothing resolved the clause is what it always was",
+    !clauses(buildTaskWhere({ ...query({}), search: "ATA-1404" }, user, {}))
+      .includes("relatedToId"));
+  // An empty search must not turn into «relatedToId in []», which matches
+  // nothing and would empty the board.
+  ok("and an empty search adds no clause at all",
+    !clauses(buildTaskWhere(query({}), user, { relatedIds: ["p1"] })).includes("relatedToId"));
+
+  const searchService = readFileSync("src/server/services/taskService.ts", "utf8");
+  ok("the resolver reads projects, quotations and customers",
+    /db\.project\.findMany/.test(searchService) && /db\.proforma\.findMany/.test(searchService)
+    && /db\.customer\.findMany/.test(searchService));
+  // SQL Server's collation treats ی/ي and the two digit sets as different
+  // characters, so a bare `contains` silently misses rows on the screen.
+  ok("...every one of them through searchClause, never a bare contains",
+    !/\{ contains: trimmed \}/.test(searchService));
+  // A term like «ا» would otherwise name every project in the company.
+  ok("and the scan is bounded", /take: RELATED_SCAN_LIMIT/.test(searchService));
   const view = readFileSync("src/components/TasksView.tsx", "utf8");
   ok("and the screen has the button", /setFilter\('hideCompleted'/.test(view));
 
