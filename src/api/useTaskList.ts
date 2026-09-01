@@ -71,7 +71,16 @@ export function useTaskList(initialSearch = "") {
 
   const list = useList<TaskRow>({
     path: "/api/tasks",
-    pageSize: 50,
+    /*
+     * Two hundred, which is the server's own ceiling.
+     *
+     * The screen is three columns now, not one list: at fifty a page could be
+     * spent entirely on finished work and leave «برای انجام» looking empty,
+     * which is the opposite of what a board is for. The cap is what stops this
+     * becoming a whole-table read; the pagination controls are still there for
+     * a backlog that outgrows it.
+     */
+    pageSize: 200,
     // Soonest first: a board is read by what is due next, not by what was
     // entered last.
     sort: "dueDate",

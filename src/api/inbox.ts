@@ -1,3 +1,4 @@
+import { REFERRAL_DONE, REFERRAL_PENDING } from "../utils/workBoard";
 import { ListResponse, api } from "./client";
 
 /**
@@ -31,6 +32,9 @@ export interface ReferralRow {
   assignedByUserId: string | null;
   assignedByName: string | null;
   createdAt: string;
+  /** When it was picked up and when it closed — the board's own record. */
+  startedAt?: string | null;
+  completedAt?: string | null;
   messages: ReferralMessageRow[];
   activity: {
     id: string;
@@ -93,7 +97,7 @@ export async function submitReferralReply(
     // with nothing in it is not.
     if (outcome === "none") return "nothing";
     await inboxApi.setReferralStatus(
-      referralId, outcome === "done" ? "انجام شده" : "در انتظار اقدام");
+      referralId, outcome === "done" ? REFERRAL_DONE : REFERRAL_PENDING);
     return "status-only";
   }
 
@@ -109,9 +113,9 @@ export async function submitReferralReply(
 
   // Forwarding sets its own status, so an outcome only applies without it.
   if (outcome === "done" && !forwardTo) {
-    await inboxApi.setReferralStatus(referralId, "انجام شده", true);
+    await inboxApi.setReferralStatus(referralId, REFERRAL_DONE, true);
   } else if (outcome === "reopen" && !forwardTo) {
-    await inboxApi.setReferralStatus(referralId, "در انتظار اقدام", true);
+    await inboxApi.setReferralStatus(referralId, REFERRAL_PENDING, true);
   }
   if (forwardTo) await inboxApi.reassignReferral(referralId, forwardTo);
 

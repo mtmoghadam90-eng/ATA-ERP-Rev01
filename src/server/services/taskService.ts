@@ -3,6 +3,9 @@ import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, canSeeAllTasks } from "../auth";
 import { taskRelationKind } from "../../utils/taskRelations";
+import {
+  BoardLane, TASK_DOING, TASK_TODO, taskLane, taskStatusForLane,
+} from "../../utils/workBoard";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate } from "../dates";
 import { toJsonColumn, toNullableString } from "../childSync";
 import { notifyModuleResponsible } from "./notificationService";
@@ -151,6 +154,10 @@ const LIST_SELECT = {
   followUpResult: true,
   completionNote: true,
   completedAtJalali: true,
+  // When the work was picked up and when it closed — the board's own record,
+  // printed on the card so a column can be read as a history and not only as a
+  // pile.
+  startedAtJalali: true,
   // The task card draws a custom-fields block from these.
   customValues: true,
 } satisfies Prisma.TaskSelect;
@@ -352,7 +359,7 @@ function scalarData(input: TaskInput): Record<string, unknown> {
   if ("relatedToId" in input) set("relatedToId", toNullableString(input.relatedToId, 36));
   if ("relatedToName" in input) set("relatedToName", toNullableString(input.relatedToName, 400));
   if ("priority" in input) set("priority", toNullableString(input.priority, 20) ?? "متوسط");
-  if ("status" in input) set("status", toNullableString(input.status, 30) ?? "در حال انجام");
+  if ("status" in input) set("status", toNullableString(input.status, 30) ?? TASK_DOING);
   if ("assignedToUserId" in input) set("assignedToUserId", toNullableString(input.assignedToUserId, 36));
   if ("assignedToName" in input) set("assignedToName", toNullableString(input.assignedToName, 200));
   if ("reminderEnabled" in input) set("reminderEnabled", !!input.reminderEnabled);
@@ -360,6 +367,106 @@ function scalarData(input: TaskInput): Record<string, unknown> {
   if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
 
   return { ...out, ...expandDateFields(input as Record<string, unknown>, TASK_DATE_FIELDS) };
+}
+
+/**
+ * The start and finish dates a status change implies.
+ *
+ * Two facts about a piece of work, recorded where the change happens rather
+ * than left to whichever screen made it — the board, the ordinary edit form,
+ * the follow-up flow and an integration all move a task's status, and a stamp
+ * written in only one of them is a date that exists for some tasks and not
+ * others.
+ *
+ * **Starting is stamped once and never cleared.** The day work began on
+ * something is a fact; a task pushed back to the queue and picked up again has
+ * not started twice, and blanking it would lose the only record of when it
+ * first moved.
+ *
+ * **Finishing is cleared on reopening**, and that is the opposite rule for the
+ * opposite reason: a task showing a completion date while it sits in «در حال
+ * انجام» is claiming to be finished, which is exactly what moving it back said
+ * it is not.
+ */
+export function laneTimestamps(
+  before: { status: string; startedAt: Date | null },
+  nextStatus: string | undefined,
+  todayJalali: string,
+): Record<string, unknown> {
+  if (!nextStatus || nextStatus === before.status) return {};
+
+  const from = taskLane(before.status);
+  const to = taskLane(nextStatus);
+  if (from === to) return {};
+
+  const out: Record<string, unknown> = {};
+
+  if (to !== "TODO" && !before.startedAt) {
+    Object.assign(out, expandDateFields({ startedAt: todayJalali }, ["startedAt"]));
+  }
+  if (to === "DONE") {
+    Object.assign(out, expandDateFields({ completedAt: todayJalali }, ["completedAt"]));
+  } else {
+    out.completedAt = null;
+    out.completedAtJalali = null;
+  }
+  return out;
+}
+
+/**
+ * Moves several tasks into one column at once.
+ *
+ * The board's whole point is picking three or four things out of «برای انجام»
+ * and saying «these are what I am doing today», so it is one request rather
+ * than one per card — four sequential round trips would show the column
+ * rearranging itself a card at a time.
+ *
+ * Scoped through `visibilityClause` **inside the query**, so an id belonging to
+ * somebody else's task moves nothing and is reported as such rather than
+ * silently ignored; and the follow-up refusal is honoured here too, since a
+ * sales follow-up dragged into «انجام شده» would close it with nothing
+ * recorded about what the customer said.
+ */
+export async function moveTasksToLane(
+  ids: string[],
+  lane: BoardLane,
+  user: AuthUser,
+  todayJalali: string,
+): Promise<{ moved: number; refused: number }> {
+  const db = getDb();
+  const wanted = [...new Set(ids.filter((id) => typeof id === "string" && id))].slice(0, 200);
+  if (wanted.length === 0) return { moved: 0, refused: 0 };
+
+  const visibility = visibilityClause(user);
+  const rows = await db.task.findMany({
+    where: visibility ? { AND: [{ id: { in: wanted } }, visibility] } : { id: { in: wanted } },
+    select: { id: true, status: true, taskKind: true, startedAt: true },
+  });
+
+  let moved = 0;
+  let refused = wanted.length - rows.length;
+
+  for (const row of rows) {
+    // The same rule the ordinary edit enforces: a follow-up is finished by
+    // recording what the customer said, not by being dragged.
+    if (row.taskKind === "SALES_FOLLOW_UP" && lane === "DONE" && taskLane(row.status) !== "DONE") {
+      refused++;
+      continue;
+    }
+    const status = taskStatusForLane(lane, row.status);
+    if (status === row.status) continue;
+
+    await db.task.update({
+      where: { id: row.id },
+      data: {
+        status,
+        ...laneTimestamps(row, status, todayJalali),
+      } as Prisma.TaskUncheckedUpdateInput,
+    });
+    moved++;
+  }
+
+  return { moved, refused };
 }
 
 export async function createTask(input: TaskInput, user: AuthUser, todayJalali: string) {
@@ -370,6 +477,15 @@ export async function createTask(input: TaskInput, user: AuthUser, todayJalali: 
 
   const task = await db.task.create({
     data: {
+      /*
+       * A task starts in the first column.
+       *
+       * The database default is still «در حال انجام» — every row written before
+       * the board existed carries it and changing the default would not move
+       * them — so «برای انجام» is written here, where a task is created. An
+       * automation that names its own status still gets what it asked for.
+       */
+      status: TASK_TODO,
       ...scalarData(input),
       // An unassigned task belongs to whoever raised it, so it appears in
       // someone's list rather than nobody's.
@@ -461,7 +577,10 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
     );
   }
 
-  const task = await db.task.update({ where: { id }, data: scalarData(input) as Prisma.TaskUncheckedUpdateInput });
+  const data = scalarData(input);
+  Object.assign(data, laneTimestamps(before, data.status as string | undefined, todayJalali));
+
+  const task = await db.task.update({ where: { id }, data: data as Prisma.TaskUncheckedUpdateInput });
 
   // Audit log
   await logAction(

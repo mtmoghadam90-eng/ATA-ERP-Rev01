@@ -598,46 +598,20 @@ const QUEUE_SELECT = {
  * last result and the health are all read back from the task and the proforma
  * every time, because a stored copy is a copy to keep in step.
  */
-export async function listFollowUpQueue(
-  q: ListQuery,
-  user: AuthUser,
-  extra: { health?: unknown } = {},
-): Promise<
-  | (ListResult<FollowUpQueueRow> & { summary: FollowUpSummary; truncated: boolean })
-  | null
-> {
-  if (!hasPermission(user, "proformas")) return null;
-
+/**
+ * Queue rows from proformas, in one pass.
+ *
+ * Extracted so the merged tasks board can ask for exactly one — the card that
+ * says «ثبت نتیجه پیگیری» opens the same modal the follow-up screen does, and a
+ * second, browser-side assembly of the same row is how the two come to disagree
+ * about what a quotation's next action is. Two reads whatever the input size:
+ * the proformas, then one query for every follow-up task belonging to them.
+ */
+async function buildQueueRows(
+  rows: Prisma.ProformaGetPayload<{ select: typeof QUEUE_SELECT }>[],
+  todayJalali: string,
+): Promise<FollowUpQueueRow[]> {
   const db = getDb();
-  const where = queueWhere(q);
-  const todayJalali = getTodayShamsi();
-
-  /*
-   * The whole chaseable set, then sorted, then paged — in that order.
-   *
-   * It used to page first and sort the page afterwards, which quietly defeated
-   * the screen: the rank is «عقب‌افتاده» before «امروز» before «بدون اقدام
-   * بعدی», and that ordering only held *within* whichever twenty-five documents
-   * happened to be the most recent. An overdue quotation from six months ago
-   * sat on page three of a list whose entire purpose is to put it first. Worse,
-   * filtering by a KPI card filtered the page while the counter still reported
-   * the unfiltered total, so the header said one number and the table showed
-   * another — which reads exactly like a missing record.
-   *
-   * The rank is derived from the open follow-up task, so no database can sort
-   * by it. Bounded and flagged rather than unbounded, the same shape as the
-   * supplier price history: the work happens on the server, with a limit, and
-   * says when it hit it.
-   */
-  const candidates = await db.proforma.findMany({
-    where,
-    orderBy: { sentDate: "desc" },
-    take: QUEUE_SCAN_LIMIT,
-    select: QUEUE_SELECT,
-  });
-  const truncated = candidates.length === QUEUE_SCAN_LIMIT;
-
-  const rows = candidates;
   const ids = rows.map((r) => r.id);
   const tasks = ids.length
     ? await db.task.findMany({
@@ -663,7 +637,7 @@ export async function listFollowUpQueue(
     }
   }
 
-  const built = rows.map((row) => {
+  return rows.map((row) => {
     const openTask = open.get(row.id) ?? null;
     const lastTask = last.get(row.id) ?? null;
     const followUpState = normalizeFollowUpState(row.followUpState);
@@ -705,6 +679,85 @@ export async function listFollowUpQueue(
       followUpHealth: health,
     } satisfies FollowUpQueueRow;
   });
+}
+
+/**
+ * The queue row for the proforma one follow-up task belongs to.
+ *
+ * The merged board raises a follow-up as a card like any other, and «ثبت نتیجه
+ * پیگیری» there has to open exactly the form the follow-up screen opens — the
+ * same modal, the same three questions. That modal takes a `FollowUpQueueRow`,
+ * which is derived and not stored, so it is built here rather than assembled by
+ * the browser out of what a task card happens to carry.
+ *
+ * Access is the **task's**, not the queue's. `listFollowUpQueue` needs the
+ * `proformas` permission because it is a report across the whole sales desk;
+ * this answers «the one you have been asked to do», so it is gated the way
+ * `completeFollowUp` is — you must be its assignee, or hold the permission.
+ * Otherwise somebody could be given a follow-up and be unable to open it.
+ */
+export async function followUpRowForTask(
+  taskId: string,
+  user: AuthUser,
+): Promise<FollowUpQueueRow | "forbidden" | "not-found"> {
+  const db = getDb();
+  const task = await db.task.findUnique({
+    where: { id: taskId },
+    select: { id: true, taskKind: true, relatedToType: true, relatedToId: true, assignedToUserId: true },
+  });
+  if (!task || task.taskKind !== "SALES_FOLLOW_UP" || !task.relatedToId) return "not-found";
+  if (task.assignedToUserId !== user.id && !hasPermission(user, "proformas")) return "forbidden";
+
+  const proforma = await db.proforma.findUnique({
+    where: { id: task.relatedToId },
+    select: QUEUE_SELECT,
+  });
+  if (!proforma) return "not-found";
+
+  const rows = await buildQueueRows([proforma], getTodayShamsi());
+  return rows[0] ?? "not-found";
+}
+
+export async function listFollowUpQueue(
+  q: ListQuery,
+  user: AuthUser,
+  extra: { health?: unknown } = {},
+): Promise<
+  | (ListResult<FollowUpQueueRow> & { summary: FollowUpSummary; truncated: boolean })
+  | null
+> {
+  if (!hasPermission(user, "proformas")) return null;
+
+  const db = getDb();
+  const where = queueWhere(q);
+  const todayJalali = getTodayShamsi();
+
+  /*
+   * The whole chaseable set, then sorted, then paged — in that order.
+   *
+   * It used to page first and sort the page afterwards, which quietly defeated
+   * the screen: the rank is «عقب‌افتاده» before «امروز» before «بدون اقدام
+   * بعدی», and that ordering only held *within* whichever twenty-five documents
+   * happened to be the most recent. An overdue quotation from six months ago
+   * sat on page three of a list whose entire purpose is to put it first. Worse,
+   * filtering by a KPI card filtered the page while the counter still reported
+   * the unfiltered total, so the header said one number and the table showed
+   * another — which reads exactly like a missing record.
+   *
+   * The rank is derived from the open follow-up task, so no database can sort
+   * by it. Bounded and flagged rather than unbounded, the same shape as the
+   * supplier price history: the work happens on the server, with a limit, and
+   * says when it hit it.
+   */
+  const candidates = await db.proforma.findMany({
+    where,
+    orderBy: { sentDate: "desc" },
+    take: QUEUE_SCAN_LIMIT,
+    select: QUEUE_SELECT,
+  });
+  const truncated = candidates.length === QUEUE_SCAN_LIMIT;
+
+  const built = await buildQueueRows(candidates, todayJalali);
 
   /*
    * Operational order, not date order.

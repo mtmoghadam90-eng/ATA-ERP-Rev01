@@ -2,6 +2,9 @@ import { Prisma } from "@prisma/client";
 import { parseMentions } from "../../utils/mentions";
 import { isAllowedReaction } from "../../utils/reactions";
 import {
+  BoardLane, REFERRAL_DONE, REFERRAL_PENDING, referralLane, referralStatusForLane,
+} from "../../utils/workBoard";
+import {
   activityRecipients, noticeExcerpt, parseMemberIds, serializeMemberIds,
 } from "../../utils/activityMembers";
 import { ActivityAttachment, attachmentColumns, normalizeAttachments } from "../../utils/attachments";
@@ -868,7 +871,7 @@ export const REFERRAL_FILTERABLE = ["status", "assignedToUserId"] as const;
 export async function listReferrals(
   q: ListQuery,
   user: AuthUser,
-  filters: { mine?: boolean; scope?: "toMe" | "fromMe" } = {},
+  filters: { mine?: boolean; scope?: "toMe" | "fromMe"; open?: boolean } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
   const and: Record<string, unknown>[] = [];
@@ -881,6 +884,16 @@ export async function listReferrals(
   for (const [field, value] of Object.entries(q.filters)) {
     and.push({ [field]: value });
   }
+  /*
+   * «still needs action», which is not the same as «در انتظار اقدام».
+   *
+   * The inbox badge filtered on that exact status, and a referral now has a
+   * middle state — so picking one up would have made it vanish from the count
+   * of what is on your plate, which reads as the work having gone away. This is
+   * written as an exclusion for the same reason `countsTowardBalance` is: a
+   * status nobody anticipated must count as open rather than silently close.
+   */
+  if (filters.open) and.push({ status: { not: REFERRAL_DONE } });
 
   const where = and.length === 0 ? {} : { AND: and };
 
@@ -918,6 +931,35 @@ export async function listReferrals(
 }
 
 /**
+ * Moves several referrals into one column at once.
+ *
+ * The board's counterpart to `moveTasksToLane`, and it reuses
+ * `setReferralStatus` rather than writing the column itself: that function is
+ * where the notice to the other party, the start and finish dates and the
+ * access check all live, and a second writer would be a second set of rules to
+ * keep in step.
+ *
+ * The notices are **not** suppressed. Somebody who asked for something wants to
+ * know it has been picked up, and a batch of three is three people to tell.
+ */
+export async function moveReferralsToLane(
+  ids: string[],
+  lane: BoardLane,
+  user: AuthUser,
+): Promise<{ moved: number; refused: number }> {
+  const wanted = [...new Set(ids.filter((id) => typeof id === "string" && id))].slice(0, 200);
+  let moved = 0;
+  let refused = 0;
+
+  for (const id of wanted) {
+    const outcome = await setReferralStatus(id, referralStatusForLane(lane), user);
+    if (outcome === "ok") moved++;
+    else refused++;
+  }
+  return { moved, refused };
+}
+
+/**
  * Changes a referral's status.
  *
  * Either party may move it: the assignee reports progress, the person who raised
@@ -940,6 +982,7 @@ export async function setReferralStatus(
     where: { id },
     select: {
       id: true, assignedToUserId: true, assignedByUserId: true, status: true, activityId: true,
+      startedAt: true,
       activity: { select: { group: { select: { project: { select: { id: true, name: true, code: true } } } } } },
     },
   });
@@ -949,11 +992,29 @@ export async function setReferralStatus(
   if (!involved && !canSeeProjects(user)) return "forbidden";
 
   const oldStatus = referral.status;
-  const newStatus = toNullableString(status, 40) ?? "در انتظار اقدام";
+  const newStatus = toNullableString(status, 40) ?? REFERRAL_PENDING;
+
+  /*
+   * The two dates a piece of work has, recorded here because this is the one
+   * place a referral's status moves.
+   *
+   * Same rules as a task (`laneTimestamps`): starting is stamped once and never
+   * cleared — the day work began is a fact and a referral handed back and
+   * picked up again did not start twice — while a completion date is cleared on
+   * reopening, because a date saying it finished is the very claim reopening
+   * contradicts.
+   */
+  const from = referralLane(oldStatus);
+  const to = referralLane(newStatus);
+  const dates: Record<string, unknown> = {};
+  if (from !== to) {
+    if (to !== "TODO" && !referral.startedAt) dates.startedAt = new Date();
+    dates.completedAt = to === "DONE" ? new Date() : null;
+  }
 
   await db.projectReferral.update({
     where: { id },
-    data: { status: newStatus },
+    data: { status: newStatus, ...dates },
   });
 
   /*
@@ -972,7 +1033,16 @@ export async function setReferralStatus(
       const actor = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
       const project = referral.activity?.group?.project;
       const where = project ? ` در پروژه ${project.name}${project.code ? ` (${project.code})` : ""}` : "";
-      const done = newStatus === "انجام شده";
+      /*
+       * «انجام شده», through the named constant.
+       *
+       * This compared against «اتمام کار» — which is a *category group's*
+       * closing status, from another table entirely — so the true branch could
+       * never fire and every completion told the person who raised the referral
+       * that it had been **reopened**. Nothing else here reads the value, which
+       * is why it went unnoticed.
+       */
+      const done = referralLane(newStatus) === "DONE";
 
       await notifyUser({
         userId: counterpart,

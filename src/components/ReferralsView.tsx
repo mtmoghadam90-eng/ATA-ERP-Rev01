@@ -36,6 +36,15 @@ import { useUserDirectory } from '../api/useUserDirectory';
  */
 interface ReferralsViewProps {
   initialTab?: 'toMe' | 'fromMe' | 'notifications';
+  /**
+   * Rendered inside «وظایف و پیگیری» rather than as a page of its own.
+   *
+   * The module was merged into the tasks board — the two screens asked the same
+   * question — and this component moved **whole** rather than being
+   * reimplemented, so nothing it could do was lost. All the flag does is drop
+   * the page title, which the screen around it already prints.
+   */
+  embedded?: boolean;
   settings: ERPSettings;
   currentUser: User | null;
   onViewProjectActivities?: (projectId: string) => void;
@@ -45,6 +54,7 @@ interface ReferralsViewProps {
 export default function ReferralsView({
   settings,
   initialTab,
+  embedded,
   currentUser,
   onViewProjectActivities,
   onViewCustomerDetails
@@ -399,13 +409,15 @@ export default function ReferralsView({
   return (
     <div className="space-y-6 animate-fade-in text-right" dir="rtl">
       
-      {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">کارتابل ارجاعات و اقدام‌ها</h1>
-          <p className="text-slate-500 text-sm mt-1">مدیریت کارهای ارجاع‌شده بین همکاران، ثبت نتایج کارها و پیگیری وضعیت اقدامات پروژه‌ها</p>
+      {/* The page title, which the screen around it prints when embedded. */}
+      {!embedded && (
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">کارتابل ارجاعات و اقدام‌ها</h1>
+            <p className="text-slate-500 text-sm mt-1">مدیریت کارهای ارجاع‌شده بین همکاران، ثبت نتایج کارها و پیگیری وضعیت اقدامات پروژه‌ها</p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Controls: Tabs & Project Filter */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-200 pb-1">

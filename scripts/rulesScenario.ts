@@ -45,6 +45,11 @@ import { hasEverPurchased, saleDateOf } from "../src/server/services/customerVal
 import { taskRelationKind } from "../src/utils/taskRelations";
 import { applySettingsPatches } from "../src/utils/settingsPatches";
 import { ACTIVITY_REACTIONS, isAllowedReaction, summarizeReactions } from "../src/utils/reactions";
+import {
+  REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, TASK_CANCELLED, TASK_DOING, TASK_DONE,
+  TASK_TODO, referralIsOpen, referralLane, sortBoardCards, taskLane, taskStatusForLane,
+} from "../src/utils/workBoard";
+import { laneTimestamps } from "../src/server/services/taskService";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
 import { lossReasonRefusal } from "../src/server/services/projectService";
 import type { ERPSettings } from "../src/types";
@@ -7126,6 +7131,158 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     /UNIQUE NONCLUSTERED INDEX \[activity_reactions_activityId_userId_emoji_key\]/.test(migration));
   ok("and a message is read once per person",
     /UNIQUE NONCLUSTERED INDEX \[activity_reads_activityId_userId_key\]/.test(migration));
+}
+
+/* ── One board over two kinds of work ────────────────────────────────────── */
+{
+  /*
+   * «کارتابل ارجاعات» and «وظایف و پیگیری» asked the same question — what has
+   * been given to me to do — so people had to look in two places. One screen,
+   * three columns, and a referral stays its own record: two status columns to
+   * keep in step is the fault this codebase keeps repairing.
+   */
+  eq("a new task is in the first column", taskLane(TASK_TODO), "TODO");
+  eq("...and everything written before the board is in the middle one",
+    taskLane(TASK_DOING), "DOING");
+  eq("finished work is in the last", taskLane(TASK_DONE), "DONE");
+  /*
+   * A cancelled task is finished with, so it goes in the last column rather
+   * than getting a fourth one nobody asked for — marked there, not hidden.
+   */
+  eq("...and so is cancelled work", taskLane(TASK_CANCELLED), "DONE");
+  /*
+   * The direction the fallback leans is the whole of it: an open task filed
+   * among the finished ones is the failure that matters, so anything
+   * unrecognised — a value from an integration, or from a later version — is
+   * open work.
+   */
+  eq("a status nobody designed for is open, never done", taskLane("در انتظار تأیید"), "DOING");
+  eq("...including an empty one", taskLane(""), "DOING");
+  eq("...and a missing one", taskLane(null), "DOING");
+
+  eq("a fresh referral is in the first column", referralLane(REFERRAL_PENDING), "TODO");
+  eq("one that was picked up is in the middle", referralLane(REFERRAL_DOING), "DOING");
+  eq("a closed one is in the last", referralLane(REFERRAL_DONE), "DONE");
+  /*
+   * Open, and specifically **not** done — which is the property that matters.
+   * A referral falls to the first column rather than the middle because its own
+   * default status is the pending one, so an unrecognised value most likely
+   * means «nobody has picked this up».
+   */
+  eq("and an unrecognised referral status is open too", referralLane("؟"), "TODO");
+  ok("...never done", referralLane("؟") !== "DONE" && taskLane("؟") !== "DONE");
+
+  /*
+   * The value the client actually writes, pinned.
+   *
+   * `setReferralStatus` compared the incoming status against «اتمام کار» —
+   * which is a *category group's* closing status, from another table — to
+   * decide which notice to send. The true branch could never fire, so every
+   * completed referral told the person who raised it that it had been
+   * **reopened**.
+   */
+  eq("a referral closes as «انجام شده»", String(REFERRAL_DONE), "انجام شده");
+  const activityService = readFileSync("src/server/services/activityService.ts", "utf8");
+  ok("and the notice reads it through the shared rule",
+    /const done = referralLane\(newStatus\) === "DONE"/.test(activityService));
+  // The literal that made the true branch unreachable, gone from the file.
+  ok("...not against the category group's «اتمام کار»",
+    !/newStatus === "اتمام کار"/.test(activityService));
+
+  // Picking a referral up must not empty the badge that says what is on your
+  // plate, so «open» is an exclusion rather than the exact pending status.
+  ok("a referral in hand still counts as needing action",
+    referralIsOpen(REFERRAL_PENDING) && referralIsOpen(REFERRAL_DOING)
+    && !referralIsOpen(REFERRAL_DONE));
+  const badges = readFileSync("src/api/useSidebarBadges.ts", "utf8");
+  ok("...and the badge asks for that, not for one status",
+    /open: "true"/.test(badges) && !/status: "در انتظار اقدام"/.test(badges));
+
+  /* -- what a drop writes -- */
+  eq("dropping into the first column queues it", taskStatusForLane("TODO"), TASK_TODO);
+  eq("...the middle one starts it", taskStatusForLane("DOING"), TASK_DOING);
+  eq("...and the last finishes it", taskStatusForLane("DONE"), TASK_DONE);
+  /*
+   * Cancelling is a decision somebody makes on the card, never something a
+   * move does by accident — and a card already cancelled keeps what it has.
+   */
+  eq("a move never cancels anything", taskStatusForLane("DONE", TASK_DOING), TASK_DONE);
+  eq("...and never un-cancels either", taskStatusForLane("DONE", TASK_CANCELLED), TASK_CANCELLED);
+
+  /* -- the order of a column -- */
+  const card = (id: string, createdAt: string, priority?: string) =>
+    ({ id, createdAt, priority });
+  const order = (list: { id: string }[]) => list.map((c) => c.id).join(",");
+
+  const cards = [
+    card("old-urgent", "2026-01-01", "فوری"),
+    card("new-low", "2026-03-01", "پایین"),
+    card("mid-referral", "2026-02-01"),
+  ];
+  eq("by date, newest first", order(sortBoardCards(cards, "date")), "new-low,mid-referral,old-urgent");
+  /*
+   * A referral carries no priority at all and sorts as «متوسط» — the middle of
+   * the ladder, not the bottom: a colleague asking for something by name is not
+   * inherently less urgent than a task somebody filed as low, and putting every
+   * referral under every task would empty the top of the column of exactly what
+   * the merge exists to surface.
+   */
+  eq("by priority, and a referral sorts as «متوسط»",
+    order(sortBoardCards(cards, "priority")), "old-urgent,mid-referral,new-low");
+  // Nine «متوسط» cards in arbitrary order is not sorted at all.
+  eq("ties inside a priority break by date",
+    order(sortBoardCards([
+      card("a", "2026-01-01", "بالا"), card("b", "2026-05-01", "بالا"),
+    ], "priority")), "b,a");
+  // The caller is holding React state.
+  ok("the input is never reordered in place",
+    (() => { const input = [...cards]; sortBoardCards(input, "priority"); return input[0].id === "old-urgent"; })());
+
+  /* -- the two dates -- */
+  const started = { status: TASK_TODO, startedAt: null };
+  ok("picking a task up stamps when",
+    "startedAtJalali" in laneTimestamps(started, TASK_DOING, "1405/06/10"));
+  // The day work began is a fact; a task pushed back and picked up again did
+  // not start twice.
+  ok("...and picking it up again does not restamp it",
+    !("startedAtJalali" in laneTimestamps(
+      { status: TASK_TODO, startedAt: new Date() }, TASK_DOING, "1405/06/10")));
+  const done = laneTimestamps({ status: TASK_DOING, startedAt: new Date() }, TASK_DONE, "1405/06/10");
+  ok("finishing stamps the completion date", done.completedAtJalali === "1405/06/10");
+  /*
+   * The opposite rule for the opposite reason: a task showing a completion date
+   * while it sits in «در حال انجام» claims to be finished, which is exactly
+   * what moving it back said it is not.
+   */
+  const reopened = laneTimestamps({ status: TASK_DONE, startedAt: new Date() }, TASK_DOING, "1405/06/10");
+  ok("...and reopening clears it", reopened.completedAt === null);
+  eq("a status change inside one column stamps nothing",
+    Object.keys(laneTimestamps({ status: TASK_DONE, startedAt: null }, TASK_CANCELLED, "1405/06/10")).length, 0);
+
+  /* -- the merge's own wiring -- */
+  const modules = readFileSync("src/appModules.ts", "utf8");
+  ok("«کارتابل ارجاعات» is no longer a module of its own",
+    !/id: "referrals"/.test(modules));
+  const auth = readFileSync("src/server/auth.ts", "utf8");
+  /*
+   * The referral endpoints were gated by `erp_project_category_groups` — the
+   * **projects** permission — because they share a route file with the activity
+   * feed. A user with the referrals module and without projects got 403 on
+   * their own inbox; merged into the board, that would have been every account.
+   */
+  ok("a referral is gated as a task, not as a project",
+    /erp_referrals: "tasks"/.test(auth));
+  const route = readFileSync("src/server/routes/activities.ts", "utf8");
+  ok("...and the routes use that key", /const REFERRAL_KEY = "erp_referrals"/.test(route));
+  const taskRoute = readFileSync("src/server/routes/tasks.ts", "utf8");
+  // Otherwise Express reads «board» as a task id.
+  ok("the board move is registered before the id routes",
+    taskRoute.indexOf('"/api/tasks/board/move"') < taskRoute.indexOf('"/api/tasks/:id"'));
+  const taskService = readFileSync("src/server/services/taskService.ts", "utf8");
+  // Closing a follow-up means recording what the customer said; a drag cannot.
+  ok("a sales follow-up cannot be finished by moving it",
+    /taskKind === "SALES_FOLLOW_UP" && lane === "DONE"/.test(taskService));
+  ok("and a task is created in the first column", /status: TASK_TODO,/.test(taskService));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

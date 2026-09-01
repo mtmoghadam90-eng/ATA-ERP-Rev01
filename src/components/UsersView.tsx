@@ -110,8 +110,11 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     { id: 'suppliers', name: 'تأمین‌کنندگان', desc: 'ثبت اطلاعات سازندگان و همکاران خارجی/داخلی' },
     { id: 'purchaseOrders', name: 'سفارشات خرید خارجی', desc: 'سفارشات خارجی، مراحل ساخت و اسناد حمل' },
     { id: 'transactions', name: 'دریافت و پرداخت ریالی', desc: 'تراکنش‌های بانکی، تنخواه‌ها و مطالبات مالی' },
-    { id: 'tasks', name: 'وظایف و پیگیری', desc: 'پیگیری امور محوله و وظایف پرسنل ابزار دقیق' },
-    { id: 'referrals', name: 'کارتابل ارجاعات کار', desc: 'کارتابل ارجاعات فنی و تسک‌های جاری ارشیا' },
+    // «کارتابل ارجاعات کار» no longer has a flag of its own: it is a tab in
+    // this module, and its endpoints are gated by this permission (see
+    // `erp_referrals` in `src/server/auth.ts`). A value stored on an account
+    // from before the merge is simply never read again.
+    { id: 'tasks', name: 'وظایف و پیگیری', desc: 'تخته کار، کارتابل ارجاعات همکاران، پیگیری فروش و اعلان‌های سیستم' },
     { id: 'messaging', name: 'ارسال پیام', desc: 'قالب‌های پیام، صف و سوابق ارسال پیامک، بله و ایمیل. تنظیمات درگاه‌ها جداگانه با دسترسی «تنظیمات سیستم» کنترل می‌شود.' },
     { id: 'settings', name: 'تنظیمات سیستم', desc: 'تغییر الگوهای پیش‌فاکتور، فیلدهای دلخواه و تنظیمات عمومی' },
     { id: 'users', name: 'مدیریت کاربران', desc: 'تعریف پرسنل، تغییر رمز عبور و تنظیم سطح دسترسی ماژول‌ها' },

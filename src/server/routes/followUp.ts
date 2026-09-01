@@ -4,7 +4,7 @@ import { RouteDeps, sendError } from "./types";
 import { getTodayShamsi } from "../../dateUtils";
 import {
   FOLLOW_UP_FILTERABLE, FOLLOW_UP_SORTABLE,
-  completeFollowUp, followUpSummary, listFollowUpQueue, projectFollowUpReport,
+  completeFollowUp, followUpRowForTask, followUpSummary, listFollowUpQueue, projectFollowUpReport,
   reactivateFollowUp,
 } from "../services/followUpService";
 import { SETTLE_OUTCOMES, type FollowUpCompletionInput } from "../../utils/salesFollowUp";
@@ -93,6 +93,37 @@ export function registerFollowUpRoutes(app: express.Express, deps: RouteDeps): v
    * transaction in the service. Three requests from the browser could stop half
    * way and leave a quotation marked as actively followed up with nobody on it.
    */
+  /*
+   * The queue row behind one follow-up task.
+   *
+   * The merged board opens the same completion modal the follow-up screen does,
+   * and that modal takes a derived row — so it is built on the server rather
+   * than assembled in the browser out of whatever a task card happens to carry,
+   * which is how two screens come to disagree about a quotation's next action.
+   *
+   * Registered before `/api/sales-follow-up/:proformaId/reactivate` for the
+   * usual reason, and gated like the completion it precedes: `requireAuth`
+   * here, with the service checking that the task is yours.
+   */
+  app.get("/api/sales-follow-up/tasks/:taskId", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      const row = await followUpRowForTask(req.params.taskId, user);
+      if (row === "forbidden") {
+        res.status(403).json({ success: false, error: "این پیگیری به شما ارجاع نشده است." });
+        return;
+      }
+      if (row === "not-found") {
+        res.status(404).json({ success: false, error: "پیگیری فروش یافت نشد." });
+        return;
+      }
+      res.json({ success: true, row });
+    } catch (err) {
+      sendError(res, err, "GET /api/sales-follow-up/tasks/:taskId");
+    }
+  });
+
   app.post("/api/sales-follow-up/tasks/:taskId/complete", async (req, res) => {
     const user = await deps.requireAuth(req, res);
     if (!user) return;

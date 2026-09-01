@@ -1,3 +1,4 @@
+import type { BoardLane } from "../utils/workBoard";
 import { ListResponse, api } from "./client";
 import type { Task } from "../types";
 
@@ -21,6 +22,12 @@ export interface TaskRow {
   /** Who raised it. Half of who may see it; null on rows written before it. */
   createdByUserId: string | null;
   createdByName: string | null;
+  /** When the work was picked up. Null until it leaves «برای انجام». */
+  startedAtJalali?: string | null;
+  /** When it closed. Cleared if the card is moved back out of «انجام شده». */
+  completedAtJalali?: string | null;
+  /** GENERAL | SALES_FOLLOW_UP — what pressing the card on the board does. */
+  taskKind?: string | null;
   /**
    * The job behind the task, resolved on the server.
    *
@@ -78,6 +85,20 @@ export const tasksApi = {
   /** Open, overdue and due-today counts, aggregated in SQL. */
   summary: () => api.get<{ summary: TaskSummary }>("/api/tasks/summary").then((r) => r.summary),
 
+  /**
+   * Moves several cards into one column.
+   *
+   * Tasks and referrals travel in the same call because the board does not
+   * distinguish them — a person drags a card, not a record type — and one
+   * request keeps a column from rearranging itself an item at a time.
+   *
+   * `refused` is reported rather than swallowed: a card that would not move is
+   * one the person can see sitting where they left it, and silence there reads
+   * as the board being broken.
+   */
+  moveToLane: (lane: BoardLane, ids: { taskIds?: string[]; referralIds?: string[] }) =>
+    api.post<{ moved: number; refused: number }>("/api/tasks/board/move", { lane, ...ids }),
+
   create: (input: TaskWriteInput) =>
     api.post<{ task: TaskRow }>("/api/tasks", input).then((r) => r.task),
 
@@ -108,6 +129,12 @@ export function rowToTask(row: TaskRow): Task {
     relatedToId: row.relatedToId ?? undefined,
     relatedToName: row.relatedToName ?? undefined,
     createdByName: row.createdByName ?? undefined,
+    // The board's own three: when work started, when it closed, and what kind
+    // of work it is — the last of which decides what pressing the card does.
+    startedAt: row.startedAtJalali ?? undefined,
+    completedAt: row.completedAtJalali ?? undefined,
+    taskKind: row.taskKind ?? undefined,
+    createdAt: row.createdAt,
     relatedProject: row.relatedProject ?? undefined,
     priority: row.priority as Task["priority"],
     status: row.status as Task["status"],

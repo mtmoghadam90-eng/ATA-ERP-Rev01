@@ -41,7 +41,10 @@ export function useSidebarBadges(enabled: boolean): SidebarBadges {
         "/api/tasks/summary", undefined, signal),
       api.get<{ summary: { counts: { lowStock: number } } }>("/api/dashboard", undefined, signal),
       api.get<ListResponse<unknown>>("/api/referrals",
-        { scope: "toMe", status: "در انتظار اقدام", pageSize: 1 }, signal),
+        // «still open», not the exact «در انتظار اقدام» this used to ask for:
+        // a referral picked up now carries a middle status, and an exact filter
+        // would have made it vanish from the count of what is on your plate.
+        { scope: "toMe", open: "true", pageSize: 1 }, signal),
       api.get<ListResponse<unknown> & { unread: number }>("/api/notifications",
         { pageSize: 1 }, signal),
     ]);

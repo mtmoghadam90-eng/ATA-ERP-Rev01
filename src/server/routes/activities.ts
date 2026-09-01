@@ -27,6 +27,15 @@ const denied = (res: express.Response, message = "شما اجازه دسترسی
 
 export function registerActivityRoutes(app: express.Express, deps: RouteDeps): void {
   const KEY = "erp_project_category_groups";
+  /*
+   * The referral endpoints are gated as **tasks**, not as projects.
+   *
+   * They live in this file because they sit on the activity feed, and they
+   * inherited its key — so a user with the referrals module and without the
+   * projects module got 403 on their own inbox. Merged into the tasks board
+   * that would have been every account. See `KEY_PERMISSION` in `auth.ts`.
+   */
+  const REFERRAL_KEY = "erp_referrals";
 
   /* --------------------------- category groups --------------------------- */
 
@@ -331,7 +340,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   /* ------------------------------ referrals ------------------------------ */
 
   app.get("/api/referrals", async (req, res) => {
-    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    const user = await deps.requireKeyAccess(req, res, REFERRAL_KEY, "read");
     if (!user) return;
     try {
       const q = parseListQuery(req.query as Record<string, unknown>, REFERRAL_SORTABLE, REFERRAL_FILTERABLE);
@@ -340,7 +349,13 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
       // picks between the two inbox tabs and always stays self-scoped.
       const scope = req.query.scope === "fromMe" ? "fromMe"
         : req.query.scope === "toMe" ? "toMe" : undefined;
-      const result = await listReferrals(q, user, { mine: req.query.all !== "true", scope });
+      const result = await listReferrals(q, user, {
+        mine: req.query.all !== "true",
+        scope,
+        // «still needs action» — an exclusion, not the exact «در انتظار اقدام»
+        // the badge used to ask for, which the middle column would have hidden.
+        open: req.query.open === "true",
+      });
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "GET /api/referrals");
@@ -348,7 +363,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.put("/api/referrals/:id/status", async (req, res) => {
-    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, REFERRAL_KEY, "write");
     if (!user) return;
     try {
       const status = (req.body as { status?: unknown })?.status;
@@ -372,7 +387,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.put("/api/referrals/:id/assignee", async (req, res) => {
-    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, REFERRAL_KEY, "write");
     if (!user) return;
     try {
       const assignedToUserId = (req.body as { assignedToUserId?: unknown })?.assignedToUserId;
@@ -404,7 +419,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
    * against a request nobody made.
    */
   app.put("/api/referrals/:id/action", async (req, res) => {
-    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, REFERRAL_KEY, "write");
     if (!user) return;
     try {
       const actionRequired = (req.body as { actionRequired?: unknown })?.actionRequired;
@@ -431,7 +446,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   app.post("/api/referrals/:id/messages", async (req, res) => {
-    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    const user = await deps.requireKeyAccess(req, res, REFERRAL_KEY, "write");
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;

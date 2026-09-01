@@ -295,7 +295,7 @@ export default function DashboardView({
 
         {/* Metric 3: Active Referrals */}
         <div 
-          onClick={() => setActiveTab('referrals')}
+          onClick={() => setActiveTab('tasks')}
           className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-sm flex items-center justify-between hover:shadow-md transition cursor-pointer group"
         >
           <div className="space-y-1">
@@ -466,7 +466,7 @@ export default function DashboardView({
             {myReferrals.slice(0, 3).map((ref) => (
               <div 
                 key={ref.activityId} 
-                onClick={() => setActiveTab('referrals')}
+                onClick={() => setActiveTab('tasks')}
                 className="p-3 bg-indigo-50/30 hover:bg-indigo-50/60 rounded-xl border border-indigo-100/50 flex flex-col gap-2 transition cursor-pointer"
               >
                 <div className="flex justify-between items-start">
@@ -494,7 +494,7 @@ export default function DashboardView({
           </div>
 
           <button 
-            onClick={() => setActiveTab('referrals')}
+            onClick={() => setActiveTab('tasks')}
             className="w-full py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-bold rounded-xl border border-slate-200 transition text-center mt-2 shrink-0"
           >
             ورود به کارتابل ارجاعات و کارپوشه ←

@@ -85,17 +85,17 @@ export const APP_MODULES = [
   {
     id: "tasks",
     name: "وظایف و پیگیری",
-    description: "مدیریت کارها، ددلاین‌ها و پیگیری‌های پرسنل فروش و فنی",
+    // «کارتابل ارجاعات کار» was a module of its own and is a tab in here now:
+    // the two screens asked the same question, so people had to look in two
+    // places. A stored `sidebarModuleOrder` still naming it is harmless — the
+    // sidebar sorts an id it does not know to the end and the ordering tab
+    // renders nothing for one.
+    description: "تخته کار، ارجاعات همکاران، پیگیری‌های فروش و اعلان‌ها در یک صفحه",
   },
   {
     id: "messaging",
     name: "ارسال پیام",
     description: "ارسال پیامک، پیام بله و ایمیل به مشتریان، دستی یا خودکار",
-  },
-  {
-    id: "referrals",
-    name: "کارتابل ارجاعات کار",
-    description: "صندوق ورودی ارجاع امور فنی و بازرگانی پروژه‌ها بین همکاران",
   },
   {
     id: "users",
