@@ -11,7 +11,11 @@ import { listProducts, lowStockProducts } from "../productService";
 import { listPurchaseOrders, getPurchaseOrder } from "../purchaseOrderService";
 import { listTransactions } from "../transactionService";
 import { listTasks } from "../taskService";
-import { listCategoryGroups } from "../activityService";
+import {
+  FOLLOW_UP_SORTABLE, followUpSummary, listFollowUpQueue, projectFollowUpReport,
+} from "../followUpService";
+import { LANE_FILTERS } from "../../../utils/workBoard";
+import { listCategoryGroups, REFERRAL_SORTABLE, listReferrals } from "../activityService";
 import { dashboardSummary } from "../dashboardService";
 import { summarizeProjectFinance } from "../projectFinance";
 import { dateToJalali, jalaliToDate } from "../../dates";
@@ -514,13 +518,121 @@ export function assistantTools(): AssistantTool[] {
     {
       definition: {
         name: "search_tasks",
-        description: "وظایف و پیگیری‌ها: عنوان، مسئول، سررسید و وضعیت.",
-        parameters: object({ ...PAGE_ARGS, status: { type: "string" } }),
+        description:
+          "وظایف و پیگیری‌ها: عنوان، مسئول، ارجاع‌دهنده، سررسید، وضعیت و پروژه‌ی مربوطه."
+          + " جستجو، متن وظیفه و کد/نام پروژه و مشتری آن را هم می‌گردد.",
+        parameters: object({
+          ...PAGE_ARGS,
+          /*
+           * The board's own column, not a status word.
+           *
+           * Every automation writes «در انتظار» — a fourth value no dropdown
+           * ever offered — so an exact status filter answered with nothing on a
+           * board full of them. `lane` is the exclusion the screen uses.
+           */
+          lane: {
+            type: "string",
+            description: `یکی از: ${LANE_FILTERS.join("، ")}`,
+          },
+          scope: {
+            type: "string",
+            description: "toMe (به من ارجاع شده) یا fromMe (من ارجاع دادم)",
+          },
+          status: { type: "string", description: "وضعیت دقیق، اگر lane کافی نیست" },
+          hideCompleted: { type: "boolean", description: "پنهان‌کردن ستون انجام‌شده" },
+        }),
       },
       run: async (args, ctx) => {
         const q = listQuery(args, ["createdAt", "dueDate", "title"]);
         if (str(args.status)) q.filters.status = str(args.status);
-        return listTasks(q, ctx.user, {});
+        const scope = str(args.scope);
+        return listTasks(q, ctx.user, {
+          lane: str(args.lane) || undefined,
+          hideCompleted: args.hideCompleted === true,
+          scope: scope === "toMe" || scope === "fromMe" ? scope : undefined,
+        });
+      },
+    },
+
+    /*
+     * The sales desk's own queue.
+     *
+     * Every figure on a row is derived — the next action, its date, whether it
+     * is overdue — so this is the service the screen uses and not a read of the
+     * proformas table: assembling it from rows would be a second copy of the
+     * ranking, which is how two answers to one question come about.
+     */
+    {
+      definition: {
+        name: "sales_follow_up_queue",
+        description:
+          "صف پیگیری فروش: پیش‌فاکتورهای بازی که باید دنبال شوند، با اقدام بعدی،"
+          + " تاریخ سررسید، مسئول و سلامت پیگیری (عقب‌افتاده، امروز، بدون اقدام بعدی)."
+          + " برای «چه پیگیری‌هایی عقب افتاده» و «کدام پیش‌فاکتورها رها شده‌اند».",
+        parameters: object({
+          ...PAGE_ARGS,
+          health: {
+            type: "string",
+            description: "OVERDUE | DUE_TODAY | NO_NEXT_ACTION | UPCOMING — محدود به یک وضعیت",
+          },
+        }),
+      },
+      run: async (args, ctx) => {
+        const q = listQuery(args, [...FOLLOW_UP_SORTABLE]);
+        const result = await listFollowUpQueue(q, ctx.user, { health: str(args.health) });
+        return result ?? { error: "این کاربر اجازه دیدن پیگیری‌های فروش را ندارد." };
+      },
+    },
+
+    {
+      definition: {
+        name: "follow_up_summary",
+        description:
+          "شمارش سلامت پیگیری‌ها: امروز، عقب‌افتاده، بدون اقدام بعدی، موکول‌شده،"
+          + " بدون پاسخ، و آن‌هایی که بیش از دو هفته باز مانده‌اند.",
+        parameters: object({}),
+      },
+      run: async (_args, ctx) => followUpSummary(ctx.user, ctx.todayJalali),
+    },
+
+    {
+      definition: {
+        name: "project_follow_ups",
+        description:
+          "تاریخچه‌ی کامل پیگیری‌های یک پروژه، شامل پیش‌فاکتورهای تعیین‌تکلیف‌شده."
+          + " برای «روی این پروژه چه پیگیری‌هایی انجام شده و مشتری چه گفته».",
+        parameters: object({ projectId: { type: "string" } }, ["projectId"]),
+      },
+      run: async (args, ctx) => {
+        const report = await projectFollowUpReport(str(args.projectId), ctx.user);
+        return report ?? { error: "این کاربر اجازه دیدن پیگیری‌های فروش را ندارد." };
+      },
+    },
+
+    /*
+     * Referrals are the other half of the merged board: work handed between
+     * colleagues, with its own thread. Scoped by the service, which forces the
+     * caller's own id into the query for anything but the company-wide view.
+     */
+    {
+      definition: {
+        name: "search_referrals",
+        description:
+          "ارجاع‌های کاری بین همکاران: درخواست، ارجاع‌دهنده، مسئول، وضعیت و پروژه."
+          + " scope=toMe یعنی آنچه به این کاربر ارجاع شده، fromMe یعنی آنچه او ارجاع داده.",
+        parameters: object({
+          ...PAGE_ARGS,
+          scope: { type: "string", description: "toMe | fromMe | mine" },
+          open: { type: "boolean", description: "فقط ارجاع‌های باز" },
+        }),
+      },
+      run: async (args, ctx) => {
+        const q = listQuery(args, [...REFERRAL_SORTABLE]);
+        const scope = str(args.scope);
+        return listReferrals(q, ctx.user, {
+          scope: scope === "toMe" || scope === "fromMe" || scope === "mine" ? scope : undefined,
+          open: args.open === true,
+        });
       },
     },
 
