@@ -45,6 +45,7 @@ import { hasEverPurchased, saleDateOf } from "../src/server/services/customerVal
 import { taskRelationKind } from "../src/utils/taskRelations";
 import { applySettingsPatches } from "../src/utils/settingsPatches";
 import { ACTIVITY_REACTIONS, isAllowedReaction, summarizeReactions } from "../src/utils/reactions";
+import { readViewPreferences, writeViewPreferences } from "../src/utils/viewPreferences";
 import {
   REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, TASK_CANCELLED, TASK_DOING, TASK_DONE,
   TASK_TODO, BOARD_SORTS, SORT_LABELS, effectivePriority, referralIsOpen, referralLane,
@@ -7571,6 +7572,93 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     !/ماژول پیش‌فاکتورها/.test(serviceCode));
   ok("...and the stripper is not simply eating the file",
     /SALES_FOLLOW_UP/.test(serviceCode));
+}
+
+/* ── A screen's own settings, remembered per person ──────────────────────── */
+{
+  /*
+   * Which column somebody filtered to, how they ordered it, whether the
+   * finished work is hidden — none of it is data, and all of it was thrown away
+   * on every refresh, so the first thing anybody did each morning was set the
+   * same three controls again.
+   */
+  const store = new Map<string, string>();
+  const g = globalThis as unknown as { window?: unknown };
+  const previous = g.window;
+  g.window = {
+    localStorage: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v); },
+    },
+  };
+
+  const defaults = { lane: "all", sort: "date", hideCompleted: false };
+
+  eq("nothing stored gives the defaults",
+    JSON.stringify(readViewPreferences("tasks", "u1", defaults)), JSON.stringify(defaults));
+
+  writeViewPreferences("tasks", "u1", { ...defaults, lane: "DOING", hideCompleted: true });
+  const back = readViewPreferences("tasks", "u1", defaults);
+  ok("what was set comes back", back.lane === "DOING" && back.hideCompleted === true);
+
+  /*
+   * Per account, because a shared machine is normal here — a warehouse
+   * terminal, the sales desk — and one person's filters appearing under
+   * another's sign-in reads as the screen having lost their work.
+   */
+  eq("another user's settings are their own",
+    readViewPreferences("tasks", "u2", defaults).lane, "all");
+  // And one screen's are not another's.
+  eq("...and one screen's are not another's",
+    readViewPreferences("proformas", "u1", defaults).lane, "all");
+
+  /*
+   * Merged over the defaults, never returned whole. A document written by an
+   * older build has keys the screen no longer knows and lacks ones it has since
+   * gained; handing it back as-is leaves a control holding `undefined`.
+   */
+  writeViewPreferences("tasks", "u3", { lane: "TODO", gone: "x" });
+  const merged = readViewPreferences("tasks", "u3", defaults) as Record<string, unknown>;
+  ok("a key the screen no longer has is dropped", !("gone" in merged));
+  eq("...and one it has gained falls back", merged.sort, "date");
+  // A boolean where a string belongs would put a control into a state it has
+  // no way to render.
+  writeViewPreferences("tasks", "u4", { lane: true });
+  eq("a value of the wrong shape is ignored",
+    readViewPreferences("tasks", "u4", defaults).lane, "all");
+
+  /*
+   * `localStorage` throws outright in a private window and in a browser set to
+   * block site data. A screen that cannot draw because it could not remember a
+   * dropdown is worse than one that forgets.
+   */
+  g.window = { localStorage: { getItem: () => { throw new Error("blocked"); },
+    setItem: () => { throw new Error("blocked"); } } };
+  eq("a browser that blocks storage still gets the defaults",
+    JSON.stringify(readViewPreferences("tasks", "u1", defaults)), JSON.stringify(defaults));
+  let threw = false;
+  try { writeViewPreferences("tasks", "u1", defaults); } catch { threw = true; }
+  ok("...and writing there is not an error", !threw);
+
+  g.window = previous;
+
+  const hook = readFileSync("src/api/useTaskList.ts", "utf8");
+  ok("the board's filters are remembered", /readViewPreferences\("tasks\.filters"/.test(hook));
+  // Written on change, not on unmount: the tab is closed, the browser killed,
+  // the machine sleeps — an unmount is not something to rely on for a thing
+  // whose whole job is to survive.
+  ok("...on change rather than on unmount",
+    /useEffect\(\(\) => \{\s*writeViewPreferences\("tasks\.filters"/.test(hook));
+  const view = readFileSync("src/components/TasksView.tsx", "utf8");
+  ok("and so are the view and the order", /readViewPreferences\(\s*'tasks\.view'/.test(view));
+  /*
+   * The remembered order has to reach the server on the way in: nobody presses
+   * the control after a refresh, so without this the board would ask for the
+   * default page and then sort those rows — the top of a column would be a
+   * slice of the middle.
+   */
+  ok("...and the remembered order is applied to the query once",
+    /appliedRememberedOrder/.test(view));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

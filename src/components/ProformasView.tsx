@@ -1494,6 +1494,9 @@ export default function ProformasView({
   const handleAddItemLine = () => {
     const firstProd = products[0];
     if (!firstProd) return;
+    // See `handleItemProductChange`: the line is seeded from this product, so
+    // it must stay resolvable once the picker's matches move on.
+    rememberProduct(firstProd);
     // Convert first product's IRR basePrice to the selected currency
     let qty = 1;
     if (
@@ -1533,6 +1536,10 @@ export default function ProformasView({
         unit: defaultUnitFor(firstProd.unit),
         unitPriceRIYAL: 0,
         ...costPatchFor(firstProd),
+        // Seeded from whichever product the picker holds first, so it has to
+        // be remembered: when the user searches for the one they actually
+        // want, this one leaves the matches — and the handler that replaces it
+        // needs to find it to subtract its description.
         techSpecs: describeProduct(firstProd),
         selectedImage:
           firstProd.images && firstProd.images.length > 0
@@ -1884,11 +1891,24 @@ export default function ProformasView({
     const prod = products.find((p) => p.id === prodId);
     if (!prod) return;
 
-    // The product the line is leaving. Without it the outgoing product's
-    // description reads as text the user typed and is kept — which is how a
-    // new line, seeded from whichever product the picker held first, printed
-    // that product's specification above the one actually chosen.
+    /*
+     * The product the line is leaving. Without it the outgoing product's
+     * description reads as text the user typed and is kept — which is how a new
+     * line, seeded from whichever product the picker held first, printed that
+     * product's specification above the one actually chosen.
+     *
+     * **It has to still be findable, and that is what was wrong.** `products`
+     * is the picker's current matches plus what this screen has written to, and
+     * choosing a different product means typing a search term — which replaces
+     * the matches. So by the time this ran, the product being left had usually
+     * dropped out of the list, `previousProd` was `undefined`, and its four or
+     * five description lines survived every subsequent change and every
+     * configuration. Remembering a product when a line is put on it (below, and
+     * in `handleAddItem`) is what keeps it reachable after the search moves on
+     * — the same reason `productOverrides` exists at all.
+     */
     const previousProd = products.find((p) => p.id === items[index]?.productId);
+    rememberProduct(prod);
 
     const basePriceInSelectedCurrency = getProductOrVariantPriceInProformaCurrency(prod);
 
@@ -4433,7 +4453,16 @@ export default function ProformasView({
                   <div className="col-span-1 text-center">حذف</div>
                 </div>
                 {/* Items rows */}
-                <div className="space-y-3 max-h-[400px] overflow-y-auto pl-1">
+                {/*
+                  One scrollbar on the form, not two.
+
+                  The item rows had their own 400px window inside a modal that
+                  already scrolls, so a long proforma meant scrolling a box
+                  inside a box — and on a phone the inner one swallows the
+                  gesture, leaving the page under it unreachable. The rows are
+                  as tall as they are; the modal scrolls them.
+                */}
+                <div className="space-y-3 pl-1">
                   {items.map((item, idx) => (
                     <div
                       key={idx}

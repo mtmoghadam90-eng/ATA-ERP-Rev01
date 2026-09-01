@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { readViewPreferences, writeViewPreferences } from "../utils/viewPreferences";
 import { useList } from "./useList";
 import { TaskRow } from "./tasks";
 
@@ -63,8 +64,31 @@ const EMPTY_FILTERS: TaskListFilters = {
   dateTo: "",
 };
 
-export function useTaskList(initialSearch = "") {
-  const [filters, setFilters] = useState<TaskListFilters>(EMPTY_FILTERS);
+/**
+ * The board's query state, remembered for whoever is signed in.
+ *
+ * Which column, which priority, whether the finished work is hidden — one
+ * person's way of looking at the screen, thrown away on every refresh until
+ * now, so the first thing anybody did each morning was set the same three
+ * controls again. Stored per account and per browser; see `viewPreferences`.
+ *
+ * `scope` is remembered too, and deliberately: «همه وظایف» is a deliberate
+ * choice somebody with the permission makes, and being dropped back to «به من
+ * ارجاع شده» on every reload is the same annoyance in the place it is felt
+ * most.
+ */
+export function useTaskList(initialSearch = "", userId?: string | null) {
+  const [filters, setFilters] = useState<TaskListFilters>(
+    () => readViewPreferences("tasks.filters", userId, EMPTY_FILTERS));
+
+  /*
+   * Written on change rather than on unmount: the tab is closed, the browser is
+   * killed, the machine sleeps — an unmount is not something to rely on for a
+   * thing whose whole job is to survive.
+   */
+  useEffect(() => {
+    writeViewPreferences("tasks.filters", userId, filters);
+  }, [filters, userId]);
 
   const params = useMemo(() => ({
     scope: filters.scope === "all" ? undefined : filters.scope,
