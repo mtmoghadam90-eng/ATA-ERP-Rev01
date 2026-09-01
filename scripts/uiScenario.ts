@@ -44,6 +44,7 @@ import AssistantPanel from "../src/components/AssistantPanel";
 import NumberField from "../src/components/NumberField";
 import InquiryPriceHistoryTab from "../src/components/InquiryPriceHistoryTab";
 import MessageReactions from "../src/components/MessageReactions";
+import WorkBoard from "../src/components/WorkBoard";
 import FollowUpCompletionModal from "../src/components/FollowUpCompletionModal";
 import ActivityComposer from "../src/components/ActivityComposer";
 import type { Product } from "../src/types";
@@ -883,6 +884,100 @@ head("Message reactions: the eye asks nobody until it is pressed");
   act(() => { root7.unmount(); root8.unmount(); });
   host7.remove();
   host8.remove();
+}
+
+head("The work board: two kinds of card, three columns");
+{
+  /*
+   * The merge, rendered. A referral is not copied into the tasks table — it
+   * stays its own record — so the only thing that can prove the two end up in
+   * one board, in the right columns, is a render.
+   */
+  const host9 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root9 = createRoot(host9);
+
+  const moved: string[] = [];
+  const opened: string[] = [];
+  const selected = new Set<string>();
+
+  const cards = [
+    {
+      kind: "task" as const, id: "t1", title: "ثبت سفارش خرید", createdAt: "2026-01-01",
+      priority: "فوری", status: "برای انجام",
+    },
+    {
+      kind: "task" as const, id: "t2", title: "تماس با مشتری", createdAt: "2026-02-01",
+      priority: "متوسط", status: "در حال انجام", taskKind: "SALES_FOLLOW_UP",
+    },
+    {
+      kind: "task" as const, id: "t3", title: "کار تمام‌شده", createdAt: "2026-03-01",
+      priority: "پایین", status: "انجام شده", completedAt: "1405/01/05",
+    },
+    {
+      kind: "referral" as const, id: "r1", title: "لطفاً دیتاشیت را چک کن",
+      createdAt: "2026-02-15", status: "در انتظار اقدام", replies: 2,
+    },
+  ];
+
+  const render = () => act(() => {
+    root9.render(React.createElement(WorkBoard, {
+      cards, sort: "date" as const, selected, moving: false,
+      onToggleSelect: (key: string) => {
+        if (selected.has(key)) selected.delete(key); else selected.add(key);
+        render();
+      },
+      onMove: (lane: string) => { moved.push(lane); },
+      onOpen: (card: { kind: string; id: string }) => { opened.push(`${card.kind}:${card.id}`); },
+    }));
+  });
+  render();
+
+  const lane = (name: string) => host9.querySelector(`#work-board-lane-${name}`);
+  ok("all three columns are drawn",
+    !!lane("TODO") && !!lane("DOING") && !!lane("DONE"));
+  // A referral and a task, in one column, from two tables.
+  ok("a queued task and a fresh referral share the first column",
+    (lane("TODO")?.textContent ?? "").includes("ثبت سفارش خرید")
+    && (lane("TODO")?.textContent ?? "").includes("دیتاشیت"), lane("TODO")?.textContent);
+  ok("...and the referral says how many replies it carries",
+    (lane("TODO")?.textContent ?? "").includes("2 پاسخ"));
+  ok("everything written before the board is in the middle column",
+    (lane("DOING")?.textContent ?? "").includes("تماس با مشتری"));
+  ok("...and it is marked as a sales follow-up, not an ordinary task",
+    (lane("DOING")?.textContent ?? "").includes("پیگیری فروش"));
+  ok("finished work is in the last column, with the date it closed",
+    (lane("DONE")?.textContent ?? "").includes("کار تمام‌شده")
+    && (lane("DONE")?.textContent ?? "").includes("1405/01/05"));
+
+  /*
+   * Moving is a toolbar press, not a drag: dragging needs a library to work at
+   * all and is unusable on the phone this is read on. Nothing may move until
+   * something is ticked.
+   */
+  const moveButton = host9.querySelector("#work-board-move-DOING") as HTMLButtonElement;
+  ok("with nothing ticked, nothing can be moved", moveButton.disabled);
+
+  const tick = host9.querySelector("#work-board-select-task:t1") as HTMLElement | null;
+  // The id carries a colon, which is not a CSS identifier — found by attribute.
+  const box = ([...host9.querySelectorAll("input[type=checkbox]")] as HTMLInputElement[])
+    .find((el) => el.id === "work-board-select-task:t1")!;
+  ok("the card has a tick box", !!box && !tick);
+  act(() => { box.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+
+  const armed = host9.querySelector("#work-board-move-DOING") as HTMLButtonElement;
+  ok("...and ticking one arms every column's button", !armed.disabled);
+  act(() => { armed.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("pressing a column moves the selection there", moved.join(",") === "DOING", moved);
+
+  // Pressing the card is what opens the thread, the follow-up form or the edit
+  // box — the whole reason the two screens were merged.
+  const title = ([...host9.querySelectorAll("button")] as HTMLElement[])
+    .find((el) => el.textContent === "لطفاً دیتاشیت را چک کن")!;
+  act(() => { title.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("pressing a referral opens it", opened.join(",") === "referral:r1", opened);
+
+  act(() => { root9.unmount(); });
+  host9.remove();
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

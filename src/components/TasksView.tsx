@@ -20,6 +20,17 @@ import type { User as AppUser } from '../types';
 import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import ShamsiDatePicker from './ShamsiDatePicker';
+import WorkBoard, { BoardCard } from './WorkBoard';
+import ReferralsView from './ReferralsView';
+import ReferralThread from './ReferralThread';
+import FollowUpCompletionModal from './FollowUpCompletionModal';
+import {
+  BOARD_SORTS, BoardLane, BoardSort, SORT_LABELS, referralLane,
+} from '../utils/workBoard';
+import { ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
+import { salesFollowUpApi, type FollowUpRow } from '../api/salesFollowUp';
+import { compressImage } from '../imageUtils';
+import { useRevalidate } from '../api/liveData';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import QuickAddModal from './QuickAddModal';
@@ -53,11 +64,19 @@ interface TasksViewProps {
    * under the heading «همه» is worse than no tab at all.
    */
   currentUser?: AppUser | null;
+  /**
+   * Which view to open on.
+   *
+   * The header's inbox and bell icons used to switch to the referrals module,
+   * which is a tab here now — so they say which tab rather than which screen.
+   */
+  initialTab?: 'board' | 'inbox' | 'notifications';
 }
 
 export default function TasksView({
   settings,
   currentUser,
+  initialTab,
 }: TasksViewProps) {
   // Declared before the pickers below, which are disabled while it is closed.
   const [showModal, setShowModal] = useState(false);
@@ -170,6 +189,7 @@ export default function TasksView({
   // so this is only what the button draws.
   const hideCompleted = list.filters.hideCompleted;
 
+
   /*
    * Which half of the board — the same two questions the referrals inbox asks.
    *
@@ -185,6 +205,67 @@ export default function TasksView({
   const selectedScope = list.filters.scope;
   const canSeeEveryTask = !!currentUser?.isSystemAdmin
     || currentUser?.permissions?.tasksAll === true;
+
+  /*
+   * Which of the three views. «کارتابل ارجاعات» used to be its own module in
+   * the sidebar and is a tab here: the two screens asked the same question —
+   * what has been given to me to do — so a person had to look in two places and
+   * remember which kind of thing they were looking for.
+   *
+   * The referrals screen is rendered **whole**, not reimplemented, so every
+   * capability it had (its own filters, the project and customer links, the
+   * notification panel) came with it unchanged. The board is the day-to-day
+   * view over both kinds of work; the list is what this screen always was.
+   */
+  const [mainTab, setMainTab] = useState<'board' | 'list' | 'inbox'>(
+    initialTab === 'inbox' || initialTab === 'notifications' ? 'inbox' : 'board');
+  /*
+   * Which of the embedded inbox's own tabs to open on.
+   *
+   * The bell in the header goes straight to the notices and the inbox icon to
+   * «به من ارجاع شده» — both were pointed at the referrals module, which no
+   * longer has a page of its own.
+   */
+  const [inboxTab] = useState<'toMe' | 'fromMe' | 'notifications'>(
+    initialTab === 'notifications' ? 'notifications' : 'toMe');
+  const [boardSort, setBoardSort] = useState<BoardSort>('date');
+  const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
+  const [movingCards, setMovingCards] = useState(false);
+
+  /*
+   * The referrals that share the board with the tasks.
+   *
+   * A referral is **not** copied into the tasks table — it stays its own record
+   * with its own conversation thread, and `workBoard.ts` maps each kind's own
+   * status onto a column. Two status columns to keep in step is the fault this
+   * codebase keeps repairing.
+   *
+   * Scoped by the same tab the tasks are: «به من ارجاع شده» is `toMe` on both
+   * sides, so one board answers one question.
+   */
+  const [referrals, setReferrals] = useState<ReferralRow[]>([]);
+  const [referralReload, setReferralReload] = useState(0);
+  const refreshReferrals = React.useCallback(() => setReferralReload((n) => n + 1), []);
+  useRevalidate(['referrals', 'activities'], refreshReferrals);
+
+  React.useEffect(() => {
+    if (mainTab !== 'board') return;
+    const controller = new AbortController();
+    inboxApi
+      .referrals({
+        scope: selectedScope === 'all' ? undefined : selectedScope,
+        all: selectedScope === 'all' ? 'true' : undefined,
+        pageSize: 200,
+      } as Record<string, string | number | undefined>, controller.signal)
+      .then((data) => setReferrals(data.rows))
+      .catch(() => { /* the board still draws its tasks */ });
+    return () => controller.abort();
+  }, [mainTab, selectedScope, referralReload]);
+
+  /** The referral whose thread is open, and the follow-up whose form is. */
+  const [openReferral, setOpenReferral] = useState<ReferralRow | null>(null);
+  const [followUpRow, setFollowUpRow] = useState<FollowUpRow | null>(null);
+  const [followUpLoading, setFollowUpLoading] = useState(false);
   const [isTaskModalFullscreen, setIsTaskModalFullscreen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [quickAddType, setQuickAddType] = useState<'customer' | 'project' | 'supplier' | 'product' | null>(null);
@@ -339,6 +420,128 @@ export default function TasksView({
   // The server searched, filtered by priority, sorted and paged this already.
   const filteredTasks = tasks;
 
+  /*
+   * The two record types, as one list of cards.
+   *
+   * Built here rather than on the server because they come from two endpoints
+   * with two scopes and two paginations — joining them in SQL would mean one
+   * query that can page neither correctly.
+   */
+  const boardCards: BoardCard[] = React.useMemo(() => {
+    const taskCards: BoardCard[] = tasks.map((task) => ({
+      kind: 'task',
+      id: task.id,
+      title: task.title,
+      createdAt: task.createdAt ?? '',
+      priority: task.priority,
+      status: task.status,
+      taskKind: task.taskKind,
+      dueDate: task.dueDate,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt,
+      assignedTo: task.assignedTo,
+      createdBy: task.createdByName,
+      context: task.relatedProject ?? null,
+    }));
+
+    const referralCards: BoardCard[] = referrals.map((ref) => ({
+      kind: 'referral',
+      id: ref.id,
+      // The message itself is the request — there is no separate «what should
+      // they do» box any more — so it is what the card is titled with.
+      title: ref.activity?.text || ref.actionRequired || 'ارجاع کار',
+      createdAt: ref.createdAt,
+      status: ref.status,
+      assignedTo: ref.assignedToName,
+      createdBy: ref.assignedByName,
+      context: ref.activity?.group?.project
+        ? {
+          code: ref.activity.group.project.code,
+          name: ref.activity.group.project.name,
+          customerName: ref.activity.group.project.customer?.companyName ?? null,
+        }
+        : null,
+      replies: ref.messages?.length ?? 0,
+    }));
+
+    /*
+     * The declutter toggle collapses the finished column rather than dropping
+     * rows: on a board «hide completed» is «do not show me that column», and
+     * the tasks half is already excluded by the server's own query.
+     */
+    const all = [...taskCards, ...referralCards];
+    return hideCompleted
+      ? all.filter((c) => !(c.kind === 'referral' && referralLane(c.status) === 'DONE'))
+      : all;
+  }, [tasks, referrals, hideCompleted]);
+
+  const toggleCard = (key: string) => setSelectedCards((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+
+  /** Moves everything ticked into one column, in a single request. */
+  const moveSelection = async (lane: BoardLane) => {
+    const taskIds: string[] = [];
+    const referralIds: string[] = [];
+    for (const key of selectedCards) {
+      const [kind, id] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
+      (kind === 'referral' ? referralIds : taskIds).push(id);
+    }
+    setMovingCards(true);
+    try {
+      const result = await tasksApi.moveToLane(lane, { taskIds, referralIds });
+      setSelectedCards(new Set());
+      list.refresh();
+      refreshReferrals();
+      /*
+       * A card that would not move is named, not swallowed.
+       *
+       * The one that refuses is a sales follow-up dragged into «انجام شده»:
+       * closing one means recording what the customer said, which is the whole
+       * point of its own form. Silence there reads as the board being broken.
+       */
+      if (result.refused > 0) {
+        alert(`${result.refused} مورد منتقل نشد. پیگیری فروش با «ثبت نتیجه پیگیری» بسته می‌شود، نه با انتقال ستون.`);
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'انتقال با خطا مواجه شد.');
+    } finally {
+      setMovingCards(false);
+    }
+  };
+
+  /**
+   * Opening a card.
+   *
+   * The whole reason for the merge: a referral is answered in its own thread
+   * and a sales follow-up through its own completion form, both without
+   * leaving this screen. An ordinary task opens the edit box it always had.
+   */
+  const openCard = async (card: BoardCard) => {
+    if (card.kind === 'referral') {
+      setOpenReferral(referrals.find((r) => r.id === card.id) ?? null);
+      return;
+    }
+    if (card.taskKind === 'SALES_FOLLOW_UP') {
+      setFollowUpLoading(true);
+      try {
+        // The row is derived — the next action, its date, the health — so it is
+        // built on the server rather than assembled out of what this card
+        // carries, which is how two screens come to disagree about a quotation.
+        setFollowUpRow(await salesFollowUpApi.rowForTask(card.id));
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'دریافت اطلاعات پیگیری با خطا مواجه شد.');
+      } finally {
+        setFollowUpLoading(false);
+      }
+      return;
+    }
+    const task = tasks.find((t) => t.id === card.id);
+    if (task) handleOpenEdit(task);
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       
@@ -356,6 +559,46 @@ export default function TasksView({
           ثبت پیگیری / یادداشت جدید
         </button>
       </div>
+
+      {/*
+        The three views.
+
+        «کارتابل ارجاعات» was its own sidebar module and is a tab here: it and
+        this screen asked the same question — what has been given to me to do —
+        so a person had to look in two places. It is rendered whole rather than
+        reimplemented, so nothing it could do was lost in the move, its own
+        notifications tab included.
+      */}
+      <div className="flex flex-wrap items-center gap-2" id="task-main-tabs">
+        {([
+          { key: 'board' as const, label: 'تخته کار' },
+          { key: 'list' as const, label: 'فهرست وظایف' },
+          { key: 'inbox' as const, label: 'کارتابل و اعلان‌ها' },
+        ]).map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setMainTab(tab.key)}
+            id={`task-main-tab-${tab.key}`}
+            className={`px-3.5 py-1.5 text-xs font-bold rounded-xl border transition ${
+              mainTab === tab.key
+                ? 'bg-slate-800 border-slate-800 text-white shadow-sm'
+                : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {mainTab === 'inbox' ? (
+        <ReferralsView
+          embedded
+          initialTab={inboxTab}
+          currentUser={currentUser}
+          settings={settings}
+        />
+      ) : (<>
 
       {/* Whose tasks. Enforced on the server; this picks between the halves. */}
       <div className="flex flex-wrap items-center gap-2" id="task-scope-tabs">
@@ -448,8 +691,55 @@ export default function TasksView({
         </button>
       </div>
 
+      {/*
+        The board's own control: what orders a column.
+
+        Only two answers, because they are the two the work actually has — when
+        it arrived, and how urgent it is. A referral carries no priority and
+        sorts as «متوسط»; see `PRIORITY_ORDER`.
+      */}
+      {mainTab === 'board' && (
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-100">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-bold text-slate-500">ترتیب ستون‌ها:</span>
+            {BOARD_SORTS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setBoardSort(option)}
+                id={`work-board-sort-${option}`}
+                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border transition ${
+                  boardSort === option
+                    ? 'bg-sky-50 border-sky-400 text-sky-700'
+                    : 'bg-white border-slate-200 text-slate-600 hover:border-sky-300'
+                }`}
+              >
+                {SORT_LABELS[option]}
+              </button>
+            ))}
+          </div>
+          <span className="text-[11px] text-slate-500">
+            {selectedCards.size > 0
+              ? `${selectedCards.size} مورد انتخاب شده — ستون مقصد را بزنید.`
+              : 'موارد را تیک بزنید و سپس «انتقال به اینجا» را در ستون مقصد بزنید.'}
+          </span>
+        </div>
+      )}
+
+      {mainTab === 'board' && (
+        <WorkBoard
+          cards={boardCards}
+          sort={boardSort}
+          selected={selectedCards}
+          onToggleSelect={toggleCard}
+          onMove={(lane) => { void moveSelection(lane); }}
+          onOpen={(card) => { void openCard(card); }}
+          moving={movingCards || followUpLoading}
+        />
+      )}
+
       {/* List */}
-      <div className="grid grid-cols-1 gap-4">
+      <div className={`grid grid-cols-1 gap-4 ${mainTab === 'board' ? 'hidden' : ''}`}>
         {filteredTasks.map((task) => (
           <div 
             key={task.id} 
@@ -649,6 +939,109 @@ export default function TasksView({
           </div>
         )}
       </div>
+
+      </>)}
+
+      {/*
+        Answering a referral without leaving this screen.
+
+        `ReferralThread` is the same component the referrals screen and the
+        project feed both use, so replying, closing, reopening and forwarding
+        all behave exactly as they did — this is where they are drawn now, not
+        a second implementation of them.
+      */}
+      {openReferral && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-3" dir="rtl">
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-xl overflow-hidden flex flex-col max-h-[92vh]">
+            <div className="px-5 py-3.5 border-b border-slate-100 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">ارجاع کار</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  از {openReferral.assignedByName || 'یک همکار'}
+                  {openReferral.activity?.group?.project
+                    ? ` — ${openReferral.activity.group.project.code} ${openReferral.activity.group.project.name}`
+                    : ''}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenReferral(null)}
+                className="p-1.5 text-slate-400 hover:bg-slate-100 rounded-lg"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto">
+              <ReferralThread
+                referral={{
+                  id: openReferral.id,
+                  assignedTo: openReferral.assignedToName ?? '',
+                  assignedBy: openReferral.assignedByName ?? '',
+                  assignedToUserId: openReferral.assignedToUserId,
+                  assignedByUserId: openReferral.assignedByUserId,
+                  actionRequired: openReferral.actionRequired ?? openReferral.activity?.text ?? '',
+                  status: openReferral.status,
+                  messages: (openReferral.messages ?? []).map((m) => ({
+                    id: m.id,
+                    text: m.text,
+                    responder: m.responderName ?? '',
+                    responderUserId: m.responderUserId,
+                    createdAt: m.createdAt,
+                    attachment: m.attachmentName
+                      ? { name: m.attachmentName, size: m.attachmentSize ?? '', content: m.attachmentUrl ?? undefined }
+                      : null,
+                  })),
+                }}
+                currentUserId={currentUser?.id}
+                formatDate={(iso) => new Date(iso).toLocaleString('fa-IR')}
+                onPickAttachment={(file, done) => {
+                  if (file.size > 2 * 1024 * 1024 && !file.type.startsWith('image/')) {
+                    alert('حداکثر حجم مجاز برای فایل‌های غیرتصویری ۲ مگابایت می‌باشد.');
+                    return;
+                  }
+                  compressImage(file, (dataUrl, sizeStr) => {
+                    done({ name: file.name, size: sizeStr, content: dataUrl });
+                  });
+                }}
+                onSubmit={async (body) => {
+                  const outcome = await submitReferralReply(openReferral.id, body);
+                  if (outcome === 'nothing') { alert('لطفاً پیام خود را بنویسید.'); return; }
+                  setOpenReferral(null);
+                  refreshReferrals();
+                }}
+                onEditAction={async (text) => {
+                  await inboxApi.updateReferralAction(openReferral.id, text);
+                  refreshReferrals();
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/*
+        And recording a follow-up result without leaving it either.
+
+        Exactly the modal «پیگیری فروش» opens, over a row the server derived —
+        so the three questions it asks, the refusals it enforces and the outcome
+        it can settle are one implementation, not two.
+      */}
+      {followUpRow && (
+        <FollowUpCompletionModal
+          row={followUpRow}
+          resultOptions={settings.dropdownItems?.followUpResults ?? []}
+          userNames={users.map((u) => u.fullName)}
+          outcomeIsTerminal={['تأیید شده (برنده)', 'باخته', 'لغو شده', 'نیمه برنده']
+            .includes(followUpRow.outcome)}
+          lossReasons={settings.lossReasons ?? []}
+          onClose={() => setFollowUpRow(null)}
+          onSubmit={async (body) => {
+            await salesFollowUpApi.complete(followUpRow.nextActionTaskId!, body);
+            setFollowUpRow(null);
+            list.refresh();
+          }}
+        />
+      )}
 
       {/* Add Modal */}
       {showModal && (

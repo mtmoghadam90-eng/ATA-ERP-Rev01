@@ -580,6 +580,18 @@ export interface Task {
   relatedToType: 'مشتری' | 'پروژه' | 'پیش‌فاکتور' | 'سفارش خرید' | 'عمومی' | 'خدمات پس از فروش' | 'بسته‌بندی و تحویل' | 'استعلام تامین‌کننده';
   /** Who raised it, kept beside the id so history survives a deactivated account. */
   createdByName?: string;
+  /**
+   * When the work was picked up, in Shamsi. Null until the card leaves «برای
+   * انجام»; stamped once and never cleared, because the day work began is a
+   * fact and a task pushed back and picked up again did not start twice.
+   */
+  startedAt?: string;
+  /** When it closed, in Shamsi. Cleared if the card is moved back out of «انجام شده». */
+  completedAt?: string;
+  /** GENERAL | SALES_FOLLOW_UP — what pressing the card does. */
+  taskKind?: string;
+  /** When it was raised. What «تاریخ ارجاع» sorts the board by. */
+  createdAt?: string;
   /** The job behind the task — code, name and customer — joined by the server. */
   relatedProject?: {
     id: string; code: string; name: string; customerName: string | null;
@@ -596,7 +608,13 @@ export interface Task {
    * only the name silently detaches the task from whoever it belongs to.
    */
   assignedToUserId?: string;
-  status: 'در حال انجام' | 'انجام شده' | 'کنسل شده';
+  /**
+   * «برای انجام» is the newest and is what a task created from the board
+   * carries; everything written before the board existed carries «در حال
+   * انجام» and sits in the middle column, which is what it has always meant.
+   * `taskLane` in `src/utils/workBoard.ts` maps this onto a column.
+   */
+  status: 'برای انجام' | 'در حال انجام' | 'انجام شده' | 'کنسل شده';
   customValues?: Record<string, any>;
   reminderEnabled?: boolean;
   reminderDate?: string;
@@ -838,7 +856,8 @@ export interface ProjectReferral {
   assignedToUserId?: string | null;
   assignedByUserId?: string | null;
   createdAt: string;
-  status: 'در انتظار اقدام' | 'انجام شده';
+  /** «در حال اقدام» is new: with two states the board's middle column could not be said. */
+  status: 'در انتظار اقدام' | 'در حال اقدام' | 'انجام شده';
   response: ProjectReferralResponse | null;
   messages?: ProjectReferralResponse[];
 }
@@ -927,6 +946,15 @@ export interface User {
     purchaseOrders: boolean;
     transactions: boolean;
     tasks: boolean;
+    /**
+     * @deprecated Never read any more.
+     *
+     * «کارتابل ارجاعات» was a module of its own; it is a tab of «وظایف و
+     * پیگیری» now and its endpoints are gated by `tasks` (see `erp_referrals`
+     * in `src/server/auth.ts`). The key is kept on the type because it is
+     * present on every stored account and removing it would make each of those
+     * documents fail to type — the value is simply never consulted.
+     */
     referrals: boolean;
     settings: boolean;
     users: boolean;

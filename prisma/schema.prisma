@@ -1370,7 +1370,20 @@ model ProjectReferral {
   assignedByName   String? @db.NVarChar(200)
 
   actionRequired String @db.NVarChar(Max)
-  status         String @default("در انتظار اقدام") @db.NVarChar(40)
+
+  /// در انتظار اقدام | در حال اقدام | اتمام کار.
+  ///
+  /// The middle one is new. A referral had two states, so on the merged board
+  /// — where a referral is one of the cards — there was no way to say «I have
+  /// picked this up», and the middle column could not be expressed at all.
+  /// `referralLane` in `src/utils/workBoard.ts` maps this onto a column, and
+  /// `referralIsOpen` is what the inbox badge counts: picking a referral up
+  /// must not make it disappear from the count of what is on your plate.
+  status String @default("در انتظار اقدام") @db.NVarChar(40)
+
+  /// The same two facts a task records: when it was picked up, when it closed.
+  startedAt   DateTime?
+  completedAt DateTime?
 
   createdAt DateTime @default(now())
 
@@ -1434,7 +1447,27 @@ model Task {
   completedAtJalali String?   @db.NVarChar(10)
 
   priority String @default("متوسط") @db.NVarChar(20)
-  status   String @default("در حال انجام") @db.NVarChar(30)
+
+  /// برای انجام | در حال انجام | انجام شده | کنسل شده.
+  ///
+  /// The default is still «در حال انجام» at the database level: every row
+  /// written before the board existed carries it, and changing the column
+  /// default would not move them anyway. The **service** writes «برای انجام»
+  /// for a task created from here on, so a new task lands in the first column
+  /// rather than the middle one. `taskLane` in `src/utils/workBoard.ts` is what
+  /// maps this onto a column.
+  status String @default("در حال انجام") @db.NVarChar(30)
+
+  /// When the work was picked up, and when it was finished.
+  ///
+  /// `completedAt` predates the board and was written only by the sales
+  /// follow-up flow; the generic path stamps it too now, so a task that reaches
+  /// «انجام شده» from any direction records when. `startedAt` is stamped the
+  /// first time it enters «در حال انجام» and is **not** cleared by moving back
+  /// — the day work started on something is a fact, and a task pushed back to
+  /// the queue and picked up again has not started twice.
+  startedAt       DateTime? @db.Date
+  startedAtJalali String?   @db.NVarChar(10)
 
   dueDate       DateTime? @db.Date
   dueDateJalali String?   @db.NVarChar(10)

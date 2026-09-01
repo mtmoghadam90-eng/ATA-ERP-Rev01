@@ -1,10 +1,12 @@
 import express from "express";
 import { parseListQuery } from "../listing";
+import { BOARD_LANES, BoardLane } from "../../utils/workBoard";
+import { moveReferralsToLane } from "../services/activityService";
 import { RouteDeps, sendError } from "./types";
 import { getTodayShamsi } from "../../dateUtils";
 import {
   TASK_FILTERABLE, TASK_SORTABLE, TaskInput,
-  createTask, deleteTask, getTask, listTasks, taskSummary, updateTask,
+  createTask, deleteTask, getTask, listTasks, moveTasksToLane, taskSummary, updateTask,
 } from "../services/taskService";
 
 const WRITABLE: (keyof TaskInput)[] = [
@@ -51,6 +53,47 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "GET /api/tasks");
+    }
+  });
+
+  /*
+   * Moving several cards into one column.
+   *
+   * Registered before `/api/tasks/:id` so «board» is not read as a task id.
+   *
+   * One request rather than one per card: the board's whole point is picking
+   * three or four things out of «برای انجام» and saying «these are today», and
+   * four sequential round trips would show the column rearranging itself a card
+   * at a time. Tasks and referrals move in the same call because the board does
+   * not distinguish them — a person drags a card, not a record type.
+   */
+  app.post("/api/tasks/board/move", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const lane = body.lane;
+      if (!(BOARD_LANES as readonly string[]).includes(String(lane))) {
+        res.status(400).json({ success: false, error: "ستون مقصد نامعتبر است." });
+        return;
+      }
+      const ids = (value: unknown) =>
+        (Array.isArray(value) ? value : []).filter((v): v is string => typeof v === "string");
+
+      const today = getTodayShamsi();
+      const tasks = await moveTasksToLane(ids(body.taskIds), lane as BoardLane, user, today);
+      const referrals = await moveReferralsToLane(ids(body.referralIds), lane as BoardLane, user);
+
+      res.json({
+        success: true,
+        moved: tasks.moved + referrals.moved,
+        // Reported rather than swallowed: a card that would not move is one the
+        // person can see sitting where they left it, and silence there reads as
+        // the board being broken.
+        refused: tasks.refused + referrals.refused,
+      });
+    } catch (err) {
+      sendError(res, err, "POST /api/tasks/board/move");
     }
   });
 

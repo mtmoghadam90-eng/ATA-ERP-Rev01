@@ -11,7 +11,6 @@ import ProjectsView from './components/ProjectsView';
 import TransactionsView from './components/TransactionsView';
 import TasksView from './components/TasksView';
 import SettingsView from './components/SettingsView';
-import ReferralsView from './components/ReferralsView';
 import UsersView from './components/UsersView';
 import AfterSalesServicesView from './components/AfterSalesServicesView';
 import PackagingDeliveryView from './components/PackagingDeliveryView';
@@ -63,7 +62,15 @@ export default function App() {
     }
     return 'dashboard';
   });
-  const [referralsTab, setReferralsTab] = useState<'toMe' | 'fromMe' | 'notifications'>('toMe');
+  /*
+   * Which tab of «وظایف و پیگیری» the header icons open.
+   *
+   * «کارتابل ارجاعات» was a module of its own and is a tab in there now, so
+   * the inbox icon and the bell say which tab rather than which screen. Both
+   * icons stay: they are how people reach their referrals and their notices
+   * from anywhere in the application.
+   */
+  const [referralsTab, setReferralsTab] = useState<'board' | 'inbox' | 'notifications'>('board');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
   const [selectedProjectIdForActivities, setSelectedProjectIdForActivities] = useState<string | null>(null);
   const [selectedCustomerNameForSearch, setSelectedCustomerNameForSearch] = useState<string | null>(null);
@@ -461,22 +468,6 @@ export default function App() {
             onClearInitialSelectedProject={() => setSelectedProjectIdForActivities(null)}
           />
         );
-      case 'referrals':
-        return (
-          <ReferralsView 
-            initialTab={referralsTab}
-            currentUser={store.currentUser}
-            settings={store.settings}
-            onViewProjectActivities={(projId) => {
-              setSelectedProjectIdForActivities(projId);
-              setActiveView('projects');
-            }}
-            onViewCustomerDetails={(custName) => {
-              setSelectedCustomerNameForSearch(custName);
-              setActiveView('customers');
-            }}
-          />
-        );
       case 'transactions':
         return (
           <TransactionsView 
@@ -488,12 +479,14 @@ export default function App() {
             categoryCompletion={categoryCompletion}
           />
         );
-            case 'tasks':
+      case 'tasks':
         return (
-          // Reads its own data from the API, scoped by assignment.
+          // Reads its own data from the API, scoped by assignment. «کارتابل
+          // ارجاعات» is a tab in here now rather than a module of its own.
           <TasksView
             settings={store.settings}
             currentUser={store.currentUser}
+            initialTab={referralsTab}
           />
         );
       case 'messaging':
@@ -608,7 +601,7 @@ export default function App() {
                </button>
                <button 
                  className="relative text-slate-500 hover:text-amber-600 transition p-1"
-                 onClick={() => { setReferralsTab('toMe'); setActiveView('referrals'); }}
+                 onClick={() => { setReferralsTab('inbox'); setActiveView('tasks'); }}
                  title="ارجاعات کار (نیاز به اقدام)"
                >
                  <Inbox size={22} />
@@ -632,7 +625,7 @@ export default function App() {
                </button>
                <button 
                  className="relative text-slate-500 hover:text-rose-600 transition p-1"
-                 onClick={() => { setReferralsTab('notifications'); setActiveView('referrals'); }} 
+                 onClick={() => { setReferralsTab('notifications'); setActiveView('tasks'); }} 
                  title="اعلان‌های سیستم"
                >
                  <Bell size={22} />

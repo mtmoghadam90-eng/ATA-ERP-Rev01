@@ -131,6 +131,18 @@ export const salesFollowUpApi = {
       .then((r) => r.summary),
 
   /**
+   * The queue row behind one follow-up task.
+   *
+   * What lets the merged work board open the *same* completion modal the
+   * follow-up screen opens. The row is derived — the next action, its due date,
+   * the health — so it is built on the server rather than assembled out of what
+   * a task card happens to carry, which is how two screens come to disagree
+   * about a quotation's next step.
+   */
+  rowForTask: (taskId: string) =>
+    api.get<{ row: FollowUpRow }>(`/api/sales-follow-up/tasks/${taskId}`).then((r) => r.row),
+
+  /**
    * One call, because it is one transaction.
    *
    * Closing the task, recording the result, moving the proforma's follow-up

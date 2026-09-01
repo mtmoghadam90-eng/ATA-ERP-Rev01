@@ -44,13 +44,17 @@ export default function Sidebar({
    * everything that has to agree about it.
    */
   const BADGES: Record<string, { badge: string | null; badgeColor: string }> = {
+    /*
+     * One badge, because there is one module.
+     *
+     * «کارتابل ارجاعات» was a module of its own with its own count; both are
+     * tabs of «وظایف و پیگیری» now, so the number has to be both — a badge
+     * that counted only half of what is waiting would say the work had gone
+     * away when a referral arrived.
+     */
     tasks: {
-      badge: taskCount > 0 ? String(taskCount) : null,
+      badge: taskCount + referralsCount > 0 ? String(taskCount + referralsCount) : null,
       badgeColor: 'bg-sky-500 text-white',
-    },
-    referrals: {
-      badge: referralsCount > 0 ? String(referralsCount) : null,
-      badgeColor: 'bg-amber-500 text-slate-900 font-extrabold animate-pulse',
     },
   };
 

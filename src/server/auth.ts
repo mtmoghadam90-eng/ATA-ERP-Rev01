@@ -113,6 +113,22 @@ export const KEY_PERMISSION: Record<string, string | null> = {
   erp_packaging_deliveries: "packagingDelivery",
   erp_after_sales_services: "packagingDelivery",
   erp_project_category_groups: "projects",
+  /*
+   * A referral is a task, so it is gated like one.
+   *
+   * It used to go through `erp_project_category_groups` — the **projects**
+   * permission — because the referral endpoints live in the same route file as
+   * the activity feed. That meant a user who had the referrals module and not
+   * the projects module got 403 on their own inbox, which nobody hit only
+   * because that module was rarely granted on its own. Merged into the tasks
+   * board, every account has `tasks` and every one of them would have hit it.
+   *
+   * Reading your own referrals needs no project permission: `listReferrals`
+   * forces the caller's own id into the query, and `setReferralStatus` refuses
+   * anybody who is neither party. The wider «all referrals» view still checks
+   * `canSeeProjects` inside the service.
+   */
+  erp_referrals: "tasks",
   erp_messaging: "messaging",
   // Readable by everyone (as a name directory — see toUserDirectory); writing is
   // gated separately by USERS_WRITE_PERMISSION.
