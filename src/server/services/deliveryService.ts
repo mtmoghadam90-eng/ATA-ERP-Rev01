@@ -307,7 +307,7 @@ export async function createDelivery(input: DeliveryInput, user: AuthUser, today
     await reconcileDeliveryStock(tx, delivery.id, todayJalali);
     // A packing list is «بسته‌بندی و تحویل» on the project's stage, and its
     // actual delivery date is what turns that into «تحویل شده».
-    await syncProjectStage(tx, delivery.projectId, todayJalali);
+    await syncProjectStage(tx, delivery.projectId, todayJalali, user);
     return tx.packagingDelivery.findUnique({
       where: { id: delivery.id },
       include: { items: { orderBy: { lineNo: "asc" } } },
@@ -410,7 +410,7 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
     const row = await tx.packagingDelivery.findUnique({
       where: { id }, select: { projectId: true },
     });
-    await syncProjectStage(tx, row?.projectId ?? null, todayJalali);
+    await syncProjectStage(tx, row?.projectId ?? null, todayJalali, user);
 
     return tx.packagingDelivery.findUnique({
       where: { id },
@@ -635,7 +635,7 @@ export async function deleteDelivery(
     await tx.packingItem.deleteMany({ where: { deliveryId: id } });
     await reconcileDeliveryStock(tx, id, todayJalali);
     await tx.packagingDelivery.delete({ where: { id } });
-    await syncProjectStage(tx, existing.projectId, todayJalali);
+    await syncProjectStage(tx, existing.projectId, todayJalali, user);
   });
 
   // Audit log
@@ -848,7 +848,7 @@ export async function createService(input: ServiceInput, user: AuthUser, todayJa
     });
     await applyServiceHeader(tx, service.id);
     // An open service record is the last stage a delivered project can be at.
-    await syncProjectStage(tx, service.projectId, todayJalali);
+    await syncProjectStage(tx, service.projectId, todayJalali, user);
 
     return tx.afterSalesService.findUnique({
       where: { id: service.id },
@@ -932,7 +932,7 @@ export async function updateService(id: string, input: ServiceInput, user: AuthU
     const row = await tx.afterSalesService.findUnique({
       where: { id }, select: { projectId: true },
     });
-    await syncProjectStage(tx, row?.projectId ?? null, todayJalali);
+    await syncProjectStage(tx, row?.projectId ?? null, todayJalali, user);
 
     return tx.afterSalesService.findUnique({
       where: { id },

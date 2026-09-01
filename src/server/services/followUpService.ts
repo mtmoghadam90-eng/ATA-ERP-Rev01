@@ -332,7 +332,7 @@ export async function completeFollowUp(
 
       // The same function the outcome modal calls, so the two cannot disagree
       // about what this project's status becomes.
-      await syncProjectStatus(tx, proforma.projectId, todayJalali);
+      await syncProjectStatus(tx, proforma.projectId, todayJalali, user);
     }
 
     return { nextTaskId };
