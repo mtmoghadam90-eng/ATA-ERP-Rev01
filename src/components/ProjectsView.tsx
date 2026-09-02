@@ -61,6 +61,7 @@ import SatisfactionLettersModal from './SatisfactionLettersModal';
 import { useProjectJump } from "../api/useProjectJump";
 import { moduleForCategory } from "../utils/projectLinks";
 import { APP_MODULES } from "../appModules";
+import { oversizedUploadReason } from '../utils/uploadLimits';
 
 /**
  * What the sidebar calls each module, so a link reads as the place it goes.
@@ -226,11 +227,15 @@ export default function ProjectsView({
       alert(`حداکثر ${MAX_ACTIVITY_ATTACHMENTS} فایل برای هر فعالیت قابل ثبت است.`);
       return null;
     }
-    const oversized = files.find(
-      (f) => f.size > 2 * 1024 * 1024 && !f.type.startsWith('image/'),
-    );
+    /*
+     * The size rule, from the one place that holds it. Checked here as well as
+     * in `uploadFile` only because this form takes several files at once and
+     * refusing the batch before any of it is sent beats uploading four and
+     * failing on the fifth.
+     */
+    const oversized = files.map(oversizedUploadReason).find(Boolean);
     if (oversized) {
-      alert(`حداکثر حجم مجاز برای فایل‌های غیرتصویری ۲ مگابایت می‌باشد: ${oversized.name}`);
+      alert(oversized);
       return null;
     }
 

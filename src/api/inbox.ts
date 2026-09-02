@@ -86,7 +86,7 @@ export interface ReferralReply {
 export async function submitReferralReply(
   referralId: string,
   body: ReferralReply,
-): Promise<"sent" | "status-only" | "nothing"> {
+): Promise<"sent" | "sent-reopened" | "status-only" | "nothing"> {
   const forwardTo = body.forwardToUserId || undefined;
   const attachment = body.attachment ?? null;
   const outcome = body.outcome ?? "none";
@@ -103,7 +103,7 @@ export async function submitReferralReply(
 
   if (forwardTo && !text) text = "ارجاع به همکار";
 
-  await inboxApi.replyToReferral(referralId, {
+  const posted = await inboxApi.replyToReferral(referralId, {
     text,
     attachmentName: attachment?.name ?? null,
     attachmentSize: attachment?.size ?? null,
@@ -119,7 +119,12 @@ export async function submitReferralReply(
   }
   if (forwardTo) await inboxApi.reassignReferral(referralId, forwardTo);
 
-  return "sent";
+  /*
+   * A closed category that the answer brought back to «جاری» is worth saying
+   * out loud: it is a change to the project the writer did not ask for and
+   * would otherwise only find by going and looking.
+   */
+  return posted?.reopened ? "sent-reopened" : "sent";
 }
 
 export const inboxApi = {
@@ -163,7 +168,13 @@ export const inboxApi = {
       /** True when the same action hands the referral on, so no notice is raised. */
       andForwarded?: boolean;
     },
-  ) => api.post<{ message: ReferralMessageRow }>(`/api/referrals/${id}/messages`, body).then((r) => r.message),
+    /*
+     * Answers with the message **and** whether a closed category had to be
+     * reopened to accept it — a change to the project the writer did not ask
+     * for, and one they would otherwise only find by going and looking.
+     */
+  ) => api.post<{ message: ReferralMessageRow; reopened: boolean }>(
+    `/api/referrals/${id}/messages`, body),
 
   /** Notices, plus the unread total — which spans every notice, not the page. */
   notifications: (query: Record<string, string | number | undefined>, signal?: AbortSignal) =>

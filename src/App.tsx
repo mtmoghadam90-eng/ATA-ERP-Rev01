@@ -98,6 +98,28 @@ export default function App() {
   /** The term this view was opened with, if it was the one asked for. */
   const jumpFor = (view: string) => (projectJump?.view === view ? projectJump.term : undefined);
   const clearJump = () => setProjectJump(null);
+
+  /*
+   * Opening a module **on a particular tab**.
+   *
+   * The same shape as the project jump above and for the same reason: the
+   * choice is *between* views, so it cannot live in either of them. «مشاهده
+   * فهرست پیگیری» on the front page opened «پیش‌فاکتورها» and landed on the
+   * documents tab — the module was right and the screen was the wrong half of
+   * it — and «مشاهده و ویرایش نرخ ارزها» opened Settings on «عمومی».
+   *
+   * Cleared the moment it is applied, exactly as the jump is: left in place,
+   * coming back to the module through the sidebar hours later would silently
+   * reopen a tab nobody asked for, and a second press of the same button would
+   * do nothing at all.
+   */
+  const [tabJump, setTabJump] = useState<{ view: string; tab: string } | null>(null);
+  const openViewTab = (view: string, tab: string) => {
+    setTabJump({ view, tab });
+    setActiveView(view);
+  };
+  const tabFor = (view: string) => (tabJump?.view === view ? tabJump.tab : undefined);
+  const clearTabJump = () => setTabJump(null);
   const [calendarOpen, setCalendarOpen] = useState<boolean>(false);
   const [triggeredReminders, setTriggeredReminders] = useState<string[]>([]);
   const [activeReminderTask, setActiveReminderTask] = useState<any>(null);
@@ -422,6 +444,7 @@ export default function App() {
           // collections it used to be handed are gone.
           <DashboardView
             setActiveTab={setActiveView}
+            openViewTab={openViewTab}
             currentUser={store.currentUser}
             settings={store.settings}
           />
@@ -454,6 +477,8 @@ export default function App() {
           <ProformasView
             projectJump={jumpFor('proformas')}
             onProjectJumpApplied={clearJump}
+            initialTab={tabFor('proformas')}
+            onInitialTabApplied={clearTabJump}
             onOpenProject={(code) => openProjectIn('projects', code)}
             initialPrintDocId={printDocumentRequest?.module === 'proformas' ? printDocumentRequest.docId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
@@ -572,6 +597,8 @@ export default function App() {
 
         return (
           <SettingsView 
+            initialTab={tabFor('settings')}
+            onInitialTabApplied={clearTabJump}
             settings={store.settings}
             updateSettings={store.updateSettings}
             applyServerSettings={store.applyServerSettings}

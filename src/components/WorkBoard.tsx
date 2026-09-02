@@ -109,8 +109,8 @@ const PRIORITY_CLASS: Record<string, string> = {
  * twice over.
  */
 const LANE_CLASS: Record<BoardLane, string> = {
-  TODO: 'board-lane board-lane-todo',
   WAITING: 'board-lane board-lane-waiting',
+  TODO: 'board-lane board-lane-todo',
   DOING: 'board-lane board-lane-doing',
   DONE: 'board-lane board-lane-done',
 };
@@ -129,7 +129,7 @@ const LANE_NOTE: Partial<Record<BoardLane, string>> = {
 export default function WorkBoard({
   cards, sort, today, load, selected, onToggleSelect, onMove, onOpen, moving,
 }: Props) {
-  const byLane: Record<BoardLane, BoardCard[]> = { TODO: [], WAITING: [], DOING: [], DONE: [] };
+  const byLane: Record<BoardLane, BoardCard[]> = { WAITING: [], TODO: [], DOING: [], DONE: [] };
   for (const card of cards) byLane[laneOf(card, today)].push(card);
   for (const lane of BOARD_LANES) byLane[lane] = sortBoardCards(byLane[lane], sort);
 

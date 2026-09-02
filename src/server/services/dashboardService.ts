@@ -50,6 +50,8 @@ export interface DashboardSummary {
     winRatePercent: number;
     wonCount: number;
     lostCount: number;
+    /** Withdrawn rather than lost — see `opportunityOutcome`. */
+    cancelledCount: number;
     totalCount: number;
     /** «چقدر رفت و برگشت» — proformas issued per project, to one decimal. */
     averageProformasPerProject: number;
@@ -224,10 +226,15 @@ export async function dashboardSummary(user: AuthUser): Promise<DashboardSummary
   const groups = opportunityGroups(rows);
   let wonCount = 0;
   let lostCount = 0;
+  /* Counted apart from the losses: a job the customer withdrew says nothing
+     about how the sales desk is performing, and mixing the two makes «چرا
+     می‌بازیم» unanswerable. See `opportunityOutcome`. */
+  let cancelledCount = 0;
   for (const group of groups) {
     const result = opportunityOutcome(group);
     if (result === "won") wonCount++;
     else if (result === "lost") lostCount++;
+    else if (result === "cancelled") cancelledCount++;
   }
   const totalCount = groups.length;
 
@@ -274,6 +281,7 @@ export async function dashboardSummary(user: AuthUser): Promise<DashboardSummary
       winRatePercent: totalCount > 0 ? Math.round((wonCount / totalCount) * 100) : 0,
       wonCount,
       lostCount,
+      cancelledCount,
       totalCount,
       averageProformasPerProject: averageProformasPerProject(proformasOnProjects, projectIds.size),
     },

@@ -8,7 +8,11 @@ import {
   ChevronLeft,
   Activity,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  XCircle,
+  Inbox,
+  ListTodo,
+  Phone
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -26,7 +30,8 @@ import {
 import { Task, User, ERPSettings } from '../types';
 import { canSeeCosts } from '../utils/permissions';
 import CustomerValueMatrix from './CustomerValueMatrix';
-import { getTodayShamsi, toShamsiStr } from '../dateUtils';
+import { getTodayShamsi } from '../dateUtils';
+import { rankForTopUp, referralIsOpen } from '../utils/workBoard';
 import { ApiError } from '../api/client';
 import { useDashboard } from '../api/dashboard';
 import FollowUpHealthSection from './FollowUpHealthSection';
@@ -48,6 +53,14 @@ import AssistantPanel from './AssistantPanel';
  */
 interface DashboardViewProps {
   setActiveTab: (tab: string) => void;
+  /**
+   * Opens a module **on a particular tab**.
+   *
+   * Two buttons here name a screen that is a tab inside another module —
+   * «فهرست پیگیری» inside «پیش‌فاکتورها» and «نرخ ارز روزانه» inside Settings —
+   * and `setActiveTab` alone lands on whichever half that module opens on.
+   */
+  openViewTab: (view: string, tab: string) => void;
   currentUser: User | null;
   /** Only for the value matrix's quadrant lines, which are the thresholds. */
   settings?: ERPSettings;
@@ -57,6 +70,7 @@ const COLORS = ['#2563eb', '#3b82f6', '#60a5fa', '#10b981', '#f59e0b', '#ef4444'
 
 export default function DashboardView({
   setActiveTab,
+  openViewTab,
   currentUser,
   settings,
 }: DashboardViewProps) {
@@ -67,26 +81,56 @@ export default function DashboardView({
   const { summary, loading, error, reload } = useDashboard();
   const { rates: exchangeRates } = useExchangeRates();
 
-  /** Timestamps arrive as datetimes, not the Shamsi strings the store kept. */
-  const shamsi = (iso: string | undefined | null) => (iso ? toShamsiStr(new Date(iso)) : '');
-
   /* The two lists the page shows, each a small query rather than a whole
      collection filtered in the browser: the tasks still open, and the referrals
      waiting on this user. */
   const [tasks, setTasks] = useState<Task[]>([]);
   const [referrals, setReferrals] = useState<ReferralRow[]>([]);
 
+  /*
+   * The two headline tiles count **what is assigned to this user**, always.
+   *
+   * They used to be `.length` of the two lists below, which now change with
+   * the «من / همه» tab — so flipping that tab moved a figure headed «من».
+   * Asked for separately, `pageSize: 1`, so only the totals come back: two
+   * counts, not two more lists.
+   */
+  const [mine, setMine] = useState({ tasks: 0, referrals: 0 });
+
   const loadLists = React.useCallback(async (signal?: AbortSignal) => {
+    /*
+     * «not finished», never the literal «در حال انجام».
+     *
+     * That word is one of four a task can carry: every automation writes «در
+     * انتظار», the completion flow writes «برای انجام», and rows older than the
+     * board carry «در حال انجام» — so asking for it by name showed a slice of
+     * the board and called it the urgent work. `hideCompleted` is the board's
+     * own rule, written as an exclusion, so a status nobody anticipated is
+     * still open work and still appears.
+     *
+     * The tab decides the scope on the **server**, by account id. «همه» used to
+     * be a `.filter()` here comparing display names, which is the fault
+     * `resolveAssignee` exists for.
+     */
+    const scope = taskFilter === 'my' ? 'toMe' : undefined;
     const [taskPage, referralPage] = await Promise.all([
       tasksApi.list({
-        status: 'در حال انجام', pageSize: 50,
+        hideCompleted: 'true', scope, pageSize: 50,
         sort: 'dueDate', order: 'asc',
       }, signal),
-      inboxApi.referrals({ scope: 'toMe', pageSize: 20, sort: 'createdAt', order: 'desc' }, signal),
+      inboxApi.referrals({
+        scope, open: 'true', pageSize: 20, sort: 'createdAt', order: 'desc',
+      }, signal),
     ]);
     setTasks(taskPage.rows.map((row: TaskRow) => rowToTask(row)));
     setReferrals(referralPage.rows);
-  }, []);
+
+    const [myTasks, myReferralCount] = await Promise.all([
+      tasksApi.list({ hideCompleted: 'true', scope: 'toMe', pageSize: 1 }, signal),
+      inboxApi.referrals({ scope: 'toMe', open: 'true', pageSize: 1 }, signal),
+    ]);
+    setMine({ tasks: myTasks.total, referrals: myReferralCount.total });
+  }, [taskFilter]);
 
   React.useEffect(() => {
     const controller = new AbortController();
@@ -111,29 +155,6 @@ export default function DashboardView({
   const totalRevenue = Number(summary.revenue.wonRial);
   const activeProformasValue = Number(summary.revenue.activeRial);
   const activeProformas = { length: summary.revenue.activeCount };
-
-  // Referrals still waiting on this user, already scoped by the server.
-  const myReferrals = referrals
-    .filter(r => r.status !== 'انجام شده')
-    .map(r => ({
-      activityId: r.activity?.id ?? r.activityId,
-      text: r.activity?.text ?? '',
-      createdAt: r.createdAt,
-      referral: {
-        actionRequired: r.actionRequired ?? '',
-        status: r.status,
-        assignedBy: r.assignedByName ?? '',
-        assignedTo: r.assignedToName ?? '',
-      },
-      groupName: r.activity?.group?.categoryName ?? 'بدون دسته‌بندی',
-      projectId: r.activity?.group?.project?.id ?? '',
-      projectName: r.activity?.group?.project?.name ?? 'پروژه نامشخص',
-    }));
-
-  const myActiveTasks = tasks.filter(t =>
-    (!t.assignedTo || t.assignedTo === currentUser?.fullName) &&
-    t.status === 'در حال انجام'
-  );
 
   const projectChartData = summary.projectsByStatus.map(s => ({
     name: s.status,
@@ -174,16 +195,51 @@ export default function DashboardView({
     }
   };
 
-  // Filter tasks for the actions checklist
-  const displayedTasks = tasks
-    .filter(t => t.status === 'در حال انجام')
-    .filter(t => taskFilter === 'all' || !t.assignedTo || t.assignedTo === currentUser?.fullName)
-    .sort((a, b) => {
-      // Prioritize urgent tasks
-      const priorityWeight = { 'فوری': 4, 'بالا': 3, 'متوسط': 2, 'پایین': 1 };
-      return (priorityWeight[b.priority] || 0) - (priorityWeight[a.priority] || 0);
-    })
-    .slice(0, 4);
+  /**
+   * The open work, both kinds, in the order somebody should pick it up.
+   *
+   * `rankForTopUp` is the board's own answer to «what next» — nearest promise
+   * first, priority breaking its ties, age breaking priority's — rather than
+   * the priority-only sort this card used, which put a «فوری» with no date
+   * above a «متوسط» due this morning. Ranking here also means the two record
+   * types are ordered against each other rather than one block after the other.
+   */
+  const workCards = React.useMemo(() => {
+    const taskCards = tasks.map((task) => ({
+      kind: 'task' as const,
+      id: task.id,
+      task,
+      title: task.title,
+      taskKind: task.taskKind,
+      priority: task.priority as string,
+      dueDate: task.dueDate,
+      createdAt: task.createdAt ?? '',
+      assignedTo: task.assignedTo,
+      context: task.relatedProject?.code
+        ? `${task.relatedProject.code} — ${task.relatedProject.name}`
+        : task.relatedToName || '',
+    }));
+
+    const referralCards = referrals
+      .filter((r) => referralIsOpen(r.status))
+      .map((r) => ({
+        kind: 'referral' as const,
+        id: r.id,
+        task: null,
+        // The message *is* the request; there is no separate «what to do» box.
+        title: r.activity?.text || r.actionRequired || 'ارجاع کار',
+        taskKind: undefined as string | undefined,
+        priority: '' as string,
+        dueDate: '',
+        createdAt: r.createdAt,
+        assignedTo: r.assignedToName ?? '',
+        context: r.activity?.group?.project?.code
+          ? `${r.activity.group.project.code} — ${r.activity.group.project.name}`
+          : '',
+      }));
+
+    return rankForTopUp([...taskCards, ...referralCards]).slice(0, 6);
+  }, [tasks, referrals]);
 
   return (
     <div className="space-y-6 animate-fade-in bg-slate-50/50 p-2 md:p-4 rounded-3xl" dir="rtl">
@@ -301,7 +357,7 @@ export default function DashboardView({
           <div className="space-y-1">
             <span className="text-[11px] text-slate-400 font-bold block group-hover:text-indigo-600 transition">ارجاعات فعال من</span>
             <span className="text-lg font-black text-slate-800 block font-mono">
-              {myReferrals.length} ارجاع باز
+              {mine.referrals} ارجاع باز
             </span>
             <span className="text-[10px] text-indigo-500 font-bold flex items-center gap-1">
               📥 نیازمند بررسی و پاسخ سریع
@@ -320,7 +376,7 @@ export default function DashboardView({
           <div className="space-y-1">
             <span className="text-[11px] text-slate-400 font-bold block group-hover:text-amber-600 transition">اقدامات در دست اقدام من</span>
             <span className="text-lg font-black text-slate-800 block font-mono">
-              {myActiveTasks.length} تسک فعال
+              {mine.tasks} تسک فعال
             </span>
             <span className="text-[10px] text-amber-600 font-bold flex items-center gap-1">
               📝 کارهای محول‌شده به شما
@@ -342,7 +398,9 @@ export default function DashboardView({
         a document's commercial outcome, which says nothing about whether
         anybody is still chasing it. Every card opens the follow-up screen.
       */}
-      <FollowUpHealthSection onOpen={() => setActiveTab('proformas')} />
+      {/* «فهرست پیگیری» is the second tab of «پیش‌فاکتورها», not its first —
+          this opened the module and landed on «اسناد». */}
+      <FollowUpHealthSection onOpen={() => openViewTab('proformas', 'follow-up')} />
 
       {/* 3. Main Row: Sales & Exchange Rates */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -436,7 +494,9 @@ export default function DashboardView({
           </div>
 
           <button 
-            onClick={() => setActiveTab('settings')}
+            /* «نرخ ارز روزانه» is a tab inside Settings, and this used to land
+               on «عمومی» and leave the reader to find it. */
+            onClick={() => openViewTab('settings', 'rates')}
             className="w-full py-2.5 bg-slate-50 hover:bg-slate-100 hover:text-blue-600 text-slate-600 text-xs font-bold rounded-xl border border-slate-200 transition text-center"
           >
             مشاهده و ویرایش نرخ ارزها ←
@@ -445,80 +505,46 @@ export default function DashboardView({
 
       </div>
 
-      {/* 4. Second Row: Referrals Inbox, Tasks & Project Statuses */}
+      {/* 4. Second Row: my open work, and the pipeline */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-6">
         
-        {/* Referrals Inbox (Col-span 4) */}
-        <div className="lg:col-span-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[360px]">
-          <div className="border-b border-slate-100 pb-3">
-            <div className="flex justify-between items-center">
-              <h3 className="text-sm font-extrabold text-slate-800 flex items-center gap-1.5">
-                <span>📥</span> کارتابل ارجاعات فعال من
-              </h3>
-              <span className="text-[10px] bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full font-bold">
-                {myReferrals.length} ارجاع جدید
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 mt-1">ارجاعات کارگاه‌ها و فعالیت‌ها که نیازمند پاسخ شماست</p>
-          </div>
+        {/*
+          One card, because it is one board.
 
-          <div className="my-4 space-y-3 flex-1 overflow-auto max-h-72">
-            {myReferrals.slice(0, 3).map((ref) => (
-              <div 
-                key={ref.activityId} 
-                onClick={() => setActiveTab('tasks')}
-                className="p-3 bg-indigo-50/30 hover:bg-indigo-50/60 rounded-xl border border-indigo-100/50 flex flex-col gap-2 transition cursor-pointer"
-              >
-                <div className="flex justify-between items-start">
-                  <span className="text-[10px] font-bold text-indigo-800 bg-indigo-100/50 px-2 py-0.5 rounded">
-                    {ref.groupName}
-                  </span>
-                  <span className="text-[9px] text-slate-400 font-mono">
-                    از طرف: {ref.referral.assignedBy}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-700 font-medium line-clamp-2">{ref.referral.actionRequired}</p>
-                <div className="flex justify-between items-center border-t border-indigo-100/20 pt-1.5 mt-1 text-[9px] text-slate-400">
-                  <span className="truncate max-w-[150px]">پروژه: {ref.projectName}</span>
-                  <span className="font-mono">{shamsi(ref.createdAt)}</span>
-                </div>
-              </div>
-            ))}
-            
-            {myReferrals.length === 0 && (
-              <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 py-12">
-                <CheckCircle2 size={32} className="text-slate-300 mb-2" />
-                <p className="text-xs">هیچ ارجاع معلقی برای شما یافت نشد.</p>
-              </div>
-            )}
-          </div>
+          There were two: «کارتابل ارجاعات فعال من» and «وظایف و اقدامات
+          بازرگانی», side by side, asking the same question of two tables — and
+          the modules behind them have since been merged into a single «وظایف و
+          پیگیری» where a task, a chase and a referral sit in the same columns.
+          Two cards for one board is two places to look, which is the round trip
+          the merge removed everywhere else.
 
-          <button 
-            onClick={() => setActiveTab('tasks')}
-            className="w-full py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-bold rounded-xl border border-slate-200 transition text-center mt-2 shrink-0"
-          >
-            ورود به کارتابل ارجاعات و کارپوشه ←
-          </button>
-        </div>
-
-        {/* Tasks List (Col-span 4) */}
-        <div className="lg:col-span-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[360px]">
-          <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
+          The tasks half was also filtering on the literal «در حال انجام», in
+          the query and twice again in the browser. That word is one of four a
+          task can carry: every automation writes «در انتظار», the completion
+          flow writes «برای انجام», and rows older than the board carry «در حال
+          انجام» — so the card showed a slice of the board and called it the
+          urgent work. It asks for «not finished» now, which is the board's own
+          rule and an exclusion, so a status nobody anticipated still appears.
+        */}
+        <div className="lg:col-span-8 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[360px]">
+          <div className="border-b border-slate-100 pb-3 flex items-center justify-between gap-3">
             <div className="space-y-0.5">
               <h3 className="text-sm font-extrabold text-slate-800 flex items-center gap-1.5">
-                <span>⚡</span> وظایف و اقدامات بازرگانی فوری
+                <span>⚡</span> کارهای باز من
               </h3>
-              <p className="text-xs text-slate-400">تسک‌های کاری فعال در جریان و سررسید پیگیری‌ها</p>
+              <p className="text-xs text-slate-500">
+                وظایف، پیگیری‌های فروش و ارجاع‌های همکاران — به ترتیب نزدیک‌ترین سررسید و بالاترین اولویت
+              </p>
             </div>
-            
-            <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-              <button 
+
+            <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 shrink-0">
+              <button
                 onClick={() => setTaskFilter('my')}
                 className={`px-2 py-1 text-[10px] font-bold rounded-md transition ${taskFilter === 'my' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
               >
                 من
               </button>
-              <button 
+              <button
                 onClick={() => setTaskFilter('all')}
                 className={`px-2 py-1 text-[10px] font-bold rounded-md transition ${taskFilter === 'all' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
               >
@@ -527,56 +553,88 @@ export default function DashboardView({
             </div>
           </div>
 
-          <div className="my-4 space-y-3 flex-1 overflow-auto max-h-72">
-            {displayedTasks.map((task) => (
-              <div 
-                key={task.id} 
-                className="p-3 bg-slate-50 hover:bg-slate-100/70 rounded-xl border border-slate-100 flex flex-col gap-1.5 transition relative group"
+          <div className="my-4 space-y-2.5 flex-1 overflow-auto max-h-72">
+            {workCards.map((card) => (
+              <div
+                key={`${card.kind}:${card.id}`}
+                className="p-3 bg-slate-50 hover:bg-slate-100/70 rounded-xl border border-slate-100 flex flex-col gap-1.5 transition"
               >
                 <div className="flex items-start gap-2 justify-between">
-                  <div className="flex items-start gap-2.5">
-                    <input 
-                      type="checkbox" 
-                      checked={task.status === 'انجام شده'}
-                      onChange={() => handleToggleTaskStatus(task)}
-                      className="mt-1 h-3.5 w-3.5 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
-                      title="تغییر وضعیت تسک"
-                    />
-                    <div className="space-y-0.5">
-                      <span className="text-xs font-extrabold text-slate-800 leading-tight block">{task.title}</span>
-                      {task.relatedToName && (
-                        <span className="text-[10px] text-slate-400 block">
-                          مربوط به: {task.relatedToName} ({task.relatedToType})
-                        </span>
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    {/*
+                      The tick, and only where a tick is what finishes it.
+
+                      A sales follow-up is closed by recording what the customer
+                      said — the server refuses the bare tick — and a referral is
+                      closed on its own thread. Offering the box for those two
+                      would be a control whose only outcome is an error, so they
+                      open the module where the right form lives.
+                    */}
+                    {card.kind === 'task' && card.taskKind !== 'SALES_FOLLOW_UP' ? (
+                      <input
+                        type="checkbox"
+                        checked={false}
+                        onChange={() => card.task && handleToggleTaskStatus(card.task)}
+                        className="mt-1 h-3.5 w-3.5 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer shrink-0"
+                        title="تکمیل این وظیفه"
+                      />
+                    ) : (
+                      <span className="mt-0.5 shrink-0 text-slate-400">
+                        {card.kind === 'referral' ? <Inbox size={13} /> : <Phone size={13} />}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('tasks')}
+                      className="text-right min-w-0"
+                    >
+                      <span className="text-xs font-extrabold text-slate-800 leading-relaxed block">
+                        {card.title}
+                      </span>
+                      {card.context && (
+                        <span className="text-[10px] text-slate-500 block truncate">{card.context}</span>
                       )}
-                    </div>
+                    </button>
                   </div>
-                  
-                  <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full border shrink-0 ${getPriorityBadgeClass(task.priority)}`}>
-                    {task.priority}
-                  </span>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-white border-slate-200 text-slate-600 inline-flex items-center gap-1">
+                      {card.kind === 'referral' ? <><Inbox size={9} /> ارجاع</>
+                        : card.taskKind === 'SALES_FOLLOW_UP' ? <><Phone size={9} /> پیگیری</>
+                          : <><ListTodo size={9} /> وظیفه</>}
+                    </span>
+                    {card.kind === 'task' && (
+                      <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full border ${getPriorityBadgeClass(card.priority as Task['priority'])}`}>
+                        {card.priority}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                
-                <div className="flex justify-between items-center text-[9px] text-slate-400 border-t border-dashed border-slate-200/80 pt-1.5 mt-1">
-                  <span>مسئول: {task.assignedTo || 'ناشناس'}</span>
-                  <span className="font-mono">سررسید: {task.dueDate}</span>
+
+                <div className="flex justify-between items-center text-[9px] text-slate-500 border-t border-dashed border-slate-200/80 pt-1.5 mt-1">
+                  <span>مسئول: {card.assignedTo || '—'}</span>
+                  {/* A referral has no due date at all, so it says so rather
+                      than printing an empty one. */}
+                  <span className="font-mono">
+                    {card.dueDate ? `سررسید: ${card.dueDate}` : 'بدون سررسید'}
+                  </span>
                 </div>
               </div>
             ))}
-            
-            {displayedTasks.length === 0 && (
-              <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 py-12">
+
+            {workCards.length === 0 && (
+              <div className="h-full flex flex-col items-center justify-center text-center text-slate-500 py-12">
                 <CheckCircle2 size={32} className="text-slate-300 mb-2" />
-                <p className="text-xs">هیچ تسکی در این بخش وجود ندارد.</p>
+                <p className="text-xs">هیچ کار بازی در این بخش نیست.</p>
               </div>
             )}
           </div>
 
-          <button 
+          <button
             onClick={() => setActiveTab('tasks')}
             className="w-full py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-bold rounded-xl border border-slate-200 transition text-center shrink-0"
           >
-            ورود به بخش برد وظایف ←
+            ورود به «وظایف و پیگیری» ←
           </button>
         </div>
 
@@ -584,7 +642,7 @@ export default function DashboardView({
         <div className="lg:col-span-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col justify-between min-h-[360px]">
           <div className="border-b border-slate-100 pb-3">
             <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
-              <span>📈</span> پیپ‌لاین پروژه‌ها و فروش
+              <span>📈</span> پایپ‌لاین پروژه‌ها و فروش
             </h3>
             <p className="text-xs text-slate-400 mt-1">تعداد فرصت‌های ثبت شده به تفکیک مرحله تجاری</p>
           </div>
@@ -678,9 +736,25 @@ export default function DashboardView({
                 <AlertCircle size={14} />
                 <span>باخته: {summary.revenue.lostCount}</span>
               </div>
+              {/*
+                Cancelled, apart from lost. They used to be one figure, so a
+                job the customer withdrew read as one the company was beaten
+                on — and «چرا می‌بازیم» has answers that «چرا لغو می‌شود» does
+                not share.
+              */}
+              <div className="flex items-center gap-1.5 text-slate-500">
+                <XCircle size={14} />
+                <span>لغو شده: {summary.revenue.cancelledCount}</span>
+              </div>
               <div className="flex items-center gap-1.5 text-sky-500">
                 <Activity size={14} />
-                <span>در جریان: {Math.max(0, summary.revenue.totalCount - summary.revenue.wonCount - summary.revenue.lostCount)}</span>
+                <span>در جریان: {Math.max(
+                  0,
+                  summary.revenue.totalCount
+                    - summary.revenue.wonCount
+                    - summary.revenue.lostCount
+                    - summary.revenue.cancelledCount,
+                )}</span>
               </div>
               <div className="flex items-center gap-1.5 text-slate-400">
                 <FileText size={14} />

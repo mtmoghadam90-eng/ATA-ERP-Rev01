@@ -313,7 +313,18 @@ export interface ProformaItem {
   selectedFeatures?: Record<string, string>;
   selectedImage?: string;
   deliveryRange?: string;
-  deliveryUnit?: 'روز' | 'هفته' | 'ماه';
+  /**
+   * The unit of the delivery time — and «آماده تحویل», which is not one.
+   *
+   * Goods on the shelf are not a length of time, so that value makes
+   * `deliveryRange` and `deliveryType` meaningless and `deliveryPhrase` does
+   * not read them. It lives here rather than in a column of its own because a
+   * fifth delivery field would be a fifth thing to keep in step on every line
+   * of every quotation, to say what one value in one of the four already says.
+   * `DELIVERY_READY_UNIT` in `src/utils/deliveryNotes.ts` is the constant, and
+   * `test:rules` holds the two together.
+   */
+  deliveryUnit?: 'روز' | 'هفته' | 'ماه' | 'آماده تحویل';
   deliveryType?: 'کاری' | 'تقویمی';
   deliveryPostfix?: string;
   tagNumber?: string;

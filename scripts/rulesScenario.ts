@@ -55,7 +55,7 @@ import {
   TASK_TODO, BOARD_SORTS, SORT_LABELS, effectivePriority, referralIsOpen, referralLane,
   referralPassesTaskFilters, laneWhere, serverOrderFor, sortBoardCards, taskLane,
   taskStatusForLane, REFERRAL_STATUSES, TASK_STATUSES,
-  BOARD_LANES, MOVABLE_LANES, isMovableLane, rankForTopUp, taskBoardLane,
+  BOARD_LANES, LANE_FILTERS, MOVABLE_LANES, isMovableLane, rankForTopUp, taskBoardLane,
 } from "../src/utils/workBoard";
 import {
   normalizeLimit, remainingCapacity, topUpShortfall, workLimitRefusalReason,
@@ -64,6 +64,12 @@ import {
   DEFAULT_STAFF_TEMPLATES, STAFF_NOTIFICATION_KINDS, STAFF_SAMPLE_VALUES, STAFF_VARIABLES,
   normalizeMobile, staffSmsEnabled, staffSmsRefusal, staffSmsSkipReason, staffTemplateFor,
 } from "../src/utils/staffNotifications";
+import {
+  MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL, oversizedUploadReason,
+} from "../src/utils/uploadLimits";
+import {
+  DELIVERY_READY_TEXT, DELIVERY_READY_UNIT, deliveryPhrase,
+} from "../src/utils/deliveryNotes";
 import { TASK_SORTABLE, laneTimestamps } from "../src/server/services/taskService";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
 import { lossReasonRefusal } from "../src/server/services/projectService";
@@ -4809,8 +4815,36 @@ head("Dashboard: conversion is per project, not per document");
     opportunityOutcome([pf("c", "prj-3", 1, [line(null)])]), "open");
   eq("a project whose last quote was lost is lost",
     opportunityOutcome([pf("d", "prj-4", 1, [line(ITEM_LOST)])]), "lost");
-  eq("a withdrawn project is not counted as won",
-    opportunityOutcome([pf("e", "prj-5", 1, [line(ITEM_CANCELLED)])]), "lost");
+  /*
+   * A withdrawn job is not a lost one, and counting them together — which this
+   * did — is the difference between «we were beaten» and «the customer pulled
+   * out». They have completely different answers, and one figure covering both
+   * cannot be acted on.
+   */
+  eq("a withdrawn project is counted apart from the losses",
+    opportunityOutcome([pf("e", "prj-5", 1, [line(ITEM_CANCELLED)])]), "cancelled");
+  /*
+   * Which of the two a job counts as is `decidingProformas`, exactly as its own
+   * status is: with no winner among them the **latest** quotation stands for
+   * the rest. So the order of the two documents is what decides it, and this
+   * pins both directions rather than one.
+   */
+  eq("the latest document decides: lost last is lost",
+    opportunityOutcome(opportunityGroups([
+      pf("f1", "prj-6", 1, [line(ITEM_CANCELLED)]),
+      pf("f2", "prj-6", 2, [line(ITEM_LOST)]),
+    ])[0]), "lost");
+  eq("...and cancelled last is cancelled",
+    opportunityOutcome(opportunityGroups([
+      pf("h1", "prj-8", 1, [line(ITEM_LOST)]),
+      pf("h2", "prj-8", 2, [line(ITEM_CANCELLED)]),
+    ])[0]), "cancelled");
+  // And neither reaches the tally while anything is still in play.
+  eq("a cancelled quotation beside a live one leaves the job open",
+    opportunityOutcome(opportunityGroups([
+      pf("g1", "prj-7", 1, [line(ITEM_CANCELLED)]),
+      pf("g2", "prj-7", 2, [line(null)]),
+    ])[0]), "open");
 
   // A quotation with no project is still a quotation somebody sent.
   const mixed = [
@@ -9504,6 +9538,189 @@ head("Staff SMS: only the work a person hands to another person");
   const directory = userService.slice(userService.indexOf("const DIRECTORY_SELECT"));
   ok("the colleague directory does not carry anyone's mobile",
     !/mobile/.test(directory.slice(0, directory.indexOf("}"))));
+}
+
+head("The corrections batch: uploads, the board, the feed and the front page");
+{
+  const strip = (text: string) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* ------------------------------ uploads ------------------------------- */
+
+  /*
+   * One limit, said once. It used to be said in five places that disagreed:
+   * three forms refused a non-image over 2 MB with their own sentence, the
+   * server refused an image over 10 MB and anything else over 20, and the two
+   * forms that never grew a check had no limit until the upload was on the
+   * wire.
+   */
+  eq("the limit is 20 MB", MAX_UPLOAD_BYTES, 20 * 1024 * 1024);
+  eq("a file at the limit is accepted",
+    oversizedUploadReason({ name: "a.pdf", size: MAX_UPLOAD_BYTES }), null);
+  ok("one byte over is refused, and the file is named",
+    (oversizedUploadReason({ name: "بروشور.pdf", size: MAX_UPLOAD_BYTES + 1}) ?? "")
+      .includes("بروشور.pdf"));
+  ok("...and the message says what the limit is",
+    (oversizedUploadReason({ name: "a", size: MAX_UPLOAD_BYTES + 1 }) ?? "")
+      .includes(MAX_UPLOAD_LABEL));
+
+  const upload = strip(readFileSync("src/imageUtils.ts", "utf8"));
+  ok("the one path a browser has enforces it before the request",
+    /oversizedUploadReason\(file\)[\s\S]{0,120}throw new Error/.test(upload));
+  const serverSrc = strip(readFileSync("server.ts", "utf8"));
+  ok("and the server holds every kind of file to the same figure",
+    (serverSrc.match(/MAX_UPLOAD_BYTES/g) ?? []).length >= 3
+    && !/10 \* 1024 \* 1024/.test(serverSrc));
+  for (const file of [
+    "src/components/TasksView.tsx",
+    "src/components/ReferralsView.tsx",
+    "src/components/ProjectsView.tsx",
+  ]) {
+    ok(`no form keeps a limit of its own (${file.split("/").pop()})`,
+      !/2 \* 1024 \* 1024/.test(strip(readFileSync(file, "utf8"))));
+  }
+
+  /* ----------------------------- the board ------------------------------ */
+
+  /*
+   * «در انتظار مشتری» is drawn first: it is the column with the least in it to
+   * decide, and the eye then travels the way the work does.
+   */
+  eq("the parked column is drawn first", BOARD_LANES[0], "WAITING");
+  eq("...then what is waiting to be picked up", BOARD_LANES[1], "TODO");
+  eq("...and the filter offers them in the same order",
+    LANE_FILTERS.slice(0, 2).join(","), "WAITING,TODO");
+
+  /*
+   * Deleting asked nothing at all — one press on a small icon beside the edit
+   * pencil and the record was gone, the chase and its recorded result with it.
+   */
+  const tasksView = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
+  ok("the tasks view source survived having its comments stripped",
+    tasksView.includes("handleOpenEdit"));
+  ok("deleting a task asks first",
+    /setTaskToDelete\(task\)/.test(tasksView) && !/onClick=\{\(\) => deleteTask\(task\.id\)\}/.test(tasksView));
+  ok("...and a follow-up's question says what else goes with it",
+    /taskKind === 'SALES_FOLLOW_UP' \? 'حذف پیگیری فروش'/.test(tasksView));
+
+  /* -------------------------- the feed and the thread -------------------- */
+
+  /*
+   * The reported gap. Writing in the feed under a message that named you was
+   * already mirrored into that request's thread; answering from «وظایف و
+   * پیگیری» — which is where the request is actually read — wrote a
+   * `ReferralMessage` and nothing else, so the feed showed the question with
+   * no answer under it.
+   */
+  const activityService = strip(readFileSync("src/server/services/activityService.ts", "utf8"));
+  ok("the activity service source survived having its comments stripped",
+    activityService.includes("addReferralMessage"));
+  ok("a thread reply is posted into the feed as a reply to the message",
+    /replyToId: referral\.activityId/.test(activityService));
+  ok("...in the same transaction as the thread message",
+    /db\.\$transaction\([\s\S]{0,900}referralMessage\.create[\s\S]{0,1400}projectActivity\.create/
+      .test(activityService));
+  /*
+   * And a closed category reopens rather than swallowing the answer: «اتمام
+   * کار» says the work under that heading is finished, and an answer arriving
+   * afterwards says it is not.
+   */
+  ok("a closed category reopens to accept the answer",
+    /group\?\.status === GROUP_CLOSED[\s\S]{0,300}status: GROUP_OPEN/.test(activityService));
+  ok("...and the completion date goes with it",
+    /status: GROUP_OPEN, endDate: null, endDateJalali: null/.test(activityService));
+  // Named once. `setReferralStatus` once compared a *referral's* status against
+  // «اتمام کار», which belongs to the category table, and the branch never fired.
+  ok("the group's own statuses are named rather than typed at each comparison",
+    !/=== "اتمام کار"/.test(activityService) && !/\?\? "جاری"/.test(activityService));
+
+  /* ------------------------- the proforma form --------------------------- */
+
+  const proformaView = strip(readFileSync("src/components/ProformasView.tsx", "utf8"));
+  ok("the proforma view source survived having its comments stripped",
+    proformaView.includes("recipientPicker"));
+  /*
+   * The suggestion list was rendered unconditionally, so it sat over the
+   * «افزودن مشتری» button from the moment the modal opened with no way to put
+   * it away.
+   */
+  ok("the recipient list is shown only while it is being used",
+    /\{recipientListOpen && \(/.test(proformaView));
+  ok("...and closes when somebody is picked",
+    /setRecipientListOpen\(false\)/.test(proformaView));
+  /*
+   * The mousedown guard is what makes closing on blur safe: without it the
+   * field loses focus before the click lands and every selection does nothing.
+   */
+  ok("...without the classic blur-before-click bug",
+    /onMouseDown=\{\(e\) => e\.preventDefault\(\)\}/.test(proformaView));
+
+  /* «آماده تحویل» is not a length of time, so the range and the days are not
+     read — and the boxes for them stand down rather than taking answers that
+     are dropped. */
+  ok("goods on the shelf print their own sentence",
+    deliveryPhrase({ deliveryUnit: DELIVERY_READY_UNIT }).startsWith(DELIVERY_READY_TEXT),
+    deliveryPhrase({ deliveryUnit: DELIVERY_READY_UNIT }));
+  /*
+   * The trailing clause survives, because «موجود در انبار ... پس از دریافت پیش
+   * پرداخت» is a real and common condition — an empty box means «use the
+   * default», which is the convention all four of these fields follow.
+   */
+  ok("...keeping the condition that follows it",
+    deliveryPhrase({ deliveryUnit: DELIVERY_READY_UNIT, deliveryPostfix: "پس از تایید" })
+      === `${DELIVERY_READY_TEXT} پس از تایید`);
+  ok("...and never «۳-۴ آماده تحویل کاری»",
+    !deliveryPhrase({
+      deliveryUnit: DELIVERY_READY_UNIT, deliveryRange: "۳-۴", deliveryType: "کاری",
+    }).includes("۳-۴"));
+  ok("...while an ordinary line is unchanged",
+    deliveryPhrase({}) === "۳-۴ هفته کاری پس از تایید پیش فاکتور و دریافت پیش پرداخت");
+  ok("the form offers it and stands the number fields down",
+    /<option value=\{DELIVERY_READY_UNIT\}>/.test(proformaView)
+    && /disabled=\{items\[0\]\?\.deliveryUnit === DELIVERY_READY_UNIT\}/.test(proformaView));
+  // The goods are the longest text on the row and no twelfth-based column held
+  // them; they get the whole width and the figures share the grid below.
+  ok("the product name has the row to itself",
+    !/col-span-2 md:col-span-3 w-full min-w-0/.test(proformaView));
+
+  /* --------------------------- the front page ---------------------------- */
+
+  const dashboard = strip(readFileSync("src/components/DashboardView.tsx", "utf8"));
+  ok("the dashboard source survived having its comments stripped",
+    dashboard.includes("workCards"));
+  /*
+   * Two buttons named a screen that is a *tab* inside another module, and
+   * `setActiveTab` alone lands on whichever half that module opens on.
+   */
+  ok("the follow-up button opens the follow-up tab",
+    /openViewTab\('proformas', 'follow-up'\)/.test(dashboard));
+  ok("and the rates button opens the rates tab",
+    /openViewTab\('settings', 'rates'\)/.test(dashboard));
+  const app = strip(readFileSync("src/App.tsx", "utf8"));
+  // Cleared the moment it is applied, exactly as the project jump is.
+  ok("the hand-off is cleared once the screen has used it",
+    /onInitialTabApplied=\{clearTabJump\}/.test(app));
+
+  /*
+   * One card, because it is one board — and it asked for the literal «در حال
+   * انجام», which is one of four words a task can carry.
+   */
+  ok("the referrals card is gone", !/کارتابل ارجاعات فعال من/.test(dashboard));
+  ok("the work card asks for «not finished», not one status word",
+    /hideCompleted: 'true'/.test(dashboard) && !/status: 'در حال انجام'/.test(dashboard));
+  ok("...and the tab scopes it on the server rather than by display name",
+    /taskFilter === 'my' \? 'toMe' : undefined/.test(dashboard)
+    && !/t\.assignedTo === currentUser\?\.fullName/.test(dashboard));
+  ok("...and both kinds of card are ranked against each other",
+    /rankForTopUp\(\[\.\.\.taskCards, \.\.\.referralCards\]\)/.test(dashboard));
+  // A chase is not closed by a tick and a referral is closed on its thread.
+  ok("the tick is offered only where a tick is what finishes it",
+    /card\.kind === 'task' && card\.taskKind !== 'SALES_FOLLOW_UP' \?/.test(dashboard));
+
+  ok("the pipeline card is spelled «پایپ‌لاین»",
+    /پایپ‌لاین پروژه‌ها و فروش/.test(dashboard) && !/پیپ‌لاین/.test(dashboard));
+  ok("and a withdrawn opportunity is counted apart from the losses",
+    /summary\.revenue\.cancelledCount/.test(dashboard));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

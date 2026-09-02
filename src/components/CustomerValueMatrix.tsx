@@ -113,15 +113,26 @@ export default function CustomerValueMatrix({
   const yOf = (realized: number) => SIZE - realized;
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4" dir="rtl">
+    /*
+      Compact on purpose, and smaller again after being asked for.
+
+      It is a *reference* chart on the front page — «where do my customers
+      sit» — not the screen anybody works on, and it was taking a full-width
+      card and most of a screen's height for four numbers and a scatter of at
+      most a few dozen points. The plot and the rank tiles now sit side by side
+      rather than stacked, which halves the height, and the plot itself is
+      capped near 11rem. The customers screen is where this is actually read in
+      detail, and every point here opens it.
+    */
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-3" dir="rtl">
       <div className="flex items-center gap-2">
-        <Grid2x2 size={18} className="text-sky-600" />
+        <Grid2x2 size={15} className="text-sky-600" />
         <div>
-          <h3 className="text-sm font-bold text-slate-800">ماتریس ارزش مشتری</h3>
+          <h3 className="text-xs font-bold text-slate-800">ماتریس ارزش مشتری</h3>
           {/* The vertical axis is deliberately unlabelled — the quadrant
               letters and each point's own tooltip say what it is, and a label
               down the side of a small chart is more furniture than reading. */}
-          <p className="text-[10px] text-slate-400 mt-0.5">
+          <p className="text-[9px] text-slate-500">
             اندازه دایره: {showCosts ? 'سود ناخالص' : 'فروش کل'}
           </p>
         </div>
@@ -136,34 +147,15 @@ export default function CustomerValueMatrix({
         them visible without misplacing them.
       */}
       {(summary?.prospects ?? 0) > 0 && (
-        <p className="text-[11px] text-violet-800 bg-violet-50 border border-violet-100 rounded-xl px-3 py-2">
+        <p className="text-[10px] leading-relaxed text-violet-800 bg-violet-50 border border-violet-100 rounded-lg px-2.5 py-1.5">
           <strong>{(summary?.prospects ?? 0).toLocaleString('fa-IR')}</strong> مشتری بالقوه
           هنوز خرید قطعی ندارند و در این ماتریس نمایش داده نمی‌شوند؛ ارزیابی آن‌ها فقط بر پایه
           ارزش بالقوه است.
         </p>
       )}
 
-      {/* summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        {(['A', 'B', 'C', 'D'] as const).map((rank) => (
-          <div key={rank} className="border border-slate-150 rounded-xl p-3">
-            <div className="text-[10px] text-slate-500">
-              <span className="font-mono font-bold">{rank}</span> — {RANK_META[rank].title}
-            </div>
-            <div className="text-lg font-extrabold text-slate-800">
-              {countOf(rank).toLocaleString('fa-IR')}
-            </div>
-            {showCosts && (
-              <div className="text-[9px] text-slate-400 font-mono" dir="ltr">
-                {formatMoney(profitOf(rank))}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
       {loading && (
-        <div className="py-12 text-center text-slate-400">
+        <div className="py-8 text-center text-slate-500">
           <Loader2 size={20} className="animate-spin inline-block" />
         </div>
       )}
@@ -176,9 +168,9 @@ export default function CustomerValueMatrix({
       )}
 
       {!loading && !error && (
-        <>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
           <div className="relative">
-            <svg viewBox="-6 -6 112 112" className="w-full max-w-sm mx-auto" role="img">
+            <svg viewBox="-6 -6 112 112" className="w-full max-w-[11rem] mx-auto" role="img">
               {/* quadrant shading, split at the configured thresholds */}
               <rect x={config.highPotentialThreshold} y={0}
                 width={SIZE - config.highPotentialThreshold} height={SIZE - config.highRealizedThreshold}
@@ -239,30 +231,49 @@ export default function CustomerValueMatrix({
 
             <div
               dir="ltr"
-              className="flex justify-between text-[10px] text-slate-400 max-w-sm mx-auto px-1"
+              className="flex justify-between text-[9px] text-slate-500 max-w-[11rem] mx-auto px-1"
             >
-              <span>ارزش بالقوه کم</span>
-              <span>ارزش بالقوه زیاد</span>
+              <span>پتانسیل کم</span>
+              <span>پتانسیل زیاد</span>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-500 border-t border-slate-100 pt-3">
-            <span>
-              میانگین ارزش ایجادشده:{' '}
-              <strong className="font-mono" dir="ltr">{summary?.averageRealized ?? 0}</strong>
-              {' · '}
-              میانگین ارزش بالقوه:{' '}
-              <strong className="font-mono" dir="ltr">{summary?.averagePotential ?? 0}</strong>
-            </span>
-            <span>
+          {/* The four ranks, beside the plot rather than above it. */}
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-1.5">
+              {(['A', 'B', 'C', 'D'] as const).map((rank) => (
+                <div key={rank} className="border border-slate-150 rounded-lg px-2 py-1.5">
+                  <div className="text-[9px] text-slate-600 truncate">
+                    <span className="font-mono font-bold">{rank}</span> — {RANK_META[rank].title}
+                  </div>
+                  <div className="text-sm font-extrabold text-slate-800 leading-tight">
+                    {countOf(rank).toLocaleString('fa-IR')}
+                  </div>
+                  {showCosts && (
+                    <div className="text-[9px] text-slate-500 font-mono" dir="ltr">
+                      {formatMoney(profitOf(rank))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="text-[9px] leading-relaxed text-slate-500 border-t border-slate-100 pt-2 space-y-0.5">
+              <div>
+                میانگین ایجادشده:{' '}
+                <strong className="font-mono" dir="ltr">{summary?.averageRealized ?? 0}</strong>
+                {' · '}
+                میانگین بالقوه:{' '}
+                <strong className="font-mono" dir="ltr">{summary?.averagePotential ?? 0}</strong>
+              </div>
               {countOf('PENDING') > 0 && (
-                <span className="text-amber-700">
+                <div className="text-amber-700">
                   {countOf('PENDING').toLocaleString('fa-IR')} مشتری هنوز ارزیابی پتانسیل ندارند و در نمودار نیستند.
-                </span>
+                </div>
               )}
-            </span>
+            </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   );

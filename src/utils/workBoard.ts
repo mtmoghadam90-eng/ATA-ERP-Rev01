@@ -17,13 +17,20 @@
 
 import { FOLLOW_UP_KIND } from "./salesFollowUp";
 
-/** The four columns, in the order they are drawn (RTL: right to left). */
-export const BOARD_LANES = ["TODO", "WAITING", "DOING", "DONE"] as const;
+/**
+ * The four columns, in the order they are drawn (RTL: right to left).
+ *
+ * «در انتظار مشتری» comes first because it is the column with the least in it
+ * to decide: a chase parked there needs nothing from anybody until its day. The
+ * eye then moves through what is waiting to be picked up, what is being done,
+ * and what is finished — the order the work actually travels in.
+ */
+export const BOARD_LANES = ["WAITING", "TODO", "DOING", "DONE"] as const;
 export type BoardLane = (typeof BOARD_LANES)[number];
 
 export const LANE_LABELS: Record<BoardLane, string> = {
-  TODO: "برای انجام",
   WAITING: "در انتظار مشتری",
+  TODO: "برای انجام",
   DOING: "در حال انجام",
   DONE: "انجام شده",
 };
@@ -247,6 +254,21 @@ export function referralIsOpen(status: string | null | undefined): boolean {
   return referralLane(status) !== "DONE";
 }
 
+/* -------------------------- activity categories -------------------------- */
+
+/**
+ * A category group's own two statuses.
+ *
+ * Not a referral's and not a task's — a third vocabulary, on a third table,
+ * and that is exactly why they are named here rather than typed out where they
+ * are compared. `setReferralStatus` once compared a *referral's* status against
+ * «اتمام کار», which belongs to this table: the branch could never fire, and
+ * every completed referral told the person who raised it that it had been
+ * reopened.
+ */
+export const GROUP_OPEN = "جاری";
+export const GROUP_CLOSED = "اتمام کار";
+
 /* ------------------------------ sorting --------------------------------- */
 
 /** How the user asked to have a column ordered. */
@@ -397,12 +419,12 @@ export interface ReferralFilterSubject {
 }
 
 /** The choices the status filter offers, as the columns they select. */
-export const LANE_FILTERS = ["TODO", "WAITING", "DOING", "DONE", "CANCELLED"] as const;
+export const LANE_FILTERS = ["WAITING", "TODO", "DOING", "DONE", "CANCELLED"] as const;
 export type LaneFilter = (typeof LANE_FILTERS)[number];
 
 export const LANE_FILTER_LABELS: Record<LaneFilter, string> = {
-  TODO: "برای انجام",
   WAITING: "در انتظار مشتری",
+  TODO: "برای انجام",
   DOING: "در حال انجام",
   DONE: "انجام شده",
   CANCELLED: "کنسل شده",
