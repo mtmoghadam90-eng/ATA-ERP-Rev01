@@ -55,7 +55,16 @@ export function normalizeFollowUpState(value: unknown): FollowUpState {
 
 /* -------------------------------- task kind ------------------------------- */
 
-export const TASK_KINDS = ["GENERAL", "SALES_FOLLOW_UP"] as const;
+/**
+ * The kind whose board column is its **date** rather than its status word.
+ *
+ * Named once because three separate rules key on it — the completion flow that
+ * refuses a bare tick, the duplicate check, and `taskBoardLane` — and a fourth
+ * spelling of it is how they would come to disagree.
+ */
+export const FOLLOW_UP_KIND = "SALES_FOLLOW_UP";
+
+export const TASK_KINDS = ["GENERAL", FOLLOW_UP_KIND] as const;
 export type TaskKind = (typeof TASK_KINDS)[number];
 
 export const TASK_KIND_LABELS: Record<TaskKind, string> = {

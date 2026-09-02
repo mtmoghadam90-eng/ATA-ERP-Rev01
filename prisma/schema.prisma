@@ -53,6 +53,20 @@ model User {
   /// Bumped to invalidate every session cookie already issued to this user.
   sessionEpoch Int @default(0)
 
+  /// How much work this person may have in «در حال انجام» at once.
+  ///
+  /// `maxActiveTasks` refuses a move into that column once it is reached;
+  /// `minActiveTasks` is the floor the board fills itself back up to, pulling
+  /// the most pressing cards out of «برای انجام» and «در انتظار مشتری».
+  ///
+  /// **Null means no limit, in both directions.** Every account written before
+  /// these columns existed has neither, so the feature reaches nobody until
+  /// somebody types a number in — which is the only safe default for a rule
+  /// that can stop a person's work from moving. `src/utils/workLimits.ts` is
+  /// the rule and reads 0 the same as null for the same reason.
+  minActiveTasks Int?
+  maxActiveTasks Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -18,6 +18,10 @@ import {
 const WRITABLE: (keyof UserInput)[] = [
   "username", "fullName", "role", "isSystemAdmin", "position",
   "signatureImage", "isActive", "permissions",
+  // «حداقل / حداکثر کار همزمان» — how much work this person may hold in «در
+  // حال انجام» at once. Normalised in the service, so anything but a positive
+  // whole number reaches the column as «no limit».
+  "minActiveTasks", "maxActiveTasks",
 ];
 
 function pickInput(body: unknown): UserInput {
@@ -100,6 +104,10 @@ export function registerUserRoutes(app: express.Express, deps: RouteDeps): void 
 
       const outcome = await createUser(input, password, user);
       if (outcome === "forbidden") return denied(res);
+      if ("refusal" in outcome) {
+        res.status(400).json({ success: false, error: outcome.refusal });
+        return;
+      }
       res.status(201).json({ success: true, user: outcome.user });
     } catch (err) {
       sendError(res, err, "POST /api/users");
@@ -122,6 +130,12 @@ export function registerUserRoutes(app: express.Express, deps: RouteDeps): void 
           code: "LAST_ADMIN",
           error: "این تنها مدیر سیستم فعال است؛ ابتدا مدیر دیگری تعریف کنید.",
         });
+        return;
+      }
+      // A minimum above the maximum: the board would promote a card to reach
+      // the floor and refuse it for breaking the ceiling, on the same press.
+      if ("refusal" in outcome) {
+        res.status(400).json({ success: false, error: outcome.refusal });
         return;
       }
       // Editing your own account revokes the sessions issued for it, this one

@@ -55,7 +55,11 @@ import {
   TASK_TODO, BOARD_SORTS, SORT_LABELS, effectivePriority, referralIsOpen, referralLane,
   referralPassesTaskFilters, laneWhere, serverOrderFor, sortBoardCards, taskLane,
   taskStatusForLane, REFERRAL_STATUSES, TASK_STATUSES,
+  BOARD_LANES, MOVABLE_LANES, isMovableLane, rankForTopUp, taskBoardLane,
 } from "../src/utils/workBoard";
+import {
+  normalizeLimit, remainingCapacity, topUpShortfall, workLimitRefusalReason,
+} from "../src/utils/workLimits";
 import { TASK_SORTABLE, laneTimestamps } from "../src/server/services/taskService";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
 import { lossReasonRefusal } from "../src/server/services/projectService";
@@ -6934,13 +6938,21 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    * report a failed check, not throw — a stack trace names the line and not the
    * rule that was broken.
    */
-  const excluded = ((laneWhere("DOING") as { status?: { notIn?: string[] } }).status?.notIn) ?? null;
+  const doingOrdinary = (laneWhere("DOING", null) as { OR: { AND: unknown[] }[] }).OR[0];
+  const excluded = ((doingOrdinary.AND[1] as { status?: { notIn?: string[] } }).status?.notIn) ?? null;
   ok("...so «در انتظار» is found by it",
     !!excluded && !excluded.includes("در انتظار") && taskLane("در انتظار") === "DOING");
   ok("...and so is any status nobody has thought of yet",
     !!excluded && !excluded.includes("منتظر تأیید") && taskLane("منتظر تأیید") === "DOING");
   ok("the first column is the one exact match there is",
     laneClause("TODO").includes('{"status":"برای انجام"}'), laneClause("TODO"));
+  /*
+   * And it excludes the chases, which have no «برای انجام» at all: their column
+   * is the next-contact date, so one sitting in the first column would be a
+   * card nothing could move and nothing would ever bring forward.
+   */
+  ok("...and it is ordinary work only",
+    laneClause("TODO").includes('"taskKind":{"not":"SALES_FOLLOW_UP"}'), laneClause("TODO"));
   // A cancelled task is finished work and sits in the last column with the
   // done ones, so asking for that column finds both.
   ok("the last column holds the cancelled ones too",
@@ -7610,7 +7622,14 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   const taskService = readFileSync("src/server/services/taskService.ts", "utf8");
   // Closing a follow-up means recording what the customer said; a drag cannot.
   ok("a sales follow-up cannot be finished by moving it",
-    /taskKind === "SALES_FOLLOW_UP" && lane === "DONE"/.test(taskService));
+    /taskKind === FOLLOW_UP_KIND && lane === "DONE"/.test(taskService));
+  /*
+   * Nor pushed into «برای انجام». A chase's column is its next-contact date, so
+   * writing that status would leave the card exactly where it was — a press
+   * that appears to work and changes nothing. Refused and named.
+   */
+  ok("...and it has no «برای انجام» to be pushed into either",
+    /taskKind === FOLLOW_UP_KIND && lane === "TODO"/.test(taskService));
   ok("and a task is created in the first column", /status: TASK_TODO,/.test(taskService));
 
   /*
@@ -8959,6 +8978,293 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
 
   ok("the comment stripper left these sources intact",
     modal.length > 6000 && view.length > 10000 && service.length > 10000);
+}
+
+head("Work board: «در انتظار مشتری», and how much one person may hold");
+{
+  /*
+   * The fourth column, and the two limits on the third.
+   *
+   * The rule that makes «در انتظار مشتری» work at all is that **nothing is
+   * stored saying a card is there**: a chase's column is its next-contact
+   * date, so it leaves the column the day that date arrives with no sweep, no
+   * nightly job and no second status word to keep in step with the first. Two
+   * things then have to agree about it — where the board *draws* a card, and
+   * what the column *filter* asks the database for — and they are written in
+   * two different vocabularies (a Shamsi string, and a comparison on the DATE
+   * column). So they are held against each other here, over every shape.
+   */
+
+  const TODAY = "1405/03/10";
+  const chase = (dueDate: string | null, status = TASK_TODO) =>
+    ({ status, taskKind: "SALES_FOLLOW_UP", dueDate });
+
+  eq("a chase agreed for next month is with the customer",
+    taskBoardLane(chase("1405/04/01"), TODAY), "WAITING");
+  eq("...the day it is due, it is the work of today",
+    taskBoardLane(chase(TODAY), TODAY), "DOING");
+  eq("...and an overdue one is not hiding in the parked column",
+    taskBoardLane(chase("1405/02/01"), TODAY), "DOING");
+  /*
+   * An undated chase is the one nobody planned — «بدون اقدام بعدی», which the
+   * health check ranks above what is merely upcoming. Parking it for ever is
+   * exactly how a quotation gets forgotten.
+   */
+  eq("a chase with no date at all is due now, not parked for ever",
+    taskBoardLane(chase(null), TODAY), "DOING");
+  /*
+   * The status word is not consulted, and that is the point: the automations
+   * raise a chase as «در انتظار», the completion flow as «برای انجام», and an
+   * old row carries «در حال انجام». None of those three was ever a statement
+   * about whether the customer had answered.
+   */
+  for (const status of ["در انتظار", TASK_TODO, TASK_DOING, "منتظر تأیید"]) {
+    eq(`...whatever status it happens to carry (${status})`,
+      taskBoardLane(chase("1405/04/01", status), TODAY), "WAITING");
+  }
+  eq("a finished chase is finished, date or no date",
+    taskBoardLane(chase("1405/04/01", TASK_DONE), TODAY), "DONE");
+  eq("...cancelled too", taskBoardLane(chase("1405/04/01", TASK_CANCELLED), TODAY), "DONE");
+
+  // An ordinary task is never parked: it has a deadline, not an appointment.
+  for (const status of [TASK_TODO, TASK_DOING, TASK_DONE, "در انتظار"]) {
+    ok(`an ordinary task is never in the parked column (${status})`,
+      taskBoardLane({ status, taskKind: "GENERAL", dueDate: "1409/01/01" }, TODAY) !== "WAITING");
+  }
+  eq("...and it keeps the column its status has always meant",
+    taskBoardLane({ status: TASK_TODO, taskKind: "GENERAL", dueDate: "1409/01/01" }, TODAY),
+    "TODO");
+
+  /* ---------- the query says the same thing as the placement ---------- */
+
+  /*
+   * A small evaluator for the clause shape `laneWhere` produces, so the two
+   * can be held against each other rather than against a second reading of the
+   * rule. Same device as `matchesWhere` on the proforma outcomes, and for the
+   * same reason: a test that re-implements the rule agrees with itself.
+   */
+  type Row = { status: string; taskKind: string; dueDate: Date | null };
+  const matchesLane = (where: unknown, row: Row): boolean => {
+    const w = where as Record<string, unknown>;
+    if (Array.isArray(w.AND)) return (w.AND as unknown[]).every((c) => matchesLane(c, row));
+    if (Array.isArray(w.OR)) return (w.OR as unknown[]).some((c) => matchesLane(c, row));
+
+    for (const [field, test] of Object.entries(w)) {
+      if (field === "id") {
+        // `{ id: { in: [] } }` is how «matches nothing» is written.
+        if (((test as { in?: string[] }).in ?? []).length === 0) return false;
+        continue;
+      }
+      const value = field === "dueDate" ? row.dueDate
+        : field === "status" ? row.status : row.taskKind;
+      if (test === null) { if (value !== null) return false; continue; }
+      if (typeof test === "string") { if (value !== test) return false; continue; }
+      const t = test as Record<string, unknown>;
+      if ("in" in t && !(t.in as string[]).includes(value as string)) return false;
+      if ("notIn" in t && (t.notIn as string[]).includes(value as string)) return false;
+      if ("not" in t && value === t.not) return false;
+      // A comparison against NULL is unknown in SQL, and therefore false —
+      // which is the whole reason the «not parked» half is spelled out rather
+      // than written as NOT (dueDate > today).
+      if ("gt" in t && !(value instanceof Date && value > (t.gt as Date))) return false;
+      if ("lte" in t && !(value instanceof Date && value <= (t.lte as Date))) return false;
+    }
+    return true;
+  };
+
+  const jalali = (text: string | null): Date | null => {
+    if (!text) return null;
+    // The two columns are written from the same value, so any monotonic map
+    // from the Shamsi string will do here — the question is only ordering.
+    const [y, m, d] = text.split("/").map(Number);
+    return new Date(Date.UTC(y, m - 1, d));
+  };
+  const todayDate = jalali(TODAY) as Date;
+
+  const DATES = [null, "1405/02/01", TODAY, "1405/03/11", "1405/04/01"];
+  const STATUSES = [TASK_TODO, TASK_DOING, TASK_DONE, TASK_CANCELLED, "در انتظار", "منتظر تأیید"];
+  const KINDS = ["GENERAL", "SALES_FOLLOW_UP"];
+
+  let mismatches: string[] = [];
+  let examined = 0;
+  for (const dueDate of DATES) {
+    for (const status of STATUSES) {
+      for (const taskKind of KINDS) {
+        examined++;
+        const drawn = taskBoardLane({ status, taskKind, dueDate }, TODAY);
+        const row: Row = { status, taskKind, dueDate: jalali(dueDate) };
+        for (const lane of BOARD_LANES) {
+          const found = matchesLane(laneWhere(lane, todayDate), row);
+          if (found !== (drawn === lane)) {
+            mismatches.push(`${taskKind}/${status}/${dueDate}: drawn ${drawn}, query says ${lane}=${found}`);
+          }
+        }
+      }
+    }
+  }
+  // Or the sweep would pass by examining nothing.
+  ok("every shape of task was examined", examined === DATES.length * STATUSES.length * KINDS.length,
+    examined);
+  ok("the column filter finds exactly what the board draws",
+    mismatches.length === 0, mismatches.slice(0, 3));
+
+  /*
+   * And every row lands in exactly one column — a card in two would be drawn
+   * twice, and one in none would simply vanish off the board.
+   */
+  let uncovered = 0;
+  for (const dueDate of DATES) {
+    for (const status of STATUSES) {
+      for (const taskKind of KINDS) {
+        const row: Row = { status, taskKind, dueDate: jalali(dueDate) };
+        const hits = BOARD_LANES.filter((lane) => matchesLane(laneWhere(lane, todayDate), row));
+        if (hits.length !== 1) uncovered++;
+      }
+    }
+  }
+  ok("and no task is in two columns or in none", uncovered === 0, uncovered);
+
+  /* ------------------ the columns a card can be pushed into ---------------- */
+
+  ok("the parked column is not a destination",
+    !(MOVABLE_LANES as readonly string[]).includes("WAITING"));
+  ok("...but the other three are",
+    (["TODO", "DOING", "DONE"] as const).every((l) => isMovableLane(l)));
+  const taskRoute2 = readFileSync("src/server/routes/tasks.ts", "utf8");
+  ok("the move endpoint refuses it by name rather than as «invalid»",
+    /isMovableLane\(lane\)/.test(taskRoute2) && /LANE_LABELS\.WAITING/.test(taskRoute2));
+  const board = readFileSync("src/components/WorkBoard.tsx", "utf8");
+  ok("and the board draws no button there",
+    /isMovableLane\(lane\) && \(/.test(board));
+
+  /* ---------------------------- picking work up --------------------------- */
+
+  /*
+   * `rankForTopUp` is the opposite question from `sortBoardCards`: that one
+   * answers «how is this column displayed», this one «which of these should
+   * somebody start next». They disagree on every tie, deliberately.
+   */
+  const card = (id: string, dueDate: string | null, priority: string, createdAt: string) =>
+    ({ id, dueDate, priority, createdAt });
+  const ranked = rankForTopUp([
+    card("undated", null, "فوری", "2026-01-01"),
+    card("late", "1405/02/01", "پایین", "2026-05-01"),
+    card("today-urgent", TODAY, "فوری", "2026-05-02"),
+    card("today-low", TODAY, "پایین", "2026-01-05"),
+  ]).map((c) => c.id);
+  eq("the soonest promise leads, then urgency, and the undated is last",
+    ranked.join(","), "late,today-urgent,today-low,undated");
+  const aged = rankForTopUp([
+    card("newer", TODAY, "متوسط", "2026-06-01"),
+    card("older", TODAY, "متوسط", "2026-01-01"),
+  ]).map((c) => c.id);
+  eq("...and equally urgent cards go oldest first, not newest",
+    aged.join(","), "older,newer");
+  // Which is the opposite of how the same two are *displayed*.
+  eq("...which is the opposite of the column's own order",
+    sortBoardCards([
+      card("newer", TODAY, "متوسط", "2026-06-01"),
+      card("older", TODAY, "متوسط", "2026-01-01"),
+    ], "due").map((c) => c.id).join(","), "newer,older");
+
+  /* ------------------------------ the limits ------------------------------ */
+
+  /*
+   * Absent, zero, negative and the string a JSON body arrives as all mean the
+   * same thing: no limit. A maximum of zero would mean «this person may never
+   * work», which nobody means by typing 0 into an empty-looking box.
+   */
+  for (const blank of [undefined, null, 0, -3, "", "  ", "abc", 0.4]) {
+    eq(`«${String(blank)}» is not a limit`, normalizeLimit(blank), null);
+  }
+  eq("a real number is", normalizeLimit("5"), 5);
+  eq("...and Persian digits are numbers too", normalizeLimit(4.9), 4);
+
+  ok("a minimum above the maximum is refused where it is typed",
+    workLimitRefusalReason({ min: 8, max: 5 }) !== null);
+  ok("...and a sane pair is not", workLimitRefusalReason({ min: 2, max: 5 }) === null);
+  ok("...nor is one half of a pair", workLimitRefusalReason({ min: 8, max: null }) === null);
+
+  /*
+   * Somebody already over the cap — the limit was lowered, or a chase reached
+   * its date on its own — may start nothing more, and has nothing taken off
+   * their desk either. A limit is about what you start.
+   */
+  eq("over the cap, there is no room and no negative room",
+    remainingCapacity(9, 5), 0);
+  eq("under it, there is exactly the difference", remainingCapacity(3, 5), 2);
+  eq("no maximum is no ceiling", remainingCapacity(300, null) > 1000, true);
+
+  eq("below the floor, that many are pulled up", topUpShortfall(1, { min: 4, max: 9 }), 3);
+  eq("at the floor, none are", topUpShortfall(4, { min: 4, max: 9 }), 0);
+  eq("no minimum means the board never fills itself", topUpShortfall(0, { min: null, max: 9 }), 0);
+  /*
+   * And the floor can never push somebody past the ceiling. The pair is
+   * refused where it is typed, but a pair stored before that check still has
+   * to behave rather than promote a card and refuse it on the same press.
+   */
+  eq("a contradictory stored pair promotes nothing past the ceiling",
+    topUpShortfall(5, { min: 9, max: 5 }), 0);
+
+  /* --------------------- read from the source, once ---------------------- */
+
+  const load = readFileSync("src/server/services/workLoadService.ts", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  ok("the workload source survived having its comments stripped",
+    load.includes("topUpActiveWork"));
+  /*
+   * A person's load is both kinds of card. Counting only the tasks would let
+   * the cap be walked straight past by anyone whose work arrives as referrals.
+   */
+  ok("a referral counts toward the load as much as a task",
+    /projectReferral\.count/.test(load) && /task\.count/.test(load));
+  /*
+   * Promoting a parked chase means moving its **date**. Writing a status onto
+   * one would leave the card exactly where it was, because that column is
+   * derived from the date and nothing else.
+   */
+  ok("pulling a parked chase forward moves its date",
+    /card\.what === "chase" \? expandDateFields\(\{ dueDate: todayJalali \}/.test(load));
+  ok("...and the day work began is stamped once, not re-dated",
+    /card\.started \? \{\} : expandDateFields\(\{ startedAt/.test(load));
+  // An account with neither limit is the common case and must cost one read.
+  ok("an account with no limits is not counted at all",
+    /limits\.min === null && limits\.max === null/.test(load));
+
+  const tasksView = readFileSync("src/components/TasksView.tsx", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  ok("the tasks view source survived having its comments stripped",
+    tasksView.includes("handleSave"));
+  /*
+   * A chase is created through the follow-up flow, not through `POST
+   * /api/tasks`: that endpoint is where the quotation's follow-up state moves,
+   * where a second open chase on one document is refused, and where a settled
+   * sale is refused outright. A second creation path would be a second copy of
+   * every one of those rules — the fault the five customer forms stand for.
+   */
+  ok("a new chase is raised through the follow-up flow",
+    /isNewFollowUp[\s\S]{0,400}salesFollowUpApi\.reactivate/.test(tasksView));
+  ok("...and the form asks which kind of work it is before anything else",
+    /id="task-kind-choice"/.test(tasksView)
+    && /\['GENERAL', 'وظیفه عادی'/.test(tasksView)
+    && /\['SALES_FOLLOW_UP', 'پیگیری فروش'/.test(tasksView));
+  ok("...and asks a chase for the quotation it is about",
+    /follow-up-proforma-picker/.test(tasksView));
+  ok("the board reports every rule that refused a card, not one sentence",
+    /result\.reasons/.test(tasksView));
+  ok("filling the middle column back up is a POST, never a side effect of a read",
+    /tasksApi\.topUp\(\)/.test(tasksView));
+
+  const taskRouteSrc = readFileSync("src/server/routes/tasks.ts", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  ok("the task route source survived having its comments stripped",
+    taskRouteSrc.includes("WRITABLE"));
+  ok("`taskKind` is not writable on a plain task",
+    !/"taskKind"/.test(taskRouteSrc));
+  // Or Express reads «board» as a task id.
+  ok("the top-up endpoint is registered before the id routes",
+    taskRouteSrc.indexOf('"/api/tasks/board/top-up"') > 0
+    && taskRouteSrc.indexOf('"/api/tasks/board/top-up"') < taskRouteSrc.indexOf('"/api/tasks/:id"'));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

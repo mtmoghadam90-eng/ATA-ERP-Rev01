@@ -197,7 +197,21 @@ export const salesFollowUpApi = {
       `/api/sales-follow-up/project/${projectId}`, undefined, signal,
     ),
 
-  /** Reactivation *is* the new task; the state follows from it. */
-  reactivate: (proformaId: string, body: { title?: string; dueDate: string; assignedToName?: string }) =>
+  /**
+   * Reactivation *is* the new task; the state follows from it.
+   *
+   * Also how the tasks screen raises a chase from scratch: every rule about
+   * one — the quotation's follow-up state, no second open chase on a document,
+   * nothing on a settled sale — lives behind this endpoint, so a second
+   * creation path would be a second copy of all of it.
+   */
+  reactivate: (proformaId: string, body: {
+    title?: string;
+    dueDate: string;
+    assignedToName?: string;
+    /** «شرح اقدام» and «اولویت»; both absent keep «no description» and «متوسط». */
+    description?: string;
+    priority?: string;
+  }) =>
     api.post<{ taskId: string }>(`/api/sales-follow-up/${proformaId}/reactivate`, body),
 };

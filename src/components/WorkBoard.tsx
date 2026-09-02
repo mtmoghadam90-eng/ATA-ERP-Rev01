@@ -1,9 +1,10 @@
 import { CheckCircle2, CornerDownLeft, Inbox, ListTodo, MessageSquare, Phone } from 'lucide-react';
 
 import {
-  BOARD_LANES, BoardLane, BoardSort, LANE_LABELS, TASK_CANCELLED,
-  referralLane, sortBoardCards, taskLane,
+  BOARD_LANES, BoardLane, BoardSort, LANE_LABELS, MovableLane, TASK_CANCELLED,
+  isMovableLane, referralLane, sortBoardCards, taskBoardLane,
 } from '../utils/workBoard';
+import type { WorkLoad } from '../api/tasks';
 
 /**
  * The three columns, over both kinds of work.
@@ -54,11 +55,15 @@ export type BoardCard = BoardTaskCard | BoardReferralCard;
 interface Props {
   cards: BoardCard[];
   sort: BoardSort;
+  /** Shamsi `YYYY/MM/DD`. What «در انتظار مشتری» is measured against. */
+  today: string;
+  /** This person's own load and limits, so the cap is visible before it bites. */
+  load: WorkLoad | null;
   /** Ids currently ticked, across every column. */
   selected: Set<string>;
   onToggleSelect: (key: string) => void;
-  /** Moves everything ticked into `lane`. */
-  onMove: (lane: BoardLane) => void;
+  /** Moves everything ticked into `lane`. Never «در انتظار مشتری» — see below. */
+  onMove: (lane: MovableLane) => void;
   /** Opens the card: the referral thread, the follow-up form, or the edit box. */
   onOpen: (card: BoardCard) => void;
   moving: boolean;
@@ -69,8 +74,20 @@ export function cardKey(card: BoardCard): string {
   return `${card.kind}:${card.id}`;
 }
 
-function laneOf(card: BoardCard): BoardLane {
-  return card.kind === 'task' ? taskLane(card.status) : referralLane(card.status);
+/**
+ * Which column a card is in.
+ *
+ * A referral answers with its status; a task answers with `taskBoardLane`,
+ * which for a sales follow-up is its **due date** and not its status word — a
+ * chase agreed for next Sunday is neither «to do» nor «in progress», it is
+ * sitting with the customer until Sunday. That is what makes «در انتظار
+ * مشتری» need no sweep: nothing is stored saying a card is there, so it leaves
+ * the moment the day arrives.
+ */
+function laneOf(card: BoardCard, today: string): BoardLane {
+  return card.kind === 'task'
+    ? taskBoardLane({ status: card.status, taskKind: card.taskKind, dueDate: card.dueDate }, today)
+    : referralLane(card.status);
 }
 
 const PRIORITY_CLASS: Record<string, string> = {
@@ -93,19 +110,31 @@ const PRIORITY_CLASS: Record<string, string> = {
  */
 const LANE_CLASS: Record<BoardLane, string> = {
   TODO: 'board-lane board-lane-todo',
+  WAITING: 'board-lane board-lane-waiting',
   DOING: 'board-lane board-lane-doing',
   DONE: 'board-lane board-lane-done',
 };
 
+/**
+ * What the column is for, where the label alone does not say it.
+ *
+ * «در انتظار مشتری» is the one that needs explaining: it has no move button,
+ * and a column a person cannot push into is a column they will otherwise
+ * assume is broken.
+ */
+const LANE_NOTE: Partial<Record<BoardLane, string>> = {
+  WAITING: 'پیگیری‌هایی که تاریخ اقدام بعدی‌شان نرسیده است. روز سررسید خودکار به «در حال انجام» می‌روند.',
+};
+
 export default function WorkBoard({
-  cards, sort, selected, onToggleSelect, onMove, onOpen, moving,
+  cards, sort, today, load, selected, onToggleSelect, onMove, onOpen, moving,
 }: Props) {
-  const byLane: Record<BoardLane, BoardCard[]> = { TODO: [], DOING: [], DONE: [] };
-  for (const card of cards) byLane[laneOf(card)].push(card);
+  const byLane: Record<BoardLane, BoardCard[]> = { TODO: [], WAITING: [], DOING: [], DONE: [] };
+  for (const card of cards) byLane[laneOf(card, today)].push(card);
   for (const lane of BOARD_LANES) byLane[lane] = sortBoardCards(byLane[lane], sort);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4" dir="rtl" id="work-board">
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" dir="rtl" id="work-board">
       {BOARD_LANES.map((lane) => {
         const list = byLane[lane];
 
@@ -125,8 +154,18 @@ export default function WorkBoard({
                 {/* The column's identity before its name is read. */}
                 <span className="board-lane-mark w-1 h-4 rounded-full" aria-hidden="true" />
                 <span className="board-lane-title text-[13px] font-extrabold">{LANE_LABELS[lane]}</span>
+                {/*
+                  The count, and on «در حال انجام» the limit beside it.
+
+                  A cap nobody can see is a cap that reads as the board
+                  refusing things at random — so «۵ از ۷» is drawn wherever
+                  there is a maximum, and the plain count wherever there is
+                  not, which is every account until somebody sets one.
+                */}
                 <span className="text-[10px] font-mono bg-white border border-slate-200 rounded-full px-1.5 text-slate-600">
-                  {list.length}
+                  {lane === 'DOING' && load?.max
+                    ? `${list.length} از ${load.max}`
+                    : list.length}
                 </span>
               </div>
 
@@ -141,21 +180,36 @@ export default function WorkBoard({
 
                 It moves in **both** directions by construction, so putting a
                 finished job back into «در حال انجام» is the same press.
+
+                **«در انتظار مشتری» has none**, and deliberately: that column
+                is derived from the chase's own next-contact date, so there
+                would be nothing for the press to write. A quotation is parked
+                by recording its follow-up result — «موکول به تاریخ دیگر» —
+                which is where the date comes from, and it leaves the column on
+                its own the day it arrives. A button that appeared to work and
+                changed nothing would be worse than no button, so the column
+                explains itself instead.
               */}
-              <button
-                type="button"
-                disabled={moving || selected.size === 0}
-                onClick={() => onMove(lane)}
-                id={`work-board-move-${lane}`}
-                title={`انتقال ${selected.size} مورد انتخاب‌شده به «${LANE_LABELS[lane]}»`}
-                className="px-1.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-sky-600 hover:border-sky-300 transition disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1 text-[10px] font-bold"
-              >
-                <CornerDownLeft size={11} />
-                انتقال به اینجا
-              </button>
+              {isMovableLane(lane) && (
+                <button
+                  type="button"
+                  disabled={moving || selected.size === 0}
+                  onClick={() => onMove(lane)}
+                  id={`work-board-move-${lane}`}
+                  title={`انتقال ${selected.size} مورد انتخاب‌شده به «${LANE_LABELS[lane]}»`}
+                  className="px-1.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-sky-600 hover:border-sky-300 transition disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1 text-[10px] font-bold"
+                >
+                  <CornerDownLeft size={11} />
+                  انتقال به اینجا
+                </button>
+              )}
             </div>
 
             <div className="p-3 flex flex-col gap-2">
+              {LANE_NOTE[lane] && (
+                <p className="text-[10px] leading-relaxed text-slate-600 pb-1">{LANE_NOTE[lane]}</p>
+              )}
+
               {list.length === 0 && (
                 <p className="text-[11px] text-slate-500 py-4 text-center">موردی در این ستون نیست.</p>
               )}

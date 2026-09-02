@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, ERPSettings } from '../types';
 import ConfirmModal from './ConfirmModal';
+import NumberField from './NumberField';
 import { uploadFile } from '../imageUtils';
 import { ApiError } from '../api/client';
 import { rowToUser, userToWriteInput, usersApi } from '../api/users';
@@ -65,6 +66,16 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState<'admin' | 'user'>('user');
   const [position, setPosition] = useState('');
+  /*
+   * «ظرفیت کار همزمان» — how much this person may hold in «در حال انجام».
+   *
+   * Kept as plain numbers with **0 meaning «no limit»**, which is also how the
+   * server reads them: a maximum of zero would mean «may never work», which is
+   * not what anybody types into an empty-looking box, and every account has
+   * neither limit until somebody sets one.
+   */
+  const [minActiveTasks, setMinActiveTasks] = useState(0);
+  const [maxActiveTasks, setMaxActiveTasks] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [signatureImage, setSignatureImage] = useState('');
 
@@ -166,6 +177,8 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     setFullName('');
     setRole('user');
     setPosition('');
+    setMinActiveTasks(0);
+    setMaxActiveTasks(0);
     setSignatureImage('');
     setPermissions({
       dashboard: true,
@@ -193,6 +206,61 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     setShowAddModal(true);
   };
 
+  /**
+   * «ظرفیت کار همزمان», on both forms and written once.
+   *
+   * Two numbers that answer two different questions. The **maximum** refuses a
+   * move into «در حال انجام» once it is reached — eleven cards in that column
+   * is not eleven things being done, it is one being done and ten being
+   * forgotten. The **minimum** is the opposite failure: an empty middle column
+   * beside a full «برای انجام» means somebody decides what to start every
+   * morning, and what gets started is whatever is at the top of the screen
+   * rather than what is due — so below it the board pulls the most pressing
+   * cards up itself.
+   *
+   * **Empty or 0 is «no limit»**, which is what every account has until
+   * somebody sets one; that is what makes this additive rather than a rule
+   * that suddenly stops everybody's work from moving.
+   */
+  const workLimitFields = (
+    <div className="space-y-1.5 md:col-span-2" id="user-work-limits">
+      <label className="text-xs font-semibold text-slate-500">
+        ظرفیت کار همزمان (ستون «در حال انجام» در تخته کار)
+      </label>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <span className="text-[10px] text-slate-600 block">حداقل کار همزمان</span>
+          <NumberField
+            id="user-min-active-tasks"
+            value={minActiveTasks}
+            onChange={setMinActiveTasks}
+            integer
+            min={0}
+            placeholder="بدون محدودیت"
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right font-mono"
+          />
+        </div>
+        <div className="space-y-1">
+          <span className="text-[10px] text-slate-600 block">حداکثر کار همزمان</span>
+          <NumberField
+            id="user-max-active-tasks"
+            value={maxActiveTasks}
+            onChange={setMaxActiveTasks}
+            integer
+            min={0}
+            placeholder="بدون محدودیت"
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right font-mono"
+          />
+        </div>
+      </div>
+      <p className="text-[10px] text-slate-600 leading-relaxed">
+        خالی یا صفر یعنی بدون محدودیت. با رسیدن به حداکثر، انتقال کار جدید به «در حال انجام»
+        انجام نمی‌شود؛ با افتادن زیر حداقل، سیستم فوری‌ترین کارها را از «برای انجام» و
+        «در انتظار مشتری» بالا می‌آورد.
+      </p>
+    </div>
+  );
+
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!username || !password || !fullName) {
@@ -212,6 +280,8 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
           signatureImage,
           permissions,
           isActive: true,
+          minActiveTasks,
+          maxActiveTasks,
         }),
         password,
       });
@@ -233,6 +303,8 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     setFullName(user.fullName);
     setRole(user.role);
     setPosition(user.position || '');
+    setMinActiveTasks(user.minActiveTasks ?? 0);
+    setMaxActiveTasks(user.maxActiveTasks ?? 0);
     setSignatureImage(user.signatureImage || '');
     setPermissions({
       ...user.permissions,
@@ -274,6 +346,8 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
         signatureImage,
         permissions,
         isActive: selectedUser.isActive,
+        minActiveTasks,
+        maxActiveTasks,
       }));
 
       // The password is its own call, and only when one was typed. Setting it
@@ -574,6 +648,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                     <option value="admin">مدیر سیستم (دسترسی کامل)</option>
                   </select>
                 </div>
+                {workLimitFields}
               </div>
 
               {/* Authentication */}
@@ -796,6 +871,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                     <option value="admin">مدیر سیستم (دسترسی کامل)</option>
                   </select>
                 </div>
+                {workLimitFields}
               </div>
 
               {/* Authentication */}

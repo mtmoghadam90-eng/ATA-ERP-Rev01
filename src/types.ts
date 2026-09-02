@@ -971,6 +971,17 @@ export interface User {
    * how a former colleague's history stays readable while their access is gone.
    */
   isActive?: boolean;
+  /**
+   * How much work this person may hold in «در حال انجام» at once.
+   *
+   * `maxActiveTasks` refuses a move into that column once it is reached;
+   * `minActiveTasks` is the floor the board fills itself back up to, pulling
+   * the most pressing cards out of «برای انجام» and «در انتظار مشتری».
+   * **Absent or 0 is «no limit»** in both directions, which is every account
+   * until somebody types a number in — see `src/utils/workLimits.ts`.
+   */
+  minActiveTasks?: number | null;
+  maxActiveTasks?: number | null;
   permissions: {
     dashboard: boolean;
     customers: boolean;

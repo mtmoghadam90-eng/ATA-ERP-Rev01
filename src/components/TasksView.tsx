@@ -28,7 +28,7 @@ import ReferralsView from './ReferralsView';
 import ReferralThread from './ReferralThread';
 import FollowUpCompletionModal from './FollowUpCompletionModal';
 import {
-  BOARD_SORTS, BoardLane, BoardSort, LANE_FILTERS, LANE_FILTER_LABELS, SORT_LABELS,
+  BOARD_SORTS, BoardSort, LANE_FILTERS, LANE_FILTER_LABELS, MovableLane, SORT_LABELS,
   referralPassesTaskFilters, serverOrderFor, sortBoardCards, taskLane,
 } from '../utils/workBoard';
 import { ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
@@ -44,12 +44,13 @@ import CustomFieldsDetailView from './CustomFieldsDetailView';
 import QuickAddModal from './QuickAddModal';
 import { Bell, Loader2 } from 'lucide-react';
 import { ApiError } from '../api/client';
-import { rowToTask, tasksApi, taskToWriteInput } from '../api/tasks';
+import { rowToTask, tasksApi, taskToWriteInput, type WorkLoad } from '../api/tasks';
 import { useTaskList } from '../api/useTaskList';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { useEntitySearch } from '../api/useEntitySearch';
 import type { CustomerRow } from '../api/customers';
 import type { ProjectRow } from '../api/projects';
+import type { ProformaRow } from '../api/proformas';
 import { projectsApi } from '../api/projects';
 import { createCustomerWithLinks } from '../api/customerAdapter';
 import { detailToProject, projectToWriteInput } from '../api/projectAdapter';
@@ -169,6 +170,8 @@ export default function TasksView({
   const updateTask = async (task: Task) => {
     try {
       await tasksApi.update(task.id, taskToWriteInput(task));
+      // Finishing something is exactly when the floor can have been crossed.
+      void topUpBoard();
       list.refresh();
     } catch (err) {
       reportError(err, 'ثبت تغییرات وظیفه با خطا مواجه شد.');
@@ -289,6 +292,19 @@ export default function TasksView({
   const [movingCards, setMovingCards] = useState(false);
 
   /*
+   * Today, held once for the whole screen.
+   *
+   * Every card's column is measured against it — a chase is parked until its
+   * next-contact date arrives — so reading the clock per card would let two
+   * halves of one render disagree across midnight.
+   */
+  const [today] = useState(() => getTodayShamsi());
+
+  /** This person's load and the limits it is held to. See `topUpBoard` below. */
+  const [load, setLoad] = useState<WorkLoad | null>(null);
+
+
+  /*
    * The referrals that share the board with the tasks.
    *
    * A referral is **not** copied into the tasks table — it stays its own record
@@ -302,6 +318,46 @@ export default function TasksView({
   const [referrals, setReferrals] = useState<ReferralRow[]>([]);
   const [referralReload, setReferralReload] = useState(0);
   const refreshReferrals = React.useCallback(() => setReferralReload((n) => n + 1), []);
+
+  /*
+   * Re-reading both halves of the board, through a ref.
+   *
+   * `list` is rebuilt on every render, so a one-shot effect that closed over
+   * it would be holding the first render's copy for the life of the screen —
+   * the same family of fault as a callback prop handed to a child that
+   * fetches. The ref is always the current one.
+   */
+  const refreshBoard = React.useRef(() => {});
+  refreshBoard.current = () => { list.refresh(); refreshReferrals(); };
+
+  /**
+   * Fills «در حال انجام» back up to this person's minimum, and reports the load.
+   *
+   * Asked for **on mount and after anything is finished**, which are the two
+   * moments the floor can have been crossed. It is a POST because it writes —
+   * the server pulls the most pressing cards up out of «برای انجام» and «در
+   * انتظار مشتری» — and a write must never be a side effect of reading a
+   * screen.
+   */
+  const topUpBoard = React.useCallback(async () => {
+    try {
+      const result = await tasksApi.topUp();
+      setLoad(result);
+      // Only re-read when something actually moved. A quiet tick is the normal
+      // case, and refreshing on it would jump the screen back to the top every
+      // time somebody opened the board.
+      if (result.promoted > 0) refreshBoard.current();
+    } catch {
+      /*
+       * A limit that could not be applied is not worth an error on a board
+       * that is otherwise correct: the columns are right either way, and the
+       * only thing lost is the «۳ از ۵» beside the heading.
+       */
+    }
+  }, []);
+
+  useEffect(() => { void topUpBoard(); }, [topUpBoard]);
+
   useRevalidate(['referrals', 'activities'], refreshReferrals);
 
   React.useEffect(() => {
@@ -374,6 +430,43 @@ export default function TasksView({
   const [reminderDate, setReminderDate] = useState(getTodayShamsi());
   const [reminderTime, setReminderTime] = useState('09:00');
 
+  /*
+   * Which kind of work is being raised, chosen before anything is typed.
+   *
+   * A follow-up is not a task with a label on it: it belongs to a quotation,
+   * it moves that quotation's follow-up state, it must not be the second open
+   * chase on the same document, it cannot exist on a settled sale, and it is
+   * closed by recording what the customer said rather than by a tick. So the
+   * two forms ask different questions, and the answers go to different
+   * endpoints — `POST /api/tasks` for a task, the follow-up flow's own
+   * «فعال‌سازی مجدد» for a chase, which is where every one of those rules
+   * already lives.
+   *
+   * Offered on **creation only**: changing the kind of a task that exists
+   * would move it between two flows with different rules about how it closes.
+   */
+  const [newTaskKind, setNewTaskKind] = useState<'GENERAL' | 'SALES_FOLLOW_UP'>('GENERAL');
+  const [followUpProformaId, setFollowUpProformaId] = useState('');
+
+  /*
+   * The quotation a new chase is about.
+   *
+   * `enabled` is what keeps it from querying while the modal is shut — a
+   * picker inside a closed modal is still mounted, and without it this asks
+   * the server for proformas on every render of the board behind it.
+   */
+  const proformaLabel = (row: ProformaRow) => [
+    row.proformaNumber,
+    row.project ? `${row.project.code} — ${row.project.name}` : row.customer?.companyName,
+  ].filter(Boolean).join(' · ');
+
+  const proformaPicker = useEntitySearch<ProformaRow>({
+    path: '/api/proformas',
+    selectedId: followUpProformaId || null,
+    enabled: showModal && newTaskKind === 'SALES_FOLLOW_UP',
+    getLabel: proformaLabel,
+  });
+
   const handleOpenAdd = () => {
     setEditingTask(null);
     setTitle('');
@@ -388,6 +481,8 @@ export default function TasksView({
     setReminderDate(getTodayShamsi());
     setReminderTime('09:00');
     setCustomValues({});
+    setNewTaskKind('GENERAL');
+    setFollowUpProformaId('');
     setShowModal(true);
   };
 
@@ -438,8 +533,40 @@ export default function TasksView({
     setShowModal(true);
   };
 
+  /** A chase being raised from scratch — the form that asks a quotation for. */
+  const isNewFollowUp = !editingTask && newTaskKind === 'SALES_FOLLOW_UP';
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+
+    /*
+     * A chase goes to the follow-up flow, not to `POST /api/tasks`.
+     *
+     * That endpoint is where the quotation's follow-up state is moved, where a
+     * second open chase on one document is refused, and where a settled sale is
+     * refused outright — and it is the same one «فعال‌سازی مجدد» on the sales
+     * queue posts to. A `taskKind` written straight onto a task row would look
+     * identical and obey none of it.
+     */
+    if (isNewFollowUp) {
+      if (!title.trim()) { alert('عنوان اقدام الزامی است.'); return; }
+      if (!followUpProformaId) { alert('پیش‌فاکتوری که پیگیری می‌شود را انتخاب کنید.'); return; }
+      if (!dueDate) { alert('تاریخ اقدام بعدی الزامی است.'); return; }
+      void (async () => {
+        try {
+          await salesFollowUpApi.reactivate(followUpProformaId, {
+            title, description, dueDate, assignedToName: assignedTo, priority,
+          });
+          setShowModal(false);
+          setIsTaskModalFullscreen(false);
+          list.refresh();
+          void topUpBoard();
+        } catch (err) {
+          reportError(err, 'ثبت پیگیری با خطا مواجه شد.');
+        }
+      })();
+      return;
+    }
 
     if (isFieldRequired(settings, 'tasks', 'title') && !title) {
       alert('فیلد "عنوان وظیفه" الزامی است.');
@@ -630,7 +757,7 @@ export default function TasksView({
   });
 
   /** Moves everything ticked into one column, in a single request. */
-  const moveSelection = async (lane: BoardLane) => {
+  const moveSelection = async (lane: MovableLane) => {
     const taskIds: string[] = [];
     const referralIds: string[] = [];
     for (const key of selectedCards) {
@@ -641,17 +768,21 @@ export default function TasksView({
     try {
       const result = await tasksApi.moveToLane(lane, { taskIds, referralIds });
       setSelectedCards(new Set());
+      setLoad(result.topUp);
       list.refresh();
       refreshReferrals();
       /*
-       * A card that would not move is named, not swallowed.
+       * A card that would not move is named, not swallowed — and named by the
+       * rule that refused it.
        *
-       * The one that refuses is a sales follow-up dragged into «انجام شده»:
-       * closing one means recording what the customer said, which is the whole
-       * point of its own form. Silence there reads as the board being broken.
+       * There are three of them now: a sales follow-up dragged into «انجام
+       * شده» (it is closed by recording what the customer said), a chase
+       * pushed into «برای انجام» (its column is its next-contact date), and an
+       * assignee already at their limit. One hardcoded sentence could only
+       * ever describe the first, so the server sends the sentences.
        */
       if (result.refused > 0) {
-        alert(`${result.refused} مورد منتقل نشد. پیگیری فروش با «ثبت نتیجه پیگیری» بسته می‌شود، نه با انتقال ستون.`);
+        alert([`${result.refused} مورد منتقل نشد.`, ...result.reasons].join('\n'));
       }
     } catch (err) {
       alert(err instanceof Error ? err.message : 'انتقال با خطا مواجه شد.');
@@ -971,6 +1102,8 @@ export default function TasksView({
         <WorkBoard
           cards={boardCards}
           sort={boardSort}
+          today={today}
+          load={load}
           selected={selectedCards}
           onToggleSelect={toggleCard}
           onMove={(lane) => { void moveSelection(lane); }}
@@ -1476,6 +1609,9 @@ export default function TasksView({
             const outcome = await salesFollowUpApi.complete(followUpRow.taskId, body);
             setFollowUpRow(null);
             list.refresh();
+            // A chase closed is a seat freed, and the replacement is parked
+            // until its own date — so this is exactly when the floor is crossed.
+            void topUpBoard();
             /*
               Settling a sale here is the same event as settling it in the
               proforma's own outcome modal, which has always gone on to ask
@@ -1522,6 +1658,39 @@ export default function TasksView({
             <form onSubmit={handleSave} className="p-4 sm:p-6 space-y-4 text-right overflow-y-auto flex-1">
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
+                {/*
+                  Which kind of work this is, asked first because it changes
+                  the rest of the form — and offered on creation only, since
+                  changing the kind of a task that exists would move it between
+                  two flows with different rules about how it closes.
+                */}
+                {!editingTask && (
+                  <div className="space-y-1.5 sm:col-span-2">
+                    <label className="text-xs font-semibold text-slate-500">نوع کار</label>
+                    <div className="grid grid-cols-2 gap-2" id="task-kind-choice">
+                      {([
+                        ['GENERAL', 'وظیفه عادی', 'کاری که خودتان یا همکارتان باید انجام دهد.'],
+                        ['SALES_FOLLOW_UP', 'پیگیری فروش', 'پیگیری یک پیش‌فاکتور تا تعیین تکلیف آن.'],
+                      ] as const).map(([value, label, hint]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          id={`task-kind-${value}`}
+                          onClick={() => setNewTaskKind(value)}
+                          className={`text-right px-3 py-2 rounded-lg border transition ${
+                            newTaskKind === value
+                              ? 'border-sky-500 bg-sky-50 ring-2 ring-sky-500/20'
+                              : 'border-slate-200 bg-white hover:border-sky-300'
+                          }`}
+                        >
+                          <span className="block text-[13px] font-bold text-slate-800">{label}</span>
+                          <span className="block text-[10px] text-slate-600 leading-relaxed">{hint}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Title */}
                 <div className="space-y-1.5 sm:col-span-2">
                   <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'tasks', 'title', 'عنوان وظیفه / پیگیری بازرگانی')}</label>
@@ -1548,80 +1717,117 @@ export default function TasksView({
                   />
                 </div>
 
-                {/* Relation Type */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-slate-500">مرتبط با ماژول</label>
-                  <select
-                    value={relatedToType}
-                    onChange={(e) => setRelatedToType(e.target.value as Task['relatedToType'])}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
-                  >
-                    <option value="عمومی">عمومی (فاقد مرجع)</option>
-                    <option value="مشتری">مشتریان</option>
-                    <option value="پروژه">پروژه‌ها و مناقصات</option>
-                  </select>
-                </div>
-
-                {/* Linked Target select */}
-                {relatedToType === 'مشتری' && (
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-500">مشتری هدف *</label>
-                    <div className="flex gap-1.5 items-center">
-                      <select
-                        value={relatedToId}
-                        onChange={(e) => setRelatedToId(e.target.value)}
-                        required
-                        className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
-                      >
-                        <option value="">-- انتخاب مشتری --</option>
-                        {customers.map(c => (
-                          <option key={c.id} value={c.id}>{c.companyName}</option>
-                        ))}
-                      </select>
-                      {addCustomer && (
-                        <button
-                          type="button"
-                          onClick={() => setQuickAddType('customer')}
-                          className="px-2.5 py-2 text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg border border-sky-200 hover:border-sky-300 transition shrink-0 flex items-center justify-center font-bold"
-                          title="تعریف سریع مشتری جدید"
-                        >
-                          <Plus size={18} />
-                        </button>
-                      )}
-                    </div>
+                {/*
+                  A chase is about a **quotation**, and that is not one of the
+                  three things the «مرتبط با ماژول» picker offers — so the two
+                  forms ask different questions here rather than one of them
+                  offering a field that cannot answer.
+                */}
+                {isNewFollowUp ? (
+                  <div className="space-y-1.5 sm:col-span-2" id="follow-up-proforma-picker">
+                    <label className="text-xs font-semibold text-slate-500">پیش‌فاکتوری که پیگیری می‌شود *</label>
+                    <input
+                      type="text"
+                      value={proformaPicker.term}
+                      onChange={(e) => proformaPicker.setTerm(e.target.value)}
+                      placeholder="جستجوی شماره پیش‌فاکتور، کد یا نام پروژه…"
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
+                    />
+                    <select
+                      value={followUpProformaId}
+                      required
+                      onChange={(e) => setFollowUpProformaId(e.target.value)}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
+                    >
+                      <option value="">-- انتخاب پیش‌فاکتور --</option>
+                      {proformaPicker.matches.map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {proformaLabel(row)}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-slate-600 leading-relaxed">
+                      اگر این پیش‌فاکتور پیگیری بازی داشته باشد یا نتیجه‌اش قطعی شده باشد، ثبت انجام نمی‌شود.
+                    </p>
                   </div>
-                )}
-
-                {relatedToType === 'پروژه' && (
+                ) : (
+                  <>
+                  {/* Relation Type */}
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-500">پروژه هدف *</label>
-                    <div className="flex gap-1.5 items-center">
-                      <select
-                        value={relatedToId}
-                        onChange={(e) => setRelatedToId(e.target.value)}
-                        required
-                        className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
-                      >
-                        <option value="">-- انتخاب پروژه --</option>
-                        {projects.map(p => (
-                          <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
-                        ))}
-                      </select>
-                      {addProject && (
-                        <button
-                          type="button"
-                          onClick={() => setQuickAddType('project')}
-                          className="px-2.5 py-2 text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg border border-sky-200 hover:border-sky-300 transition shrink-0 flex items-center justify-center font-bold"
-                          title="تعریف سریع پروژه جدید"
-                        >
-                          <Plus size={18} />
-                        </button>
-                      )}
-                    </div>
+                    <label className="text-xs font-semibold text-slate-500">مرتبط با ماژول</label>
+                    <select
+                      value={relatedToType}
+                      onChange={(e) => setRelatedToType(e.target.value as Task['relatedToType'])}
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
+                    >
+                      <option value="عمومی">عمومی (فاقد مرجع)</option>
+                      <option value="مشتری">مشتریان</option>
+                      <option value="پروژه">پروژه‌ها و مناقصات</option>
+                    </select>
                   </div>
-                )}
 
-                {relatedToType === 'عمومی' && <div className="hidden" />}
+                  {/* Linked Target select */}
+                  {relatedToType === 'مشتری' && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-500">مشتری هدف *</label>
+                      <div className="flex gap-1.5 items-center">
+                        <select
+                          value={relatedToId}
+                          onChange={(e) => setRelatedToId(e.target.value)}
+                          required
+                          className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
+                        >
+                          <option value="">-- انتخاب مشتری --</option>
+                          {customers.map(c => (
+                            <option key={c.id} value={c.id}>{c.companyName}</option>
+                          ))}
+                        </select>
+                        {addCustomer && (
+                          <button
+                            type="button"
+                            onClick={() => setQuickAddType('customer')}
+                            className="px-2.5 py-2 text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg border border-sky-200 hover:border-sky-300 transition shrink-0 flex items-center justify-center font-bold"
+                            title="تعریف سریع مشتری جدید"
+                          >
+                            <Plus size={18} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {relatedToType === 'پروژه' && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-500">پروژه هدف *</label>
+                      <div className="flex gap-1.5 items-center">
+                        <select
+                          value={relatedToId}
+                          onChange={(e) => setRelatedToId(e.target.value)}
+                          required
+                          className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
+                        >
+                          <option value="">-- انتخاب پروژه --</option>
+                          {projects.map(p => (
+                            <option key={p.id} value={p.id}>{p.name} ({p.code})</option>
+                          ))}
+                        </select>
+                        {addProject && (
+                          <button
+                            type="button"
+                            onClick={() => setQuickAddType('project')}
+                            className="px-2.5 py-2 text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg border border-sky-200 hover:border-sky-300 transition shrink-0 flex items-center justify-center font-bold"
+                            title="تعریف سریع پروژه جدید"
+                          >
+                            <Plus size={18} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {relatedToType === 'عمومی' && <div className="hidden" />}
+                  </>
+                )}
 
                 {/* Priority */}
                 <div className="space-y-1.5">
@@ -1642,8 +1848,16 @@ export default function TasksView({
                 {/* Due Date */}
                 <div className="space-y-1.5" id="task-due-date-picker-wrapper">
                   <ShamsiDatePicker
-                    label={`مهلت انجام (سررسید)${getFieldAsterisk(settings, 'tasks', 'dueDate')}`}
-                    required={isFieldRequired(settings, 'tasks', 'dueDate')}
+                    /*
+                      A chase's date is not a deadline: it is the day the
+                      customer is to be called, and it is what decides whether
+                      the card sits in «در انتظار مشتری» or «در حال انجام». So
+                      it is always required here and says what it is.
+                    */
+                    label={isNewFollowUp
+                      ? 'تاریخ اقدام بعدی (تماس با مشتری) *'
+                      : `مهلت انجام (سررسید)${getFieldAsterisk(settings, 'tasks', 'dueDate')}`}
+                    required={isNewFollowUp || isFieldRequired(settings, 'tasks', 'dueDate')}
                     value={dueDate}
                     onChange={(val) => setDueDate(val)}
                   />
@@ -1685,7 +1899,15 @@ export default function TasksView({
                   </div>
                 )}
 
-                {/* Reminder Option */}
+                {/*
+                  No reminder on a chase.
+                  
+                  It has one already, and a better one: the due date puts it in
+                  «در حال انجام» on the morning it is to be made, on the board
+                  the person is looking at anyway. A second notification for the
+                  same call is one to start ignoring.
+                */}
+                {!isNewFollowUp && (
                 <div className="sm:col-span-2 border-t border-slate-100 pt-3 mt-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -1731,10 +1953,17 @@ export default function TasksView({
                     </div>
                   )}
                 </div>
+                )}
 
               </div>
 
-              {/* Dynamic Custom Fields Form Section */}
+              {/*
+                The custom fields belong to the tasks module and are written by
+                `POST /api/tasks`; a chase is created through the follow-up
+                flow, which has no column for them — so offering boxes whose
+                answers would be dropped is worse than not offering them.
+              */}
+              {!isNewFollowUp && (
               <div className="border-t border-slate-100 pt-5">
                 <CustomFieldsForm
                   module="tasks"
@@ -1743,6 +1972,7 @@ export default function TasksView({
                   onChange={setCustomValues}
                 />
               </div>
+              )}
 
               <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 shrink-0">
                 <button

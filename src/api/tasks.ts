@@ -1,6 +1,22 @@
-import type { BoardLane } from "../utils/workBoard";
+import type { MovableLane } from "../utils/workBoard";
 import { ListResponse, api } from "./client";
 import type { Task } from "../types";
+
+/**
+ * How much work this person is holding, and what they are held to.
+ *
+ * Travels back from every move so the board can draw «۳ از ۵» on «در حال
+ * انجام» — a cap nobody can see is a cap that reads as the board refusing
+ * things at random. Nulls are «no limit», which is every account until
+ * somebody types a number into the users screen.
+ */
+export interface WorkLoad {
+  /** How many cards were pulled up to reach the floor, if any. */
+  promoted: number;
+  active: number;
+  min: number | null;
+  max: number | null;
+}
 
 /**
  * Task endpoints.
@@ -99,8 +115,31 @@ export const tasksApi = {
    * one the person can see sitting where they left it, and silence there reads
    * as the board being broken.
    */
-  moveToLane: (lane: BoardLane, ids: { taskIds?: string[]; referralIds?: string[] }) =>
-    api.post<{ moved: number; refused: number }>("/api/tasks/board/move", { lane, ...ids }),
+  moveToLane: (lane: MovableLane, ids: { taskIds?: string[]; referralIds?: string[] }) =>
+    api.post<{
+      moved: number;
+      refused: number;
+      /**
+       * One sentence per rule that refused something.
+       *
+       * Three cards can be refused for three different reasons — a follow-up
+       * dragged into «انجام شده», a chase pushed into «برای انجام», an
+       * assignee already at their limit — and the single hardcoded message
+       * this screen used to show could only ever describe the first.
+       */
+      reasons: string[];
+      topUp: WorkLoad;
+    }>("/api/tasks/board/move", { lane, ...ids }),
+
+  /**
+   * Fills «در حال انجام» back up to this person's minimum.
+   *
+   * A POST because it writes. The board asks for it when it opens and after
+   * anything is finished — the two moments the floor can have been crossed —
+   * rather than the server doing it as a side effect of a read.
+   */
+  topUp: () =>
+    api.post<{ topUp: WorkLoad }>("/api/tasks/board/top-up", {}).then((r) => r.topUp),
 
   create: (input: TaskWriteInput) =>
     api.post<{ task: TaskRow }>("/api/tasks", input).then((r) => r.task),
