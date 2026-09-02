@@ -31,9 +31,20 @@ export interface SidebarBadges {
   pendingReferrals: number;
   /** Unread notices addressed to this user. */
   unreadNotifications: number;
+  /**
+   * Everything on this user's plate: the open tasks plus the open referrals.
+   *
+   * One figure rather than a sum recomputed wherever it is drawn. The sidebar's
+   * «وظایف و پیگیری» badge and the header's inbox icon are the same question —
+   * «چقدر کار روی دستم مانده» — and two additions of the same two numbers is
+   * how they come to disagree the day one of them changes.
+   */
+  openWork: number;
 }
 
-const EMPTY: SidebarBadges = { openTasks: 0, lowStock: 0, pendingReferrals: 0, unreadNotifications: 0 };
+const EMPTY: SidebarBadges = {
+  openTasks: 0, lowStock: 0, pendingReferrals: 0, unreadNotifications: 0, openWork: 0,
+};
 
 /** How often to re-read them. Long enough not to chatter, short enough to feel live. */
 const REFRESH_MS = 60_000;
@@ -57,21 +68,25 @@ export function useSidebarBadges(enabled: boolean): SidebarBadges {
         { pageSize: 1 }, signal),
     ]);
 
+    /*
+     * Everything the board's open columns hold: an ordinary task, one an
+     * automation raised, a sales follow-up, one this user logged for
+     * themselves. `taskLane` is the same rule the board draws by, and it is an
+     * exclusion — every automation writes «در انتظار», a fourth value no
+     * dropdown ever offered, and a hardcoded list of the two closing words
+     * counted it only by luck.
+     */
+    const openTasks = tasks.summary.byStatus
+      .filter((s) => taskLane(s.status) !== "DONE")
+      .reduce((sum, s) => sum + s.count, 0);
+    const pendingReferrals = referrals.total;
+
     setBadges({
-      /*
-       * Everything the board's open columns hold: an ordinary task, one an
-       * automation raised, a sales follow-up, one this user logged for
-       * themselves. `taskLane` is the same rule the board draws by, and it is
-       * an exclusion — every automation writes «در انتظار», a fourth value no
-       * dropdown ever offered, and a hardcoded list of the two closing words
-       * counted it only by luck.
-       */
-      openTasks: tasks.summary.byStatus
-        .filter((s) => taskLane(s.status) !== "DONE")
-        .reduce((sum, s) => sum + s.count, 0),
+      openTasks,
       lowStock: dashboard.summary.counts.lowStock,
-      pendingReferrals: referrals.total,
+      pendingReferrals,
       unreadNotifications: notifications.unread,
+      openWork: openTasks + pendingReferrals,
     });
   }, []);
 

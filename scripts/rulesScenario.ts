@@ -8232,6 +8232,27 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   // on this user's board.
   ok("referrals are counted in both directions",
     /scope: "mine", open: "true"/.test(badges));
+  /*
+   * One figure, made once. The sidebar's «وظایف و پیگیری» badge and the
+   * header's inbox icon ask the same question — «چقدر کار روی دستم مانده» —
+   * and two additions of the same two numbers is how they come to disagree the
+   * day one of them changes.
+   */
+  ok("...and the two are added up in one place",
+    /openWork: openTasks \+ pendingReferrals/.test(badges));
+  const sidebar = strip(readFileSync("src/components/Sidebar.tsx", "utf8"));
+  ok("the sidebar draws that figure rather than adding its own",
+    /badge: workCount > 0/.test(sidebar) && !/taskCount \+ referralsCount/.test(sidebar));
+  const app = strip(readFileSync("src/App.tsx", "utf8"));
+  ok("the inbox icon carries the whole workload",
+    /\{badges\.openWork > 0 &&/.test(app));
+  /*
+   * And the calendar carries none: it is a way of *looking* at the work, not a
+   * second count of it. Two icons with two halves of one number is what this
+   * replaced.
+   */
+  ok("...and the calendar icon counts nothing",
+    !/badges\.openTasks > 0/.test(app));
   const activity = strip(readFileSync("src/server/services/activityService.ts", "utf8"));
   ok("...and «mine» is that, on the server",
     /and\.push\(\{ OR: \[\{ assignedToUserId: user\.id \}, \{ assignedByUserId: user\.id \}\] \}\)/
