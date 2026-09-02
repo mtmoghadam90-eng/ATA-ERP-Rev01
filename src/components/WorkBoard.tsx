@@ -80,10 +80,21 @@ const PRIORITY_CLASS: Record<string, string> = {
   'پایین': 'bg-slate-50 text-slate-600 border-slate-200',
 };
 
+/*
+ * A column's whole appearance, in one class.
+ *
+ * It was `border-sky-200 bg-sky-50/40` and its two neighbours — a boundary at
+ * 1.32:1 over a fill measuring 1.02:1 against the page, so the three columns
+ * did not read as three regions and the cards ran down the screen in three
+ * invisible gutters. The colours live in `index.css` as `--lane-*` roles that
+ * both themes answer: a tinted surface written as a Tailwind utility is a
+ * light value with no dark answer, which is the fault this file used to carry
+ * twice over.
+ */
 const LANE_CLASS: Record<BoardLane, string> = {
-  TODO: 'border-sky-200 bg-sky-50/40',
-  DOING: 'border-amber-200 bg-amber-50/40',
-  DONE: 'border-emerald-200 bg-emerald-50/30',
+  TODO: 'board-lane board-lane-todo',
+  DOING: 'board-lane board-lane-doing',
+  DONE: 'board-lane board-lane-done',
 };
 
 export default function WorkBoard({
@@ -102,12 +113,19 @@ export default function WorkBoard({
           <div
             key={lane}
             id={`work-board-lane-${lane}`}
-            className={`rounded-2xl border ${LANE_CLASS[lane]} p-3 flex flex-col gap-2 min-h-[120px]`}
+            className={`rounded-2xl border overflow-hidden ${LANE_CLASS[lane]} flex flex-col min-h-[120px]`}
           >
-            <div className="flex items-center justify-between gap-2 pb-2 border-b border-white/70">
+            {/*
+              The heading sits in a band of its own, closed by the column's own
+              edge. The rule under it used to be `border-white/70` — white, on a
+              surface that was itself 98% white.
+            */}
+            <div className="board-lane-head flex items-center justify-between gap-2 px-3 py-2">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-extrabold text-slate-700">{LANE_LABELS[lane]}</span>
-                <span className="text-[10px] font-mono bg-white border border-slate-200 rounded-full px-1.5 text-slate-500">
+                {/* The column's identity before its name is read. */}
+                <span className="board-lane-mark w-1 h-4 rounded-full" aria-hidden="true" />
+                <span className="board-lane-title text-[13px] font-extrabold">{LANE_LABELS[lane]}</span>
+                <span className="text-[10px] font-mono bg-white border border-slate-200 rounded-full px-1.5 text-slate-600">
                   {list.length}
                 </span>
               </div>
@@ -137,105 +155,107 @@ export default function WorkBoard({
               </button>
             </div>
 
-            {list.length === 0 && (
-              <p className="text-[11px] text-slate-400 py-4 text-center">موردی در این ستون نیست.</p>
-            )}
+            <div className="p-3 flex flex-col gap-2">
+              {list.length === 0 && (
+                <p className="text-[11px] text-slate-500 py-4 text-center">موردی در این ستون نیست.</p>
+              )}
 
-            {list.map((card) => {
-              const key = cardKey(card);
-              const isSelected = selected.has(key);
-              const cancelled = card.kind === 'task' && card.status === TASK_CANCELLED;
+              {list.map((card) => {
+                const key = cardKey(card);
+                const isSelected = selected.has(key);
+                const cancelled = card.kind === 'task' && card.status === TASK_CANCELLED;
 
-              return (
-                <div
-                  key={key}
-                  id={`work-board-card-${key}`}
-                  className={`bg-white rounded-xl border p-2.5 space-y-1.5 transition ${
-                    isSelected ? 'border-sky-400 ring-2 ring-sky-500/15' : 'border-slate-200'
-                  }`}
-                >
-                  <div className="flex items-start gap-2">
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => onToggleSelect(key)}
-                      id={`work-board-select-${key}`}
-                      className="mt-0.5 accent-sky-500"
-                      aria-label="انتخاب برای انتقال"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => onOpen(card)}
-                      className="flex-1 text-right text-[12px] font-bold text-slate-800 leading-relaxed hover:text-sky-700 transition"
-                    >
-                      {card.title}
-                    </button>
-                  </div>
+                return (
+                  <div
+                    key={key}
+                    id={`work-board-card-${key}`}
+                    className={`bg-white rounded-xl border p-2.5 space-y-1.5 shadow-sm transition ${
+                      isSelected ? 'border-sky-500 ring-2 ring-sky-500/25' : 'border-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => onToggleSelect(key)}
+                        id={`work-board-select-${key}`}
+                        className="mt-0.5 accent-sky-500"
+                        aria-label="انتخاب برای انتقال"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => onOpen(card)}
+                        className="flex-1 text-right text-[12px] font-bold text-slate-800 leading-relaxed hover:text-sky-700 transition"
+                      >
+                        {card.title}
+                      </button>
+                    </div>
 
-                  <div className="flex flex-wrap items-center gap-1 pr-6">
-                    {/*
-                      What kind of work it is, because the answer decides what
-                      pressing the card does — reply in a thread, record what
-                      the customer said, or tick it.
-                    */}
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-slate-50 border-slate-200 text-slate-600 inline-flex items-center gap-1">
-                      {card.kind === 'referral' ? <><Inbox size={9} /> ارجاع</>
-                        : card.taskKind === 'SALES_FOLLOW_UP' ? <><Phone size={9} /> پیگیری فروش</>
-                          : <><ListTodo size={9} /> وظیفه</>}
-                    </span>
-
-                    {card.kind === 'task' && card.priority && (
-                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
-                        PRIORITY_CLASS[card.priority] ?? PRIORITY_CLASS['متوسط']
-                      }`}>
-                        {card.priority}
+                    <div className="flex flex-wrap items-center gap-1 pr-6">
+                      {/*
+                        What kind of work it is, because the answer decides what
+                        pressing the card does — reply in a thread, record what
+                        the customer said, or tick it.
+                      */}
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-slate-50 border-slate-200 text-slate-600 inline-flex items-center gap-1">
+                        {card.kind === 'referral' ? <><Inbox size={9} /> ارجاع</>
+                          : card.taskKind === 'SALES_FOLLOW_UP' ? <><Phone size={9} /> پیگیری فروش</>
+                            : <><ListTodo size={9} /> وظیفه</>}
                       </span>
-                    )}
 
-                    {card.kind === 'referral' && card.replies > 0 && (
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-white border-slate-200 text-slate-500 inline-flex items-center gap-1">
-                        <MessageSquare size={9} />
-                        {card.replies} پاسخ
-                      </span>
-                    )}
+                      {card.kind === 'task' && card.priority && (
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                          PRIORITY_CLASS[card.priority] ?? PRIORITY_CLASS['متوسط']
+                        }`}>
+                          {card.priority}
+                        </span>
+                      )}
 
-                    {/*
-                      A cancelled task is finished work and belongs in the last
-                      column, but it is not the same as done — so it is marked
-                      rather than given a column nobody asked for.
-                    */}
-                    {cancelled && (
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-rose-50 border-rose-200 text-rose-700">
-                        کنسل شده
-                      </span>
-                    )}
-                  </div>
+                      {card.kind === 'referral' && card.replies > 0 && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-white border-slate-200 text-slate-500 inline-flex items-center gap-1">
+                          <MessageSquare size={9} />
+                          {card.replies} پاسخ
+                        </span>
+                      )}
 
-                  {card.context && (card.context.code || card.context.customerName) && (
-                    <div className="pr-6 text-[10px] text-sky-700 flex flex-wrap items-center gap-1">
-                      {card.context.code && <span className="font-mono font-bold">{card.context.code}</span>}
-                      {card.context.name && <span className="truncate">{card.context.name}</span>}
-                      {card.context.customerName && (
-                        <span className="text-slate-500">— {card.context.customerName}</span>
+                      {/*
+                        A cancelled task is finished work and belongs in the last
+                        column, but it is not the same as done — so it is marked
+                        rather than given a column nobody asked for.
+                      */}
+                      {cancelled && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-rose-50 border-rose-200 text-rose-700">
+                          کنسل شده
+                        </span>
                       )}
                     </div>
-                  )}
 
-                  <div className="pr-6 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-400 font-mono">
-                    {card.kind === 'task' && card.dueDate && <span>سررسید: {card.dueDate}</span>}
-                    {/* The two facts the board records: when it started, when it closed. */}
-                    {card.kind === 'task' && card.startedAt && <span>شروع: {card.startedAt}</span>}
-                    {card.kind === 'task' && card.completedAt && (
-                      <span className="text-emerald-600 inline-flex items-center gap-0.5">
-                        <CheckCircle2 size={9} /> {card.completedAt}
-                      </span>
+                    {card.context && (card.context.code || card.context.customerName) && (
+                      <div className="pr-6 text-[10px] text-sky-700 flex flex-wrap items-center gap-1">
+                        {card.context.code && <span className="font-mono font-bold">{card.context.code}</span>}
+                        {card.context.name && <span className="truncate">{card.context.name}</span>}
+                        {card.context.customerName && (
+                          <span className="text-slate-500">— {card.context.customerName}</span>
+                        )}
+                      </div>
                     )}
-                    <span className="font-sans">مسئول: {card.assignedTo || '—'}</span>
-                    <span className="font-sans">ارجاع‌دهنده: {card.createdBy || 'سیستم'}</span>
+
+                    <div className="pr-6 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-400 font-mono">
+                      {card.kind === 'task' && card.dueDate && <span>سررسید: {card.dueDate}</span>}
+                      {/* The two facts the board records: when it started, when it closed. */}
+                      {card.kind === 'task' && card.startedAt && <span>شروع: {card.startedAt}</span>}
+                      {card.kind === 'task' && card.completedAt && (
+                        <span className="text-emerald-600 inline-flex items-center gap-0.5">
+                          <CheckCircle2 size={9} /> {card.completedAt}
+                        </span>
+                      )}
+                      <span className="font-sans">مسئول: {card.assignedTo || '—'}</span>
+                      <span className="font-sans">ارجاع‌دهنده: {card.createdBy || 'سیستم'}</span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         );
       })}

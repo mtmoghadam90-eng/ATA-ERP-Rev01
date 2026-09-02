@@ -6559,6 +6559,68 @@ head("Contrast: the palette was measured, and most of it did not pass");
   const composer = readFileSync("src/components/ActivityComposer.tsx", "utf8");
   ok("the compose bar carries the edge rather than a heavier fill",
     /border-t-edge/.test(composer));
+
+  /* ------------------- the work board's three columns ---------------------- */
+
+  /*
+   * Reported as «ستون های مراحل اقدام خیلی محو دیده میشه», and measurably so:
+   * the columns were `border-sky-200 bg-sky-50/40` and their two neighbours — a
+   * boundary at 1.32:1 over a fill at 1.02:1 against the page. Three columns
+   * that could not be told from the page or from each other.
+   *
+   * Measured here rather than eyeballed, for the same reason every other value
+   * in that stylesheet is: a tint chosen by eye is exactly what produced the
+   * 1.02. The boundary carries the separation and is held to the 3:1 a
+   * component boundary owes; the fill carries the identity and is not, since
+   * two large tinted surfaces only reach 3:1 by making one obviously grey.
+   */
+  const LANES = ["todo", "doing", "done"] as const;
+  for (const [theme, roles, page] of [
+    ["light", light, light["bg-app"]], ["dark", dark, dark["bg-app"]],
+  ] as const) {
+    let worstEdge = { pair: "", r: 99 };
+    let worstAccent = { pair: "", r: 99 };
+    let read = 0;
+    for (const lane of LANES) {
+      const fill = roles[`lane-${lane}-fill`];
+      const head = roles[`lane-${lane}-head`];
+      const edge = roles[`lane-${lane}-edge`];
+      const accent = roles[`lane-${lane}-accent`];
+      if (!fill || !head || !edge || !accent) continue;
+      read += 1;
+      for (const [name, ground] of [["page", page], ["fill", fill]] as const) {
+        const r = contrast(edge, ground);
+        if (r < worstEdge.r) worstEdge = { pair: `${lane} edge on the ${name}`, r };
+      }
+      for (const [name, ground] of [["fill", fill], ["band", head]] as const) {
+        const r = contrast(accent, ground);
+        if (r < worstAccent.r) worstAccent = { pair: `${lane} accent on the ${name}`, r };
+      }
+    }
+    // Or every assertion below would pass by measuring nothing.
+    ok(`${theme}: all three lane palettes were read`, read === 3, read);
+    ok(`${theme}: a lane boundary clears 3:1 on the page and on its own fill`,
+      worstEdge.r >= 3, `${worstEdge.pair} = ${worstEdge.r.toFixed(2)}`);
+    ok(`${theme}: a lane's name clears AA on the fill and on its band`,
+      worstAccent.r >= 4.5, `${worstAccent.pair} = ${worstAccent.r.toFixed(2)}`);
+  }
+
+  /*
+   * And the component reads those roles rather than carrying tinted utilities
+   * of its own. A tinted Tailwind surface is a *light* value with no dark
+   * answer — the sweep above only knows about the slate ramp, so `bg-sky-50/40`
+   * passed it while rendering as a light-grey slab over a dark ground.
+   */
+  const board = readFileSync("src/components/WorkBoard.tsx", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  ok("the board file survived having its comments stripped", board.includes("LANE_CLASS"));
+  ok("each column is one role-bearing class",
+    LANES.every((lane) => board.includes(`board-lane board-lane-${lane}`)));
+  ok("and carries no tinted surface of its own",
+    !/bg-(?:sky|amber|emerald)-50\//.test(board),
+    board.match(/bg-(?:sky|amber|emerald)-50\/\d+/g));
+  // The divider that was white on a 98%-white ground.
+  ok("nor a white rule to separate the heading", !/border-white\//.test(board));
 }
 
 head("Product categories: one taxonomy, two ways in");
