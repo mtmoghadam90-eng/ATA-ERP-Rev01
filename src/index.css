@@ -188,7 +188,38 @@ body {
   --text-danger: #d01741;     /* 5.41 white · 4.94 hover */
   --text-warn: #b45309;       /* 5.02 */
   --text-violet: #4338ca;     /* 8.28 */
+
+  /*
+   * The work board's three columns.
+   *
+   * They were `border-sky-200 bg-sky-50/40` and the like — a border at 1.32:1
+   * and a fill that is 40% of a near-white over a near-white, which measures
+   * 1.02:1 against the page. So the three columns of «تخته کار» did not read as
+   * three regions at all: the cards simply ran down the screen in three
+   * invisible gutters, which is exactly how it was reported.
+   *
+   * Four roles per column, because a column is four things: the fill it stands
+   * on, the band its heading sits in, the boundary that separates it from the
+   * page and from its neighbours, and the accent that names it. The boundary
+   * is the one held to 3:1 — the same rule `--color-edge` answers — since two
+   * large tinted surfaces cannot be pulled to 3:1 without making one of them
+   * obviously grey, and the fill is what carries the *identity* rather than
+   * the separation.
+   */
+  --lane-todo-fill: #e0edfa;    /* edge 3.72 on the page · 3.28 on this fill */
+  --lane-todo-head: #cbe1f6;
+  --lane-todo-edge: #4a86b8;
+  --lane-todo-accent: #0b5c8a;  /* 6.07 on the fill · 5.37 on the band */
+  --lane-doing-fill: #f9edda;   /* edge 3.45 · 3.12 */
+  --lane-doing-head: #f2dfbd;
+  --lane-doing-edge: #b07d2a;
+  --lane-doing-accent: #8a5209; /* 5.52 · 4.88 */
+  --lane-done-fill: #dfeee7;    /* edge 3.65 · 3.19 */
+  --lane-done-head: #c9e4d7;
+  --lane-done-edge: #4d8f74;
+  --lane-done-accent: #116245;  /* 6.13 · 5.45 */
 }
+
 
 /*
  * The same roles on a dark ground.
@@ -227,7 +258,28 @@ body {
   --text-danger: #fb7185;     /* 6.12 */
   --text-warn: #fbbf24;       /* 9.87 */
   --text-violet: #a5b4fc;     /* 8.27 */
+
+  /*
+   * The same four roles on a dark ground, and going the other way: the fill is
+   * a shade *below* the page so the cards — which are `--bg-card` — sit on top
+   * of it rather than under it, and the accent is lightened rather than
+   * darkened. Untinted, these columns had no dark answer at all: a translucent
+   * near-white over a dark ground rendered as three light-grey slabs.
+   */
+  --lane-todo-fill: #061019;
+  --lane-todo-head: #0f2c44;
+  --lane-todo-edge: #3f6f95;    /* 3.52 on the page · 3.58 on this fill */
+  --lane-todo-accent: #7cc6f5;  /* 10.27 on the fill · 7.69 on the band */
+  --lane-doing-fill: #151009;
+  --lane-doing-head: #2e260e;
+  --lane-doing-edge: #8a6a2c;   /* 3.75 · 3.76 */
+  --lane-doing-accent: #e8b45c; /* 10.01 · 7.94 */
+  --lane-done-fill: #05130f;
+  --lane-done-head: #0d2e24;
+  --lane-done-edge: #3a7862;    /* 3.63 · 3.65 */
+  --lane-done-accent: #6ed3ab;  /* 10.46 · 8.07 */
 }
+
 
 /* Base Body Dark Styling */
 .dark body {
@@ -645,4 +697,62 @@ html:not(.dark) textarea:not([readonly]) {
 .dark main .md\:hover\:bg-white:hover,
 .dark [role="dialog"] .md\:hover\:bg-white:hover {
   background-color: var(--bg-card) !important;
+}
+
+
+/* ======================================================================== */
+/*  The work board's columns                                                */
+/* ======================================================================== */
+/*
+ * Reported as «ستون های مراحل اقدام خیلی محو دیده میشه», and it was literally
+ * true: the columns were `border-sky-200 bg-sky-50/40`, a boundary at 1.32:1
+ * over a fill at 1.02:1. Nothing on the screen said where one column ended and
+ * the next began.
+ *
+ * The four roles above are set on the column and read by its parts, so a
+ * column is one class rather than four, and adding a fourth column later is
+ * one variable block rather than an edit in three places. They are `--lane-*`
+ * indirections rather than the utilities the component used to carry, because
+ * a tinted surface written as a Tailwind class is a light value with no dark
+ * answer — which is how these columns rendered as three light-grey slabs in
+ * dark mode, a fault nobody had reported only because the board is new.
+ */
+.board-lane {
+  background-color: var(--lane-fill);
+  border-color: var(--lane-edge);
+}
+
+/*
+ * The heading sits in a band rather than over the fill, and the rule under it
+ * is the column's own edge. It used to be `border-white/70` — white, on a
+ * surface that was itself 98% white.
+ */
+.board-lane-head {
+  background-color: var(--lane-head);
+  border-bottom: 1px solid var(--lane-edge);
+}
+
+.board-lane-title { color: var(--lane-accent); }
+
+/* The bar beside the title: the column's identity at a glance, before the
+   words are read. */
+.board-lane-mark { background-color: var(--lane-accent); }
+
+.board-lane-todo {
+  --lane-fill: var(--lane-todo-fill);
+  --lane-head: var(--lane-todo-head);
+  --lane-edge: var(--lane-todo-edge);
+  --lane-accent: var(--lane-todo-accent);
+}
+.board-lane-doing {
+  --lane-fill: var(--lane-doing-fill);
+  --lane-head: var(--lane-doing-head);
+  --lane-edge: var(--lane-doing-edge);
+  --lane-accent: var(--lane-doing-accent);
+}
+.board-lane-done {
+  --lane-fill: var(--lane-done-fill);
+  --lane-head: var(--lane-done-head);
+  --lane-edge: var(--lane-done-edge);
+  --lane-accent: var(--lane-done-accent);
 }
