@@ -8330,10 +8330,31 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     /taskLane\(s\.status\) !== "DONE"/.test(badges));
   ok("...not by a list of closing words written out here",
     !/new Set\(\["انجام شده", "کنسل شده"\]\)/.test(badges));
-  // A referral belongs to two people exactly as a task does, and both appear
-  // on this user's board.
-  ok("referrals are counted in both directions",
-    /scope: "mine", open: "true"/.test(badges));
+  /*
+   * The reported fault: both records belong to two people — the one the work
+   * was given to and the one who gave it — and counting both put every request
+   * this user had handed to a colleague into their own inbox figure. A badge on
+   * an inbox answers «چقدر کار روی دستم مانده», so it is the assignee's half.
+   */
+  ok("referrals are counted only where they were assigned to this user",
+    /scope: "toMe", open: "true"/.test(badges));
+  ok("...and so are the tasks, which had the identical fault",
+    /"\/api\/tasks\/summary", \{ scope: "toMe" \}/.test(badges));
+  ok("...neither half asks for both directions any more",
+    !/scope: "mine"/.test(badges));
+  /*
+   * And the server can actually answer it: the summary took no scope at all,
+   * so `visibilityClause` — which is «assigned to me OR raised by me» — was
+   * the only narrowing there was.
+   */
+  const taskRouteBadge = strip(readFileSync("src/server/routes/tasks.ts", "utf8"));
+  ok("the summary endpoint takes the scope the badge sends",
+    /taskSummary\(user, getTodayShamsi\(\), scope\)/.test(taskRouteBadge));
+  const taskServiceBadge = strip(readFileSync("src/server/services/taskService.ts", "utf8"));
+  // Narrowed *within* what the caller may see, never instead of it.
+  ok("...applied on top of the visibility rule, not instead of it",
+    /const scoped = scopeClause\(user, scope\);[\s\S]{0,200}visibility, scoped/
+      .test(taskServiceBadge));
   /*
    * One figure, made once. The sidebar's «وظایف و پیگیری» badge and the
    * header's inbox icon ask the same question — «چقدر کار روی دستم مانده» —
@@ -8355,8 +8376,12 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    */
   ok("...and the calendar icon counts nothing",
     !/badges\.openTasks > 0/.test(app));
+  /*
+   * `mine` is still a scope, and still correct — it is what the board's «همه»
+   * view and the assistant ask for. It simply is not what a badge means.
+   */
   const activity = strip(readFileSync("src/server/services/activityService.ts", "utf8"));
-  ok("...and «mine» is that, on the server",
+  ok("«mine» still answers both directions, on the server",
     /and\.push\(\{ OR: \[\{ assignedToUserId: user\.id \}, \{ assignedByUserId: user\.id \}\] \}\)/
       .test(activity));
   const activityRoute = strip(readFileSync("src/server/routes/activities.ts", "utf8"));

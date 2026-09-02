@@ -477,11 +477,31 @@ export async function getTask(id: string, user: AuthUser) {
   return db.task.findFirst({ where: visibility ? { AND: [{ id }, visibility] } : { id } });
 }
 
-/** Open, overdue and due-today counts for the dashboard, aggregated in SQL. */
-export async function taskSummary(user: AuthUser, todayJalali: string) {
+/**
+ * Open, overdue and due-today counts, aggregated in SQL.
+ *
+ * **`scope` is what separates «چقدر کار روی دستم مانده» from «چه چیزهایی به من
+ * مربوط است».** `visibilityClause` alone answers the second: a task belongs to
+ * two people, the one it was given to *and* the one who gave it, so counting
+ * through it alone put every request this user had raised **for somebody else**
+ * into their own badge. Reported as the inbox counting other people's work, and
+ * it was. Passing `toMe` narrows it to the assignee, which is what a badge on
+ * an inbox means.
+ *
+ * Narrowed *within* what the caller may see, never instead of it — an omitted
+ * or invented scope widens nothing.
+ */
+export async function taskSummary(
+  user: AuthUser,
+  todayJalali: string,
+  scope?: TaskScope,
+) {
   const db = getDb();
   const visibility = visibilityClause(user);
-  const base = visibility ?? {};
+  const scoped = scopeClause(user, scope);
+  const clauses = [visibility, scoped].filter(Boolean) as Record<string, unknown>[];
+  const base: Record<string, unknown> = clauses.length === 0 ? {}
+    : clauses.length === 1 ? clauses[0] : { AND: clauses };
   const today = jalaliToDate(todayJalali);
 
   const [byStatus, overdue, dueToday] = await Promise.all([

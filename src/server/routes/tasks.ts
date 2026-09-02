@@ -165,7 +165,16 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
     const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
     try {
-      res.json({ success: true, summary: await taskSummary(user, getTodayShamsi()) });
+      /*
+       * The badge asks for `toMe`, and it is the reason this takes a scope at
+       * all: a task belongs to its assignee **and** to whoever raised it, so
+       * the unscoped count put every request this user had raised for a
+       * colleague into their own inbox figure.
+       */
+      const scope = req.query.scope === "toMe" ? "toMe"
+        : req.query.scope === "fromMe" ? "fromMe"
+        : undefined;
+      res.json({ success: true, summary: await taskSummary(user, getTodayShamsi(), scope) });
     } catch (err) {
       sendError(res, err, "GET /api/tasks/summary");
     }
