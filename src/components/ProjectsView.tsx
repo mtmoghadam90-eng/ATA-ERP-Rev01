@@ -5308,10 +5308,17 @@ export default function ProjectsView({
                                         }}
                                         title={`رفتن به «${MODULE_NAMES[target] ?? target}» برای پروژه ${code}`}
                                         data-category-link={target}
-                                        className="text-[10px] font-bold text-sky-700 hover:text-sky-900 hover:underline inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-sky-200 bg-white transition"
+                                        /*
+                                          The icon alone. The label repeated a
+                                          module name beside a category that
+                                          already says which work it is, in a
+                                          row that is mostly badges — and the
+                                          tooltip names the destination for
+                                          anybody who needs it.
+                                        */
+                                        className="text-slate-400 hover:text-sky-700 p-0.5 rounded transition"
                                       >
-                                        <ExternalLink size={9} />
-                                        {MODULE_NAMES[target] ?? target}
+                                        <ExternalLink size={11} />
                                       </button>
                                     );
                                   })()}
