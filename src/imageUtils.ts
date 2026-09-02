@@ -1,4 +1,5 @@
 import { saveAs } from 'file-saver';
+import { oversizedUploadReason } from './utils/uploadLimits';
 
 export async function compressAndResizeImage(
   file: File,
@@ -49,6 +50,17 @@ export async function downloadFileFromServer(url: string, filename: string) {
  * are a separate, logical grouping stored on the record, not directories.
  */
 export async function uploadFile(file: File, folder?: string): Promise<string> {
+  /*
+   * The size rule, here rather than in the forms.
+   *
+   * This is the only path a browser has to `/api/upload`, so a form that never
+   * grew a check of its own is covered — which is three of the five that
+   * upload today. The server is still the authority; this saves the round trip
+   * and names the file, which a 413 from multer cannot.
+   */
+  const oversized = oversizedUploadReason(file);
+  if (oversized) throw new Error(oversized);
+
   const formData = new FormData();
   formData.append("file", file);
 

@@ -2,7 +2,8 @@ import { Prisma } from "@prisma/client";
 import { parseMentions } from "../../utils/mentions";
 import { isAllowedReaction } from "../../utils/reactions";
 import {
-  MovableLane, REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, referralLane, referralStatusForLane,
+  GROUP_CLOSED, GROUP_OPEN, MovableLane, REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING,
+  referralLane, referralStatusForLane,
 } from "../../utils/workBoard";
 import {
   activityRecipients, noticeExcerpt, parseMemberIds, serializeMemberIds,
@@ -113,7 +114,7 @@ export async function upsertCategoryGroup(
     if (owned === 0) return "forbidden";
   }
 
-  const status = toNullableString(input.status, 30) ?? "جاری";
+  const status = toNullableString(input.status, 30) ?? GROUP_OPEN;
 
   /*
    * Closing a category stamps the day it closed.
@@ -124,7 +125,7 @@ export async function upsertCategoryGroup(
    * instead of setting it, and a closed category could never say when it closed.
    * An explicit date still wins; this only supplies the one nobody gave.
    */
-  const closing = status === "اتمام کار";
+  const closing = status === GROUP_CLOSED;
   const dates = expandDateFields(input as Record<string, unknown>, GROUP_DATE_FIELDS);
   if (closing && !dates.endDate) {
     Object.assign(dates, expandDateFields({ endDate: getTodayShamsi() }, ["endDate"]));
@@ -159,7 +160,7 @@ export async function upsertCategoryGroup(
     where: { projectId: input.projectId, categoryId: input.categoryId },
     select: { id: true, status: true },
   });
-  const wasClosed = existing?.status === "اتمام کار";
+  const wasClosed = existing?.status === GROUP_CLOSED;
 
   const group = existing
     ? await db.projectCategoryGroup.update({ where: { id: existing.id }, data })
@@ -1406,7 +1407,11 @@ export async function addReferralMessage(
     andForwarded?: boolean;
   },
   user: AuthUser,
-): Promise<"forbidden" | "not-found" | "invalid" | { message: unknown }> {
+): Promise<
+  "forbidden" | "not-found" | "invalid"
+  /** `reopened` when the answer brought a closed category back to «جاری». */
+  | { message: unknown; reopened: boolean }
+> {
   const db = getDb();
   const text = toNullableString(input.text);
   if (!text) return "invalid";
@@ -1415,7 +1420,19 @@ export async function addReferralMessage(
     where: { id: referralId },
     select: {
       id: true, assignedToUserId: true, assignedByUserId: true, status: true,
-      activity: { select: { group: { select: { project: { select: { id: true, name: true, code: true } } } } } },
+      activityId: true,
+      activity: {
+        select: {
+          id: true,
+          groupId: true,
+          group: {
+            select: {
+              id: true, status: true,
+              project: { select: { id: true, name: true, code: true } },
+            },
+          },
+        },
+      },
     },
   });
   if (!referral) return "not-found";
@@ -1425,16 +1442,95 @@ export async function addReferralMessage(
 
   const author = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
 
-  const message = await db.referralMessage.create({
-    data: {
-      referralId,
-      text,
-      responderUserId: user.id,
-      responderName: author?.fullName ?? null,
-      attachmentName: toNullableString(input.attachmentName, 300),
-      attachmentSize: toNullableString(input.attachmentSize, 50),
-      attachmentUrl: toNullableString(input.attachmentUrl, 500),
-    } as Prisma.ReferralMessageUncheckedCreateInput,
+  const attachments = attachmentColumns(normalizeAttachments([{
+    name: toNullableString(input.attachmentName, 300) ?? "",
+    size: toNullableString(input.attachmentSize, 50) ?? "",
+    url: toNullableString(input.attachmentUrl, 500) ?? "",
+  }]));
+
+  /*
+   * The reply goes into the thread **and** into the feed, in one transaction.
+   *
+   * The other direction has always worked: writing in the project's feed under
+   * a message that named you is mirrored into that request's thread by
+   * `addActivity`, so the inbox and the feed read the same conversation. The
+   * way back did not — answering from «وظایف و پیگیری», which is where the
+   * request is actually read, wrote a `ReferralMessage` and nothing else, so
+   * the feed showed the question with no answer under it and whoever raised it
+   * was left looking at their own message.
+   *
+   * Written as a `ProjectActivity` **replying to the message that named this
+   * person**, which is what makes it appear in the right place rather than at
+   * the bottom of the feed as an unrelated note.
+   *
+   * The row is created here rather than through `addActivity`, deliberately:
+   * that function mirrors a reply *into* the referral thread, so calling it
+   * would write the message twice — once as a reply and once as its own echo.
+   */
+  const { message, reopened } = await db.$transaction(async (tx) => {
+    const created = await tx.referralMessage.create({
+      data: {
+        referralId,
+        text,
+        responderUserId: user.id,
+        responderName: author?.fullName ?? null,
+        attachmentName: attachments.attachmentName,
+        attachmentSize: attachments.attachmentSize,
+        attachmentUrl: attachments.attachmentUrl,
+      } as Prisma.ReferralMessageUncheckedCreateInput,
+    });
+
+    let didReopen = false;
+    const groupId = referral.activity?.groupId;
+    if (groupId && referral.activityId) {
+      /*
+       * A closed category reopens rather than swallowing the answer.
+       *
+       * «اتمام کار» says the work under that heading is finished, and an answer
+       * arriving afterwards says it is not — so the category comes back to
+       * «جاری» and the completion date is cleared, because a closed group with
+       * a message posted after its end date is a group whose own dates
+       * contradict it. Reported as an answer that appeared to be accepted and
+       * then could not be found.
+       */
+      if (referral.activity?.group?.status === GROUP_CLOSED) {
+        await tx.projectCategoryGroup.update({
+          where: { id: groupId },
+          data: { status: GROUP_OPEN, endDate: null, endDateJalali: null },
+        });
+        didReopen = true;
+      }
+
+      await tx.projectActivity.create({
+        data: {
+          groupId,
+          text,
+          replyToId: referral.activityId,
+          authorUserId: user.id,
+          authorName: author?.fullName ?? null,
+          ...attachments,
+        } as Prisma.ProjectActivityUncheckedCreateInput,
+      });
+    }
+
+    /*
+     * And the request is picked up, exactly as it is when the same words are
+     * typed into the feed: only the **assignee** replying moves it — somebody
+     * chasing their own request has picked nothing up — and one already marked
+     * done is never reopened by a reply.
+     */
+    if (
+      referral.assignedToUserId === user.id
+      && referral.status !== REFERRAL_DOING
+      && referral.status !== REFERRAL_DONE
+    ) {
+      await tx.projectReferral.update({
+        where: { id: referralId },
+        data: { status: REFERRAL_DOING, startedAt: new Date() },
+      });
+    }
+
+    return { message: created, reopened: didReopen };
   });
 
   /*
@@ -1472,7 +1568,7 @@ export async function addReferralMessage(
     }
   }
 
-  return { message };
+  return { message, reopened };
 }
 
 /* ============================== module notes ============================= */

@@ -471,7 +471,14 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
         res.status(400).json({ success: false, error: "متن پاسخ الزامی است." });
         return;
       }
-      res.status(201).json({ success: true, message: outcome.message });
+      /*
+       * `reopened` travels so the screen can say the category came back to
+       * «جاری». A closed heading quietly reopening under somebody is a change
+       * they should be told about rather than discover.
+       */
+      res.status(201).json({
+        success: true, message: outcome.message, reopened: outcome.reopened,
+      });
     } catch (err) {
       sendError(res, err, "POST /api/referrals/:id/messages");
     }

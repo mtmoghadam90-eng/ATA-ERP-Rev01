@@ -412,6 +412,15 @@ export default function ReferralsView({
       // Only forwarding is worth a word: the thread leaves this inbox for
       // someone else's, so there is nothing left on screen to show for it.
       // A reply and a status change are both visible where they happened.
+      /*
+       * A closed category that the answer reopened. Not a fault and not
+       * silent: «اتمام کار» said the work under that heading was finished and
+       * this answer says it is not, which is a change to the project the
+       * writer should be told about rather than discover.
+       */
+      if (outcome === 'sent-reopened') {
+        alert('پاسخ ثبت شد. چون دسته‌بندی این پیام بسته بود، دوباره به وضعیت «جاری» بازگشت.');
+      }
       if (body.forwardToUserId) alert('ارجاع به همکار انتخاب‌شده منتقل شد.');
     } catch (err) {
       reportError(err, 'ثبت پاسخ ارجاع با خطا مواجه شد.');
@@ -881,10 +890,8 @@ export default function ReferralsView({
                             formatDate={shamsi}
                             users={users.filter(u => u.id !== currentUser?.id)}
                             onPickAttachment={(file, done) => {
-                              if (file.size > 2 * 1024 * 1024 && !file.type.startsWith('image/')) {
-                                alert('حداکثر حجم مجاز برای فایل‌های غیرتصویری ۲ مگابایت می‌باشد.');
-                                return;
-                              }
+                              // The size rule is in `uploadFile`; see
+                              // `src/utils/uploadLimits.ts`.
                               compressImage(file, (dataUrl, sizeStr) => {
                                 done({ name: file.name, size: sizeStr, content: dataUrl });
                               });

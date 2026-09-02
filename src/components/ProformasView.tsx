@@ -93,7 +93,9 @@ import NumberField from "./NumberField";
 import type { SuggestedItem } from "../api/assistant";
 import { suggestionSpecText } from "../utils/advisorSuggestion";
 import RichTextField from "./RichTextField";
-import { getDeliverySummary, updateNotesWithDelivery } from "../utils/deliveryNotes";
+import {
+  DELIVERY_READY_UNIT, getDeliverySummary, updateNotesWithDelivery,
+} from "../utils/deliveryNotes";
 import {
   attributesFromSelections, describeProductSpec, mergeSpecText, specLinesFrom,
 } from "../utils/productConfig";
@@ -118,6 +120,14 @@ interface ProformasViewProps {
    */
   projectJump?: string;
   onProjectJumpApplied?: () => void;
+  /**
+   * A tab this screen was opened on, from another screen — see `tabJump` in
+   * `App.tsx`. Applied once and then cleared by the caller, exactly as the
+   * project jump is.
+   */
+  initialTab?: string;
+  onInitialTabApplied?: () => void;
+
   /** Follows a project code printed on this screen back to «پروژه‌ها». */
   onOpenProject?: (code: string) => void;
 
@@ -136,6 +146,7 @@ interface ProformasViewProps {
 }
 export default function ProformasView({
   projectJump, onProjectJumpApplied, onOpenProject,
+  initialTab, onInitialTabApplied,
   initialPrintDocId,
   onClearInitialPrintDocId,
   settings,
@@ -651,6 +662,21 @@ export default function ProformasView({
    */
   /** «اسناد» (the register) or «پیگیری فروش» (the sales desk's working list). */
   const [mainTab, setMainTab] = useState<'documents' | 'follow-up'>('documents');
+
+  /*
+   * Opened on the follow-up tab when the front page asked for it.
+   *
+   * «مشاهده فهرست پیگیری» used to open this module and land on «اسناد» — the
+   * right screen, the wrong half of it. Applied once and **cleared by the
+   * caller**, so coming back through the sidebar hours later does not silently
+   * reopen a tab nobody asked for, and pressing the same button a second time
+   * works.
+   */
+  useEffect(() => {
+    if (initialTab !== 'follow-up' && initialTab !== 'documents') return;
+    setMainTab(initialTab);
+    onInitialTabApplied?.();
+  }, [initialTab, onInitialTabApplied]);
   const [copyTarget, setCopyTarget] = useState<Proforma | null>(null);
   const [versionQuestion, setVersionQuestion] = useState<{
     newId: string; newNumber: string; previousNumber: string;
@@ -1031,6 +1057,17 @@ export default function ProformasView({
   const recipientOwnerId = modalOpen
     ? customerId
     : (proformas.find((p) => p.id === statusTargetId)?.customerId ?? '');
+
+  /*
+   * Whether the suggestion list is showing.
+   *
+   * It had no such state: the panel was rendered unconditionally, so it sat
+   * over the «افزودن مشتری» button and the fields beneath it from the moment
+   * the modal opened and there was no way to put it away. It opens when the
+   * field is being used and closes the moment somebody is picked — which is
+   * also the one press that proves they are finished with it.
+   */
+  const [recipientListOpen, setRecipientListOpen] = useState(false);
 
   const recipientPicker = useEntitySearch<CustomerRow>({
     path: '/api/customers',
@@ -3357,11 +3394,23 @@ export default function ProformasView({
                       </div>
                       
                       <div className="mt-1 flex gap-1.5 items-center w-full min-w-0">
+                        {/*
+                          Closing on blur is safe because the list below
+                          swallows its own mousedown, so the click that picks
+                          somebody lands before the field loses focus — the
+                          classic ordering bug that would otherwise make every
+                          selection do nothing.
+                        */}
                         <div className="relative flex-1 min-w-0">
                           <input
                             type="text"
                             value={recipientPicker.term}
-                            onChange={(e) => recipientPicker.setTerm(e.target.value)}
+                            onChange={(e) => {
+                              recipientPicker.setTerm(e.target.value);
+                              setRecipientListOpen(true);
+                            }}
+                            onFocus={() => setRecipientListOpen(true)}
+                            onBlur={() => setRecipientListOpen(false)}
                             placeholder="جستجوی نام شخص (مشتری حقیقی)..."
                             className="w-full border border-slate-200 rounded-lg pr-8 pl-3 py-1.5 text-[11px] focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
                           />
@@ -3369,7 +3418,11 @@ export default function ProformasView({
                             <Search size={12} />
                           </div>
                           
-                          <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
+                          {recipientListOpen && (
+                          <div
+                            className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-32 overflow-y-auto"
+                            onMouseDown={(e) => e.preventDefault()}
+                          >
                             {(() => {
                               // Scoped and searched by the server; see recipientPicker.
                               const filtered = recipientPicker.matches as unknown as Customer[];
@@ -3407,6 +3460,10 @@ export default function ProformasView({
                                         setSelectedSentRecipients(prev => [...prev, fullName]);
                                       }
                                       recipientPicker.setTerm("");
+                                      // Asked for: the list goes away once
+                                      // somebody has been chosen. Typing again
+                                      // brings it back for the next one.
+                                      setRecipientListOpen(false);
                                     }}
                                     className={`w-full text-right px-3 py-1.5 text-[11px] transition flex items-center justify-between hover:bg-slate-50 ${
                                       isSelected ? "bg-sky-50/50 text-sky-700 font-semibold" : "text-slate-700"
@@ -3419,6 +3476,7 @@ export default function ProformasView({
                               });
                             })()}
                           </div>
+                          )}
                         </div>
                         {addCustomer && (
                           <button
@@ -4165,11 +4223,23 @@ export default function ProformasView({
                       </div>
                       
                       <div className="mt-1 flex gap-1.5 items-center w-full min-w-0">
+                        {/*
+                          Closing on blur is safe because the list below
+                          swallows its own mousedown, so the click that picks
+                          somebody lands before the field loses focus — the
+                          classic ordering bug that would otherwise make every
+                          selection do nothing.
+                        */}
                         <div className="relative flex-1 min-w-0">
                           <input
                             type="text"
                             value={recipientPicker.term}
-                            onChange={(e) => recipientPicker.setTerm(e.target.value)}
+                            onChange={(e) => {
+                              recipientPicker.setTerm(e.target.value);
+                              setRecipientListOpen(true);
+                            }}
+                            onFocus={() => setRecipientListOpen(true)}
+                            onBlur={() => setRecipientListOpen(false)}
                             placeholder="جستجوی نام شخص (مشتری حقیقی)..."
                             className="w-full border border-slate-200 rounded-lg pr-8 pl-3 py-1.5 text-[11px] focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
                           />
@@ -4177,7 +4247,11 @@ export default function ProformasView({
                             <Search size={12} />
                           </div>
                           
-                          <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-32 overflow-y-auto">
+                          {recipientListOpen && (
+                          <div
+                            className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-32 overflow-y-auto"
+                            onMouseDown={(e) => e.preventDefault()}
+                          >
                             {(() => {
                               // Scoped and searched by the server; see recipientPicker.
                               const filtered = recipientPicker.matches as unknown as Customer[];
@@ -4215,6 +4289,10 @@ export default function ProformasView({
                                         setSelectedSentRecipients(prev => [...prev, fullName]);
                                       }
                                       recipientPicker.setTerm("");
+                                      // Asked for: the list goes away once
+                                      // somebody has been chosen. Typing again
+                                      // brings it back for the next one.
+                                      setRecipientListOpen(false);
                                     }}
                                     className={`w-full text-right px-3 py-1.5 text-[11px] transition flex items-center justify-between hover:bg-slate-50 ${
                                       isSelected ? "bg-sky-50/50 text-sky-700 font-semibold" : "text-slate-700"
@@ -4227,6 +4305,7 @@ export default function ProformasView({
                               });
                             })()}
                           </div>
+                          )}
                         </div>
                         {addCustomer && (
                           <button
@@ -4371,8 +4450,11 @@ export default function ProformasView({
                         */}
                         <input
                           type="text"
-                          required
-                          value={items[0]?.deliveryRange ?? "۳-۴"}
+                          required={items[0]?.deliveryUnit !== DELIVERY_READY_UNIT}
+                          disabled={items[0]?.deliveryUnit === DELIVERY_READY_UNIT}
+                          value={items[0]?.deliveryUnit === DELIVERY_READY_UNIT
+                            ? "—"
+                            : items[0]?.deliveryRange ?? "۳-۴"}
                           onChange={(e) =>
                             handleItemDeliveryFieldChange(
                               0,
@@ -4381,7 +4463,7 @@ export default function ProformasView({
                             )
                           }
                           placeholder="مثال: ۳-۴"
-                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-center font-bold bg-white focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none"
+                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-center font-bold bg-white focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
                         />
                       </div>
 
@@ -4404,6 +4486,14 @@ export default function ProformasView({
                           <option value="روز">روز</option>
                           <option value="هفته">هفته</option>
                           <option value="ماه">ماه</option>
+                          {/*
+                            Goods on the shelf. Not a length of time at all, which
+                            is why the range and the type of days beside it stand
+                            down when it is chosen — `deliveryPhrase` does not read
+                            them, and offering boxes whose answers are dropped is
+                            worse than not offering them.
+                          */}
+                          <option value={DELIVERY_READY_UNIT}>{DELIVERY_READY_UNIT}</option>
                         </select>
                       </div>
 
@@ -4413,6 +4503,7 @@ export default function ProformasView({
                           نوع روزها
                         </label>
                         <select
+                          disabled={items[0]?.deliveryUnit === DELIVERY_READY_UNIT}
                           value={items[0]?.deliveryType || "کاری"}
                           onChange={(e) =>
                             handleItemDeliveryFieldChange(
@@ -4455,33 +4546,32 @@ export default function ProformasView({
                   </div>
                 )}
                 {/* Grid headers */}
-                <div className="hidden md:grid grid-cols-12 gap-3 px-3 py-1 text-slate-400 font-bold text-[10px]">
-                  <div
-                    className={
-                      proformaType === "TECHNICAL" ? "col-span-8" : "col-span-3"
-                    }
-                  >
-                    انتخاب کالا
+                {/*
+                  Two lines, because the rows are: the goods span the whole
+                  width and the figures share the grid underneath them.
+                */}
+                <div className="hidden md:block px-3 py-1 text-slate-400 font-bold text-[10px]">
+                  <div className="pb-1">انتخاب کالا</div>
+                  <div className="grid grid-cols-12 gap-3">
+                    <div className="col-span-4 text-center">تعداد و واحد</div>
+                    {proformaType !== "TECHNICAL" && (
+                      <>
+                        {/*
+                          A rial price is ten digits and this cell also carries
+                          the calculator button, so it keeps the widest of the
+                          number columns — the one figure on the row nobody can
+                          afford to misread.
+                        */}
+                        <div className="col-span-4 text-left">
+                          بهای واحد ({currency})
+                        </div>
+                        <div className="col-span-3 text-left">
+                          بهای کل ردیف ({currency})
+                        </div>
+                      </>
+                    )}
+                    <div className="col-span-1 text-center">حذف</div>
                   </div>
-                  <div className="col-span-3 text-center">تعداد و واحد</div>
-                  {proformaType !== "TECHNICAL" && (
-                    <>
-                      {/*
-                        Wider than the columns beside it, on purpose. A rial
-                        price is ten digits and this cell also carries the
-                        calculator button, so at two twelfths the figure was cut
-                        in half — the one number on the row nobody can afford to
-                        misread.
-                      */}
-                      <div className="col-span-3 text-left">
-                        بهای واحد ({currency})
-                      </div>
-                      <div className="col-span-2 text-left">
-                        بهای کل ردیف ({currency})
-                      </div>
-                    </>
-                  )}
-                  <div className="col-span-1 text-center">حذف</div>
                 </div>
                 {/* Items rows */}
                 {/*
@@ -4499,15 +4589,20 @@ export default function ProformasView({
                       key={idx}
                       className="bg-slate-50 p-3 rounded-xl border border-slate-150 space-y-3"
                     >
-                      <div className="grid grid-cols-2 md:grid-cols-12 gap-3 items-start">
-                        {/* Product Selector */}
-                        <div
-                          className={
-                            proformaType === "TECHNICAL"
-                              ? "col-span-2 md:col-span-8 w-full min-w-0"
-                              : "col-span-2 md:col-span-3 w-full min-w-0"
-                          }
-                        >
+                      {/*
+                        The goods first, across the whole row.
+
+                        It used to be three twelfths of the line — a quarter of
+                        the width, carrying the name, the code, the brand and
+                        the SKU selector — so «شیر کنترل پنوماتیک ۴ اینچ کلاس
+                        ۳۰۰» arrived as four visible characters and a scrollbar.
+                        It is the longest text on the row and the one thing a
+                        reader has to be certain of, and no twelfth-based column
+                        was ever going to hold it; the figures below are short
+                        and share the grid comfortably without it.
+                      */}
+                      <div className="space-y-2.5">
+                        <div className="w-full min-w-0">
                           <div className="flex flex-col gap-2 w-full min-w-0">
                             <div className="flex gap-1.5 items-center w-full min-w-0">
                               {!item.productId ? (
@@ -4523,7 +4618,7 @@ export default function ProformasView({
                                       setItems(newItems);
                                     }}
                                     placeholder="نام کالا یا عنوان خدمات دستی..."
-                                    className="w-full border border-sky-200 focus:border-sky-500 rounded-lg px-2 py-1.5 text-xs bg-white text-right"
+                                    className="w-full border border-sky-200 focus:border-sky-500 rounded-lg px-3 py-2 text-sm bg-white text-right"
                                   />
                                   <div className="grid grid-cols-2 gap-2 w-full">
                                     <input
@@ -4814,8 +4909,9 @@ export default function ProformasView({
                             </div>
                           </div>
                         </div>
+                        <div className="grid grid-cols-2 md:grid-cols-12 gap-3 items-start">
                         {/* Quantity and its unit */}
-                        <div className="col-span-1 md:col-span-3 flex flex-col gap-1">
+                        <div className="col-span-1 md:col-span-4 flex flex-col gap-1">
                           <label className="text-[10px] font-bold text-slate-400 md:hidden block">
                             تعداد و واحد *
                           </label>
@@ -4860,7 +4956,7 @@ export default function ProformasView({
                         {proformaType !== "TECHNICAL" && (
                           <>
                             {/* Unit Price */}
-                            <div className="col-span-1 md:col-span-3 flex flex-col gap-1">
+                            <div className="col-span-1 md:col-span-4 flex flex-col gap-1">
                               <label className="text-[10px] font-bold text-slate-400 md:hidden block">
                                 بهای واحد ({currency}) *
                               </label>
@@ -4925,7 +5021,7 @@ export default function ProformasView({
                               </div>
                             </div>
                             {/* Total price for line */}
-                            <div className="col-span-1 md:col-span-2 flex flex-col justify-center text-left px-2">
+                            <div className="col-span-1 md:col-span-3 flex flex-col justify-center text-left px-2">
                               <label className="text-[10px] font-bold text-slate-400 md:hidden block text-right">
                                 بهای کل ردیف
                               </label>
@@ -4960,6 +5056,7 @@ export default function ProformasView({
                             <MinusCircle size={16} />
                             <span className="md:hidden">حذف</span>
                           </button>
+                        </div>
                         </div>
                       </div>
                       {/*
@@ -5192,8 +5289,11 @@ export default function ProformasView({
                               </label>
                               <input
                                 type="text"
-                                required
-                                value={item.deliveryRange ?? "۳-۴"}
+                                required={item.deliveryUnit !== DELIVERY_READY_UNIT}
+                                disabled={item.deliveryUnit === DELIVERY_READY_UNIT}
+                                value={item.deliveryUnit === DELIVERY_READY_UNIT
+                                  ? "—"
+                                  : item.deliveryRange ?? "۳-۴"}
                                 onChange={(e) =>
                                   handleItemDeliveryFieldChange(
                                     idx,
@@ -5202,7 +5302,7 @@ export default function ProformasView({
                                   )
                                 }
                                 placeholder="مثال: ۳-۴"
-                                className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-center font-bold bg-white focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none"
+                                className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-center font-bold bg-white focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed"
                               />
                             </div>
 
@@ -5225,6 +5325,14 @@ export default function ProformasView({
                                 <option value="روز">روز</option>
                                 <option value="هفته">هفته</option>
                                 <option value="ماه">ماه</option>
+                                {/*
+                                  Goods on the shelf. Not a length of time at all, which
+                                  is why the range and the type of days beside it stand
+                                  down when it is chosen — `deliveryPhrase` does not read
+                                  them, and offering boxes whose answers are dropped is
+                                  worse than not offering them.
+                                */}
+                                <option value={DELIVERY_READY_UNIT}>{DELIVERY_READY_UNIT}</option>
                               </select>
                             </div>
 
@@ -5234,6 +5342,7 @@ export default function ProformasView({
                                 نوع روزها
                               </label>
                               <select
+                                disabled={item.deliveryUnit === DELIVERY_READY_UNIT}
                                 value={item.deliveryType || "کاری"}
                                 onChange={(e) =>
                                   handleItemDeliveryFieldChange(

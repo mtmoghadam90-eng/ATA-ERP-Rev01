@@ -163,7 +163,7 @@ export function opportunityGroups<T extends GroupedProforma>(proformas: T[]): T[
   return [...byProject.values(), ...alone];
 }
 
-export type OpportunityOutcome = "won" | "lost" | "open";
+export type OpportunityOutcome = "won" | "lost" | "cancelled" | "open";
 
 /**
  * What became of one opportunity, from the proformas that decide it.
@@ -172,14 +172,29 @@ export type OpportunityOutcome = "won" | "lost" | "open";
  * derived from, so the front page and the project card cannot disagree about
  * who won. Anything neither won nor closed is still in play and belongs in
  * neither the numerator nor the "lost" tally.
+ *
+ * **A cancelled opportunity is not a lost one**, and counting them together —
+ * which this did — is the difference between «we were beaten» and «the customer
+ * withdrew, or we withdrew». A job the customer cancelled before anybody quoted
+ * against us says nothing about how the sales desk is performing, and a figure
+ * that mixes the two cannot be acted on: «چرا می‌بازیم» has answers and «چرا
+ * پروژه‌ها لغو می‌شوند» has completely different ones.
+ *
+ * Which of the two a job counts as is decided by `decidingProformas`, exactly
+ * as its own status is: with no winner among them, the **latest** quotation
+ * stands for the rest, so a job whose last document was cancelled is cancelled
+ * even if an earlier one was lost. The `some` below is written for a set rather
+ * than a single document because that selection returns several when there are
+ * winners, and a rule that only worked for one would be wrong the day it does.
  */
 export function opportunityOutcome<T extends GroupedProforma>(group: T[]): OpportunityOutcome {
   const deciders = decidingProformas(group);
   const outcomes = deciders.map((pf) => getProformaOutcome(pf));
+  if (outcomes.length === 0) return "open";
 
   if (outcomes.some((o) => o === "تأیید شده (برنده)" || o === "نیمه برنده")) return "won";
-  if (outcomes.length > 0 && outcomes.every((o) => o === "باخته" || o === "لغو شده")) return "lost";
-  return "open";
+  if (!outcomes.every((o) => o === "باخته" || o === "لغو شده")) return "open";
+  return outcomes.some((o) => o === "باخته") ? "lost" : "cancelled";
 }
 
 /**

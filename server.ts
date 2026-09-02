@@ -52,6 +52,7 @@ import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 import { UPLOADS_DIR, ensureUploadsDir } from "./src/server/uploadsDir";
 import { recalculateCustomerValueNow } from "./src/server/services/customerValueRecalc";
 import { authenticateUser, findAuthUser } from "./src/server/services/userService";
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL } from "./src/utils/uploadLimits";
 
 /**
  * Where the session-signing secret is kept.
@@ -107,7 +108,8 @@ async function startServer() {
   const upload = multer({
     storage: storage,
     limits: {
-      fileSize: 20 * 1024 * 1024 // 20 MB max overall limit
+      // The same figure the browser and the two checks below use.
+      fileSize: MAX_UPLOAD_BYTES,
     }
   });
 
@@ -136,8 +138,17 @@ async function startServer() {
       const targetPath = path.join(finalDir, uniqueName);
 
       if (mimetype.startsWith("image/")) {
-        if (buffer.length > 10 * 1024 * 1024) {
-          return res.status(400).json({ success: false, error: "حجم عکس نباید بیشتر از ۱۰ مگابایت باشد." });
+        /*
+         * The same limit as everything else. An image used to be held to 10 MB
+         * while a PDF beside it was allowed 20, for no reason anybody could
+         * state — and a photograph off a phone is routinely larger than that.
+         * It is resized below in any case.
+         */
+        if (buffer.length > MAX_UPLOAD_BYTES) {
+          return res.status(400).json({
+            success: false,
+            error: `حجم فایل نباید بیشتر از ${MAX_UPLOAD_LABEL} باشد.`,
+          });
         }
 
         try {
@@ -165,8 +176,11 @@ async function startServer() {
           await fs.promises.writeFile(targetPath, buffer);
         }
       } else {
-        if (buffer.length > 20 * 1024 * 1024) {
-          return res.status(400).json({ success: false, error: "حجم فایل نباید بیشتر از ۲۰ مگابایت باشد." });
+        if (buffer.length > MAX_UPLOAD_BYTES) {
+          return res.status(400).json({
+            success: false,
+            error: `حجم فایل نباید بیشتر از ${MAX_UPLOAD_LABEL} باشد.`,
+          });
         }
         await fs.promises.writeFile(targetPath, buffer);
       }

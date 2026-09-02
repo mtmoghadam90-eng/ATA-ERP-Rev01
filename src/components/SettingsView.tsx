@@ -63,6 +63,13 @@ import CategoryMergePanel from './CategoryMergePanel';
 import { TASK_KINDS, TASK_KIND_LABELS } from '../utils/salesFollowUp';
 
 interface SettingsViewProps {
+  /**
+   * A tab this screen was opened on, from another screen — see `tabJump` in
+   * `App.tsx`. Applied once and then cleared by the caller, exactly as the
+   * project jump is.
+   */
+  initialTab?: string;
+  onInitialTabApplied?: () => void;
   settings: ERPSettings;
   updateSettings: (newSettings: ERPSettings) => void;
   /**
@@ -79,6 +86,7 @@ interface SettingsViewProps {
 }
 
 export default function SettingsView({
+  initialTab, onInitialTabApplied,
   settings,
   updateSettings,
   applyServerSettings,
@@ -122,6 +130,19 @@ export default function SettingsView({
   
   // Tab control
   const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields' | 'customerValue' | 'assistant' | 'apiTokens' | 'holidays'>('general');
+
+  /*
+   * Opened on a particular tab when another screen asked for it.
+   *
+   * «مشاهده و ویرایش نرخ ارزها» on the front page opened this screen on
+   * «عمومی», leaving the reader to find the tab themselves. Applied once and
+   * cleared by the caller — see `tabJump` in `App.tsx`.
+   */
+  useEffect(() => {
+    if (!initialTab) return;
+    setActiveTab(initialTab as typeof activeTab);
+    onInitialTabApplied?.();
+  }, [initialTab, onInitialTabApplied]);
 
   // Mandatory / optional fields state
   const [localRequiredFields, setLocalRequiredFields] = useState<Record<string, Record<string, boolean>>>(() => {

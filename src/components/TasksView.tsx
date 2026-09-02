@@ -24,6 +24,7 @@ import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import WorkBoard, { BoardCard } from './WorkBoard';
+import ConfirmModal from './ConfirmModal';
 import ReferralsView from './ReferralsView';
 import ReferralThread from './ReferralThread';
 import FollowUpCompletionModal from './FollowUpCompletionModal';
@@ -412,6 +413,13 @@ export default function TasksView({
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [isTaskModalFullscreen, setIsTaskModalFullscreen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  /*
+   * Deleting asked nothing at all — one press on a small icon beside the edit
+   * pencil and the record was gone. Reported for a follow-up, where the loss is
+   * worst (the chase, what the customer said, and the quotation left with
+   * nobody on it), and the same button deletes an ordinary task, so both ask.
+   */
+  const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
   const [quickAddType, setQuickAddType] = useState<'customer' | 'project' | 'supplier' | 'product' | null>(null);
 
   // Dynamic Custom Fields State
@@ -1402,7 +1410,7 @@ export default function TasksView({
 
               {/* Delete */}
               <button
-                onClick={() => deleteTask(task.id)}
+                onClick={() => setTaskToDelete(task)}
                 className="p-1.5 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg transition"
                 title="حذف وظیفه"
               >
@@ -1522,11 +1530,10 @@ export default function TasksView({
                 }}
                 currentUserId={currentUser?.id}
                 formatDate={(iso) => new Date(iso).toLocaleString('fa-IR')}
+                // The size rule lives in `uploadFile`, which is the only path
+                // to the server — a check here was one of three that disagreed
+                // with it and with each other.
                 onPickAttachment={(file, done) => {
-                  if (file.size > 2 * 1024 * 1024 && !file.type.startsWith('image/')) {
-                    alert('حداکثر حجم مجاز برای فایل‌های غیرتصویری ۲ مگابایت می‌باشد.');
-                    return;
-                  }
                   compressImage(file, (dataUrl, sizeStr) => {
                     done({ name: file.name, size: sizeStr, content: dataUrl });
                   });
@@ -1536,6 +1543,16 @@ export default function TasksView({
                   if (outcome === 'nothing') { alert('لطفاً پیام خود را بنویسید.'); return; }
                   setOpenReferral(null);
                   refreshReferrals();
+                  /*
+                   * A closed category that the answer reopened. Not a fault and not
+                   * silent: «اتمام کار» said the work under that heading was finished and
+                   * this answer says it is not, which is a change to the project the
+                   * writer should be told about rather than discover.
+                   */
+                  if (outcome === 'sent-reopened') {
+                    alert('پاسخ ثبت شد. چون دسته‌بندی این پیام بسته بود، دوباره به وضعیت «جاری» بازگشت.');
+                  }
+
                 }}
                 onEditAction={async (text) => {
                   await inboxApi.updateReferralAction(openReferral.id, text);
@@ -1624,6 +1641,32 @@ export default function TasksView({
           }}
         />
       )}
+
+      {/*
+        Deleting asks first.
+
+        A follow-up says what is actually lost, because it is not one record:
+        the chase, the result somebody recorded on it, and the quotation that
+        is left with nothing chasing it. An ordinary task gets the plain
+        question — the same button deletes both, and a button that asks about
+        one and not the other is a button nobody can predict.
+      */}
+      <ConfirmModal
+        isOpen={!!taskToDelete}
+        onClose={() => setTaskToDelete(null)}
+        onConfirm={() => {
+          const target = taskToDelete;
+          setTaskToDelete(null);
+          if (target) void deleteTask(target.id);
+        }}
+        title={taskToDelete?.taskKind === 'SALES_FOLLOW_UP' ? 'حذف پیگیری فروش' : 'حذف وظیفه'}
+        message={taskToDelete?.taskKind === 'SALES_FOLLOW_UP'
+          ? `«${taskToDelete?.title ?? ''}» حذف شود؟ نتیجه ثبت‌شده این پیگیری هم با آن پاک می‌شود و`
+            + ' پیش‌فاکتور مربوطه بدون اقدام بعدی می‌ماند. برای بستن یک پیگیری، «ثبت نتیجه پیگیری»'
+            + ' را بزنید تا سابقه آن بماند.'
+          : `«${taskToDelete?.title ?? ''}» حذف شود؟ این کار قابل بازگشت نیست.`}
+        variant="danger"
+      />
 
       {/* Add Modal */}
       {showModal && (
