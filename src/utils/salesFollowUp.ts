@@ -350,6 +350,15 @@ export interface FollowUpCompletionInput {
   nextDescription?: string | null;
   nextDueDate?: string | null;
   nextAssignedToName?: string | null;
+  /**
+   * How urgent the next chase is.
+   *
+   * Absent inherits the chase being closed, which is what happened to every
+   * follow-up before this existed — so a quotation first chased as «فوری» kept
+   * raising «فوری» tasks for ever, and one raised as «پایین» never got more
+   * urgent however long the customer sat on it.
+   */
+  nextPriority?: string | null;
   /** DEFER: the day the customer asked to be approached again. */
   deferredUntil?: string | null;
   /**

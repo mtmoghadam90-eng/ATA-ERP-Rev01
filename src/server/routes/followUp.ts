@@ -141,6 +141,7 @@ export function registerFollowUpRoutes(app: express.Express, deps: RouteDeps): v
         nextDescription:
           typeof body.nextDescription === "string" ? body.nextDescription : undefined,
         nextDueDate: typeof body.nextDueDate === "string" ? body.nextDueDate : null,
+        nextPriority: typeof body.nextPriority === "string" ? body.nextPriority : null,
         nextAssignedToName:
           typeof body.nextAssignedToName === "string" ? body.nextAssignedToName : null,
         deferredUntil: typeof body.deferredUntil === "string" ? body.deferredUntil : null,

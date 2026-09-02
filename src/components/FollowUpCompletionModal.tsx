@@ -8,6 +8,7 @@ import {
   SettleOutcome, completionRefusalReason, impliedSettlement,
 } from '../utils/salesFollowUp';
 import { getTodayShamsi, addDaysToShamsi } from '../dateUtils';
+import { TASK_PRIORITIES } from '../utils/moduleStatuses';
 import type { FollowUpRow, FollowUpCompletionBody } from '../api/salesFollowUp';
 
 /**
@@ -37,43 +38,70 @@ interface Props {
   lossReasons: string[];
   onClose: () => void;
   onSubmit: (body: FollowUpCompletionBody) => Promise<void>;
+  /** «اولویت», from `settings.dropdownItems.taskPriorities`. */
+  priorityOptions?: string[];
   /**
-   * Correcting what was recorded on a chase that is already closed.
+   * Editing a follow-up that has already been recorded, rather than recording
+   * one.
    *
    * A follow-up and an ordinary task are different things, so «ویرایش» on one
-   * has to open the form it was filled in on rather than the task box. But a
-   * closed one has exactly two things left to correct — what the customer said
-   * and the note about the call — because everything else the completion did
-   * has already happened: the task is closed, the proforma's follow-up state
-   * moved, the replacement was raised and the sale may have been settled.
-   * Re-running any of that would raise a second next action or re-date a sale
-   * the ranking counts from, so the whole lower half of this form is hidden and
-   * a different endpoint is called.
+   * opens the form it was filled in on. What that form shows depends on
+   * whether the chase is closed:
+   *
+   *  * **open** — no call has happened, so there is no result to correct. What
+   *    is editable is the chase *itself*: what it is for, when it is due, whose
+   *    it is, how urgent. Opening a blank completion form for that is what
+   *    «فرم خام» meant.
+   *  * **closed** — everything that was recorded, in one place: the chase's own
+   *    fields, what the customer said, and the next action it raised. A person
+   *    filled all of that in through one form and expects to correct it through
+   *    the same one; that the system keeps it as two task rows is not their
+   *    problem.
+   *
+   * What is deliberately *not* re-offered is the decision block, the deferral
+   * and the settlement question. Those already happened — the task is closed,
+   * the proforma's follow-up state moved, the replacement exists and the sale
+   * may be settled — and answering any of them again would raise a second next
+   * action or re-date a sale the customer-value ranking counts from. Editing
+   * writes fields; it never re-runs the completion.
    */
   editing?: {
     taskId: string;
-    /**
-     * True once the chase is closed.
-     *
-     * Closed, there is one thing left to correct — what the customer said —
-     * and the form shows the recorded answer. Still open, there is no answer
-     * yet and what the person came to edit is the chase *itself*: what it is
-     * for, when it is due, whose it is. Opening a blank completion form for
-     * that is what «فرم خام» meant.
-     */
     closed: boolean;
     followUpResult: string;
     completionNote: string;
+    /** The chase itself. */
     title: string;
     description: string;
     dueDate: string;
     assignee: string;
+    priority: string;
+    /** The replacement it raised, when one is still open. */
+    next?: {
+      taskId: string;
+      title: string;
+      description: string;
+      dueDate: string;
+      assignee: string;
+      priority: string;
+    } | null;
   } | null;
-  /** Correcting a closed chase: writes the two columns and nothing else. */
-  onSaveResult?: (body: { followUpResult: string; completionNote?: string }) => Promise<void>;
-  /** Editing an open chase: its own title, description, date and assignee. */
-  onSaveAction?: (body: {
-    title: string; description: string; dueDate: string; assignedToName: string;
+  /**
+   * Saves an edit. One callback rather than three, because which rows are
+   * written depends on the mode and that decision belongs to the screen that
+   * owns them, not to the form.
+   */
+  onSaveEdits?: (body: {
+    followUpResult: string;
+    completionNote: string;
+    action: {
+      title: string; description: string; dueDate: string;
+      assignedToName: string; priority: string;
+    };
+    next?: {
+      taskId: string; title: string; description: string; dueDate: string;
+      assignedToName: string; priority: string;
+    };
   }) => Promise<void>;
 }
 
@@ -102,23 +130,38 @@ const DECISIONS: { value: FollowUpDecision; label: string; hint: string; icon: t
 
 export default function FollowUpCompletionModal({
   row, resultOptions, userNames, outcomeIsTerminal, lossReasons, onClose, onSubmit,
-  editing = null, onSaveResult, onSaveAction,
+  priorityOptions, editing = null, onSaveEdits,
 }: Props) {
-  /** Editing rather than completing — in one of the two shapes above. */
+  /** Editing what was recorded, rather than recording a completion. */
   const isEditing = !!editing;
-  /** A closed chase: only the recorded answer moves. */
+  /** A closed chase: the whole record, including the next action it raised. */
   const isCorrecting = editing?.closed === true;
-  /** An open chase: its own fields, pre-filled, and no result is recorded. */
+  /** An open chase: its own fields only — no call has happened yet. */
   const isEditingAction = isEditing && !isCorrecting;
+  const priorities = priorityOptions?.length ? priorityOptions : [...TASK_PRIORITIES];
   const today = getTodayShamsi();
 
   const [decision, setDecision] = useState<FollowUpDecision>('NEXT_ACTION');
   const [followUpResult, setFollowUpResult] = useState('');
   const [completionNote, setCompletionNote] = useState('');
+  /*
+   * Two groups, because a closed chase shows both at once.
+   *
+   * `action*` is the chase being looked at; `next*` is the one that follows it.
+   * Completing, only `next*` is used (there is no other chase to edit);
+   * editing an open one, only `action*` (there is no next action yet).
+   */
+  const [actionTitle, setActionTitle] = useState('');
+  const [actionDescription, setActionDescription] = useState('');
+  const [actionDueDate, setActionDueDate] = useState(today);
+  const [actionAssignee, setActionAssignee] = useState('');
+  const [actionPriority, setActionPriority] = useState('متوسط');
+
   const [nextTitle, setNextTitle] = useState(`پیگیری پیش‌فاکتور ${row.proformaNumber}`);
   const [nextDescription, setNextDescription] = useState('');
   const [nextDueDate, setNextDueDate] = useState(addDaysToShamsi(today, 3));
   const [nextAssignee, setNextAssignee] = useState(row.salesExpert ?? '');
+  const [nextPriority, setNextPriority] = useState('متوسط');
   const [deferredUntil, setDeferredUntil] = useState(addDaysToShamsi(today, 14));
   /*
    * Whether to also write the commercial outcome, and which.
@@ -152,20 +195,25 @@ export default function FollowUpCompletionModal({
     setFollowUpResult(editing?.followUpResult ?? '');
     setCompletionNote(editing?.completionNote ?? '');
     /*
-      Editing an open chase, these four are the chase itself and are seeded
-      from it. Completing one, they describe the *next* task and start from the
-      usual defaults.
+      The chase itself, whenever there is one to look at. Completing, there is
+      nothing here to edit — the chase is being closed, not changed.
     */
-    setNextTitle(editing && !editing.closed
-      ? editing.title
-      : `پیگیری پیش‌فاکتور ${row.proformaNumber}`);
-    setNextDescription(editing && !editing.closed ? editing.description : '');
-    setNextDueDate(editing && !editing.closed
-      ? editing.dueDate
-      : addDaysToShamsi(getTodayShamsi(), 3));
-    setNextAssignee(editing && !editing.closed
-      ? editing.assignee
-      : row.salesExpert ?? '');
+    setActionTitle(editing?.title ?? '');
+    setActionDescription(editing?.description ?? '');
+    setActionDueDate(editing?.dueDate || getTodayShamsi());
+    setActionAssignee(editing?.assignee ?? '');
+    setActionPriority(editing?.priority || 'متوسط');
+
+    /*
+      The next action. Editing a closed chase it is the replacement that was
+      raised — real, with real values — and completing one it is the task about
+      to be created, which starts from the usual defaults.
+    */
+    setNextTitle(editing?.next?.title ?? `پیگیری پیش‌فاکتور ${row.proformaNumber}`);
+    setNextDescription(editing?.next?.description ?? '');
+    setNextDueDate(editing?.next?.dueDate || addDaysToShamsi(getTodayShamsi(), 3));
+    setNextAssignee(editing?.next?.assignee ?? row.salesExpert ?? '');
+    setNextPriority(editing?.next?.priority || 'متوسط');
     setDeferredUntil(addDaysToShamsi(getTodayShamsi(), 14));
     setSettleOutcome(null);
     setSettleLossReason('');
@@ -189,6 +237,14 @@ export default function FollowUpCompletionModal({
     nextDescription: decision === 'NEXT_ACTION' ? nextDescription : undefined,
     nextDueDate: decision === 'NEXT_ACTION' ? nextDueDate : undefined,
     nextAssignedToName: decision === 'NEXT_ACTION' ? (nextAssignee || undefined) : undefined,
+    /*
+      The next chase's own urgency, rather than inheriting this one's.
+
+      Every follow-up used to take the priority of the one it replaced, so a
+      quotation first chased as «فوری» raised «فوری» tasks for ever and one
+      raised as «پایین» never became more urgent however long it sat.
+    */
+    nextPriority: decision === 'NEXT_ACTION' ? nextPriority : undefined,
     deferredUntil: decision === 'DEFER' ? deferredUntil : undefined,
     settleOutcome: settleOutcome ?? undefined,
     settleLossReason: settleOutcome === 'LOST' ? (settleLossReason || undefined) : undefined,
@@ -200,34 +256,53 @@ export default function FollowUpCompletionModal({
   // The same pure rule the server runs, so the button cannot submit what the
   // server would refuse — and the server does not trust that it did not.
   /*
-    Correcting asks one thing of the form — a result — and the completion's own
-    rules are about a decision, a date and an outcome, none of which is being
+    Editing asks the form for what it is showing, and the completion's own
+    rules are about a decision, a date and an outcome — none of which is being
     taken again.
   */
-  const refusal = isEditingAction
-    ? (nextTitle.trim()
-        ? (nextDueDate.trim() ? null : 'تاریخ اقدام الزامی است.')
-        : 'عنوان اقدام الزامی است.')
-    : isCorrecting
-      ? (followUpResult.trim() ? null : 'ثبت نتیجه پیگیری الزامی است.')
-      : completionRefusalReason(body, { todayJalali: today, outcomeIsTerminal });
+  const editRefusal = !isEditing ? null
+    : !actionTitle.trim() ? 'عنوان اقدام الزامی است.'
+      : !actionDueDate.trim() ? 'تاریخ اقدام الزامی است.'
+        : isCorrecting && !followUpResult.trim() ? 'ثبت نتیجه پیگیری الزامی است.'
+          : editing?.next && !nextTitle.trim() ? 'عنوان اقدام بعدی الزامی است.'
+            : editing?.next && !nextDueDate.trim() ? 'تاریخ اقدام بعدی الزامی است.'
+              : null;
+
+  const refusal = isEditing
+    ? editRefusal
+    : completionRefusalReason(body, { todayJalali: today, outcomeIsTerminal });
 
   const submit = async () => {
     if (refusal) { setError(refusal); return; }
     setSaving(true);
     setError(null);
     try {
-      if (isEditingAction) {
-        await onSaveAction?.({
-          title: nextTitle,
-          description: nextDescription,
-          dueDate: nextDueDate,
-          assignedToName: nextAssignee,
-        });
-      } else if (isCorrecting) {
-        await onSaveResult?.({
+      if (isEditing) {
+        await onSaveEdits?.({
           followUpResult,
-          completionNote: completionNote || undefined,
+          completionNote,
+          action: {
+            title: actionTitle,
+            description: actionDescription,
+            dueDate: actionDueDate,
+            assignedToName: actionAssignee,
+            priority: actionPriority,
+          },
+          /*
+            Only when the chase actually raised one that is still open. There
+            is nothing to write otherwise, and inventing a next action from an
+            empty form is how a second one comes to exist.
+          */
+          next: editing?.next
+            ? {
+                taskId: editing.next.taskId,
+                title: nextTitle,
+                description: nextDescription,
+                dueDate: nextDueDate,
+                assignedToName: nextAssignee,
+                priority: nextPriority,
+              }
+            : undefined,
         });
       } else await onSubmit(body);
     } catch (err) {
@@ -263,6 +338,72 @@ export default function FollowUpCompletionModal({
         </div>
 
         <div className="p-5 space-y-4 overflow-y-auto">
+          {/*
+            The chase itself, first, because it is what the reader pressed
+            «ویرایش» on. Shown whenever there is one to look at — an open chase
+            has nothing but this, and a closed one has this above what came of
+            it.
+          */}
+          {isEditing && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-white border border-slate-200 rounded-xl p-3">
+              <div className="md:col-span-3 flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
+                <CheckCircle2 size={12} className="text-sky-500" />
+                {isCorrecting ? 'اقدام انجام‌شده' : 'اقدام پیگیری'}
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                  عنوان اقدام <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={actionTitle}
+                  onChange={(e) => setActionTitle(e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg p-2.5 text-xs bg-white"
+                  id="follow-up-action-title"
+                />
+              </div>
+              <div className="md:col-span-3">
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">شرح اقدام</label>
+                <textarea
+                  value={actionDescription}
+                  onChange={(e) => setActionDescription(e.target.value)}
+                  rows={2}
+                  className="w-full border border-slate-200 rounded-lg p-2.5 text-xs bg-white focus:outline-none focus:border-sky-400"
+                  id="follow-up-action-description"
+                />
+              </div>
+              <div>
+                <ShamsiDatePicker
+                  label="تاریخ اقدام"
+                  value={actionDueDate}
+                  onChange={setActionDueDate}
+                  required
+                  compact
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">مسئول</label>
+                <SearchableSelect
+                  value={actionAssignee}
+                  onChange={setActionAssignee}
+                  options={userNames.map((n) => ({ value: n, label: n }))}
+                  placeholder="مسئول پیگیری"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">اولویت</label>
+                <select
+                  value={actionPriority}
+                  onChange={(e) => setActionPriority(e.target.value)}
+                  id="follow-up-action-priority"
+                  className="w-full border border-slate-200 rounded-lg p-2.5 text-xs bg-white"
+                >
+                  {priorities.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+
           {/*
             Editing an open chase records nothing: there has been no call yet,
             and a result box on a form for «what should be done next» is what
@@ -411,8 +552,10 @@ export default function FollowUpCompletionModal({
           */}
           {isCorrecting && (
             <p className="text-[10px] text-slate-500 bg-slate-50 border border-slate-150 rounded-xl p-2.5 leading-relaxed">
-              فقط نتیجه و یادداشت این پیگیری اصلاح می‌شود. «اقدام بعدی» خودش یک وظیفه جداگانه است و
-              از کارت خودش ویرایش می‌شود.
+              {editing?.next
+                ? 'این پیگیری قبلاً ثبت شده است. اقدام انجام‌شده، نتیجه و اقدام بعدی همگی اینجا قابل ویرایش‌اند.'
+                : 'این پیگیری قبلاً ثبت شده و اقدام بعدی بازی ندارد؛ اقدام انجام‌شده و نتیجه‌ی آن قابل ویرایش است.'}
+              {' '}تصمیم پیگیری، تعیین وضعیت تجاری و ساخت اقدام بعدیِ تازه دوباره انجام نمی‌شود.
             </p>
           )}
 
@@ -465,8 +608,14 @@ export default function FollowUpCompletionModal({
           </div>
           )}
 
-          {(isEditingAction || (!isEditing && decision === 'NEXT_ACTION')) && (
+          {((isCorrecting && !!editing?.next) || (!isEditing && decision === 'NEXT_ACTION')) && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-50 border border-slate-100 rounded-xl p-3">
+              {isCorrecting && (
+                <div className="md:col-span-3 flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
+                  <CalendarClock size={12} className="text-sky-500" />
+                  اقدام بعدی
+                </div>
+              )}
               <div className="md:col-span-3">
                 <label className="block text-[11px] font-bold text-slate-600 mb-1">عنوان اقدام بعدی</label>
                 <input
@@ -490,7 +639,7 @@ export default function FollowUpCompletionModal({
                   id="next-action-description"
                 />
               </div>
-              <div className="md:col-span-2">
+              <div>
                 <ShamsiDatePicker
                   label="تاریخ اقدام بعدی"
                   value={nextDueDate}
@@ -507,6 +656,21 @@ export default function FollowUpCompletionModal({
                   options={userNames.map((n) => ({ value: n, label: n }))}
                   placeholder="کارشناس فروش پروژه"
                 />
+              </div>
+              {/*
+                Its own urgency, not this chase's. Inheriting meant a quotation
+                first chased as «فوری» raised «فوری» tasks for ever.
+              */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">اولویت</label>
+                <select
+                  value={nextPriority}
+                  onChange={(e) => setNextPriority(e.target.value)}
+                  id="next-action-priority"
+                  className="w-full border border-slate-200 rounded-lg p-2.5 text-xs bg-white"
+                >
+                  {priorities.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
               </div>
             </div>
           )}

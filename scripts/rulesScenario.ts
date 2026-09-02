@@ -194,7 +194,7 @@ import {
 import {
   DELIVERY_DELIVERED, DELIVERY_PREPARING, DELIVERY_WORKFLOW_STATUSES,
   INQUIRY_FINAL_OFFER, INQUIRY_INITIAL_OFFER, INQUIRY_SENT, INQUIRY_WINNER,
-  INQUIRY_WORKFLOW_STATUSES, PROJECT_STATUSES, PURCHASE_ORDER_STATUSES,
+  INQUIRY_WORKFLOW_STATUSES, PROJECT_STATUSES, PURCHASE_ORDER_STATUSES, TASK_PRIORITIES,
   deliveryWorkflowStatus, inquiryWorkflowStatus,
 } from "../src/utils/moduleStatuses";
 import {
@@ -7889,11 +7889,11 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    * for the one after it. Same family as every other field seeded here.
    */
   /*
-   * Blank when a next action is being *planned*, and the chase's own words when
-   * an open one is being edited — two different questions, one field.
+   * Seeded from the replacement when one is being edited, and blank when a next
+   * action is being *planned* — two different questions, one field.
    */
-  ok("...and seeded from the chase, or blank, per what is being edited",
-    /setNextDescription\(editing && !editing\.closed \? editing\.description : ''\);/.test(modal));
+  ok("...and seeded from the replacement, or blank, per what is being edited",
+    /setNextDescription\(editing\?\.next\?\.description \?\? ''\);/.test(modal));
 
   /* -- the row has to carry the note, or the card cannot draw it -- */
   const api = strip(readFileSync("src/api/tasks.ts", "utf8"));
@@ -8166,8 +8166,22 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    */
   ok("...in correcting mode only once it is closed",
     /taskLane\(task\.status\) === 'DONE'/.test(view));
-  ok("...writing through the endpoint that touches two columns",
-    /salesFollowUpApi\.updateResult\(followUpRow\.taskId, body\)/.test(view));
+  /*
+   * The recorded answer goes through the endpoint that touches two columns,
+   * and only once the chase is closed — an open one has no result to correct.
+   */
+  ok("...writing the answer through the endpoint that touches two columns",
+    /if \(followUpRow\.editing\?\.closed\) \{\s*await salesFollowUpApi\.updateResult\(/.test(view));
+  /*
+   * The rows are written with *partial* payloads naming only what changed, so
+   * the status is never among them: `completeFollowUp` is the only thing that
+   * may close a follow-up, and an edit must not do it by accident.
+   */
+  ok("...and the chase's own fields as a partial task write",
+    /await tasksApi\.update\(followUpRow\.taskId, fields\(body\.action\)\)/.test(view)
+    && !/status:/.test(view.slice(view.indexOf("onSaveEdits"), view.indexOf("onSaveEdits") + 1400)));
+  ok("...and the replacement only when there is one",
+    /if \(body\.next\) await tasksApi\.update\(body\.next\.taskId, fields\(body\.next\)\)/.test(view));
 
   /* -- and the form knows the difference -- */
   const modal = strip(readFileSync("src/components/FollowUpCompletionModal.tsx", "utf8"));
@@ -8178,18 +8192,21 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    * task, and the sale may already be settled.
    */
   for (const [what, pattern] of [
-    /*
-     * The block is shown when an *open* chase is being edited — those four
-     * fields are the chase — and never when a closed one is corrected, where
-     * the next action already exists as its own task with its own card.
-     */
-    ["the next action",
-      /\{\(isEditingAction \|\| \(!isEditing && decision === 'NEXT_ACTION'\)\) &&/],
     ["the deferral", /\{!isEditing && decision === 'DEFER' &&/],
     ["the settlement question", /\{suggested && !outcomeIsTerminal && !isEditing &&/],
+    ["the decision", /\{!isEditing && \(\s*<div>/],
   ] as const) {
     ok(`...and does not re-ask ${what}`, pattern.test(modal));
   }
+  /*
+   * The next action is *shown* when editing a closed chase — a person filled it
+   * in through this form and expects to correct it here — but only when one is
+   * actually open. Offering the block with nothing behind it is how a second
+   * next action comes to exist.
+   */
+  ok("...and edits the existing next action rather than raising one",
+    /\{\(\(isCorrecting && !!editing\?\.next\) \|\| \(!isEditing && decision === 'NEXT_ACTION'\)\) &&/
+      .test(modal));
   // Keyed on the task being worked on: correcting a closed chase, the row's
   // own `nextActionTaskId` is the replacement, a different task.
   ok("...seeded on the task being corrected",
@@ -8299,13 +8316,16 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
       .test(service));
 
   /*
-   * The screen's half: sending a stale id beside a changed name would keep the
-   * task with the old owner under the new one's name, because an explicit id
-   * wins on the server.
+   * The screen's half: an explicit id wins on the server, so sending a stale
+   * one beside a changed name would keep the task with the old owner under the
+   * new one's name. The follow-up edit sends no id at all — the name is
+   * resolved — which is the stronger version of the same guarantee.
    */
   const view = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
-  ok("a renamed assignee is sent without the stale id",
-    /assignedToUserId: body\.assignedToName === \(task\.assignedTo \?\? ''\)/.test(view));
+  const editWrite = view.slice(view.indexOf("onSaveEdits"), view.indexOf("onSaveEdits") + 1400);
+  ok("the follow-up edit sends the assignee by name, with no id",
+    /assignedToName: a\.assignedToName/.test(editWrite)
+    && !/assignedToUserId/.test(editWrite));
 
   /* -- and the edit button always carries the chase -- */
   ok("editing a follow-up always passes its current state",
@@ -8799,6 +8819,84 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
 
   ok("the comment stripper left these sources intact",
     events.length > 1500 && project.length > 10000);
+}
+
+/* ==========================================================================
+ * Editing a recorded follow-up shows the whole record, and the card opens it
+ *
+ * A person fills a follow-up in through one form — the action, the result, the
+ * next action — and expects to correct it through the same one. That the
+ * system keeps it as two task rows is not their problem. And on the list, the
+ * way to open a card was a small icon at the side while the board opened the
+ * same things by pressing the card itself.
+ * ========================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const modal = strip(readFileSync("src/components/FollowUpCompletionModal.tsx", "utf8"));
+  const view = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
+
+  /* -- the whole record, in one form -- */
+  for (const [what, id] of [
+    ["the action's title", "follow-up-action-title"],
+    ["its description", "follow-up-action-description"],
+    ["its priority", "follow-up-action-priority"],
+    ["the next action's title", "next-action-title"],
+    ["its description", "next-action-description"],
+    ["its priority", "next-action-priority"],
+  ] as const) {
+    ok(`the form has ${what}`, new RegExp(`id="${id}"`).test(modal));
+  }
+  /*
+   * Two groups of state, because a closed chase shows both at once: the chase
+   * being looked at and the one that follows it. One group reused for both is
+   * how the second overwrites the first.
+   */
+  ok("the chase and its replacement have their own state",
+    /setActionTitle\(editing\?\.title \?\? ''\)/.test(modal)
+    && /setNextTitle\(editing\?\.next\?\.title \?\?/.test(modal));
+
+  /* -- the replacement comes from the server's row, not the board's page -- */
+  ok("the replacement is read off the derived row",
+    /taskId: row\.nextActionTaskId,/.test(view));
+  /*
+   * And only when it is a *different* task. On an open chase the row's open
+   * task is this one, and offering it as «اقدام بعدی» would show the same
+   * fields twice under two headings.
+   */
+  ok("...and never when it is the chase itself",
+    /row\.nextActionTaskId !== taskId/.test(view));
+  const service = strip(readFileSync("src/server/services/followUpService.ts", "utf8"));
+  ok("the row carries the next action's own words and urgency",
+    /nextActionDescription: openTask\?\.description \?\? null/.test(service)
+    && /nextActionPriority: openTask\?\.priority \?\? null/.test(service));
+
+  /* -- the priority is chosen, not inherited -- */
+  /*
+   * Every follow-up used to take the priority of the one it replaced, so a
+   * quotation first chased as «فوری» raised «فوری» tasks for ever and one
+   * raised as «پایین» never became more urgent however long it sat.
+   */
+  ok("a new chase takes the priority chosen for it",
+    /priority: toNullableString\(input\.nextPriority, 20\) \?\? task\.priority/.test(service));
+  const route = strip(readFileSync("src/server/routes/followUp.ts", "utf8"));
+  ok("...which the route lets through", /nextPriority: typeof body\.nextPriority/.test(route));
+  // The four words this application stores, pinned to the type union in
+  // `moduleStatuses.ts` rather than typed again in the form.
+  eq("the priorities are the module's own list",
+    TASK_PRIORITIES.join("|"), "پایین|متوسط|بالا|فوری");
+  ok("...read by the form rather than written out again",
+    /TASK_PRIORITIES/.test(modal) && !/'پایین', 'متوسط'/.test(modal));
+
+  /* -- pressing the card opens it, on the list as on the board -- */
+  ok("the list's task title opens the card",
+    /onClick=\{\(\) => \{ void openCard\(card\); \}\}[\s\S]{0,200}id=\{`card-open-\$\{task\.id\}`\}/
+      .test(view));
+  ok("...and so does a referral's",
+    /id=\{`card-open-\$\{card\.id\}`\}/.test(view));
+
+  ok("the comment stripper left these sources intact",
+    modal.length > 6000 && view.length > 10000 && service.length > 10000);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

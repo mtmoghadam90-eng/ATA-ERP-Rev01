@@ -38,7 +38,7 @@ import type { WorkflowRule } from "../types";
 import {
   AFTER_SALES_STATUSES, CUSTOMER_TYPES, DELIVERY_WORKFLOW_STATUSES,
   INQUIRY_WORKFLOW_STATUSES, PROFORMA_OUTCOMES, PROJECT_STATUSES,
-  PURCHASE_ORDER_STATUSES, TRANSACTION_TYPES,
+  PURCHASE_ORDER_STATUSES, TASK_PRIORITIES, TRANSACTION_TYPES,
 } from "./moduleStatuses";
 import { REFERRAL_STATUSES, TASK_STATUSES } from "./workBoard";
 import { PROJECT_STAGES } from "./projectStage";
@@ -64,8 +64,6 @@ export interface TriggerSpec {
   group: string;
   fields: readonly TriggerField[];
 }
-
-const TASK_PRIORITIES = ["پایین", "متوسط", "بالا", "فوری"] as const;
 
 /** «برای انجام» and the rest, plus the value every automation actually writes. */
 const TASK_STATUS_OPTIONS = TASK_STATUSES;

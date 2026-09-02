@@ -34,8 +34,11 @@ export interface FollowUpRow {
   followUpState: FollowUpState;
   deferredUntilJalali: string | null;
   nextAction: string | null;
+  /** «شرح اقدام بعدی» and its urgency — what the edit form needs to show. */
+  nextActionDescription: string | null;
   nextActionDueDateJalali: string | null;
   nextActionAssignee: string | null;
+  nextActionPriority: string | null;
   /** The task to complete. Null is exactly what «بدون اقدام بعدی» means. */
   nextActionTaskId: string | null;
   lastFollowUpDateJalali: string | null;
@@ -63,6 +66,8 @@ export interface FollowUpCompletionBody {
   nextDescription?: string;
   nextDueDate?: string;
   nextAssignedToName?: string;
+  /** «اولویت» of the next chase; absent inherits the one being closed. */
+  nextPriority?: string;
   deferredUntil?: string;
   /**
    * The commercial outcome to write onto the proforma alongside the result.
