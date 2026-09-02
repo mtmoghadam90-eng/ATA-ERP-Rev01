@@ -42,7 +42,7 @@ import { renderWithMentions } from './MentionText';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import { PROJECT_STAGES, stageRank } from '../utils/projectStage';
 import {
-  BoardLane, REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, referralStatusForLane,
+  MovableLane, REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, referralStatusForLane,
 } from '../utils/workBoard';
 import { projectDataGaps, projectGapFields } from '../utils/projectDataGaps';
 import { detailToProject, projectToWriteInput, rowToProject } from '../api/projectAdapter';
@@ -297,7 +297,7 @@ export default function ProjectsView({
    * `referralStatusForLane` is the same mapping the board uses, so the two
    * screens cannot disagree about what a column means.
    */
-  const setReferralLane = async (referralId: string, lane: BoardLane) => {
+  const setReferralLane = async (referralId: string, lane: MovableLane) => {
     try {
       await inboxApi.setReferralStatus(referralId, referralStatusForLane(lane));
       activityFeed.refresh();

@@ -22,6 +22,9 @@ export interface UserRow {
   isActive: boolean;
   /** Serialized `Record<string, boolean>`; absent means unrestricted. */
   permissions: string | null;
+  /** «حداقل / حداکثر کار همزمان»; null in both is «no limit». */
+  minActiveTasks: number | null;
+  maxActiveTasks: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -43,6 +46,8 @@ export interface UserWriteInput {
   signatureImage?: string | null;
   isActive?: boolean;
   permissions?: unknown;
+  minActiveTasks?: number | null;
+  maxActiveTasks?: number | null;
 }
 
 export interface RemoveUserResult {
@@ -101,6 +106,8 @@ export function rowToUser(row: UserRow): User {
     signatureImage: row.signatureImage ?? "",
     isActive: row.isActive,
     permissions: parseJson<Record<string, boolean>>(row.permissions, {}),
+    minActiveTasks: row.minActiveTasks,
+    maxActiveTasks: row.maxActiveTasks,
     // Never sent by the server, and the form no longer reads it.
     password: "",
   } as unknown as User;
@@ -116,5 +123,10 @@ export function userToWriteInput(user: Partial<User>): UserWriteInput {
     signatureImage: user.signatureImage ?? null,
     isActive: user.isActive,
     permissions: user.permissions,
+    // Null rather than undefined so clearing a box actually clears the column:
+    // the route copies only the keys that are present, and an absent key is
+    // «not edited».
+    minActiveTasks: user.minActiveTasks ?? null,
+    maxActiveTasks: user.maxActiveTasks ?? null,
   };
 }

@@ -15,15 +15,36 @@
  * a change of where things are shown, and that is all it is.
  */
 
-/** The three columns, in the order they are drawn (RTL: right to left). */
-export const BOARD_LANES = ["TODO", "DOING", "DONE"] as const;
+import { FOLLOW_UP_KIND } from "./salesFollowUp";
+
+/** The four columns, in the order they are drawn (RTL: right to left). */
+export const BOARD_LANES = ["TODO", "WAITING", "DOING", "DONE"] as const;
 export type BoardLane = (typeof BOARD_LANES)[number];
 
 export const LANE_LABELS: Record<BoardLane, string> = {
   TODO: "برای انجام",
+  WAITING: "در انتظار مشتری",
   DOING: "در حال انجام",
   DONE: "انجام شده",
 };
+
+/**
+ * The columns a card can be **pushed** into, which is not all of them.
+ *
+ * «در انتظار مشتری» is derived from the chase's own next-contact date, so
+ * there is nothing for a move to write: pushing a card there would mean
+ * inventing a future date nobody agreed with the customer. A quotation is
+ * parked by recording its follow-up result — «موکول به تاریخ دیگر» — which is
+ * where that date comes from, and it leaves the column on its own the day it
+ * arrives. Typed rather than merely documented, so `taskStatusForLane` and
+ * `referralStatusForLane` cannot be handed a lane they have no answer for.
+ */
+export const MOVABLE_LANES = ["TODO", "DOING", "DONE"] as const;
+export type MovableLane = (typeof MOVABLE_LANES)[number];
+
+export function isMovableLane(lane: string): lane is MovableLane {
+  return (MOVABLE_LANES as readonly string[]).includes(lane);
+}
 
 /* ------------------------------- tasks ---------------------------------- */
 
@@ -63,15 +84,52 @@ export function taskLane(status: string | null | undefined): BoardLane {
 }
 
 /**
- * The status to write when a task is dragged into a column.
+ * Which column a *chase* belongs in, where its status word cannot say.
+ *
+ * A sales follow-up is not «to do» and not «in progress»: it is a call agreed
+ * for a day. Until that day comes there is nothing to do and nobody to chase —
+ * the quotation is sitting with the customer — and on the day, it is the most
+ * pressing thing on the desk. So a follow-up's column is its **due date**, and
+ * the status word it carries is not consulted at all beyond «is it finished».
+ *
+ * That is what makes «در انتظار مشتری» need no sweep, no second status column
+ * and no nightly job: a chase leaves it the moment its date arrives, because
+ * nothing was ever stored saying it was there. It is also why the status the
+ * task happens to carry is irrelevant here — the automations raise a follow-up
+ * as «در انتظار», the completion flow as «برای انجام» and an old row may carry
+ * «در حال انجام», and none of those three was ever a statement about whether
+ * the customer had answered.
+ *
+ * An **undated** chase is due now, not parked for ever: a follow-up with no
+ * date is the one nobody planned, which is exactly what the health check calls
+ * «بدون اقدام بعدی» and ranks above what is merely upcoming.
+ */
+export function taskBoardLane(
+  task: { status?: string | null; taskKind?: string | null; dueDate?: string | null },
+  todayJalali: string,
+): BoardLane {
+  const lane = taskLane(task.status);
+  if (lane === "DONE") return "DONE";
+  if (String(task.taskKind ?? "") !== FOLLOW_UP_KIND) return lane;
+
+  const due = String(task.dueDate ?? "").trim();
+  return due && due > todayJalali ? "WAITING" : "DOING";
+}
+
+/**
+ * The status to write when a task is moved into a column.
  *
  * Dropping into «انجام شده» never writes «کنسل شده» — cancelling is a decision
- * somebody makes explicitly on the card, not something a drag can do by
+ * somebody makes explicitly on the card, not something a move can do by
  * accident — and a card already cancelled that is dropped back into the same
  * column keeps what it has, which is why the current status is an argument.
+ *
+ * Typed over `MovableLane`: «در انتظار مشتری» has no status to write, and a
+ * function that quietly answered one for it would put a card in a column its
+ * own date contradicts.
  */
 /**
- * The query that finds one column, as a clause on `tasks.status`.
+ * The query that finds one column.
  *
  * **The middle column is an exclusion, and that is the whole point.** Every
  * automation here raises its task as «در انتظار» — the workflow engine, the
@@ -84,14 +142,51 @@ export function taskLane(status: string | null | undefined): BoardLane {
  * Written as «not one of the other three» rather than as a list of the values
  * that mean in-progress, so it agrees with `taskLane`'s own fallback: a status
  * nobody anticipated is open work, and open work must never be unfindable.
+ *
+ * **The chases are separated by their date, exactly as `taskBoardLane` places
+ * them**, because the dropdown and the board have to answer the same question.
+ * That is also why this takes a date: the column is derived, so the query for
+ * it is a date comparison and not a status word.
+ *
+ * `dueDate` is nullable, so the «not parked» half is spelled out as «no date or
+ * a date that has come» rather than as `NOT (dueDate > today)` — SQL evaluates
+ * that to unknown for a NULL and drops exactly the undated chases the rule
+ * above says are due now.
  */
-export function laneWhere(lane: BoardLane): Record<string, unknown> {
-  if (lane === "TODO") return { status: TASK_TODO };
-  if (lane === "DONE") return { status: { in: [TASK_DONE, TASK_CANCELLED] } };
-  return { status: { notIn: [TASK_TODO, TASK_DONE, TASK_CANCELLED] } };
+export function laneWhere(lane: BoardLane, today: Date | null): Record<string, unknown> {
+  const finished = { status: { in: [TASK_DONE, TASK_CANCELLED] } };
+  if (lane === "DONE") return finished;
+
+  const chase = { taskKind: FOLLOW_UP_KIND };
+  const notChase = { taskKind: { not: FOLLOW_UP_KIND } };
+  const open = { status: { notIn: [TASK_DONE, TASK_CANCELLED] } };
+
+  if (lane === "WAITING") {
+    // With no date to compare against nothing can be parked. Answering «every
+    // chase» here would empty «در حال انجام» of the calls due today, which is
+    // the one thing this column must never do.
+    if (!today) return { id: { in: [] as string[] } };
+    return { AND: [chase, open, { dueDate: { gt: today } }] };
+  }
+
+  if (lane === "TODO") {
+    // Ordinary work waiting to be picked up. A chase is never here: its column
+    // is its date, and a date is not a thing to be picked up.
+    return { AND: [notChase, { status: TASK_TODO }] };
+  }
+
+  const dueNow = today
+    ? { OR: [{ dueDate: null }, { dueDate: { lte: today } }] }
+    : {};
+  return {
+    OR: [
+      { AND: [notChase, { status: { notIn: [TASK_TODO, TASK_DONE, TASK_CANCELLED] } }] },
+      { AND: [chase, open, dueNow] },
+    ],
+  };
 }
 
-export function taskStatusForLane(lane: BoardLane, current?: string | null): string {
+export function taskStatusForLane(lane: MovableLane, current?: string | null): string {
   if (lane === "TODO") return TASK_TODO;
   if (lane === "DOING") return TASK_DOING;
   return String(current ?? "").trim() === TASK_CANCELLED ? TASK_CANCELLED : TASK_DONE;
@@ -135,7 +230,7 @@ export function referralLane(status: string | null | undefined): BoardLane {
   return "TODO";
 }
 
-export function referralStatusForLane(lane: BoardLane): string {
+export function referralStatusForLane(lane: MovableLane): string {
   if (lane === "TODO") return REFERRAL_PENDING;
   if (lane === "DOING") return REFERRAL_DOING;
   return REFERRAL_DONE;
@@ -236,6 +331,34 @@ export function sortBoardCards<T extends BoardCardOrder>(cards: T[], by: BoardSo
   });
 }
 
+/**
+ * The order work is picked up in when there is room for more.
+ *
+ * The opposite question from `sortBoardCards`, and deliberately a different
+ * function: that one answers «how should this column be displayed», this one
+ * answers «which of these should somebody start next», and the two disagree on
+ * every tie — a column is shown newest-first, while the thing to pick up next
+ * out of two equally urgent cards is the one that has been waiting longest.
+ *
+ * Due date leads because that is what a promise is, priority breaks its ties,
+ * and age breaks priority's. **An undated card sorts last**: Shamsi dates
+ * compare as strings, so an empty one would come before every real date and
+ * put the unplanned work in front of what was actually promised for today.
+ */
+export function rankForTopUp<T extends BoardCardOrder>(cards: T[]): T[] {
+  return [...cards].sort((a, b) => {
+    const da = (a.dueDate ?? "").trim() || "9999/99/99";
+    const db = (b.dueDate ?? "").trim() || "9999/99/99";
+    if (da !== db) return da < db ? -1 : 1;
+
+    const rank = priorityRank(a.priority) - priorityRank(b.priority);
+    if (rank !== 0) return rank;
+
+    // Oldest first — the card that has been waiting longest.
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+}
+
 /* --------------------- one filter bar, two record types ------------------ */
 
 /**
@@ -273,12 +396,13 @@ export interface ReferralFilterSubject {
   hasProject?: boolean;
 }
 
-/** The four choices the status filter offers, as the columns they select. */
-export const LANE_FILTERS = ["TODO", "DOING", "DONE", "CANCELLED"] as const;
+/** The choices the status filter offers, as the columns they select. */
+export const LANE_FILTERS = ["TODO", "WAITING", "DOING", "DONE", "CANCELLED"] as const;
 export type LaneFilter = (typeof LANE_FILTERS)[number];
 
 export const LANE_FILTER_LABELS: Record<LaneFilter, string> = {
   TODO: "برای انجام",
+  WAITING: "در انتظار مشتری",
   DOING: "در حال انجام",
   DONE: "انجام شده",
   CANCELLED: "کنسل شده",

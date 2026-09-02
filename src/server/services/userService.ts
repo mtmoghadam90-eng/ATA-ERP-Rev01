@@ -4,6 +4,7 @@ import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
 import { toJsonColumn, toNullableString } from "../childSync";
+import { normalizeLimit, workLimitRefusalReason } from "../../utils/workLimits";
 
 /**
  * User account data access.
@@ -23,6 +24,9 @@ const SEARCH_FIELDS = ["username", "fullName", "position"] as const;
 const SAFE_SELECT = {
   id: true, username: true, fullName: true, role: true, isSystemAdmin: true,
   position: true, signatureImage: true, isActive: true, permissions: true,
+  // How much work this person may hold in «در حال انجام» at once. Null in both
+  // is «no limit», which is every account written before the columns existed.
+  minActiveTasks: true, maxActiveTasks: true,
   createdAt: true, updatedAt: true,
 } satisfies Prisma.UserSelect;
 
@@ -94,6 +98,9 @@ export interface UserInput {
   signatureImage?: string | null;
   isActive?: boolean;
   permissions?: unknown;
+  /** «حداقل / حداکثر کار همزمان». Null or 0 means no limit — see `workLimits`. */
+  minActiveTasks?: number | null;
+  maxActiveTasks?: number | null;
 }
 
 function scalarData(input: UserInput): Record<string, unknown> {
@@ -108,6 +115,17 @@ function scalarData(input: UserInput): Record<string, unknown> {
   if ("signatureImage" in input) set("signatureImage", toNullableString(input.signatureImage, 500));
   if ("isActive" in input) set("isActive", !!input.isActive);
   if ("permissions" in input) set("permissions", toJsonColumn(input.permissions));
+  /*
+   * The two work-in-progress limits, normalised where they are written.
+   *
+   * `normalizeLimit` folds an empty box, a zero, a negative and the string a
+   * JSON body arrives as into the same null — «no limit» — so the column can
+   * only ever hold a real cap or nothing, and every reader is spared the
+   * question. A maximum of zero would otherwise mean «may never work», which
+   * is not what anybody types into an empty-looking box.
+   */
+  if ("minActiveTasks" in input) set("minActiveTasks", normalizeLimit(input.minActiveTasks));
+  if ("maxActiveTasks" in input) set("maxActiveTasks", normalizeLimit(input.maxActiveTasks));
 
   return out;
 }
@@ -116,8 +134,14 @@ export async function createUser(
   input: UserInput,
   password: string,
   user: AuthUser,
-): Promise<"forbidden" | { user: unknown }> {
+): Promise<"forbidden" | { refusal: string } | { user: unknown }> {
   if (!canManage(user)) return "forbidden";
+
+  const badLimits = workLimitRefusalReason({
+    min: normalizeLimit(input.minActiveTasks),
+    max: normalizeLimit(input.maxActiveTasks),
+  });
+  if (badLimits) return { refusal: badLimits };
 
   const created = await getDb().user.create({
     data: {
@@ -177,7 +201,10 @@ export async function updateUser(
   id: string,
   input: UserInput,
   user: AuthUser,
-): Promise<"forbidden" | "not-found" | "last-admin" | { user: unknown; epoch?: number }> {
+): Promise<
+  "forbidden" | "not-found" | "last-admin" | { refusal: string }
+  | { user: unknown; epoch?: number }
+> {
   if (!canManage(user)) return "forbidden";
   const db = getDb();
 
@@ -186,9 +213,26 @@ export async function updateUser(
     select: {
       id: true, isSystemAdmin: true, isActive: true,
       permissions: true, sessionEpoch: true,
+      minActiveTasks: true, maxActiveTasks: true,
     },
   });
   if (!existing) return "not-found";
+
+  /*
+   * The pair as it will stand, not the pair that was sent.
+   *
+   * A form may post one of the two, so checking the request alone would let a
+   * minimum of 8 be saved beside a stored maximum of 5 — and the board would
+   * then promote a card to reach the floor and refuse it for breaking the
+   * ceiling, on the same press.
+   */
+  const badLimits = workLimitRefusalReason({
+    min: "minActiveTasks" in input
+      ? normalizeLimit(input.minActiveTasks) : normalizeLimit(existing.minActiveTasks),
+    max: "maxActiveTasks" in input
+      ? normalizeLimit(input.maxActiveTasks) : normalizeLimit(existing.maxActiveTasks),
+  });
+  if (badLimits) return { refusal: badLimits };
 
   // Removing the last administrator would leave nobody able to restore access.
   const losingAdmin =

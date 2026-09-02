@@ -420,6 +420,18 @@ export interface ReactivateInput {
   title?: string | null;
   dueDate?: string | null;
   assignedToName?: string | null;
+  /**
+   * «شرح اقدام» and «اولویت» — what this chase is for, and how urgent it is.
+   *
+   * Both absent keep what this endpoint has always done: no description, and
+   * «متوسط». They exist because the tasks screen now raises a follow-up here
+   * rather than through `POST /api/tasks`, and a person filling in a form has
+   * both boxes in front of them — a chase raised because a deal closes this
+   * week and one raised because the customer went quiet are not equally
+   * urgent, and the queue orders on exactly that.
+   */
+  description?: string | null;
+  priority?: string | null;
 }
 
 /**
@@ -504,11 +516,12 @@ export async function reactivateFollowUp(
     const task = await tx.task.create({
       data: {
         title,
+        description: toNullableString(input.description),
         taskKind: "SALES_FOLLOW_UP",
         relatedToType: "proforma",
         relatedToId: proformaId,
         relatedToName: proforma.proformaNumber,
-        priority: "متوسط",
+        priority: toNullableString(input.priority, 20) ?? "متوسط",
         status: TASK_TODO,
         ...expandDateFields({ dueDate }, ["dueDate"]),
         assignedToUserId: assignee.assignedToUserId,

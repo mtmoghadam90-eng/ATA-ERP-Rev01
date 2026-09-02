@@ -906,8 +906,17 @@ head("The work board: two kinds of card, three columns");
       priority: "فوری", status: "برای انجام",
     },
     {
+      // A chase whose date has come: its column is the date, not the status.
       kind: "task" as const, id: "t2", title: "تماس با مشتری", createdAt: "2026-02-01",
       priority: "متوسط", status: "در حال انجام", taskKind: "SALES_FOLLOW_UP",
+      dueDate: "1405/01/10",
+    },
+    {
+      // The same kind of card, parked: its date has not arrived, so it belongs
+      // in «در انتظار مشتری» however its status reads.
+      kind: "task" as const, id: "t4", title: "تماس مجدد بعد از نوروز",
+      createdAt: "2026-02-20", priority: "بالا", status: "برای انجام",
+      taskKind: "SALES_FOLLOW_UP", dueDate: "1405/02/20",
     },
     {
       kind: "task" as const, id: "t3", title: "کار تمام‌شده", createdAt: "2026-03-01",
@@ -921,7 +930,12 @@ head("The work board: two kinds of card, three columns");
 
   const render = () => act(() => {
     root9.render(React.createElement(WorkBoard, {
-      cards, sort: "date" as const, selected, moving: false,
+      cards,
+      sort: "date" as const,
+      today: "1405/01/10",
+      load: { promoted: 0, active: 2, min: null, max: 4 },
+      selected,
+      moving: false,
       onToggleSelect: (key: string) => {
         if (selected.has(key)) selected.delete(key); else selected.add(key);
         render();
@@ -933,8 +947,8 @@ head("The work board: two kinds of card, three columns");
   render();
 
   const lane = (name: string) => host9.querySelector(`#work-board-lane-${name}`);
-  ok("all three columns are drawn",
-    !!lane("TODO") && !!lane("DOING") && !!lane("DONE"));
+  ok("all four columns are drawn",
+    !!lane("TODO") && !!lane("WAITING") && !!lane("DOING") && !!lane("DONE"));
   // A referral and a task, in one column, from two tables.
   ok("a queued task and a fresh referral share the first column",
     (lane("TODO")?.textContent ?? "").includes("ثبت سفارش خرید")
@@ -945,6 +959,32 @@ head("The work board: two kinds of card, three columns");
     (lane("DOING")?.textContent ?? "").includes("تماس با مشتری"));
   ok("...and it is marked as a sales follow-up, not an ordinary task",
     (lane("DOING")?.textContent ?? "").includes("پیگیری فروش"));
+
+  /*
+   * The reported behaviour, and the whole reason the fourth column exists: a
+   * chase agreed for next month is neither «to do» nor «in progress», it is
+   * sitting with the customer — and it comes back on its own the day it is
+   * due, because nothing was stored saying it was parked.
+   */
+  ok("a chase whose date has not come is parked, whatever its status says",
+    (lane("WAITING")?.textContent ?? "").includes("تماس مجدد بعد از نوروز"),
+    lane("WAITING")?.textContent);
+  ok("...and the column it left is not holding it too",
+    !(lane("TODO")?.textContent ?? "").includes("تماس مجدد بعد از نوروز"));
+  ok("...while the one due today sits in «در حال انجام»",
+    (lane("DOING")?.textContent ?? "").includes("تماس با مشتری"));
+  /*
+   * It has no move button: there is nothing for a press to write, since the
+   * column is a date somebody agreed with the customer. Explained on the
+   * column rather than left as a button that appears to work and does not.
+   */
+  ok("the parked column offers no destination button",
+    !host9.querySelector("#work-board-move-WAITING"));
+  ok("...and says why instead",
+    (lane("WAITING")?.textContent ?? "").includes("سررسید"));
+  // A cap nobody can see reads as the board refusing things at random.
+  ok("the middle column shows the limit it is held to",
+    (lane("DOING")?.textContent ?? "").includes("از 4"), lane("DOING")?.textContent);
   ok("finished work is in the last column, with the date it closed",
     (lane("DONE")?.textContent ?? "").includes("کار تمام‌شده")
     && (lane("DONE")?.textContent ?? "").includes("1405/01/05"));

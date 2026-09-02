@@ -1,6 +1,6 @@
 import express from "express";
 import { parseListQuery } from "../listing";
-import { BOARD_LANES, BoardLane } from "../../utils/workBoard";
+import { LANE_LABELS, MOVABLE_LANES, MovableLane, isMovableLane } from "../../utils/workBoard";
 import { moveReferralsToLane } from "../services/activityService";
 import { RouteDeps, sendError } from "./types";
 import { getTodayShamsi } from "../../dateUtils";
@@ -8,11 +8,24 @@ import {
   TASK_FILTERABLE, TASK_SORTABLE, TaskInput,
   createTask, deleteTask, getTask, listTasks, moveTasksToLane, taskSummary, updateTask,
 } from "../services/taskService";
+import { topUpActiveWork } from "../services/workLoadService";
 
 const WRITABLE: (keyof TaskInput)[] = [
   "title", "description", "relatedToType", "relatedToId", "relatedToName",
   "priority", "status", "dueDate", "assignedToUserId", "assignedToName",
   "reminderEnabled", "reminderDate", "reminderTime", "customValues",
+  /*
+   * `taskKind` is deliberately **not** here.
+   *
+   * The form asks which kind of task is being raised, and a follow-up does not
+   * become one by having a word written on it: it belongs to a quotation, it
+   * moves that quotation's `followUpState`, it must not be the second open
+   * chase on the same document, and it cannot exist on a settled sale. All of
+   * that is `reactivateFollowUp`, which the form posts to instead — the same
+   * endpoint the sales queue's «فعال‌سازی مجدد» uses. A second way to create
+   * one would be a second set of those rules to keep in step, which is the
+   * fault the five customer creation forms are the standing example of.
+   */
 ];
 
 function pickInput(body: unknown): TaskInput {
@@ -52,6 +65,9 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
         // omits it — every integration written before the button existed —
         // still gets the whole list.
         hideCompleted: req.query.hideCompleted === "true",
+        // «در انتظار مشتری» is a date comparison, not a status word, so the
+        // column filter cannot be built without today.
+        today: getTodayShamsi(),
       });
       res.json({ success: true, ...result });
     } catch (err) {
@@ -75,28 +91,73 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const lane = body.lane;
-      if (!(BOARD_LANES as readonly string[]).includes(String(lane))) {
-        res.status(400).json({ success: false, error: "ستون مقصد نامعتبر است." });
+      const lane = String(body.lane ?? "");
+      /*
+       * Only three of the four columns can be pushed into.
+       *
+       * «در انتظار مشتری» is derived from the chase's own next-contact date, so
+       * there is nothing here to write: a card is parked by recording the
+       * follow-up result — «موکول به تاریخ دیگر» — which is where that date
+       * comes from. Named in the refusal rather than answered with «invalid»,
+       * since a person pressing it is asking a reasonable question.
+       */
+      if (!isMovableLane(lane)) {
+        res.status(400).json({
+          success: false,
+          error: (MOVABLE_LANES as readonly string[]).includes(lane)
+            ? "ستون مقصد نامعتبر است."
+            : `«${LANE_LABELS.WAITING}» از تاریخ اقدام بعدی پیگیری می‌آید و مقصد انتقال نیست؛`
+              + " برای موکول کردن، نتیجه پیگیری را ثبت کنید.",
+        });
         return;
       }
       const ids = (value: unknown) =>
         (Array.isArray(value) ? value : []).filter((v): v is string => typeof v === "string");
 
       const today = getTodayShamsi();
-      const tasks = await moveTasksToLane(ids(body.taskIds), lane as BoardLane, user, today);
-      const referrals = await moveReferralsToLane(ids(body.referralIds), lane as BoardLane, user);
+      const tasks = await moveTasksToLane(ids(body.taskIds), lane as MovableLane, user, today);
+      const referrals = await moveReferralsToLane(
+        ids(body.referralIds), lane as MovableLane, user, today);
+
+      /*
+       * Room made is room to fill.
+       *
+       * Finishing three cards is exactly when the floor is crossed, so the
+       * top-up runs here rather than waiting for the next time somebody opens
+       * the board — which is what would make the feature look like it only
+       * worked in the morning.
+       */
+      const topUp = await topUpActiveWork(user, today);
 
       res.json({
         success: true,
         moved: tasks.moved + referrals.moved,
         // Reported rather than swallowed: a card that would not move is one the
         // person can see sitting where they left it, and silence there reads as
-        // the board being broken.
+        // the board being broken. Each rule says its own sentence.
         refused: tasks.refused + referrals.refused,
+        reasons: [...new Set([...tasks.reasons, ...referrals.reasons])],
+        topUp,
       });
     } catch (err) {
       sendError(res, err, "POST /api/tasks/board/move");
+    }
+  });
+
+  /**
+   * Fills «در حال انجام» back up to this person's minimum.
+   *
+   * A write, so it is a POST and never a side effect of reading the board: the
+   * screen asks for it when it opens and after anything is finished, which are
+   * the two moments the floor can have been crossed.
+   */
+  app.post("/api/tasks/board/top-up", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      res.json({ success: true, topUp: await topUpActiveWork(user, getTodayShamsi()) });
+    } catch (err) {
+      sendError(res, err, "POST /api/tasks/board/top-up");
     }
   });
 

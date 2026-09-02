@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { parseMentions } from "../../utils/mentions";
 import { isAllowedReaction } from "../../utils/reactions";
 import {
-  BoardLane, REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, referralLane, referralStatusForLane,
+  MovableLane, REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, referralLane, referralStatusForLane,
 } from "../../utils/workBoard";
 import {
   activityRecipients, noticeExcerpt, parseMemberIds, serializeMemberIds,
@@ -19,6 +19,9 @@ import { processWorkflowRules } from "./workflowService";
 import { notifyUser } from "./notificationService";
 import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
 import { afterCommit } from "../afterCommit";
+import { capacityRefusalMessage } from "../../utils/workLimits";
+import { MoveOutcome } from "./taskService";
+import { capacityByUser } from "./workLoadService";
 
 /**
  * Project category groups, activities, referrals and module notes.
@@ -1087,19 +1090,59 @@ export async function listReferrals(
  */
 export async function moveReferralsToLane(
   ids: string[],
-  lane: BoardLane,
+  lane: MovableLane,
   user: AuthUser,
-): Promise<{ moved: number; refused: number }> {
+  todayJalali: string,
+): Promise<MoveOutcome> {
   const wanted = [...new Set(ids.filter((id) => typeof id === "string" && id))].slice(0, 200);
   let moved = 0;
   let refused = 0;
+  const reasons = new Set<string>();
+
+  /*
+   * The work-in-progress cap applies here too.
+   *
+   * A referral picked up is exactly as much of somebody's afternoon as a task
+   * picked up, so a limit enforced on one and not the other is a limit that
+   * anyone whose work arrives as referrals walks straight past. Read once for
+   * the batch and decremented as cards are admitted.
+   */
+  const assignees = wanted.length > 0 && lane === "DOING"
+    ? await getDb().projectReferral.findMany({
+      where: { id: { in: wanted } },
+      select: { id: true, assignedToUserId: true, assignedToName: true, status: true },
+    })
+    : [];
+  const room = lane === "DOING"
+    ? await capacityByUser(
+      assignees.map((r) => r.assignedToUserId).filter((id): id is string => !!id), todayJalali)
+    : new Map();
 
   for (const id of wanted) {
+    const target = assignees.find((r) => r.id === id);
+    // Already in the column: no move, and therefore no capacity consumed.
+    if (target && referralLane(target.status) === lane) continue;
+
+    const seat = target?.assignedToUserId ? room.get(target.assignedToUserId) : undefined;
+    if (seat && seat.limits.max !== null) {
+      if (seat.remaining <= 0) {
+        refused++;
+        reasons.add(capacityRefusalMessage(
+          target?.assignedToName ?? null, seat.active, seat.limits.max, 1,
+        ));
+        continue;
+      }
+      seat.remaining -= 1;
+    }
+
     const outcome = await setReferralStatus(id, referralStatusForLane(lane), user);
     if (outcome === "ok") moved++;
-    else refused++;
+    else {
+      refused++;
+      reasons.add("انتقال بعضی ارجاع‌ها انجام نشد؛ تنها ارجاع‌دهنده و مسئول می‌توانند وضعیت را تغییر دهند.");
+    }
   }
-  return { moved, refused };
+  return { moved, refused, reasons: [...reasons] };
 }
 
 /**

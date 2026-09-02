@@ -210,6 +210,10 @@ body {
   --lane-todo-head: #cbe1f6;
   --lane-todo-edge: #4a86b8;
   --lane-todo-accent: #0b5c8a;  /* 6.07 on the fill · 5.37 on the band */
+  --lane-waiting-fill: #ebe8fa; /* edge 4.16 · 3.62 */
+  --lane-waiting-head: #dcd7f4;
+  --lane-waiting-edge: #7a6ec0;
+  --lane-waiting-accent: #4b3fa6; /* 6.82 · 5.88 */
   --lane-doing-fill: #f9edda;   /* edge 3.45 · 3.12 */
   --lane-doing-head: #f2dfbd;
   --lane-doing-edge: #b07d2a;
@@ -270,6 +274,10 @@ body {
   --lane-todo-head: #0f2c44;
   --lane-todo-edge: #3f6f95;    /* 3.52 on the page · 3.58 on this fill */
   --lane-todo-accent: #7cc6f5;  /* 10.27 on the fill · 7.69 on the band */
+  --lane-waiting-fill: #0e0b1a;
+  --lane-waiting-head: #241d3d;
+  --lane-waiting-edge: #6558a0;   /* 3.11 · 3.20 */
+  --lane-waiting-accent: #b6aaf5; /* 9.30 · 7.63 */
   --lane-doing-fill: #151009;
   --lane-doing-head: #2e260e;
   --lane-doing-edge: #8a6a2c;   /* 3.75 · 3.76 */
@@ -743,6 +751,12 @@ html:not(.dark) textarea:not([readonly]) {
   --lane-head: var(--lane-todo-head);
   --lane-edge: var(--lane-todo-edge);
   --lane-accent: var(--lane-todo-accent);
+}
+.board-lane-waiting {
+  --lane-fill: var(--lane-waiting-fill);
+  --lane-head: var(--lane-waiting-head);
+  --lane-edge: var(--lane-waiting-edge);
+  --lane-accent: var(--lane-waiting-accent);
 }
 .board-lane-doing {
   --lane-fill: var(--lane-doing-fill);

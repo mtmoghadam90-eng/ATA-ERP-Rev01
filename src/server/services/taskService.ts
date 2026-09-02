@@ -5,9 +5,12 @@ import { AuthUser, canSeeAllTasks } from "../auth";
 import { taskRelationKind } from "../../utils/taskRelations";
 import { resolveAssignee } from "./assigneeLookup";
 import {
-  BoardLane, LANE_FILTERS, TASK_CANCELLED, TASK_DOING, TASK_DONE, TASK_TODO,
-  laneWhere, taskLane, taskStatusForLane,
+  BoardLane, LANE_FILTERS, MovableLane, TASK_CANCELLED, TASK_DOING, TASK_DONE, TASK_TODO,
+  laneWhere, taskBoardLane, taskLane, taskStatusForLane,
 } from "../../utils/workBoard";
+import { FOLLOW_UP_KIND } from "../../utils/salesFollowUp";
+import { capacityRefusalMessage } from "../../utils/workLimits";
+import { capacityByUser } from "./workLoadService";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate } from "../dates";
 import { toJsonColumn, toNullableString } from "../childSync";
 import { notifyModuleResponsible } from "./notificationService";
@@ -31,6 +34,21 @@ export const TASK_DATE_FIELDS = ["dueDate", "reminderDate"] as const;
 
 /** Which half of the board is being asked for. */
 export type TaskScope = "toMe" | "fromMe" | "all";
+
+/**
+ * What a board move did, and why the rest of it did not happen.
+ *
+ * The reasons are a **set of sentences**, not a count: three cards can be
+ * refused for three different rules — a follow-up dragged into «انجام شده», a
+ * chase pushed into «برای انجام», an assignee already at their limit — and one
+ * hardcoded message on the screen could only ever describe the first of them,
+ * which reads as the board being broken for the other two.
+ */
+export interface MoveOutcome {
+  moved: number;
+  refused: number;
+  reasons: string[];
+}
 
 /**
  * The rows this user may see at all.
@@ -162,6 +180,16 @@ export function buildTaskWhere(
     /** One of `BOARD_LANES`, or «CANCELLED». See `laneWhere`. */
     lane?: unknown;
     /**
+     * Today, in Shamsi.
+     *
+     * «در انتظار مشتری» is a date comparison rather than a status word — a
+     * chase is parked until the day it is due — so the column filter cannot be
+     * built without it. Absent, that column answers with nothing and «در حال
+     * انجام» answers with every open chase, which is the safe direction: a
+     * call that is due must never be the one that disappears.
+     */
+    today?: unknown;
+    /**
      * Records whose own fields match the search term — a project by code, name
      * or customer, a proforma on such a project, a customer by name.
      *
@@ -238,7 +266,10 @@ export function buildTaskWhere(
   const lane = (LANE_FILTERS as readonly string[]).includes(requested) ? requested : "";
 
   if (lane === "CANCELLED") and.push({ status: TASK_CANCELLED });
-  else if (lane) and.push(laneWhere(lane as BoardLane));
+  else if (lane) {
+    const today = typeof extra.today === "string" ? jalaliToDate(extra.today) : null;
+    and.push(laneWhere(lane as BoardLane, today));
+  }
 
   /*
    * The board's «hide completed» toggle.
@@ -309,6 +340,8 @@ export async function listTasks(
     hideCompleted?: unknown;
     /** One of `BOARD_LANES`, or «CANCELLED». See `laneWhere`. */
     lane?: unknown;
+    /** Today, in Shamsi — what «در انتظار مشتری» is measured against. */
+    today?: unknown;
   } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
@@ -608,44 +641,111 @@ export function laneTimestamps(
  */
 export async function moveTasksToLane(
   ids: string[],
-  lane: BoardLane,
+  lane: MovableLane,
   user: AuthUser,
   todayJalali: string,
-): Promise<{ moved: number; refused: number }> {
+): Promise<MoveOutcome> {
   const db = getDb();
   const wanted = [...new Set(ids.filter((id) => typeof id === "string" && id))].slice(0, 200);
-  if (wanted.length === 0) return { moved: 0, refused: 0 };
+  if (wanted.length === 0) return { moved: 0, refused: 0, reasons: [] };
 
   const visibility = visibilityClause(user);
   const rows = await db.task.findMany({
     where: visibility ? { AND: [{ id: { in: wanted } }, visibility] } : { id: { in: wanted } },
-    select: { id: true, status: true, taskKind: true, startedAt: true },
+    select: {
+      id: true, status: true, taskKind: true, startedAt: true,
+      dueDateJalali: true, assignedToUserId: true, assignedToName: true,
+    },
   });
 
   let moved = 0;
   let refused = wanted.length - rows.length;
+  const reasons = new Set<string>();
+
+  /*
+   * How much room each assignee has left in «در حال انجام».
+   *
+   * Read once for the whole batch and decremented as cards are admitted, so
+   * ticking six cards and pressing the column cannot slip past a cap of four —
+   * which counting per card against a figure read at the start would.
+   */
+  const capacity = lane === "DOING"
+    ? await capacityByUser(
+      rows.map((r) => r.assignedToUserId).filter((id): id is string => !!id), todayJalali)
+    : new Map();
 
   for (const row of rows) {
+    /*
+     * Where the card is **now**, by the board's own rule rather than by its
+     * status word. A chase parked in «در انتظار مشتری» carries whatever status
+     * the automation that raised it wrote, and comparing statuses would call
+     * that a real move and write one that changed nothing on screen.
+     */
+    const from = taskBoardLane(
+      { status: row.status, taskKind: row.taskKind, dueDate: row.dueDateJalali },
+      todayJalali,
+    );
+    if (from === lane) continue;
+
     // The same rule the ordinary edit enforces: a follow-up is finished by
     // recording what the customer said, not by being dragged.
-    if (row.taskKind === "SALES_FOLLOW_UP" && lane === "DONE" && taskLane(row.status) !== "DONE") {
+    if (row.taskKind === FOLLOW_UP_KIND && lane === "DONE") {
       refused++;
+      reasons.add("پیگیری فروش با «ثبت نتیجه پیگیری» بسته می‌شود، نه با انتقال ستون.");
       continue;
     }
+
+    /*
+     * A chase has no «برای انجام».
+     *
+     * Its column is its next-contact date, so writing «برای انجام» onto one
+     * would leave the card exactly where it was — a press that appears to work
+     * and does nothing. Refused and named, rather than silently ignored.
+     */
+    if (row.taskKind === FOLLOW_UP_KIND && lane === "TODO") {
+      refused++;
+      reasons.add("ستون یک پیگیری از تاریخ اقدام بعدی آن می‌آید؛ برای موکول کردن،"
+        + " نتیجه پیگیری را با «موکول به تاریخ دیگر» ثبت کنید.");
+      continue;
+    }
+
+    if (lane === "DOING" && row.assignedToUserId) {
+      const room = capacity.get(row.assignedToUserId);
+      if (room && room.limits.max !== null && room.remaining <= 0) {
+        refused++;
+        reasons.add(capacityRefusalMessage(
+          row.assignedToName, room.active, room.limits.max, 1,
+        ));
+        continue;
+      }
+      if (room && room.limits.max !== null) room.remaining -= 1;
+    }
+
     const status = taskStatusForLane(lane, row.status);
-    if (status === row.status) continue;
 
     await db.task.update({
       where: { id: row.id },
       data: {
         status,
+        /*
+         * Pulling a parked chase forward *is* moving its date.
+         *
+         * The column comes from the date and nothing else, so a status on its
+         * own would put the card back where it was on the next render. Today
+         * is also what it now means: somebody said they would call today, and
+         * the queue, the health badge and the project's own tab all read that
+         * same date and now agree with the board.
+         */
+        ...(row.taskKind === FOLLOW_UP_KIND && lane === "DOING" && from === "WAITING"
+          ? expandDateFields({ dueDate: todayJalali }, ["dueDate"])
+          : {}),
         ...laneTimestamps(row, status, todayJalali),
       } as Prisma.TaskUncheckedUpdateInput,
     });
     moved++;
   }
 
-  return { moved, refused };
+  return { moved, refused, reasons: [...reasons] };
 }
 
 export async function createTask(input: TaskInput, user: AuthUser, todayJalali: string) {

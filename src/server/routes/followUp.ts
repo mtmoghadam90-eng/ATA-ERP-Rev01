@@ -219,6 +219,8 @@ export function registerFollowUpRoutes(app: express.Express, deps: RouteDeps): v
           title: typeof body.title === "string" ? body.title : null,
           dueDate: typeof body.dueDate === "string" ? body.dueDate : null,
           assignedToName: typeof body.assignedToName === "string" ? body.assignedToName : null,
+          description: typeof body.description === "string" ? body.description : null,
+          priority: typeof body.priority === "string" ? body.priority : null,
         },
         user,
         getTodayShamsi(),

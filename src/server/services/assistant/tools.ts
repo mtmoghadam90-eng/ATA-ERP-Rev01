@@ -1,3 +1,4 @@
+import { getTodayShamsi } from "../../../dateUtils";
 import { getDb } from "../../db";
 import { AuthUser, canSeeCosts } from "../../auth";
 import { parseListQuery } from "../../listing";
@@ -550,6 +551,9 @@ export function assistantTools(): AssistantTool[] {
           lane: str(args.lane) || undefined,
           hideCompleted: args.hideCompleted === true,
           scope: scope === "toMe" || scope === "fromMe" ? scope : undefined,
+          // «در انتظار مشتری» is a date comparison and not a status word, so
+          // the assistant cannot ask for that column without today either.
+          today: getTodayShamsi(),
         });
       },
     },
