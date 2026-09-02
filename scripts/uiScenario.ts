@@ -1041,14 +1041,21 @@ head("Follow-up editing: the form opens carrying the follow-up");
     const m = await open({
       taskId: "t-open", closed: false, followUpResult: "", completionNote: "",
       title: "قیمت رقیب را بگیر", description: "با واحد فنی هماهنگ کن",
-      dueDate: "1405/06/20", assignee: "مریم کاظمی",
+      dueDate: "1405/06/20", assignee: "مریم کاظمی", priority: "بالا",
     });
     ok("an open chase opens as an edit of the action", m.text("h3") === "ویرایش اقدام پیگیری");
-    ok("...with its own title", m.value("#next-action-title") === "قیمت رقیب را بگیر",
-      m.value("#next-action-title"));
+    ok("...with its own title", m.value("#follow-up-action-title") === "قیمت رقیب را بگیر",
+      m.value("#follow-up-action-title"));
     ok("...and its own description",
-      m.value("#next-action-description") === "با واحد فنی هماهنگ کن",
-      m.value("#next-action-description"));
+      m.value("#follow-up-action-description") === "با واحد فنی هماهنگ کن",
+      m.value("#follow-up-action-description"));
+    ok("...and the priority it carries",
+      m.value("#follow-up-action-priority") === "بالا", m.value("#follow-up-action-priority"));
+    /*
+      No next action on an open chase: the row's open task *is* this one, and
+      offering it under a second heading would show the same fields twice.
+    */
+    ok("...and no next-action block", m.value("#next-action-title") === undefined);
     // No call has happened, so there is nothing to record — a result box here
     // is exactly what made this read as a blank completion form.
     ok("...and no result box", m.value("#follow-up-note") === undefined);
@@ -1060,12 +1067,30 @@ head("Follow-up editing: the form opens carrying the follow-up");
   {
     const m = await open({
       taskId: "t-done", closed: true, followUpResult: "در حال بررسی فنی",
-      completionNote: "مشتری گفت تا هفته بعد", title: "x", description: "y",
-      dueDate: "1405/06/09", assignee: "کارشناس فروش",
+      completionNote: "مشتری گفت تا هفته بعد",
+      title: "تماس اول", description: "قیمت را اعلام کن",
+      dueDate: "1405/06/09", assignee: "کارشناس فروش", priority: "متوسط",
+      next: {
+        taskId: "t-next", title: "تماس دوم", description: "تخفیف پیشنهاد بده",
+        dueDate: "1405/06/20", assignee: "مریم کاظمی", priority: "فوری",
+      },
     });
     ok("a closed chase opens as a correction", m.text("h3") === "ویرایش نتیجه پیگیری");
     ok("...carrying the note that was recorded",
       m.value("#follow-up-note") === "مشتری گفت تا هفته بعد", m.value("#follow-up-note"));
+    /*
+      The whole record, in one form: a person filled the action, the result and
+      the next action in through this form and expects to correct them here.
+    */
+    ok("...and the chase's own words",
+      m.value("#follow-up-action-title") === "تماس اول"
+      && m.value("#follow-up-action-description") === "قیمت را اعلام کن",
+      [m.value("#follow-up-action-title"), m.value("#follow-up-action-description")]);
+    ok("...and the next action it raised",
+      m.value("#next-action-title") === "تماس دوم"
+      && m.value("#next-action-description") === "تخفیف پیشنهاد بده"
+      && m.value("#next-action-priority") === "فوری",
+      [m.value("#next-action-title"), m.value("#next-action-priority")]);
     // The value is real; the box renders the matching option, so a result the
     // dropdown no longer has would show the placeholder instead.
     ok("...and the result that was chosen",
@@ -1075,9 +1100,14 @@ head("Follow-up editing: the form opens carrying the follow-up");
      * would raise a second one, and re-offering the settlement would re-date a
      * sale the customer-value ranking counts from.
      */
-    ok("...and offering neither a next action nor a decision",
-      m.value("#next-action-title") === undefined
-      && m.host.querySelector("#follow-up-decision-TERMINAL") === null);
+    /*
+      The decision, the deferral and the settlement already happened — the task
+      is closed, the state moved, the replacement exists and the sale may be
+      settled. Answering any again would raise a second next action or re-date
+      a sale the ranking counts from.
+    */
+    ok("...and re-asks no decision",
+      m.host.querySelector("#follow-up-decision-TERMINAL") === null);
     m.close();
   }
 

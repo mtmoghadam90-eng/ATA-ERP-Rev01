@@ -345,7 +345,12 @@ export default function TasksView({
     editing?: {
       taskId: string; closed: boolean;
       followUpResult: string; completionNote: string;
-      title: string; description: string; dueDate: string; assignee: string;
+      title: string; description: string; dueDate: string;
+      assignee: string; priority: string;
+      next?: {
+        taskId: string; title: string; description: string; dueDate: string;
+        assignee: string; priority: string;
+      } | null;
     };
   } | null>(null);
   const [followUpLoading, setFollowUpLoading] = useState(false);
@@ -413,6 +418,7 @@ export default function TasksView({
         description: task.description ?? '',
         dueDate: task.dueDate,
         assignee: task.assignedTo ?? '',
+        priority: task.priority,
       });
       return;
     }
@@ -668,7 +674,8 @@ export default function TasksView({
     editing?: {
       closed: boolean;
       followUpResult: string; completionNote: string;
-      title: string; description: string; dueDate: string; assignee: string;
+      title: string; description: string; dueDate: string;
+      assignee: string; priority: string;
     },
   ) => {
     setFollowUpLoading(true);
@@ -676,10 +683,33 @@ export default function TasksView({
       // The row is derived — the next action, its date, the health — so it is
       // built on the server rather than assembled out of what a card carries,
       // which is how two screens come to disagree about a quotation.
+      const row = await salesFollowUpApi.rowForTask(taskId);
       setFollowUpRow({
         taskId,
-        row: await salesFollowUpApi.rowForTask(taskId),
-        editing: editing ? { taskId, ...editing } : undefined,
+        row,
+        editing: editing
+          ? {
+              taskId,
+              ...editing,
+              /*
+                The replacement, from the row the server derived — never from
+                the board's own page, which may not hold it. Only when it is a
+                *different* task: on an open chase the row's open task is this
+                one, and offering it as «اقدام بعدی» would show the same fields
+                twice under two headings.
+              */
+              next: row.nextActionTaskId && row.nextActionTaskId !== taskId
+                ? {
+                    taskId: row.nextActionTaskId,
+                    title: row.nextAction ?? '',
+                    description: row.nextActionDescription ?? '',
+                    dueDate: row.nextActionDueDateJalali ?? '',
+                    assignee: row.nextActionAssignee ?? '',
+                    priority: row.nextActionPriority ?? 'متوسط',
+                  }
+                : null,
+            }
+          : undefined,
       });
     } catch (err) {
       alert(err instanceof Error ? err.message : 'دریافت اطلاعات پیگیری با خطا مواجه شد.');
@@ -981,9 +1011,22 @@ export default function TasksView({
                   <Inbox size={11} />
                 </button>
                 <div className="space-y-1 flex-1 min-w-0">
-                  <h4 className="font-bold text-sm leading-snug break-words text-slate-800">
+                  {/*
+                    The title opens the record, exactly as on the board.
+
+                    A referral's thread, a follow-up's completion form, a
+                    task's edit box — pressing the card is how the board opens
+                    each of them, and the list made people find the small icon
+                    at the side instead. Same gesture, both views.
+                  */}
+                  <button
+                    type="button"
+                    onClick={() => { void openCard(card); }}
+                    id={`card-open-${card.id}`}
+                    className="font-bold text-sm leading-snug break-words text-slate-800 text-right hover:text-sky-700 transition w-full"
+                  >
                     {card.title}
-                  </h4>
+                  </button>
                   {card.context && (
                     <div className="text-[10px] text-sky-700 flex flex-wrap items-center gap-1">
                       {card.context.code && <span className="font-mono font-bold">{card.context.code}</span>}
@@ -1063,9 +1106,15 @@ export default function TasksView({
               </button>
               
               <div className="space-y-1 flex-1 min-w-0">
-                <h4 className={`font-bold text-sm leading-snug break-words ${task.status === 'انجام شده' ? 'line-through text-slate-400' : 'text-slate-800'}`}>
+                {/* Same gesture as the board: the title opens the record. */}
+                <button
+                  type="button"
+                  onClick={() => { void openCard(card); }}
+                  id={`card-open-${task.id}`}
+                  className={`font-bold text-sm leading-snug break-words text-right w-full hover:text-sky-700 transition ${task.status === 'انجام شده' ? 'line-through text-slate-400' : 'text-slate-800'}`}
+                >
                   {task.title}
-                </h4>
+                </button>
                 {/*
                   The job, not just its label.
 
@@ -1376,6 +1425,7 @@ export default function TasksView({
         <FollowUpCompletionModal
           row={followUpRow.row}
           resultOptions={settings.dropdownItems?.followUpResults ?? []}
+          priorityOptions={settings.dropdownItems?.taskPriorities ?? []}
           userNames={users.map((u) => u.fullName)}
           // The same rule the follow-up screen passes, not a second list of
           // the four outcomes written out here.
@@ -1384,45 +1434,40 @@ export default function TasksView({
           onClose={() => setFollowUpRow(null)}
           editing={followUpRow.editing ?? null}
           /*
-            A different endpoint, deliberately: the completion closed the task,
-            moved the proforma's follow-up state, raised the replacement and may
-            have settled the sale, and re-running any of that would raise a
-            second next action or re-date a sale the ranking counts from.
+            Editing writes fields; it never re-runs the completion.
+
+            Up to three rows move, and which ones depends on the mode — the
+            chase itself always, the recorded answer only once it is closed,
+            and the replacement only when there is one still open. That
+            decision belongs here, where the rows are, rather than in the form.
+
+            Each write is a *partial* one, naming only the keys being changed:
+            the route copies an allowlist, so a key that is not sent is not
+            touched, and the status in particular is never among them —
+            `completeFollowUp` is the only thing that may close a follow-up.
+            The assignee travels as a name with no id, so the server resolves
+            it and a rename cannot leave the task belonging to nobody.
           */
-          onSaveResult={async (body) => {
-            await salesFollowUpApi.updateResult(followUpRow.taskId, body);
-            setFollowUpRow(null);
-            list.refresh();
-          }}
-          /*
-            An open chase's own fields go through the ordinary task update —
-            the server refuses only the bare *tick* on a follow-up, not an edit
-            of what it is for. The assignee travels as a name and the server
-            resolves it to an account, so a rename here cannot leave the task
-            belonging to nobody.
-          */
-          onSaveAction={async (body) => {
-            const task = tasks.find((t) => t.id === followUpRow.taskId);
-            if (task) {
-              await updateTask({
-                ...task,
-                title: body.title,
-                description: body.description,
-                dueDate: body.dueDate,
-                assignedTo: body.assignedToName,
-                /*
-                  The stored id is only right while the name has not moved. Sent
-                  alongside a different name it wins — an explicit id is not
-                  second-guessed — and the task would stay with the old owner
-                  under the new one's name. Dropping it asks the server to look
-                  the name up, which is the whole point of `resolveAssignee`.
-                */
-                assignedToUserId: body.assignedToName === (task.assignedTo ?? '')
-                  ? task.assignedToUserId
-                  : undefined,
+          onSaveEdits={async (body) => {
+            const fields = (a: typeof body.action) => ({
+              title: a.title,
+              description: a.description,
+              dueDate: a.dueDate,
+              assignedToName: a.assignedToName,
+              priority: a.priority,
+            });
+
+            await tasksApi.update(followUpRow.taskId, fields(body.action));
+            if (followUpRow.editing?.closed) {
+              await salesFollowUpApi.updateResult(followUpRow.taskId, {
+                followUpResult: body.followUpResult,
+                completionNote: body.completionNote || undefined,
               });
             }
+            if (body.next) await tasksApi.update(body.next.taskId, fields(body.next));
+
             setFollowUpRow(null);
+            list.refresh();
           }}
           onSubmit={async (body) => {
             // Against the task that was pressed, never the row's own

@@ -15,7 +15,9 @@
  * what stops this drifting again the next time a status is added.
  */
 
-import type { Project, Proforma, PurchaseOrder, AfterSalesService, Transaction, Customer } from "../types";
+import type {
+  Project, Proforma, PurchaseOrder, AfterSalesService, Transaction, Customer, Task,
+} from "../types";
 
 /** Fails to compile when `list` is missing any member of `Union`. */
 type Covers<Union extends string, List extends readonly string[]> =
@@ -72,6 +74,21 @@ export const CUSTOMER_TYPES = [
   "حقیقی", "حقوقی",
 ] as const satisfies readonly Customer["customerType"][];
 const _customerTypesCover: Covers<Customer["customerType"], typeof CUSTOMER_TYPES> = true;
+
+/* -------------------------------- tasks ---------------------------------- */
+
+/**
+ * A task's four priorities. The statuses live in `workBoard.ts` with the lanes
+ * they map onto; these have no lane, so they live here with the other lists.
+ *
+ * The rule editor offered «کم / زیاد / بحرانی» — three words this application
+ * has never stored — which is what made every priority condition match nothing.
+ */
+export const TASK_PRIORITIES = [
+  "پایین", "متوسط", "بالا", "فوری",
+] as const satisfies readonly Task["priority"][];
+const _taskPrioritiesCover: Covers<Task["priority"], typeof TASK_PRIORITIES> = true;
+void _taskPrioritiesCover;
 
 /* --------------------- statuses that are *derived* ----------------------- */
 

@@ -278,7 +278,13 @@ export async function completeFollowUp(
           relatedToType: "proforma",
           relatedToId: proformaId,
           relatedToName: proforma.proformaNumber,
-          priority: task.priority,
+          /*
+           * The urgency chosen on the form, inheriting this chase's only when
+           * nobody said. A follow-up raised because the customer went quiet and
+           * one raised to close a deal this week are not equally urgent, and
+           * before this the second inherited the first.
+           */
+          priority: toNullableString(input.nextPriority, 20) ?? task.priority,
           status: TASK_TODO,
           ...expandDateFields({ dueDate }, ["dueDate"]),
           assignedToUserId: assignee.assignedToUserId,
@@ -588,7 +594,17 @@ export interface FollowUpQueueRow {
   deferredUntilJalali: string | null;
   /** From the open follow-up task, which is the only source of these. */
   nextAction: string | null;
+  /**
+   * «شرح اقدام بعدی» — what the next chase is *for*.
+   *
+   * Carried because editing a recorded follow-up means editing the whole
+   * thing, and the next action is half of it. Without this the form could show
+   * its title and its date and silently drop the words the person typed.
+   */
+  nextActionDescription: string | null;
   nextActionDueDateJalali: string | null;
+  /** «اولویت» of the next chase, so the edit form can show and change it. */
+  nextActionPriority: string | null;
   nextActionAssignee: string | null;
   nextActionTaskId: string | null;
   lastFollowUpDateJalali: string | null;
@@ -681,6 +697,8 @@ async function buildQueueRows(
         where: { taskKind: "SALES_FOLLOW_UP", relatedToType: "proforma", relatedToId: { in: ids } },
         select: {
           id: true, relatedToId: true, title: true, status: true,
+          // The next action's own words and urgency, for the edit form.
+          description: true, priority: true,
           dueDateJalali: true, assignedToName: true,
           followUpResult: true, completedAtJalali: true,
         },
@@ -734,7 +752,9 @@ async function buildQueueRows(
       followUpState,
       deferredUntilJalali: row.deferredUntilJalali,
       nextAction: openTask?.title ?? null,
+      nextActionDescription: openTask?.description ?? null,
       nextActionDueDateJalali: openTask?.dueDateJalali ?? null,
+      nextActionPriority: openTask?.priority ?? null,
       nextActionAssignee: openTask?.assignedToName ?? row.project?.salesExpert ?? null,
       nextActionTaskId: openTask?.id ?? null,
       lastFollowUpDateJalali: lastTask?.completedAtJalali ?? null,
