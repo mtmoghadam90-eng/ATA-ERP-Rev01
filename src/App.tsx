@@ -605,11 +605,10 @@ export default function App() {
         <Sidebar 
           activeTab={activeView} 
           setActiveTab={setActiveView} 
-          taskCount={badges.openTasks}
+          workCount={badges.openWork}
           lowStockCount={badges.lowStock}
           userRole={store.userRole}
           changeRole={store.changeRole}
-          referralsCount={badges.pendingReferrals}
           currentUser={store.currentUser}
           onLogout={store.logout}
           sidebarModuleOrder={store.settings.sidebarModuleOrder}
@@ -644,12 +643,21 @@ export default function App() {
                <button 
                  className="relative text-slate-500 hover:text-amber-600 transition p-1"
                  onClick={() => { setReferralsTab('board'); setActiveView('tasks'); }}
-                 title="کارهای ارجاع‌شده به من (تخته کار)"
+                 title="کارتابل: وظایف و ارجاع‌های باز (تخته کار)"
                >
                  <Inbox size={22} />
-                 {badges.pendingReferrals > 0 && (
+                 {/*
+                   The whole workload, not half of it.
+
+                   This counted only the referrals while the calendar beside it
+                   counted only the tasks — two numbers for one question, on two
+                   icons, and neither answered «چقدر کار روی دستم مانده». It is
+                   `openWork` now, the same figure the sidebar's «وظایف و
+                   پیگیری» badge draws.
+                 */}
+                 {badges.openWork > 0 && (
                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-amber-500 text-[10px] font-bold flex justify-center items-center rounded-full text-white shadow-sm border-2 border-white">
-                     {badges.pendingReferrals}
+                     {badges.openWork}
                    </span>
                  )}
                </button>
@@ -658,12 +666,12 @@ export default function App() {
                  onClick={() => setCalendarOpen(true)}
                  title="تقویم پیگیری و وظایف روزانه"
                >
+                 {/*
+                   No badge here. The calendar is a way of *looking* at the
+                   work, not a second count of it — the number lives on the
+                   inbox icon, once.
+                 */}
                  <Calendar size={22} />
-                 {badges.openTasks > 0 && (
-                   <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-sky-500 text-[10px] font-bold flex justify-center items-center rounded-full text-white shadow-sm border-2 border-white">
-                     {badges.openTasks}
-                   </span>
-                 )}
                </button>
                <button 
                  className="relative text-slate-500 hover:text-rose-600 transition p-1"

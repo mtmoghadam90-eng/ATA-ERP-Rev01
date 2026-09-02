@@ -6,11 +6,16 @@ import { User, SCREEN_PERMISSION_ALIAS } from '../types';
 interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
-  taskCount: number;
+  /**
+   * Everything on this user's plate — open tasks plus open referrals, added up
+   * in `useSidebarBadges` and not here. The header's inbox icon draws the same
+   * figure, and two additions of the same two numbers is how they come to
+   * disagree the day one of them changes.
+   */
+  workCount: number;
   lowStockCount: number;
   userRole?: 'admin' | 'user';
   changeRole?: (role: 'admin' | 'user') => void;
-  referralsCount?: number;
   currentUser?: User | null;
   onLogout?: () => void;
   sidebarModuleOrder?: string[];
@@ -22,11 +27,10 @@ interface SidebarProps {
 export default function Sidebar({ 
   activeTab, 
   setActiveTab, 
-  taskCount, 
+  workCount, 
   lowStockCount, 
   userRole, 
   changeRole, 
-  referralsCount = 0, 
   currentUser, 
   onLogout, 
   sidebarModuleOrder,
@@ -50,10 +54,10 @@ export default function Sidebar({
      * «کارتابل ارجاعات» was a module of its own with its own count; both are
      * tabs of «وظایف و پیگیری» now, so the number has to be both — a badge
      * that counted only half of what is waiting would say the work had gone
-     * away when a referral arrived.
+     * away when a referral arrived. `openWork` is that sum, made once.
      */
     tasks: {
-      badge: taskCount + referralsCount > 0 ? String(taskCount + referralsCount) : null,
+      badge: workCount > 0 ? String(workCount) : null,
       badgeColor: 'bg-sky-500 text-white',
     },
   };
