@@ -8,6 +8,7 @@ import { sameCategory } from "../../utils/activityCategories";
 import { notifyModuleResponsible, notifyUser } from "./notificationService";
 import { TASK_TODO } from "../../utils/workBoard";
 import { resolveAssignee as sharedResolveAssignee } from "./assigneeLookup";
+import { notifyStaffBySms } from "./staffNotifications";
 
 /**
  * The project's own milestones and their automation rules.
@@ -141,7 +142,7 @@ export async function runMilestoneRules(
     try {
       if (rule.actionType === "create_task") {
         const assignee = await resolveAssignee(rule.assignedTo);
-        await db.task.create({
+        const created = await db.task.create({
           data: {
             title: toNullableString(title, 400)!,
             description: body,
@@ -159,6 +160,27 @@ export async function runMilestoneRules(
             relatedToId: project.id,
             relatedToName: project.name,
           } as Prisma.TaskUncheckedCreateInput,
+        });
+
+        /*
+         * Told on their phone, the same as a task a colleague typed. A
+         * checkpoint fires because a milestone was ticked, so there is no
+         * actor to name and the message says «سیستم».
+         */
+        await notifyStaffBySms({
+          kind: "TASK_ASSIGNED",
+          assigneeUserId: created.assignedToUserId,
+          actorUserId: null,
+          actorName: "سیستم",
+          title: created.title,
+          taskKind: created.taskKind,
+          dueDate: created.dueDateJalali,
+          priority: created.priority,
+          projectId: project.id,
+          projectCode: project.code ?? null,
+          projectName: project.name ?? null,
+          entityType: "task",
+          entityId: created.id,
         });
       } else if (rule.actionType === "send_notification") {
         const assignee = await resolveAssignee(rule.assignedTo);

@@ -16,6 +16,8 @@ import { toJsonColumn, toNullableString } from "../childSync";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
+import { notifyStaffBySms } from "./staffNotifications";
+import { afterCommit } from "../afterCommit";
 
 /**
  * Task data access.
@@ -836,6 +838,31 @@ export async function createTask(input: TaskInput, user: AuthUser, todayJalali: 
     user,
   );
 
+  /*
+   * And the person it was given to, on their phone.
+   *
+   * The board tells them the next time they open it, which is no use for
+   * something raised while they are at a customer site. `notifyStaffBySms`
+   * decides the rest — never a sales follow-up, never to whoever raised it,
+   * never to an account with no mobile — and `afterCommit` means a gateway
+   * being down cannot fail a save that has already happened.
+   */
+  await afterCommit("task assignment SMS", async () => {
+    await notifyStaffBySms({
+      kind: "TASK_ASSIGNED",
+      assigneeUserId: task.assignedToUserId,
+      actorUserId: user.id,
+      actorName: author?.fullName ?? null,
+      title: task.title,
+      taskKind: task.taskKind,
+      dueDate: task.dueDateJalali,
+      priority: task.priority,
+      projectId: task.relatedToType === "project" ? task.relatedToId : null,
+      entityType: "task",
+      entityId: task.id,
+    });
+  });
+
   return task;
 }
 
@@ -924,6 +951,32 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
       },
       user,
     );
+  }
+
+  /*
+   * Handed to somebody else: the new owner is told, and nobody else is.
+   *
+   * Compared against what was stored, not against the mere presence of the
+   * field — the form posts the whole record, so reading «assignedToUserId was
+   * sent» as «reassigned» would text the same person on every edit of a task
+   * that was already theirs.
+   */
+  if (task.assignedToUserId && task.assignedToUserId !== before.assignedToUserId) {
+    await afterCommit("task reassignment SMS", async () => {
+      await notifyStaffBySms({
+        kind: "TASK_ASSIGNED",
+        assigneeUserId: task.assignedToUserId,
+        actorUserId: user.id,
+        actorName: user.fullName ?? null,
+        title: task.title,
+        taskKind: task.taskKind,
+        dueDate: task.dueDateJalali,
+        priority: task.priority,
+        projectId: task.relatedToType === "project" ? task.relatedToId : null,
+        entityType: "task",
+        entityId: task.id,
+      });
+    });
   }
 
   // Workflow trigger for task completion

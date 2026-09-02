@@ -17,7 +17,7 @@ import {
 
 const WRITABLE: (keyof UserInput)[] = [
   "username", "fullName", "role", "isSystemAdmin", "position",
-  "signatureImage", "isActive", "permissions",
+  "signatureImage", "isActive", "permissions", "mobile",
   // «حداقل / حداکثر کار همزمان» — how much work this person may hold in «در
   // حال انجام» at once. Normalised in the service, so anything but a positive
   // whole number reaches the column as «no limit».

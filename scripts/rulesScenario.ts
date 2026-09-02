@@ -60,6 +60,10 @@ import {
 import {
   normalizeLimit, remainingCapacity, topUpShortfall, workLimitRefusalReason,
 } from "../src/utils/workLimits";
+import {
+  DEFAULT_STAFF_TEMPLATES, STAFF_NOTIFICATION_KINDS, STAFF_SAMPLE_VALUES, STAFF_VARIABLES,
+  normalizeMobile, staffSmsEnabled, staffSmsRefusal, staffSmsSkipReason, staffTemplateFor,
+} from "../src/utils/staffNotifications";
 import { TASK_SORTABLE, laneTimestamps } from "../src/server/services/taskService";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
 import { lossReasonRefusal } from "../src/server/services/projectService";
@@ -9265,6 +9269,216 @@ head("Work board: «در انتظار مشتری», and how much one person may 
   ok("the top-up endpoint is registered before the id routes",
     taskRouteSrc.indexOf('"/api/tasks/board/top-up"') > 0
     && taskRouteSrc.indexOf('"/api/tasks/board/top-up"') < taskRouteSrc.indexOf('"/api/tasks/:id"'));
+}
+
+head("Staff SMS: only the work a person hands to another person");
+{
+  /*
+   * The board tells somebody what is on their plate the next time they open
+   * it. That is no use for a request raised while they are at a customer site,
+   * which is exactly the case a notification exists for — so the two events
+   * that mean «a person gave this to you, by name» are texted, over the outbox
+   * the customer messages already use.
+   *
+   * What is *not* texted is the whole design, and every one of these is a
+   * separate check because each was a deliberate decision.
+   */
+
+  const ON = { enabled: true };
+  const account = { isActive: true, mobile: "09121234567" };
+  const subject = (over: Partial<Parameters<typeof staffSmsRefusal>[0]> = {}) => ({
+    kind: "TASK_ASSIGNED" as const,
+    assigneeUserId: "u-2",
+    actorUserId: "u-1",
+    ...over,
+  });
+
+  eq("a task handed to a colleague is texted",
+    staffSmsSkipReason(subject(), account, ON), null);
+  eq("...and so is a referral raised for them",
+    staffSmsSkipReason(subject({ kind: "REFERRAL_RAISED" }), account, ON), null);
+
+  /*
+   * The one the user asked for by name. A chase is a call that person
+   * scheduled themselves; it sits in «در انتظار مشتری» until its day and
+   * arrives in «در حال انجام» on the morning it is due, on the board they
+   * already have open. Several a day per salesperson is how the texts that
+   * matter stop being read.
+   */
+  eq("a sales follow-up is never texted",
+    staffSmsSkipReason(subject({ taskKind: "SALES_FOLLOW_UP" }), account, ON), "FOLLOW_UP");
+  eq("...and an ordinary task is not caught by that rule",
+    staffSmsSkipReason(subject({ taskKind: "GENERAL" }), account, ON), null);
+  /*
+   * Refused **before** the account is read: `completeFollowUp` raises a chase
+   * several times a day per salesperson, and each would otherwise cost a user
+   * lookup for a message that is never sent.
+   */
+  eq("...refused without reading the recipient at all",
+    staffSmsRefusal(subject({ taskKind: "SALES_FOLLOW_UP" }), ON), "FOLLOW_UP");
+
+  // Half the tasks here are things people log for themselves.
+  eq("nobody is texted their own work",
+    staffSmsSkipReason(subject({ actorUserId: "u-2" }), account, ON), "SELF");
+  eq("a task belonging to nobody is nobody's to text",
+    staffSmsSkipReason(subject({ assigneeUserId: null }), account, ON), "NO_RECIPIENT");
+
+  /*
+   * A stored assignee is not rewritten when somebody leaves, so this is asked
+   * on the way out and not only when the work was assigned — the same rule
+   * `activityRecipients` follows.
+   */
+  eq("a deactivated account is not texted",
+    staffSmsSkipReason(subject(), { isActive: false, mobile: "09121234567" }, ON), "INACTIVE");
+  eq("an account with no number simply gets none",
+    staffSmsSkipReason(subject(), { isActive: true, mobile: null }, ON), "NO_MOBILE");
+  eq("...and a landline is named as such rather than dialled",
+    staffSmsSkipReason(subject(), { isActive: true, mobile: "02188776655" }, ON), "BAD_MOBILE");
+  eq("and the switch turns the whole thing off",
+    staffSmsSkipReason(subject(), account, { enabled: false }), "DISABLED");
+
+  /*
+   * **Absent is on.** `settings` is one JSON row seeded once, so a default
+   * added to `seedData` reaches a fresh installation and no other — and this
+   * was asked for, so a live document that has never heard of the key must
+   * behave as though it is switched on.
+   */
+  ok("an unconfigured settings document has it on", staffSmsEnabled(undefined));
+  ok("...and only an explicit false turns it off",
+    staffSmsEnabled({}) && !staffSmsEnabled({ enabled: false }));
+
+  /*
+   * And the patch writes the key in once, which is what makes a later,
+   * deliberate `false` stick rather than being re-decided by the reading above.
+   */
+  const patchedStaff = applySettingsPatches(
+    { messaging: { dryRun: true } } as unknown as ERPSettings,
+  );
+  ok("the patch writes the key in explicitly",
+    (patchedStaff?.next as { messaging?: { staffSms?: { enabled?: boolean } } })
+      ?.messaging?.staffSms?.enabled === true);
+  ok("...without touching what was already stored",
+    (patchedStaff?.next as { messaging?: { dryRun?: boolean } })?.messaging?.dryRun === true);
+  const alreadySet = applySettingsPatches(
+    {
+      appliedPatches: [],
+      messaging: { staffSms: { enabled: false } },
+    } as unknown as ERPSettings,
+  );
+  ok("and a document that already carries it is left exactly alone",
+    (alreadySet?.next as { messaging?: { staffSms?: { enabled?: boolean } } })
+      ?.messaging?.staffSms?.enabled === false);
+
+  /* ------------------------------ the number ----------------------------- */
+
+  /*
+   * People type all three of these and they are the same phone. Folded where
+   * the message is **sent**, so the users screen still shows what was entered.
+   */
+  for (const typed of ["09121234567", "9121234567", "+989121234567", "0912 123 4567", "0912-123-4567"]) {
+    eq(`«${typed}» is one number`, normalizeMobile(typed), "09121234567");
+  }
+  eq("a landline is not a mobile", normalizeMobile("02188776655"), null);
+  eq("...nor is an empty box", normalizeMobile(""), null);
+
+  /* ---------------------------- the wording ------------------------------ */
+
+  /*
+   * The palette and the service have to agree in both directions: a variable
+   * offered here that nothing fills in reaches a colleague as «{dueDate}»,
+   * and one filled in but not offered is a variable nobody can discover.
+   */
+  const sender = readFileSync("src/server/services/staffNotifications.ts", "utf8");
+  // The object handed to `renderTemplate`, and nothing else in the file — the
+  // Prisma selects and the queue call are full of keys that are not variables.
+  const rendered = /renderTemplate\(staffTemplateFor\([\s\S]*?\n  \}\);/.exec(sender)?.[0] ?? "";
+  ok("the sender's variable block was found", rendered.length > 100, rendered.length);
+  const supplied = new Set([...rendered.matchAll(/^\s+([a-zA-Z]+):/gm)].map((m) => m[1]));
+  const offered = STAFF_VARIABLES.map((v) => v.key);
+  const notSupplied = offered.filter((k) => !supplied.has(k));
+  ok("every variable the palette offers is filled in", notSupplied.length === 0, notSupplied);
+  // And nothing is filled in that the palette does not offer: a variable
+  // nobody can discover is one nobody uses.
+  const notOffered = [...supplied].filter((k) => !offered.includes(k));
+  ok("...and nothing is supplied that it does not offer", notOffered.length === 0, notOffered);
+
+  // Both default texts render with nothing left standing.
+  for (const kind of STAFF_NOTIFICATION_KINDS) {
+    const rendered = renderTemplate(staffTemplateFor(kind, undefined), STAFF_SAMPLE_VALUES);
+    ok(`the default text for ${kind} leaves no placeholder`, !/[{}]/.test(rendered), rendered);
+    // Persian SMS is UCS-2 — 70 then 67 per part. This is money.
+    ok(`...and fits in two parts`, smsLength(rendered).parts <= 2,
+      `${smsLength(rendered).characters} chars = ${smsLength(rendered).parts} parts`);
+  }
+  ok("an edited text wins over the default",
+    staffTemplateFor("TASK_ASSIGNED", { templates: { TASK_ASSIGNED: "x" } }) === "x");
+  // A box somebody emptied is not an instruction to send an empty message.
+  ok("...but an emptied box falls back rather than sending nothing",
+    staffTemplateFor("TASK_ASSIGNED", { templates: { TASK_ASSIGNED: "  " } })
+      === DEFAULT_STAFF_TEMPLATES.TASK_ASSIGNED);
+
+  /* -------------------- read from the source, once ----------------------- */
+
+  const strip = (text: string) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  ok("nothing here sends outside the outbox",
+    /queueMessage\(/.test(strip(sender)) && !/sendViaProvider|fetch\(/.test(strip(sender)));
+
+  /*
+   * Every caller is inside `afterCommit` or is itself an after-commit path: a
+   * gateway that is down must never fail the save that assigned the work.
+   */
+  const taskSrc = strip(readFileSync("src/server/services/taskService.ts", "utf8"));
+  ok("a new task texts its assignee, after the commit",
+    /afterCommit\("task assignment SMS"[\s\S]{0,400}notifyStaffBySms/.test(taskSrc));
+  /*
+   * Compared against what was **stored**, not against the field being present:
+   * the form posts the whole record, so «assignedToUserId was sent» would text
+   * the same person on every edit of a task that was already theirs.
+   */
+  ok("...and a reassignment texts the new owner only when it really moved",
+    /task\.assignedToUserId !== before\.assignedToUserId/.test(taskSrc));
+
+  const activitySrc = strip(readFileSync("src/server/services/activityService.ts", "utf8"));
+  ok("naming a colleague in the feed texts them",
+    /kind: "REFERRAL_RAISED"/.test(activitySrc));
+  /*
+   * And the quieter half deliberately does not. «بار از گمرک ترخیص شد» is
+   * worth knowing and is not a request to anybody — that is the entire reason
+   * `activityRecipients` is a separate path — so it stays in the inbox.
+   */
+  ok("...while the category members are not texted at all",
+    !/activityRecipients[\s\S]{0,600}notifyStaffBySms/.test(activitySrc));
+
+  // A rule-raised task is as much of somebody's afternoon as a typed one.
+  for (const file of [
+    "src/server/services/workflowService.ts",
+    "src/server/services/milestoneAutomation.ts",
+  ]) {
+    ok(`an automation-raised task reaches its assignee too (${file.split("/").pop()})`,
+      /notifyStaffBySms/.test(strip(readFileSync(file, "utf8"))));
+  }
+
+  /*
+   * The one that would have been silent: rebuilding `settings.messaging` from
+   * the three fields the sending panel knows drops every other key in it —
+   * `staffSms` among them — so changing the retry limit would have thrown the
+   * wording away.
+   */
+  const messagingView = strip(readFileSync("src/components/MessagingView.tsx", "utf8"));
+  ok("the messaging view source survived having its comments stripped",
+    messagingView.includes("SendingBehaviour"));
+  ok("the sending panel spreads the stored settings rather than rebuilding them",
+    /messaging: \{\s*\.\.\.messaging,/.test(messagingView));
+  ok("and the wording is editable on that screen",
+    /staff-sms-template-/.test(messagingView) && /staff-sms-enabled/.test(messagingView));
+
+  // A colleague's phone number is not something every account may enumerate.
+  const userService = strip(readFileSync("src/server/services/userService.ts", "utf8"));
+  const directory = userService.slice(userService.indexOf("const DIRECTORY_SELECT"));
+  ok("the colleague directory does not carry anyone's mobile",
+    !/mobile/.test(directory.slice(0, directory.indexOf("}"))));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

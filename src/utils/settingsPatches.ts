@@ -26,6 +26,7 @@ import type { ERPSettings } from "../types";
 import {
   RESULT_LOST_TO_COMPETITOR, RESULT_PURCHASE_CANCELLED, RESULT_PURCHASE_CONFIRMED,
 } from "./salesFollowUp";
+import { DEFAULT_STAFF_TEMPLATES } from "./staffNotifications";
 
 export interface SettingsPatch {
   /** Recorded in `settings.appliedPatches`; never reused for different content. */
@@ -55,6 +56,32 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
       return {
         ...settings,
         dropdownItems: { ...settings.dropdownItems, followUpResults: next },
+      };
+    },
+  },
+  {
+    id: "staff-sms-notifications-1",
+    describe: "پیامک ارجاع وظیفه و ارجاع کار به همکاران، با متن قابل ویرایش",
+    apply: (settings) => {
+      /*
+       * Written in explicitly, and that is the whole point of doing it here.
+       *
+       * `staffSmsEnabled` reads an absent key as **on**, because a live
+       * database never sees a default added to `seedData` and this was asked
+       * for. But «absent means on» would also mean somebody who switched it off
+       * had their choice re-decided by any later reading of the code — so the
+       * key is written down once, and from then on `false` is `false`.
+       *
+       * Only ever an addition: a document that already carries `staffSms` is
+       * left exactly as it is, wording included.
+       */
+      if (settings.messaging?.staffSms) return null;
+      return {
+        ...settings,
+        messaging: {
+          ...settings.messaging,
+          staffSms: { enabled: true, templates: { ...DEFAULT_STAFF_TEMPLATES } },
+        },
       };
     },
   },
