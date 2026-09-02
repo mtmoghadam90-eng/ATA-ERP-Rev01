@@ -67,6 +67,12 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
   const [role, setRole] = useState<'admin' | 'user'>('user');
   const [position, setPosition] = useState('');
   /*
+   * «موبایل» — where a task or a referral reaches this person when the
+   * application is shut. An account without one simply gets no text, which is
+   * what every account has until somebody fills it in.
+   */
+  const [mobile, setMobile] = useState('');
+  /*
    * «ظرفیت کار همزمان» — how much this person may hold in «در حال انجام».
    *
    * Kept as plain numbers with **0 meaning «no limit»**, which is also how the
@@ -177,6 +183,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     setFullName('');
     setRole('user');
     setPosition('');
+    setMobile('');
     setMinActiveTasks(0);
     setMaxActiveTasks(0);
     setSignatureImage('');
@@ -280,6 +287,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
           signatureImage,
           permissions,
           isActive: true,
+          mobile,
           minActiveTasks,
           maxActiveTasks,
         }),
@@ -303,6 +311,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     setFullName(user.fullName);
     setRole(user.role);
     setPosition(user.position || '');
+    setMobile(user.mobile || '');
     setMinActiveTasks(user.minActiveTasks ?? 0);
     setMaxActiveTasks(user.maxActiveTasks ?? 0);
     setSignatureImage(user.signatureImage || '');
@@ -346,6 +355,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
         signatureImage,
         permissions,
         isActive: selectedUser.isActive,
+        mobile,
         minActiveTasks,
         maxActiveTasks,
       }));
@@ -637,6 +647,29 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                     ))}
                   </select>
                 </div>
+                {/*
+                  Where a task or a referral reaches this person when the
+                  application is shut. Stored as typed — the number is folded
+                  into 09xxxxxxxxx where the message is sent, not here.
+                */}
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="text-xs font-semibold text-slate-500">
+                    موبایل (برای پیامک ارجاع کار)
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="tel"
+                    value={mobile}
+                    onChange={(e) => setMobile(e.target.value)}
+                    placeholder="09121234567"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right font-mono"
+                  />
+                  <p className="text-[10px] text-slate-600 leading-relaxed">
+                    خالی یعنی این کاربر پیامکی دریافت نمی‌کند. پیامک فقط برای «ارجاع کار» و
+                    «وظیفه‌ای که مستقیم به این کاربر ارجاع شود» ارسال می‌شود — پیگیری فروش و
+                    اعلان‌های دسته فعالیت پیامک ندارند.
+                  </p>
+                </div>
                 <div className="space-y-1.5 md:col-span-2">
                   <label className="text-xs font-semibold text-slate-500">سطح دسترسی (نقش سیستمی) *</label>
                   <select
@@ -858,6 +891,29 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                       <option key={idx} value={pos}>{pos}</option>
                     ))}
                   </select>
+                </div>
+                {/*
+                  Where a task or a referral reaches this person when the
+                  application is shut. Stored as typed — the number is folded
+                  into 09xxxxxxxxx where the message is sent, not here.
+                */}
+                <div className="space-y-1.5 md:col-span-2">
+                  <label className="text-xs font-semibold text-slate-500">
+                    موبایل (برای پیامک ارجاع کار)
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="tel"
+                    value={mobile}
+                    onChange={(e) => setMobile(e.target.value)}
+                    placeholder="09121234567"
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right font-mono"
+                  />
+                  <p className="text-[10px] text-slate-600 leading-relaxed">
+                    خالی یعنی این کاربر پیامکی دریافت نمی‌کند. پیامک فقط برای «ارجاع کار» و
+                    «وظیفه‌ای که مستقیم به این کاربر ارجاع شود» ارسال می‌شود — پیگیری فروش و
+                    اعلان‌های دسته فعالیت پیامک ندارند.
+                  </p>
                 </div>
                 <div className="space-y-1.5 md:col-span-2">
                   <label className="text-xs font-semibold text-slate-500">سطح دسترسی (نقش سیستمی) *</label>

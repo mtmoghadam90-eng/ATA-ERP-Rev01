@@ -4,6 +4,10 @@ import {
   Send, Settings as SettingsIcon, Trash2, Users, X, XCircle,
 } from 'lucide-react';
 import type { ERPSettings, User } from '../types';
+import {
+  STAFF_NOTIFICATION_KINDS, STAFF_NOTIFICATION_LABELS, STAFF_SAMPLE_VALUES,
+  STAFF_VARIABLES, type StaffNotificationKind, staffTemplateFor,
+} from '../utils/staffNotifications';
 import { ApiError } from '../api/client';
 import {
   BaleChatRow, MessageRow, MessageTemplateRow, ProviderSummary, messagingApi,
@@ -183,6 +187,11 @@ export default function MessagingView({ settings, onUpdateSettings, currentUser 
       {tab === 'providers' && canConfigure && (
         <>
           <SendingBehaviour
+            settings={settings}
+            onUpdateSettings={onUpdateSettings}
+            onNotice={flash}
+          />
+          <StaffNotifications
             settings={settings}
             onUpdateSettings={onUpdateSettings}
             onNotice={flash}
@@ -673,7 +682,19 @@ function SendingBehaviour({
     if (!onUpdateSettings) return;
     onUpdateSettings({
       ...settings,
-      messaging: { quietHours: { from: quietFrom || null, to: quietTo || null }, dryRun, maxAttempts, ...change },
+      /*
+       * Spread over what is stored, not rebuilt from the three fields this
+       * panel knows. Rebuilding drops every other key in `settings.messaging`
+       * — `staffSms` among them — so changing the retry limit would have
+       * silently switched the staff notifications back to their defaults.
+       */
+      messaging: {
+        ...messaging,
+        quietHours: { from: quietFrom || null, to: quietTo || null },
+        dryRun,
+        maxAttempts,
+        ...change,
+      },
     });
     onNotice(notice);
   };
@@ -765,6 +786,122 @@ function SendingBehaviour({
         در ساعات سکوت پیام حذف نمی‌شود؛ تا باز شدن پنجره نگه داشته می‌شود و زمان واقعی ارسالش
         در صندوق خروجی نوشته می‌شود. بازه می‌تواند از نیمه‌شب رد شود (مثلاً ۲۲:۰۰ تا ۰۸:۰۰).
         هر دو خانه را خالی بگذارید تا ساعات سکوتی در کار نباشد.
+      </p>
+    </div>
+  );
+}
+
+/* --------------------------- staff notifications -------------------------- */
+
+/**
+ * Texting a colleague the work that has just been handed to them.
+ *
+ * Two events and no more: a task assigned to somebody, and a referral raised
+ * for them in a project's feed. A sales follow-up is deliberately not one —
+ * it is a call that person scheduled themselves and it arrives on their board
+ * on the morning it is due — and neither are the category notices, which are
+ * worth knowing and are not a request to anybody.
+ *
+ * The wording is editable because it is what a colleague reads, and because
+ * Persian SMS is UCS-2: 70 characters and then 67 per part, which is money.
+ * The counter beside each box is the same `smsLength` the outbox uses.
+ */
+function StaffNotifications({
+  settings, onUpdateSettings, onNotice,
+}: {
+  settings: ERPSettings;
+  onUpdateSettings?: (next: ERPSettings) => void;
+  onNotice: (t: string) => void;
+}) {
+  const messaging = settings.messaging ?? {};
+  const staff = messaging.staffSms ?? {};
+  // Absent is on: a live settings document never sees a default added to the
+  // seed, and this was asked for. `settingsPatches` writes the key in once.
+  const enabled = staff.enabled !== false;
+
+  const patch = (next: NonNullable<ERPSettings['messaging']>['staffSms'], notice: string) => {
+    if (!onUpdateSettings) return;
+    onUpdateSettings({ ...settings, messaging: { ...messaging, staffSms: next } });
+    onNotice(notice);
+  };
+
+  const bodyFor = (kind: StaffNotificationKind) => staffTemplateFor(kind, staff);
+
+  return (
+    <div className="border border-slate-150 rounded-2xl p-4 bg-white space-y-3">
+      <h3 className="font-bold text-sm text-slate-800">پیامک ارجاع کار به همکاران</h3>
+
+      <label className="flex items-start gap-2.5 rounded-xl border border-slate-150 bg-slate-50/60 p-3 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={!onUpdateSettings}
+          onChange={(e) => patch(
+            { ...staff, enabled: e.target.checked },
+            e.target.checked ? 'پیامک ارجاع کار روشن شد.' : 'پیامک ارجاع کار خاموش شد.',
+          )}
+          className="accent-sky-500 mt-0.5"
+          id="staff-sms-enabled"
+        />
+        <span className="text-[11px] leading-6">
+          <span className="font-bold text-slate-800">ارسال پیامک به همکار در لحظه ارجاع</span>
+          <span className="block text-slate-500">
+            فقط دو رویداد: وظیفه‌ای که مستقیم به یک همکار ارجاع می‌شود، و ارجاع کاری که در فید
+            پروژه با نام بردن او ثبت می‌شود. <b>پیگیری فروش پیامک ندارد</b> — روز سررسیدش خودش
+            به ستون «در حال انجام» می‌آید — و اعلان‌های دسته فعالیت هم پیامک ندارند.
+            پیامک به شماره موبایل ثبت‌شده در «مدیریت کاربران» می‌رود؛ کاربر بدون شماره، پیامکی
+            دریافت نمی‌کند. ساعات سکوت و حالت آزمایشی بالا روی این پیامک‌ها هم اعمال می‌شود.
+          </span>
+        </span>
+      </label>
+
+      {STAFF_NOTIFICATION_KINDS.map((kind) => {
+        const body = bodyFor(kind);
+        const parts = smsLength(body);
+        return (
+          <div key={kind} className="space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-[11px] font-bold text-slate-600">
+                متن پیامک: {STAFF_NOTIFICATION_LABELS[kind]}
+              </label>
+              <span className="text-[10px] font-mono text-slate-500">
+                {parts.characters} کاراکتر · {parts.parts} بخش
+              </span>
+            </div>
+            <textarea
+              rows={2}
+              value={body}
+              disabled={!onUpdateSettings}
+              id={`staff-sms-template-${kind}`}
+              onChange={(e) => patch(
+                { ...staff, templates: { ...staff.templates, [kind]: e.target.value } },
+                'متن پیامک ذخیره شد.',
+              )}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-right leading-6"
+            />
+          </div>
+        );
+      })}
+
+      {/*
+        The palette and the preview render from one list, so a variable cannot
+        exist in one and not the other — the same rule the customer templates
+        follow, and for the same reason: a name offered here that nothing fills
+        in would reach a colleague as «{dueDate}».
+      */}
+      <div className="flex flex-wrap gap-1.5">
+        {STAFF_VARIABLES.map((v) => (
+          <span
+            key={v.key}
+            title={v.label}
+            className="text-[10px] font-mono bg-slate-50 border border-slate-200 rounded-full px-2 py-0.5 text-slate-600"
+          >
+            {`{${v.key}}`}
+          </span>
+        ))}
+      </div>
+      <p className="text-[10px] text-slate-500 leading-5">
+        نمونه با مقادیر آزمایشی: {renderTemplate(bodyFor('REFERRAL_RAISED'), STAFF_SAMPLE_VALUES)}
       </p>
     </div>
   );

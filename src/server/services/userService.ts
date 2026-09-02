@@ -24,6 +24,10 @@ const SEARCH_FIELDS = ["username", "fullName", "position"] as const;
 const SAFE_SELECT = {
   id: true, username: true, fullName: true, role: true, isSystemAdmin: true,
   position: true, signatureImage: true, isActive: true, permissions: true,
+  // Where a task or a referral reaches this person when the app is shut.
+  // Deliberately absent from `DIRECTORY_SELECT`: a colleague's phone number is
+  // not something every account may enumerate through the assignment pickers.
+  mobile: true,
   // How much work this person may hold in «در حال انجام» at once. Null in both
   // is «no limit», which is every account written before the columns existed.
   minActiveTasks: true, maxActiveTasks: true,
@@ -98,6 +102,8 @@ export interface UserInput {
   signatureImage?: string | null;
   isActive?: boolean;
   permissions?: unknown;
+  /** «موبایل» — where the staff notification is sent. See `staffNotifications`. */
+  mobile?: string | null;
   /** «حداقل / حداکثر کار همزمان». Null or 0 means no limit — see `workLimits`. */
   minActiveTasks?: number | null;
   maxActiveTasks?: number | null;
@@ -112,6 +118,12 @@ function scalarData(input: UserInput): Record<string, unknown> {
   if ("role" in input) set("role", toNullableString(input.role, 30) ?? "user");
   if ("isSystemAdmin" in input) set("isSystemAdmin", !!input.isSystemAdmin);
   if ("position" in input) set("position", toNullableString(input.position, 150));
+  /*
+   * Stored as typed. `normalizeMobile` folds `+98`, the leading zero and the
+   * spaces where the message is **sent**, so the users screen still shows the
+   * number somebody entered rather than a rewritten one they did not.
+   */
+  if ("mobile" in input) set("mobile", toNullableString(input.mobile, 20));
   if ("signatureImage" in input) set("signatureImage", toNullableString(input.signatureImage, 500));
   if ("isActive" in input) set("isActive", !!input.isActive);
   if ("permissions" in input) set("permissions", toJsonColumn(input.permissions));

@@ -22,6 +22,7 @@ import { afterCommit } from "../afterCommit";
 import { capacityRefusalMessage } from "../../utils/workLimits";
 import { MoveOutcome } from "./taskService";
 import { capacityByUser } from "./workLoadService";
+import { notifyStaffBySms } from "./staffNotifications";
 
 /**
  * Project category groups, activities, referrals and module notes.
@@ -627,6 +628,30 @@ export async function addActivity(
           actorUserId: user.id,
         });
       }
+
+      /*
+       * And on their phone, because a request is the one thing on this board
+       * that somebody else is waiting on.
+       *
+       * The message *is* the request — there is no separate «what should they
+       * do» box — so the text carries it and the project it was written under.
+       * `notifyStaffBySms` refuses to write to whoever raised it, to an account
+       * that has since been deactivated, and to one with no number.
+       */
+      await notifyStaffBySms({
+        kind: "REFERRAL_RAISED",
+        assigneeUserId: referral.assignedToUserId,
+        actorUserId: user.id,
+        actorName: author?.fullName ?? null,
+        title: referral.actionRequired,
+        projectId: group.project.id,
+        projectCode: group.project.code ?? null,
+        // The picker's selection carries no name here; the code is what a
+        // colleague recognises anyway, and it is the one that is unique.
+        projectName: null,
+        entityType: "referral",
+        entityId: referral.id,
+      });
 
       await processWorkflowRules(
         "referral_created",

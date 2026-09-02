@@ -3,6 +3,7 @@ import { DEFAULT_MODULE_ORDER } from './appModules';
 import { ExchangeRate, ERPSettings } from './types';
 import { DEFAULT_CUSTOMER_VALUE_SETTINGS } from './utils/customerValue';
 import { DEFAULT_PROJECT_GAP_FIELDS } from './utils/projectDataGaps';
+import { DEFAULT_STAFF_TEMPLATES } from "./utils/staffNotifications";
 
 /**
  * What a fresh installation starts with.
@@ -259,6 +260,13 @@ export const DEFAULT_SETTINGS: ERPSettings = {
     quietHours: { from: null, to: null },
     dryRun: false,
     maxAttempts: 4,
+    /*
+     * Texting a colleague the work handed to them — on, with the default
+     * wording. A live database never sees this (a seed reaches a fresh
+     * installation and no other), which is what `settingsPatches` exists for;
+     * it is here so a new one and a patched one start from the same document.
+     */
+    staffSms: { enabled: true, templates: { ...DEFAULT_STAFF_TEMPLATES } },
   },
   deliveryChecklistTemplate: [
     'بررسی ظاهری کالا و اصالت برند کالاها',

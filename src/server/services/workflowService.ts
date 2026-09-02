@@ -27,6 +27,7 @@ export type { WorkflowRule } from "../../types";
 import type { WorkflowRule } from "../../types";
 import { TASK_TODO } from "../../utils/workBoard";
 import { resolveAssignee as sharedResolveAssignee } from "./assigneeLookup";
+import { notifyStaffBySms } from "./staffNotifications";
 
 
 /**
@@ -215,7 +216,7 @@ export async function executeRule(
         }
 
         // Create task
-        await db.task.create({
+        const created = await db.task.create({
           data: {
             title:
               replaceTemplateVars(config.titleTemplate, enrichedPayload) ||
@@ -229,6 +230,31 @@ export async function executeRule(
             assignedToName: assignee.assignedToName,
             ...related,
           },
+        });
+
+        /*
+         * And the person it landed on, on their phone.
+         *
+         * A rule-raised task is exactly as much of somebody's afternoon as one
+         * a colleague typed, and it arrives with nobody to mention it. There is
+         * no actor — a rule fires because a status moved or a date arrived — so
+         * the message says «سیستم» rather than naming anybody.
+         *
+         * `notifyStaffBySms` refuses a `SALES_FOLLOW_UP` on its own, which is
+         * what keeps the standard «پیگیری پیش‌فاکتور» rule silent.
+         */
+        await notifyStaffBySms({
+          kind: "TASK_ASSIGNED",
+          assigneeUserId: created.assignedToUserId,
+          actorUserId: null,
+          actorName: "سیستم",
+          title: created.title,
+          taskKind: created.taskKind,
+          dueDate: created.dueDateJalali,
+          priority: created.priority,
+          projectId: created.relatedToType === "project" ? created.relatedToId : null,
+          entityType: "task",
+          entityId: created.id,
         });
       } else if (action.type === "send_message" && action.messageConfig) {
         const config = action.messageConfig;

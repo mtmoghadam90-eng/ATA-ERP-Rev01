@@ -765,6 +765,18 @@ export interface ERPSettings {
     dryRun?: boolean;
     /** Attempts before a message is given up on. */
     maxAttempts?: number;
+    /**
+     * Texting a colleague the work that has just been handed to them.
+     *
+     * Two events only — a task assigned to somebody and a referral raised for
+     * them — and never a sales follow-up or a category notice. `enabled` absent
+     * means **on**: `settingsPatches` writes the key in once so a later,
+     * deliberate `false` sticks. See `src/utils/staffNotifications.ts`.
+     */
+    staffSms?: {
+      enabled?: boolean;
+      templates?: { TASK_ASSIGNED?: string; REFERRAL_RAISED?: string };
+    };
   };
   showProductBrandInDocuments?: boolean;
   customFields: CustomField[];
@@ -966,6 +978,13 @@ export interface User {
   isSystemAdmin?: boolean;
   position?: string;
   signatureImage?: string;
+  /**
+   * Where a task or a referral reaches this person when the application is shut.
+   *
+   * Only the two events somebody *hands over* are texted — never a sales
+   * follow-up, never the category notices. See `src/utils/staffNotifications.ts`.
+   */
+  mobile?: string;
   /**
    * An account that owns records is deactivated rather than deleted, so this is
    * how a former colleague's history stays readable while their access is gone.

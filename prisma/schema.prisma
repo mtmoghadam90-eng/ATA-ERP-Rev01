@@ -47,6 +47,18 @@ model User {
   signatureImage String? @db.NVarChar(500)
   isActive       Boolean @default(true)
 
+  /// Where a notification reaches this person when the application is shut.
+  ///
+  /// The board says what is on somebody's plate the next time they open it,
+  /// which is no use for a request raised while they are at a customer site.
+  /// Web Push needs HTTPS and this is served over plain HTTP on a LAN, so the
+  /// notification is an SMS through the outbox the customer messages already
+  /// use. Kept as typed — `normalizeMobile` folds `+98`, a leading zero and the
+  /// spaces where the message is **sent**, so the screen still shows what
+  /// somebody entered. Never in `DIRECTORY_SELECT`: a colleague's phone number
+  /// is not something every account may enumerate.
+  mobile String? @db.NVarChar(20)
+
   /// Module permissions, e.g. { "customers": true, "transactions": false }
   permissions String? @db.NVarChar(Max)
 
