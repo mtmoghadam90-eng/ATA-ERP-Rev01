@@ -6,6 +6,7 @@ import { expandDateFields } from "../../dates";
 import { getTodayShamsi, toShamsiStr } from "../../../dateUtils";
 import { loadSettings } from "../../settings";
 import {
+  ALL_SMS_CONFIG_FIELDS, ALL_SMS_SECRET_FIELDS,
   CHANNELS, Channel, MAX_SEND_ATTEMPTS, MESSAGE_STATUS, QuietHours, isChannel,
   nextAllowedSendTime, renderTemplate, resolveRecipient, retryDelayMs, shouldRetry,
 } from "../../../utils/messaging";
@@ -36,14 +37,29 @@ import { addresseeOf, namePrefixFor } from "../../../utils/honorific";
  * an empty box means "unchanged", not "delete it".
  */
 const SECRET_FIELDS: Record<Channel, string[]> = {
-  SMS: ["password"],
+  /*
+   * Every panel's secrets, not the chosen panel's.
+   *
+   * The stored configuration is one document and it keeps the other panel's
+   * credentials, so switching to Kavenegar and back does not mean typing the
+   * MeliPayamak password in again — which means both have to stay hidden on
+   * the way out whichever one is currently selected.
+   */
+  SMS: ALL_SMS_SECRET_FIELDS,
   BALE: ["botToken"],
   EMAIL: ["password"],
 };
 
 /** Everything a channel's configuration may hold, secrets included. */
 const CONFIG_FIELDS: Record<Channel, string[]> = {
-  SMS: ["username", "password", "senderNumber", "apiUrl"],
+  /*
+   * Read from the panel catalogue rather than written out here. It was written
+   * out here, and adding a panel then meant remembering to widen two lists in
+   * a file the panel is not mentioned in — where a forgotten key is silently
+   * dropped on save and the screen looks like it does not remember what was
+   * typed into it.
+   */
+  SMS: ALL_SMS_CONFIG_FIELDS,
   BALE: ["botToken"],
   EMAIL: [
     "host", "port", "secure", "user", "password",
