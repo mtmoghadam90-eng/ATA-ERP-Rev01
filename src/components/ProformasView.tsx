@@ -94,7 +94,7 @@ import type { SuggestedItem } from "../api/assistant";
 import { suggestionSpecText } from "../utils/advisorSuggestion";
 import RichTextField from "./RichTextField";
 import {
-  DELIVERY_READY_UNIT, getDeliverySummary, updateNotesWithDelivery,
+  DELIVERY_READY_UNIT, getDeliverySummary, updateNotesForItems,
 } from "../utils/deliveryNotes";
 import {
   attributesFromSelections, describeProductSpec, mergeSpecText, specLinesFrom,
@@ -1221,7 +1221,7 @@ export default function ProformasView({
     setTaxPercent(10);
     const initialNotes =
       settings?.proformaTemplates?.[0]?.termsAndConditions || "";
-    setNotes(updateNotesWithDelivery(initialNotes, defaultItems, true));
+    setNotes(updateNotesForItems(initialNotes, defaultItems, true));
     setDeliveryDate(getDeliverySummary(defaultItems));
     setShowCreateModal(true);
   };
@@ -1338,7 +1338,7 @@ export default function ProformasView({
           )
         : true;
     setIsEqualDelivery(allEqual);
-    setNotes(updateNotesWithDelivery(pf.notes || "", loadedItems, allEqual));
+    setNotes(updateNotesForItems(pf.notes || "", loadedItems, allEqual));
     setDeliveryDate(getDeliverySummary(loadedItems));
     setShowCreateModal(true);
   };
@@ -1478,7 +1478,7 @@ export default function ProformasView({
     }
 
     setItems(newItems);
-    setNotes((prev) => updateNotesWithDelivery(prev, newItems, isEqualDelivery));
+    setNotes((prev) => updateNotesForItems(prev, newItems, isEqualDelivery));
     setDeliveryDate(getDeliverySummary(newItems));
   };
 
@@ -1605,7 +1605,7 @@ export default function ProformasView({
     ];
     setItems(newItems);
     setNotes((prevNotes) =>
-      updateNotesWithDelivery(prevNotes, newItems, isEqualDelivery),
+      updateNotesForItems(prevNotes, newItems, isEqualDelivery),
     );
     setDeliveryDate(getDeliverySummary(newItems));
   };
@@ -1632,7 +1632,7 @@ export default function ProformasView({
     ];
     setItems(newItems);
     setNotes((prevNotes) =>
-      updateNotesWithDelivery(prevNotes, newItems, isEqualDelivery),
+      updateNotesForItems(prevNotes, newItems, isEqualDelivery),
     );
     setDeliveryDate(getDeliverySummary(newItems));
   };
@@ -1643,7 +1643,7 @@ export default function ProformasView({
     const newItems = items.filter((_, i) => i !== index);
     setItems(newItems);
     setNotes((prevNotes) =>
-      updateNotesWithDelivery(prevNotes, newItems, isEqualDelivery),
+      updateNotesForItems(prevNotes, newItems, isEqualDelivery),
     );
     setDeliveryDate(getDeliverySummary(newItems));
   };
@@ -1667,7 +1667,7 @@ export default function ProformasView({
     }
     setItems(newItems);
     setNotes((prevNotes) =>
-      updateNotesWithDelivery(prevNotes, newItems, isEqualDelivery),
+      updateNotesForItems(prevNotes, newItems, isEqualDelivery),
     );
     setDeliveryDate(getDeliverySummary(newItems));
   };
@@ -1688,12 +1688,12 @@ export default function ProformasView({
       }));
       setItems(updatedItems);
       setNotes((prevNotes) =>
-        updateNotesWithDelivery(prevNotes, updatedItems, checked),
+        updateNotesForItems(prevNotes, updatedItems, checked),
       );
       setDeliveryDate(getDeliverySummary(updatedItems));
     } else if (!checked && items.length > 0) {
       setNotes((prevNotes) =>
-        updateNotesWithDelivery(prevNotes, items, checked),
+        updateNotesForItems(prevNotes, items, checked),
       );
     }
   };
@@ -5400,9 +5400,12 @@ export default function ProformasView({
                     </label>
                     {/*
                       Same plain-text-with-markers as the line specification.
-                      This block is not only printed: `updateNotesWithDelivery`
-                      writes and rewrites the delivery section inside it, and it
-                      finds that section by the words at the start of a line.
+                      This block is not only printed: `updateNotesForItems`
+                      writes and rewrites two sections inside it — «زمان تحویل»
+                      and, for goods that are on the shelf, «نحوه پرداخت» — and
+                      it finds each by the words at the start of a line. What
+                      somebody types under those headings themselves is left
+                      alone; only what the rule wrote is ever taken back.
                     */}
                     <RichTextField
                       rows={4}

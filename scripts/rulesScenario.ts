@@ -68,7 +68,8 @@ import {
   MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL, oversizedUploadReason,
 } from "../src/utils/uploadLimits";
 import {
-  DELIVERY_READY_TEXT, DELIVERY_READY_UNIT, deliveryPhrase,
+  DELIVERY_READY_TEXT, DELIVERY_READY_UNIT, PAYMENT_HEADING, READY_PAYMENT_TEXT,
+  deliveryPhrase, updateNotesForItems,
 } from "../src/utils/deliveryNotes";
 import { TASK_SORTABLE, laneTimestamps } from "../src/server/services/taskService";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
@@ -9658,17 +9659,52 @@ head("The corrections batch: uploads, the board, the feed and the front page");
   /* «آماده تحویل» is not a length of time, so the range and the days are not
      read — and the boxes for them stand down rather than taking answers that
      are dropped. */
-  ok("goods on the shelf print their own sentence",
-    deliveryPhrase({ deliveryUnit: DELIVERY_READY_UNIT }).startsWith(DELIVERY_READY_TEXT),
-    deliveryPhrase({ deliveryUnit: DELIVERY_READY_UNIT }));
   /*
-   * The trailing clause survives, because «موجود در انبار ... پس از دریافت پیش
-   * پرداخت» is a real and common condition — an empty box means «use the
-   * default», which is the convention all four of these fields follow.
+   * The whole sentence, and nothing after it. «موجود در انبار و آماده تحویل پس
+   * از دریافت پیش پرداخت» contradicts itself — goods that are ready are not
+   * waiting on a payment — so the trailing clause is dropped for these and the
+   * payment condition goes in its own section instead.
    */
-  ok("...keeping the condition that follows it",
-    deliveryPhrase({ deliveryUnit: DELIVERY_READY_UNIT, deliveryPostfix: "پس از تایید" })
-      === `${DELIVERY_READY_TEXT} پس از تایید`);
+  eq("goods on the shelf are the whole sentence",
+    deliveryPhrase({ deliveryUnit: DELIVERY_READY_UNIT }), DELIVERY_READY_TEXT);
+  eq("...whatever condition is stored beside them",
+    deliveryPhrase({ deliveryUnit: DELIVERY_READY_UNIT, deliveryPostfix: "پس از تایید" }),
+    DELIVERY_READY_TEXT);
+  eq("...and the printed section says exactly that",
+    generateDeliveryNotes([{ deliveryUnit: DELIVERY_READY_UNIT }], true),
+    `زمان تحویل:\n${DELIVERY_READY_TEXT}`);
+
+  /* ---------------------- and paid for on the shelf ---------------------- */
+
+  const ready = [{ deliveryUnit: DELIVERY_READY_UNIT }];
+  const ordered = [{ deliveryUnit: "هفته" }];
+  const written = updateNotesForItems("گارانتی ۱۲ ماه.", ready);
+  ok("ready stock is paid for in full on delivery",
+    written.includes(`${PAYMENT_HEADING}\n${READY_PAYMENT_TEXT}`), written);
+  ok("...and the section is not appended twice when nothing changed",
+    updateNotesForItems(written, ready) === written);
+  /*
+   * A quotation with one item on the shelf and one on six weeks' order has no
+   * single payment rule, and «۱۰۰٪ در زمان تحویل» over a document that needs a
+   * deposit for half of it is worse than writing nothing.
+   */
+  ok("a mixed document gets no payment section",
+    !updateNotesForItems("گارانتی ۱۲ ماه.", [...ready, ...ordered]).includes(PAYMENT_HEADING));
+  ok("...and neither does an ordinary one",
+    !updateNotesForItems("گارانتی ۱۲ ماه.", ordered).includes(PAYMENT_HEADING));
+  // Written, then the goods change: the rule takes back what it wrote.
+  ok("changing to ordinary goods removes the line the rule wrote",
+    !updateNotesForItems(written, ordered).includes(READY_PAYMENT_TEXT));
+  ok("...without taking the rest of the notes with it",
+    updateNotesForItems(written, ordered).includes("گارانتی ۱۲ ماه."));
+  /*
+   * But **only** what it wrote. Somebody who typed their own terms under that
+   * heading — a staged payment, a letter of credit — keeps them: a rule that
+   * manages a section may remove what it put there and nothing else.
+   */
+  const edited = written.replace(READY_PAYMENT_TEXT, "۵۰٪ پیش‌پرداخت");
+  ok("a hand-written condition is left alone",
+    updateNotesForItems(edited, ordered).includes("۵۰٪ پیش‌پرداخت"));
   ok("...and never «۳-۴ آماده تحویل کاری»",
     !deliveryPhrase({
       deliveryUnit: DELIVERY_READY_UNIT, deliveryRange: "۳-۴", deliveryType: "کاری",

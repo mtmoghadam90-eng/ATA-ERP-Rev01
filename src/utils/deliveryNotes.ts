@@ -51,20 +51,22 @@ const DEFAULTS = {
  */
 export function deliveryPhrase(item: DeliveryBearing): string {
   const unit = item.deliveryUnit || DEFAULTS.unit;
-  const postfix = item.deliveryPostfix || DEFAULTS.postfix;
 
   /*
-   * Goods on the shelf have no range and no working days — printing «۳-۴
-   * آماده تحویل کاری» is what reading the four fields blindly would produce.
-   * The trailing clause is kept, because «موجود ... پس از دریافت پیش پرداخت»
-   * is a real and common condition.
+   * Goods on the shelf are the whole sentence.
+   *
+   * No range and no working days — printing «۳-۴ آماده تحویل کاری» is what
+   * reading the four fields blindly would produce — and **no trailing clause
+   * either**: «موجود در انبار و آماده تحویل پس از دریافت پیش پرداخت»
+   * contradicts itself, because goods that are ready are not waiting on a
+   * payment. The payment condition for these is written in its own section of
+   * the notes instead; see `readyPaymentNote`.
    */
-  if (unit === DELIVERY_READY_UNIT) {
-    return `${DELIVERY_READY_TEXT} ${postfix}`.trim();
-  }
+  if (unit === DELIVERY_READY_UNIT) return DELIVERY_READY_TEXT;
 
   const range = item.deliveryRange || DEFAULTS.range;
   const type = item.deliveryType || DEFAULTS.type;
+  const postfix = item.deliveryPostfix || DEFAULTS.postfix;
   return `${range} ${unit} ${type} ${postfix}`.trim();
 }
 
@@ -180,3 +182,95 @@ export const getDeliverySummary = (itemsList: DeliveryBearing[]) => {
 
   return allEqual ? first : `${first} (ردیف‌های دیگر متفاوت)`;
 };
+
+/* ------------------------- the payment condition ------------------------- */
+
+/**
+ * Goods on the shelf are paid for on the shelf.
+ *
+ * The delivery sentence for «آماده تحویل» deliberately carries no trailing
+ * condition — «موجود در انبار و آماده تحویل پس از دریافت پیش پرداخت»
+ * contradicts itself — so the payment condition belongs in its own section,
+ * under its own heading, where it can be recognised again and rewritten.
+ *
+ * **Only when every line is ready stock.** A quotation with one item on the
+ * shelf and one on six weeks' order has no single payment rule, and writing
+ * «۱۰۰٪ در زمان تحویل» over a document that needs a deposit for half of it is
+ * worse than writing nothing.
+ */
+export const PAYMENT_HEADING = "نحوه پرداخت:";
+export const READY_PAYMENT_TEXT = "۱۰۰٪ کل مبلغ در زمان تحویل کالا";
+
+export function allReadyForDelivery(itemsList: DeliveryBearing[]): boolean {
+  if (!itemsList || itemsList.length === 0) return false;
+  return itemsList.every((item) => item.deliveryUnit === DELIVERY_READY_UNIT);
+}
+
+/**
+ * Writes, replaces or removes the payment section.
+ *
+ * Removal is **exact**: the section goes only when it still says what this
+ * wrote. Somebody who typed their own terms under that heading — a staged
+ * payment, a letter of credit — keeps them when the goods change, because a
+ * rule that manages a section is entitled to remove what it put there and
+ * nothing else.
+ *
+ * The section is one line, which is what lets this be so much simpler than
+ * `updateNotesWithDelivery`: that one has to consume a «ردیف N» block of
+ * unknown length.
+ */
+export function updateNotesWithPayment(
+  currentNotes: string,
+  itemsList: DeliveryBearing[],
+): string {
+  const wanted = allReadyForDelivery(itemsList) ? READY_PAYMENT_TEXT : null;
+  const lines = (currentNotes || "").split("\n");
+  /*
+   * Compared past the formatting markers, the same way the delivery section
+   * is: bolding «**نحوه پرداخت:**» would otherwise hide the section and the
+   * next change would append a second one below the first.
+   */
+  const plain = lines.map((line) => stripRichMarks(line).trim());
+  const at = plain.findIndex((line) => line.startsWith(PAYMENT_HEADING));
+
+  if (at === -1) {
+    if (!wanted) return currentNotes || "";
+    const section = `${PAYMENT_HEADING}\n${wanted}`;
+    const trimmed = (currentNotes || "").trim();
+    return trimmed === "" ? section : `${trimmed}\n\n${section}`;
+  }
+
+  // The single line under the heading, if there is one that is not another.
+  const bodyAt = at + 1;
+  const hasBody = bodyAt < lines.length
+    && plain[bodyAt] !== ""
+    && !plain[bodyAt].endsWith(":");
+  const end = hasBody ? bodyAt + 1 : bodyAt;
+
+  if (wanted) {
+    return [...lines.slice(0, at), `${PAYMENT_HEADING}\n${wanted}`, ...lines.slice(end)]
+      .join("\n");
+  }
+
+  // Not ready stock any more. Only what this wrote is taken back.
+  if (hasBody && plain[bodyAt] !== READY_PAYMENT_TEXT) return lines.join("\n");
+  return [...lines.slice(0, at), ...lines.slice(end)].join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
+ * Both sections, in one call.
+ *
+ * Every screen that changes a line's delivery has to update the delivery
+ * *and* the payment section, and eight call sites each remembering to do two
+ * things is how one of them comes to do one. There is one function to call.
+ */
+export function updateNotesForItems(
+  currentNotes: string,
+  itemsList: DeliveryBearing[],
+  isEqualDelivery: boolean = true,
+): string {
+  return updateNotesWithPayment(
+    updateNotesWithDelivery(currentNotes, itemsList, isEqualDelivery),
+    itemsList,
+  );
+}
