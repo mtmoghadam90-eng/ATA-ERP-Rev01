@@ -26,6 +26,16 @@ $ErrorActionPreference = "Stop"
 $npm  = Join-Path $NodeDir "npm.cmd"
 $node = Join-Path $NodeDir "node.exe"
 
+# Prisma prints a boxed "Update available 7.9.1 -> 8.0.0-rc.x" banner on every
+# `generate` and `migrate deploy`. It is an advertisement, not a diagnostic —
+# the command still succeeds and this script only stops on a non-zero exit —
+# but a red-and-yellow box in the middle of a deploy reads as a failure, and it
+# was reported as one. It also advertises a *release candidate* across a major
+# version, which is not something to follow on a live server: Prisma 7 is what
+# this application is pinned to, and a major bump changes the SQL Server driver
+# adapter it depends on. Silenced for this process only.
+$env:PRISMA_HIDE_UPDATE_MESSAGE = "1"
+
 function Step($n, $msg) { Write-Host "`n[$n] $msg" -ForegroundColor Cyan }
 function Ok($msg)       { Write-Host "    OK - $msg" -ForegroundColor Green }
 function Fail($msg)     { Write-Host "    FAILED - $msg" -ForegroundColor Red }
