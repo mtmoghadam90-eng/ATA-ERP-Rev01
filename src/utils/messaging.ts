@@ -216,6 +216,28 @@ export function smsConfigRefusal(
 }
 
 /**
+ * The sender line, as the panel wants to read it back.
+ *
+ * The number is copied off the panel's own «مدیریت خطوط» page, which prints it
+ * in **Persian digits** — and a panel handed «۰۰۱۸۰۱۸۹۴۹۱۶۱» does not recognise
+ * its own line, refusing it as an invalid sender. That refusal names the
+ * sender, so it reads as the line not belonging to the account rather than as
+ * the digits being the wrong alphabet, and there is nothing on either screen to
+ * suggest otherwise.
+ *
+ * Only the digits and the spacing are touched. Leading zeros are kept, because
+ * an international line genuinely begins `00`, and nothing else is stripped
+ * because some accounts send from an alphabetic sender id rather than a number.
+ */
+export function normalizeSenderLine(value: string | null | undefined): string {
+  return String(value ?? "")
+    .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06F0))
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/\s+/g, "")
+    .trim();
+}
+
+/**
  * Where a Kavenegar send is posted.
  *
  * The key is part of the **path**, not a header and not a body field, so the
