@@ -1,7 +1,8 @@
 import nodemailer from "nodemailer";
 import {
   CHANNELS, Channel, SMS_PROVIDERS, SMS_PROVIDER_SPECS, SmsProvider,
-  isBaleChatId, kavenegarSendUrl, looksLikeMobile, smsConfigRefusal, smsProviderOf,
+  isBaleChatId, kavenegarSendUrl, looksLikeMobile, normalizeSenderLine,
+  smsConfigRefusal, smsProviderOf,
 } from "../../../utils/messaging";
 
 /**
@@ -160,7 +161,7 @@ async function sendMeliPayamak(
         username: config.username,
         password: config.password,
         to,
-        from: config.senderNumber,
+        from: normalizeSenderLine(config.senderNumber),
         text: message.body,
         isflash: false,
       }),
@@ -221,7 +222,7 @@ const KAVENEGAR_REMEDIES: Record<number, string> = {
   407: "این کلید اجازه این عملیات را ندارد؛ محدودیت IP و سطح سرویس حساب را در پنل کاوه‌نگار بررسی کنید.",
   409: "سرویس کاوه‌نگار موقتاً پاسخ نمی‌دهد؛ ارسال دوباره تلاش خواهد شد.",
   411: "شماره گیرنده را کاوه‌نگار نپذیرفت؛ شماره موبایل مخاطب را بررسی کنید.",
-  412: "شماره خط فرستنده برای این حساب مجاز نیست. آن را خالی بگذارید تا خط پیش‌فرض حساب استفاده شود، یا یکی از خطوط خود حساب را وارد کنید.",
+  412: "شماره خط فرستنده پذیرفته نشد. اول آن را خالی بگذارید تا خط پیش‌فرض حساب استفاده شود. اگر باز هم رد شد، خط شما «اشتراکی» است و خطوط اشتراکی فقط برای ارسال با الگوی تاییدشده (سرویس لوکاپ) کار می‌کنند؛ برای ارسال متن آزاد به یک «خط اختصاصی» نیاز دارید.",
   413: "متن پیام خالی است یا از حد مجاز بلندتر است.",
   418: "اعتبار حساب کاوه‌نگار کافی نیست؛ حساب را شارژ کنید.",
   451: "تعداد درخواست‌ها بیش از حد مجاز بوده است؛ کمی بعد دوباره تلاش می‌شود.",
@@ -261,7 +262,7 @@ async function sendKavenegar(
 ): Promise<SendResult> {
   const url = kavenegarSendUrl(config.apiUrl, String(config.apiKey ?? ""));
   const form = new URLSearchParams({ receptor: to, message: message.body });
-  const sender = String(config.senderNumber ?? "").trim();
+  const sender = normalizeSenderLine(config.senderNumber);
   if (sender) form.set("sender", sender);
 
   try {

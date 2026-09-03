@@ -97,6 +97,7 @@ import {
   CHANNELS, MESSAGE_VARIABLES, SAMPLE_VARIABLE_VALUES, SMS_PROVIDER_SPECS,
   isBaleChatId, isWithinQuietHours, kavenegarSendUrl,
   looksLikeMobile, nextAllowedSendTime, renderTemplate, resolveRecipient, retryDelayMs,
+  normalizeSenderLine,
   shouldRetry, smsConfigRefusal, smsLength, smsProviderOf, templateVariables,
 } from "../src/utils/messaging";
 import { addresseeOf, namePrefixFor } from "../src/utils/honorific";
@@ -2523,6 +2524,14 @@ head("Template variables: the palette and the values agree");
 head("SMS panels: the channel is the medium, the panel is a field of it");
 {
   /*
+   * Comments first, always: the notes in the driver explaining these very rules
+   * quote the expressions the checks below look for, so a scan of the raw file
+   * would pass on the explanation rather than on the code.
+   */
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /*
    * Kavenegar is not a fourth channel. The channel is what carries the words —
    * a text message — and it is the identity of a template, of a recipient's
    * address and of the outbox history; a company changing panels must not lose
@@ -2573,6 +2582,25 @@ head("SMS panels: the channel is the medium, the panel is a field of it");
     kavenegarSendUrl("https://api.kavenegar.com/v1/OTHER/sms/send.json", "KEY"),
     "https://api.kavenegar.com/v1/OTHER/sms/send.json");
 
+  /*
+   * The line is copied off Kavenegar's own «مدیریت خطوط» page, which prints it
+   * in Persian digits — and the panel then does not recognise its own line,
+   * refusing it as an invalid sender. That refusal names the *sender*, so it
+   * reads as the line not belonging to the account rather than as the digits
+   * being the wrong alphabet.
+   */
+  eq("a line copied from the panel in Persian digits is folded",
+    normalizeSenderLine("۰۰۱۸۰۱۸۹۴۹۱۶۱"), "0018018949161");
+  eq("leading zeros survive, because an international line begins with them",
+    normalizeSenderLine("0018018949161"), "0018018949161");
+  eq("spacing is dropped", normalizeSenderLine(" 1000 4346 "), "10004346");
+  eq("an alphabetic sender id is left alone", normalizeSenderLine("ATAsys"), "ATAsys");
+  eq("and a blank line stays blank, which is what asks for the default one",
+    normalizeSenderLine("   "), "");
+  ok("both panels fold it, so one does not accept a line the other refuses",
+    (strip(readFileSync("src/server/services/messaging/drivers.ts", "utf-8"))
+      .match(/normalizeSenderLine\(config\.senderNumber\)/g) ?? []).length === 2);
+
   /* Every panel's fields reach the server, or a saved value is silently lost. */
   for (const id of ALL_SMS_PROVIDERS) {
     const spec = SMS_PROVIDER_SPECS[id];
@@ -2601,14 +2629,6 @@ head("SMS panels: the channel is the medium, the panel is a field of it");
     /SMS:\s*ALL_SMS_CONFIG_FIELDS/.test(service)
     && /SMS:\s*ALL_SMS_SECRET_FIELDS/.test(service));
 
-  /*
-   * Comments first, always: the note above `sendKavenegar` explaining that the
-   * HTTP status is not the answer contains the very words the check below looks
-   * for, so a scan of the raw file would pass on the explanation rather than on
-   * the code.
-   */
-  const strip = (src: string) =>
-    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
   const drivers = strip(readFileSync("src/server/services/messaging/drivers.ts", "utf-8"));
   ok("the drivers file survived having its comments stripped",
     drivers.includes("sendKavenegar"));
