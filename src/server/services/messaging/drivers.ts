@@ -1,5 +1,8 @@
 import nodemailer from "nodemailer";
-import { CHANNELS, Channel, isBaleChatId, looksLikeMobile } from "../../../utils/messaging";
+import {
+  CHANNELS, Channel, SMS_PROVIDERS, SMS_PROVIDER_SPECS, SmsProvider,
+  isBaleChatId, kavenegarSendUrl, looksLikeMobile, smsConfigRefusal, smsProviderOf,
+} from "../../../utils/messaging";
 
 /**
  * The three ways a message actually leaves this building.
@@ -63,19 +66,37 @@ const describe = (err: unknown): string => {
 /* ---------------------------------- SMS ---------------------------------- */
 
 export interface SmsConfig {
-  /** Panel username. */
+  /**
+   * Which panel carries the message. Absent is MeliPayamak — every
+   * configuration stored before this field existed is one.
+   */
+  provider?: SmsProvider;
+
+  /** MeliPayamak: the panel login. */
   username?: string;
   password?: string;
-  /** The line the message is sent from. */
-  senderNumber?: string;
+
+  /** Kavenegar: the API key, which goes in the request *path*. */
+  apiKey?: string;
+
   /**
-   * The REST endpoint. Defaults to MeliPayamak's, and is configurable so the
-   * other Iranian panels with the same shape can be used without a code change.
+   * The line the message is sent from. Required by MeliPayamak; optional for
+   * Kavenegar, which falls back to the account's own default line.
+   */
+  senderNumber?: string;
+
+  /**
+   * The REST address, when the default will not do.
+   *
+   * It is a different **kind** of address per panel — MeliPayamak's is the
+   * complete endpoint, Kavenegar's is a base the key and method are appended
+   * to — which is why the spec carries the default and `kavenegarSendUrl`
+   * builds the second one rather than either being pasted together here.
    */
   apiUrl?: string;
 }
 
-const MELIPAYAMAK_URL = "https://rest.payamak-panel.com/api/SendSMS/SendSMS";
+const MELIPAYAMAK_URL = SMS_PROVIDER_SPECS.MELIPAYAMAK.defaultUrl;
 
 /**
  * Normalises an Iranian mobile number to what a panel expects.
@@ -96,16 +117,41 @@ export function normalizeMobile(raw: string): string {
   return latin;
 }
 
+/**
+ * The SMS channel, whichever panel is behind it.
+ *
+ * Everything that is true of a text message however it is carried happens here
+ * — the configuration is checked against the chosen panel's own field list, and
+ * the number is folded to `09…` once — and then the panel's own driver is
+ * called. Doing the shared half twice, once per panel, is how one of them comes
+ * to accept a number the other refuses.
+ */
 export async function sendSms(config: SmsConfig, message: OutgoingMessage): Promise<SendResult> {
-  if (!config.username || !config.password || !config.senderNumber) {
-    return { ok: false, error: "تنظیمات پنل پیامک کامل نیست (نام کاربری، رمز و شماره فرستنده)." };
-  }
+  const refusal = smsConfigRefusal(config as Record<string, unknown>);
+  if (refusal) return { ok: false, error: refusal };
 
   const to = normalizeMobile(message.recipient);
   if (!/^09\d{9}$/.test(to)) {
     return { ok: false, error: `شماره موبایل «${message.recipient}» معتبر نیست.` };
   }
 
+  return smsProviderOf(config) === SMS_PROVIDERS.KAVENEGAR
+    ? sendKavenegar(config, to, message)
+    : sendMeliPayamak(config, to, message);
+}
+
+/**
+ * MeliPayamak and the several Iranian panels built to the same shape.
+ *
+ * Credentials in a JSON body, and an answer that is a bare number rather than
+ * an HTTP status — which is the whole reason the success check below is what it
+ * is rather than `response.ok`.
+ */
+async function sendMeliPayamak(
+  config: SmsConfig,
+  to: string,
+  message: OutgoingMessage,
+): Promise<SendResult> {
   try {
     const response = await fetchWithTimeout(config.apiUrl || MELIPAYAMAK_URL, {
       method: "POST",
@@ -151,6 +197,110 @@ export async function sendSms(config: SmsConfig, message: OutgoingMessage): Prom
       return { ok: false, error: `سرویس پیامک کد خطای ${value || "نامشخص"} برگرداند.` };
     }
     return { ok: true, providerMessageId: value };
+  } catch (err) {
+    return { ok: false, error: describe(err) };
+  }
+}
+
+/**
+ * What Kavenegar refused, and what to do about it.
+ *
+ * Unlike Bale and SMTP, Kavenegar answers **in Persian already** — its
+ * `return.message` is a sentence a user can read — so this never replaces what
+ * it said. It adds the remedy beside it for the handful of codes that have one,
+ * and relays the rest verbatim with the code: a message this file invented for
+ * a code whose meaning had shifted would be worse than the panel's own words.
+ *
+ * The codes below are the ones that actually happen when somebody is setting
+ * this up or has stopped paying: a key that was pasted wrong, a line the
+ * account may not send from, and an empty wallet.
+ */
+const KAVENEGAR_REMEDIES: Record<number, string> = {
+  401: "حساب کاربری کاوه‌نگار غیرفعال است؛ با پشتیبانی کاوه‌نگار تماس بگیرید.",
+  403: "کلید API پذیرفته نشد. آن را دوباره از پنل کاوه‌نگار (تنظیمات ← حساب کاربری) بردارید و اینجا ثبت کنید.",
+  407: "این کلید اجازه این عملیات را ندارد؛ محدودیت IP و سطح سرویس حساب را در پنل کاوه‌نگار بررسی کنید.",
+  409: "سرویس کاوه‌نگار موقتاً پاسخ نمی‌دهد؛ ارسال دوباره تلاش خواهد شد.",
+  411: "شماره گیرنده را کاوه‌نگار نپذیرفت؛ شماره موبایل مخاطب را بررسی کنید.",
+  412: "شماره خط فرستنده برای این حساب مجاز نیست. آن را خالی بگذارید تا خط پیش‌فرض حساب استفاده شود، یا یکی از خطوط خود حساب را وارد کنید.",
+  413: "متن پیام خالی است یا از حد مجاز بلندتر است.",
+  418: "اعتبار حساب کاوه‌نگار کافی نیست؛ حساب را شارژ کنید.",
+  451: "تعداد درخواست‌ها بیش از حد مجاز بوده است؛ کمی بعد دوباره تلاش می‌شود.",
+};
+
+function kavenegarFailure(status: number, said: string): string {
+  const words = String(said ?? "").trim();
+  const remedy = KAVENEGAR_REMEDIES[status];
+  return [
+    `کاوه‌نگار پیام را نپذیرفت (کد ${status})`,
+    words ? `: ${words}` : "",
+    remedy ? ` — ${remedy}` : "",
+  ].join("");
+}
+
+/**
+ * Kavenegar.
+ *
+ * Three things differ from the panel above and all three are why this is a
+ * driver rather than a URL setting. The key is part of the **path**
+ * (`/v1/{apiKey}/sms/send.json`), so it can never be left out of the address
+ * the way a username can be left out of a body. The body is
+ * **form-encoded**, not JSON. And the answer is an envelope —
+ * `{ return: { status, message }, entries: [...] }` — whose `return.status` is
+ * the truth: an HTTP 200 accompanies a refusal just as it does an acceptance,
+ * so reading the HTTP status is how a system reports every message as sent
+ * while the panel accepts none of them.
+ *
+ * `sender` is deliberately omitted when it is blank rather than sent empty:
+ * Kavenegar then uses the account's own default line, which is what most
+ * accounts here want and what a company with one line never has to think about.
+ */
+async function sendKavenegar(
+  config: SmsConfig,
+  to: string,
+  message: OutgoingMessage,
+): Promise<SendResult> {
+  const url = kavenegarSendUrl(config.apiUrl, String(config.apiKey ?? ""));
+  const form = new URLSearchParams({ receptor: to, message: message.body });
+  const sender = String(config.senderNumber ?? "").trim();
+  if (sender) form.set("sender", sender);
+
+  try {
+    const response = await fetchWithTimeout(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+      body: form.toString(),
+    });
+
+    const text = await response.text();
+    let payload: {
+      return?: { status?: unknown; message?: unknown };
+      entries?: { messageid?: unknown }[] | null;
+    } | null = null;
+    try {
+      payload = JSON.parse(text) as typeof payload;
+    } catch {
+      payload = null;
+    }
+
+    /*
+     * A body that is not JSON at all is a proxy, a captive portal or an error
+     * page — not Kavenegar — and quoting the beginning of it is the only thing
+     * that tells the reader which of those they are looking at.
+     */
+    if (!payload?.return) {
+      return {
+        ok: false,
+        error: `پاسخ کاوه‌نگار قابل خواندن نبود (وضعیت ${response.status}): ${text.slice(0, 200)}`,
+      };
+    }
+
+    const status = Number(payload.return.status);
+    if (status !== 200) {
+      return { ok: false, error: kavenegarFailure(status, String(payload.return.message ?? "")) };
+    }
+
+    const id = Array.isArray(payload.entries) ? payload.entries[0]?.messageid : null;
+    return { ok: true, providerMessageId: id === undefined || id === null ? null : String(id) };
   } catch (err) {
     return { ok: false, error: describe(err) };
   }

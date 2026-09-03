@@ -93,9 +93,11 @@ import {
   calculateProformaFinance, calculateProjectFinance, priceInWarehouseCurrency,
 } from "../src/utils/finance";
 import {
-  CHANNELS, MESSAGE_VARIABLES, SAMPLE_VARIABLE_VALUES, isBaleChatId, isWithinQuietHours,
+  ALL_SMS_CONFIG_FIELDS, ALL_SMS_PROVIDERS, ALL_SMS_SECRET_FIELDS,
+  CHANNELS, MESSAGE_VARIABLES, SAMPLE_VARIABLE_VALUES, SMS_PROVIDER_SPECS,
+  isBaleChatId, isWithinQuietHours, kavenegarSendUrl,
   looksLikeMobile, nextAllowedSendTime, renderTemplate, resolveRecipient, retryDelayMs,
-  shouldRetry, smsLength, templateVariables,
+  shouldRetry, smsConfigRefusal, smsLength, smsProviderOf, templateVariables,
 } from "../src/utils/messaging";
 import { addresseeOf, namePrefixFor } from "../src/utils/honorific";
 import { APP_MODULES, DEFAULT_MODULE_ORDER } from "../src/appModules";
@@ -2517,6 +2519,119 @@ head("Template variables: the palette and the values agree");
     "جناب آقای مهندس رضایی عزیز، پروژه PRJ-1405-018");
 }
 
+
+head("SMS panels: the channel is the medium, the panel is a field of it");
+{
+  /*
+   * Kavenegar is not a fourth channel. The channel is what carries the words —
+   * a text message — and it is the identity of a template, of a recipient's
+   * address and of the outbox history; a company changing panels must not lose
+   * any of that, and every SMS template must not have to be written again.
+   */
+  eq("a configuration written before panels existed is MeliPayamak",
+    smsProviderOf({ username: "u", password: "p", senderNumber: "1000" }),
+    "MELIPAYAMAK");
+  eq("and so is a stored value this build does not know",
+    smsProviderOf({ provider: "SOMETHING_ELSE" }), "MELIPAYAMAK");
+  eq("a stored Kavenegar is Kavenegar", smsProviderOf({ provider: "KAVENEGAR" }), "KAVENEGAR");
+
+  /*
+   * The refusal names the field, because the two panels want different things
+   * and somebody who has just switched is looking at a form where yesterday's
+   * box is no longer there.
+   */
+  ok("a complete MeliPayamak configuration is accepted",
+    smsConfigRefusal({ username: "u", password: "p", senderNumber: "10004346" }) === null);
+  ok("and one with no sender line is refused by name",
+    (smsConfigRefusal({ username: "u", password: "p" }) ?? "").includes("شماره فرستنده"));
+
+  /*
+   * Kavenegar's sender is genuinely optional — left blank the account's own
+   * default line is used, which is what a company with one line wants. Demanding
+   * it would be this form inventing a requirement the panel does not have.
+   */
+  ok("a Kavenegar key on its own is enough",
+    smsConfigRefusal({ provider: "KAVENEGAR", apiKey: "abc123" }) === null);
+  ok("and a Kavenegar configuration with no key is refused",
+    (smsConfigRefusal({ provider: "KAVENEGAR", senderNumber: "10004346" }) ?? "")
+      .includes("کلید API"));
+  ok("a MeliPayamak password does not satisfy Kavenegar",
+    smsConfigRefusal({ provider: "KAVENEGAR", username: "u", password: "p" }) !== null);
+
+  /*
+   * The two addresses are different kinds of thing: MeliPayamak's is the whole
+   * endpoint, Kavenegar's is a base the key and the method are appended to. The
+   * field says «آدرس پایه» and somebody will paste the finished URL into it
+   * anyway, so a URL that already ends in `.json` is taken as it stands.
+   */
+  eq("a blank base uses Kavenegar's own address",
+    kavenegarSendUrl("", "KEY"), "https://api.kavenegar.com/v1/KEY/sms/send.json");
+  eq("a trailing slash does not double up",
+    kavenegarSendUrl("https://api.kavenegar.com/v1/", "KEY"),
+    "https://api.kavenegar.com/v1/KEY/sms/send.json");
+  eq("and a complete URL somebody pasted is left exactly as it is",
+    kavenegarSendUrl("https://api.kavenegar.com/v1/OTHER/sms/send.json", "KEY"),
+    "https://api.kavenegar.com/v1/OTHER/sms/send.json");
+
+  /* Every panel's fields reach the server, or a saved value is silently lost. */
+  for (const id of ALL_SMS_PROVIDERS) {
+    const spec = SMS_PROVIDER_SPECS[id];
+    ok(`every «${spec.label}» field is one the server stores`,
+      spec.fields.every((f) => ALL_SMS_CONFIG_FIELDS.includes(f.key)),
+      spec.fields.map((f) => f.key));
+    ok(`and every «${spec.label}» secret is one the server hides`,
+      spec.fields.filter((f) => f.secret).every((f) => ALL_SMS_SECRET_FIELDS.includes(f.key)));
+    ok(`«${spec.label}» has a required field, so an empty form cannot pass`,
+      spec.fields.some((f) => f.required));
+    ok(`and every «${spec.label}» field is labelled`,
+      spec.fields.every((f) => f.label.trim() !== ""));
+  }
+  ok("the panel itself is stored", ALL_SMS_CONFIG_FIELDS.includes("provider"));
+  ok("both panels' credentials stay hidden whichever is selected",
+    ALL_SMS_SECRET_FIELDS.includes("password") && ALL_SMS_SECRET_FIELDS.includes("apiKey"));
+
+  /*
+   * The field lists used to be written out in the service, so adding a panel
+   * meant widening two arrays in a file that does not mention it — and a key
+   * left out of them is dropped on save, which reads as the screen forgetting
+   * what was typed into it.
+   */
+  const service = readFileSync("src/server/services/messaging/messageService.ts", "utf-8");
+  ok("the service reads the panel catalogue rather than listing SMS fields",
+    /SMS:\s*ALL_SMS_CONFIG_FIELDS/.test(service)
+    && /SMS:\s*ALL_SMS_SECRET_FIELDS/.test(service));
+
+  /*
+   * Comments first, always: the note above `sendKavenegar` explaining that the
+   * HTTP status is not the answer contains the very words the check below looks
+   * for, so a scan of the raw file would pass on the explanation rather than on
+   * the code.
+   */
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const drivers = strip(readFileSync("src/server/services/messaging/drivers.ts", "utf-8"));
+  ok("the drivers file survived having its comments stripped",
+    drivers.includes("sendKavenegar"));
+  ok("the shared half — the configuration check and the number — happens once",
+    /export async function sendSms[\s\S]{0,900}smsConfigRefusal[\s\S]{0,900}normalizeMobile/
+      .test(drivers));
+  for (const id of ALL_SMS_PROVIDERS) {
+    ok(`«${SMS_PROVIDER_SPECS[id].label}» is actually dispatched to`,
+      new RegExp(`SMS_PROVIDERS\\.${id}|send${id === "KAVENEGAR" ? "Kavenegar" : "MeliPayamak"}`)
+        .test(drivers));
+  }
+  /*
+   * Kavenegar answers HTTP 200 to a refusal exactly as it does to an
+   * acceptance; the truth is `return.status`. Reading the HTTP status is how a
+   * system reports every message as sent while the panel accepts none.
+   */
+  ok("a Kavenegar send is judged by return.status, not by the HTTP status",
+    /async function sendKavenegar[\s\S]{0,2000}payload\.return\.status/.test(drivers));
+  ok("and the endpoint is built rather than pasted together",
+    /async function sendKavenegar[\s\S]{0,400}kavenegarSendUrl/.test(drivers));
+  ok("the MeliPayamak address comes from the catalogue too",
+    /MELIPAYAMAK_URL = SMS_PROVIDER_SPECS\.MELIPAYAMAK\.defaultUrl/.test(drivers));
+}
 
 head("Activity category settings: usage is asked, not assumed");
 {

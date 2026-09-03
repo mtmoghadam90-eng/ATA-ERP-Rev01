@@ -13,8 +13,9 @@ import {
   BaleChatRow, MessageRow, MessageTemplateRow, ProviderSummary, messagingApi,
 } from '../api/messaging';
 import {
-  ALL_CHANNELS, CHANNELS, CHANNEL_LABELS, Channel, MESSAGE_STATUS, MESSAGE_VARIABLES,
-  SAMPLE_VARIABLE_VALUES, STATUS_LABELS, isChannel, renderTemplate, smsLength,
+  ALL_CHANNELS, ALL_SMS_PROVIDERS, CHANNELS, CHANNEL_LABELS, Channel, MESSAGE_STATUS,
+  MESSAGE_VARIABLES, SAMPLE_VARIABLE_VALUES, SMS_PROVIDERS, SMS_PROVIDER_SPECS,
+  STATUS_LABELS, isChannel, renderTemplate, smsLength, smsProviderOf, smsProviderSpec,
   templateVariables,
 } from '../utils/messaging';
 
@@ -63,12 +64,19 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
  * answers on their own domain while the certificate belongs to the host's, and
  * the one switch that gets past it was unreachable.
  */
-const PROVIDER_FIELDS: Record<Channel, { key: string; label: string; type?: string; hint?: string }[]> = {
-  SMS: [
-    { key: 'username', label: 'نام کاربری پنل' },
-    { key: 'senderNumber', label: 'شماره فرستنده' },
-    { key: 'apiUrl', label: 'آدرس سرویس (اختیاری)', hint: 'خالی بگذارید تا از ملی پیامک استفاده شود.' },
-  ],
+interface ProviderField { key: string; label: string; type?: string; hint?: string }
+
+const PROVIDER_FIELDS: Record<Channel, ProviderField[]> = {
+  /*
+   * The SMS boxes are not written out here.
+   *
+   * Which of them exist depends on the panel — MeliPayamak wants a username, a
+   * password and a line; Kavenegar wants an API key and nothing else — and a
+   * second copy of that list on the screen is how a form comes to offer a field
+   * the driver never reads, or to hide one it requires. `SMS_PROVIDER_SPECS` is
+   * the catalogue and `fieldsFor` below reads it.
+   */
+  SMS: [],
   BALE: [],
   EMAIL: [
     { key: 'host', label: 'آدرس سرور SMTP' },
@@ -95,6 +103,45 @@ const SECRET_LABELS: Record<string, string> = {
   password: 'رمز عبور',
   botToken: 'توکن ربات',
 };
+
+/**
+ * The boxes to draw for one provider row, given what its form currently says.
+ *
+ * `config` is the stored configuration with the unsaved draft laid over it, so
+ * choosing another SMS panel redraws the form immediately rather than after a
+ * save — otherwise somebody picks «کاوه‌نگار», sees a username box, and fills
+ * it in.
+ */
+function fieldsFor(channel: Channel, config: Record<string, unknown>): ProviderField[] {
+  if (channel === CHANNELS.SMS) {
+    return smsProviderSpec(config).fields.filter((f) => !f.secret);
+  }
+  return PROVIDER_FIELDS[channel];
+}
+
+/** Which secrets this panel actually uses, of all the ones the server hides. */
+function secretsFor(
+  channel: Channel,
+  config: Record<string, unknown>,
+  secrets: Record<string, string | null>,
+): string[] {
+  if (channel === CHANNELS.SMS) {
+    const used = smsProviderSpec(config).fields.filter((f) => f.secret).map((f) => f.key);
+    // The other panel's stored credentials are kept and stay hidden; they are
+    // simply not asked for while it is not the panel in use.
+    return used.filter((key) => key in secrets);
+  }
+  return Object.keys(secrets);
+}
+
+/** One label per field, from the catalogue where there is one. */
+function labelFor(channel: Channel, config: Record<string, unknown>, key: string): string {
+  if (channel === CHANNELS.SMS) {
+    const field = smsProviderSpec(config).fields.find((f) => f.key === key);
+    if (field) return field.label;
+  }
+  return SECRET_LABELS[key] ?? key;
+}
 
 export default function MessagingView({ settings, onUpdateSettings, currentUser = null }: Props) {
   const [tab, setTab] = useState<Tab>('outbox');
@@ -1010,6 +1057,8 @@ function Providers({
         const draft = drafts[row.channel] ?? {};
         const setField = (key: string, value: unknown) =>
           setDrafts((d) => ({ ...d, [row.channel]: { ...(d[row.channel] ?? {}), [key]: value } }));
+        // What is stored, with what has been typed but not saved laid over it.
+        const effective = { ...row.config, ...draft };
 
         return (
           <div key={row.channel} className="border border-slate-150 rounded-2xl p-4 bg-white space-y-3">
@@ -1035,8 +1084,33 @@ function Providers({
               </label>
             </div>
 
+            {/*
+              Which panel carries our text messages. The channel stays «پیامک»
+              whichever it is — the templates, the outbox history and the
+              customer's own number are all about the medium, not the company
+              behind it — so this is a field of the SMS configuration and not a
+              fourth channel.
+            */}
+            {row.channel === CHANNELS.SMS && (
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-600">سرویس‌دهنده پیامک</label>
+                <select
+                  value={smsProviderOf(effective)}
+                  onChange={(e) => setField('provider', e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold bg-white"
+                >
+                  {ALL_SMS_PROVIDERS.map((id) => (
+                    <option key={id} value={id}>{SMS_PROVIDER_SPECS[id].label}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-400">
+                  با تغییر سرویس‌دهنده، اطلاعات سرویس قبلی پاک نمی‌شود؛ اگر برگردید دوباره در دسترس است.
+                </p>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {PROVIDER_FIELDS[row.channel].map((field) => (
+              {fieldsFor(row.channel, effective).map((field) => (
                 <div key={field.key} className="space-y-1">
                   {field.type === 'checkbox' ? (
                     <label className="flex items-start gap-2 text-[11px] font-bold text-slate-600 cursor-pointer pt-5">
@@ -1072,16 +1146,16 @@ function Providers({
                 empty and an empty box means "leave it as it is" — the same rule
                 a password field follows, for the same reason.
               */}
-              {Object.entries(row.secrets).map(([key, hint]) => (
+              {secretsFor(row.channel, effective, row.secrets).map((key) => (
                 <div key={key} className="space-y-1">
                   <label className="text-[11px] font-bold text-slate-600">
-                    {SECRET_LABELS[key] ?? key}
+                    {labelFor(row.channel, effective, key)}
                   </label>
                   <input
                     type="password"
                     value={String(draft[key] ?? '')}
                     onChange={(e) => setField(key, e.target.value)}
-                    placeholder={hint ? `ثبت شده: ${hint}` : 'ثبت نشده'}
+                    placeholder={row.secrets[key] ? `ثبت شده: ${row.secrets[key]}` : 'ثبت نشده'}
                     dir="ltr"
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-left"
                   />
@@ -1099,6 +1173,24 @@ function Providers({
               this up — is the difference between a field people fill in and one
               they guess a phone number into.
             */}
+            {/*
+              Where the API key comes from, and the one thing about Kavenegar
+              that is not obvious: the sender line is optional. Left blank the
+              account's default line is used, which is what a company with one
+              line wants — and a line typed in that the account may not send
+              from is refused with code 412, which reads as the key being wrong.
+            */}
+            {row.channel === CHANNELS.SMS
+              && smsProviderOf(effective) === SMS_PROVIDERS.KAVENEGAR && (
+              <div className="rounded-xl bg-sky-50/60 border border-sky-100 p-3">
+                <p className="text-[11px] text-sky-900 leading-6">
+                  کلید API را از پنل کاوه‌نگار، بخش «تنظیمات ← حساب کاربری» بردارید.
+                  شماره خط فرستنده اختیاری است؛ اگر خالی بماند، خط پیش‌فرض همان حساب استفاده می‌شود.
+                  اگر حساب شما محدودیت IP دارد، آدرس IP این سرور را در پنل کاوه‌نگار مجاز کنید.
+                </p>
+              </div>
+            )}
+
             {row.channel === CHANNELS.BALE && (
               <div className="space-y-2 rounded-xl bg-amber-50/60 border border-amber-100 p-3">
                 <p className="text-[11px] text-amber-800 leading-6">
