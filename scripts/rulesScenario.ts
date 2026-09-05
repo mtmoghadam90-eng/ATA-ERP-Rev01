@@ -101,6 +101,11 @@ import {
   shouldRetry, smsConfigRefusal, smsLength, smsProviderOf, templateVariables,
 } from "../src/utils/messaging";
 import { addresseeOf, namePrefixFor } from "../src/utils/honorific";
+import {
+  ALL_DEMAND_SOURCES, DEMAND_SOURCE_SPECS, DemandLine, demandGroupingOf,
+  demandOutcomeOf, demandRefusal, demandSourceOf, describeDemand, foldDemand,
+  rankDemand,
+} from "../src/utils/demandAnalysis";
 import { APP_MODULES, DEFAULT_MODULE_ORDER } from "../src/appModules";
 import {
   attributesFromSelections, mergeSpecText, selectionsFromAttributes,
@@ -3392,6 +3397,210 @@ head("Receipts and payments: a mistake is edited or deleted");
    */
   ok("no guard refuses an amount change on a confirmed document",
     !view.includes("امکان تغییر مبلغ برای تراکنش تأیید شده وجود ندارد"));
+}
+
+head("Product demand: the question that was asked, at the level it was asked");
+{
+  /*
+   * The reported failure, pinned as arithmetic.
+   *
+   * Asked «بیشترین درخواست برای چه کالایی بوده», the assistant had no tool that
+   * counted requests, reached for `dashboard_summary`'s `revenueByCategory` —
+   * won revenue, per category — and answered with the category holding the
+   * largest settled contracts. The person asking said the count did not look
+   * large, which is exactly right: one big pressure order outweighs fifty flow
+   * meters in money and is outnumbered by them in requests.
+   */
+  const words = { won: "برنده", lost: "بازنده", cancelled: "لغو شده" };
+  const line = (over: Partial<DemandLine>): DemandLine => ({
+    documentId: "pf-1", name: "کالا", quantity: 1, ...over,
+  });
+
+  const mixed: DemandLine[] = [
+    // One pressure transmitter, quoted once, enormous.
+    line({
+      documentId: "pf-1", partyId: "c-1", productId: "p-pressure",
+      productName: "ترانسمیتر فشار", category: "فشار",
+      quantity: 2, valueRial: 9_000_000_000, status: "برنده",
+    }),
+    // Flow meters, quoted on four separate documents for three customers.
+    line({ documentId: "pf-2", partyId: "c-2", productId: "p-flow", productName: "فلومتر توربینی", category: "فلو", quantity: 3, valueRial: 100_000_000, status: "بازنده" }),
+    line({ documentId: "pf-3", partyId: "c-3", productId: "p-flow", productName: "فلومتر توربینی", category: "فلو", quantity: 5, valueRial: 120_000_000, status: null }),
+    line({ documentId: "pf-4", partyId: "c-2", productId: "p-flow", productName: "فلومتر توربینی", category: "فلو", quantity: 1, valueRial: 40_000_000, status: "برنده" }),
+    // The same document listing it twice: two lines, still one request.
+    line({ documentId: "pf-4", partyId: "c-2", productId: "p-flow", productName: "فلومتر توربینی", category: "فلو", quantity: 2, valueRial: 60_000_000, status: "وضعیت ناشناخته" }),
+  ];
+
+  const byProduct = foldDemand(mixed, "PRODUCT", words);
+  eq("the most-requested product leads, not the most valuable one",
+    byProduct[0]?.label, "فلومتر توربینی");
+  eq("and the one big contract is second", byProduct[1]?.label, "ترانسمیتر فشار");
+  eq("a document listing the same goods twice is one request",
+    byProduct[0]?.requests, 3);
+  eq("...but two lines", byProduct[0]?.lines, 4);
+  eq("distinct customers are counted, not repeats", byProduct[0]?.parties, 2);
+  eq("quantities add up", byProduct[0]?.quantity, 11);
+
+  /*
+   * The outcome split travels on every row, so «کدام کالا را بیشتر باخته‌ایم»
+   * needs no second call — and OPEN is an **exclusion**, so a null status and a
+   * status nobody anticipated are both still in play rather than vanishing.
+   */
+  eq("won lines are counted", byProduct[0]?.wonLines, 1);
+  eq("lost lines are counted", byProduct[0]?.lostLines, 1);
+  eq("a null status and an unknown one are both still open", byProduct[0]?.openLines, 2);
+
+  ok("every measure is on every row, so one cannot be reported as another",
+    byProduct.every((r) =>
+      typeof r.requests === "number" && typeof r.quantity === "number"
+      && typeof r.valueRial === "number"));
+
+  /* The level is the other half of the fault: a category is not a product. */
+  const byCategory = foldDemand(mixed, "CATEGORY", words);
+  eq("asked for categories, it answers in categories", byCategory[0]?.label, "فلو");
+  eq("and there are exactly two of them here", byCategory.length, 2);
+  eq("but the product level is the default, never the category",
+    demandGroupingOf(undefined), "PRODUCT");
+  eq("an unknown grouping falls back to the product too",
+    demandGroupingOf("REGION"), "PRODUCT");
+
+  /*
+   * A product is grouped by its **id**. `productName` is copied onto the line
+   * at save time, so a product renamed since would otherwise split its own
+   * history into two rows that each understate it.
+   */
+  const renamed = foldDemand([
+    line({ documentId: "a", productId: "p-1", productName: "فلومتر", name: "فلومتر" }),
+    line({ documentId: "b", productId: "p-1", productName: "فلومتر مغناطیسی", name: "فلومتر" }),
+  ], "PRODUCT", words);
+  eq("a product renamed since does not split its own history", renamed.length, 1);
+  eq("...and it is counted twice", renamed[0]?.requests, 2);
+
+  /*
+   * A free-text line has no product and must not be dropped: it is the half of
+   * «چه چیزی از ما می‌خواهند» about goods the company does not yet carry.
+   */
+  const freeText = foldDemand([
+    line({ documentId: "a", name: "شير كنترل ۴ اينچ" }),
+    line({ documentId: "b", name: "شیر  کنترل ۴ اینچ" }),
+    line({ documentId: "c", productId: "p-9", productName: "شیر کنترل ۴ اینچ" }),
+  ], "PRODUCT", words);
+  eq("two spellings of one free-text line are one row", freeText.length, 2);
+  ok("the off-catalogue row is marked as such",
+    freeText.some((r) => r.offCatalogue && r.requests === 2));
+  ok("and a free-text row is never merged into the catalogue item it resembles",
+    freeText.some((r) => !r.offCatalogue && r.requests === 1));
+
+  /* The SKU level, for «کدام سایز را بیشتر می‌خواهند». */
+  const bySku = foldDemand([
+    line({ documentId: "a", productId: "p-1", variantId: "v-6", variantSku: "FL-6IN", productName: "فلومتر" }),
+    line({ documentId: "b", productId: "p-1", variantId: "v-6", variantSku: "FL-6IN", productName: "فلومتر" }),
+    line({ documentId: "c", productId: "p-1", variantId: "v-2", variantSku: "FL-2IN", productName: "فلومتر" }),
+  ], "VARIANT", words);
+  eq("the SKUs are separated", bySku.length, 2);
+  eq("and the commonest leads", bySku[0]?.variantSku, "FL-6IN");
+
+  /* The ranking is total, so the same question cannot answer two ways. */
+  const tied = rankDemand([
+    { requests: 2, quantity: 5, valueRial: 10, label: "ب" },
+    { requests: 2, quantity: 5, valueRial: 10, label: "الف" },
+    { requests: 2, quantity: 9, valueRial: 1, label: "ج" },
+  ]);
+  eq("quantity breaks a tie in the count", tied[0]?.label, "ج");
+  eq("and the name breaks the rest, so the order is repeatable", tied[1]?.label, "الف");
+
+  /* Absent means the quotation — the ordinary meaning of «درخواست». */
+  eq("absent source is the quotation", demandSourceOf(undefined), "PROFORMA");
+  eq("an unknown source falls back to it", demandSourceOf("EMAIL"), "PROFORMA");
+  eq("absent outcome counts everything", demandOutcomeOf(undefined), "ALL");
+
+  ok("only the quotation carries an outcome",
+    DEMAND_SOURCE_SPECS.PROFORMA.hasOutcome
+    && !DEMAND_SOURCE_SPECS.PROJECT.hasOutcome
+    && !DEMAND_SOURCE_SPECS.INQUIRY.hasOutcome);
+  ok("and every source says what one of its rows means",
+    ALL_DEMAND_SOURCES.every((id) =>
+      DEMAND_SOURCE_SPECS[id].meaning.trim() !== ""
+      && DEMAND_SOURCE_SPECS[id].label.trim() !== ""));
+
+  /*
+   * The result carries its own sentence, because the failure was a model
+   * reading a number whose meaning it had to infer from a field name.
+   */
+  const said = describeDemand({
+    source: "PROFORMA", grouping: "PRODUCT", outcome: "LOST",
+    fromJalali: "1404/01/01", toJalali: "1404/12/29", category: "فلو", truncated: false,
+  });
+  ok("the sentence names the source", said.includes("پیش‌فاکتور"));
+  ok("...the level", said.includes("کالا"));
+  ok("...the outcome when it is not everything", said.includes("بازنده"));
+  ok("...the period", said.includes("1404/01/01") && said.includes("1404/12/29"));
+  ok("...and the category filter", said.includes("فلو"));
+  ok("a whole-history answer says so rather than leaving it open",
+    describeDemand({
+      source: "PROFORMA", grouping: "PRODUCT", outcome: "ALL", truncated: false,
+    }).includes("کل سوابق"));
+  ok("a truncated scan warns in the same sentence, so the answer repeats it",
+    describeDemand({
+      source: "PROFORMA", grouping: "PRODUCT", outcome: "ALL", truncated: true,
+    }).includes("هشدار"));
+
+  /*
+   * A reversed range answers with nothing, and «هیچ کالایی درخواست نشده» is a
+   * sentence somebody would believe.
+   */
+  ok("a reversed range is refused by name",
+    (demandRefusal("1405/06/01", "1405/01/01") ?? "").includes("وارونه"));
+  eq("an ordinary range is not", demandRefusal("1405/01/01", "1405/06/01"), null);
+  eq("and an open-ended one is not either", demandRefusal("", ""), null);
+
+  /* ---- the two ends the pure rules cannot see ---- */
+
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const tools = strip(readFileSync("src/server/services/assistant/tools.ts", "utf-8"));
+  ok("the tools file survived having its comments stripped",
+    tools.includes("dashboard_summary"));
+  ok("the demand tool is registered", tools.includes('name: "product_demand"'));
+  ok("and it goes through the service rather than reading the tables here",
+    /product_demand[\s\S]{0,3000}productDemand\(/.test(tools));
+
+  /*
+   * The tool that produced the wrong answer now points away from itself. A
+   * description is the only thing standing between a category-level money
+   * figure and a product-level count question.
+   */
+  ok("dashboard_summary says its category figures are money, not counts",
+    /dashboard_summary[\s\S]{0,1600}revenueByCategory/.test(tools));
+  ok("...and names the tool that does answer a demand question",
+    /dashboard_summary[\s\S]{0,1600}product_demand/.test(tools));
+
+  const service = strip(readFileSync("src/server/services/demandService.ts", "utf-8"));
+  ok("the demand service survived having its comments stripped",
+    service.includes("productDemand"));
+  ok("every source is read through its own module's visibility rule",
+    service.includes("proformaVisibility") && service.includes("projectVisibility")
+    && /hasPermission\(user, "suppliers"\)/.test(service));
+  ok("the scan is bounded and reports being cut short",
+    service.includes("DEMAND_SCAN_LIMIT") && service.includes("truncated"));
+
+  /*
+   * The prompt rule is the fix for the *class* of failure: every instruction
+   * the assistant had was obeyed when it gave the wrong answer, because none of
+   * them said that a near answer is a wrong answer.
+   */
+  const prompt = buildSystemPrompt({
+    companyName: "x", todayJalali: "1405/06/01", userName: "y",
+    canSeeCosts: true, actionsAllowed: false, actions: [], extra: "",
+  });
+  ok("it is told not to answer a nearby question instead",
+    prompt.includes("سوال نزدیک"));
+  ok("...that a count is not an amount and a category is not a product",
+    prompt.includes("«تعداد» با «مبلغ»") && prompt.includes("«دسته‌بندی» با «کالا»"));
+  ok("...to repeat what a tool says it measured", prompt.includes("measured"));
+  ok("...to show the runners-up on a superlative question",
+    prompt.includes("بیشترین/کمترین"));
+  ok("...and to pass a truncation warning on", prompt.includes("ناقص یا بریده"));
 }
 
 head("Assistant: a temperature the model refuses to be told");

@@ -204,6 +204,31 @@ export function buildSystemPrompt(input: {
     "- مبالغ را با رقم لاتین و جداکننده هزارگان بنویس (مثال: 12,500,000).",
     "- برای هر سوالی که به داده نیاز دارد، اول ابزار مناسب را صدا بزن؛ از حافظه جواب نده.",
     "- وقتی چند رکورد را خلاصه می‌کنی، تعداد کل و بازه‌ی زمانی را هم بگو.",
+    /*
+     * The rule the reported failure needed, and the one no tool can supply.
+     *
+     * Asked «بیشترین درخواست برای چه کالایی بوده», the assistant reached for
+     * the only nearby number it had — `revenueByCategory`, which is won revenue
+     * per category — and answered «فشار». Every instruction above was obeyed:
+     * the figure came from a tool, nothing was guessed, it was in rial. What
+     * was missing is that a *near* answer is a wrong answer, and that saying so
+     * is a better outcome than a confident substitute nobody can tell apart
+     * from the real thing.
+     */
+    "",
+    "درباره‌ی «دقیقاً همان چیزی که پرسیده شده»:",
+    "- اگر هیچ ابزاری دقیقاً همان چیزی را که پرسیده شده اندازه نمی‌گیرد، صریح بگو"
+    + " که این عدد را نداریم و بگو نزدیک‌ترین چیزی که داری چیست. هرگز جواب یک"
+    + " سوال نزدیک را به جای جواب سوال اصلی نده.",
+    "- «تعداد» با «مبلغ» یکی نیست، «برنده‌شده» با «درخواست‌شده» یکی نیست، و"
+    + " «دسته‌بندی» با «کالا» یکی نیست. اگر سوال درباره‌ی یک کالاست، در سطح کالا"
+    + " جواب بده؛ اگر فقط داده‌ی سطح دسته‌بندی داری، همین را بگو.",
+    "- در پاسخ بگو چه چیزی را شمرده‌ای و در چه بازه‌ای. اگر خروجی ابزار فیلدی به"
+    + " نام measured داشت، همان را مبنای این جمله قرار بده.",
+    "- برای سوال‌های «بیشترین/کمترین/پرتکرارترین/پرفروش‌ترین»، علاوه بر رتبه‌ی اول،"
+    + " دو سه ردیف بعدی و عدد هرکدام را هم بیاور تا فاصله‌شان معلوم باشد.",
+    "- اگر خروجی ابزار هشدار داد که داده‌ها ناقص یا بریده شده‌اند، همان هشدار را"
+    + " به کاربر منتقل کن.",
   ];
 
   if (!input.canSeeCosts) {
