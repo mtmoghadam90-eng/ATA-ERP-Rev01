@@ -16,8 +16,13 @@ import {
   FOLLOW_UP_SORTABLE, followUpSummary, listFollowUpQueue, projectFollowUpReport,
 } from "../followUpService";
 import { LANE_FILTERS } from "../../../utils/workBoard";
+import {
+  ALL_DEMAND_GROUPINGS, ALL_DEMAND_OUTCOMES, ALL_DEMAND_SOURCES,
+  demandGroupingOf, demandOutcomeOf, demandSourceOf,
+} from "../../../utils/demandAnalysis";
 import { listCategoryGroups, REFERRAL_SORTABLE, listReferrals } from "../activityService";
 import { dashboardSummary } from "../dashboardService";
+import { productDemand } from "../demandService";
 import { summarizeProjectFinance } from "../projectFinance";
 import { dateToJalali, jalaliToDate } from "../../dates";
 import type { ChatToolDefinition } from "./provider";
@@ -102,8 +107,21 @@ export function assistantTools(): AssistantTool[] {
         name: "dashboard_summary",
         description:
           "خلاصه‌ی کل کسب‌وکار: تعداد مشتری، کالا و پروژه، موجودی رو به اتمام،"
-          + " سفارش‌های خرید باز، ارزش قراردادهای برنده و در جریان، نرخ برد،"
-          + " وضعیت پروژه‌ها و فروش به تفکیک دسته‌بندی کالا.",
+          + " سفارش‌های خرید باز، ارزش قراردادهای برنده و در جریان، نرخ برد و"
+          + " وضعیت پروژه‌ها."
+          /*
+           * Spelled out because it was being mistaken for a demand figure and
+           * reported as one. `revenueByCategory` is *money already won*, summed
+           * per category — so the largest entry is whichever category holds the
+           * biggest settled contracts, which is routinely not the one most
+           * often asked for. A single sentence in a description is what stands
+           * between that number and an answer to a different question.
+           */
+          + " دو فیلد دسته‌بندی این ابزار «مبلغ» است، نه «تعداد»:"
+          + " revenueByCategory یعنی درآمد قراردادهای برنده به تفکیک دسته و"
+          + " conversionByCategory یعنی نرخ برد به تفکیک دسته."
+          + " برای «چه کالایی بیشتر درخواست شده» یا هر پرسش پرتکرارترین/پرفروش‌ترین"
+          + " کالا، این ابزار پاسخ نیست؛ از product_demand استفاده کن.",
         parameters: object({}),
       },
       run: async (_args, ctx) => dashboardSummary(ctx.user),
@@ -454,6 +472,56 @@ export function assistantTools(): AssistantTool[] {
         );
         return { ...result, rows: result.rows.map((row) => redactProduct(row, ctx.user)) };
       },
+    },
+
+    {
+      definition: {
+        name: "product_demand",
+        description:
+          "پرتکرارترین کالاهای درخواست‌شده: هر کالا چند بار و در چند سند درخواست"
+          + " شده، چه تعدادی، از چند مشتری، و چند ردیفش برنده یا بازنده شده است."
+          + " پاسخ همیشه در سطح «کالا»ست مگر groupBy را عوض کنی."
+          + " برای این پرسش‌ها همین ابزار درست است: بیشترین/کمترین درخواست،"
+          + " پرتکرارترین کالا، پرفروش‌ترین کالا، کالایی که بیشتر باخته‌ایم،"
+          + " تقاضای یک دسته یا یک بازه زمانی."
+          + " خروجی یک فیلد measured دارد که می‌گوید دقیقاً چه چیزی شمرده شده؛"
+          + " آن را در پاسخت بازگو کن.",
+        parameters: object({
+          source: {
+            type: "string",
+            enum: [...ALL_DEMAND_SOURCES],
+            description:
+              "PROFORMA = درخواست قیمت مشتری در پیش‌فاکتور (پیش‌فرض و معنای"
+              + " معمول «درخواست»)، PROJECT = اقلام مورد نیاز پروژه‌ها،"
+              + " INQUIRY = استعلام‌های ما از تأمین‌کننده.",
+          },
+          groupBy: {
+            type: "string",
+            enum: [...ALL_DEMAND_GROUPINGS],
+            description: "PRODUCT (پیش‌فرض) | VARIANT (کد فنی) | CATEGORY (دسته‌بندی)",
+          },
+          outcome: {
+            type: "string",
+            enum: [...ALL_DEMAND_OUTCOMES],
+            description: "فقط برای PROFORMA: ALL (پیش‌فرض) | WON | LOST | OPEN",
+          },
+          from: { type: "string", description: "از تاریخ شمسی YYYY/MM/DD (اختیاری)" },
+          to: { type: "string", description: "تا تاریخ شمسی YYYY/MM/DD (اختیاری)" },
+          category: { type: "string", description: "فقط یک دسته‌بندی کالا (اختیاری)" },
+          search: { type: "string", description: "محدود کردن به کالاهایی با این نام (اختیاری)" },
+          limit: { type: "number", description: "چند ردیف برگردد، حداکثر ۵۰" },
+        }),
+      },
+      run: async (args, ctx) => productDemand({
+        source: demandSourceOf(args.source),
+        grouping: demandGroupingOf(args.groupBy),
+        outcome: demandOutcomeOf(args.outcome),
+        fromJalali: str(args.from) || null,
+        toJalali: str(args.to) || null,
+        category: str(args.category) || null,
+        search: str(args.search) || null,
+        limit: Math.min(50, Math.max(1, num(args.limit, 15))),
+      }, ctx.user),
     },
 
     {
