@@ -327,6 +327,19 @@ export interface ProformaItem {
   deliveryUnit?: 'روز' | 'هفته' | 'ماه' | 'آماده تحویل';
   deliveryType?: 'کاری' | 'تقویمی';
   deliveryPostfix?: string;
+  /**
+   * What the customer pays and when, from `settings.dropdownItems.paymentTerms`.
+   *
+   * Per line and not on the document, for the same reason the four delivery
+   * fields are: a quotation mixing goods off the shelf with goods on order has
+   * two payment arrangements. Deliberately a plain string rather than a union —
+   * the list is the company's own and editable, so a value typed into settings
+   * must not have to be typed here too.
+   *
+   * Absent means «nobody has said», which `paymentPhrase` reads differently
+   * from every value the list offers.
+   */
+  paymentTerm?: string;
   tagNumber?: string;
 }
 

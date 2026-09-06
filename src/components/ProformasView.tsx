@@ -1325,6 +1325,9 @@ export default function ProformasView({
       deliveryType: item.deliveryType || "کاری",
       deliveryPostfix:
         item.deliveryPostfix || "پس از تایید پیش فاکتور و دریافت پیش پرداخت",
+      // `??`, not `||`: a document written before this column existed has none,
+      // and «nobody has said» is what its notes were already written against.
+      paymentTerm: item.paymentTerm ?? "",
     }));
     setItems(loadedItems);
     const allEqual =
@@ -1334,7 +1337,12 @@ export default function ProformasView({
               it.deliveryRange === loadedItems[0].deliveryRange &&
               it.deliveryUnit === loadedItems[0].deliveryUnit &&
               it.deliveryType === loadedItems[0].deliveryType &&
-              it.deliveryPostfix === loadedItems[0].deliveryPostfix,
+              it.deliveryPostfix === loadedItems[0].deliveryPostfix &&
+              // The toggle governs both now, so a document whose rows agree on
+              // delivery and differ on payment has to open with it off — or the
+              // uniform block would show the first row's terms as the whole
+              // document's and quietly write them over the rest on the next edit.
+              (it.paymentTerm ?? "") === (loadedItems[0].paymentTerm ?? ""),
           )
         : true;
     setIsEqualDelivery(allEqual);
@@ -1514,6 +1522,7 @@ export default function ProformasView({
     const range = isEqualDelivery && firstItem ? firstItem.deliveryRange : "۳-۴";
     const unit = isEqualDelivery && firstItem ? firstItem.deliveryUnit : ("هفته" as const);
     const dtype = isEqualDelivery && firstItem ? firstItem.deliveryType : ("کاری" as const);
+    const payment = isEqualDelivery && firstItem ? (firstItem.paymentTerm ?? "") : "";
     const postfix = isEqualDelivery && firstItem
       ? firstItem.deliveryPostfix
       : "پس از تایید پیش فاکتور و دریافت پیش پرداخت";
@@ -1538,6 +1547,7 @@ export default function ProformasView({
         deliveryUnit: unit,
         deliveryType: dtype,
         deliveryPostfix: postfix,
+        paymentTerm: payment,
         status: "جاری",
       } as ProformaItem,
     ]);
@@ -1572,6 +1582,7 @@ export default function ProformasView({
       isEqualDelivery && firstItem ? firstItem.deliveryUnit : ("هفته" as const);
     const dtype =
       isEqualDelivery && firstItem ? firstItem.deliveryType : ("کاری" as const);
+    const payment = isEqualDelivery && firstItem ? (firstItem.paymentTerm ?? "") : "";
     const postfix =
       isEqualDelivery && firstItem
         ? firstItem.deliveryPostfix
@@ -1601,6 +1612,7 @@ export default function ProformasView({
         deliveryUnit: unit,
         deliveryType: dtype,
         deliveryPostfix: postfix,
+        paymentTerm: payment,
       },
     ];
     setItems(newItems);
@@ -1685,6 +1697,12 @@ export default function ProformasView({
         deliveryPostfix:
           firstItem.deliveryPostfix ||
           "پس از تایید پیش فاکتور و دریافت پیش پرداخت",
+        /*
+          `??`, not `||`. «انتخاب نشده» is a deliberate answer, so switching the
+          uniform toggle on has to copy the first row's *blank* down as a blank
+          rather than reaching for a default that does not exist.
+        */
+        paymentTerm: firstItem.paymentTerm ?? "",
       }));
       setItems(updatedItems);
       setNotes((prevNotes) =>
@@ -2050,6 +2068,18 @@ export default function ProformasView({
   const unitOptions = settings?.dropdownItems?.units?.length
     ? settings.dropdownItems.units
     : ["عدد"];
+
+  /**
+   * The payment arrangements this company offers, from its own settings.
+   *
+   * Read from `dropdownItems.paymentTerms` rather than written out here for the
+   * same reason the units are: it is the company's list, editable on the
+   * settings screen, and a second copy in a form is one that goes out of date
+   * silently. There is no fallback list — a settings record with none offers
+   * only «انتخاب نشده», which is the honest answer and points at the screen
+   * where the terms are added.
+   */
+  const paymentTermOptions = settings?.dropdownItems?.paymentTerms ?? [];
   /** A catalogue product brings its own unit; anything else starts at the first. */
   const defaultUnitFor = (unit?: string) => unit || unitOptions[0];
 
@@ -4405,7 +4435,15 @@ export default function ProformasView({
                         }
                         className="rounded border-slate-300 text-sky-500 focus:ring-sky-500 w-4 h-4 cursor-pointer"
                       />
-                      <span>زمان تحویل یکسان برای همه ردیف‌ها</span>
+                      {/*
+                        One switch for both, because it answers one question —
+                        «do these lines share their terms?» — and a second
+                        checkbox beside it would let somebody set uniform
+                        delivery with per-row payment, which no quotation here
+                        has ever needed and which doubles the states this form
+                        can be in.
+                      */}
+                      <span>زمان تحویل و نحوه پرداخت یکسان برای همه ردیف‌ها</span>
                     </label>
                     <button
                       type="button"
@@ -4541,6 +4579,44 @@ export default function ProformasView({
                           placeholder="توضیح تکمیلی..."
                           className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none text-right"
                         />
+                      </div>
+
+                      {/*
+                        The payment terms, from the company's own list.
+
+                        «انتخاب نشده» is a real answer and not a placeholder:
+                        ready stock still prints «۱۰۰٪ کل مبلغ در زمان تحویل
+                        کالا» when nothing is chosen — the rule that shipped
+                        before this field existed — and ordinary goods print no
+                        payment section at all, because an arrangement nobody
+                        agreed to must not appear in a document that goes to a
+                        customer.
+                      */}
+                      <div className="space-y-1 sm:col-span-2">
+                        <label className="text-[10px] font-bold text-slate-500 block">
+                          نحوه پرداخت
+                        </label>
+                        <select
+                          value={items[0]?.paymentTerm ?? ""}
+                          onChange={(e) =>
+                            handleItemDeliveryFieldChange(
+                              0,
+                              "paymentTerm",
+                              e.target.value,
+                            )
+                          }
+                          className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold bg-white focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none text-right"
+                        >
+                          <option value="">انتخاب نشده</option>
+                          {paymentTermOptions.map((term) => (
+                            <option key={term} value={term}>{term}</option>
+                          ))}
+                        </select>
+                        {paymentTermOptions.length === 0 && (
+                          <span className="text-[9px] text-amber-600 block">
+                            فهرست «نحوه پرداخت» در تنظیمات خالی است.
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -5380,6 +5456,29 @@ export default function ProformasView({
                                 placeholder="توضیح تکمیلی..."
                                 className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none text-right"
                               />
+                            </div>
+
+                            {/* This row's own payment terms — see the uniform block. */}
+                            <div className="space-y-1 sm:col-span-2">
+                              <label className="text-[9px] font-bold text-slate-500 block">
+                                نحوه پرداخت
+                              </label>
+                              <select
+                                value={item.paymentTerm ?? ""}
+                                onChange={(e) =>
+                                  handleItemDeliveryFieldChange(
+                                    idx,
+                                    "paymentTerm",
+                                    e.target.value,
+                                  )
+                                }
+                                className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold bg-white focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none text-right"
+                              >
+                                <option value="">انتخاب نشده</option>
+                                {paymentTermOptions.map((term) => (
+                                  <option key={term} value={term}>{term}</option>
+                                ))}
+                              </select>
                             </div>
                           </div>
                         </div>

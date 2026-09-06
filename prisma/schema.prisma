@@ -836,6 +836,21 @@ model ProformaItem {
   deliveryType    String? @db.NVarChar(20)
   deliveryPostfix String? @db.NVarChar(100)
 
+  /// What the customer pays and when, chosen from
+  /// `settings.dropdownItems.paymentTerms`.
+  ///
+  /// Per line and not on the document, for the same reason the four delivery
+  /// fields are: a quotation that mixes goods off the shelf with goods on a
+  /// four-month order genuinely has two payment arrangements, and one field on
+  /// the header could only ever describe one of them.
+  ///
+  /// Null means nobody has said, which is not any of the values in the list —
+  /// ready stock still implies «۱۰۰٪ در زمان تحویل» when this is empty, and
+  /// ordinary goods imply nothing, because a payment arrangement is negotiated
+  /// and guessing one into a document that goes to a customer is worse than
+  /// leaving the question to whoever is writing it.
+  paymentTerm String? @db.NVarChar(200)
+
   selectedFeatures String? @db.NVarChar(Max)
   selectedImage    String? @db.NVarChar(500)
 
