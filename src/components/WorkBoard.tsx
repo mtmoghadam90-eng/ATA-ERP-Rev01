@@ -1,4 +1,9 @@
-import { CheckCircle2, CornerDownLeft, Inbox, ListTodo, MessageSquare, Phone } from 'lucide-react';
+import { useState } from 'react';
+import {
+  CheckCircle2, ChevronDown, ChevronUp, CornerDownLeft, Inbox, ListTodo, MessageSquare, Phone,
+} from 'lucide-react';
+
+import { cardDetail, hasMoreToShow } from '../utils/cardSummary';
 
 import {
   BOARD_LANES, BoardLane, BoardSort, LANE_LABELS, MovableLane, TASK_CANCELLED,
@@ -35,6 +40,16 @@ export interface BoardTaskCard {
   assignedTo?: string | null;
   createdBy?: string | null;
   context?: { code: string; name: string; customerName: string | null } | null;
+  /**
+   * What the task is *for*. On a chase this is «شرح اقدام بعدی» — the
+   * instruction whoever closed the previous call left for this one — and it
+   * was drawn in the list view only, so the board named the quotation and said
+   * nothing about what to do with it.
+   */
+  description?: string | null;
+  /** What the customer said, and the note about the call, once it closed. */
+  followUpResult?: string | null;
+  completionNote?: string | null;
 }
 
 export interface BoardReferralCard {
@@ -129,6 +144,22 @@ const LANE_NOTE: Partial<Record<BoardLane, string>> = {
 export default function WorkBoard({
   cards, sort, today, load, selected, onToggleSelect, onMove, onOpen, moving,
 }: Props) {
+  /*
+   * Which cards are showing their detail. A per-card disclosure and not data,
+   * so it lives here and nowhere else — and it is deliberately **not** a modal:
+   * the card's title already opens the record's own form, so a pop-up here
+   * would be a second overlay from the same card with nothing saying which
+   * button gives which. Expanding in place also keeps the neighbouring columns
+   * on screen, which is the reason a person is looking at a board rather than
+   * at the list.
+   */
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const toggleExpanded = (key: string) => setExpanded((prev) => {
+    const next = new Set(prev);
+    if (!next.delete(key)) next.add(key);
+    return next;
+  });
+
   const byLane: Record<BoardLane, BoardCard[]> = { WAITING: [], TODO: [], DOING: [], DONE: [] };
   for (const card of cards) byLane[laneOf(card, today)].push(card);
   for (const lane of BOARD_LANES) byLane[lane] = sortBoardCards(byLane[lane], sort);
@@ -218,6 +249,21 @@ export default function WorkBoard({
                 const key = cardKey(card);
                 const isSelected = selected.has(key);
                 const cancelled = card.kind === 'task' && card.status === TASK_CANCELLED;
+                /*
+                  The card's two halves. A referral's headline is the message
+                  itself, so its detail is that message in full and it carries
+                  no blocks; a task's headline is short and everything worth
+                  reading is in the blocks.
+                */
+                const detail = cardDetail({
+                  headline: card.title,
+                  description: card.kind === 'task' ? card.description : null,
+                  followUpResult: card.kind === 'task' ? card.followUpResult : null,
+                  completionNote: card.kind === 'task' ? card.completionNote : null,
+                  isFollowUp: card.kind === 'task' && card.taskKind === 'SALES_FOLLOW_UP',
+                });
+                const isOpen = expanded.has(key);
+                const showMore = hasMoreToShow(detail);
 
                 return (
                   <div
@@ -236,12 +282,22 @@ export default function WorkBoard({
                         className="mt-0.5 accent-sky-500"
                         aria-label="انتخاب برای انتقال"
                       />
+                      {/*
+                        The headline still opens the record — same gesture as
+                        the list. Collapsed it is the one-line summary, so a
+                        column of referrals reads as a column and not as three
+                        paragraphs; expanded it is the writer's own text, line
+                        breaks and all.
+                      */}
                       <button
                         type="button"
                         onClick={() => onOpen(card)}
-                        className="flex-1 text-right text-[12px] font-bold text-slate-800 leading-relaxed hover:text-sky-700 transition"
+                        id={`work-board-open-${key}`}
+                        className={`flex-1 text-right text-[12px] font-bold text-slate-800 leading-relaxed hover:text-sky-700 transition ${
+                          isOpen ? 'whitespace-pre-line break-words' : ''
+                        }`}
                       >
-                        {card.title}
+                        {isOpen ? card.title : detail.summary}
                       </button>
                     </div>
 
@@ -282,7 +338,61 @@ export default function WorkBoard({
                           کنسل شده
                         </span>
                       )}
+
+                      {/*
+                        The press that shows the rest.
+
+                        Drawn only when there *is* a rest: a button that expands
+                        to what is already on the card teaches the reader that
+                        it says nothing, and then they stop pressing it on the
+                        cards where it says something. It sits with the badges
+                        because it belongs to the card and not to the record —
+                        opening the record is the title, one row above.
+                      */}
+                      {showMore && (
+                        <button
+                          type="button"
+                          onClick={() => toggleExpanded(key)}
+                          id={`work-board-detail-${key}`}
+                          aria-expanded={isOpen}
+                          title={isOpen ? 'بستن شرح' : 'نمایش شرح کامل'}
+                          className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-white border-slate-200 text-slate-600 hover:text-sky-600 hover:border-sky-300 transition inline-flex items-center gap-1"
+                        >
+                          {isOpen ? <ChevronUp size={9} /> : <ChevronDown size={9} />}
+                          {isOpen ? 'بستن' : 'شرح'}
+                        </button>
+                      )}
                     </div>
+
+                    {/*
+                      Everything the headline does not say, in reading order:
+                      what this is for, then — on a chase that has closed — what
+                      the customer said and the note about the call. Each is
+                      `whitespace-pre-line`, because the line breaks are the
+                      writer's own, and a blank field is left out rather than
+                      given an empty heading.
+                    */}
+                    {isOpen && detail.blocks.length > 0 && (
+                      <div className="pr-6 space-y-1.5">
+                        {detail.blocks.map((block) => (
+                          <div
+                            key={block.label}
+                            className={block.tone === 'done'
+                              ? 'rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5'
+                              : ''}
+                          >
+                            <span className={`block text-[9px] font-bold mb-0.5 ${
+                              block.tone === 'done' ? 'text-emerald-700' : 'text-slate-400'
+                            }`}>
+                              {block.label}
+                            </span>
+                            <p className="text-[11px] text-slate-600 break-words whitespace-pre-line leading-relaxed">
+                              {block.body}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
                     {card.context && (card.context.code || card.context.customerName) && (
                       <div className="pr-6 text-[10px] text-sky-700 flex flex-wrap items-center gap-1">

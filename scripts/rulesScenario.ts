@@ -227,6 +227,9 @@ import {
 import {
   PROJECT_STAGES, STAGE_FOR_PO_STATUS, deriveProjectStage, resolveStage, stageRank,
 } from "../src/utils/projectStage";
+import {
+  DETAIL_LABELS, SUMMARY_LIMIT, cardDetail, hasMoreToShow, summarizeText,
+} from "../src/utils/cardSummary";
 import { readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -10404,6 +10407,135 @@ head("The corrections batch: uploads, the board, the feed and the front page");
     /پایپ‌لاین پروژه‌ها و فروش/.test(dashboard) && !/پیپ‌لاین/.test(dashboard));
   ok("and a withdrawn opportunity is counted apart from the losses",
     /summary\.revenue\.cancelledCount/.test(dashboard));
+}
+
+head("A board card summarises, and keeps the rest behind one press");
+{
+  const strip = (text: string) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* ---------------------------- the summary ------------------------------ */
+
+  // Short text is printed as it stands: an ellipsis on a title that fits is a
+  // claim there is more to read, and the button beside it would say nothing.
+  const short = summarizeText("پیگیری پیش‌فاکتور شرکت آزمون");
+  eq("a short headline is untouched", short.summary, "پیگیری پیش‌فاکتور شرکت آزمون");
+  ok("...and nothing is hidden behind it", short.truncated === false);
+  ok("...so the card offers no button",
+    hasMoreToShow({ summary: short.summary, truncated: short.truncated, blocks: [] }) === false);
+
+  const long = summarizeText("الف ".repeat(80));
+  ok("a long headline is cut", long.truncated);
+  ok("...to within the limit", long.summary.length <= SUMMARY_LIMIT + 1, long.summary.length);
+  ok("...and says so", long.summary.endsWith("…"));
+  // A cut inside a word reads as a typo rather than as an abbreviation, so the
+  // body has to be a prefix of the text ending exactly where a space was.
+  const longFolded = "الف ".repeat(80).replace(/\s+/g, " ").trim();
+  const longBody = long.summary.slice(0, -1);
+  ok("...at a word boundary, never inside a word",
+    longFolded.startsWith(longBody) && longFolded[longBody.length] === " ",
+    longBody.slice(-8));
+
+  /*
+   * The one a length check alone gets wrong. A message whose first line is
+   * «سلام» and which runs to ten lines below it folds to something well inside
+   * the limit — so on length alone the card would report that nothing was cut
+   * and offer no way to read the rest, which is exactly where the button is
+   * wanted. The comparison is against the original text, not its folded form.
+   */
+  const multi = summarizeText("سلام\nلطفاً دیتاشیت را بررسی کن\nو قیمت رقیب را بگیر");
+  ok("a multi-line message is truncated even though it folds to one short line",
+    multi.truncated && multi.summary.length < SUMMARY_LIMIT);
+  ok("...and the fold is a single line", !multi.summary.includes("\n"));
+
+  // A single unbroken token has no boundary to cut at and is cut where it
+  // stands — dropping it to nothing would leave a card with no headline.
+  const token = summarizeText("x".repeat(200));
+  ok("an unbroken token is cut hard rather than dropped",
+    token.truncated && token.summary.length > SUMMARY_LIMIT / 2);
+
+  eq("an empty headline stays empty", summarizeText("").summary, "");
+  ok("...and hides nothing", summarizeText("   ").truncated === false);
+
+  /* ----------------------------- the blocks ------------------------------ */
+
+  const chase = cardDetail({
+    headline: "پیگیری پیش‌فاکتور ۱۴۰۴-۱۲",
+    description: "قیمت رقیب را بگیر و ۵٪ تخفیف پیشنهاد کن",
+    followUpResult: "خرید به تعویق افتاد",
+    completionNote: "بعد از نوروز تماس بگیریم",
+    isFollowUp: true,
+  });
+  eq("a chase reads its three blocks in order",
+    chase.blocks.map((b) => b.label).join(" | "),
+    [DETAIL_LABELS.followUpDescription, DETAIL_LABELS.followUpResult,
+      DETAIL_LABELS.completionNote].join(" | "));
+  ok("...with what already happened set apart from what is being asked for",
+    chase.blocks.map((b) => b.tone).join(",") === "plain,done,done");
+  ok("...and a card with blocks offers the button even when the title fits",
+    chase.truncated === false && hasMoreToShow(chase));
+
+  // The same column, under the name that column means on an ordinary task.
+  const task = cardDetail({ headline: "تهیه لیست بسته‌بندی", description: "با انبار هماهنگ شود" });
+  eq("an ordinary task names it «شرح»", task.blocks[0].label, DETAIL_LABELS.description);
+
+  /*
+   * A heading with nothing under it is worse than no heading, and «شرح» is
+   * blank on most tasks somebody typed in a hurry.
+   */
+  const blank = cardDetail({
+    headline: "تماس با مشتری", description: "   ", followUpResult: "", completionNote: null,
+  });
+  ok("a blank field produces no block", blank.blocks.length === 0);
+  ok("...so a card with nothing to add offers no button", hasMoreToShow(blank) === false);
+
+  // A referral's headline *is* the message, so its detail is that message in
+  // full and it carries no blocks at all.
+  const referral = cardDetail({ headline: "الف ".repeat(80) });
+  ok("a referral discloses its own message and nothing else",
+    referral.blocks.length === 0 && referral.truncated && hasMoreToShow(referral));
+
+  /* -------------------- read from the source, once ----------------------- */
+
+  const board = strip(readFileSync("src/components/WorkBoard.tsx", "utf8"));
+  ok("the board source survived having its comments stripped",
+    board.includes("BOARD_LANES.map"));
+
+  ok("the card asks the rule rather than trimming the title itself",
+    /cardDetail\(\{/.test(board) && /hasMoreToShow\(detail\)/.test(board)
+    && !/\.slice\(0, \d+\)/.test(board));
+  ok("...prints the summary while collapsed and the writer's own text when open",
+    /isOpen \? card\.title : detail\.summary/.test(board)
+    && /whitespace-pre-line/.test(board));
+  ok("...draws the button only when there is something behind it",
+    /\{showMore && \(/.test(board));
+  // In place, not in a modal: the title already opens the record's own form,
+  // and a second overlay from one card is two pop-ups with nothing saying
+  // which button gives which.
+  ok("...and discloses in place rather than opening a second modal",
+    /toggleExpanded\(key\)/.test(board) && !/Modal/.test(board));
+
+  /*
+   * One name per field. The list view printed these headings as literals of
+   * its own, which is how a column comes to be called two things on two
+   * screens that show it side by side.
+   */
+  const tasksView = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
+  ok("the tasks view source survived having its comments stripped",
+    tasksView.includes("boardCards"));
+  ok("the list reads the headings from the catalogue",
+    /DETAIL_LABELS\.followUpDescription/.test(tasksView)
+    && /DETAIL_LABELS\.completionNote/.test(tasksView));
+  for (const literal of [DETAIL_LABELS.followUpDescription, DETAIL_LABELS.completionNote]) {
+    ok(`«${literal}» is not written out at a call site again`,
+      !tasksView.includes(`'${literal}'`) && !tasksView.includes(`>${literal}<`));
+  }
+
+  // The board card cannot show what it was never handed.
+  ok("the board card is given the three fields it discloses",
+    /description: task\.description/.test(tasksView)
+    && /followUpResult: task\.followUpResult/.test(tasksView)
+    && /completionNote: task\.completionNote/.test(tasksView));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
