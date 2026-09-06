@@ -220,6 +220,10 @@ import {
 } from "../src/utils/workflowTriggers";
 import { PROFORMA_STORED_STATUSES } from "../src/utils/moduleStatuses";
 import {
+  buildWorkflowDraftPrompt, sanitizeDraftedRule, workflowCatalogue,
+} from "../src/utils/workflowDraft";
+import { WORKFLOW_ASSIGNEE_TOKENS, isAssigneeToken } from "../src/utils/workflowTriggers";
+import {
   DELIVERY_DELIVERED, DELIVERY_PREPARING, DELIVERY_WORKFLOW_STATUSES,
   INQUIRY_FINAL_OFFER, INQUIRY_INITIAL_OFFER, INQUIRY_SENT, INQUIRY_WINNER,
   INQUIRY_WORKFLOW_STATUSES, PROJECT_STATUSES, PURCHASE_ORDER_STATUSES, TASK_PRIORITIES,
@@ -10628,6 +10632,270 @@ head("A board card summarises, and keeps the rest behind one press");
     /description: task\.description/.test(tasksView)
     && /followUpResult: task\.followUpResult/.test(tasksView)
     && /completionNote: task\.completionNote/.test(tasksView));
+}
+
+head("A workflow rule, drafted from a sentence");
+{
+  const strip = (text: string) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  const CTX = { templateIds: ["tpl-1"], fallbackName: "خواستهٔ کاربر" };
+
+  /* ---------------------------- the good case ---------------------------- */
+
+  const good = sanitizeDraftedRule({
+    name: "پیگیری پس از ارسال",
+    triggerType: "proforma_status_change",
+    conditions: [{ field: "newStatus", operator: "equals", value: "ارسال شده" }],
+    actions: [{
+      type: "create_task",
+      taskConfig: {
+        titleTemplate: "پیگیری {proformaNumber}",
+        descTemplate: "تماس با مشتری",
+        assignedTo: "SALES_EXPERT",
+        priority: "بالا",
+        dueDaysOffset: 2,
+        taskKind: "SALES_FOLLOW_UP",
+        skipIfOpenSameKind: true,
+      },
+    }],
+    summary: "دو روز بعد از ارسال، پیگیری",
+  }, CTX);
+
+  ok("a well-formed answer becomes a rule", !!good.rule && good.refusal === null);
+  eq("...on the trigger it named", good.rule?.triggerType, "proforma_status_change");
+  eq("...with its condition kept", good.rule?.conditions.length, 1);
+  eq("...and its action", good.rule?.actions[0]?.taskConfig?.priority, "بالا");
+  ok("...nothing was dropped", good.warnings.length === 0, good.warnings);
+  /*
+   * Active by default. The commonest way this feature fails is a perfect rule
+   * that never runs because the box beside it was never ticked — which is
+   * exactly how it was reported against a hand-built rule.
+   */
+  ok("...and it is drafted switched on", good.rule?.active === true);
+  // Clock-free: the screen stamps real ids, so the same input is the same rule.
+  eq("ids are placeholders, not timestamps", good.rule?.id, "new-draft");
+  eq("...on the actions too", good.rule?.actions[0]?.id, "act-1");
+  eq("the rule is deterministic",
+    JSON.stringify(sanitizeDraftedRule({
+      name: "پیگیری پس از ارسال",
+      triggerType: "proforma_status_change",
+      conditions: [{ field: "newStatus", operator: "equals", value: "ارسال شده" }],
+      actions: [{ type: "create_task", taskConfig: { titleTemplate: "پیگیری {proformaNumber}", assignedTo: "SALES_EXPERT" } }],
+    }, CTX).rule?.triggerType),
+    JSON.stringify("proforma_status_change"));
+
+  /* ------------------------- the invented value --------------------------- */
+
+  /*
+   * The test this module exists for. «تأیید شده (برنده)» is a derived *outcome*
+   * and the stored status column has never held it, so a rule built on it saves
+   * cleanly, reads correctly on its card and matches nothing for ever. A model
+   * is if anything likelier than a person to write it, because it is a
+   * plausible thing to write.
+   */
+  const invented = sanitizeDraftedRule({
+    name: "برنده",
+    triggerType: "proforma_status_change",
+    conditions: [{ field: "newStatus", operator: "equals", value: "تأیید شده (برنده)" }],
+    actions: [{ type: "create_task", taskConfig: { titleTemplate: "کاری", assignedTo: "SALES_EXPERT" } }],
+  }, CTX);
+  eq("an invented condition value is dropped", invented.rule?.conditions.length, 0);
+  ok("...and reported by name",
+    invented.warnings.some((w) => w.includes("تأیید شده (برنده)")), invented.warnings);
+  ok("...naming what the field may hold instead",
+    invented.warnings.some((w) => PROFORMA_STORED_STATUSES.every((v) => w.includes(v))));
+  // The rule still stands: a wrong condition is dropped, the rule is not lost.
+  ok("...but the rule itself survives", !!invented.rule);
+
+  const strayField = sanitizeDraftedRule({
+    triggerType: "proforma_status_change",
+    conditions: [{ field: "newOutcome", operator: "equals", value: "باخته" }],
+    actions: [{ type: "create_task", taskConfig: { titleTemplate: "کاری", assignedTo: "SALES_EXPERT" } }],
+  }, CTX);
+  eq("a field this trigger does not emit is dropped", strayField.rule?.conditions.length, 0);
+  ok("...and said so", strayField.warnings.some((w) => w.includes("newOutcome")));
+
+  // A field with no fixed list takes any value — an amount is a number.
+  const freeValue = sanitizeDraftedRule({
+    triggerType: "proforma_created",
+    conditions: [{ field: "finalAmount", operator: "greater_than", value: "1000" }],
+    actions: [{ type: "create_task", taskConfig: { titleTemplate: "کاری", assignedTo: "SALES_EXPERT" } }],
+  }, CTX);
+  eq("a field with no fixed list keeps its value", freeValue.rule?.conditions[0]?.value, "1000");
+  eq("...and its operator", freeValue.rule?.conditions[0]?.operator, "greater_than");
+
+  const badOperator = sanitizeDraftedRule({
+    triggerType: "proforma_created",
+    conditions: [{ field: "finalAmount", operator: "roughly", value: "5" }],
+    actions: [{ type: "create_task", taskConfig: { titleTemplate: "کاری", assignedTo: "SALES_EXPERT" } }],
+  }, CTX);
+  eq("an operator nobody implements falls back to equals",
+    badOperator.rule?.conditions[0]?.operator, "equals");
+
+  /* ------------------------------ the refusals ---------------------------- */
+
+  const noTrigger = sanitizeDraftedRule({
+    triggerType: "invoice_paid",
+    actions: [{ type: "create_task", taskConfig: { titleTemplate: "x", assignedTo: "SALES_EXPERT" } }],
+  }, CTX);
+  ok("an event this application does not emit is refused, not substituted",
+    noTrigger.rule === null && !!noTrigger.refusal, noTrigger.refusal);
+
+  const noActions = sanitizeDraftedRule({
+    triggerType: "proforma_created", conditions: [], actions: [],
+  }, CTX);
+  ok("a rule that would do nothing is refused", noActions.rule === null && !!noActions.refusal);
+
+  ok("the model's own refusal is passed through",
+    sanitizeDraftedRule({ refusal: "چنین رویدادی نداریم" }, CTX).refusal === "چنین رویدادی نداریم");
+
+  /* ------------------------------ the schedule ---------------------------- */
+
+  const scheduled = sanitizeDraftedRule({
+    triggerType: "time_elapsed",
+    schedule: { subject: "proforma_sent", days: 2.7, direction: "after" },
+    conditions: [{ field: "status", operator: "equals", value: "ارسال شده" }],
+    actions: [{ type: "create_task", taskConfig: { titleTemplate: "پیگیری", assignedTo: "SALES_EXPERT" } }],
+  }, CTX);
+  eq("a scheduled rule keeps its subject", scheduled.rule?.schedule?.subject, "proforma_sent");
+  eq("...with whole days only", scheduled.rule?.schedule?.days, 2);
+  // A scheduled rule's conditions are asked of the record, not of an event.
+  eq("...and a condition on the record itself", scheduled.rule?.conditions.length, 1);
+
+  const negative = sanitizeDraftedRule({
+    triggerType: "time_elapsed",
+    schedule: { subject: "proforma_sent", days: -3 },
+    actions: [{ type: "create_task", taskConfig: { titleTemplate: "x", assignedTo: "SALES_EXPERT" } }],
+  }, CTX);
+  eq("days are never negative — the side is `direction`", negative.rule?.schedule?.days, 0);
+  eq("...and absent means «after»", negative.rule?.schedule?.direction, "after");
+
+  ok("a date this application does not carry is refused",
+    sanitizeDraftedRule({
+      triggerType: "time_elapsed",
+      schedule: { subject: "invoice_due", days: 1 },
+      actions: [{ type: "create_task", taskConfig: { titleTemplate: "x", assignedTo: "SALES_EXPERT" } }],
+    }, CTX).rule === null);
+
+  /* ------------------------------- the actions ---------------------------- */
+
+  const sloppyTask = sanitizeDraftedRule({
+    triggerType: "proforma_created",
+    actions: [{
+      type: "create_task",
+      taskConfig: {
+        titleTemplate: "کاری", assignedTo: "کارشناس ناشناس",
+        priority: "خیلی زیاد", dueDaysOffset: -2, taskKind: "CHASE",
+      },
+    }],
+  }, CTX);
+  eq("an invented priority falls back", sloppyTask.rule?.actions[0]?.taskConfig?.priority, "متوسط");
+  eq("...a negative offset to zero", sloppyTask.rule?.actions[0]?.taskConfig?.dueDaysOffset, 0);
+  eq("...and an invented kind to GENERAL", sloppyTask.rule?.actions[0]?.taskConfig?.taskKind, "GENERAL");
+  // A person's own name is legitimate — the engine looks it up in the directory
+  // — so it is passed through with a note rather than dropped.
+  eq("a name is kept as the assignee", sloppyTask.rule?.actions[0]?.taskConfig?.assignedTo, "کارشناس ناشناس");
+  ok("...with a note to check it exists",
+    sloppyTask.warnings.some((w) => w.includes("کارشناس ناشناس")));
+
+  ok("every dynamic token the editor offers is recognised as one",
+    WORKFLOW_ASSIGNEE_TOKENS.every((t) => isAssigneeToken(t.value)));
+  ok("...and a person's name is not one", !isAssigneeToken("محمد توکل مقدم"));
+  ok("the token list carries the sales expert and the module responsibles",
+    WORKFLOW_ASSIGNEE_TOKENS.some((t) => t.value === "SALES_EXPERT")
+    && WORKFLOW_ASSIGNEE_TOKENS.some((t) => t.value === "MODULE_RESPONSIBLE_purchaseOrders"));
+
+  /*
+   * A message action with no real template renders an empty body and the engine
+   * skips the send without a word — so it is dropped here, where it can be said.
+   */
+  const ghostTemplate = sanitizeDraftedRule({
+    triggerType: "proforma_created",
+    actions: [
+      { type: "send_message", messageConfig: { templateId: "tpl-does-not-exist" } },
+      { type: "create_task", taskConfig: { titleTemplate: "کاری", assignedTo: "SALES_EXPERT" } },
+    ],
+  }, CTX);
+  eq("a message naming no real template is dropped", ghostTemplate.rule?.actions.length, 1);
+  ok("...and says where templates come from",
+    ghostTemplate.warnings.some((w) => w.includes("ارسال پیام")));
+
+  const realTemplate = sanitizeDraftedRule({
+    triggerType: "proforma_created",
+    actions: [{ type: "send_message", messageConfig: { templateId: "tpl-1", channel: "SMS", delayDays: 1 } }],
+  }, CTX);
+  eq("a real template is kept", realTemplate.rule?.actions[0]?.messageConfig?.templateId, "tpl-1");
+  eq("...with its channel", realTemplate.rule?.actions[0]?.messageConfig?.channel, "SMS");
+
+  eq("a nameless rule is named after what the person asked for",
+    sanitizeDraftedRule({
+      triggerType: "proforma_created",
+      actions: [{ type: "create_task", taskConfig: { titleTemplate: "x", assignedTo: "SALES_EXPERT" } }],
+    }, CTX).rule?.name, "خواستهٔ کاربر");
+
+  /* ------------------------------ the catalogue --------------------------- */
+
+  /*
+   * The prompt is built from the catalogue rather than typed beside it: a
+   * trigger added to `workflowTriggers.ts` and not to a hand-written prompt is
+   * one the assistant would never propose — the same drift, one file along.
+   */
+  const catalogue = workflowCatalogue([{ id: "tpl-1", name: "اطلاع‌رسانی ارسال" }]);
+  for (const trigger of Object.keys(WORKFLOW_TRIGGERS)) {
+    ok(`the prompt offers «${trigger}»`, catalogue.includes(trigger));
+  }
+  ok("...and every schedule subject", catalogue.includes("proforma_sent"));
+  ok("...and the company's own templates", catalogue.includes("اطلاع‌رسانی ارسال"));
+  ok("...and the assignee tokens",
+    WORKFLOW_ASSIGNEE_TOKENS.every((t) => catalogue.includes(t.value)));
+  const prompt = buildWorkflowDraftPrompt([]);
+  ok("the prompt warns about the two proforma status axes",
+    prompt.includes("proforma_outcome_change") && prompt.includes("proforma_status_change"));
+  ok("...and tells the model to refuse rather than pick something near",
+    prompt.includes("refusal"));
+  ok("...and says there are no templates when there are none",
+    prompt.includes("هیچ قالبی ساخته نشده"));
+
+  /* -------------------- read from the source, once ----------------------- */
+
+  const service = strip(readFileSync("src/server/services/assistant/workflowDraft.ts", "utf8"));
+  ok("the service source survived having its comments stripped",
+    service.includes("draftWorkflowRule"));
+  // It reads the templates and nothing else, and it writes nothing at all.
+  ok("the drafter never writes",
+    !/\.(create|update|updateMany|delete|deleteMany|upsert)\(/.test(service));
+  ok("...and needs the settings permission as well as the assistant flag",
+    /hasPermission\(user, "settings"\)/.test(service));
+  ok("...and sanitises the answer rather than trusting it",
+    /sanitizeDraftedRule\(/.test(service));
+
+  const routes = strip(readFileSync("src/server/routes/assistant.ts", "utf8"));
+  ok("the endpoint is registered behind the assistant gate",
+    /"\/api\/assistant\/workflow-draft"/.test(routes) && /requireAssistant\(req, res\)/.test(routes));
+
+  const view = strip(readFileSync("src/components/SettingsView.tsx", "utf8"));
+  ok("the settings source survived having its comments stripped",
+    view.includes("handleSaveWorkflowRule"));
+  ok("the screen drafts into the form", /assistantApi\.draftWorkflowRule\(/.test(view));
+  /*
+   * And saves nothing. The draft fills `editingRule`; the ordinary save button
+   * is still the only writer, which is what keeps one copy of the save-time
+   * validation rather than two.
+   */
+  const draftHandler = view.slice(
+    view.indexOf("const handleDraftRule"),
+    view.indexOf("const handleSaveWorkflowRule"),
+  );
+  ok("...and the draft handler writes nothing",
+    draftHandler.length > 200 && !/updateSettings\(/.test(draftHandler), draftHandler.length);
+  // The select must offer every token the drafter may produce: a `<select>`
+  // whose value matches no option renders its placeholder.
+  ok("the assignee box reads the same token list",
+    /WORKFLOW_ASSIGNEE_TOKENS\.map/.test(view)
+    && !/MODULE_RESPONSIBLE_customers">/.test(view));
+  ok("...and the responsibles table reads the module catalogue",
+    /RESPONSIBLE_MODULES\.map/.test(view));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
