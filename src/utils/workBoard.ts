@@ -193,6 +193,30 @@ export function laneWhere(lane: BoardLane, today: Date | null): Record<string, u
   };
 }
 
+/**
+ * What is on somebody's plate **now**: the two open columns, and not the parked one.
+ *
+ * The inbox badge used to fold the summary's `byStatus` and count everything
+ * that was not finished — and «در انتظار مشتری» is not a status. It is derived
+ * from the due date and the task kind, so no grouping by status can express it
+ * at all, and every chase agreed for after Nowruz sat in the figure for
+ * «چقدر کار روی دستم مانده» from the day it was scheduled. A badge that counts
+ * work nobody can do yet is a badge people stop reading.
+ *
+ * TODO ∪ DOING rather than «not WAITING and not DONE» spelled out again: the
+ * four lanes partition every row (`test:rules` sweeps every combination of
+ * status, kind and date for exactly that), so the union of the two open ones
+ * *is* the complement of the other two — and writing it as a union means it
+ * cannot drift from the columns the board actually draws.
+ *
+ * With no date to compare against, `laneWhere` parks nothing and DOING takes
+ * every open chase. That is the safe direction: a missing clock hides nothing
+ * from the count rather than emptying it.
+ */
+export function onPlateWhere(today: Date | null): Record<string, unknown> {
+  return { OR: [laneWhere("TODO", today), laneWhere("DOING", today)] };
+}
+
 export function taskStatusForLane(lane: MovableLane, current?: string | null): string {
   if (lane === "TODO") return TASK_TODO;
   if (lane === "DOING") return TASK_DOING;

@@ -74,6 +74,15 @@ export interface TaskRow {
 export interface TaskSummary {
   byStatus: { status: string; count: number }[];
   total: number;
+  /**
+   * On this person's plate **now**: not finished, and not parked in «در انتظار
+   * مشتری».
+   *
+   * Derived on the server through the board's own `onPlateWhere`, because the
+   * parked column is a date comparison and not a status — no fold over
+   * `byStatus` can subtract it.
+   */
+  open: number;
   overdue: number;
   dueToday: number;
 }
