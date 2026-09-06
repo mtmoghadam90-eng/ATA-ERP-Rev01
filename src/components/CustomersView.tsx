@@ -25,7 +25,7 @@ import CustomFieldsForm from './CustomFieldsForm';
 import CustomerValueFields from './CustomerValueFields';
 import CustomerValueCard, { RANK_STYLE } from './CustomerValueCard';
 import { Pencil } from 'lucide-react';
-import { formatMoney } from '../numUtils';
+import { formatMoney, toPersianDigits } from '../numUtils';
 import { COST_TO_SERVE_LEVELS, PAYMENT_BEHAVIOURS, RANK_META } from '../utils/customerValue';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import { exportToCSV } from '../excelUtils';
@@ -134,6 +134,25 @@ interface CustomersViewProps {
  * customer can be deleted, and the duplicate check when saving one, are queries
  * too — both used to need the entire table in the browser to answer.
  */
+/**
+ * How many candidates the relationship picker asks the server for, and how many
+ * of them it draws.
+ *
+ * They are different numbers on purpose. The **fetch** is generous because it is
+ * what a search reaches into — narrowing it would make the box find less. The
+ * **render** is short because the checklist had no cap at all: with nothing
+ * typed it drew every row it was handed, so the form opened on a wall of
+ * checkboxes with the search box that shortens it pushed off the top.
+ *
+ * Capped by *count* and never by height. A `max-h-` with `overflow-y-auto`
+ * would be a second scrollbar inside a form that already scrolls — a window
+ * onto a list whose shape the reader cannot see — which is a rule this codebase
+ * holds in `test:rules` for six other screens. A short list plus «search for
+ * the rest» is the same information without the second bar.
+ */
+const RELATION_FETCH_LIMIT = 25;
+const RELATION_VISIBLE = 6;
+
 export default function CustomersView({
   industries,
   settings,
@@ -766,7 +785,7 @@ export default function CustomersView({
   // always joins the opposite type, so the query is filtered to it.
   const relationSearchState = useEntitySearch<CustomerRow>({
     path: '/api/customers',
-    limit: 25,
+    limit: RELATION_FETCH_LIMIT,
     params: { customerType: customerType === 'حقوقی' ? 'حقیقی' : 'حقوقی' },
     getLabel: (row) => row.companyName,
     // Only while the form is open; otherwise it queries behind a closed modal.
@@ -2272,7 +2291,7 @@ export default function CustomersView({
                 {/* Candidate checklist container */}
                 <div className="border border-slate-100 rounded-lg divide-y divide-slate-100 bg-white">
                   {relationCandidates.length > 0 ? (
-                    relationCandidates.map(rc => {
+                    relationCandidates.slice(0, RELATION_VISIBLE).map(rc => {
                       const isChecked = selectedLinks.includes(rc.id);
                       return (
                         <label 
@@ -2298,7 +2317,25 @@ export default function CustomersView({
                     })
                   ) : (
                     <div className="p-4 text-center text-[11px] text-slate-400 italic">
-                      موردی جهت ارتباط یافت نشد.
+                      {relationSearch.trim()
+                        ? 'موردی با این جستجو پیدا نشد.'
+                        : 'موردی جهت ارتباط یافت نشد.'}
+                    </div>
+                  )}
+
+                  {/*
+                    What the short list is hiding, said rather than left to be
+                    discovered. Two sentences because two different things are
+                    true: the server sent more than is drawn, or the server
+                    itself stopped at its own limit and there may be more behind
+                    that — «۱۹ مورد دیگر» would be a figure this screen does not
+                    have in the second case.
+                  */}
+                  {relationCandidates.length > RELATION_VISIBLE && (
+                    <div className="px-3 py-2 text-[10px] text-slate-500 bg-slate-50/70 text-center">
+                      {relationSearchState.matches.length >= RELATION_FETCH_LIMIT
+                        ? 'موارد بیشتری هم هست؛ برای رسیدن به مورد دلخواه، نام آن را در کادر بالا جستجو کنید.'
+                        : `${toPersianDigits(String(relationCandidates.length - RELATION_VISIBLE))} مورد دیگر نمایش داده نشده؛ برای دیدنشان جستجو کنید.`}
                     </div>
                   )}
                 </div>
