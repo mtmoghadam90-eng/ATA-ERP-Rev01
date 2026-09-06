@@ -304,6 +304,7 @@ export async function readSqlCollections(): Promise<StoreCollections> {
         deliveryRange: i.deliveryRange,
         deliveryUnit: i.deliveryUnit,
         deliveryType: i.deliveryType,
+        paymentTerm: i.paymentTerm,
       }));
 
       return {

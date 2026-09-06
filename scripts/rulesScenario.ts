@@ -131,7 +131,8 @@ import {
   clampNumber, isPartialNumber, parseDecimalInput, toLatinDigits,
 } from "../src/utils/numberInput";
 import {
-  generateDeliveryNotes, getDeliverySummary, updateNotesWithDelivery,
+  DELIVERY_HEADING, generateDeliveryNotes, generatePaymentNotes, getDeliverySummary,
+  paymentPhrase,
 } from "../src/utils/deliveryNotes";
 import { DEFAULT_SETTINGS } from "../src/seedData";
 import { KEY_PERMISSION, canSeeAllTasks, canSeeCosts } from "../src/server/auth";
@@ -4043,31 +4044,56 @@ head("Delivery section inside a formattable notes block");
   const section = generateDeliveryNotes(items);
 
   ok("the section names itself", section.startsWith("زمان تحویل:"));
-  eq("empty notes become the section alone", updateNotesWithDelivery("", items), section);
-
-  const withNotes = updateNotesWithDelivery("اعتبار: ۳۰ روز", items);
-  ok("existing notes are kept above it", withNotes.startsWith("اعتبار: ۳۰ روز"));
-  eq("and only one section exists",
-    withNotes.split("زمان تحویل:").length - 1, 1);
+  eq("empty notes become the section alone", updateNotesForItems("", items), section);
 
   /*
-   * The rule this file exists to hold. The notes are formattable text now, and
-   * this function finds its own section by the words at the start of a line —
-   * so somebody bolding the heading must not hide it, or every later change to
-   * a delivery date appends a second section below the first.
+   * **The managed sections lead.** They used to be appended, so a document with
+   * three paragraphs of conditions printed the two things a customer looks for
+   * first at the bottom of the block.
+   */
+  const withNotes = updateNotesForItems("اعتبار: ۳۰ روز", items);
+  ok("the delivery section comes first", withNotes.startsWith("زمان تحویل:"));
+  ok("and the writer's own text follows it", withNotes.endsWith("اعتبار: ۳۰ روز"));
+  eq("only one section exists", withNotes.split("زمان تحویل:").length - 1, 1);
+
+  /*
+   * A section already sitting further down is **moved**, not duplicated — which
+   * is the whole reason it is recognised by its heading rather than by
+   * position, and what makes this safe on every document already on disk.
+   */
+  const below = updateNotesForItems("اعتبار: ۳۰ روز\n\nزمان تحویل:\n۲ هفته کاری پس از تایید", items);
+  eq("a section found below is lifted, not copied",
+    below.split("زمان تحویل:").length - 1, 1);
+  ok("...to the top", below.startsWith("زمان تحویل:"));
+  ok("...with the old figures gone", !below.includes("۲ هفته کاری"));
+  ok("...and the writer's text kept", below.includes("اعتبار: ۳۰ روز"));
+
+  /*
+   * The rule this file exists to hold. The notes are formattable text, and this
+   * finds its own section by the words at the start of a line — so somebody
+   * bolding the heading must not hide it, or every later change to a delivery
+   * date writes a second section above the first.
    */
   const bolded = "اعتبار: ۳۰ روز\n\n**زمان تحویل:**\n۲ هفته کاری پس از تایید";
-  const rewritten = updateNotesWithDelivery(bolded, items);
+  const rewritten = updateNotesForItems(bolded, items);
   eq("a bolded heading is still recognised as the section",
     rewritten.split("زمان تحویل:").length - 1, 1);
-  ok("the notes above it survive", rewritten.startsWith("اعتبار: ۳۰ روز"));
+  ok("the writer's own notes survive", rewritten.includes("اعتبار: ۳۰ روز"));
   ok("and the old figures are gone", !rewritten.includes("۲ هفته کاری"));
 
   /* Formatting elsewhere in the notes is left exactly as written. */
   const decorated = "==فوری==\nزمان تحویل:\n۲ هفته کاری پس از تایید\n\n__گارانتی__: ۱۲ ماه";
-  const after = updateNotesWithDelivery(decorated, items);
+  const after = updateNotesForItems(decorated, items);
   ok("a highlight above the section is untouched", after.includes("==فوری=="));
   ok("and an underline below it too", after.includes("__گارانتی__: ۱۲ ماه"));
+
+  /* A «ردیف N» block of unknown length is consumed whole, not left half behind. */
+  const perRow = updateNotesForItems(
+    "زمان تحویل:\nردیف 1 : ۲ هفته کاری\nردیف 2 : ۵ هفته کاری\n\nگارانتی: ۱۲ ماه",
+    items,
+  );
+  ok("an old per-row block is replaced entirely", !perRow.includes("ردیف 2"));
+  ok("...and what followed it survives", perRow.includes("گارانتی: ۱۲ ماه"));
 
   eq("one delivery for every line reads as one line",
     getDeliverySummary(items), "3-4 هفته کاری");
@@ -10029,12 +10055,25 @@ head("The corrections batch: uploads, the board, the feed and the front page");
     updateNotesForItems(written, ready) === written);
   /*
    * A quotation with one item on the shelf and one on six weeks' order has no
-   * single payment rule, and «۱۰۰٪ در زمان تحویل» over a document that needs a
-   * deposit for half of it is worse than writing nothing.
+   * single payment rule — and it used to get **no section at all**, because the
+   * sentence could only be written about the whole document and «۱۰۰٪ در زمان
+   * تحویل» over one that needs a deposit for half of it is worse than nothing.
+   *
+   * Now that terms are per line, the section can say the true thing: it names
+   * the row it can answer for and stays silent about the other, whose terms the
+   * writer chooses in the field beside it.
    */
-  ok("a mixed document gets no payment section",
-    !updateNotesForItems("گارانتی ۱۲ ماه.", [...ready, ...ordered]).includes(PAYMENT_HEADING));
-  ok("...and neither does an ordinary one",
+  // Asserted on the payment section itself: the *delivery* section of a mixed
+  // document is legitimately per-row too, so a search of the whole notes would
+  // find «ردیف ۲» there and prove nothing about this rule.
+  const mixedPayment = generatePaymentNotes([...ready, ...ordered], true) ?? "";
+  ok("a mixed document answers only for the row it can",
+    mixedPayment.includes("ردیف ۱ : "));
+  ok("...and says nothing about the other", !mixedPayment.includes("ردیف ۲"));
+  ok("...so no claim is made over the whole document",
+    !updateNotesForItems("گارانتی ۱۲ ماه.", [...ready, ...ordered])
+      .includes(`${PAYMENT_HEADING}\n${READY_PAYMENT_TEXT}`));
+  ok("an ordinary document still gets no payment section at all",
     !updateNotesForItems("گارانتی ۱۲ ماه.", ordered).includes(PAYMENT_HEADING));
   // Written, then the goods change: the rule takes back what it wrote.
   ok("changing to ordinary goods removes the line the rule wrote",
@@ -10058,6 +10097,81 @@ head("The corrections batch: uploads, the board, the feed and the front page");
   ok("the form offers it and stands the number fields down",
     /<option value=\{DELIVERY_READY_UNIT\}>/.test(proformaView)
     && /disabled=\{items\[0\]\?\.deliveryUnit === DELIVERY_READY_UNIT\}/.test(proformaView));
+
+  /* -------------- the payment terms, chosen rather than implied ------------- */
+
+  /*
+   * The field the ready-stock rule was standing in for. A chosen term wins;
+   * with nothing chosen the old rule still answers, so no document already on
+   * disk changes what it says.
+   */
+  eq("a chosen term is the answer", paymentPhrase({ paymentTerm: "۳۰ روزه" }), "۳۰ روزه");
+  eq("...even on ready stock, because the field is the person's answer",
+    paymentPhrase({ deliveryUnit: DELIVERY_READY_UNIT, paymentTerm: "۶۰ روزه" }), "۶۰ روزه");
+  eq("nothing chosen on ready stock still implies payment on delivery",
+    paymentPhrase({ deliveryUnit: DELIVERY_READY_UNIT }), READY_PAYMENT_TEXT);
+  eq("nothing chosen on ordinary goods implies nothing at all",
+    paymentPhrase({ deliveryUnit: "هفته" }), "");
+  eq("...and a blank is not a choice", paymentPhrase({ paymentTerm: "   " }), "");
+
+  /*
+   * Per line, exactly like delivery: a document mixing shelf stock with a
+   * four-month order genuinely has two arrangements, and one header field could
+   * only ever describe one of them.
+   */
+  eq("one term across every line is written once",
+    generatePaymentNotes([{ paymentTerm: "نقدی" }, { paymentTerm: "نقدی" }], true),
+    `${PAYMENT_HEADING}\nنقدی`);
+  const mixedTerms = generatePaymentNotes(
+    [{ paymentTerm: "نقدی" }, { paymentTerm: "۶۰ روزه" }], true) ?? "";
+  ok("differing terms are listed per row", mixedTerms.includes("ردیف ۱ : نقدی"));
+  ok("...both of them", mixedTerms.includes("ردیف ۲ : ۶۰ روزه"));
+  /*
+   * A line nobody answered is left out of the list rather than given an empty
+   * row: «nobody has said» is a real answer here, and «ردیف ۲ : » reads as a
+   * mistake in a document that goes to a customer.
+   */
+  const partial = generatePaymentNotes(
+    [{ paymentTerm: "نقدی" }, { deliveryUnit: "هفته" }], true) ?? "";
+  ok("a line with nothing to say is left out", !partial.includes("ردیف ۲"));
+  ok("...while the one that was answered is listed", partial.includes("ردیف ۱ : نقدی"));
+  eq("nothing to say anywhere is no section at all",
+    generatePaymentNotes([{ deliveryUnit: "هفته" }], true), null);
+
+  /* The order on the page: delivery, then payment, then the writer's own text. */
+  const both = updateNotesForItems("گارانتی ۱۲ ماه.", [
+    { deliveryUnit: "هفته", paymentTerm: "۳۰ روزه" },
+  ]);
+  ok("delivery leads", both.indexOf(DELIVERY_HEADING) === 0);
+  ok("payment comes under it",
+    both.indexOf(PAYMENT_HEADING) > both.indexOf(DELIVERY_HEADING));
+  ok("and the writer's own text is last",
+    both.indexOf("گارانتی ۱۲ ماه.") > both.indexOf(PAYMENT_HEADING));
+  eq("...and re-running it changes nothing",
+    updateNotesForItems(both, [{ deliveryUnit: "هفته", paymentTerm: "۳۰ روزه" }]), both);
+
+  /*
+   * A term chosen on ordinary goods overrides the «no section» rule — that
+   * rule existed because nothing could be *said*, not because nothing should be.
+   */
+  ok("a term on ordinary goods does print a section",
+    updateNotesForItems("", [{ deliveryUnit: "هفته", paymentTerm: "نقدی" }])
+      .includes(`${PAYMENT_HEADING}\nنقدی`));
+  /* And the field wins over the text somebody typed under the heading before it existed. */
+  ok("choosing a term replaces a hand-written condition",
+    updateNotesForItems(edited, [{ deliveryUnit: "هفته", paymentTerm: "نقدی" }])
+      .includes("نقدی"));
+
+  /* Both ends: the column exists, the form draws it, and settings feed it. */
+  ok("the payment column is on the line, not the document",
+    /paymentTerm\s+String\?/.test(readFileSync("prisma/schema.prisma", "utf-8")));
+  ok("the form reads the company's own list",
+    /paymentTermOptions = settings\?\.dropdownItems\?\.paymentTerms/.test(proformaView));
+  ok("...and offers it in both the uniform block and the per-row one",
+    (proformaView.match(/"paymentTerm",/g) ?? []).length === 2);
+  ok("the service stores it",
+    /paymentTerm: toNullableString\(row\.paymentTerm, 200\)/
+      .test(readFileSync("src/server/services/proformaService.ts", "utf-8")));
   // The goods are the longest text on the row and no twelfth-based column held
   // them; they get the whole width and the figures share the grid below.
   ok("the product name has the row to itself",

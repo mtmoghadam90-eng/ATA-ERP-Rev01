@@ -290,6 +290,7 @@ export interface ProformaItemInput {
   deliveryUnit?: string | null;
   deliveryType?: string | null;
   deliveryPostfix?: string | null;
+  paymentTerm?: string | null;
   selectedFeatures?: unknown;
   selectedImage?: string | null;
 }
@@ -508,6 +509,7 @@ function mapItem(row: ProformaItemInput, currency: string): Record<string, unkno
     deliveryUnit: toNullableString(row.deliveryUnit, 20),
     deliveryType: toNullableString(row.deliveryType, 20),
     deliveryPostfix: toNullableString(row.deliveryPostfix, 100),
+    paymentTerm: toNullableString(row.paymentTerm, 200),
     selectedFeatures: toJsonColumn(row.selectedFeatures),
     selectedImage: toNullableString(row.selectedImage, 500),
   };

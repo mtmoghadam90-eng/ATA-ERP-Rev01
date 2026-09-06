@@ -428,6 +428,7 @@ export const flattenProformaItems = (proformas: any[]): Row[] => {
         delivery_range: s(it.deliveryRange),
         delivery_unit: s(it.deliveryUnit),
         delivery_type: s(it.deliveryType),
+        payment_term: s(it.paymentTerm),
         tech_specs: s(it.techSpecs),
       });
     });
