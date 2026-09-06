@@ -53,7 +53,7 @@ import { matchAssignee, nameKey } from "../src/utils/assigneeName";
 import {
   REFERRAL_DOING, REFERRAL_DONE, REFERRAL_PENDING, TASK_CANCELLED, TASK_DOING, TASK_DONE,
   TASK_TODO, BOARD_SORTS, SORT_LABELS, effectivePriority, referralIsOpen, referralLane,
-  referralPassesTaskFilters, laneWhere, serverOrderFor, sortBoardCards, taskLane,
+  referralPassesTaskFilters, laneWhere, onPlateWhere, serverOrderFor, sortBoardCards, taskLane,
   taskStatusForLane, REFERRAL_STATUSES, TASK_STATUSES,
   BOARD_LANES, LANE_FILTERS, MOVABLE_LANES, isMovableLane, rankForTopUp, taskBoardLane,
 } from "../src/utils/workBoard";
@@ -8835,13 +8835,21 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   /* -- the badge counts what the board holds -- */
   const badges = strip(readFileSync("src/api/useSidebarBadges.ts", "utf8"));
   /*
-   * Every automation writes «در انتظار», a fourth value no dropdown ever
-   * offered; a hardcoded pair of closing words counted it only by luck.
-   * `taskLane` is the board's own rule and is an exclusion.
+   * Counted by the **server**, through the board's own `onPlateWhere`, and no
+   * longer folded out of `byStatus` here.
+   *
+   * Two faults, one after the other. First a hardcoded pair of closing words,
+   * which counted every automation's «در انتظار» as open only by luck. Then
+   * `taskLane(status) !== "DONE"`, which fixed that and still could not exclude
+   * «در انتظار مشتری» *even in principle*: a chase's column is derived from its
+   * due date and its kind, so no grouping by status can see it, and a follow-up
+   * agreed for after Nowruz counted from the day it was scheduled.
    */
-  ok("open tasks are counted by the board's own lane rule",
-    /taskLane\(s\.status\) !== "DONE"/.test(badges));
-  ok("...not by a list of closing words written out here",
+  ok("open tasks are counted by the server, not folded here",
+    /tasks\.summary\.open/.test(badges));
+  ok("...not out of the statuses, which cannot see the parked column",
+    !/byStatus/.test(badges));
+  ok("...and not by a list of closing words written out here",
     !/new Set\(\["انجام شده", "کنسل شده"\]\)/.test(badges));
   /*
    * The reported fault: both records belong to two people — the one the work
@@ -9665,6 +9673,79 @@ head("Work board: «در انتظار مشتری», and how much one person may 
     }
   }
   ok("and no task is in two columns or in none", uncovered === 0, uncovered);
+
+  /* ---------------- what the inbox badge counts, and what it does not ------- */
+
+  /*
+   * A chase agreed for after Nowruz is not on anybody's plate today: it sits in
+   * «در انتظار مشتری» until its own morning. The badge used to fold the
+   * summary's `byStatus` and count everything not finished — which could not
+   * have excluded the parked column even in principle, since a chase's lane is
+   * derived from its due date and no grouping by status can see it.
+   *
+   * Held against `taskBoardLane` over the same sweep rather than against a
+   * second reading of the rule: the clause is right exactly when it matches the
+   * rows the board draws in the two open columns and no others.
+   */
+  let badgeMismatches: string[] = [];
+  let parkedSeen = 0;
+  for (const dueDate of DATES) {
+    for (const status of STATUSES) {
+      for (const taskKind of KINDS) {
+        const drawn = taskBoardLane({ status, taskKind, dueDate }, TODAY);
+        const row: Row = { status, taskKind, dueDate: jalali(dueDate) };
+        const counted = matchesLane(onPlateWhere(todayDate), row);
+        const shouldCount = drawn === "TODO" || drawn === "DOING";
+        if (drawn === "WAITING") parkedSeen++;
+        if (counted !== shouldCount) {
+          badgeMismatches.push(`${taskKind}/${status}/${dueDate}: drawn ${drawn}, counted ${counted}`);
+        }
+      }
+    }
+  }
+  ok("the badge counts the two open columns and nothing else",
+    badgeMismatches.length === 0, badgeMismatches.slice(0, 3));
+  // Or the check would pass on a sweep that never produced a parked card.
+  ok("...over a sweep that actually parked some", parkedSeen > 0, parkedSeen);
+
+  /*
+   * A parked chase is the case the whole change is about, and a chase due today
+   * is the one it must not take with it.
+   */
+  ok("a chase due after today is not counted",
+    !matchesLane(onPlateWhere(todayDate),
+      { status: TASK_TODO, taskKind: "SALES_FOLLOW_UP", dueDate: jalali("1405/04/01") }));
+  ok("...one due today is",
+    matchesLane(onPlateWhere(todayDate),
+      { status: TASK_TODO, taskKind: "SALES_FOLLOW_UP", dueDate: todayDate }));
+  ok("...and an undated one is, because nobody planned it",
+    matchesLane(onPlateWhere(todayDate),
+      { status: TASK_TODO, taskKind: "SALES_FOLLOW_UP", dueDate: null }));
+  /*
+   * With no clock nothing is parked, which is the safe direction: a missing
+   * date hides nothing from the count rather than emptying it.
+   */
+  ok("with no date to compare against, a future chase is still counted",
+    matchesLane(onPlateWhere(null),
+      { status: TASK_TODO, taskKind: "SALES_FOLLOW_UP", dueDate: jalali("1405/04/01") }));
+
+  /*
+   * Both ends: the server answers it, and the badge stops folding statuses.
+   * Comments first, always — the notes on both sides quote the very names these
+   * checks look for, so a scan of the raw files would pass on the explanation.
+   */
+  const stripSrc = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const summarySrc = stripSrc(readFileSync("src/server/services/taskService.ts", "utf8"));
+  ok("the summary counts it with the board's own clause",
+    /onPlateWhere\(today\)/.test(summarySrc));
+  const badgeSrc = stripSrc(readFileSync("src/api/useSidebarBadges.ts", "utf8"));
+  ok("the badge survived having its comments stripped",
+    badgeSrc.includes("openWork"));
+  ok("the badge reads the server's figure",
+    /tasks\.summary\.open/.test(badgeSrc));
+  ok("...and no longer folds the statuses in the browser",
+    !/byStatus/.test(badgeSrc));
 
   /* ------------------ the columns a card can be pushed into ---------------- */
 

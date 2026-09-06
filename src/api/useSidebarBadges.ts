@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ListResponse, api } from "./client";
 import { useRevalidate } from "./liveData";
-import { taskLane } from "../utils/workBoard";
 
 /**
  * The counts on the sidebar and in the header.
@@ -61,7 +60,7 @@ export function useSidebarBadges(enabled: boolean): SidebarBadges {
   const load = useCallback(async (signal?: AbortSignal) => {
     // `pageSize: 1` throughout: the rows are irrelevant, only the totals matter.
     const [tasks, dashboard, referrals, notifications] = await Promise.all([
-      api.get<{ summary: { byStatus: { status: string; count: number }[] } }>(
+      api.get<{ summary: { open: number } }>(
         // «به من ارجاع شده», not everything this user can see: a task belongs
         // to its assignee *and* to whoever raised it, and the unscoped count
         // put every request handed to a colleague into this user's own badge.
@@ -83,16 +82,22 @@ export function useSidebarBadges(enabled: boolean): SidebarBadges {
     ]);
 
     /*
-     * Everything the board's open columns hold **for this user**: an ordinary
-     * task, one an automation raised, a sales follow-up, one they logged for
-     * themselves. `taskLane` is the same rule the board draws by, and it is an
-     * exclusion — every automation writes «در انتظار», a fourth value no
-     * dropdown ever offered, and a hardcoded list of the two closing words
-     * counted it only by luck.
+     * Everything the board's **open** columns hold for this user — «برای انجام»
+     * and «در حال انجام» — and deliberately not «در انتظار مشتری».
+     *
+     * This used to fold `byStatus` and count everything that was not finished,
+     * which could not have excluded the parked column even in principle: a
+     * chase's lane is derived from its due date and its kind, and no grouping by
+     * status can see it. So a follow-up agreed for after Nowruz counted against
+     * «چقدر کار روی دستم مانده» from the day it was scheduled, and the badge
+     * showed work nobody could do yet — which is how a badge stops being read.
+     * It leaves the count on its own the morning it is due, for the same reason
+     * it leaves the column: nothing was stored saying it was parked.
+     *
+     * The server answers it now, through `onPlateWhere` — the board's own rule —
+     * rather than the browser subtracting something it cannot name.
      */
-    const openTasks = tasks.summary.byStatus
-      .filter((s) => taskLane(s.status) !== "DONE")
-      .reduce((sum, s) => sum + s.count, 0);
+    const openTasks = tasks.summary.open;
     const pendingReferrals = referrals.total;
 
     setBadges({

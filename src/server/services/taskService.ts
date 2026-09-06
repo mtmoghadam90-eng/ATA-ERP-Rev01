@@ -6,7 +6,7 @@ import { taskRelationKind } from "../../utils/taskRelations";
 import { resolveAssignee } from "./assigneeLookup";
 import {
   BoardLane, LANE_FILTERS, MovableLane, TASK_CANCELLED, TASK_DOING, TASK_DONE, TASK_TODO,
-  laneWhere, taskBoardLane, taskLane, taskStatusForLane,
+  laneWhere, onPlateWhere, taskBoardLane, taskLane, taskStatusForLane,
 } from "../../utils/workBoard";
 import { FOLLOW_UP_KIND } from "../../utils/salesFollowUp";
 import { capacityRefusalMessage } from "../../utils/workLimits";
@@ -504,8 +504,16 @@ export async function taskSummary(
     : clauses.length === 1 ? clauses[0] : { AND: clauses };
   const today = jalaliToDate(todayJalali);
 
-  const [byStatus, overdue, dueToday] = await Promise.all([
+  const [byStatus, open, overdue, dueToday] = await Promise.all([
     db.task.groupBy({ by: ["status"], where: base, _count: { _all: true } }),
+    /*
+     * What the inbox badge counts, answered here rather than folded out of
+     * `byStatus` in the browser. «در انتظار مشتری» is not a status — it is
+     * derived from the due date and the task kind — so no grouping by status
+     * can subtract it, and a chase agreed for after Nowruz sat in the badge
+     * from the day it was scheduled. `onPlateWhere` is the board's own rule.
+     */
+    db.task.count({ where: { AND: [base, onPlateWhere(today)] } }),
     today
       ? db.task.count({ where: { AND: [base, { dueDate: { lt: today } }, { status: { not: "انجام شده" } }] } })
       : Promise.resolve(0),
@@ -517,6 +525,8 @@ export async function taskSummary(
   return {
     byStatus: byStatus.map((s) => ({ status: s.status, count: s._count._all })),
     total: byStatus.reduce((sum, s) => sum + s._count._all, 0),
+    /** Not finished **and** not parked — see `onPlateWhere`. */
+    open,
     overdue,
     dueToday,
   };
