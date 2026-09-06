@@ -24,6 +24,7 @@ import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import WorkBoard, { BoardCard } from './WorkBoard';
+import { DETAIL_LABELS } from '../utils/cardSummary';
 import ConfirmModal from './ConfirmModal';
 import ReferralsView from './ReferralsView';
 import ReferralThread from './ReferralThread';
@@ -704,6 +705,11 @@ export default function TasksView({
       assignedTo: task.assignedTo,
       createdBy: task.createdByName,
       context: task.relatedProject ?? null,
+      // The board card keeps these behind its «شرح» button. They are already on
+      // the list row — `LIST_SELECT` carries all three — so this costs nothing.
+      description: task.description,
+      followUpResult: task.followUpResult,
+      completionNote: task.completionNote,
     }));
 
     /*
@@ -1322,7 +1328,9 @@ export default function TasksView({
                 {task.description && (
                   <div className="w-full">
                     <span className="block text-[10px] font-bold text-slate-400 mb-0.5">
-                      {task.taskKind === 'SALES_FOLLOW_UP' ? 'شرح اقدام بعدی' : 'شرح'}
+                      {task.taskKind === 'SALES_FOLLOW_UP'
+                        ? DETAIL_LABELS.followUpDescription
+                        : DETAIL_LABELS.description}
                     </span>
                     <p className="text-xs text-slate-600 break-words whitespace-pre-line leading-relaxed">
                       {task.description}
@@ -1333,7 +1341,7 @@ export default function TasksView({
                 {task.completionNote && (
                   <div className="w-full bg-emerald-50/40 border border-emerald-100 rounded-xl px-3 py-2">
                     <span className="block text-[10px] font-bold text-emerald-700 mb-0.5">
-                      شرح اقدام انجام‌شده
+                      {DETAIL_LABELS.completionNote}
                     </span>
                     <p className="text-xs text-slate-600 break-words whitespace-pre-line leading-relaxed">
                       {task.completionNote}

@@ -1021,6 +1021,98 @@ head("The work board: two kinds of card, three columns");
 }
 
 /*
+ * The card summarises, and one press shows the rest — in place.
+ *
+ * A rule test reads the props; only a render can show that the description is
+ * genuinely absent until the button is pressed, that pressing it does not open
+ * the record (which is what the title does), and that a card with nothing to
+ * add offers no button at all.
+ */
+head("The work board: a card keeps its description behind one press");
+{
+  const host10 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root10 = createRoot(host10);
+
+  const opened: string[] = [];
+  const longMessage = "سلام\nلطفاً دیتاشیت این فلومتر را با پیشنهاد سازنده مقایسه کن "
+    + "و اگر اختلاف قیمت بیش از ده درصد بود به من خبر بده تا با مشتری صحبت کنم.";
+
+  const cards = [
+    {
+      // A chase: its «شرح اقدام بعدی» is the one thing the person picking it up
+      // needs, and the board used to print the quotation's name and nothing else.
+      kind: "task" as const, id: "t1", title: "پیگیری پیش‌فاکتور ۱۴۰۴-۱۲",
+      createdAt: "2026-01-01", priority: "فوری", status: "در حال انجام",
+      taskKind: "SALES_FOLLOW_UP", dueDate: "1405/01/10",
+      description: "قیمت رقیب را بگیر و ۵٪ تخفیف پیشنهاد کن",
+    },
+    {
+      // Nothing behind the headline: no button, or the reader learns it says
+      // nothing and stops pressing it where it says something.
+      kind: "task" as const, id: "t2", title: "ثبت سفارش خرید",
+      createdAt: "2026-01-02", priority: "متوسط", status: "برای انجام",
+    },
+    {
+      // A referral's headline *is* the message, so the summary is what the
+      // column shows and the press restores the writer's own text.
+      kind: "referral" as const, id: "r1", title: longMessage,
+      createdAt: "2026-01-03", status: "در انتظار اقدام", replies: 0,
+    },
+  ];
+
+  act(() => {
+    root10.render(React.createElement(WorkBoard, {
+      cards,
+      sort: "date" as const,
+      today: "1405/01/10",
+      load: null,
+      selected: new Set<string>(),
+      moving: false,
+      onToggleSelect: () => {},
+      onMove: () => {},
+      onOpen: (card: { kind: string; id: string }) => { opened.push(`${card.kind}:${card.id}`); },
+    }));
+  });
+
+  const button = (key: string) => ([...host10.querySelectorAll("button")] as HTMLButtonElement[])
+    .find((el) => el.id === `work-board-detail-${key}`);
+  const text = () => host10.textContent ?? "";
+
+  ok("the description is not on the collapsed card",
+    !text().includes("قیمت رقیب را بگیر"), text().slice(0, 120));
+  ok("...but the card says there is something to see", !!button("task:t1"));
+  ok("a card with nothing behind its title offers no button", !button("task:t2"));
+
+  // The message is folded to one line and cut, so a column of referrals reads
+  // as a column rather than as three paragraphs.
+  ok("a long message is shown as a summary",
+    text().includes("…") && !text().includes("خبر بده تا با مشتری صحبت کنم"));
+
+  act(() => {
+    button("task:t1")!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  ok("pressing it reveals the description", text().includes("قیمت رقیب را بگیر و ۵٪ تخفیف پیشنهاد کن"));
+  ok("...under the name that column has on a chase", text().includes("شرح اقدام بعدی"));
+  // In place: the record's own form is what the *title* opens, and a press
+  // here must not be mistaken for that.
+  ok("...and opens no record", opened.length === 0, opened);
+
+  act(() => {
+    button("referral:r1")!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  ok("a referral discloses its whole message", text().includes("خبر بده تا با مشتری صحبت کنم"));
+
+  act(() => {
+    button("task:t1")!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  ok("pressing again folds it back", !text().includes("قیمت رقیب را بگیر"));
+  ok("...and leaves the other card open", text().includes("خبر بده تا با مشتری صحبت کنم"));
+
+  act(() => { root10.unmount(); });
+  host10.remove();
+}
+
+/*
  * «ویرایش» on a follow-up opens the form it was filled in on, carrying what is
  * already recorded.
  *
