@@ -8703,6 +8703,42 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   const inquiry = readFileSync("src/components/SupplierInquiriesView.tsx", "utf8");
   ok("the inquiry's goods table scrolls sideways and not down",
     /rounded-xl overflow-x-auto">/.test(inquiry));
+
+  /* -- and the list that got long once the scrollbar went -- */
+  /*
+   * The customer form's relationship checklist drew every candidate the server
+   * sent, so with nothing typed the form opened on a wall of checkboxes and the
+   * search box that shortens it was pushed off the top. Capped by **count**,
+   * never by height: a `max-h-` here would be the second scrollbar the loop
+   * above forbids, which is why the cap is a `slice` and the rest is reached by
+   * searching.
+   */
+  const customersView = strip(readFileSync("src/components/CustomersView.tsx", "utf8"));
+  ok("the customer screen survived having its comments stripped",
+    customersView.includes("relationCandidates"));
+  ok("the relationship checklist draws only the first few",
+    /relationCandidates\.slice\(0, RELATION_VISIBLE\)/.test(customersView));
+  ok("...and says what the rest is reached by",
+    /relationCandidates\.length > RELATION_VISIBLE/.test(customersView)
+    && /جستجو کنید/.test(customersView));
+  /*
+   * The two figures are different on purpose and in one direction: the fetch is
+   * what a search reaches into, so a cap equal to or below what is drawn would
+   * make «search for the rest» advice that cannot be followed.
+   */
+  const fetchLimit = Number(/const RELATION_FETCH_LIMIT = (\d+)/.exec(customersView)?.[1]);
+  const visible = Number(/const RELATION_VISIBLE = (\d+)/.exec(customersView)?.[1]);
+  ok("both figures are named rather than written into the markup",
+    Number.isFinite(fetchLimit) && Number.isFinite(visible), [fetchLimit, visible]);
+  ok("the search reaches further than the list draws", fetchLimit > visible,
+    [fetchLimit, visible]);
+  ok("and the list is genuinely short", visible <= 10, visible);
+  /* The box has to reach the query, or it narrows nothing. */
+  ok("the search box drives the server query",
+    /relationSearchState\.setTerm\(relationSearch\)/.test(customersView)
+    && /value=\{relationSearch\}/.test(customersView));
+  ok("...and the picker asks for the opposite customer type",
+    /limit: RELATION_FETCH_LIMIT/.test(customersView));
 }
 
 /* ==========================================================================
