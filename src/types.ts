@@ -854,7 +854,6 @@ export interface ERPSettings {
     communicationMethods: string[];
     taskPriorities: string[];
     taskStatuses: string[];
-    proformaStatuses: string[];
     purchaseOrderStatuses: string[];
     positions?: string[];
     receiptTypes?: string[];

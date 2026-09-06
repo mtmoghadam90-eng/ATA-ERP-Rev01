@@ -36,15 +36,34 @@ const _projectStatusesCover: Covers<Project["status"], typeof PROJECT_STATUSES> 
 /**
  * The **derived** outcome, which is what `proforma_outcome_change` reports.
  *
- * Not the same list as the stored `status` column, which only ever holds
- * «پیش‌نویس» and «ارسال شده» — that is `settings.dropdownItems.proformaStatuses`
- * and it is the user's own.
+ * Not the same list as the stored `status` column — see
+ * `PROFORMA_STORED_STATUSES` below.
  */
 export const PROFORMA_OUTCOMES = [
   "پیش‌نویس", "ارسال شده", "تأیید شده (برنده)",
   "لغو شده", "باخته", "نیمه برنده", "جاری",
 ] as const satisfies readonly Proforma["status"][];
 const _proformaOutcomesCover: Covers<Proforma["status"], typeof PROFORMA_OUTCOMES> = true;
+
+/**
+ * The **stored** `proformas.status` column, which holds these two and nothing
+ * else — «has this quotation gone out yet», not how the sale went.
+ *
+ * It is a two-value column this application writes, not a vocabulary a company
+ * chooses, and treating it as one is what put «تأیید شده (برنده)», «لغو شده»
+ * and «باخته» into the rule editor's `newStatus` dropdown: those three are
+ * *outcomes*, derived from the line statuses, and the column never holds any of
+ * them — so a rule built on one saved cleanly, read correctly on its card, and
+ * never fired. `settings.dropdownItems.proformaStatuses` was that list; it is
+ * gone, and nothing reads a settings list for this any more.
+ *
+ * The subset check is deliberate rather than `Covers`: the outcome union is a
+ * superset, so this pins the **spelling** of the two against it and nothing
+ * more.
+ */
+export const PROFORMA_STORED_STATUSES = [
+  "پیش‌نویس", "ارسال شده",
+] as const satisfies readonly Proforma["status"][];
 
 /* ---------------------------- purchase orders ---------------------------- */
 
