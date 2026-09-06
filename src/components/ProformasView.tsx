@@ -96,6 +96,7 @@ import RichTextField from "./RichTextField";
 import {
   DELIVERY_READY_UNIT, getDeliverySummary, updateNotesForItems,
 } from "../utils/deliveryNotes";
+import { copiedProformaDates } from "../utils/proformaCopy";
 import {
   attributesFromSelections, describeProductSpec, mergeSpecText, specLinesFrom,
 } from "../utils/productConfig";
@@ -2462,8 +2463,12 @@ export default function ProformasView({
       contactPrefix: full.contactPrefix,
       projectId: full.projectId,
       projectName: full.projectName,
-      issueDate: full.issueDate,
-      expiryDate: full.expiryDate,
+      /*
+        A copy is a new document issued today, and the validity window it was
+        given travels with it — see `copiedProformaDates`. Both stay editable,
+        so somebody re-issuing under the original date puts it back.
+      */
+      ...copiedProformaDates(full, getTodayShamsi()),
       deliveryDate: full.deliveryDate,
       status: "پیش‌نویس",
       currency: full.currency || "ریال",

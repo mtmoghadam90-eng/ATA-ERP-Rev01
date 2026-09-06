@@ -186,6 +186,9 @@ import {
   healthRank, isOpenWithoutNextAction, isTaskFinished, isTerminalOutcome,
   isChaseableOutcome, normalizeFollowUpState, normalizeTaskKind, stateAfterDecision,
   versionRefusalReason, impliedSettlement,
+} from "../src/utils/salesFollowUp";
+import { copiedProformaDates } from "../src/utils/proformaCopy";
+import {
   RESULT_PURCHASE_CONFIRMED, RESULT_PURCHASE_CANCELLED, RESULT_LOST_TO_COMPETITOR,
   settlementCategoryPrompt,
 } from "../src/utils/salesFollowUp";
@@ -4736,6 +4739,75 @@ head("Sales follow-up: chasing a quotation");
   ok("a second revision of the same document is refused", forked !== null);
   ok("and the message names the revision to work from instead",
     (forked ?? "").includes("PF-B"), forked);
+
+  /* --- the dates a copy is issued with --- */
+  /*
+   * Copying carried both dates across verbatim, so a quotation duplicated to
+   * re-quote a job a month later went out dated a month ago — and every figure
+   * measured from that date measured from the wrong one: the queue's age, the
+   * health badge, `saleDateOf`'s fallback, and the printed document itself.
+   */
+  const copied = copiedProformaDates(
+    { issueDate: "1405/03/01", expiryDate: "1405/03/31" }, "1405/06/10");
+  eq("a copy is issued today", copied.issueDate, "1405/06/10");
+  eq("...and keeps the thirty days it was given", copied.expiryDate, "1405/07/09");
+
+  /*
+   * The window travels, not the date and not a hardcoded default: a quotation
+   * deliberately given ten days keeps ten, and one given sixty keeps sixty.
+   */
+  eq("a ten-day validity stays ten days",
+    copiedProformaDates(
+      { issueDate: "1405/03/01", expiryDate: "1405/03/11" }, "1405/06/10").expiryDate,
+    "1405/06/20");
+  /*
+   * Counted in **days**, not in months. Farvardin and Ordibehesht are 31 days
+   * each, so this window is 62 and lands on 1405/08/11 — a rule that added two
+   * months instead would answer 1405/08/10 and shorten the offer by a day every
+   * time a document was copied across months of unequal length.
+   */
+  eq("a two-month window keeps its exact length in days",
+    copiedProformaDates(
+      { issueDate: "1405/01/01", expiryDate: "1405/03/01" }, "1405/06/10").expiryDate,
+    "1405/08/11");
+
+  /*
+   * A blank expiry means «this offer does not lapse». Inventing a date for it
+   * is a claim made to a customer that nobody wrote.
+   */
+  eq("a source with no expiry gets none",
+    copiedProformaDates({ issueDate: "1405/03/01", expiryDate: "" }, "1405/06/10").expiryDate,
+    "");
+  eq("...and one with no issue date keeps the expiry it had",
+    copiedProformaDates({ issueDate: "", expiryDate: "1405/03/31" }, "1405/06/10").expiryDate,
+    "1405/03/31");
+  eq("...while still being issued today",
+    copiedProformaDates({ issueDate: "", expiryDate: "" }, "1405/06/10").issueDate,
+    "1405/06/10");
+
+  /*
+   * Broken data stays visibly broken rather than being quietly repaired on one
+   * document while every other copy of it is left wrong.
+   */
+  eq("an expiry that precedes its own issue date keeps that relationship",
+    copiedProformaDates(
+      { issueDate: "1405/03/10", expiryDate: "1405/03/01" }, "1405/06/10").expiryDate,
+    "1405/06/01");
+
+  /*
+   * Copying the dates verbatim is the fault; the screen must not do it again.
+   * Comments first, always: the note above the call names the function the
+   * check looks for, so a scan of the raw file would pass on the explanation.
+   */
+  const copySource = readFileSync("src/components/ProformasView.tsx", "utf-8")
+    .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  ok("the proforma screen survived having its comments stripped",
+    copySource.includes("handleCopyProforma"));
+  ok("the copy handler takes its dates from the rule",
+    /handleCopyProforma[\s\S]{0,3000}copiedProformaDates\(full, getTodayShamsi\(\)\)/
+      .test(copySource));
+  ok("...and no longer carries the source's own dates across",
+    !/issueDate: full\.issueDate/.test(copySource));
 
   /* --- the timeline sentence --- */
   const text = followUpActivityText({
