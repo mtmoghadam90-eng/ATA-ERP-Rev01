@@ -1,4 +1,5 @@
 import { api } from "./client";
+import type { WorkflowRule } from "../types";
 import type { AssistantProposal } from "../utils/assistantActions";
 
 export type { AssistantProposal } from "../utils/assistantActions";
@@ -82,6 +83,18 @@ export interface AdvisorAnswer {
   attachments?: { name: string; read: boolean; problem?: string }[];
 }
 
+export interface WorkflowDraftAnswer {
+  ok: boolean;
+  error?: string;
+  /** Null when nothing usable could be built — `refusal` says why. */
+  rule: WorkflowRule | null;
+  /** Persian sentences: what was dropped on the way back, and why. */
+  warnings: string[];
+  refusal: string | null;
+  /** The model's own one-line description of the rule it drafted. */
+  summary: string;
+}
+
 export const assistantApi = {
   status: () => api.get<AssistantStatus>("/api/assistant/status"),
 
@@ -111,6 +124,16 @@ export const assistantApi = {
     messages: { role: "user" | "assistant"; content: string }[],
     attachments: string[],
   ) => api.post<AdvisorAnswer>("/api/assistant/product-advisor", { messages, attachments }),
+
+  /**
+   * Turns a sentence into a workflow rule, for the editor to show.
+   *
+   * It writes nothing: the answer fills the form and the ordinary save button
+   * is still what stores it. `warnings` says what the server dropped for not
+   * being in the trigger catalogue, which is the half worth reading.
+   */
+  draftWorkflowRule: (description: string) =>
+    api.post<WorkflowDraftAnswer>("/api/assistant/workflow-draft", { description }),
 
   /* settings */
   config: () => api.get<AssistantConfigResponse>("/api/assistant/config"),

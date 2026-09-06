@@ -35,6 +35,7 @@
  */
 
 import type { WorkflowRule } from "../types";
+import { APP_MODULES } from "../appModules";
 import {
   AFTER_SALES_STATUSES, CUSTOMER_TYPES, DELIVERY_WORKFLOW_STATUSES,
   INQUIRY_WORKFLOW_STATUSES, PROFORMA_OUTCOMES, PROFORMA_STORED_STATUSES, PROJECT_STATUSES,
@@ -377,6 +378,52 @@ export function conditionValues(triggerType: string, field: string): readonly st
  * The fields a `time_elapsed` rule may match, by the record its schedule counts
  * from. Kept beside the catalogue so both come from one file.
  */
+/**
+ * The modules a workflow rule may hand a task to, and the one list that decides
+ * it.
+ *
+ * `create_task` resolves «MODULE_RESPONSIBLE_<id>» through
+ * `settings.moduleResponsibles[id]`, so two lists have to agree: the assignee
+ * dropdown in the rule editor, and the table in Settings where a responsible is
+ * actually named. They were both hand-typed and did not — the dropdown offered
+ * `MODULE_RESPONSIBLE_tasks` and the table had no row for it, so a rule
+ * assigned to it silently fell back to «admin». Both read this now, and it is
+ * derived from `APP_MODULES` for the same reason everything else about the
+ * modules is.
+ *
+ * Three are excluded because they are not work anybody is handed: the front
+ * page, the users screen and the settings screen.
+ */
+const NOT_ASSIGNABLE = new Set(["dashboard", "users", "settings"]);
+
+export interface AssigneeToken {
+  value: string;
+  label: string;
+}
+
+/** The modules that carry a responsible, in the catalogue's own order. */
+export const RESPONSIBLE_MODULES = APP_MODULES.filter((m) => !NOT_ASSIGNABLE.has(m.id));
+
+/**
+ * What the assignee box may hold, besides a person's own name.
+ *
+ * `SALES_EXPERT` leads because it is the answer for anything about a sale: it
+ * resolves through the proforma's *project*, which is where the owner of a
+ * quotation is recorded.
+ */
+export const WORKFLOW_ASSIGNEE_TOKENS: readonly AssigneeToken[] = [
+  { value: "SALES_EXPERT", label: "کارشناس فروش پروژه" },
+  ...RESPONSIBLE_MODULES.map((m) => ({
+    value: `MODULE_RESPONSIBLE_${m.id}`,
+    label: `مسئول ماژول ${m.name}`,
+  })),
+];
+
+/** True when the string is one of the dynamic tokens rather than a person. */
+export function isAssigneeToken(value: string): boolean {
+  return WORKFLOW_ASSIGNEE_TOKENS.some((t) => t.value === value);
+}
+
 export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
   proforma: [
     { value: "status", label: "وضعیت ارسال پیش‌فاکتور", options: PROFORMA_STORED_STATUSES },

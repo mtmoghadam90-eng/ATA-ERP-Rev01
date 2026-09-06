@@ -30,7 +30,8 @@ import {
   X,
   Bot,
   Plug,
-  CalendarDays
+  CalendarDays,
+  Sparkles
 } from 'lucide-react';
 import { ERPSettings, CustomField, User, Project, AuditLog, WorkflowRule } from '../types';
 import { APP_MODULES, DEFAULT_MODULE_ORDER } from '../appModules';
@@ -41,6 +42,7 @@ import { MessageTemplateRow, messagingApi } from '../api/messaging';
 import { CHANNEL_LABELS, Channel } from '../utils/messaging';
 import { formatERPNumber } from '../numUtils';
 import { ApiError, api } from '../api/client';
+import { assistantApi } from '../api/assistant';
 import { auditLogsApi } from '../api/auditLogs';
 import { useAuditLogList } from '../api/useAuditLogList';
 import { useUserDirectory } from '../api/useUserDirectory';
@@ -50,8 +52,8 @@ import RatesView from './RatesView';
 import { decompressLZW } from '../utils/compress';
 import { SCHEDULE_SUBJECTS, describeSchedule } from '../utils/workflowSchedule';
 import {
-  SCHEDULE_MODEL_FIELDS, WORKFLOW_TRIGGERS, defaultConditionField, triggerFields,
-  triggerGroups, triggerLabel,
+  RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS, WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS,
+  defaultConditionField, triggerFields, triggerGroups, triggerLabel,
 } from '../utils/workflowTriggers';
 import ConfirmModal from './ConfirmModal';
 import { uploadFile } from '../imageUtils';
@@ -157,6 +159,21 @@ export default function SettingsView({
 
   // Workflow builder states
   const [editingRule, setEditingRule] = useState<WorkflowRule | null>(null);
+
+  /*
+   * The assistant that fills this form in.
+   *
+   * It drafts; it never saves. The rule lands in the editor below and the
+   * ordinary «ذخیره قانون ورک‌فلو» button is still the only thing that writes —
+   * which is stricter than the assistant's propose-and-confirm path, not looser:
+   * a workflow rule is configuration that fires for ever, and the form explains
+   * it far better than a summary beside a confirm button could.
+   */
+  const [draftWish, setDraftWish] = useState('');
+  const [draftBusy, setDraftBusy] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [draftSummary, setDraftSummary] = useState('');
+  const [draftWarnings, setDraftWarnings] = useState<string[]>([]);
   const [isRuleFormOpen, setIsRuleFormOpen] = useState(false);
 
   /*
@@ -601,6 +618,51 @@ export default function SettingsView({
       ...settings,
       workflows: [...rules, newRule]
     });
+  };
+
+  /**
+   * «دو روز بعد از ارسال پیش‌فاکتور به کارشناس فروش پیگیری بده» → a filled form.
+   *
+   * Everything the server hands back has already been checked against the
+   * trigger catalogue, so what arrives here is a rule this application can
+   * actually run; `warnings` says what was dropped on the way and is drawn
+   * beside the form rather than swallowed — a condition silently removed is the
+   * same silence the catalogue exists to end.
+   *
+   * Ids are stamped here because the pure rule is clock-free.
+   */
+  const handleDraftRule = async () => {
+    const wish = draftWish.trim();
+    if (!wish) return;
+    setDraftBusy(true);
+    setDraftError(null);
+    setDraftWarnings([]);
+    setDraftSummary('');
+    try {
+      const answer = await assistantApi.draftWorkflowRule(wish);
+      if (!answer.ok) { setDraftError(answer.error || 'ساخت پیش‌نویس ممکن نشد.'); return; }
+      if (answer.refusal || !answer.rule) {
+        setDraftError(answer.refusal || 'از این توضیح قانونی ساخته نشد.');
+        setDraftWarnings(answer.warnings || []);
+        return;
+      }
+      const stamp = Date.now();
+      setEditingRule({
+        ...answer.rule,
+        id: `new-${stamp}`,
+        actions: answer.rule.actions.map((action, index) => ({
+          ...action,
+          id: `act-${stamp}-${index}`,
+        })),
+      });
+      setIsRuleFormOpen(true);
+      setDraftSummary(answer.summary || '');
+      setDraftWarnings(answer.warnings || []);
+    } catch (err) {
+      setDraftError(err instanceof ApiError ? err.message : 'ارتباط با دستیار برقرار نشد.');
+    } finally {
+      setDraftBusy(false);
+    }
   };
 
   const handleSaveWorkflowRule = (e: React.FormEvent) => {
@@ -2383,23 +2445,12 @@ export default function SettingsView({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {[
-                      { id: 'customers', name: 'مشتریان', desc: 'مدیریت خریداران و مخاطبین' },
-                      { id: 'projects', name: 'پروژه‌ها (فرصت‌ها)', desc: 'پیش‌برد پروژه‌ها و پیگیری فرصت‌ها' },
-                      { id: 'products', name: 'کالاها و تجهیزات', desc: 'کاتالوگ کالاها و تجهیزات فنی' },
-                      { id: 'proformas', name: 'پیش‌فاکتورها', desc: 'صدور و پیگیری پیش‌فاکتورها' },
-                      { id: 'suppliers', name: 'تأمین‌کنندگان', desc: 'مدیریت و ارزیابی تأمین‌کنندگان کالا' },
-                      { id: 'supplierInquiries', name: 'استعلام قیمت تأمین‌کنندگان', desc: 'ثبت و پیگیری استعلام‌های قیمتی' },
-                      { id: 'purchaseOrders', name: 'سفارشات خرید خارجی', desc: 'سفارشات خرید قطعی از خارج کشور' },
-                      { id: 'packagingDelivery', name: 'بسته‌بندی و تحویل کالا', desc: 'فرآیند آماده‌سازی و ارسال کالا' },
-                      { id: 'afterSalesServices', name: 'خدمات پس از فروش', desc: 'پیگیری گارانتی و تعمیرات کالا' },
-                      { id: 'transactions', name: 'تراکنش‌های مالی', desc: 'ثبت اسناد دریافتی، پرداختی و مالی' }
-                    ].map((mod, idx) => {
+                    {RESPONSIBLE_MODULES.map((mod, idx) => {
                       return (
                         <tr key={mod.id} className="hover:bg-white transition bg-white/40">
                           <td className="py-3 px-4 font-mono text-slate-400">{idx + 1}</td>
                           <td className="py-3 px-4 font-semibold text-slate-800">{mod.name}</td>
-                          <td className="py-3 px-4 text-slate-500">{mod.desc}</td>
+                          <td className="py-3 px-4 text-slate-500">{mod.description}</td>
                           <td className="py-3 px-4">
                             <span className="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full font-bold text-[10px]">
                               سیستمی
@@ -2436,25 +2487,14 @@ export default function SettingsView({
 
               {/* Mobile View */}
               <div className="md:hidden space-y-4">
-                {[
-                  { id: 'customers', name: 'مشتریان', desc: 'مدیریت خریداران و مخاطبین' },
-                  { id: 'projects', name: 'پروژه‌ها (فرصت‌ها)', desc: 'پیش‌برد پروژه‌ها و پیگیری فرصت‌ها' },
-                  { id: 'products', name: 'کالاها و تجهیزات', desc: 'کاتالوگ کالاها و تجهیزات فنی' },
-                  { id: 'proformas', name: 'پیش‌فاکتورها', desc: 'صدور و پیگیری پیش‌فاکتورها' },
-                  { id: 'suppliers', name: 'تأمین‌کنندگان', desc: 'مدیریت و ارزیابی تأمین‌کنندگان کالا' },
-                  { id: 'supplierInquiries', name: 'استعلام قیمت تأمین‌کنندگان', desc: 'ثبت و پیگیری استعلام‌های قیمتی' },
-                  { id: 'purchaseOrders', name: 'سفارشات خرید خارجی', desc: 'سفارشات خرید قطعی از خارج کشور' },
-                  { id: 'packagingDelivery', name: 'بسته‌بندی و تحویل کالا', desc: 'فرآیند آماده‌سازی و ارسال کالا' },
-                  { id: 'afterSalesServices', name: 'خدمات پس از فروش', desc: 'پیگیری گارانتی و تعمیرات کالا' },
-                  { id: 'transactions', name: 'تراکنش‌های مالی', desc: 'ثبت اسناد دریافتی، پرداختی و مالی' }
-                ].map((mod, idx) => {
+                {RESPONSIBLE_MODULES.map((mod, idx) => {
                   return (
                     <div key={`sys-mob-${mod.id}`} className="bg-white rounded-xl border border-slate-200 p-4 space-y-4 shadow-sm relative">
                       <div className="flex items-start justify-between">
                         <div className="space-y-1">
                           <span className="text-slate-400 font-mono text-[10px]">ردیف {idx + 1}</span>
                           <h4 className="font-bold text-slate-800 text-sm">{mod.name}</h4>
-                          <p className="text-[11px] text-slate-500">{mod.desc}</p>
+                          <p className="text-[11px] text-slate-500">{mod.description}</p>
                         </div>
                         <span className="text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full font-bold text-[9px]">
                           سیستمی
@@ -3285,6 +3325,62 @@ export default function SettingsView({
 
             {isRuleFormOpen && editingRule ? (
               <form onSubmit={handleSaveWorkflowRule} className="space-y-6 bg-slate-50/50 p-6 rounded-2xl border border-slate-200 animate-fade-in">
+                {/*
+                  Describe the rule; the assistant fills the form in.
+
+                  Building one by hand means knowing which of twenty-four
+                  triggers reports the event you mean and which values its
+                  fields can hold — and getting either wrong produces a rule
+                  that saves, reads correctly on its card and never fires. The
+                  draft is checked against that catalogue on the server, so what
+                  lands here is runnable; everything it had to drop is printed
+                  under the box rather than swallowed.
+                */}
+                <div className="bg-white border border-sky-200 rounded-2xl p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Sparkles size={15} className="text-sky-600" />
+                    <span className="text-xs font-extrabold text-slate-800">ساخت قانون با توضیح ساده</span>
+                  </div>
+                  <textarea
+                    value={draftWish}
+                    onChange={(e) => setDraftWish(e.target.value)}
+                    rows={2}
+                    id="workflow-draft-wish"
+                    placeholder="مثال: دو روز بعد از اینکه پیش‌فاکتور برای مشتری ارسال شد، به کارشناس فروش پروژه وظیفه پیگیری بده"
+                    className="w-full text-xs md:text-sm border border-slate-200 rounded-xl p-3 focus:outline-none focus:border-sky-500 bg-white leading-relaxed"
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { void handleDraftRule(); }}
+                      disabled={draftBusy || !draftWish.trim()}
+                      id="workflow-draft-run"
+                      className="bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-4 rounded-xl text-xs transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {draftBusy ? 'در حال ساخت…' : 'پیش‌نویس قانون'}
+                    </button>
+                    <span className="text-[10px] text-slate-500">
+                      فرم پر می‌شود؛ ذخیره همچنان با دکمهٔ پایین صفحه و پس از بازبینی شماست.
+                    </span>
+                  </div>
+
+                  {draftError && (
+                    <p className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2 leading-relaxed">
+                      {draftError}
+                    </p>
+                  )}
+                  {draftSummary && (
+                    <p className="text-[11px] text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 leading-relaxed">
+                      {draftSummary}
+                    </p>
+                  )}
+                  {draftWarnings.length > 0 && (
+                    <ul className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 space-y-1 leading-relaxed">
+                      {draftWarnings.map((note, i) => <li key={i}>• {note}</li>)}
+                    </ul>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-slate-700 text-xs font-bold mb-2">نام قانون ورک‌فلو <span className="text-red-500">*</span></label>
@@ -3736,18 +3832,24 @@ export default function SettingsView({
                                     className="w-full border border-slate-200 rounded-lg p-2.5 bg-white"
                                   >
                                     <optgroup label="سمت‌های پویا">
-                                      <option value="SALES_EXPERT">کارشناس فروش پروژه</option>
-                                      <option value="MODULE_RESPONSIBLE_customers">مسئول ماژول مشتریان</option>
-                                      <option value="MODULE_RESPONSIBLE_projects">مسئول ماژول پروژه‌ها (فرصت‌ها)</option>
-                                      <option value="MODULE_RESPONSIBLE_products">مسئول ماژول کالاها و تجهیزات</option>
-                                      <option value="MODULE_RESPONSIBLE_proformas">مسئول ماژول پیش‌فاکتورها</option>
-                                      <option value="MODULE_RESPONSIBLE_suppliers">مسئول ماژول تأمین‌کنندگان</option>
-                                      <option value="MODULE_RESPONSIBLE_supplierInquiries">مسئول ماژول استعلام قیمت تأمین‌کنندگان</option>
-                                      <option value="MODULE_RESPONSIBLE_purchaseOrders">مسئول سفارشات خرید خارجی</option>
-                                      <option value="MODULE_RESPONSIBLE_packagingDelivery">مسئول ماژول بسته‌بندی و تحویل کالا</option>
-                                      <option value="MODULE_RESPONSIBLE_afterSalesServices">مسئول خدمات پس از فروش</option>
-                                      <option value="MODULE_RESPONSIBLE_transactions">مسئول ماژول تراکنش‌های مالی</option>
-                                      <option value="MODULE_RESPONSIBLE_tasks">مسئول ماژول وظایف و پیگیری</option>
+                                      {/*
+                                        The tokens, from the one catalogue.
+
+                                        This was eleven hand-typed options, and
+                                        the responsibles table beside it was a
+                                        different hand-typed list — so
+                                        `MODULE_RESPONSIBLE_tasks` could be
+                                        chosen here with nowhere to name that
+                                        responsible, and the engine quietly fell
+                                        back to «admin». It also has to hold
+                                        every token the assistant may draft: a
+                                        `<select>` whose value matches no option
+                                        renders its placeholder, so a perfectly
+                                        good assignee would read as blank.
+                                      */}
+                                      {WORKFLOW_ASSIGNEE_TOKENS.map((token) => (
+                                        <option key={token.value} value={token.value}>{token.label}</option>
+                                      ))}
                                     </optgroup>
                                     <optgroup label="کاربران سیستم">
                                       {users.map(u => (

@@ -11,6 +11,7 @@ import {
 } from "../services/assistant/actions";
 import { getTodayShamsi } from "../../dateUtils";
 import { askAdvisor } from "../services/assistant/advisor";
+import { draftWorkflowRule } from "../services/assistant/workflowDraft";
 
 /**
  * The dashboard assistant.
@@ -140,6 +141,26 @@ export function registerAssistantRoutes(app: express.Express, deps: RouteDeps): 
       res.json({ success: true, ...(await askAdvisor(history, attachments, user)) });
     } catch (err) {
       sendError(res, err, "POST /api/assistant/product-advisor");
+    }
+  });
+
+  /**
+   * A workflow rule, drafted from a sentence.
+   *
+   * It reads nothing but the trigger catalogue and the company's message
+   * templates, and it **writes nothing**: the answer fills the rule editor and
+   * the person presses the same save button as always. Gated twice — the
+   * assistant flag here, the `settings` permission inside the service — because
+   * drafting a rule for somebody who cannot save one is a form they cannot use.
+   */
+  app.post("/api/assistant/workflow-draft", async (req, res) => {
+    const user = await requireAssistant(req, res);
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as { description?: unknown };
+      res.json({ success: true, ...(await draftWorkflowRule(String(body.description ?? ""), user)) });
+    } catch (err) {
+      sendError(res, err, "POST /api/assistant/workflow-draft");
     }
   });
 
