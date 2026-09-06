@@ -3487,19 +3487,23 @@ export default function SettingsView({
                           : triggerFields(editingRule.triggerType);
 
                         /*
-                          The stored proforma status list is the company's own,
-                          so `settings` wins over the catalogue's default pair —
-                          the one place a user-editable list beats it.
-                        */
-                        const storedProformaStatuses = settings.dropdownItems?.proformaStatuses;
-                        const isStoredProformaStatus =
-                          editingRule.triggerType === 'proforma_status_change'
-                          && (cond.field === 'newStatus' || cond.field === 'oldStatus');
+                          The catalogue decides, with no exception.
 
+                          There used to be one: `settings.dropdownItems.
+                          proformaStatuses` beat the catalogue for a
+                          `proforma_status_change` condition, on the reasoning
+                          that a company's own list should win. It is not a
+                          company's list — it is a two-value column this
+                          application writes — and the seeded document held five
+                          entries from before the outcome and the status were
+                          separated, so «تأیید شده (برنده)», «لغو شده» and
+                          «باخته» were offered against a column that never holds
+                          them. That is precisely the drift this catalogue was
+                          written to end, reintroduced through the one override
+                          left standing over it.
+                        */
                         const valueOptions: readonly string[] =
-                          isStoredProformaStatus && storedProformaStatuses?.length
-                            ? storedProformaStatuses
-                            : (fieldOptions.find((f) => f.value === cond.field)?.options ?? []);
+                          fieldOptions.find((f) => f.value === cond.field)?.options ?? [];
 
                         return (
                           <div key={condIdx} className="flex flex-wrap items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-150 animate-fade-in text-xs">

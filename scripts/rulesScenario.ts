@@ -218,6 +218,7 @@ import {
 import {
   WORKFLOW_TRIGGERS, conditionValues, triggerFields,
 } from "../src/utils/workflowTriggers";
+import { PROFORMA_STORED_STATUSES } from "../src/utils/moduleStatuses";
 import {
   DELIVERY_DELIVERED, DELIVERY_PREPARING, DELIVERY_WORKFLOW_STATUSES,
   INQUIRY_FINAL_OFFER, INQUIRY_INITIAL_OFFER, INQUIRY_SENT, INQUIRY_WINNER,
@@ -9087,6 +9088,38 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   ok("customer_updated no longer offers a key it does not emit",
     !triggerFields("customer_updated").some((f) => f.value === "newStatus"));
 
+  /*
+   * The stored status is a two-value column, not a vocabulary.
+   *
+   * `proforma_status_change` reports `proformas.status` moving — «has this gone
+   * out yet» — and `proforma_outcome_change` reports the derived outcome. The
+   * editor preferred `settings.dropdownItems.proformaStatuses` over the
+   * catalogue for the first, on the reasoning that a company's own list should
+   * win; that list was seeded with five entries from before the two were
+   * separated, so «تأیید شده (برنده)», «لغو شده» and «باخته» were offered
+   * against a column that never holds any of them — the rule saved, read
+   * correctly on its card, and never fired. Reported from the screen.
+   */
+  eq("the stored proforma status offers exactly the two the column holds",
+    conditionValues("proforma_status_change", "newStatus").join("|"),
+    PROFORMA_STORED_STATUSES.join("|"));
+  eq("...on both sides of the change",
+    conditionValues("proforma_status_change", "oldStatus").join("|"),
+    PROFORMA_STORED_STATUSES.join("|"));
+  // Named, because a list that merely has two entries would pass with one of
+  // these still in it.
+  for (const outcomeOnly of ["تأیید شده (برنده)", "لغو شده", "باخته", "نیمه برنده", "جاری"]) {
+    ok(`«${outcomeOnly}» is not offered as a stored proforma status`,
+      !conditionValues("proforma_status_change", "newStatus").includes(outcomeOnly)
+      && !conditionValues("proforma_status_change", "oldStatus").includes(outcomeOnly));
+    // ...and each of them is exactly what the *other* trigger is for.
+    ok(`...but «${outcomeOnly}» is offered as an outcome`,
+      conditionValues("proforma_outcome_change", "newOutcome").includes(outcomeOnly));
+  }
+  eq("a new proforma is offered the same two",
+    conditionValues("proforma_created", "status").join("|"),
+    PROFORMA_STORED_STATUSES.join("|"));
+
   /* -- and the screen holds no copy of any of it -- */
   const view = strip(readFileSync("src/components/SettingsView.tsx", "utf8"));
   ok("the trigger dropdown is built from the catalogue",
@@ -9101,6 +9134,17 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   ok("no hand-typed status list survives in the editor",
     !/'تحویل شده \(رسید انبار\)', 'لغو شده'/.test(view)
     && !/'پیشنهاد فنی مالی'/.test(view));
+  /*
+   * And no settings list beats the catalogue any more. That override was the
+   * one exception left standing over it, and it is how the drift came back.
+   */
+  ok("the value list comes from the catalogue with no exception",
+    !/proformaStatuses/.test(view)
+    && /fieldOptions\.find\(\(f\) => f\.value === cond\.field\)\?\.options/.test(view));
+  for (const file of ["src/seedData.ts", "src/types.ts"]) {
+    ok(`«proformaStatuses» is gone from ${file}`,
+      !readFileSync(file, "utf8").includes("proformaStatuses"));
+  }
 
   ok("the comment stripper left the screen intact", view.length > 50000);
 }

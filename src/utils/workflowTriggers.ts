@@ -37,7 +37,7 @@
 import type { WorkflowRule } from "../types";
 import {
   AFTER_SALES_STATUSES, CUSTOMER_TYPES, DELIVERY_WORKFLOW_STATUSES,
-  INQUIRY_WORKFLOW_STATUSES, PROFORMA_OUTCOMES, PROJECT_STATUSES,
+  INQUIRY_WORKFLOW_STATUSES, PROFORMA_OUTCOMES, PROFORMA_STORED_STATUSES, PROJECT_STATUSES,
   PURCHASE_ORDER_STATUSES, TASK_PRIORITIES, TRANSACTION_TYPES,
 } from "./moduleStatuses";
 import { REFERRAL_STATUSES, TASK_STATUSES } from "./workBoard";
@@ -92,7 +92,7 @@ export const WORKFLOW_TRIGGERS: Record<WorkflowTriggerType, TriggerSpec> = {
      * emits it now, and a new proforma is «پیش‌نویس» or «ارسال شده».
      */
     fields: [
-      { value: "status", label: "وضعیت پیش‌فاکتور", options: ["پیش‌نویس", "ارسال شده"] },
+      { value: "status", label: "وضعیت پیش‌فاکتور", options: PROFORMA_STORED_STATUSES },
       { value: "currency", label: "ارز سند" },
       { value: "totalAmount", label: "مبلغ کل" },
       { value: "finalAmount", label: "مبلغ نهایی" },
@@ -111,13 +111,17 @@ export const WORKFLOW_TRIGGERS: Record<WorkflowTriggerType, TriggerSpec> = {
     label: "تغییر وضعیت ثبت‌شده پیش‌فاکتور (مثلاً ارسال شده)",
     group: G.SALES,
     /*
-     * The stored column, not the derived outcome: only «پیش‌نویس» and «ارسال
-     * شده» ever live there, and that list is the user's own — the editor reads
-     * `settings.dropdownItems.proformaStatuses` over these.
+     * The stored column, not the derived outcome — and **not** a user-editable
+     * list either. The editor used to prefer `settings.dropdownItems.
+     * proformaStatuses` over these, a five-entry leftover from before the
+     * outcome and the status were separated, so it offered «تأیید شده (برنده)»,
+     * «لغو شده» and «باخته» on a column that has never held any of them: the
+     * rule saved, printed correctly on its card, and never fired. Those three
+     * belong to `proforma_outcome_change` one trigger above.
      */
     fields: [
-      { value: "newStatus", label: "وضعیت جدید ثبت‌شده", options: ["پیش‌نویس", "ارسال شده"] },
-      { value: "oldStatus", label: "وضعیت قبلی ثبت‌شده", options: ["پیش‌نویس", "ارسال شده"] },
+      { value: "newStatus", label: "وضعیت جدید ثبت‌شده", options: PROFORMA_STORED_STATUSES },
+      { value: "oldStatus", label: "وضعیت قبلی ثبت‌شده", options: PROFORMA_STORED_STATUSES },
       { value: "proformaAmount", label: "مبلغ پیش‌فاکتور" },
     ],
   },
