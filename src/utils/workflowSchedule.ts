@@ -54,6 +54,23 @@ export interface ScheduleSubject {
   dateField: string;
   /** The trigger name the rule's payload is built for. */
   entityType: string;
+  /**
+   * The payload key that names **the record this fired on**.
+   *
+   * The sweep spreads the row it found, so the id arrived as plain `id` and
+   * nothing downstream looks for that: `enrichPayload` reads `proformaId` to
+   * resolve the document's project, and `create_task` reads it to decide what
+   * the task is *about*. So every scheduled rule raised a task attached to the
+   * wrong record or to none — and a `SALES_FOLLOW_UP` filed against a project
+   * cannot be closed **at all**, because `completeFollowUp` refuses anything
+   * whose `relatedToType` is not «proforma» and the ordinary tick refuses a
+   * follow-up. The task simply sat on the board for ever.
+   *
+   * Spelled out per subject rather than derived as `${entityType}Id`, so the
+   * key is visible beside the model it names and `test:rules` can hold it
+   * against the keys the engine actually reads.
+   */
+  payloadIdKey: string;
 }
 
 /**
@@ -72,38 +89,47 @@ export const SCHEDULE_SUBJECTS: Record<string, ScheduleSubject> = {
   proforma_sent: {
     label: "ارسال پیش‌فاکتور به کارفرما",
     model: "proforma", dateField: "sentDateJalali", entityType: "proforma",
+    payloadIdKey: "proformaId",
   },
   proforma_issue: {
     label: "تاریخ صدور پیش‌فاکتور",
     model: "proforma", dateField: "issueDateJalali", entityType: "proforma",
+    payloadIdKey: "proformaId",
   },
   proforma_expiry: {
     label: "تاریخ اعتبار پیش‌فاکتور",
     model: "proforma", dateField: "expiryDateJalali", entityType: "proforma",
+    payloadIdKey: "proformaId",
   },
   proforma_delivery: {
     label: "تاریخ تحویل توافق‌شده پیش‌فاکتور",
     model: "proforma", dateField: "deliveryDateJalali", entityType: "proforma",
+    payloadIdKey: "proformaId",
   },
   project_creation: {
     label: "تاریخ ایجاد پروژه",
     model: "project", dateField: "creationDateJalali", entityType: "project",
+    payloadIdKey: "projectId",
   },
   purchase_order_date: {
     label: "تاریخ سفارش خرید",
     model: "purchaseOrder", dateField: "orderDateJalali", entityType: "purchaseOrder",
+    payloadIdKey: "purchaseOrderId",
   },
   purchase_order_arrival: {
     label: "تاریخ تحویل مورد انتظار سفارش خرید",
     model: "purchaseOrder", dateField: "expectedDeliveryDateJalali", entityType: "purchaseOrder",
+    payloadIdKey: "purchaseOrderId",
   },
   delivery_date: {
     label: "تاریخ صدور پکینگ‌لیست",
     model: "packagingDelivery", dateField: "deliveryDateJalali", entityType: "packagingDelivery",
+    payloadIdKey: "packagingDeliveryId",
   },
   inquiry_creation: {
     label: "تاریخ ثبت استعلام قیمت",
     model: "supplierInquiry", dateField: "creationDateJalali", entityType: "supplierInquiry",
+    payloadIdKey: "supplierInquiryId",
   },
 };
 

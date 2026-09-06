@@ -379,7 +379,7 @@ export function conditionValues(triggerType: string, field: string): readonly st
  */
 export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
   proforma: [
-    { value: "status", label: "وضعیت ارسال پیش‌فاکتور", options: ["پیش‌نویس", "ارسال شده"] },
+    { value: "status", label: "وضعیت ارسال پیش‌فاکتور", options: PROFORMA_STORED_STATUSES },
     { value: "currency", label: "ارز سند" },
     { value: "finalAmount", label: "مبلغ نهایی" },
   ],

@@ -9120,6 +9120,54 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     conditionValues("proforma_created", "status").join("|"),
     PROFORMA_STORED_STATUSES.join("|"));
 
+  /*
+   * A scheduled rule has to name the record it fired on.
+   *
+   * The sweep spreads the row it found, so the id arrived as a plain `id` —
+   * and nothing downstream reads that. `enrichPayload` keys on `proformaId`
+   * to resolve the document's project; `create_task` keys on it to decide
+   * what the task is *about*. So «۲ روز پس از ارسال پیش‌فاکتور، به کارشناس
+   * فروش پیگیری بده» raised a `SALES_FOLLOW_UP` attached to the **project**,
+   * which `completeFollowUp` refuses («مرتبط با پیش‌فاکتور نیست») and the
+   * ordinary tick refuses as well — a task that could not be closed from any
+   * screen. Reported while building exactly that rule.
+   */
+  for (const [key, subject] of Object.entries(SCHEDULE_SUBJECTS)) {
+    ok(`the «${key}» schedule names the record it fires on`,
+      subject.payloadIdKey === `${subject.entityType}Id`,
+      { entityType: subject.entityType, payloadIdKey: subject.payloadIdKey });
+  }
+  // The three keys the engine actually reads, held against the subjects that
+  // produce them — a key spelled anything else is silently ignored.
+  eq("a proforma schedule produces the key the engine reads",
+    SCHEDULE_SUBJECTS.proforma_sent.payloadIdKey, "proformaId");
+  eq("...a project schedule likewise",
+    SCHEDULE_SUBJECTS.project_creation.payloadIdKey, "projectId");
+  eq("...and a purchase order's",
+    SCHEDULE_SUBJECTS.purchase_order_arrival.payloadIdKey, "purchaseOrderId");
+
+  {
+    const strip2 = (text: string) =>
+      text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    const sweep = strip2(readFileSync("src/server/services/workflowSweep.ts", "utf8"));
+    ok("the sweep source survived having its comments stripped",
+      sweep.includes("runDueWorkflows"));
+    ok("the sweep puts that key on the payload",
+      /\[subject\.payloadIdKey\]: entityId/.test(sweep));
+    // After the spread: a proforma row carries its own `projectId` foreign key,
+    // which is a different question from which record is firing.
+    ok("...after the row, not before",
+      sweep.indexOf("...row") < sweep.indexOf("[subject.payloadIdKey]"));
+
+    const engine = strip2(readFileSync("src/server/services/workflowService.ts", "utf8"));
+    ok("the engine source survived having its comments stripped",
+      engine.includes("enrichPayload"));
+    ok("...and the engine still decides the task's subject from that key",
+      /enrichedPayload\.proformaId/.test(engine));
+    ok("...a follow-up on a quotation is filed against the quotation",
+      /relatedToType: "proforma"/.test(engine));
+  }
+
   /* -- and the screen holds no copy of any of it -- */
   const view = strip(readFileSync("src/components/SettingsView.tsx", "utf8"));
   ok("the trigger dropdown is built from the catalogue",

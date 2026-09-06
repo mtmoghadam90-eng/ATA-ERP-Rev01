@@ -143,6 +143,25 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
         const payload = await enrichPayload(
           {
             ...row,
+            /*
+             * The record this fired on, under the key the engine looks for.
+             *
+             * The row arrives with a plain `id` and nothing downstream reads
+             * that: `enrichPayload` keys on `proformaId` to resolve the
+             * document's project, and `create_task` keys on it to decide what
+             * the task is *about*. Without it every scheduled rule raised a
+             * task attached to the wrong record — a follow-up filed against a
+             * project, which `completeFollowUp` refuses and the ordinary tick
+             * refuses too, so it could not be closed from any screen.
+             *
+             * After the spread, deliberately: a proforma row carries its own
+             * `projectId` foreign key and that is a different question from
+             * «which record is this rule firing on».
+             */
+            [subject.payloadIdKey]: entityId,
+            // What the record is, so a queued message names it as well.
+            entityType: subject.entityType,
+            entityId,
             ruleName: rule.name,
             elapsedDays: days,
             dueDay: dueDay(base, days, direction),
