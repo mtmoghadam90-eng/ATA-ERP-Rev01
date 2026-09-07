@@ -10,10 +10,11 @@ import { syncProjectStage } from "./projectService";
 import { afterCommit } from "../afterCommit";
 import { closeFollowUpTasks } from "./followUpService";
 import { isTerminalOutcome, versionRefusalReason } from "../../utils/salesFollowUp";
+import { deriveProjectCompetitor } from "../../utils/competitors";
 import { describeProformaChanges, proformaChangeSentence } from "./proformaChanges";
 import {
-  ProformaOutcome, deriveProjectLossReason, deriveProjectStatus, getProformaOutcome,
-  getWonItems, isWonStatus, outcomeWhere, statusWithoutProformas,
+  ProformaOutcome, decidingProformas, deriveProjectLossReason, deriveProjectStatus,
+  getProformaOutcome, getWonItems, isWonStatus, outcomeWhere, statusWithoutProformas,
 } from "../proformaStatus";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
@@ -181,6 +182,11 @@ const LIST_SELECT = {
   sentMethod: true,
   sentRecipients: true,
   lossReason: true,
+  // Who contested it, and what they quoted — the grid prints the name and the
+  // report is built on the pair. The amount is in this document's own currency.
+  competitorId: true,
+  competitorAmount: true,
+  competitor: { select: { name: true } },
   customValues: true,
   // The day the quotation actually went out. The card prints it beside «ارسال
   // شده»: the issue date is when the document was written, which is a different
@@ -345,6 +351,8 @@ export interface ProformaInput {
   status?: string;
   isCancelled?: boolean;
   lossReason?: string | null;
+  competitorId?: string | null;
+  competitorAmount?: unknown;
   currency?: string;
   issueDate?: string | null;
   expiryDate?: string | null;
@@ -560,6 +568,18 @@ function scalarData(input: ProformaInput): Record<string, unknown> {
   if ("status" in input) set("status", toNullableString(input.status, 50));
   if ("isCancelled" in input) set("isCancelled", !!input.isCancelled);
   if ("lossReason" in input) set("lossReason", toNullableString(input.lossReason, 300));
+  if ("competitorId" in input) set("competitorId", toNullableString(input.competitorId, 36));
+  /*
+   * Their price, in this document's own currency.
+   *
+   * `positiveOrNull` rather than `toNumber`: an empty box is «not recorded»,
+   * and a zero stored there would read as «they quoted nothing» and make the
+   * gap an infinity. The same distinction `amountForeign` draws on a receipt.
+   */
+  if ("competitorAmount" in input) {
+    const amount = toNumber(input.competitorAmount);
+    set("competitorAmount", Number.isFinite(amount) && amount > 0 ? amount : null);
+  }
   if ("currency" in input) set("currency", toNullableString(input.currency, 20) ?? "ریال");
   if ("notes" in input) set("notes", toNullableString(input.notes));
   if ("sentMethod" in input) set("sentMethod", toNullableString(input.sentMethod, 100));
@@ -605,6 +625,8 @@ export async function syncProjectStatus(
       // The reasons, document-level and per line: the project's own loss reason
       // is derived from these rather than typed a second time on its form.
       lossReason: true,
+      // And who contested it, for the project's own copy below.
+      competitorId: true,
       items: { select: { status: true, supplyMethod: true, lossReason: true } },
     },
   });
@@ -635,6 +657,18 @@ export async function syncProjectStatus(
    */
   const nextLossReason = deriveProjectLossReason(proformas);
   if (nextLossReason !== undefined) data.lossReason = nextLossReason;
+
+  /*
+   * And the competitor, from the same deciding documents.
+   *
+   * Unconditional where the loss reason is not, and the difference is the
+   * point: `lossReason` has a box on the project form whose answer must be
+   * preserved when the quotations say nothing, so it has an `undefined`. This
+   * column has no such box — nothing but this rule ever writes it — so «none of
+   * them names a competitor» is simply null, and a competitor left over from a
+   * quotation since revised goes with it.
+   */
+  data.competitorId = deriveProjectCompetitor(decidingProformas(proformas));
 
   if (isWonStatus(nextStatus)) {
     if (!project.winningDate) {
@@ -1335,6 +1369,16 @@ export async function setItemOutcomes(
   outcomes: { itemId: string; status: string; lossReason?: string | null }[],
   user: AuthUser,
   todayJalali: string,
+  /**
+   * Who contested the quotation, recorded on the screen that decides it.
+   *
+   * **Absent is «not edited», not «nobody»** — the same distinction
+   * `syncChildren` draws. n8n drives this endpoint and has no competitor box,
+   * and the outcome modal sends the pair only when somebody answered it, so
+   * reading absent as null would erase a competitor named on an earlier pass
+   * every time a line's status was corrected.
+   */
+  competitor?: { competitorId?: string | null; competitorAmount?: unknown },
 ): Promise<"ok" | "forbidden" | "not-found"> {
   const db = getDb();
   const visibility = visibilityClause(user);
@@ -1362,6 +1406,28 @@ export async function setItemOutcomes(
         },
       });
       if (updated.count === 0) return "not-found";
+    }
+
+    /*
+     * The competitor, before the project is re-derived.
+     *
+     * `deriveProjectCompetitor` reads the documents inside `syncProjectStatus`,
+     * so writing this afterwards would put the project one save behind its own
+     * quotation — exactly the order `syncProjectStage` is called in for the
+     * same reason.
+     */
+    if (competitor) {
+      const data: Record<string, unknown> = {};
+      if ("competitorId" in competitor) {
+        data.competitorId = toNullableString(competitor.competitorId, 36);
+      }
+      if ("competitorAmount" in competitor) {
+        const amount = toNumber(competitor.competitorAmount);
+        data.competitorAmount = Number.isFinite(amount) && amount > 0 ? amount : null;
+      }
+      if (Object.keys(data).length > 0) {
+        await tx.proforma.update({ where: { id }, data });
+      }
     }
 
     await syncProjectStatus(tx, existing.projectId, todayJalali, user);

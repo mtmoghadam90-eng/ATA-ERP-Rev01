@@ -73,6 +73,17 @@ export interface ProformaRow {
   sentMethod: string | null;
   sentRecipients: string | null;
   lossReason: string | null;
+  /**
+   * Who contested this quotation, and what they quoted.
+   *
+   * Recorded on a **won** document too — «در برابر چه کسی بردیم» is the same
+   * question and the same field. The amount is in this document's own currency,
+   * beside `finalAmount`, which is what makes the gap a percentage independent
+   * of the exchange rate.
+   */
+  competitorId: string | null;
+  competitorAmount: string | null;
+  competitor: { name: string } | null;
   /** The grid draws a custom-fields column from these. */
   customValues: string | null;
   /** The day it was sent to the customer, not the day it was written. */
@@ -120,6 +131,9 @@ export interface ProformaWriteInput {
   status?: string;
   isCancelled?: boolean;
   lossReason?: string | null;
+  competitorId?: string | null;
+  /** In the document's own currency. Zero and null both mean «not recorded». */
+  competitorAmount?: number | null;
   currency?: string;
   issueDate?: string | null;
   expiryDate?: string | null;
@@ -166,7 +180,16 @@ export const proformasApi = {
   setItemOutcomes: (
     id: string,
     outcomes: { itemId: string; status: string; lossReason?: string | null }[],
-  ) => api.post<{ proforma: ProformaDetail }>(`/api/proformas/${id}/item-outcomes`, { outcomes })
+    /**
+     * Who contested it, when the screen asked. **Omitted rather than nulled**
+     * when nobody answered: the server reads an absent key as «not edited», so
+     * correcting one line's status does not erase a competitor named earlier.
+     */
+    competitor?: { competitorId: string | null; competitorAmount: number | null },
+  ) => api.post<{ proforma: ProformaDetail }>(`/api/proformas/${id}/item-outcomes`, {
+    outcomes,
+    ...(competitor ?? {}),
+  })
     .then((r) => r.proforma),
 
   /**

@@ -61,6 +61,8 @@ import { projectToWriteInput, detailToProject } from "../api/projectAdapter";
 import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
 import { calcSeedOf } from "../api/productAdapter";
 import { canSeeCosts, hasModulePermission } from "../utils/permissions";
+import CompetitorsTab, { CompetitorFields } from "./CompetitorsTab";
+import { CompetitorRow, competitorsApi } from "../api/competitors";
 import {
   COST_SOURCES, COST_SOURCE_LABELS, landedUnitCostOf, lineNeedsCost, linesMissingCost,
 } from "../utils/costOfGoods";
@@ -662,7 +664,28 @@ export default function ProformasView({
    * they decide what becomes of the one a revision replaced.
    */
   /** «اسناد» (the register) or «پیگیری فروش» (the sales desk's working list). */
-  const [mainTab, setMainTab] = useState<'documents' | 'follow-up'>('documents');
+  const [mainTab, setMainTab] = useState<'documents' | 'follow-up' | 'competitors'>('documents');
+
+  /*
+   * The competitor catalogue, for the outcome modal's picker.
+   *
+   * Read once when the screen mounts rather than resolved out of a picker's
+   * matches — a short reference list, and a `<select>` whose value matches no
+   * option renders its placeholder, so a document naming a competitor outside
+   * whatever page was loaded would read as having none.
+   */
+  const [competitors, setCompetitors] = useState<CompetitorRow[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    competitorsApi.list(true)
+      .then((r) => { if (!cancelled) setCompetitors(r.competitors); })
+      .catch(() => { /* the picker degrades to «ثبت نشده»; nothing else breaks */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  /** The pair the outcome modal is editing, seeded when it opens. */
+  const [outcomeCompetitorId, setOutcomeCompetitorId] = useState('');
+  const [outcomeCompetitorAmount, setOutcomeCompetitorAmount] = useState<number | null>(null);
 
   /*
    * Opened on the follow-up tab when the front page asked for it.
@@ -779,6 +802,10 @@ export default function ProformasView({
         lossReason: item.lossReason || "",
       })),
     );
+    // From the record just read, not from the grid row: a list row is a
+    // projection and this pair is what the modal is about to write back.
+    setOutcomeCompetitorId(pf.competitorId || "");
+    setOutcomeCompetitorAmount(pf.competitorAmount ?? null);
     setShowItemsModal(true);
   };
   /**
@@ -824,6 +851,11 @@ export default function ProformasView({
       items: editingItemsList,
       isCancelled: false,
       status: target.status === "لغو شده" ? "ارسال شده" : target.status,
+      // Who contested it, from this modal. Recorded on a win as readily as on a
+      // loss — a competitor named only on losses makes every win rate against
+      // them read as zero.
+      competitorId: outcomeCompetitorId || undefined,
+      competitorAmount: outcomeCompetitorAmount ?? undefined,
     });
 
     if (!categoryCompletion || !target.projectId) return;
@@ -2784,6 +2816,16 @@ export default function ProformasView({
             >
               پیگیری فروش
             </button>
+            <button
+              type="button"
+              onClick={() => setMainTab('competitors')}
+              id="proformas-tab-competitors"
+              className={`px-4 py-2 text-xs font-bold transition ${
+                mainTab === 'competitors' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              رقبا
+            </button>
           </div>
           <button
             onClick={handleOpenCreate}
@@ -2799,6 +2841,14 @@ export default function ProformasView({
           opened — a list hook fetches on mount. */}
       {mainTab === 'follow-up' && (
         <SalesFollowUpTab active settings={settings} categoryCompletion={categoryCompletion} />
+      )}
+
+      {/* Fetches nothing until it is opened, like the queue above it. */}
+      {mainTab === 'competitors' && (
+        <CompetitorsTab
+          active
+          canEditCatalogue={hasModulePermission(currentUser, 'settings')}
+        />
       )}
 
       {mainTab === 'documents' && (
@@ -3785,6 +3835,27 @@ export default function ProformasView({
                   </tbody>
                 </table>
               </div>
+              {/*
+                Who we were up against, asked on the screen that decides the
+                deal — the one moment somebody actually knows it. Optional, and
+                offered on a win too: «در برابر چه کسی بردیم» is the same
+                question and the same field.
+              */}
+              <div className="mt-4 pt-4 border-t border-slate-100">
+                <CompetitorFields
+                  competitors={competitors}
+                  competitorId={outcomeCompetitorId}
+                  competitorAmount={outcomeCompetitorAmount}
+                  currency={selectedProformaForItems.currency || "ریال"}
+                  onChange={(patch) => {
+                    if ("competitorId" in patch) setOutcomeCompetitorId(patch.competitorId ?? "");
+                    if ("competitorAmount" in patch) {
+                      setOutcomeCompetitorAmount(patch.competitorAmount ?? null);
+                    }
+                  }}
+                />
+              </div>
+
               <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
                 <button
                   type="button"

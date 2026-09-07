@@ -24,6 +24,7 @@ import {
 import { registerCustomerRoutes } from "./src/server/routes/customers";
 import { registerProjectRoutes } from "./src/server/routes/projects";
 import { registerProformaRoutes } from "./src/server/routes/proformas";
+import { registerCompetitorRoutes } from "./src/server/routes/competitors";
 import { registerFollowUpRoutes } from "./src/server/routes/followUp";
 import { registerProductRoutes } from "./src/server/routes/products";
 import { registerSupplierRoutes } from "./src/server/routes/suppliers";
@@ -409,6 +410,7 @@ async function startServer() {
   registerCustomerRoutes(app, routeDeps);
   registerProjectRoutes(app, routeDeps);
   registerProformaRoutes(app, routeDeps);
+  registerCompetitorRoutes(app, routeDeps);
   registerFollowUpRoutes(app, routeDeps);
   registerProductRoutes(app, routeDeps);
   registerSupplierRoutes(app, routeDeps);

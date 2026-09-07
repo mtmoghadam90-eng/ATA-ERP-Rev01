@@ -22,6 +22,10 @@ import {
 const WRITABLE: (keyof ProformaInput)[] = [
   "proformaNumber", "proformaType", "customerId", "contactCustomerId", "contactPrefix",
   "projectId", "status", "isCancelled", "lossReason", "currency",
+  // Who contested it and what they quoted. On the document rather than the
+  // line: the loss is decided line by line, but who took the business is a fact
+  // about the deal.
+  "competitorId", "competitorAmount",
   "issueDate", "expiryDate", "deliveryDate", "sentDate",
   "discountPercent", "discountAmount", "taxPercent", "taxAmount", "extraCosts",
   "historicalExchangeRate", "notes", "sentMethod", "sentRecipients", "customValues",
@@ -215,7 +219,23 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
         return;
       }
 
-      const outcome = await setItemOutcomes(req.params.id, outcomes, user, getTodayShamsi());
+      /*
+       * The competitor travels with the outcome, because this is the screen
+       * where somebody learns it. Only the keys that were actually sent are
+       * passed on: absent means «not edited» here too, so an integration
+       * correcting one line's status does not erase a competitor named earlier.
+       */
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const competitor: { competitorId?: string | null; competitorAmount?: unknown } = {};
+      if ("competitorId" in body) {
+        competitor.competitorId = typeof body.competitorId === "string" ? body.competitorId : null;
+      }
+      if ("competitorAmount" in body) competitor.competitorAmount = body.competitorAmount;
+
+      const outcome = await setItemOutcomes(
+        req.params.id, outcomes, user, getTodayShamsi(),
+        Object.keys(competitor).length > 0 ? competitor : undefined,
+      );
       if (outcome === "forbidden") {
         res.status(403).json({ success: false, error: "شما اجازه تغییر این پیش‌فاکتور را ندارید." });
         return;

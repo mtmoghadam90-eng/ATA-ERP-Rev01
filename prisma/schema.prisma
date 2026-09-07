@@ -326,6 +326,33 @@ model CustomerAgreement {
 }
 
 /**
+ * Who we lose to, and win against.
+ *
+ * A table rather than a free-text column on the proforma, for the reason the
+ * product categories are a list: one competitor entered twice is two rows, and
+ * every figure about either is half the truth.
+ */
+model Competitor {
+  id      String  @id @default(uuid()) @db.NVarChar(36)
+  name    String  @db.NVarChar(200)
+  website String? @db.NVarChar(300)
+  country String? @db.NVarChar(100)
+  notes   String? @db.NVarChar(Max)
+
+  /// Retired rather than deleted: the documents naming it keep their history.
+  isActive Boolean @default(true)
+
+  proformas Proforma[]
+  projects  Project[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([name])
+  @@map("competitors")
+}
+
+/**
  * ================================ suppliers ==============================
  */
 
@@ -553,6 +580,11 @@ model Project {
   manualStage       String?   @db.NVarChar(60)
   manualStageLocked Boolean   @default(false)
   lossReason  String? @db.NVarChar(300)
+
+  /// Derived from the deciding quotations in the same transaction as the status
+  /// and the loss reason — never typed a second time on this form.
+  competitorId String?     @db.NVarChar(36)
+  competitor   Competitor? @relation(fields: [competitorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   description String? @db.NVarChar(Max)
 
   creationDate             DateTime  @db.Date
@@ -703,6 +735,20 @@ model Proforma {
   status      String  @db.NVarChar(50)
   isCancelled Boolean @default(false)
   lossReason  String? @db.NVarChar(300)
+
+  /// Which competitor contested this quotation, and what they quoted.
+  ///
+  /// On the document rather than the line: the loss is decided line by line,
+  /// but who took the business is a fact about the deal. Recorded on a **won**
+  /// document too — a competitor named only on losses makes every win rate
+  /// against them read as zero.
+  competitorId String?     @db.NVarChar(36)
+  competitor   Competitor? @relation(fields: [competitorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  /// Their price, in **this document's own currency**, beside `finalAmount` —
+  /// the same rule as `ProformaItem.unitCost`, and what makes the gap a
+  /// percentage that does not move with the exchange rate.
+  competitorAmount Decimal? @db.Decimal(19, 2)
   currency    String  @default("ریال") @db.NVarChar(20)
 
   issueDate          DateTime  @db.Date
