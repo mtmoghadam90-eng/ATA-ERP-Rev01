@@ -9,6 +9,7 @@ import {
   STAFF_VARIABLES, type StaffNotificationKind, staffTemplateFor,
 } from '../utils/staffNotifications';
 import { ApiError } from '../api/client';
+import CampaignsTab from './CampaignsTab';
 import {
   BaleChatRow, MessageRow, MessageTemplateRow, ProviderSummary, messagingApi,
 } from '../api/messaging';
@@ -38,7 +39,7 @@ interface Props {
   currentUser?: User | null;
 }
 
-type Tab = 'outbox' | 'templates' | 'providers';
+type Tab = 'outbox' | 'campaigns' | 'templates' | 'providers';
 
 const STATUS_STYLE: Record<string, string> = {
   QUEUED: 'bg-sky-50 text-sky-700 border-sky-200',
@@ -211,6 +212,7 @@ export default function MessagingView({ settings, onUpdateSettings, currentUser 
       <div className="flex border-b border-slate-200">
         {([
           ['outbox', 'صف و سوابق ارسال'],
+          ['campaigns', 'سگمنت‌ها و کمپین‌ها'],
           ['templates', 'قالب‌های پیام'],
           ...(canConfigure ? [['providers', 'تنظیمات درگاه‌ها'] as [Tab, string]] : []),
         ] as [Tab, string][]).map(([id, label]) => (
@@ -230,6 +232,7 @@ export default function MessagingView({ settings, onUpdateSettings, currentUser 
       </div>
 
       {tab === 'outbox' && <Outbox onError={report} onNotice={flash} />}
+      {tab === 'campaigns' && <CampaignsTab onError={report} onNotice={flash} />}
       {tab === 'templates' && <Templates settings={settings} onError={report} onNotice={flash} />}
       {tab === 'providers' && canConfigure && (
         <>

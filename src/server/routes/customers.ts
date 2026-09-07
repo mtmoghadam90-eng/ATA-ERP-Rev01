@@ -10,7 +10,7 @@ import {
 import { logAction } from "../services/auditService";
 import { getTodayShamsi } from "../../dateUtils";
 import {
-  CUSTOMER_FILTERABLE,
+  CUSTOMER_FILTERABLE, customerListExtras,
   CUSTOMER_METRIC_SORTABLE,
   CUSTOMER_SORTABLE,
   CustomerInput,
@@ -79,38 +79,16 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
         [...CUSTOMER_SORTABLE, ...CUSTOMER_METRIC_SORTABLE],
         CUSTOMER_FILTERABLE,
       );
-      // `customField=<id>:<value>`, repeatable. Kept out of parseListQuery's
-      // allowlist because the field ids are defined by users at runtime.
-      // `linkedTo=<customerId>` filters to contacts linked to that company.
-      const result = await listCustomers(q, user, {
-        customField: req.query.customField,
-        linkedTo: req.query.linkedTo,
-        // Ranges and a relation rather than plain equality, so they travel
-        // separately from parseListQuery's column allowlist.
-        value: {
-          rank: req.query.rank,
-          minRealized: req.query.minRealized,
-          maxRealized: req.query.maxRealized,
-          minPotential: req.query.minPotential,
-          maxPotential: req.query.maxPotential,
-          minGrossProfit: req.query.minGrossProfit,
-          maxGrossProfit: req.query.maxGrossProfit,
-          lastPurchaseWithinMonths: req.query.lastPurchaseWithinMonths,
-          paymentBehaviour: req.query.paymentBehaviour,
-          costToServe: req.query.costToServe,
-          notAssessed: req.query.notAssessed,
-        },
-        // The grid's per-column header inputs. Allowlisted by column name.
-        columns: {
-          type: req.query.colType,
-          name: req.query.colName,
-          industry: req.query.colIndustry,
-          keyPerson: req.query.colKeyPerson,
-          contact: req.query.colContact,
-          province: req.query.colProvince,
-          tags: req.query.colTags,
-        },
-      });
+      /*
+       * The extras — the custom-field filter, the linked-contacts filter, the
+       * value ranges and the grid's per-column inputs — are read by
+       * `customerListExtras` rather than mapped out here. A saved segment
+       * stores the same parameters and is resolved through the same function,
+       * so the two cannot come to mean different things.
+       */
+      const result = await listCustomers(
+        q, user, customerListExtras(req.query as Record<string, unknown>),
+      );
       res.json({ success: true, ...result, rows: redactCustomerValues(result.rows, user) });
     } catch (err) {
       sendError(res, err, "GET /api/customers");

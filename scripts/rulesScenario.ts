@@ -11043,5 +11043,239 @@ head("Competitors: who we lose to, and by how much");
     /isActive: false/.test(catalogue) && !/competitor\.delete\(/.test(catalogue));
 }
 
+/* ==========================================================================
+ * Segments and campaigns: one message to a group, through one sending path.
+ * ========================================================================== */
+{
+  head("Segments and campaigns");
+
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  const {
+    CAMPAIGN_RECIPIENT_LIMIT, SKIP_REASONS, campaignProgressPercent, campaignRefusal,
+    describeCampaignResult, parseSegmentQuery, sanitizeSegmentQuery, segmentKey,
+    segmentRefusal, skipReasonFor,
+  } = await import("../src/utils/campaigns");
+  const { CUSTOMER_QUERY_KEYS } = await import("../src/server/services/customerService");
+
+  /* ------------------------- the saved query ----------------------------- */
+
+  /*
+   * A segment may store only what the customers endpoint reads. A key nobody
+   * allowlisted would be a filter the segment prints on its card and the query
+   * ignores — the segment would then match a different set of people from the
+   * grid it was built on, silently.
+   */
+  const cleaned = sanitizeSegmentQuery(
+    { rank: "A", province: "تهران", status: "all", colName: "  ", nonsense: "1", page: "3" },
+    CUSTOMER_QUERY_KEYS,
+  );
+  eq("an allowlisted filter is kept", cleaned.rank, "A");
+  eq("...and another", cleaned.province, "تهران");
+  ok("a key the endpoint never reads is dropped", !("nonsense" in cleaned));
+  // `page` is not a filter: a segment is a set, not a slice of one.
+  ok("paging is not part of a segment", !("page" in cleaned));
+  // Both are what `parseListQuery` itself discards, so keeping them would make
+  // two segments asking the same question compare as different.
+  ok("the literal «all» is dropped", !("status" in cleaned));
+  ok("a blank value is dropped", !("colName" in cleaned));
+
+  // A repeated query parameter arrives as an array; the first is the one
+  // `parseListQuery` would read, so it is the one stored.
+  eq("a repeated parameter keeps its first value",
+    sanitizeSegmentQuery({ rank: ["B", "C"] }, CUSTOMER_QUERY_KEYS).rank, "B");
+
+  eq("a stored query round-trips",
+    parseSegmentQuery(JSON.stringify({ rank: "A" }), CUSTOMER_QUERY_KEYS).rank, "A");
+  eq("...and unreadable JSON is an empty query, not a crash",
+    Object.keys(parseSegmentQuery("{oops", CUSTOMER_QUERY_KEYS)).length, 0);
+
+  /*
+   * Every filter the customers module offers has to be storable, or a segment
+   * built from the grid loses part of what the person was looking at.
+   */
+  for (const key of ["rank", "province", "customerType", "status", "industry",
+    "minGrossProfit", "lastPurchaseWithinMonths", "notAssessed", "colTags", "customField",
+    "search"]) {
+    ok(`«${key}» is a segment-storable filter`, CUSTOMER_QUERY_KEYS.includes(key));
+  }
+
+  /* --------------------------- the refusals ------------------------------ */
+
+  eq("a segment needs a name", segmentRefusal("", { rank: "A" }, []) !== null, true);
+  /*
+   * The one that matters: an empty form is «every customer», and the cost of
+   * that mistake is a message to the entire customer list. Somebody who means
+   * everybody says so with a filter.
+   */
+  ok("a segment with no condition at all is refused",
+    (segmentRefusal("همه", {}, []) ?? "").includes("حداقل یک شرط"));
+  ok("...and a segment with one is not", segmentRefusal("طلایی", { rank: "A" }, []) === null);
+  ok("a duplicate name is refused",
+    segmentRefusal("مشتریان طلایی", { rank: "A" }, ["مشتريان طلايي"]) !== null);
+  // Folds only spelling — it does not join separate words.
+  eq("the fold is spelling only", segmentKey("مشتريان  طلايي"), segmentKey("مشتریان طلایی"));
+  ok("...and does not join words",
+    segmentKey("مشتری ان") !== segmentKey("مشتریان"));
+
+  ok("a campaign needs a body",
+    campaignRefusal({ name: "n", segmentId: "s", channel: "SMS", body: "  " }) !== null);
+  ok("a campaign needs a segment",
+    campaignRefusal({ name: "n", segmentId: "", channel: "SMS", body: "x" }) !== null);
+  ok("...and is otherwise accepted",
+    campaignRefusal({ name: "n", segmentId: "s", channel: "SMS", body: "x" }) === null);
+
+  /* ------------------------- reporting the result ------------------------ */
+
+  eq("an opt-out is read as an opt-out",
+    skipReasonFor("این مشتری درخواست عدم تماس دارد."), SKIP_REASONS.OPTED_OUT);
+  eq("a missing number is read as a missing address",
+    skipReasonFor("شماره موبایلی ثبت نشده است."), SKIP_REASONS.NO_ADDRESS);
+  /*
+   * Anything unrecognised keeps its own sentence rather than being folded into
+   * the nearest neighbour — a reason nobody anticipated is the one worth
+   * reading in full.
+   */
+  eq("an unfamiliar refusal is not guessed at",
+    skipReasonFor("چیزی که هیچ‌کس پیش‌بینی نکرده"), SKIP_REASONS.OTHER);
+  eq("and no reason at all is not an opt-out", skipReasonFor(null), SKIP_REASONS.OTHER);
+
+  /*
+   * Progress is measured against what was queued, never against the segment's
+   * size: the people who could not be written to are never going to move, so
+   * counting them would leave every campaign stuck short of 100% with nothing
+   * wrong.
+   */
+  eq("progress ignores the people who were never queued",
+    campaignProgressPercent({ matched: 100, queued: 0, sent: 50, failed: 0, cancelled: 0, skipped: 50 }),
+    100);
+  eq("...and is half way when half have gone",
+    campaignProgressPercent({ matched: 10, queued: 5, sent: 5, failed: 0, cancelled: 0, skipped: 0 }),
+    50);
+  eq("...and a campaign that queued nothing is zero, not NaN",
+    campaignProgressPercent({ matched: 0, queued: 0, sent: 0, failed: 0, cancelled: 0, skipped: 0 }),
+    0);
+
+  ok("the result sentence names both figures",
+    describeCampaignResult({ matched: 120, queued: 0, sent: 83, failed: 0, cancelled: 0, skipped: 37 })
+      .includes("120")
+    && describeCampaignResult({ matched: 120, queued: 0, sent: 83, failed: 0, cancelled: 0, skipped: 37 })
+      .includes("37"));
+
+  ok("a campaign is bounded", CAMPAIGN_RECIPIENT_LIMIT > 0 && CAMPAIGN_RECIPIENT_LIMIT <= 10_000);
+
+  /* --------------------- read from the source, once ---------------------- */
+
+  const campaignSrc = strip(readFileSync("src/server/services/messaging/campaignService.ts", "utf8"));
+  ok("the campaign service survived having its comments stripped",
+    campaignSrc.includes("sendCampaign"));
+
+  /*
+   * The one sending path. A campaign must not write to `messages` itself, or
+   * quiet hours, the dry-run switch, the retry policy and every opt-out would
+   * each need a second implementation — and the first one anybody forgot would
+   * be the one that texts a customer who asked us not to.
+   */
+  ok("a campaign enqueues through the shared sender",
+    campaignSrc.includes("queueForCustomer"));
+  ok("...and never creates an outbox row itself",
+    !/message\.create\(/.test(campaignSrc));
+
+  /*
+   * The campaign id is written **with** the row rather than stamped onto it
+   * afterwards: the unique index is what stops one customer getting two
+   * messages, and an index can only do that at the moment of insert.
+   */
+  ok("the campaign is written with the message, not stamped after it",
+    /campaignId: id/.test(campaignSrc)
+    && !/message\.update\(\{ where: \{ id: outcome\.messageId \}/.test(campaignSrc));
+  ok("...and a duplicate caught by the index is counted, not thrown",
+    campaignSrc.includes('"P2002"'));
+
+  /*
+   * One filter dialect. A segment resolves through the customers module's own
+   * readers, so `visibilityClause` applies with nothing written here to make
+   * that true, and a filter added there reaches segments on the same commit.
+   */
+  ok("a segment is resolved through the customers module",
+    campaignSrc.includes("buildCustomerWhere") && campaignSrc.includes("customerListExtras"));
+  ok("...and this file writes no customer clause of its own",
+    !/searchClause\(/.test(campaignSrc));
+
+  // A cancelled message is cancelled everywhere: the figures are counted from
+  // the outbox rows rather than kept as a tally on the campaign.
+  ok("the campaign's figures are counted from its messages",
+    /message\.groupBy\(/.test(campaignSrc));
+
+  /*
+   * One press is bounded, and what is left is reported rather than dropped: a
+   * two-thousand-person segment is minutes of work and a request that times out
+   * half way would leave the sender with no idea what went out.
+   */
+  ok("a send is bounded per press", /SEND_BATCH_SIZE/.test(campaignSrc));
+  ok("...and reports what it did not reach", /remaining/.test(campaignSrc));
+  /*
+   * And a campaign with people still to write to stays SENDING. Marked sent, it
+   * would be the screen saying the work is finished when it is not — and the
+   * «ادامه ارسال» button would disappear with it.
+   */
+  ok("a half-finished campaign is not marked sent",
+    /remaining > 0[\s\S]{0,120}CAMPAIGN_STATUS\.SENDING/.test(campaignSrc));
+  /*
+   * The skipped figure is only meaningful once it has finished: while it is
+   * sending, the same subtraction counts everybody merely next in the queue,
+   * and «۲۵۰ ارسال نشد» about them reads as a failure.
+   */
+  ok("«not sent» is only counted on a finished campaign",
+    /row\.status === CAMPAIGN_STATUS\.SENT/.test(campaignSrc));
+
+  const campaignRoutes = strip(readFileSync("src/server/routes/campaigns.ts", "utf8"));
+  ok("the campaign routes survived having their comments stripped",
+    campaignRoutes.includes("registerCampaignRoutes"));
+  // Or Express answers 404 for a segment whose id is the literal «preview».
+  ok("the preview is registered before the segment id route",
+    campaignRoutes.indexOf('"/api/messaging/segments/preview"')
+      < campaignRoutes.indexOf('"/api/messaging/segments/:id"'));
+  ok("the send is registered before nothing that would shadow it",
+    campaignRoutes.indexOf('"/api/messaging/campaigns/:id/send"') > 0);
+
+  /*
+   * The migration's index is what makes «one customer, one message» true, and
+   * it is filtered because both columns are nullable — an unfiltered unique
+   * index over two nullables collides on the ordinary messages that have
+   * neither.
+   */
+  const migration = readFileSync(
+    "prisma/migrations/20260916000000_segments_campaigns/migration.sql", "utf8",
+  );
+  ok("one customer gets one message per campaign",
+    /CREATE UNIQUE INDEX \[messages_campaign_customer_uq\]/.test(migration));
+  ok("...and the index is filtered, since both columns are nullable",
+    /messages_campaign_customer_uq[\s\S]*?WHERE \[campaignId\] IS NOT NULL/.test(migration));
+  // The whole design, in one absence: no table joining a segment to customers.
+  ok("a segment stores no customer ids",
+    !/segment_customers|customer_segment_members/i.test(migration));
+
+  /*
+   * There is one filter form in this application, and it is the customers
+   * grid's. A second set of controls in the messaging screen would be two
+   * places to add every new filter and two answers to «who is in this
+   * segment».
+   */
+  const modal = strip(readFileSync("src/components/SegmentSaveModal.tsx", "utf8"));
+  ok("the segment modal survived having its comments stripped",
+    modal.includes("SegmentSaveModal"));
+  ok("...and builds no filter controls of its own",
+    !/setFilter|CustomerListFilters/.test(modal));
+  const tab = strip(readFileSync("src/components/CampaignsTab.tsx", "utf8"));
+  ok("the campaigns tab builds no filter controls either",
+    !/setFilter|CustomerListFilters/.test(tab));
+  // The count somebody agrees to is the one about to be used, fetched from the
+  // server rather than read off the campaign: a segment is a live query.
+  ok("the send confirmation re-counts the recipients",
+    tab.includes("previewSegment") && tab.includes("SendConfirmation"));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

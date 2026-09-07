@@ -234,6 +234,88 @@ function valueClause(filters: CustomerValueFilters | undefined): Record<string, 
   return and;
 }
 
+/* --------------------------- one query dialect --------------------------- */
+
+/**
+ * Which query parameter carries each value filter, and each column filter.
+ *
+ * Written as data rather than as an object literal inside the route, because
+ * the customers grid is no longer the only caller: a saved segment stores these
+ * same parameters and is resolved through this same path, so a filter reachable
+ * from one and not the other would be a segment that matches a different set of
+ * people from the grid it was built on.
+ */
+const VALUE_QUERY_KEYS = [
+  "rank", "minRealized", "maxRealized", "minPotential", "maxPotential",
+  "minGrossProfit", "maxGrossProfit", "lastPurchaseWithinMonths",
+  "paymentBehaviour", "costToServe", "notAssessed",
+] as const;
+
+/** Query parameter -> the column filter it fills in. */
+const COLUMN_QUERY_KEYS = {
+  colType: "type", colName: "name", colIndustry: "industry", colKeyPerson: "keyPerson",
+  colContact: "contact", colProvince: "province", colTags: "tags",
+} as const satisfies Record<string, keyof CustomerColumnFilters>;
+
+/*
+ * Exhaustiveness, both ways, at compile time.
+ *
+ * A filter added to either interface and not given a query key would simply
+ * never arrive — the endpoint would answer correctly for a question nobody
+ * could ask — so the type-checker names the omission instead.
+ */
+type _EveryValueFilterIsQueryable =
+  Exclude<keyof CustomerValueFilters, typeof VALUE_QUERY_KEYS[number]> extends never ? true
+    : ["value filter with no query key", Exclude<keyof CustomerValueFilters, typeof VALUE_QUERY_KEYS[number]>];
+type _EveryColumnFilterIsQueryable =
+  Exclude<keyof CustomerColumnFilters, typeof COLUMN_QUERY_KEYS[keyof typeof COLUMN_QUERY_KEYS]> extends never ? true
+    : ["column filter with no query key", keyof CustomerColumnFilters];
+const _valueKeysAreComplete: _EveryValueFilterIsQueryable = true;
+const _columnKeysAreComplete: _EveryColumnFilterIsQueryable = true;
+void _valueKeysAreComplete;
+void _columnKeysAreComplete;
+
+/**
+ * Every query parameter the customers list understands.
+ *
+ * This is what a segment is allowed to store, so it is derived from the
+ * allowlists rather than typed out again: a filter added to the module reaches
+ * segments on the same commit, and one removed stops being storable.
+ */
+export const CUSTOMER_QUERY_KEYS: readonly string[] = [
+  "search", "sort", "order",
+  ...CUSTOMER_FILTERABLE,
+  "customField", "linkedTo",
+  ...VALUE_QUERY_KEYS,
+  ...Object.keys(COLUMN_QUERY_KEYS),
+];
+
+export interface CustomerListExtras {
+  customField?: unknown;
+  linkedTo?: unknown;
+  value?: CustomerValueFilters;
+  columns?: CustomerColumnFilters;
+}
+
+/**
+ * Reads the extras out of a query object — an Express `req.query`, or a
+ * segment's stored parameters, which are deliberately the same shape.
+ */
+export function customerListExtras(query: Record<string, unknown>): CustomerListExtras {
+  const value: Record<string, unknown> = {};
+  for (const key of VALUE_QUERY_KEYS) value[key] = query[key];
+
+  const columns: Record<string, unknown> = {};
+  for (const [param, field] of Object.entries(COLUMN_QUERY_KEYS)) columns[field] = query[param];
+
+  return {
+    customField: query.customField,
+    linkedTo: query.linkedTo,
+    value: value as CustomerValueFilters,
+    columns: columns as CustomerColumnFilters,
+  };
+}
+
 export function buildCustomerWhere(
   q: ListQuery,
   user: AuthUser,

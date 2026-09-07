@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { Customer, ERPSettings } from '../types';
 import type { User as AppUser } from '../types';
-import { canSeeCosts } from '../utils/permissions';
+import { canSeeCosts, hasModulePermission } from '../utils/permissions';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomerValueFields from './CustomerValueFields';
 import CustomerValueCard, { RANK_STYLE } from './CustomerValueCard';
@@ -34,6 +34,7 @@ import { ApiError } from '../api/client';
 import { customersApi } from '../api/customers';
 import { customerToWriteInput, detailToCustomer, rowToCustomer } from '../api/customerAdapter';
 import { useCustomerList } from '../api/useCustomerList';
+import { SegmentSaveModal } from './SegmentSaveModal';
 import { useEntitySearch } from '../api/useEntitySearch';
 import type { CustomerRow } from '../api/customers';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
@@ -169,6 +170,11 @@ export default function CustomersView({
    * than showing a screenful of dashes.
    */
   const showCosts = canSeeCosts(currentUser);
+  // Only for somebody who can actually use one: a segment exists to address a
+  // campaign, and offering it to an account with no messaging module is a
+  // button that leads nowhere.
+  const canSaveSegment = hasModulePermission(currentUser, 'messaging');
+  const [segmentModalOpen, setSegmentModalOpen] = useState(false);
 
   const list = useCustomerList(initialSearchQuery ?? '');
   const search = list.search;
@@ -819,6 +825,16 @@ export default function CustomersView({
             <FileSpreadsheet size={16} />
             خروجی اکسل
           </button>
+          {canSaveSegment && (
+            <button
+              onClick={() => setSegmentModalOpen(true)}
+              title="فیلترهای فعلی این فهرست را به‌عنوان یک سگمنت برای کمپین‌های پیامکی ذخیره کنید"
+              className="px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-edge rounded-xl text-sm font-medium transition flex items-center gap-2"
+            >
+              <Users size={16} />
+              ذخیره به‌عنوان سگمنت
+            </button>
+          )}
           <button 
             onClick={handleOpenAdd}
             className="px-4 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-sky-500/15 flex items-center gap-2"
@@ -2514,6 +2530,23 @@ export default function CustomersView({
           setCustomerToDeleteId(null);
           setCustomerToDeleteName('');
         }}
+      />
+
+      <SegmentSaveModal
+        open={segmentModalOpen}
+        /*
+         * The very parameters the grid is asking the server with — the same
+         * object the Excel export uses, so a segment covers exactly what the
+         * screen is showing rather than the page in hand. Undefined entries are
+         * dropped on the server, where `sanitizeSegmentQuery` keeps only the
+         * keys the customers endpoint reads.
+         */
+        query={Object.fromEntries(
+          Object.entries(list.exportParams)
+            .filter(([, value]) => typeof value === 'string' && value && value !== 'all'),
+        ) as Record<string, string>}
+        onClose={() => setSegmentModalOpen(false)}
+        onSaved={(name) => alert(`سگمنت «${name}» ذخیره شد. از «پیام‌رسانی ← کمپین‌ها» می‌توانید برای آن پیام بفرستید.`)}
       />
 
     </div>

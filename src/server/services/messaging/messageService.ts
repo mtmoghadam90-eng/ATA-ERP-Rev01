@@ -308,6 +308,17 @@ export interface QueueMessageInput {
   workflowRuleName?: string | null;
   entityType?: string | null;
   entityId?: string | null;
+  /**
+   * The campaign this message belongs to, written **on insert**.
+   *
+   * Not stamped afterwards, deliberately: the filtered unique index on
+   * (campaignId, customerId) is what stops one customer getting two messages
+   * from one campaign, and an index can only do that at the moment the row is
+   * written. A row created bare and updated a statement later leaves a window
+   * in which the worker could send a duplicate the index would then refuse to
+   * record.
+   */
+  campaignId?: string | null;
   createdByUserId?: string | null;
   createdByName?: string | null;
 }
@@ -343,6 +354,7 @@ export async function queueMessage(input: QueueMessageInput) {
       workflowRuleName: input.workflowRuleName ?? null,
       entityType: input.entityType ?? null,
       entityId: input.entityId ?? null,
+      campaignId: input.campaignId ?? null,
       createdByUserId: input.createdByUserId ?? null,
       createdByName: input.createdByName ?? null,
     },
@@ -371,6 +383,7 @@ export interface AddressedSendInput {
   workflowRuleName?: string | null;
   entityType?: string | null;
   entityId?: string | null;
+  campaignId?: string | null;
   createdByUserId?: string | null;
   createdByName?: string | null;
 }
@@ -470,6 +483,7 @@ export async function queueForCustomer(
     workflowRuleName: input.workflowRuleName ?? null,
     entityType: input.entityType ?? null,
     entityId: input.entityId ?? null,
+    campaignId: input.campaignId ?? null,
     createdByUserId: input.createdByUserId ?? null,
     createdByName: input.createdByName ?? null,
   });

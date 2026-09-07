@@ -1909,13 +1909,100 @@ model Message {
   createdByUserId String? @db.NVarChar(36)
   createdByName   String? @db.NVarChar(200)
 
+  /// Which campaign produced it, or null for every other kind of message.
+  ///
+  /// A campaign's figures are counted from these rows and never from counters
+  /// on the campaign itself, so a message somebody cancelled shows as
+  /// cancelled. The unique index on (campaignId, customerId) — filtered, and
+  /// declared in the migration because Prisma cannot express it — is what makes
+  /// one customer get one message however many times the send is pressed.
+  campaignId String?   @db.NVarChar(36)
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
   createdAt DateTime @default(now())
 
   @@index([status, scheduledAt])
   @@index([customerId])
   @@index([projectId])
+  @@index([campaignId])
   @@index([createdAt])
   @@map("messages")
+}
+
+/// A saved customers query, used to address a campaign.
+///
+/// It stores the query, never the customers it currently matches. The ids would
+/// be a photograph taken the day somebody pressed save — a customer who
+/// qualifies tomorrow is not in it, one who has since asked not to be contacted
+/// still is, and nothing about the list says so. Resolving it goes through the
+/// customers module's own `buildCustomerWhere`, so there is one filter dialect
+/// in this application and a segment cannot ask a question the grid cannot.
+model CustomerSegment {
+  id          String  @id @default(uuid()) @db.NVarChar(36)
+  name        String  @db.NVarChar(200)
+  description String? @db.NVarChar(Max)
+
+  /// The customers list's query parameters, as JSON. Only the keys that
+  /// endpoint actually reads survive being saved.
+  query String @db.NVarChar(Max)
+
+  createdByUserId String? @db.NVarChar(36)
+  createdByName   String? @db.NVarChar(200)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  campaigns Campaign[]
+
+  @@map("customer_segments")
+}
+
+/// One message, to everybody a segment resolves to.
+///
+/// It does not send anything itself: it enqueues through `queueForCustomer`,
+/// the same path a manual send and a workflow rule take, so quiet hours, the
+/// dry-run switch, the retry policy and every opt-out apply unchanged. There is
+/// exactly one sending path and there must not be a second.
+model Campaign {
+  id   String @id @default(uuid()) @db.NVarChar(36)
+  name String @db.NVarChar(200)
+
+  segmentId String?          @db.NVarChar(36)
+  segment   CustomerSegment? @relation(fields: [segmentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  /// Denormalised so a sent campaign still says who it went to after the
+  /// segment is renamed or removed — the same reason a category group keeps
+  /// `categoryName`.
+  segmentName String? @db.NVarChar(200)
+
+  channel    String  @db.NVarChar(20)
+  templateId String? @db.NVarChar(36)
+  subject    String? @db.NVarChar(400)
+  body       String  @db.NVarChar(Max)
+
+  /// DRAFT | SENDING | SENT | CANCELLED
+  status String @db.NVarChar(20) @default("DRAFT")
+
+  scheduledAt       DateTime?
+  scheduledAtJalali String?   @db.NVarChar(10)
+
+  /// How many customers the segment resolved to when it was sent. The messages
+  /// record what was queued; this is the figure they are read against, and it
+  /// cannot be recovered afterwards because the segment is a live query.
+  matchedCount Int?
+
+  sentAt DateTime?
+
+  createdByUserId String? @db.NVarChar(36)
+  createdByName   String? @db.NVarChar(200)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  messages Message[]
+
+  @@index([status])
+  @@index([segmentId])
+  @@map("campaigns")
 }
 
 /// The assistant's provider credentials.
