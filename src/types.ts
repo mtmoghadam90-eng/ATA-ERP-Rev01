@@ -367,6 +367,19 @@ export interface Proforma {
   outcomeStatus?: 'پیش‌نویس' | 'ارسال شده' | 'تأیید شده (برنده)' | 'لغو شده' | 'باخته' | 'نیمه برنده' | 'جاری';
   isCancelled?: boolean;
   lossReason?: string; // e.g. "قیمت بالا", "زمان تحویل طولانی"
+  /**
+   * Who contested this quotation, and what they quoted.
+   *
+   * Recorded on a **won** document too — «در برابر چه کسی بردیم» is the same
+   * question and the same field, and a competitor named only on losses makes
+   * every win rate against them read as zero. The amount is in **this
+   * document's own currency**, beside its own totals, which is what makes the
+   * gap a percentage that does not move with the exchange rate.
+   */
+  competitorId?: string;
+  competitorAmount?: number;
+  /** Joined for the card; never written back. */
+  competitorName?: string;
   currency?: 'دلار' | 'یورو' | 'درهم' | 'ریال' | 'یوان';
   items: ProformaItem[];
   totalAmount: number; // Sum of items

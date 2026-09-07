@@ -70,6 +70,9 @@ export function rowToProforma(row: ProformaRow): Proforma {
     sentRecipients: parseJson<string[]>(row.sentRecipients, []),
     sentDate: row.sentDateJalali ?? undefined,
     lossReason: row.lossReason ?? undefined,
+    competitorId: row.competitorId ?? undefined,
+    competitorAmount: row.competitorAmount == null ? undefined : Number(row.competitorAmount),
+    competitorName: row.competitor?.name ?? undefined,
     customValues: parseJson<Record<string, unknown>>(row.customValues, {}),
     // Follow-up and the revision chain. Both ends come down as records, so the
     // card can print «نسخه جدید از PF-A» without resolving a number out of
@@ -166,6 +169,10 @@ export function proformaToWriteInput(proforma: Partial<Proforma>): ProformaWrite
     status: proforma.status,
     isCancelled: proforma.isCancelled,
     lossReason: proforma.lossReason ?? null,
+    competitorId: proforma.competitorId ?? null,
+    // Zero is «not recorded», never «they quoted nothing» — the server stores
+    // null for it and the gap would otherwise be an infinity.
+    competitorAmount: proforma.competitorAmount || null,
     currency: proforma.currency,
     issueDate: proforma.issueDate ?? null,
     expiryDate: proforma.expiryDate ?? null,

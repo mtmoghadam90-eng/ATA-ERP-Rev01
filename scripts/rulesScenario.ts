@@ -224,6 +224,9 @@ import {
 } from "../src/utils/workflowDraft";
 import { WORKFLOW_ASSIGNEE_TOKENS, isAssigneeToken } from "../src/utils/workflowTriggers";
 import {
+  competitorNameRefusal, competitorStandings, deriveProjectCompetitor, priceGapPercent,
+} from "../src/utils/competitors";
+import {
   DELIVERY_DELIVERED, DELIVERY_PREPARING, DELIVERY_WORKFLOW_STATUSES,
   INQUIRY_FINAL_OFFER, INQUIRY_INITIAL_OFFER, INQUIRY_SENT, INQUIRY_WINNER,
   INQUIRY_WORKFLOW_STATUSES, PROJECT_STATUSES, PURCHASE_ORDER_STATUSES, TASK_PRIORITIES,
@@ -10896,6 +10899,148 @@ head("A workflow rule, drafted from a sentence");
     && !/MODULE_RESPONSIBLE_customers">/.test(view));
   ok("...and the responsibles table reads the module catalogue",
     /RESPONSIBLE_MODULES\.map/.test(view));
+}
+
+head("Competitors: who we lose to, and by how much");
+{
+  const strip = (text: string) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* ------------------------------ the catalogue -------------------------- */
+
+  const known = [{ id: "c1", name: "پارس کنترل" }, { id: "c2", name: "ABB" }];
+  ok("a blank name is refused", !!competitorNameRefusal("  ", known));
+  ok("a fresh name is accepted", competitorNameRefusal("زیمنس", known) === null);
+  /*
+   * The duplicates the fold can see: case, ی/ي, ک/ك and the zero-width joiner.
+   * One competitor entered twice is two rows, and every figure about either is
+   * half the truth — the fault the product categories were corrected for.
+   */
+  ok("the same name in another case is a duplicate",
+    !!competitorNameRefusal("abb", known));
+  ok("...and one written with the Arabic ك",
+    !!competitorNameRefusal("پارس كنترل", known));
+  ok("...and one written with a zero-width joiner",
+    !!competitorNameRefusal("پارس‌کنترل", known));
+  ok("...naming the entry it clashes with",
+    (competitorNameRefusal("abb", known) ?? "").includes("ABB"));
+  // A record is not its own duplicate, or nothing could ever be renamed.
+  ok("editing a record keeps its own name",
+    competitorNameRefusal("ABB", known, "c2") === null);
+
+  /* --------------------------------- the gap ------------------------------ */
+
+  eq("we were 20٪ above them", priceGapPercent(1200, 1000), 20);
+  eq("...and 20٪ below", priceGapPercent(800, 1000), -20);
+  /*
+   * A competitor price of zero is «not recorded», never «free»: the box is
+   * empty far more often than a competitor quotes nothing, and dividing by it
+   * would put an infinity in the report.
+   */
+  ok("a competitor price of zero is not a price", priceGapPercent(1000, 0) === null);
+  ok("...nor is a missing one", priceGapPercent(1000, null) === null);
+  ok("...and our own zero is refused too", priceGapPercent(0, 1000) === null);
+  ok("nonsense answers null", priceGapPercent("خیلی", 1000) === null);
+
+  /* -------------------------- the project's copy -------------------------- */
+
+  eq("a project takes the competitor its deciding quotations name",
+    deriveProjectCompetitor([{ competitorId: "c1" }, { competitorId: "c1" }]), "c1");
+  eq("...the commonest where they disagree",
+    deriveProjectCompetitor([{ competitorId: "c1" }, { competitorId: "c2" }, { competitorId: "c2" }]),
+    "c2");
+  eq("...ties by document order",
+    deriveProjectCompetitor([{ competitorId: "c2" }, { competitorId: "c1" }]), "c2");
+  /*
+   * Null rather than undefined, which is where this differs from the loss
+   * reason: that column has a box on the project form whose answer must be
+   * preserved, and this one has none — nothing but the rule writes it.
+   */
+  ok("nothing named means null, not «say nothing»",
+    deriveProjectCompetitor([{ competitorId: null }, {}]) === null);
+  ok("...and an empty set likewise", deriveProjectCompetitor([]) === null);
+
+  /* ------------------------------ the standings --------------------------- */
+
+  const standings = competitorStandings([
+    { competitorId: "c1", outcome: "باخته", ourAmount: 1100, competitorAmount: 1000 },
+    { competitorId: "c1", outcome: "باخته", ourAmount: 1300, competitorAmount: 1000 },
+    { competitorId: "c1", outcome: "تأیید شده (برنده)", ourAmount: 900, competitorAmount: 1000 },
+    { competitorId: "c1", outcome: "ارسال شده" },
+    { competitorId: "c2", outcome: "نیمه برنده" },
+  ]);
+  const c1 = standings.find((r) => r.competitorId === "c1")!;
+  eq("every encounter is counted", c1.encounters, 4);
+  eq("...won", c1.won, 1);
+  eq("...lost", c1.lost, 2);
+  // A quotation still being fought is neither, and must not sink the win rate.
+  eq("...and one still open is neither", c1.open, 1);
+  eq("the win rate is of the decided ones only", Math.round(c1.winRatePercent ?? -1), 33);
+  ok("a part-won document counts as a win",
+    (standings.find((r) => r.competitorId === "c2")?.won ?? 0) === 1);
+
+  /*
+   * The **median**, not the mean. One quotation where somebody typed a rial
+   * price into a dollar document moves a mean by hundreds of percent and the
+   * whole report reads as nonsense.
+   */
+  eq("the gap is the median of the priced encounters", c1.medianGapPercent, 10);
+  eq("...over the encounters that had both prices", c1.pricedEncounters, 3);
+  const skewed = competitorStandings([
+    { competitorId: "x", outcome: "باخته", ourAmount: 110, competitorAmount: 100 },
+    { competitorId: "x", outcome: "باخته", ourAmount: 120, competitorAmount: 100 },
+    { competitorId: "x", outcome: "باخته", ourAmount: 900_000, competitorAmount: 100 },
+  ]);
+  ok("...so one mistyped figure cannot swing it",
+    (skewed[0].medianGapPercent ?? 0) === 20, skewed[0].medianGapPercent);
+  ok("a competitor with no priced encounter reports no gap",
+    standings.find((r) => r.competitorId === "c2")?.medianGapPercent === null);
+  // Most-met first: the one you meet twice a week is the one to know.
+  eq("the most-met competitor leads", standings[0].competitorId, "c1");
+
+  /* -------------------- read from the source, once ----------------------- */
+
+  const service = strip(readFileSync("src/server/services/proformaService.ts", "utf8"));
+  ok("the proforma service source survived having its comments stripped",
+    service.includes("syncProjectStatus"));
+  /*
+   * The project's copy is written inside the same transaction as its status and
+   * its loss reason, from the same deciding selection — never typed a second
+   * time on the project form.
+   */
+  ok("the project's competitor is derived where its status is",
+    /data\.competitorId = deriveProjectCompetitor\(decidingProformas\(proformas\)\)/.test(service));
+  /*
+   * And the outcome screen writes it **before** the project is re-derived:
+   * `deriveProjectCompetitor` reads the documents inside `syncProjectStatus`,
+   * so the other order would leave the project one save behind its own
+   * quotation. Scoped to that function, because both strings appear elsewhere
+   * in the file and a whole-file `indexOf` would compare two other call sites.
+   */
+  const outcomeFn = service.slice(
+    service.indexOf("export async function setItemOutcomes"),
+    service.indexOf("export async function", service.indexOf("export async function setItemOutcomes") + 10),
+  );
+  ok("the outcome function was found", outcomeFn.length > 400, outcomeFn.length);
+  ok("...and it writes the competitor before re-deriving the project",
+    outcomeFn.includes("competitorAmount")
+    && outcomeFn.indexOf("competitorAmount") < outcomeFn.indexOf("await syncProjectStatus"));
+
+  const routes = strip(readFileSync("src/server/routes/competitors.ts", "utf8"));
+  ok("the competitor routes survived having their comments stripped",
+    routes.includes("registerCompetitorRoutes"));
+  // Or Express answers 404 for a competitor whose id is the literal «report».
+  ok("the report is registered before the id route",
+    routes.indexOf('"/api/competitors/report"') < routes.indexOf('"/api/competitors/:id"'));
+
+  const catalogue = strip(readFileSync("src/server/services/competitorService.ts", "utf8"));
+  ok("editing the list needs `settings`, not the proformas module",
+    (catalogue.match(/hasPermission\(user, "settings"\)/g) ?? []).length >= 3);
+  ok("...while the standings need `proformas`",
+    /hasPermission\(user, "proformas"\)/.test(catalogue));
+  // Retired, never deleted: the quotations naming it are the whole point.
+  ok("a competitor is retired rather than deleted",
+    /isActive: false/.test(catalogue) && !/competitor\.delete\(/.test(catalogue));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
