@@ -39,6 +39,7 @@ import { registerActivityRoutes } from "./src/server/routes/activities";
 import { registerNotificationRoutes } from "./src/server/routes/notifications";
 import { registerDashboardRoutes } from "./src/server/routes/dashboard";
 import { registerMessagingRoutes } from "./src/server/routes/messaging";
+import { registerCampaignRoutes } from "./src/server/routes/campaigns";
 import { registerAssistantRoutes } from "./src/server/routes/assistant";
 import { registerApiTokenRoutes } from "./src/server/routes/apiTokens";
 import { authenticateToken } from "./src/server/services/apiTokenService";
@@ -425,6 +426,7 @@ async function startServer() {
   registerNotificationRoutes(app, routeDeps);
   registerDashboardRoutes(app, routeDeps);
 registerMessagingRoutes(app, routeDeps);
+registerCampaignRoutes(app, routeDeps);
 
   /**
    * Who am I? Lets the client restore its session on reload.
