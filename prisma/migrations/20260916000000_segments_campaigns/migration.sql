@@ -11,8 +11,9 @@
 -- group carries `categoryName`: the campaign's history has to survive the
 -- segment being renamed or removed.
 --
--- Guarded throughout so a retry after a half-applied migration is safe, and DDL
--- only — there is no DML here, so nothing needs deferring through EXEC.
+-- Guarded throughout so a retry after a half-applied migration is safe. There is
+-- no DML here, but one statement still has to be deferred through EXEC — see the
+-- note above the filtered unique index at the foot of this file.
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'customer_segments')
 CREATE TABLE [dbo].[customer_segments] (
@@ -74,12 +75,36 @@ CREATE INDEX [messages_campaignId_idx] ON [dbo].[messages]([campaignId]);
 --
 -- This index is what enforces it, exactly as `workflow_firings`'s (ruleId,
 -- entityId) enforces once-per-record: a double-pressed send, or a re-run after
--- a send that died half way through, must not text the same person twice. It is
--- filtered because both columns are nullable and a campaign message with no
--- customer (there is no such path today) must not collide with another.
+-- a send that died half way through, must not text the same person twice. It
+-- has to be filtered because both columns are nullable and SQL Server treats
+-- NULLs as equal in a unique index — unfiltered, the second ordinary message
+-- ever sent would collide with the first.
+--
+-- **Deferred through EXEC, and this is the statement that taught the rule.**
+-- A plain `CREATE INDEX` on a column added earlier in the same file compiles
+-- when it executes, which is why five migrations here write one plainly and
+-- 20260901000000_sales_follow_up does ALTER-then-index-then-foreign-key in one
+-- file and has always worked. A **filtered** index is not that shape: its WHERE
+-- clause is an expression, and an expression is bound when the batch is
+-- compiled — before any statement in it runs. So this died on the server with
+-- «Invalid column name 'campaignId'» (207) with the ALTER that adds the column
+-- eleven lines above it, and the whole deployment stopped. Same trap as a
+-- backfill reading a column its own migration adds; the key list is exempt and
+-- the predicate is not.
+--
+-- The SET options are explicit because a filtered index carries the session's
+-- options into every later write to the table: created under QUOTED_IDENTIFIER
+-- OFF, SQL Server refuses to create it at all (Msg 1934), and a mismatch
+-- afterwards fails the INSERT rather than the CREATE. Inside EXEC they apply to
+-- this dynamic batch alone.
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'messages_campaign_customer_uq' AND object_id = OBJECT_ID('dbo.messages'))
-CREATE UNIQUE INDEX [messages_campaign_customer_uq] ON [dbo].[messages]([campaignId], [customerId])
-  WHERE [campaignId] IS NOT NULL AND [customerId] IS NOT NULL;
+  EXEC(N'
+    SET QUOTED_IDENTIFIER ON;
+    SET ANSI_NULLS ON;
+    CREATE UNIQUE INDEX [messages_campaign_customer_uq]
+      ON [dbo].[messages]([campaignId], [customerId])
+      WHERE [campaignId] IS NOT NULL AND [customerId] IS NOT NULL;
+  ');
 
 IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'campaigns_segmentId_fkey')
   ALTER TABLE [dbo].[campaigns] ADD CONSTRAINT [campaigns_segmentId_fkey]

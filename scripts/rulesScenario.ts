@@ -5990,9 +5990,10 @@ head("Migrations: no sqlcmd batch separators");
    * `20260906000000_holiday_calendar_kind` shipped that way and stopped the
    * deployment.
    *
-   * DDL is not affected — `CREATE INDEX` on the new column is compiled when it
-   * executes, which is why five migrations here write those plainly and have
-   * always worked. What must be deferred is the DML, and `EXEC(N'…')` is how
+   * DDL is *mostly* not affected — `CREATE INDEX` on the new column is compiled
+   * when it executes, which is why five migrations here write those plainly and
+   * have always worked. The exception is a **filtered** index, checked
+   * separately below. What must be deferred is the DML, and `EXEC(N'…')` is how
    * every backfill in this tree already does it (`cost_of_goods`,
    * `customer_value_ranking`, `proforma_sent_date`). `GO` would work too and is
    * forbidden by the check above.
@@ -6062,6 +6063,99 @@ head("Migrations: no sqlcmd batch separators");
   eq("and passes the EXEC-wrapped one", readsOwnNewColumn(wrappedBackfill).length, 0);
   eq("and does not complain about an index, which compiles late",
     readsOwnNewColumn(indexOnly).length, 0);
+
+  /*
+   * The exception to «DDL compiles late», learned the hard way.
+   *
+   * A filtered index's WHERE clause is an *expression*, and an expression is
+   * bound when the batch is compiled — before any statement in it runs. So
+   * `CREATE UNIQUE INDEX … ON [messages]([campaignId], …) WHERE [campaignId] IS
+   * NOT NULL` in the file that adds `campaignId` died on the server with
+   * «Invalid column name 'campaignId'» (207), eleven lines below the ALTER that
+   * adds it, and stopped the whole deployment. The key list is exempt and the
+   * predicate is not, which is exactly why the check above cannot be widened to
+   * every index — five migrations write a plain one and are correct.
+   */
+  const filteredIndexOnOwnNewColumn = (sql: string): string[] => {
+    const code = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+    const added = [...code.matchAll(
+      /ALTER\s+TABLE\s+(?:\[?dbo\]?\.)?\[?\w+\]?\s+ADD\s+(?!CONSTRAINT\b)\[?(\w+)\]?/gi,
+    )].map((m) => m[1]);
+    if (!added.length) return [];
+
+    // Same T-SQL string rule as above: a deferred statement is not a statement.
+    const withoutDynamic = code.replace(
+      /EXEC\s*(?:sp_executesql\s*)?\(?\s*N?'(?:[^']|'')*'\s*\)?\s*;?/gi, " ",
+    );
+
+    const bad: string[] = [];
+    for (const stmt of withoutDynamic.split(";")) {
+      const create = /CREATE\s+(?:UNIQUE\s+)?(?:\w+\s+)?INDEX/i.exec(stmt);
+      if (!create) continue;
+      /*
+       * The predicate is the half that binds early, so only it is inspected —
+       * the key list may name the new column freely. And it is looked for
+       * **after** the CREATE, because every one of these statements is
+       * introduced by an `IF NOT EXISTS (SELECT … WHERE name = …)` guard whose
+       * own WHERE is not the index's: reading the first WHERE in the chunk
+       * flagged twelve migrations that are perfectly correct.
+       */
+      const after = stmt.slice(create.index + create[0].length);
+      const where = /\bWHERE\b([\s\S]*)$/i.exec(after);
+      if (!where) continue;
+      for (const col of added) {
+        if (new RegExp(`\\b${col}\\b`).test(where[1])) bad.push(col);
+      }
+    }
+    return bad;
+  };
+
+  const filteredOffenders: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const file = joinPath(dir, name, "migration.sql");
+    let sql: string;
+    try { sql = readFileSync(file, "utf8"); } catch { continue; }
+    for (const col of filteredIndexOnOwnNewColumn(sql)) {
+      filteredOffenders.push(`${name}:${col}`);
+    }
+  }
+  ok("no migration filters an index on a column it adds, outside dynamic SQL",
+    filteredOffenders.length === 0, filteredOffenders);
+
+  /* Held four ways, or a check that matches nothing passes for the wrong reason. */
+  const addsCampaignId =
+    "IF COL_LENGTH('dbo.messages', 'campaignId') IS NULL\n"
+    + "  ALTER TABLE [dbo].[messages] ADD [campaignId] NVARCHAR(36) NULL;";
+  eq("the check catches the filtered index that failed",
+    filteredIndexOnOwnNewColumn(
+      `${addsCampaignId}\nCREATE UNIQUE INDEX [u] ON [dbo].[messages]([campaignId], [customerId])`
+      + " WHERE [campaignId] IS NOT NULL;",
+    ).length, 1);
+  eq("...and passes it once deferred",
+    filteredIndexOnOwnNewColumn(
+      `${addsCampaignId}\nEXEC(N'CREATE UNIQUE INDEX [u] ON [dbo].[messages]([campaignId])`
+      + " WHERE [campaignId] IS NOT NULL;');",
+    ).length, 0);
+  // The key list is not the predicate: a plain index stays legal written plainly.
+  eq("...and leaves a plain index on the new column alone",
+    filteredIndexOnOwnNewColumn(
+      `${addsCampaignId}\nCREATE INDEX [i] ON [dbo].[messages]([campaignId]);`,
+    ).length, 0);
+  /*
+   * The one the first version of this check got wrong: an ordinary guarded
+   * index, where the guard's own WHERE sits between the CREATE and nothing.
+   */
+  eq("...and is not fooled by the IF NOT EXISTS guard's own WHERE",
+    filteredIndexOnOwnNewColumn(
+      `${addsCampaignId}\nIF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'i')\n`
+      + "CREATE INDEX [i] ON [dbo].[messages]([campaignId]);",
+    ).length, 0);
+  // And a filtered index on a column that was already there is nobody's problem.
+  eq("...and a filter on an existing column is fine",
+    filteredIndexOnOwnNewColumn(
+      `${addsCampaignId}\nCREATE UNIQUE INDEX [u] ON [dbo].[messages]([customerId])`
+      + " WHERE [customerId] IS NOT NULL;",
+    ).length, 0);
 
   // The one that failed, specifically: it must still do all four things.
   const messenger = readFileSync(
