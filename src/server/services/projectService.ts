@@ -6,6 +6,7 @@ import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } fr
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { scrubProductRefs } from "../refIntegrity";
 import { deriveProjectStage, resolveStage } from "../../utils/projectStage";
+import { inquiryWorkflowStatus } from "../../utils/moduleStatuses";
 import { scheduleProjectStageTrigger } from "./projectStageEvents";
 import { isWonStatus } from "../proformaStatus";
 import { summarizeProject, summarizeProjects } from "./projectSummary";
@@ -335,10 +336,25 @@ export async function syncProjectStage(
   });
   if (!project) return;
 
-  const [proformas, orders, deliveries, afterSales] = await Promise.all([
+  const [proformas, inquiries, orders, deliveries, afterSales] = await Promise.all([
     tx.proforma.findMany({
       where: { projectId },
       select: { status: true, isCancelled: true },
+    }),
+    /*
+     * Enough of each inquiry for `inquiryWorkflowStatus` and nothing more.
+     *
+     * The item prices are what tell an answered inquiry from an unanswered
+     * one, so they have to be read — but only the two price columns, because
+     * a job with eight inquiries of twenty lines each is read on every write
+     * that touches the project.
+     */
+    tx.supplierInquiry.findMany({
+      where: { projectId },
+      select: {
+        isWinner: true, offerConfirmed: true,
+        items: { select: { priceForeign: true, priceRial: true } },
+      },
     }),
     tx.purchaseOrder.findMany({ where: { projectId }, select: { status: true } }),
     tx.packagingDelivery.findMany({
@@ -359,6 +375,8 @@ export async function syncProjectStage(
     isWon: isWonStatus(project.status),
     isLost: project.status === "باخته",
     isCancelled: project.status === "لغو شده",
+    // Through the module's own rule, never a second reading of it here.
+    supplierInquiries: inquiries.map((i) => ({ status: inquiryWorkflowStatus(i) })),
     purchaseOrders: orders,
     deliveries: deliveries.map((d) => ({ delivered: !!d.actualDeliveryDate })),
     // «تحویل داده شده» is the one status that closes an after-sales record.

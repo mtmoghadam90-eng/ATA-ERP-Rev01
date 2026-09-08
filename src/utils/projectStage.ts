@@ -29,7 +29,7 @@
  * the customer rank override in `customerValue.ts`.
  */
 
-import { PURCHASE_ORDER_STATUSES } from "./moduleStatuses";
+import { INQUIRY_SENT, INQUIRY_WINNER, PURCHASE_ORDER_STATUSES } from "./moduleStatuses";
 
 /**
  * Every stage, **in order**. The order is the rule: `stageRank` is the index,
@@ -42,6 +42,12 @@ import { PURCHASE_ORDER_STATUSES } from "./moduleStatuses";
 export const PROJECT_STAGES = [
   "جدید",
   "در حال مذاکره",
+  // The two stages before a quotation exists. Until they were added, a job with
+  // three unanswered supplier inquiries sitting twenty days old read exactly
+  // like one created this morning and touched by nobody — the derivation looked
+  // at no inquiry at all, and «جدید» was as much as the column could say.
+  "در انتظار پاسخ تأمین‌کننده",
+  "بررسی پیشنهاد تأمین‌کننده",
   "تهیه پیش‌فاکتور",
   "پیگیری پیش‌فاکتور",
   "باخته",
@@ -105,6 +111,15 @@ export interface StageFacts {
   isLost?: boolean;
   /** True when every quotation is cancelled. */
   isCancelled?: boolean;
+  /**
+   * The project's supplier inquiries, as the module's own derived status.
+   *
+   * The **status**, not the row: `inquiryWorkflowStatus` is already the single
+   * rule for «where has this inquiry got to», read by that service and by the
+   * workflow rule editor, and a second reading of «has the supplier answered»
+   * here is exactly how two screens come to disagree.
+   */
+  supplierInquiries?: { status?: string | null }[];
   purchaseOrders?: { status?: string | null }[];
   /** One entry per packing list; `delivered` is «تاریخ تحویل قطعی خورده». */
   deliveries?: { delivered?: boolean | null }[];
@@ -130,17 +145,47 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
 
   /* -- before the sale is won -- */
   if (!facts.isWon) {
-    if (proformas.length === 0) {
-      // Whatever the person put on the form, which is «جدید» or «در حال مذاکره».
-      return facts.projectStatus === "در حال مذاکره" ? "در حال مذاکره" : "جدید";
-    }
     /*
      * A document that has gone out is being chased; one that has not is still
      * being written. A cancelled one counts as neither.
+     *
+     * A **sent** quotation is checked before anything else here, and that is
+     * the dividing line: once it has gone out the customer has an answer, and
+     * what the job is waiting on is the customer. Before that it is waiting on
+     * us, and the supplier inquiries below say what for. Reading them first
+     * would take a project that has already quoted *backwards* into «در انتظار
+     * پاسخ تأمین‌کننده» the moment somebody asked a supplier about extra scope.
      */
     const live = proformas.filter((pf) => !pf.isCancelled);
     if (live.some((pf) => pf.status === "ارسال شده")) return "پیگیری پیش‌فاکتور";
-    return "تهیه پیش‌فاکتور";
+
+    /*
+     * Nothing has reached the customer yet, so the least-advanced open thing
+     * wins here exactly as it does in the operational chain below.
+     *
+     * An inquiry nobody has answered outranks a half-written quotation: the
+     * draft cannot be finished until the price arrives, so the supplier is
+     * what the job is actually waiting on. An inquiry already chosen as the
+     * winner is decided and holds nothing back.
+     */
+    const inquiries = facts.supplierInquiries ?? [];
+    const undecided = inquiries.filter((i) => i.status !== INQUIRY_WINNER);
+    if (undecided.some((i) => i.status === INQUIRY_SENT)) {
+      return "در انتظار پاسخ تأمین‌کننده";
+    }
+
+    if (live.length > 0) return "تهیه پیش‌فاکتور";
+    if (undecided.length > 0) return "بررسی پیشنهاد تأمین‌کننده";
+
+    /*
+     * A winning inquiry with no quotation yet is the same answer as an offer
+     * still being compared: somebody has to write the document. It is not
+     * «جدید», which would say no work had been done at all.
+     */
+    if (inquiries.length > 0) return "بررسی پیشنهاد تأمین‌کننده";
+
+    // Whatever the person put on the form, which is «جدید» or «در حال مذاکره».
+    return facts.projectStatus === "در حال مذاکره" ? "در حال مذاکره" : "جدید";
   }
 
   /* -- won: the operational chain -- */

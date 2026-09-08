@@ -23,6 +23,7 @@
 import "dotenv/config";
 import { getDb, disconnectDb, isDbConfigured } from "../src/server/db";
 import { deriveProjectStage, resolveStage } from "../src/utils/projectStage";
+import { inquiryWorkflowStatus } from "../src/utils/moduleStatuses";
 import { isWonStatus } from "../src/server/proformaStatus";
 import { getTodayShamsi } from "../src/dateUtils";
 import { normalizeJalali } from "../src/server/dates";
@@ -44,6 +45,17 @@ async function main(): Promise<void> {
       id: true, code: true, status: true, stage: true,
       manualStage: true, manualStageLocked: true,
       proformas: { select: { status: true, isCancelled: true } },
+      /*
+       * The inquiries too, or the backfill quietly cannot produce the two
+       * stages before a quotation exists — and a repair that leaves exactly
+       * the rows it was run for untouched is worse than not running it.
+       */
+      inquiries: {
+        select: {
+          isWinner: true, offerConfirmed: true,
+          items: { select: { priceForeign: true, priceRial: true } },
+        },
+      },
       purchaseOrders: { select: { status: true } },
       deliveries: { select: { actualDeliveryDate: true } },
       services: { select: { status: true } },
@@ -57,6 +69,10 @@ async function main(): Promise<void> {
     const derived = deriveProjectStage({
       projectStatus: p.status,
       proformas: p.proformas,
+      // The module's own rule, exactly as `syncProjectStage` reads it.
+      supplierInquiries: p.inquiries.map((i) => ({
+        status: inquiryWorkflowStatus(i),
+      })),
       isWon: isWonStatus(p.status),
       isLost: p.status === "باخته",
       isCancelled: p.status === "لغو شده",
