@@ -40,12 +40,23 @@ import { SCHEDULE_SUBJECTS } from "./workflowSchedule";
 
 /* ------------------------------ the catalogue ----------------------------- */
 
-/** How a field's permitted values are written into the prompt. */
+/**
+ * How a field's permitted values are written into the prompt.
+ *
+ * The **hint** is the half that was missing, and its absence cost a real rule.
+ * A list of values is not a definition: «مرحله پروژه: جدید | در حال مذاکره | …»
+ * tells a reader what may be written and nothing about what any of it *means*,
+ * so «۳ روز پس از ایجاد پروژه، اگر استعلام قیمت ثبت نشده باشد» — which is
+ * exactly `stage = جدید` — was refused as inexpressible. The catalogue is the
+ * authority here as everywhere, so the meaning belongs in the catalogue beside
+ * the values rather than in a sentence written into this prompt.
+ */
 function describeField(field: TriggerField): string {
   const values = field.options?.length
     ? field.options.join(" | ")
     : "«هر مقدار» (عدد یا متن آزاد)";
-  return `    ${field.value} — ${field.label}: ${values}`;
+  const line = `    ${field.value} — ${field.label}: ${values}`;
+  return field.hint ? `${line}\n      ↳ ${field.hint}` : line;
 }
 
 /**
@@ -158,6 +169,18 @@ export function buildWorkflowDraftPrompt(
     "   proforma_outcome_change تعلق دارند. این دو را با هم اشتباه نگیر.",
     "۳) اگر خواسته‌ی کاربر با هیچ رویدادی در فهرست قابل بیان نیست، به‌جای انتخاب",
     "   نزدیک‌ترین گزینه، فیلد refusal را پر کن و بگو چه چیزی کم است.",
+    // The other half of rule ۳, and the reason it is written out: refusing is
+    // right for a request the system cannot express and wrong for one it can.
+    // «فلان کار هنوز انجام نشده» has no event by construction — nothing
+    // happened — and is answered by the *state* the record is in, which the
+    // hints under each field spell out.
+    "۳-الف) ولی پیش از refusal، حتماً یک بار دنبال فیلدِ «وضعیت/مرحله» بگرد.",
+    "   «هنوز فلان کار انجام نشده» رویداد ندارد — چون هیچ اتفاقی نیفتاده — و",
+    "   تقریباً همیشه با time_elapsed به‌علاوهٔ شرط روی همان فیلدِ محاسبه‌شده",
+    "   گفته می‌شود. توضیح زیر هر فیلد (↳) می‌گوید هر مقدار یعنی چه؛ آن را بخوان.",
+    "   مثال: «۳ روز از ایجاد پروژه گذشت و استعلام قیمتی ثبت نشد» یعنی",
+    "   time_elapsed + subject=project_creation + days=3 + شرط stage برابر «جدید».",
+    "   فقط وقتی refusal بده که حتی با این فیلدها هم نتوان خواسته را گفت.",
     "۴) برای «چند روز بعد از یک تاریخ» دو راه هست و هر دو درست‌اند: یا رویدادِ",
     "   همان لحظه با dueDaysOffset، یا time_elapsed. اگر رویدادی برای آن لحظه",
     "   وجود دارد آن را ترجیح بده، چون وظیفه از همان ابتدا روی تخته دیده می‌شود.",

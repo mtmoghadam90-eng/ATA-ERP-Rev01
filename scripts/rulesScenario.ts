@@ -9769,6 +9769,77 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
       /relatedToType: "proforma"/.test(engine));
   }
 
+  /* ------------ a value list is not a definition, and it cost a rule ---------- */
+  /*
+   * Reported: «اگر ۳ روز از ایجاد یک پروژه گذشت و استعلام قیمت ثبت نشد، به
+   * مسئول پروژه اعلان برود» was refused by the drafter as inexpressible —
+   * «رویداد یا شرطی برای تشخیص «استعلام قیمت ثبت نشده است» در فهرست موجود
+   * نیست.»
+   *
+   * The refusal was honest and wrong. The rule **is** expressible, exactly:
+   * `time_elapsed` + `project_creation` + 3 days + `stage = جدید`, because a
+   * project with no inquiry and no quotation falls through `deriveProjectStage`
+   * to «جدید». Nothing said so. The catalogue handed over the values and not
+   * their meaning, so a reader looking for a field *named* «استعلام ثبت نشده»
+   * found none and concluded the system could not answer — the trigger
+   * catalogue's own silent failure arriving from the other side: not a rule
+   * that never fires, but a rule never written.
+   */
+  {
+    // First, that the rule really is expressible — if this stops holding, the
+    // hint below is a lie and the refusal was right after all.
+    const projectFields = SCHEDULE_MODEL_FIELDS.project ?? [];
+    const stageField = projectFields.find((f) => f.value === "stage");
+    ok("a scheduled project rule can ask about the stage", !!stageField);
+    ok("...and «جدید» is one of the values it can ask for",
+      (stageField?.options ?? []).includes("جدید"));
+    ok("...which the derivation reaches with no inquiry and no quotation",
+      deriveProjectStage({ projectStatus: "جدید", proformas: [], supplierInquiries: [] }) === "جدید");
+    /*
+     * And it is genuinely a *different* answer once an inquiry exists, or the
+     * condition would be true of every project and the rule would be noise.
+     */
+    ok("...and a sent inquiry moves it off «جدید»",
+      deriveProjectStage({
+        projectStatus: "جدید", proformas: [],
+        supplierInquiries: [{ status: INQUIRY_SENT }],
+      }) !== "جدید");
+
+    /*
+     * The fix: the meaning travels with the values, in the catalogue, so the
+     * drafter and the editor read one source. A **derived** field is the case
+     * that needs it — a stored column whose values speak for themselves does
+     * not — so that is what is required rather than a hint on everything.
+     */
+    ok("the project's stage explains what its values mean",
+      (stageField?.hint ?? "").includes("استعلام"));
+    ok("...and names «جدید» specifically, which is the value the rule needs",
+      (stageField?.hint ?? "").includes("جدید"));
+    // The pair this codebase keeps having to separate: the sales outcome and
+    // where the work has got to are two columns and read as synonyms.
+    ok("...and the status beside it says it is not the same question",
+      (projectFields.find((f) => f.value === "status")?.hint ?? "").includes("stage"));
+
+    // The prompt has to actually carry them, or the catalogue improved and the
+    // model still cannot see it.
+    const prompt = buildWorkflowDraftPrompt([{ id: "t1", name: "x" }]);
+    ok("the drafter's prompt renders the hints", prompt.includes(stageField!.hint!));
+    /*
+     * And the rule that turns a hint into an answer: «this has not happened
+     * yet» has no event *by construction* — nothing happened — so it is asked
+     * as a state, and refusing is only right once even the derived fields
+     * cannot say it. The reported sentence is written out as the worked
+     * example, because that is the shape people ask in.
+     */
+    ok("...and tells the model to look for a state field before refusing",
+      prompt.includes("۳-الف") && prompt.includes("project_creation"));
+
+    // The editor reads the same catalogue: a person picking «جدید» out of a
+    // dropdown has exactly the problem the drafter had.
+    const settingsSrc = strip(readFileSync("src/components/SettingsView.tsx", "utf8"));
+    ok("the rule editor draws the hint too", /chosenField\?\.hint/.test(settingsSrc));
+  }
+
   /* -- and the screen holds no copy of any of it -- */
   const view = strip(readFileSync("src/components/SettingsView.tsx", "utf8"));
   ok("the trigger dropdown is built from the catalogue",
@@ -9789,7 +9860,12 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    */
   ok("the value list comes from the catalogue with no exception",
     !/proformaStatuses/.test(view)
-    && /fieldOptions\.find\(\(f\) => f\.value === cond\.field\)\?\.options/.test(view));
+    // Two halves, because the lookup was split in two when the field's own
+    // hint started being drawn beside its values: the chosen field is still
+    // found in `fieldOptions` by the condition's field name, and the value
+    // list still comes from **that** field and from nowhere else.
+    && /const chosenField = fieldOptions\.find\(\(f\) => f\.value === cond\.field\)/.test(view)
+    && /valueOptions: readonly string\[\] = chosenField\?\.options/.test(view));
   for (const file of ["src/seedData.ts", "src/types.ts"]) {
     ok(`«proformaStatuses» is gone from ${file}`,
       !readFileSync(file, "utf8").includes("proformaStatuses"));
