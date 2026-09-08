@@ -33,6 +33,10 @@ import {
 import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr } from "../src/dateUtils";
 import { escalationFor, escalationIsConfigured } from "../src/utils/workflowEscalation";
+import {
+  DEFAULT_STUCK_THRESHOLDS, FALLBACK_STUCK_DAYS, PO_STAGE_PAIRS, STUCK_SECTIONS,
+  STUCK_STATE_LISTS, dwellDays, overdueRatio, severityFor, thresholdFor,
+} from "../src/utils/stuckWork";
 import { generateSku, decodeSku } from "../src/utils/skuUtils";
 import { parseFeatureSpec, splitNameAndCode } from "../src/utils/productFeatureSpec";
 import { normalizeSuggestion, suggestionSpecText } from "../src/utils/advisorSuggestion";
@@ -9792,6 +9796,237 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   }
 
   ok("the comment stripper left the screen intact", view.length > 50000);
+}
+
+/* ==========================================================================
+ * «کارهای متوقف» — what is sitting still, across the chain
+ * ========================================================================== */
+/*
+ * The engine can now act on a stuck record, but only once somebody has written
+ * a rule for that exact state — and a rule looks at records one at a time.
+ * Nothing anywhere answered the plain question a manager opens the week with.
+ * This is the reading of the dwell columns, and it writes nothing.
+ */
+head("Stuck work: the dwell report");
+{
+  /*
+   * A **single** threshold across the chain would have made this noise on day
+   * one: «در حال آماده‌سازی سازنده» is months of ordinary manufacturing lead
+   * time and «ترخیص گمرک» is days, so one number either screams about every
+   * order in production or never notices one stranded at customs.
+   */
+  ok("manufacturing is given far longer than customs",
+    DEFAULT_STUCK_THRESHOLDS.purchaseOrder["در حال آماده‌سازی سازنده"]
+      > DEFAULT_STUCK_THRESHOLDS.purchaseOrder["ترخیص گمرک"]);
+
+  /*
+   * Every state each module can hold has an explicit entry, in both directions.
+   * A status with no threshold falls to the fallback silently — and for a
+   * *finished* state that means reporting every completed record as stuck.
+   */
+  {
+    const missing: string[] = [];
+    const extra: string[] = [];
+    for (const section of STUCK_SECTIONS) {
+      const table = DEFAULT_STUCK_THRESHOLDS[section];
+      for (const state of STUCK_STATE_LISTS[section]) {
+        if (typeof table[state] !== "number") missing.push(`${section}.${state}`);
+      }
+      for (const state of Object.keys(table)) {
+        if (!STUCK_STATE_LISTS[section].includes(state)) extra.push(`${section}.${state}`);
+      }
+    }
+    ok("every state a module can hold has a default", missing.length === 0, missing);
+    ok("...and no default names a state no module holds", extra.length === 0, extra);
+  }
+
+  /*
+   * The double-reporting guard, and the reason the project's middle legs are
+   * zero. A project in «حمل و ترانزیت» and its purchase order in «حمل و
+   * ترانزیت» are one fact; reporting it twice would make the list read as
+   * double the problem it is, and only one of the two records can be acted on.
+   *
+   * It is an exact **complement**, not a blanket exclusion — a stage is watched
+   * on the project exactly when the purchase-order status mapping onto it is
+   * not — and holding both directions is what makes «counted once» a property
+   * rather than a claim. The first version of this check was the blanket kind
+   * and it failed against the two ends of the chain, correctly: a **draft**
+   * order shares its stage with «won and nothing raised at all», which no order
+   * can report because none exists, and a **received** order hands over to the
+   * packing list, which is the project's leg again. Both are settled by the
+   * complement with no exception written anywhere.
+   */
+  {
+    const doubled: string[] = [];
+    const neither: string[] = [];
+    for (const { poStatus, stage } of PO_STAGE_PAIRS) {
+      const onOrder = (DEFAULT_STUCK_THRESHOLDS.purchaseOrder[poStatus] ?? 0) > 0;
+      const onProject = (DEFAULT_STUCK_THRESHOLDS.projectStage[stage] ?? 0) > 0;
+      if (onOrder && onProject) doubled.push(`${poStatus} / ${stage}`);
+      if (!onOrder && !onProject) neither.push(`${poStatus} / ${stage}`);
+    }
+    ok("a leg the purchase order reports is not reported again by the project",
+      doubled.length === 0, doubled);
+    ok("...and a leg the order does not report is picked up by the project",
+      neither.length === 0, neither);
+  }
+  /*
+   * The end the complement settles, spelled out because it is the case that
+   * matters most: won with no order *moving* — none raised at all, or one still
+   * a draft — is the most expensive stall in the chain, since the customer is
+   * already waiting. It is watched on the **project**, which is the record that
+   * names the job, and the draft order is therefore not watched on its own.
+   */
+  ok("won with no order moving is watched, on the project",
+    DEFAULT_STUCK_THRESHOLDS.projectStage["برنده — در انتظار تأمین"] > 0
+    && DEFAULT_STUCK_THRESHOLDS.purchaseOrder["پیش‌نویس"] === 0);
+  // And the other end: a received order stops being the order's problem.
+  ok("...and a received order hands the leg back to the project",
+    DEFAULT_STUCK_THRESHOLDS.purchaseOrder["تحویل شده (رسید انبار)"] === 0
+    && DEFAULT_STUCK_THRESHOLDS.projectStage["بسته‌بندی و تحویل"] > 0);
+  ok("...and so is an unanswered supplier inquiry, the case this started from",
+    DEFAULT_STUCK_THRESHOLDS.projectStage["در انتظار پاسخ تأمین‌کننده"] > 0);
+  ok("a terminal stage is never stuck",
+    DEFAULT_STUCK_THRESHOLDS.projectStage["باخته"] === 0
+    && DEFAULT_STUCK_THRESHOLDS.projectStage["لغو شده"] === 0
+    && DEFAULT_STUCK_THRESHOLDS.projectStage["خاتمه‌یافته"] === 0);
+
+
+  /* ---------------------------- the thresholds ---------------------------- */
+  eq("with nothing stored, the default stands",
+    thresholdFor("purchaseOrder", "ترخیص گمرک"), 21);
+  eq("a stored value wins",
+    thresholdFor("purchaseOrder", "ترخیص گمرک", { purchaseOrder: { "ترخیص گمرک": 5 } }), 5);
+  /*
+   * And a stored **zero** wins, which is how «we never chase this state» is
+   * said at all. Reading zero as «not configured» would make that setting
+   * impossible to express — `absent ≠ empty` in its numeric form.
+   */
+  eq("...including a stored zero",
+    thresholdFor("purchaseOrder", "ترخیص گمرک", { purchaseOrder: { "ترخیص گمرک": 0 } }), 0);
+  /*
+   * A state this build does not know is watched rather than skipped — the same
+   * decision `deriveProjectStage` makes for an unmapped purchase-order status.
+   * A record whose state nothing recognises is the last one to report as fine.
+   */
+  eq("a state nobody anticipated is still watched",
+    thresholdFor("purchaseOrder", "چیزی که وجود ندارد"), FALLBACK_STUCK_DAYS);
+
+  /* ------------------------------- the clock ------------------------------ */
+  eq("the dwell is the days since it moved", dwellDays("1405/05/24", "1405/06/03"), 10);
+  eq("moved today is zero days", dwellDays("1405/06/03", "1405/06/03"), 0);
+  /*
+   * Null is not zero and it is not «for ever». The dwell migration backfilled
+   * nothing on purpose, so reading NULL as «stuck since the beginning of time»
+   * would put every record written before the column at the top of the list on
+   * the day this ships — the report being wrong in the loudest way available.
+   */
+  eq("a record this app has never seen move is unmeasured, not overdue",
+    dwellDays(null, "1405/06/03"), null);
+  eq("...and is not severe either", severityFor(null, 10), "OK");
+
+  /* ------------------------------ the bands ------------------------------- */
+  eq("at the threshold it is over", severityFor(10, 10), "OVERDUE");
+  eq("past it too", severityFor(40, 10), "OVERDUE");
+  // A bare boolean would make the screen a cliff — nothing, nothing, crisis —
+  // and the use of it is seeing what is *about to* go wrong while a call helps.
+  eq("three quarters of the way is amber", severityFor(8, 10), "WARN");
+  eq("...and below that, nothing", severityFor(7, 10), "OK");
+  eq("a threshold of zero is never reported", severityFor(9999, 0), "OK");
+
+  /*
+   * The ranking, and the sharp part. Sorting by **days** would put every
+   * long-lead-time leg permanently at the top: 20 days into a 60-day
+   * manufacturing window would outrank 3 days past a 2-day handover, when the
+   * second is the one going wrong.
+   */
+  ok("a short leg badly overrun outranks a long leg barely started",
+    overdueRatio(3, 2) > overdueRatio(20, 60));
+  eq("nothing is over nothing", overdueRatio(9, 0), 0);
+  eq("and an unmeasured record ranks last", overdueRatio(null, 10), 0);
+
+  /* ------------------------ the service and the route ---------------------- */
+  {
+    const strip = (t: string) =>
+      t.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    const svc = strip(readFileSync("src/server/services/stuckWorkService.ts", "utf8"));
+    ok("the service source survived having its comments stripped",
+      svc.includes("stuckWorkReport"));
+
+    /*
+     * Each section through its own module's permission, and a section the
+     * caller may not see is reported as **withheld** rather than empty. An
+     * empty list reads as «there is nothing wrong», which is the opposite of
+     * «you may not look» — the distinction the assistant's tools were corrected
+     * for.
+     */
+    ok("purchase orders need the purchase-order permission",
+      /purchaseOrder: hasPermission\(user, "purchaseOrders"\)/.test(svc));
+    ok("...after-sales borrows the delivery module's, as its endpoints do",
+      /afterSales: hasPermission\(user, "packagingDelivery"\)/.test(svc));
+    ok("...projects need the projects permission",
+      /projectStage: hasPermission\(user, "projects"\)/.test(svc));
+    ok("...and a withheld section says so rather than answering empty",
+      /visible: false/.test(svc));
+
+    /*
+     * Record-level visibility **inside** the query, never as a post-filter, or
+     * the counts leak the existence of records the user cannot see.
+     */
+    ok("a project the user may not see is excluded by the query",
+      /where: projectVisibility\(user\)/.test(svc));
+
+    /*
+     * Ranked here over the whole bounded scan, and never by the database: the
+     * figure it orders by is a proportion of a threshold that lives in the
+     * settings document. Paging first and sorting the page afterwards is what
+     * put a six-month-old overdue quotation on page three of the follow-up
+     * queue, and this is the same shape.
+     */
+    ok("the rank is computed over the scan, not asked of SQL",
+      /rows\.sort\(\(a, b\) => b\.ratio - a\.ratio/.test(svc));
+    ok("...and the scan is bounded, and says when it stopped",
+      /STUCK_SCAN_LIMIT/.test(svc) && /truncated/.test(svc));
+    // Read-only. A report that writes is a report nobody trusts to open.
+    ok("it writes nothing at all",
+      !/\.(create|update|updateMany|delete|deleteMany|upsert)\(/.test(svc));
+
+    const route = strip(readFileSync("src/server/routes/stuckWork.ts", "utf8"));
+    ok("the route needs only a session, since the service gates each section",
+      /deps\.requireAuth/.test(route) && !/requireKeyAccess/.test(route));
+  }
+
+  /* ----------------------- the screen and its settings --------------------- */
+  {
+    const view = readFileSync("src/components/StuckWorkView.tsx", "utf8");
+    ok("the screen exists and is read-only", !/api\.(post|put|delete)/.test(view));
+    /*
+     * A helper rebuilt on every parent render gives the loading effect a new
+     * function each time, and `App` re-renders on the badge poll and on every
+     * write anywhere — which is how the messaging screen came to refetch in a
+     * loop and jump back to the top.
+     */
+    ok("...and its loader is stable across a parent re-render",
+      /useCallback\([\s\S]{0,600}\}, \[\]\)/.test(view));
+    ok("...a withheld section is named rather than drawn as empty",
+      view.includes("دسترسی به این ماژول را ندارید"));
+    ok("...and an unmeasured record is named rather than counted as overdue",
+      view.includes("اندازه‌گیری نشده"));
+
+    /*
+     * The settings form lists each module's **own** status list rather than a
+     * second typing of it — the drift the workflow trigger catalogue exists to
+     * end. A state added to a module appears here the moment it exists.
+     */
+    const panel = readFileSync("src/components/StuckThresholdsPanel.tsx", "utf8");
+    ok("the thresholds form reads each module's own list",
+      /STUCK_STATE_LISTS\[section\]\.map/.test(panel));
+    ok("...and says plainly that zero means «never»", panel.includes("گزارش نمی‌شود"));
+  }
+
+  // The module has to be reachable, or it is a screen nobody can open.
+  ok("«کارهای متوقف» is in the module catalogue",
+    APP_MODULES.some((m) => m.id === "stuckWork"));
 }
 
 /* ==========================================================================

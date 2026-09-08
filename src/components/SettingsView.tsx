@@ -30,6 +30,7 @@ import {
   X,
   Bot,
   Plug,
+  AlarmClock,
   CalendarDays,
   Sparkles
 } from 'lucide-react';
@@ -51,6 +52,7 @@ import type { ProjectRow } from '../api/projects';
 import RatesView from './RatesView';
 import { decompressLZW } from '../utils/compress';
 import { SCHEDULE_SUBJECTS, describeSchedule, scheduleRepeats } from '../utils/workflowSchedule';
+import StuckThresholdsPanel from './StuckThresholdsPanel';
 import { escalationIsConfigured } from '../utils/workflowEscalation';
 import {
   RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS, WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS,
@@ -132,7 +134,7 @@ export default function SettingsView({
   };
   
   // Tab control
-  const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields' | 'customerValue' | 'assistant' | 'apiTokens' | 'holidays'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields' | 'customerValue' | 'assistant' | 'apiTokens' | 'holidays' | 'stuckWork'>('general');
 
   /*
    * Opened on a particular tab when another screen asked for it.
@@ -1209,6 +1211,18 @@ export default function SettingsView({
           <CalendarDays size={16} className="text-rose-500" />
           تقویم تعطیلات
         </button>
+
+        <button
+          onClick={() => setActiveTab('stuckWork')}
+          className={`py-2 px-4 md:py-2.5 md:px-5 text-xs md:text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 rounded-xl border flex-shrink-0 ${
+            activeTab === 'stuckWork'
+              ? 'bg-sky-50 text-sky-600 border-sky-300 shadow-sm shadow-sky-100'
+              : 'bg-white text-slate-500 hover:text-slate-800 hover:bg-slate-50 border-slate-200'
+          }`}
+        >
+          <AlarmClock size={16} className="text-rose-500" />
+          کارهای متوقف
+        </button>
       </div>
 
       {activeTab === 'requiredFields' ? (
@@ -1365,6 +1379,8 @@ export default function SettingsView({
         <CustomerValueSettingsPanel settings={settings} updateSettings={updateSettings} />
       ) : activeTab === 'holidays' ? (
         <HolidayCalendarTab />
+      ) : activeTab === 'stuckWork' ? (
+        <StuckThresholdsPanel settings={settings} updateSettings={updateSettings} />
       ) : activeTab === 'rates' ? (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="mb-6">

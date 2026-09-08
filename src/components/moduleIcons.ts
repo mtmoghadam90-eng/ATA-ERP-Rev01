@@ -1,5 +1,5 @@
 import {
-  ArrowDownLeft, ArrowLeftRight, Boxes, Briefcase, CheckSquare, FileText,
+  AlarmClock, ArrowDownLeft, ArrowLeftRight, Boxes, Briefcase, CheckSquare, FileText,
   LayoutDashboard, MessageSquare, Package, Settings, ShieldCheck, ShoppingCart,
   Truck, Users, Wrench,
 } from "lucide-react";
@@ -27,6 +27,7 @@ export const MODULE_ICONS: Record<AppModuleId, typeof LayoutDashboard> = {
   afterSalesServices: Wrench,
   transactions: ArrowDownLeft,
   tasks: CheckSquare,
+  stuckWork: AlarmClock,
   messaging: MessageSquare,
   users: ShieldCheck,
   settings: Settings,
