@@ -4,6 +4,9 @@ import { loadSettings } from "../settings";
 import { getTodayShamsi } from "../../dateUtils";
 import { normalizeJalali } from "../dates";
 import { WorkflowRule, enrichPayload, executeRule } from "./workflowService";
+import { matchesConditions } from "../../utils/workflowConditions";
+import { FINISHED_TASK_STATUSES } from "../../utils/salesFollowUp";
+import { expandDateFields } from "../dates";
 import {
   SCHEDULE_SUBJECTS, dueDay, isDue, scheduledRules, sweepRange,
 } from "../../utils/workflowSchedule";
@@ -190,5 +193,147 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
     }
   }
 
+  // Raising is only half of it — see `resolveFinishedTasks`.
+  await resolveFinishedTasks(rules, today);
+
   return fired;
+}
+
+/* ------------------------- closing what is finished ------------------------ */
+
+/** How many stale reminders one pass will retire. A ceiling, not a page. */
+const RESOLVE_LIMIT = 500;
+
+/** What the closing note says, so a person reading the card knows why. */
+const RESOLVED_NOTE = "بسته شد چون شرط قانون دیگر برقرار نیست.";
+
+/**
+ * Closes the tasks a rule raised, once the record stops matching it.
+ *
+ * The half that was missing. `skipIfOpenSameKind` stops a *second* reminder and
+ * nothing ever retired the first, so the supplier answered, the order cleared
+ * customs, and the reminder sat on somebody's board for ever. A board filling
+ * with dead reminders is a board people stop reading — which makes a working
+ * automation worse than none, and is exactly why this had to land before
+ * repeating reminders rather than after them.
+ *
+ * Four things decide its shape.
+ *
+ * **It walks the tasks, not the rule's subject rows.** The sweep above only
+ * looks at records whose base date is inside the band, and a record that has
+ * moved on has a *new* `statusChangedAt` — so it is out of the band precisely
+ * when it becomes resolvable. Reading the tasks is the only query that finds it.
+ *
+ * **It asks the same question the firing asked**, through `matchesConditions`.
+ * Two readings of «does this match» is how a task comes to be raised by one
+ * half and never closed by the other.
+ *
+ * **A `SALES_FOLLOW_UP` is never auto-closed.** `completeFollowUp` is the only
+ * thing that may close one — it moves the quotation's follow-up state and
+ * raises the replacement in one transaction, and the ordinary tick refuses for
+ * the same reason. Closing one here would tick the task and leave the quotation
+ * marked as actively followed up with nothing chasing it.
+ *
+ * **The firing is deleted with the close**, so a record that falls back into
+ * the state can be chased again: an order rejected at customs and sent back
+ * into transit is a new problem, and `(ruleId, entityId)` would otherwise
+ * remember the first one for ever. Only ever together with a real close, so a
+ * rule cannot ping-pong on a record that still matches.
+ */
+export async function resolveFinishedTasks(
+  rules: WorkflowRule[],
+  today: string,
+): Promise<number> {
+  const db = getDb();
+  let closed = 0;
+
+  for (const rule of rules) {
+    const wants = (rule.actions ?? []).some(
+      (a) => a.type === "create_task" && a.taskConfig?.closeWhenResolved,
+    );
+    if (!wants || !rule.id) continue;
+
+    const subject = SCHEDULE_SUBJECTS[rule.schedule!.subject];
+    if (!subject) continue;
+
+    const open = await db.task.findMany({
+      where: {
+        workflowRuleId: rule.id,
+        workflowEntityId: { not: null },
+        status: { notIn: [...FINISHED_TASK_STATUSES] },
+        // Never a sales follow-up; see above.
+        taskKind: { not: "SALES_FOLLOW_UP" },
+      },
+      select: { id: true, workflowEntityType: true, workflowEntityId: true },
+      take: RESOLVE_LIMIT,
+    });
+
+    for (const task of open) {
+      try {
+        /*
+         * The type stored on the task, not the rule's current subject: a rule
+         * whose subject was changed since must not send the resolver to the
+         * wrong table for a task already raised.
+         */
+        const model = task.workflowEntityType ?? subject.model;
+        const select = PAYLOAD_SELECT[model];
+        const delegate = (db as any)[model];
+        if (!select || !delegate) continue;
+
+        const row = await delegate.findUnique({
+          where: { id: task.workflowEntityId },
+          select,
+        });
+
+        /*
+         * A record that is gone resolves the task with it: the thing the
+         * reminder was about does not exist, so there is nothing to chase.
+         */
+        const stillMatches = row
+          ? matchesConditions(
+              rule.conditions,
+              await enrichPayload(
+                {
+                  ...row,
+                  [subject.payloadIdKey]: task.workflowEntityId,
+                  entityType: model,
+                  entityId: task.workflowEntityId,
+                  ruleName: rule.name,
+                  today,
+                },
+                model,
+              ),
+            )
+          : false;
+
+        if (stillMatches) continue;
+
+        /*
+         * Conditional on it still being open, so two sweeps overlapping close
+         * it once — the same shape as the follow-up's own closing.
+         */
+        const result = await db.task.updateMany({
+          where: { id: task.id, status: { notIn: [...FINISHED_TASK_STATUSES] } },
+          data: {
+            status: "انجام شده",
+            completionNote: `${RESOLVED_NOTE} (${rule.name})`,
+            ...expandDateFields({ completedAt: today }, ["completedAt"]),
+          },
+        });
+        if (result.count === 0) continue;
+
+        closed++;
+        await db.workflowFiring.deleteMany({
+          where: { ruleId: rule.id, entityId: task.workflowEntityId },
+        });
+      } catch (err) {
+        console.error(
+          `[workflow] could not resolve "${rule.name}" on ${task.workflowEntityId}:`,
+          (err as Error)?.message || err,
+        );
+      }
+    }
+  }
+
+  return closed;
 }

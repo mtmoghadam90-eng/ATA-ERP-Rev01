@@ -1322,6 +1322,22 @@ export interface WorkflowRule {
        * of work an automation might raise.
        */
       skipIfOpenSameKind?: boolean;
+      /**
+       * Close the task this rule raised once the record stops matching it.
+       *
+       * The half that was missing: `skipIfOpenSameKind` stops a *second*
+       * reminder, and nothing ever retired the first. So the supplier answered,
+       * the order cleared customs, and the reminder sat on somebody's board for
+       * ever — and a board filling with dead reminders is a board people stop
+       * reading, which makes a working automation worse than none.
+       *
+       * Absent means off, so no rule written before this changes behaviour. It
+       * is an option on the action rather than a law in the engine for the same
+       * reason `skipIfOpenSameKind` is: «راستی‌آزمایی کن که هنوز لازم است» is
+       * not true of every task an automation raises — «فاکتور رسمی صادر کن» has
+       * to be done by a person whatever the record says afterwards.
+       */
+      closeWhenResolved?: boolean;
     };
     notificationConfig?: {
       titleTemplate: string;
