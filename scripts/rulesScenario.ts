@@ -9142,16 +9142,21 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   const modal = strip(readFileSync("src/components/FollowUpCompletionModal.tsx", "utf8"));
   ok("the modal has a correcting mode", /const isEditing = !!editing;/.test(modal));
   /*
-   * The lower half is hidden because none of it may be answered again: the
-   * task is closed, the state has moved, the replacement exists as its own
-   * task, and the sale may already be settled.
+   * The lower half is withheld from the **closed** shape alone, and the guard
+   * has to say `isCorrecting` rather than `isEditing` for that to be true.
+   *
+   * None of it may be answered a second time there: the task is closed, the
+   * state has moved, the replacement exists as its own task, and the sale may
+   * already be settled. On an *open* chase none of that has happened, so the
+   * same blocks are exactly the questions still to be asked — hiding them was
+   * what made «ویرایش» a second, smaller form than the tick on the same card.
    */
   for (const [what, pattern] of [
-    ["the deferral", /\{!isEditing && decision === 'DEFER' &&/],
-    ["the settlement question", /\{suggested && !outcomeIsTerminal && !isEditing &&/],
-    ["the decision", /\{!isEditing && \(\s*<div>/],
+    ["the deferral", /\{!isCorrecting && decision === 'DEFER' &&/],
+    ["the settlement question", /\{suggested && !outcomeIsTerminal && !isCorrecting &&/],
+    ["the decision", /\{!isCorrecting && \(\s*<div>/],
   ] as const) {
-    ok(`...and does not re-ask ${what}`, pattern.test(modal));
+    ok(`...and asks ${what} on every shape but the closed one`, pattern.test(modal));
   }
   /*
    * The next action is *shown* when editing a closed chase — a person filled it
@@ -9160,7 +9165,7 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    * next action comes to exist.
    */
   ok("...and edits the existing next action rather than raising one",
-    /\{\(\(isCorrecting && !!editing\?\.next\) \|\| \(!isEditing && decision === 'NEXT_ACTION'\)\) &&/
+    /\{\(\(isCorrecting && !!editing\?\.next\) \|\| \(!isCorrecting && decision === 'NEXT_ACTION'\)\) &&/
       .test(modal));
   // Keyed on the task being worked on: correcting a closed chase, the row's
   // own `nextActionTaskId` is the replacement, a different task.
@@ -9322,9 +9327,39 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   ok("the modal tells the two edit shapes apart",
     /const isCorrecting = editing\?\.closed === true;/.test(modal)
     && /const isEditingAction = isEditing && !isCorrecting;/.test(modal));
-  // An open chase has had no call, so there is nothing to record on it.
-  ok("...and records no result on a chase that is still open",
-    /\{!isEditingAction && \(/.test(modal));
+  /*
+   * Editing an open chase is the whole form, and what the button does is
+   * decided by whether a result was chosen. That is the one signal, and it is
+   * the honest one: the result is the field the completion cannot be written
+   * without, and picking one is deliberate in a way that correcting a date is
+   * not.
+   */
+  ok("...and completing from the edit form turns on a chosen result",
+    /const willComplete = isEditingAction && followUpResult\.trim\(\) !== '';/.test(modal));
+  /*
+   * The form hands the completion over; it never performs one. There is
+   * exactly one completion path in this application and a second here would be
+   * a second copy of the transaction, the settlement question and the
+   * replacement it raises.
+   */
+  ok("...and the form hands the completion to the screen rather than running it",
+    /complete: willComplete \? body : undefined,/.test(modal)
+    && !/salesFollowUpApi/.test(modal));
+  /*
+   * And the screen writes the corrected words *before* the completion closes
+   * the row, or the edit would land on a task that was already finished with.
+   */
+  const editStart = view.indexOf("onSaveEdits={async");
+  const editHandler = view.slice(editStart, view.indexOf("onSubmit={async", editStart));
+  ok("...and the screen corrects the row before completing it",
+    editHandler.indexOf("tasksApi.update(followUpRow.taskId") <
+      editHandler.indexOf("salesFollowUpApi.complete(followUpRow.taskId"),
+    [editHandler.indexOf("tasksApi.update(followUpRow.taskId"),
+      editHandler.indexOf("salesFollowUpApi.complete(followUpRow.taskId")]);
+  ok("...through the same call the tick button makes",
+    /if \(body\.complete\) \{/.test(editHandler)
+    && /salesFollowUpApi\.complete\(followUpRow\.taskId, body\.complete\)/.test(editHandler)
+    && /settlementCategoryPrompt\(outcome, ACTIVITY_CATEGORY\.PROFORMAS\)/.test(editHandler));
 
   ok("the comment stripper left these sources intact",
     service.length > 10000 && view.length > 10000 && modal.length > 4000);

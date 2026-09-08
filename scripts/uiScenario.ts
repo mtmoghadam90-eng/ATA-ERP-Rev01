@@ -1175,7 +1175,7 @@ head("Follow-up editing: the form opens carrying the follow-up");
       title: "قیمت رقیب را بگیر", description: "با واحد فنی هماهنگ کن",
       dueDate: "1405/06/20", assignee: "مریم کاظمی", priority: "بالا",
     });
-    ok("an open chase opens as an edit of the action", m.text("h3") === "ویرایش اقدام پیگیری");
+    ok("an open chase opens the follow-up form", m.text("h3") === "ویرایش پیگیری");
     ok("...with its own title", m.value("#follow-up-action-title") === "قیمت رقیب را بگیر",
       m.value("#follow-up-action-title"));
     ok("...and its own description",
@@ -1184,14 +1184,31 @@ head("Follow-up editing: the form opens carrying the follow-up");
     ok("...and the priority it carries",
       m.value("#follow-up-action-priority") === "بالا", m.value("#follow-up-action-priority"));
     /*
-      No next action on an open chase: the row's open task *is* this one, and
-      offering it under a second heading would show the same fields twice.
+      And the rest of the form, which used to be missing entirely.
+
+      Nothing has happened to an open chase, so the result, the note, the
+      decision and the next action are the questions still ahead of it — hiding
+      them made «ویرایش» a second, smaller form than the tick on the same card,
+      which is exactly how it was reported.
     */
-    ok("...and no next-action block", m.value("#next-action-title") === undefined);
-    // No call has happened, so there is nothing to record — a result box here
-    // is exactly what made this read as a blank completion form.
-    ok("...and no result box", m.value("#follow-up-note") === undefined);
-    ok("...and the button is ready", !(m.host.querySelector("#follow-up-submit") as HTMLButtonElement).disabled);
+    ok("...and the note box", m.value("#follow-up-note") === "");
+    ok("...and the decision block", !!m.host.querySelector("#follow-up-decision-TERMINAL"));
+    /*
+      The next action here is the one that *would* be raised, so it carries the
+      usual defaults rather than a replacement that does not exist yet.
+    */
+    ok("...and the next action, seeded from the quotation",
+      m.value("#next-action-title") === "پیگیری پیش‌فاکتور PF-1405-08",
+      m.value("#next-action-title"));
+    /*
+      Correcting a date must not demand a result nobody has heard, so the
+      button is ready with the result box empty — and it saves rather than
+      completes, which is the whole of what «willComplete» decides.
+    */
+    ok("...and the button is ready with no result chosen",
+      !(m.host.querySelector("#follow-up-submit") as HTMLButtonElement).disabled);
+    ok("...and says it will save rather than complete",
+      m.text("#follow-up-submit") === "ذخیره تغییرات", m.text("#follow-up-submit"));
     m.close();
   }
 
