@@ -50,7 +50,8 @@ import { useEntitySearch } from '../api/useEntitySearch';
 import type { ProjectRow } from '../api/projects';
 import RatesView from './RatesView';
 import { decompressLZW } from '../utils/compress';
-import { SCHEDULE_SUBJECTS, describeSchedule } from '../utils/workflowSchedule';
+import { SCHEDULE_SUBJECTS, describeSchedule, scheduleRepeats } from '../utils/workflowSchedule';
+import { escalationIsConfigured } from '../utils/workflowEscalation';
 import {
   RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS, WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS,
   defaultConditionField, triggerFields, triggerGroups, triggerLabel,
@@ -3495,6 +3496,49 @@ export default function SettingsView({
                               </select>
                             </div>
                           </div>
+                          {/*
+                            The repeat, beside the schedule it belongs to rather
+                            than in the action below: it decides how often the
+                            *rule* fires, and every action on it repeats with it
+                            — including a message to the customer, which is the
+                            one worth saying out loud.
+                          */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-slate-700 text-xs font-bold mb-2">تکرار هر چند روز یک‌بار</label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={schedule.repeatEveryDays || 0}
+                                onChange={(e) => setSchedule({ repeatEveryDays: Math.max(0, Number(e.target.value) || 0) })}
+                                className="w-full text-xs md:text-sm border border-slate-200 rounded-xl p-3 focus:outline-none focus:border-sky-500 bg-white text-center font-mono"
+                              />
+                              <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                                ۰ یعنی فقط یک بار — رفتار همیشگی. عددی بزرگ‌تر یعنی تا وقتی شرط قانون برقرار است، هر این تعداد روز دوباره اجرا شود.
+                              </p>
+                            </div>
+                            <div>
+                              <label className="block text-slate-700 text-xs font-bold mb-2">حداکثر دفعات (۰ = بی‌نهایت)</label>
+                              <input
+                                type="number"
+                                min={0}
+                                disabled={!scheduleRepeats(schedule)}
+                                value={schedule.maxOccurrences || 0}
+                                onChange={(e) => setSchedule({ maxOccurrences: Math.max(0, Number(e.target.value) || 0) })}
+                                className="w-full text-xs md:text-sm border border-slate-200 rounded-xl p-3 focus:outline-none focus:border-sky-500 bg-white text-center font-mono disabled:bg-slate-50 disabled:text-slate-400"
+                              />
+                              <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                                راه اصلی پایان تکرار این نیست؛ راه اصلی این است که رکورد از آن وضعیت خارج شود.
+                              </p>
+                            </div>
+                          </div>
+                          {scheduleRepeats(schedule) && (
+                            <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 leading-5">
+                              <strong>تکرار روی همه اقدام‌های این قانون اعمال می‌شود.</strong> اگر اقدام «ارسال پیام» دارد،
+                              پیام هم به همان فاصله برای مشتری تکرار می‌شود. برای یادآوری داخلی، اقدام «ایجاد وظیفه» را
+                              همراه با «بستن خودکار» فعال کنید تا وقتی مشکل حل شد تکرار هم قطع شود.
+                            </div>
+                          )}
                           <div className="text-xs font-bold text-sky-800 bg-white border border-sky-200 rounded-xl px-3 py-2">
                             این قانون اجرا می‌شود: {describeSchedule(schedule)}
                           </div>
@@ -3978,6 +4022,91 @@ export default function SettingsView({
                                     برای کاری که به‌هرحال باید انجام شود (مثل صدور فاکتور رسمی) خاموش بگذارید. وظایف «پیگیری فروش» هرگز خودکار بسته نمی‌شوند.
                                   </p>
                                 </div>
+
+                                {/*
+                                  Escalation, drawn only for a repeating rule.
+
+                                  It has nothing to say otherwise: `occurrence`
+                                  is 1 for ever on a rule that fires once, so a
+                                  threshold of any value would never be passed
+                                  and the three boxes would be a form that does
+                                  nothing — which is how a toggle comes to be
+                                  reported as broken.
+                                */}
+                                {editingRule.triggerType === 'time_elapsed' && scheduleRepeats(editingRule.schedule) && (
+                                  <div className="md:col-span-2 border border-amber-200 bg-amber-50/60 rounded-xl p-3 space-y-3">
+                                    <div className="text-[11px] font-bold text-amber-900">تشدید پس از چند بار بی‌پاسخ ماندن</div>
+                                    <p className="text-[10px] text-amber-800 leading-relaxed">
+                                      یادآوری‌ای که دو بار نادیده گرفته شده، با چاپ دوباره‌اش انجام نمی‌شود. آنچه نتیجه را عوض می‌کند
+                                      این است که فوری شود یا روی میز شخص دیگری برود. اگر «ساخته نشدن وظیفه تکراری» بالا روشن باشد،
+                                      تشدید روی <strong>همان کارت موجود</strong> اعمال می‌شود و کارت دومی ساخته نمی‌شود.
+                                    </p>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                      <div>
+                                        <label className="block text-slate-600 text-[11px] font-bold mb-1">بعد از چند بار</label>
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          value={act.taskConfig.escalateAfterOccurrences || 0}
+                                          onChange={(e) => {
+                                            const updatedActs = [...editingRule.actions];
+                                            updatedActs[actIdx].taskConfig!.escalateAfterOccurrences = Math.max(0, Number(e.target.value) || 0);
+                                            setEditingRule({ ...editingRule, actions: updatedActs });
+                                          }}
+                                          className="w-full border border-slate-200 rounded-lg p-2.5 bg-white text-center font-mono"
+                                        />
+                                        <p className="text-[10px] text-slate-500 mt-1">۰ یعنی بدون تشدید.</p>
+                                      </div>
+                                      <div>
+                                        <label className="block text-slate-600 text-[11px] font-bold mb-1">اولویت پس از تشدید</label>
+                                        <select
+                                          value={act.taskConfig.escalatePriority || ''}
+                                          onChange={(e) => {
+                                            const updatedActs = [...editingRule.actions];
+                                            updatedActs[actIdx].taskConfig!.escalatePriority = (e.target.value || undefined) as any;
+                                            setEditingRule({ ...editingRule, actions: updatedActs });
+                                          }}
+                                          className="w-full border border-slate-200 rounded-lg p-2.5 bg-white"
+                                        >
+                                          <option value="">بدون تغییر</option>
+                                          <option value="پایین">پایین</option>
+                                          <option value="متوسط">متوسط</option>
+                                          <option value="بالا">بالا</option>
+                                          <option value="فوری">فوری</option>
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="block text-slate-600 text-[11px] font-bold mb-1">مسئول پس از تشدید</label>
+                                        <select
+                                          value={act.taskConfig.escalateAssignedTo || ''}
+                                          onChange={(e) => {
+                                            const updatedActs = [...editingRule.actions];
+                                            updatedActs[actIdx].taskConfig!.escalateAssignedTo = e.target.value || undefined;
+                                            setEditingRule({ ...editingRule, actions: updatedActs });
+                                          }}
+                                          className="w-full border border-slate-200 rounded-lg p-2.5 bg-white"
+                                        >
+                                          <option value="">همان مسئول قبلی</option>
+                                          <optgroup label="سمت‌های پویا">
+                                            {WORKFLOW_ASSIGNEE_TOKENS.map((token) => (
+                                              <option key={token.value} value={token.value}>{token.label}</option>
+                                            ))}
+                                          </optgroup>
+                                          <optgroup label="کاربران سیستم">
+                                            {users.map(u => (
+                                              <option key={u.id} value={u.fullName}>{u.fullName}</option>
+                                            ))}
+                                          </optgroup>
+                                        </select>
+                                      </div>
+                                    </div>
+                                    {(act.taskConfig.escalateAfterOccurrences || 0) > 0 && !escalationIsConfigured(act.taskConfig) && (
+                                      <div className="text-[10px] font-bold text-rose-700">
+                                        آستانه تعیین شده اما نه اولویتی و نه مسئولی برای پس از آن انتخاب نشده — این تشدید هیچ کاری نمی‌کند.
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             )}
 

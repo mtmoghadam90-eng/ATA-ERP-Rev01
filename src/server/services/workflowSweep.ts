@@ -8,7 +8,8 @@ import { matchesConditions } from "../../utils/workflowConditions";
 import { FINISHED_TASK_STATUSES } from "../../utils/salesFollowUp";
 import { expandDateFields } from "../dates";
 import {
-  SCHEDULE_SUBJECTS, dueDay, isDue, scheduledRules, sweepRange,
+  REPEAT_SWEEP_WINDOW_DAYS, SCHEDULE_SUBJECTS, SWEEP_WINDOW_DAYS,
+  dueDay, occurrenceDue, scheduleRepeats, scheduledRules, sweepRange,
 } from "../../utils/workflowSchedule";
 
 /**
@@ -115,10 +116,21 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
     const select = PAYLOAD_SELECT[subject.model];
     if (!select) continue;
 
-    // Only base dates inside the sweep's band: far enough back that a record
-    // due long before the rule existed is left alone, and — for a rule that
-    // counts *before* a date — far enough forward to see a date still ahead.
-    const band = sweepRange(days, today, direction);
+    /*
+     * Only base dates inside the sweep's band: far enough back that a record
+     * due long before the rule existed is left alone, and — for a rule that
+     * counts *before* a date — far enough forward to see a date still ahead.
+     *
+     * A **repeating** rule reaches much further back, and that is not a tuning
+     * knob: the record it is chasing is still stuck, which is the entire thing
+     * being reported, so a 45-day lookback would silently stop chasing exactly
+     * the orders that have been ignored longest.
+     */
+    const repeats = scheduleRepeats(rule.schedule);
+    const band = sweepRange(
+      days, today, direction,
+      repeats ? REPEAT_SWEEP_WINDOW_DAYS : SWEEP_WINDOW_DAYS,
+    );
     const delegate = (db as any)[subject.model];
     const rows: Record<string, unknown>[] = await delegate.findMany({
       where: {
@@ -130,23 +142,39 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
 
     for (const row of rows) {
       const base = row[subject.dateField] as string | null;
-      if (!isDue(base, days, today, direction)) continue;
+      /*
+       * Which firing is due *now*, rather than whether the first one ever was.
+       *
+       * For a rule that does not repeat this answers 1 for ever and the guard
+       * below is the same «once per record» it always was. For one that does,
+       * it answers the occurrence today has reached — and deliberately only
+       * that one: a server that was off for a fortnight comes back and raises a
+       * single card, not the five it missed.
+       */
+      const occurrence = occurrenceDue(
+        base, days, today, direction,
+        rule.schedule!.repeatEveryDays, rule.schedule!.maxOccurrences,
+      );
+      if (occurrence < 1) continue;
 
       const entityId = String(row.id);
       // Written first, and the unique index is what decides: two servers, or a
-      // sweep overlapping a manual run, cannot both get past this line.
+      // sweep overlapping a manual run, cannot both get past this line. The
+      // occurrence is part of that key, which is the whole of what lets a
+      // repeat through while a one-shot rule stays a one-shot rule.
       try {
         await db.workflowFiring.create({
           data: {
             ruleId: rule.id,
             entityType: subject.entityType,
             entityId,
+            occurrence,
             dueDay: dueDay(base, days, direction),
           } as Prisma.WorkflowFiringUncheckedCreateInput,
         });
       } catch (err) {
-        // P2002: this rule has already fired for this record. Anything else is
-        // a real problem and is worth the log line.
+        // P2002: this rule has already fired this occurrence for this record.
+        // Anything else is a real problem and is worth the log line.
         if ((err as { code?: string })?.code !== "P2002") {
           console.error("[workflow] could not record firing:", (err as Error)?.message || err);
         }
@@ -181,6 +209,13 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
             ruleName: rule.name,
             elapsedDays: days,
             dueDay: dueDay(base, days, direction),
+            /*
+             * Which reminder this is. It reaches `create_task` for the
+             * escalation and is a template variable in its own right, so a
+             * repeating rule can title its card «یادآوری {occurrence}» rather
+             * than printing the same sentence every three days.
+             */
+            occurrence,
             today,
           },
           subject.entityType,

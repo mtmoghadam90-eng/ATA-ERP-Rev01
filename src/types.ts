@@ -1290,6 +1290,13 @@ export interface WorkflowRule {
     /** Never negative; the side is `direction`. */
     days: number;
     direction?: 'after' | 'before';
+    /**
+     * Fire again every N days while the record still matches. Absent or 0 is
+     * once and never again — what every rule written before this meant.
+     */
+    repeatEveryDays?: number;
+    /** Stop after this many firings. Absent or 0 is no ceiling. */
+    maxOccurrences?: number;
   };
   conditions: {
     field: string; // e.g. 'newOutcome', 'newStatus'
@@ -1338,6 +1345,20 @@ export interface WorkflowRule {
        * to be done by a person whatever the record says afterwards.
        */
       closeWhenResolved?: boolean;
+      /**
+       * From the firing *after* this one, the reminder is raised differently.
+       *
+       * Only meaningful on a repeating schedule, and absent means no escalation
+       * whatever the two fields below say — the threshold is the only thing
+       * that says *when*, and reading a bare escalated priority as «from the
+       * second one» would be the code guessing at a number nobody typed.
+       * See src/utils/workflowEscalation.ts.
+       */
+      escalateAfterOccurrences?: number;
+      /** The priority from then on. A named value, never a computed step. */
+      escalatePriority?: 'پایین' | 'متوسط' | 'بالا' | 'فوری';
+      /** And whose desk it lands on from then on. Absent keeps the assignee. */
+      escalateAssignedTo?: string;
     };
     notificationConfig?: {
       titleTemplate: string;

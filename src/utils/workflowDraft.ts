@@ -92,6 +92,13 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     "  schedule.subject یکی از این‌هاست:",
     subjects,
     "  schedule.days: عدد صحیح نامنفی — schedule.direction: after یا before",
+    // A repeat only became safe once the reminder could retire itself: without
+    // `closeWhenResolved` the loop ends only at a counter, which is a guess.
+    "  schedule.repeatEveryDays: عدد صحیح نامنفی — ۰ یا نیامده یعنی فقط یک بار؛",
+    "    عددی بزرگ‌تر یعنی تا وقتی شرط برقرار است هر این تعداد روز دوباره اجرا شود.",
+    "    برای «تا وقتی جواب ندادند پیگیری کن» لازم است و باید همراه با",
+    "    closeWhenResolved: true باشد، وگرنه یادآوری بعد از حل شدن مشکل هم می‌ماند.",
+    "  schedule.maxOccurrences: عدد صحیح نامنفی — ۰ یا نیامده یعنی بی‌نهایت.",
     "  شرط‌های یک قانون زمان‌بندی‌شده روی خودِ رکورد سنجیده می‌شوند:",
     scheduleFields,
     "",
@@ -100,7 +107,8 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     "",
     "## اقدام‌ها (actions[].type)",
     "  create_task — ساخت وظیفه. taskConfig: titleTemplate, descTemplate,",
-    "    assignedTo, priority, dueDaysOffset, taskKind, skipIfOpenSameKind, closeWhenResolved",
+    "    assignedTo, priority, dueDaysOffset, taskKind, skipIfOpenSameKind, closeWhenResolved,",
+    "    escalateAfterOccurrences, escalatePriority, escalateAssignedTo",
     "  send_message — ارسال پیام به مشتری. messageConfig: templateId (اجباری),",
     "    channel (SMS | BALE | EMAIL یا نیامده = ترجیح پروژه), delayDays, sendAtTime",
     "  send_notification — اعلان داخلی. notificationConfig: titleTemplate,",
@@ -115,6 +123,10 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     // model knowing about, because a rule that chases something is exactly
     // the rule that should not leave its own reminder behind.
     "  closeWhenResolved: true | false — برای یادآوری‌ها true، برای کاری که به‌هرحال باید انجام شود false",
+    "  escalateAfterOccurrences: عدد صحیح نامنفی — فقط برای قانون تکرارشونده معنی دارد.",
+    "    ۰ یا نیامده یعنی بدون تشدید. از تکرار بعد از این عدد به بعد اعمال می‌شود.",
+    `  escalatePriority: ${TASK_PRIORITIES.join(" | ")} — اولویت پس از تشدید`,
+    "  escalateAssignedTo: مسئول پس از تشدید، از همان فهرست assignedTo",
     "  assignedTo یکی از این نشانه‌ها یا نام کامل یک کاربر:",
     assignees,
     "",
@@ -249,7 +261,19 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
       };
     }
     const direction = rawSchedule.direction === "before" ? "before" : "after";
-    schedule = { subject, days: wholeNumber(rawSchedule.days, 0), direction };
+    /*
+     * The repeat is clamped rather than refused: an absurd number is a rule
+     * that fires too often, which a person sees on the form and corrects, while
+     * refusing the whole draft over it would throw away a rule that is
+     * otherwise right. Zero — the value a model omits — is the old behaviour.
+     */
+    schedule = {
+      subject,
+      days: wholeNumber(rawSchedule.days, 0),
+      direction,
+      repeatEveryDays: wholeNumber(rawSchedule.repeatEveryDays, 0),
+      maxOccurrences: wholeNumber(rawSchedule.maxOccurrences, 0),
+    };
   }
 
   /* ------------------------------- conditions ----------------------------- */
@@ -337,6 +361,17 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
           taskKind,
           skipIfOpenSameKind: config.skipIfOpenSameKind === true,
           closeWhenResolved: config.closeWhenResolved === true,
+          escalateAfterOccurrences: wholeNumber(config.escalateAfterOccurrences, 0),
+          /*
+           * The priority is checked against the list, exactly as the ordinary
+           * one is — an invented value here would save cleanly and escalate to
+           * a word the board cannot order. Absent is «no change», which is why
+           * it falls to undefined rather than to «متوسط».
+           */
+          escalatePriority: (TASK_PRIORITIES as readonly string[]).includes(String(config.escalatePriority))
+            ? (config.escalatePriority as "پایین" | "متوسط" | "بالا" | "فوری")
+            : undefined,
+          escalateAssignedTo: text(config.escalateAssignedTo, 120) || undefined,
         },
       });
       continue;
