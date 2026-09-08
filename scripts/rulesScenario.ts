@@ -38,7 +38,8 @@ import {
 } from "../src/utils/permissions";
 import {
   DEFAULT_STUCK_THRESHOLDS, FALLBACK_STUCK_DAYS, PO_STAGE_PAIRS, STUCK_SECTIONS,
-  STUCK_STATE_LISTS, dwellDays, overdueRatio, severityFor, thresholdFor,
+  STUCK_STATE_LISTS, dwellDays, overdueRatio, pruneStuckThresholds, severityFor,
+  stuckStateOwner, thresholdFor,
 } from "../src/utils/stuckWork";
 import { generateSku, decodeSku } from "../src/utils/skuUtils";
 import { parseFeatureSpec, splitNameAndCode } from "../src/utils/productFeatureSpec";
@@ -10213,6 +10214,122 @@ head("Stuck work: the dwell report");
     DEFAULT_STUCK_THRESHOLDS.projectStage["باخته"] === 0
     && DEFAULT_STUCK_THRESHOLDS.projectStage["لغو شده"] === 0
     && DEFAULT_STUCK_THRESHOLDS.projectStage["خاتمه‌یافته"] === 0);
+
+  /* --------- and the complement survives a settings document -------------- */
+  /*
+   * The complement above is a property of the **defaults**, and the defaults
+   * are overridable — so it held right up to the moment somebody typed a number
+   * into the settings form, which offered a box on both sides of every shared
+   * leg with nothing saying they were the same leg. A document naming «حمل و
+   * ترانزیت» on the order *and* the project reported one container in transit
+   * as two stalls at two different day counts on one screen. Reported from that
+   * form.
+   */
+  {
+    const doubled = { purchaseOrder: { "حمل و ترانزیت": 45 }, projectStage: { "حمل و ترانزیت": 20 } };
+    eq("the order still counts the leg it owns",
+      thresholdFor("purchaseOrder", "حمل و ترانزیت", doubled), 45);
+    eq("...and the project's copy of the same leg is refused, whatever is stored",
+      thresholdFor("projectStage", "حمل و ترانزیت", doubled), 0);
+    /*
+     * Both ends of the chain go the other way, which is the half a blanket «the
+     * order always wins» would get wrong: a draft order and a received one are
+     * the project's legs, so an override *there* is the one that is refused.
+     */
+    const ends = {
+      purchaseOrder: { "پیش‌نویس": 9, "تحویل شده (رسید انبار)": 9 },
+      projectStage: { "برنده — در انتظار تأمین": 4, "بسته‌بندی و تحویل": 6 },
+    };
+    eq("a draft order is not counted on the order", thresholdFor("purchaseOrder", "پیش‌نویس", ends), 0);
+    eq("...it is counted on the project",
+      thresholdFor("projectStage", "برنده — در انتظار تأمین", ends), 4);
+    eq("a received order is not counted on the order",
+      thresholdFor("purchaseOrder", "تحویل شده (رسید انبار)", ends), 0);
+    eq("...the packing leg is the project's",
+      thresholdFor("projectStage", "بسته‌بندی و تحویل", ends), 6);
+    // After-sales shares nothing, so nothing there is ever refused.
+    eq("an after-sales state is owned by its own section",
+      thresholdFor("afterSales", "در حال بررسی", { afterSales: { "در حال بررسی": 3 } }), 3);
+  }
+  /*
+   * Ownership is derived from the defaults rather than from a second table, so
+   * it cannot drift from the complement checked above — and every shared leg
+   * has exactly one owner, in both directions.
+   */
+  {
+    const wrong: string[] = [];
+    for (const { poStatus, stage } of PO_STAGE_PAIRS) {
+      const a = stuckStateOwner("purchaseOrder", poStatus);
+      const b = stuckStateOwner("projectStage", stage);
+      if (a !== b) wrong.push(`${poStatus} → ${a} / ${stage} → ${b}`);
+    }
+    ok("both sides of a shared leg name the same owner", wrong.length === 0, wrong);
+    const orphan: string[] = [];
+    for (const section of STUCK_SECTIONS) {
+      for (const state of STUCK_STATE_LISTS[section]) {
+        const owner = stuckStateOwner(section, state);
+        if (owner !== section && thresholdFor(section, state) !== 0) orphan.push(`${section}/${state}`);
+      }
+    }
+    ok("...and a section never counts a leg it does not own", orphan.length === 0, orphan);
+    // The check is not vacuous: five project stages and two order statuses are
+    // shared, so something really is being refused.
+    const disowned = STUCK_STATE_LISTS.projectStage
+      .filter((st) => stuckStateOwner("projectStage", st) !== "projectStage");
+    ok("the shared legs really are shared", disowned.length === 5, disowned);
+  }
+  /*
+   * A stored key nothing consults is the same fault as a switch that does
+   * nothing, so the form writes the document pruned. It only ever removes, and
+   * only what is already ignored.
+   */
+  {
+    const pruned = pruneStuckThresholds({
+      purchaseOrder: { "حمل و ترانزیت": 45, "پیش‌نویس": 9 },
+      projectStage: { "حمل و ترانزیت": 20, "جدید": 3 },
+      afterSales: { "در حال بررسی": 4 },
+    });
+    ok("pruning keeps what each section owns",
+      pruned.purchaseOrder?.["حمل و ترانزیت"] === 45
+      && pruned.projectStage?.["جدید"] === 3
+      && pruned.afterSales?.["در حال بررسی"] === 4, JSON.stringify(pruned));
+    ok("...and drops only what nothing reads",
+      pruned.purchaseOrder?.["پیش‌نویس"] === undefined
+      && pruned.projectStage?.["حمل و ترانزیت"] === undefined, JSON.stringify(pruned));
+  }
+  /*
+   * And the form says so where somebody is looking. A row that merely reads
+   * «گزارش نمی‌شود» says «switched off» when the truth is «counted next door»,
+   * so the box is disabled and the other section is named — and the row is not
+   * hidden, or somebody hunting for «ترخیص گمرک» under «پروژه‌ها» finds nothing
+   * and no answer.
+   */
+  {
+    const strip = (src: string) =>
+      src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    const panel = strip(readFileSync("src/components/StuckThresholdsPanel.tsx", "utf8"));
+    ok("the thresholds panel survived having its comments stripped",
+      panel.includes("STUCK_STATE_LISTS"));
+    ok("the panel asks who owns each leg",
+      /const owner = stuckStateOwner\(section, state\);/.test(panel)
+      && /const owned = owner === section;/.test(panel));
+    ok("...and disables the side that does not own it",
+      /disabled=\{!owned\}/.test(panel));
+    /*
+     * Addressed by data attributes and not an id: these state names carry
+     * spaces, which an HTML id may not, so a selector over one matches nothing
+     * — and a render test that silently finds no input passes nothing while
+     * reporting nothing.
+     */
+    ok("...and the boxes are addressable without an id carrying spaces",
+      /data-stuck-section=\{section\}/.test(panel)
+      && /data-stuck-state=\{state\}/.test(panel));
+    ok("...naming where it is counted instead",
+      /STUCK_SECTION_LABELS\[owner\]/.test(panel));
+    ok("...while still drawing the row", !/owned &&\s*\(?\s*<div\s+key=\{state\}/.test(panel));
+    ok("...and saving prunes the entries nothing reads",
+      /pruneStuckThresholds\(draft\)/.test(panel));
+  }
 
 
   /* ---------------------------- the thresholds ---------------------------- */

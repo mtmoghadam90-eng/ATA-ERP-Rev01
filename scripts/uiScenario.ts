@@ -47,6 +47,7 @@ import MessageReactions from "../src/components/MessageReactions";
 import WorkBoard from "../src/components/WorkBoard";
 import FollowUpCompletionModal from "../src/components/FollowUpCompletionModal";
 import ActivityComposer from "../src/components/ActivityComposer";
+import StuckThresholdsPanel from "../src/components/StuckThresholdsPanel";
 import type { Product } from "../src/types";
 import type { ExchangeRate } from "../src/types";
 
@@ -1269,6 +1270,61 @@ head("Follow-up editing: the form opens carrying the follow-up");
       (m.host.querySelector("#follow-up-submit") as HTMLButtonElement).disabled === true);
     m.close();
   }
+}
+
+/*
+ * A leg is threshold-able on one side only.
+ *
+ * Seven project stages are the same fact as a purchase-order status, and the
+ * form used to offer a box on both sides of each — so a document naming «حمل و
+ * ترانزیت» twice reported one container as two stalls. `thresholdFor` refuses
+ * the copy whatever is stored, which the rule tests hold; this asks the other
+ * half, which only a render can: that the box really is unreachable and the row
+ * really is still drawn, saying where the leg is counted instead.
+ */
+head("Stuck thresholds: a leg is asked about once");
+
+{
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(React.createElement(StuckThresholdsPanel, {
+      // A document that already carries the double entry, which is the shape
+      // that was reported.
+      settings: {
+        stuckThresholds: {
+          purchaseOrder: { "حمل و ترانزیت": 45 },
+          projectStage: { "حمل و ترانزیت": 20 },
+        },
+      },
+      updateSettings: () => {},
+    } as never));
+  });
+  const box = (section: string, state: string) =>
+    host.querySelector(
+      `[data-stuck-section="${section}"][data-stuck-state="${state}"]`,
+    ) as HTMLInputElement | null;
+
+  ok("the order's own leg can be typed into", box("purchaseOrder", "حمل و ترانزیت")?.disabled === false);
+  ok("...and the project's copy of it cannot",
+    box("projectStage", "حمل و ترانزیت")?.disabled === true);
+  /*
+   * Drawn, not hidden: somebody hunting for «ترخیص گمرک» under «پروژه‌ها» has
+   * to find the answer where they are looking for it, and a row that is simply
+   * absent answers nothing.
+   */
+  ok("...but the row is still there, naming where it is counted",
+    !!box("projectStage", "ترخیص گمرک")
+    && host.textContent?.includes("روی «سفارش‌های خرید» شمرده می‌شود") === true);
+  // Both ends of the chain go the other way, so this is not «the order wins».
+  ok("a draft order is the project's leg, not the order's",
+    box("purchaseOrder", "پیش‌نویس")?.disabled === true
+    && box("projectStage", "برنده — در انتظار تأمین")?.disabled === false);
+  // The inert figure is not shown as if it were in force.
+  ok("...and the refused value is not printed as a setting",
+    box("projectStage", "حمل و ترانزیت")?.value === "");
+  act(() => { root.unmount(); });
+  host.remove();
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

@@ -168,6 +168,17 @@ export interface StuckThresholdSettings {
  * how somebody says «we never chase this state»; reading zero as «not
  * configured» would make that setting impossible to express, which is the
  * `absent ≠ empty` rule in its numeric form.
+ *
+ * **Except on a leg this section does not own**, which is answered 0 whatever
+ * is stored. «هر مرحله یک بار» was a property of the defaults table alone, and
+ * the defaults are overridable — so a settings document naming «حمل و ترانزیت»
+ * on *both* the order and the project reported one container in transit as two
+ * stalls, at two different day counts, on one screen. That was reported from
+ * the settings form, which offered both boxes with nothing saying they were the
+ * same leg. Enforcing it here rather than only in the form is the `costs` rule
+ * in another shape: hiding a box hides it from the person looking at the screen
+ * and from nobody else — a document written by hand, by an integration, or
+ * before this existed reaches the same function.
  */
 export function thresholdFor(
   section: StuckSection,
@@ -175,6 +186,7 @@ export function thresholdFor(
   settings?: StuckThresholdSettings | null,
 ): number {
   const key = String(state ?? "").trim();
+  if (stuckStateOwner(section, key) !== section) return 0;
   const stored = settings?.[section]?.[key];
   if (typeof stored === "number" && Number.isFinite(stored)) {
     return Math.max(0, Math.trunc(stored));
@@ -251,6 +263,75 @@ export function overdueRatio(dwell: number | null, threshold: number): number {
  */
 export const PO_STAGE_PAIRS: readonly { poStatus: string; stage: string }[] =
   Object.entries(STAGE_FOR_PO_STATUS).map(([poStatus, stage]) => ({ poStatus, stage }));
+
+const STAGE_OF_PO_STATUS = new Map(PO_STAGE_PAIRS.map((p) => [p.poStatus, p.stage]));
+const PO_STATUS_OF_STAGE = new Map(PO_STAGE_PAIRS.map((p) => [p.stage, p.poStatus]));
+
+/**
+ * Which section counts a leg, when two of them name it.
+ *
+ * Seven project stages are the *same fact* as a purchase-order status — a
+ * container is in transit once — and the middle of the chain is watched on the
+ * order because that is the record somebody can act on, while both ends fall
+ * back to the project (a draft order shares its stage with «won and nothing
+ * raised at all», which no order can report because none exists; a received one
+ * hands over to the packing list). Every other state is owned by the only
+ * section that names it.
+ *
+ * It is **derived from the defaults, not from a second table**. The complement
+ * is already written there and `test:rules` already holds it, so a table here
+ * would be a second copy to keep in step — exactly the drift this codebase
+ * keeps repairing. Ownership is a fact about the chain rather than about a
+ * company's numbers, which is why it reads the defaults and never the stored
+ * overrides: a company may change how long a leg is allowed, not which record
+ * the leg belongs to.
+ */
+export function stuckStateOwner(
+  section: StuckSection,
+  state: string | null | undefined,
+): StuckSection {
+  const key = String(state ?? "").trim();
+  if (section === "afterSales") return "afterSales";
+  const other: StuckSection = section === "purchaseOrder" ? "projectStage" : "purchaseOrder";
+  const twin = section === "purchaseOrder"
+    ? STAGE_OF_PO_STATUS.get(key)
+    : PO_STATUS_OF_STAGE.get(key);
+  // Named by one section only, so there is nothing to share.
+  if (twin === undefined) return section;
+
+  if ((DEFAULT_STUCK_THRESHOLDS[section]?.[key] ?? 0) > 0) return section;
+  if ((DEFAULT_STUCK_THRESHOLDS[other]?.[twin] ?? 0) > 0) return other;
+  /*
+   * Neither side claims it. `test:rules` holds the complement in both
+   * directions so this cannot happen — but a leg that falls between the two
+   * tables and is watched by nobody is the silent failure, so it is answered
+   * deterministically with the record somebody can act on rather than left to
+   * each side pointing at the other.
+   */
+  return "purchaseOrder";
+}
+
+/**
+ * A settings document with the inert entries removed.
+ *
+ * A stored value on a leg its section does not own is now read as 0, so it does
+ * nothing — and a key nothing consults is the same fault as a switch that does
+ * nothing, one door along. The form runs this on save, so a document that
+ * already carries such an entry (typed before this rule existed, which is how
+ * it was reported) stops carrying it the next time somebody presses the button.
+ * It only ever *removes*, and only what is already ignored.
+ */
+export function pruneStuckThresholds(
+  settings: StuckThresholdSettings | null | undefined,
+): StuckThresholdSettings {
+  const next: StuckThresholdSettings = {};
+  for (const section of STUCK_SECTIONS) {
+    const entries = Object.entries(settings?.[section] ?? {})
+      .filter(([state]) => stuckStateOwner(section, state) === section);
+    if (entries.length > 0) next[section] = Object.fromEntries(entries);
+  }
+  return next;
+}
 
 /*
  * And every state the modules can hold has an entry, in both directions: a
