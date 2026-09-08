@@ -4206,6 +4206,45 @@ head("A list row is never the source of a new record");
   ok("and so does opening the print preview",
     printStart > 0
     && view.slice(printStart, printStart + 600).includes("isPartial("));
+
+  /*
+   * The two free-text boxes on that form open big enough to read.
+   *
+   * A line's specification is routinely a dozen features and the document's
+   * terms carry the validity, the delivery, the payment and the guarantee —
+   * and both were drawn two and four rows tall, which is a window onto the
+   * text rather than the text. The floor is pinned because it is a number
+   * somebody trims back while tidying a form and nothing else would notice:
+   * `RichTextField` grows past it to fit the content, so shrinking the floor
+   * would not break a single behaviour, only the reading of it.
+   */
+  const MIN_RICH_ROWS = 10;
+  /*
+   * Each element is sliced to its own closing tag rather than searched inside
+   * a fixed window: the note explaining why the floor is what it is sits
+   * between the tag and the attribute, and a character budget that fitted one
+   * comment silently stopped finding the other the moment its comment grew.
+   */
+  const richRows = view.split("<RichTextField").slice(1)
+    .map((part) => /rows=\{(\d+)\}/.exec(part.slice(0, part.indexOf("/>"))))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => Number(m[1]));
+  eq("both rich-text boxes on the proforma form were found", richRows.length, 2);
+  ok(`...and each opens at least ${MIN_RICH_ROWS} lines`,
+    richRows.every((n) => n >= MIN_RICH_ROWS), richRows);
+
+  /*
+   * And the growth itself, which is what makes the floor a floor rather than a
+   * fixed window: a specification longer than it must not be hidden behind an
+   * inner scrollbar. Held with the jsdom guard beside it, because a
+   * measurement of zero would otherwise collapse the box to its borders in the
+   * very harness that renders this component.
+   */
+  const field = readFileSync("src/components/RichTextField.tsx", "utf-8");
+  ok("the box grows to fit what is in it",
+    /scrollHeight/.test(field) && /style\.height = 'auto'/.test(field));
+  ok("...and a layout-free environment is left to the rows attribute",
+    /scrollHeight <= 0/.test(field));
 }
 
 head("Message templates live in one place");
@@ -4529,6 +4568,37 @@ head("Printed proforma: the multi-page rules");
     preLineBlocks.length);
 
   ok("all eight items are on the document", (doc.match(/INSTRUMENT \d/g) ?? []).length === 8);
+
+  /*
+   * The tag number is a second label, under the name rather than trailing it.
+   *
+   * «FT-1101» identifies this instrument on this P&ID — it is not part of what
+   * the thing is called, and appended to a long product name it wrapped to
+   * wherever the name happened to end, sitting mid-title on one row and beside
+   * it on the next. The brand is the opposite case and stays inline: «(Krohne)»
+   * *is* part of the name.
+   */
+  const nameCell = docNoComments.slice(
+    docNoComments.indexOf("INSTRUMENT 1"),
+    docNoComments.indexOf("Turbine flow meter"),
+  );
+  ok("the name cell was found", nameCell.length > 40 && nameCell.length < 1500, nameCell.length);
+  const flat = nameCell.replace(/\s+/g, " ");
+  ok("the brand still follows the name on the same line",
+    /INSTRUMENT 1 ?<span[^>]*>\(Krohne\)<\/span>/.test(flat), flat.slice(0, 120));
+  ok("...and the tag is in a block of its own beneath it",
+    /<div[^>]*><span[^>]*>تگ: FT-1101<\/span><\/div>/.test(flat));
+  // Which is the whole point: it must not be a sibling of the name on one line.
+  ok("...so nothing prints the tag as a continuation of the title",
+    !/INSTRUMENT 1 ?(<span[^>]*>\(Krohne\)<\/span> ?)?<span[^>]*>تگ:/.test(flat));
+  /*
+   * And it is inside the title block rather than down among the specification:
+   * the rule under the name separates what the item is from what it is made
+   * of, and the tag belongs on the first side of it.
+   */
+  ok("...still above the rule, with the name",
+    flat.indexOf("تگ: FT-1101") < flat.indexOf("white-space: pre-line"),
+    [flat.indexOf("تگ: FT-1101"), flat.indexOf("white-space: pre-line")]);
 
   /*
    * The seal must never be the only thing on a sheet.

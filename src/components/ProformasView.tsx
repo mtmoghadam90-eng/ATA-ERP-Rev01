@@ -5316,7 +5316,16 @@ export default function ProformasView({
                           the hole a stray «<» in a tolerance used to open.
                         */}
                         <RichTextField
-                          rows={2}
+                          /*
+                            Twelve lines, not two. A line's specification here
+                            is routinely a dozen features — size, pressure
+                            class, body material, output — and a two-row window
+                            onto it meant checking the last one blind. The box
+                            grows past this to fit what is in it, so a longer
+                            paste is not hidden behind an inner scrollbar
+                            either; this is the floor.
+                          */
+                          rows={12}
                           value={item.techSpecs || ""}
                           onChange={(next) =>
                             handleItemFieldChange(idx, "techSpecs", next)
@@ -5583,7 +5592,15 @@ export default function ProformasView({
                       alone; only what the rule wrote is ever taken back.
                     */}
                     <RichTextField
-                      rows={4}
+                      /*
+                        Same floor as a line's specification, and for the same
+                        reason: this block carries the validity, the delivery
+                        terms, the payment terms and the guarantee, and the two
+                        managed sections are written in at the top — so four
+                        rows showed the machine's sentences and hid the ones
+                        somebody wrote underneath them.
+                      */
+                      rows={12}
                       dir="rtl"
                       required={isFieldRequired(settings, 'proformas', 'notes')}
                       value={notes}

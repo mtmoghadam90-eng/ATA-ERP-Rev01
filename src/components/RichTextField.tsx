@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Bold, Highlighter, Italic, Underline } from 'lucide-react';
 import { RICH_MARKS, renderRichText, toggleMark } from '../utils/richText';
 
@@ -23,7 +23,20 @@ const ICONS = {
 interface Props {
   value: string;
   onChange: (next: string) => void;
+  /**
+   * The **minimum** height, in lines. The box never draws shorter than this,
+   * and grows past it to fit what is in it — see `maxRows`.
+   */
   rows?: number;
+  /**
+   * The ceiling the growth stops at, after which the box scrolls like any
+   * other textarea.
+   *
+   * There has to be one: a specification pasted out of a datasheet can run to
+   * two hundred lines, and a box that matched it would push every control
+   * below it off the screen with no way back but scrolling past the paste.
+   */
+  maxRows?: number;
   placeholder?: string;
   className?: string;
   /** LTR by default: these are Latin specifications. */
@@ -37,9 +50,61 @@ interface Props {
 }
 
 export default function RichTextField({
-  value, onChange, rows = 2, placeholder, className = '', dir = 'ltr', required = false,
+  value, onChange, rows = 2, maxRows = 40, placeholder, className = '',
+  dir = 'ltr', required = false,
 }: Props) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
+
+  /*
+   * The box is as tall as what is in it.
+   *
+   * `rows` alone is a fixed window: a thirteen-feature specification typed
+   * into a two-row box is twelve features the writer cannot see while
+   * checking the thirteenth, and the same is true of a document's terms. So
+   * `rows` becomes the floor and this grows past it, up to `maxRows`.
+   *
+   * Measured rather than computed from a line count, because the two callers
+   * set different padding and line-height through `className` and a rule that
+   * assumed one would be wrong on the other. Height is set to `auto` first so
+   * `scrollHeight` reports the content rather than the height already applied
+   * — without that the box only ever grows and never shrinks back when text
+   * is deleted.
+   */
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const style = window.getComputedStyle(el);
+    const border = (parseFloat(style.borderTopWidth) || 0)
+      + (parseFloat(style.borderBottomWidth) || 0);
+
+    el.style.height = 'auto';
+    /*
+     * jsdom reports 0 for every layout figure, so this would set the box to
+     * the borders alone and collapse it — `test:ui` renders this component.
+     * A measurement of zero means «this environment does not lay out», and
+     * the right answer there is to leave the `rows` attribute doing its job.
+     */
+    if (el.scrollHeight <= 0) {
+      el.style.height = '';
+      return;
+    }
+
+    // `scrollHeight` counts padding and not the border, while `height` under
+    // Tailwind's border-box counts both — so the border is added back, or the
+    // box is two pixels short and scrolls by exactly that.
+    const wanted = el.scrollHeight + border;
+
+    const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5 || 16;
+    const padding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+    const cap = lineHeight * maxRows + padding + border;
+
+    const height = Math.min(wanted, cap);
+    el.style.height = `${height}px`;
+    // Only once it is capped: a scrollbar on a box that fits its content is a
+    // phantom, and on Windows it reserves width and reflows the text under it.
+    el.style.overflowY = wanted > cap ? 'auto' : 'hidden';
+  }, [value, maxRows, rows]);
 
   const apply = (token: string) => {
     const el = ref.current;

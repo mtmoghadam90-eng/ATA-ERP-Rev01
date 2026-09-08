@@ -148,7 +148,23 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
              an RTL cell put them at the opposite side of the text they
              belong to. -->
         <div style="font-weight: bold; color: #1e293b; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid #f1f5f9; text-align: left; direction: ltr;">
-          ${item.productName}${overrideShowBrand && item.brand ? ` <span style="color: #4f46e5; font-size: 11px;">(${item.brand})</span>` : ""}${item.tagNumber ? ` <span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 1px 5px; border-radius: 4px;">تگ: ${item.tagNumber}</span>` : ""}
+          ${escapeHtml(item.productName ?? "")}${overrideShowBrand && item.brand ? ` <span style="color: #4f46e5; font-size: 11px;">(${escapeHtml(item.brand)})</span>` : ""}
+          <!--
+            The tag number is on its own line under the name, not trailing it.
+            A tag identifies *this* instrument on *this* P&ID — «PT-1042» — so
+            it is a second label rather than part of what the thing is called,
+            and appended to a long product name it wrapped to wherever the name
+            happened to end, landing in the middle of the title on one row and
+            beside it on the next. Above the rule, because it belongs with the
+            name: the rule separates what the item is from what it is made of.
+
+            The brand stays inline — «(WIKA)» *is* part of the name.
+
+            The weight is reset to normal because the block it sits in is
+            bold: a chip already carrying a border and a fill does not also
+            need weight, and bold monospace at 10px on paper closes up.
+          -->${item.tagNumber ? `
+          <div style="margin-top: 5px; font-weight: normal;"><span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 1px 5px; border-radius: 4px;">تگ: ${escapeHtml(item.tagNumber)}</span></div>` : ""}
         </div>
         <!-- On one line on purpose: 'white-space: pre-line' keeps newlines, so
              a line break between the tag and the value printed a blank line
