@@ -8,7 +8,7 @@ import {
   BoardLane, LANE_FILTERS, MovableLane, TASK_CANCELLED, TASK_DOING, TASK_DONE, TASK_TODO,
   laneWhere, onPlateWhere, taskBoardLane, taskLane, taskStatusForLane,
 } from "../../utils/workBoard";
-import { FOLLOW_UP_KIND } from "../../utils/salesFollowUp";
+import { FOLLOW_UP_KIND, deferralAfterChaseMoved } from "../../utils/salesFollowUp";
 import { capacityRefusalMessage } from "../../utils/workLimits";
 import { capacityByUser } from "./workLoadService";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate } from "../dates";
@@ -687,6 +687,9 @@ export async function moveTasksToLane(
     select: {
       id: true, status: true, taskKind: true, startedAt: true,
       dueDateJalali: true, assignedToUserId: true, assignedToName: true,
+      // Pulling a parked chase forward moves the quotation's deferral with it,
+      // and that needs to know which quotation.
+      relatedToType: true, relatedToId: true,
     },
   });
 
@@ -764,9 +767,13 @@ export async function moveTasksToLane(
          *
          * The column comes from the date and nothing else, so a status on its
          * own would put the card back where it was on the next render. Today
-         * is also what it now means: somebody said they would call today, and
-         * the queue, the health badge and the project's own tab all read that
-         * same date and now agree with the board.
+         * is also what it now means: somebody said they would call today.
+         *
+         * The queue does **not** read this date while the quotation is parked —
+         * it reads `Proforma.deferredUntil` — which this used to claim it did.
+         * The block below moves that half too, and the two agree because both
+         * are written here rather than because they happen to say the same
+         * thing.
          */
         ...(row.taskKind === FOLLOW_UP_KIND && lane === "DOING" && from === "WAITING"
           ? expandDateFields({ dueDate: todayJalali }, ["dueDate"])
@@ -774,6 +781,17 @@ export async function moveTasksToLane(
         ...laneTimestamps(row, status, todayJalali),
       } as Prisma.TaskUncheckedUpdateInput,
     });
+    /*
+     * And the quotation's own deferral with it. The comment above used to claim
+     * the queue and the board agreed after this; they did not — the queue reads
+     * `Proforma.deferredUntil`, which this never touched, so a card pulled
+     * forward stayed hidden from the overdue list until the old date arrived.
+     */
+    if (row.taskKind === FOLLOW_UP_KIND && lane === "DOING" && from === "WAITING") {
+      await syncDeferralToChase(
+        db as unknown as Prisma.TransactionClient, row, todayJalali, todayJalali,
+      );
+    }
     moved++;
   }
 
@@ -896,6 +914,55 @@ export async function createTask(input: TaskInput, user: AuthUser, todayJalali: 
   return task;
 }
 
+/**
+ * Keeps a parked quotation's deferral on the same day as its open chase.
+ *
+ * The date lives in two places by design — `Proforma.deferredUntil`, which the
+ * sales queue and the health badge read, and the chase's own due date, which
+ * puts the card in «در انتظار مشتری» — and **two** paths move the task alone:
+ * the edit form and the board's «کشیدن به جلو». So a chase pulled onto
+ * somebody's plate today sat in «در حال انجام» while the queue went on
+ * reporting the quotation as parked and hid it from the overdue list until the
+ * old date came round.
+ *
+ * `deferralAfterChaseMoved` is the rule and it answers `null` for everything
+ * that is not a parked quotation, so the ordinary task edit costs one indexed
+ * read and stops. It is written here rather than in `followUpService` because
+ * this is where the task's date is written, and a second writer is how the two
+ * halves came to disagree in the first place.
+ */
+async function syncDeferralToChase(
+  tx: Prisma.TransactionClient,
+  task: { taskKind: string | null; relatedToType: string | null; relatedToId: string | null },
+  newDueDateJalali: string | null | undefined,
+  todayJalali: string,
+): Promise<void> {
+  if (task.taskKind !== FOLLOW_UP_KIND || task.relatedToType !== "proforma") return;
+  if (!task.relatedToId || !newDueDateJalali) return;
+
+  const proforma = await tx.proforma.findUnique({
+    where: { id: task.relatedToId },
+    select: { followUpState: true, deferredUntilJalali: true },
+  });
+  const next = deferralAfterChaseMoved(proforma?.followUpState, newDueDateJalali, todayJalali);
+  if (!next) return;
+  // Nothing to write when the pause already says what the chase does.
+  if (
+    proforma?.followUpState === next.followUpState
+    && (proforma?.deferredUntilJalali ?? null) === next.deferredUntil
+  ) return;
+
+  await tx.proforma.update({
+    where: { id: task.relatedToId },
+    data: {
+      followUpState: next.followUpState,
+      ...(next.deferredUntil
+        ? expandDateFields({ deferredUntil: next.deferredUntil }, ["deferredUntil"])
+        : { deferredUntil: null, deferredUntilJalali: null }),
+    },
+  });
+}
+
 export async function updateTask(id: string, input: TaskInput, user: AuthUser, todayJalali: string) {
   const db = getDb();
   const visibility = visibilityClause(user);
@@ -947,7 +1014,18 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
   Object.assign(data, await assigneeColumns(input, null));
   Object.assign(data, laneTimestamps(before, data.status as string | undefined, todayJalali));
 
-  const task = await db.task.update({ where: { id }, data: data as Prisma.TaskUncheckedUpdateInput });
+  const task = await db.$transaction(async (tx) => {
+    const saved = await tx.task.update({
+      where: { id }, data: data as Prisma.TaskUncheckedUpdateInput,
+    });
+    /*
+      Moving a parked chase's date *is* moving the deferral. Inside the same
+      transaction, or a failure here leaves the board on one date and the sales
+      queue on another — which is exactly the state this closes.
+    */
+    await syncDeferralToChase(tx, saved, saved.dueDateJalali, todayJalali);
+    return saved;
+  });
 
   // Audit log
   await logAction(
