@@ -66,6 +66,8 @@ import CustomerValueSettingsPanel from './CustomerValueSettingsPanel';
 import HolidayCalendarTab from './HolidayCalendarTab';
 import CategoryMergePanel from './CategoryMergePanel';
 import { TASK_KINDS, TASK_KIND_LABELS } from '../utils/salesFollowUp';
+import { TemplatePreview, TemplateVariablePalette } from './MessageTemplateHelp';
+import { hasModulePermission } from '../utils/permissions';
 
 interface SettingsViewProps {
   /**
@@ -240,6 +242,78 @@ export default function SettingsView({
       setEditingRule({ ...editingRule, actions: updatedActs });
     } catch (err) {
       alert(err instanceof ApiError ? err.message : 'ساخت قالب از متن این قانون ممکن نشد.');
+    }
+  };
+
+  /**
+   * A new template, written from here and saved into the messaging module.
+   *
+   * Asked for so a rule can be finished without leaving the settings screen,
+   * finding the messaging module and coming back. The important half is that
+   * it is **not** a second kind of template: it posts to the same
+   * `messagingApi.createTemplate` the messaging screen posts to and gets back
+   * the same `MessageTemplate` row, so the two lists are synced by
+   * construction rather than by anything remembering to copy. A rule still
+   * carries only the `templateId`; the wording lives in one place and editing
+   * it there reaches every rule that uses it.
+   *
+   * Held per action index, because the rule editor draws one of these blocks
+   * per action and two drafts sharing one state would type into each other.
+   */
+  const [templateDraft, setTemplateDraft] = useState<
+    { actIdx: number; name: string; subject: string; body: string } | null>(null);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+
+  /*
+    Writing a template needs the messaging module's own write permission — the
+    GET accepts `settings` as well, which is why the list is readable here at
+    all, but the POST does not. Drawing the button for somebody who would get a
+    403 is worse than not drawing it, so the form is replaced by the sentence
+    saying where to ask.
+  */
+  const canWriteTemplates = hasModulePermission(currentUser, 'messaging');
+
+  const saveTemplateDraft = async () => {
+    if (!editingRule || !templateDraft) return;
+    const { actIdx } = templateDraft;
+    const name = templateDraft.name.trim();
+    const body = templateDraft.body.trim();
+    if (!name || !body) {
+      alert('نام قالب و متن پیام هر دو لازم‌اند.');
+      return;
+    }
+    const action = editingRule.actions[actIdx];
+    const channel = action?.messageConfig?.channel ?? 'SMS';
+
+    setSavingTemplate(true);
+    try {
+      const created = await messagingApi.createTemplate({
+        name,
+        channel,
+        // A subject belongs to an email and is left null for the other two, so
+        // a template written for SMS does not carry a field nothing reads.
+        subject: channel === 'EMAIL' ? (templateDraft.subject.trim() || null) : null,
+        body,
+        active: true,
+      });
+      setMessageTemplates((rows) => [...rows, created]);
+
+      const updatedActs = [...editingRule.actions];
+      updatedActs[actIdx] = {
+        ...updatedActs[actIdx],
+        messageConfig: {
+          ...updatedActs[actIdx].messageConfig,
+          templateId: created.id,
+          bodyTemplate: undefined,
+          subjectTemplate: undefined,
+        },
+      };
+      setEditingRule({ ...editingRule, actions: updatedActs });
+      setTemplateDraft(null);
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'ذخیره‌ی قالب جدید ممکن نشد.');
+    } finally {
+      setSavingTemplate(false);
     }
   };
 
@@ -4198,10 +4272,27 @@ export default function SettingsView({
                                     const chosen = messageTemplates.find(
                                       (t) => t.id === act.messageConfig?.templateId);
                                     if (chosen) {
+                                      /*
+                                        The message as the customer will read
+                                        it, not the template.
+                                        
+                                        This printed `chosen.body` raw, so
+                                        somebody choosing a rule saw «سلام
+                                        {{addressee}} عزیز» and had to do the
+                                        substitution in their head — which is
+                                        the one thing a template exists to save
+                                        them. The variable palette deliberately
+                                        does *not* appear here: a rule picks a
+                                        template, it does not write one, and a
+                                        palette would offer to insert a variable
+                                        into a box that is not on this screen.
+                                      */
                                       return (
-                                        <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-[11px] text-slate-700 leading-relaxed whitespace-pre-wrap">
-                                          {chosen.body}
-                                        </div>
+                                        <TemplatePreview
+                                          body={chosen.body}
+                                          subject={chosen.subject}
+                                          channel={chosen.channel}
+                                        />
                                       );
                                     }
                                     return (
@@ -4212,6 +4303,100 @@ export default function SettingsView({
                                       </p>
                                     );
                                   })()}
+
+                                  {/*
+                                    A template can also be written from here,
+                                    and it is the same template.
+
+                                    Asked for so a rule can be finished without
+                                    leaving this screen — but the sync is the
+                                    point, not the convenience: this posts the
+                                    same `MessageTemplate` row the messaging
+                                    module posts, so there is one list, one
+                                    wording and one place to edit it. A copy
+                                    held on the rule is what the template
+                                    picker replaced.
+
+                                    This is also the **only** place on this
+                                    screen the variable palette is drawn. A rule
+                                    that merely *picks* a template has no box to
+                                    insert a variable into, so the palette there
+                                    was an offer that could not be taken up; the
+                                    preview is what a person choosing one needs.
+                                  */}
+                                  {templateDraft?.actIdx === actIdx ? (
+                                    <div className="rounded-lg border border-sky-200 bg-sky-50/60 px-3 py-3 space-y-2">
+                                      <div className="text-[11px] font-bold text-sky-900">
+                                        قالب جدید — در ماژول «ارسال پیام» ذخیره می‌شود و از همان‌جا هم
+                                        قابل ویرایش است.
+                                      </div>
+                                      <input
+                                        value={templateDraft.name}
+                                        onChange={(e) => setTemplateDraft({ ...templateDraft, name: e.target.value })}
+                                        placeholder="نام قالب (مثلاً: اطلاع‌رسانی تغییر وضعیت پروژه)"
+                                        className="w-full border border-slate-200 rounded-lg p-2 bg-white text-xs"
+                                      />
+                                      {act.messageConfig.channel === 'EMAIL' && (
+                                        <input
+                                          value={templateDraft.subject}
+                                          onChange={(e) => setTemplateDraft({ ...templateDraft, subject: e.target.value })}
+                                          placeholder="موضوع ایمیل"
+                                          className="w-full border border-slate-200 rounded-lg p-2 bg-white text-xs"
+                                        />
+                                      )}
+                                      <textarea
+                                        value={templateDraft.body}
+                                        onChange={(e) => setTemplateDraft({ ...templateDraft, body: e.target.value })}
+                                        rows={4}
+                                        placeholder="متن پیام"
+                                        className="w-full border border-slate-200 rounded-lg p-2 bg-white text-xs leading-relaxed"
+                                      />
+                                      <TemplateVariablePalette
+                                        onInsert={(key) => setTemplateDraft((current) => (current
+                                          ? { ...current, body: `${current.body}{{${key}}}` }
+                                          : current))}
+                                      />
+                                      <TemplatePreview
+                                        body={templateDraft.body}
+                                        subject={templateDraft.subject}
+                                        channel={act.messageConfig.channel ?? 'SMS'}
+                                      />
+                                      <div className="flex gap-2">
+                                        <button
+                                          type="button"
+                                          disabled={savingTemplate}
+                                          onClick={() => void saveTemplateDraft()}
+                                          className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white rounded-lg text-[11px] font-bold"
+                                        >
+                                          {savingTemplate ? 'در حال ذخیره…' : 'ذخیره قالب و انتخاب آن'}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setTemplateDraft(null)}
+                                          className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-[11px] font-bold"
+                                        >
+                                          انصراف
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : canWriteTemplates ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setTemplateDraft({
+                                        actIdx,
+                                        name: editingRule.name ? `${editingRule.name} — پیام` : '',
+                                        subject: '',
+                                        body: '',
+                                      })}
+                                      className="text-[11px] font-bold text-sky-700 hover:text-sky-800"
+                                    >
+                                      + ساخت قالب جدید بدون خروج از این صفحه
+                                    </button>
+                                  ) : (
+                                    <p className="text-[10px] text-slate-400">
+                                      ساخت قالب جدید نیاز به دسترسی ماژول «ارسال پیام» دارد.
+                                    </p>
+                                  )}
 
                                   {/*
                                     A rule saved before templates were pickable

@@ -2630,6 +2630,90 @@ head("Template variables: the palette and the values agree");
 }
 
 
+head("Message templates: one component, and one place a template is written");
+{
+  /*
+   * Comments first: the notes in both screens explaining these rules quote the
+   * very names the checks look for, so a scan of the raw file would pass on the
+   * explanation rather than on the code.
+   */
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  const helper = strip(readFileSync("src/components/MessageTemplateHelp.tsx", "utf8"));
+  const messagingScreen = strip(readFileSync("src/components/MessagingView.tsx", "utf8"));
+  const settingsScreen = strip(readFileSync("src/components/SettingsView.tsx", "utf8"));
+
+  ok("the shared component survived having its comments stripped",
+    helper.includes("TemplatePreview") && helper.includes("TemplateVariablePalette"));
+
+  /*
+   * The messaging module's template editor and the workflow rule editor ask
+   * about the same text from two different modules. A second rendering of the
+   * variable list on either screen is a second answer to «which variables
+   * exist», which is exactly how the palette came to be a hand-written line of
+   * names that a new variable never reached.
+   */
+  ok("the variable list is read by the shared component and nowhere else",
+    helper.includes("MESSAGE_VARIABLES")
+    && !messagingScreen.includes("MESSAGE_VARIABLES")
+    && !settingsScreen.includes("MESSAGE_VARIABLES"));
+  ok("and both screens draw the shared preview",
+    messagingScreen.includes("<TemplatePreview")
+    && settingsScreen.includes("<TemplatePreview"));
+
+  /*
+   * The palette belongs wherever a template is *written* and nowhere one is
+   * only *chosen*. The rule editor picks an existing template, so a palette
+   * beside the picker offered to insert a variable into a box that is not on
+   * the screen. It is drawn exactly once on the settings screen, inside the
+   * create form — which is what `templateDraft` guards.
+   */
+  const paletteUses = settingsScreen.split("<TemplateVariablePalette").length - 1;
+  ok("the settings screen draws the palette exactly once", paletteUses === 1, paletteUses);
+  const draftBlock = settingsScreen.slice(
+    settingsScreen.indexOf("templateDraft?.actIdx === actIdx"),
+    settingsScreen.indexOf("<TemplateVariablePalette"));
+  ok("and it is inside the create form rather than beside the picker",
+    draftBlock !== "" && draftBlock.includes("setTemplateDraft"));
+
+  /*
+   * The sync is the point of the settings-screen form, not the convenience: it
+   * posts the same row the messaging module posts, so there is one list and one
+   * wording. A draft written into `bodyTemplate` on the rule would be the copy
+   * the template picker was built to end.
+   */
+  const saver = settingsScreen.slice(
+    settingsScreen.indexOf("const saveTemplateDraft"),
+    settingsScreen.indexOf("const saveTemplateDraft") + 2000);
+  ok("the new template is created through the messaging module's own endpoint",
+    saver.includes("messagingApi.createTemplate"));
+  ok("and the rule is pointed at it rather than given a copy of the words",
+    saver.includes("templateId: created.id")
+    && saver.includes("bodyTemplate: undefined"));
+
+  /*
+   * Writing a template needs the messaging module's write permission — the GET
+   * accepts `settings` too, which is why the list is readable from here, but
+   * the POST does not. A button that answers 403 reads as the screen being
+   * broken, so it is replaced by the sentence saying where to ask.
+   */
+  ok("the create form is gated on the messaging permission",
+    settingsScreen.includes("hasModulePermission(currentUser, 'messaging')")
+    && settingsScreen.includes("canWriteTemplates"));
+
+  /*
+   * Request 1 end to end: the honorific is a variable a template may use, and
+   * the two the company actually writes are the first things offered.
+   */
+  const keys = MESSAGE_VARIABLES.map((v) => v.key);
+  ok("the honorific and the addressee are offered as variables",
+    keys.includes("namePrefix") && keys.includes("addressee"), keys);
+  eq("and the sample shows the honorific rather than a placeholder",
+    SAMPLE_VARIABLE_VALUES.namePrefix, namePrefixFor("مرد"));
+}
+
+
 head("SMS panels: the channel is the medium, the panel is a field of it");
 {
   /*
