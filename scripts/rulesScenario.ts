@@ -32,6 +32,7 @@ import {
 } from "../src/utils/inquiryPriceHistory";
 import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr } from "../src/dateUtils";
+import { escalationFor, escalationIsConfigured } from "../src/utils/workflowEscalation";
 import { generateSku, decodeSku } from "../src/utils/skuUtils";
 import { parseFeatureSpec, splitNameAndCode } from "../src/utils/productFeatureSpec";
 import { normalizeSuggestion, suggestionSpecText } from "../src/utils/advisorSuggestion";
@@ -173,7 +174,8 @@ import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
 import { nextSequence, renderAround } from "../src/server/documentNumbers";
 import { describeProformaChanges, proformaChangeSentence } from "../src/server/services/proformaChanges";
 import {
-  SCHEDULE_SUBJECTS, TIME_TRIGGER, describeSchedule, dueDay, isDue, scheduledRules, sweepRange,
+  REPEAT_SWEEP_WINDOW_DAYS, SCHEDULE_SUBJECTS, SWEEP_WINDOW_DAYS, TIME_TRIGGER,
+  describeSchedule, dueDay, isDue, occurrenceDue, scheduleRepeats, scheduledRules, sweepRange,
 } from "../src/utils/workflowSchedule";
 import { statusChangeColumns } from "../src/utils/statusDwell";
 import { matchesConditions } from "../src/utils/workflowConditions";
@@ -1466,6 +1468,83 @@ head("Workflow: time-based triggers");
   ok("every subject names a model and a Jalali column",
     Object.values(SCHEDULE_SUBJECTS).every((s) => !!s.model && /Jalali$/.test(s.dateField)),
     Object.entries(SCHEDULE_SUBJECTS).map(([k, v]) => `${k}:${v.dateField}`));
+
+  /* --------------------------- repeating firings --------------------------- */
+  /*
+   * A rule fired once per record, for ever. Right for «۳ روز پس از ارسال،
+   * پیگیری کن»; wrong for the case this whole line of work started from — the
+   * supplier has not answered for a week, somebody is reminded once, nobody
+   * acts, and nothing ever asks again.
+   *
+   * The occurrence is **derived from the dates, never counted from the firings
+   * already written**, so asking twice gives the same answer and a firing the
+   * sweep never reached leaves no gap that would shift every later number.
+   */
+  {
+    const at = (today: string, every?: number, max?: number) =>
+      occurrenceDue("1405/05/24", 5, today, "after", every, max);
+
+    eq("a rule that does not repeat answers 1 for ever", at("1405/05/29"), 1);
+    eq("...and still 1 a year later, so nothing about it changes", at("1406/05/29"), 1);
+    eq("not due before its day", at("1405/05/28"), 0);
+    eq("not due before its day, repeating either", at("1405/05/28", 3), 0);
+
+    eq("the first firing of a repeating rule is 1", at("1405/05/29", 3), 1);
+    eq("...still 1 two days later, inside the interval", at("1405/05/31", 3), 1);
+    eq("...2 on the third day", at("1405/06/01", 3), 2);
+    eq("...3 on the sixth", at("1405/06/04", 3), 3);
+
+    /*
+     * The half worth being deliberate about. A server off for a fortnight comes
+     * back and fires **one** reminder — the occurrence due now — rather than
+     * the five it missed. Five cards on one order the morning the server
+     * returns is precisely the board noise this feature exists to avoid.
+     */
+    eq("a sweep that was down catches up to one card, not five",
+      at("1405/06/13", 3), 6);
+
+    // A ceiling stops it, and answers «not due» rather than the last number
+    // again, or the record would be reminded about for ever at occurrence N.
+    eq("inside the ceiling", at("1405/06/01", 3, 4), 2);
+    eq("on the ceiling", at("1405/06/07", 3, 4), 4);
+    eq("past the ceiling it stops", at("1405/06/10", 3, 4), 0);
+    eq("a ceiling of one still allows the only firing there is",
+      at("1405/06/13", 0, 1), 1);
+
+    // A record with no base date is not overdue, it is unscheduled.
+    eq("no date, no occurrence", occurrenceDue(null, 5, "1405/06/01", "after", 3), 0);
+
+    ok("«۰ روز» is not a repeat", !scheduleRepeats({ subject: "x", days: 1, repeatEveryDays: 0 }));
+    ok("...and absent is not a repeat", !scheduleRepeats({ subject: "x", days: 1 }));
+    ok("...but a real interval is", scheduleRepeats({ subject: "x", days: 1, repeatEveryDays: 3 }));
+
+    /*
+     * A repeating rule has to reach far further back than a one-shot one. A
+     * one-shot rule due two months ago is history; a repeating one is chasing a
+     * record that is *still stuck*, which is the entire thing being reported —
+     * so a 45-day lookback would silently give up on exactly the orders that
+     * have been ignored longest.
+     */
+    ok("the repeat window is far wider than the ordinary one",
+      REPEAT_SWEEP_WINDOW_DAYS > SWEEP_WINDOW_DAYS * 4);
+    eq("and the band uses it when asked",
+      sweepRange(5, "1405/05/29", "after", REPEAT_SWEEP_WINDOW_DAYS).from,
+      addDaysToShamsi("1405/05/29", -(5 + REPEAT_SWEEP_WINDOW_DAYS)));
+    eq("the default lookback is unchanged, so no existing rule moves",
+      sweepRange(5, "1405/05/29").from, "1405/04/10");
+
+    // The repeat is part of the sentence: a rule that fires every three days
+    // for ever and one that fires once read identically without it.
+    eq("a repeating rule says so",
+      describeSchedule({ subject: "proforma_sent", days: 3, repeatEveryDays: 2 }),
+      "۳ روز پس از ارسال پیش‌فاکتور به کارفرما و سپس هر ۲ روز تا زمانی که شرط برقرار است");
+    eq("...and names its ceiling when it has one",
+      describeSchedule({ subject: "proforma_sent", days: 3, repeatEveryDays: 2, maxOccurrences: 5 }),
+      "۳ روز پس از ارسال پیش‌فاکتور به کارفرما و سپس هر ۲ روز، حداکثر ۵ بار");
+    eq("...and a rule that does not repeat reads exactly as it always did",
+      describeSchedule({ subject: "proforma_sent", days: 3, repeatEveryDays: 0 }),
+      "۳ روز پس از ارسال پیش‌فاکتور به کارفرما");
+  }
 }
 
 /**
@@ -9405,6 +9484,156 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     // And the drafter, or a rule described in a sentence never gets it.
     const draftSrc = readFileSync("src/utils/workflowDraft.ts", "utf8");
     ok("the assistant may draft it", draftSrc.includes("closeWhenResolved"));
+  }
+
+  /* ---------------- repeating reminders, and what they become --------------- */
+  /*
+   * Piece three, and it lands **after** the retirement above rather than before
+   * it on purpose: repeating reminders with nothing retiring them fill a board
+   * faster than they help, and a board people stop reading is what makes a
+   * working automation worse than none.
+   */
+  {
+    const strip5 = (text: string) =>
+      text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    const sweepSrc3 = strip5(readFileSync("src/server/services/workflowSweep.ts", "utf8"));
+    const draftSrc3 = readFileSync("src/utils/workflowDraft.ts", "utf8");
+    ok("the sweep source survived having its comments stripped",
+      sweepSrc3.includes("runDueWorkflows"));
+
+    /*
+     * The occurrence is what the firing is recorded under, and it is derived —
+     * `occurrenceDue` — rather than counted from the rows already in the table.
+     * Counting would make a firing the sweep never reached shift every later
+     * number, so the same question would answer differently over time.
+     */
+    ok("the sweep asks which firing is due, not merely whether one ever was",
+      /occurrenceDue\(/.test(sweepSrc3) && !/isDue\(/.test(sweepSrc3));
+    ok("...and records it, which is the whole of what allows a second one",
+      /workflowFiring\.create\(\{[\s\S]{0,300}occurrence,/.test(sweepSrc3));
+    ok("...and hands it to the actions, for the escalation and for {occurrence}",
+      /occurrence,\n\s*today,/.test(sweepSrc3));
+    // A repeating rule that gave up after 45 days would give up on exactly the
+    // records that have been ignored longest.
+    ok("...and looks further back for a rule that repeats",
+      /repeats \? REPEAT_SWEEP_WINDOW_DAYS : SWEEP_WINDOW_DAYS/.test(sweepSrc3));
+
+    /*
+     * The index is the enforcement, not the code: two servers, or a sweep
+     * overlapping a manual run, both reach the insert and only one gets past
+     * it. Adding a column to a unique index means replacing it, so the
+     * migration has to drop the old one — and if it did not, the narrower key
+     * would go on refusing exactly the second firing this feature exists for.
+     */
+    const mig = readFileSync(
+      "prisma/migrations/20260919000000_workflow_firing_occurrence/migration.sql", "utf8");
+    const migBody = mig.replace(/^\s*--.*$/gm, " ");
+    ok("the migration adds the column with a default, so no row needs writing",
+      /ADD \[occurrence\] INT NOT NULL[\s\S]{0,80}DEFAULT 1/.test(migBody));
+    ok("...drops the two-column key", /DROP INDEX \[workflow_firings_rule_entity_uq\]/.test(migBody));
+    ok("...and creates the three-column one",
+      /CREATE UNIQUE INDEX[\s\S]{0,140}\[ruleId\], \[entityId\], \[occurrence\]/.test(migBody));
+    ok("...in that order, or the narrower key keeps refusing the repeat",
+      migBody.indexOf("DROP INDEX") < migBody.indexOf("CREATE UNIQUE INDEX"));
+    ok("...every step guarded, since a half-applied migration has to be retried",
+      /IF COL_LENGTH/.test(migBody) && /IF EXISTS \(SELECT 1 FROM sys\.indexes/.test(migBody)
+      && /IF NOT EXISTS \(SELECT 1 FROM sys\.indexes/.test(migBody));
+    ok("...and it backfills nothing, so nothing reads a column this batch adds",
+      !/\bUPDATE\b/i.test(migBody));
+    ok("the schema agrees with it",
+      /@@unique\(\[ruleId, entityId, occurrence\]/.test(
+        readFileSync("prisma/schema.prisma", "utf8")));
+
+    /*
+     * Escalation. A card ignored twice is not made likelier to be picked up by
+     * being printed a third time; what changes an outcome is that it becomes
+     * urgent or lands on somebody else.
+     */
+    eq("no threshold, no escalation",
+      Object.keys(escalationFor({ escalatePriority: "فوری" }, 9)).length, 0);
+    eq("...however many times it has fired", Object.keys(escalationFor({}, 40)).length, 0);
+    // «after 2» means the third card, which is how the word reads. Taking
+    // effect *on* the second would make «after 1» mean «always escalated»,
+    // which is really just a different priority on the rule itself.
+    eq("not on the threshold itself",
+      Object.keys(escalationFor({ escalateAfterOccurrences: 2, escalatePriority: "فوری" }, 2)).length, 0);
+    eq("...and on the one after it",
+      escalationFor({ escalateAfterOccurrences: 2, escalatePriority: "فوری" }, 3).priority, "فوری");
+    eq("...and stays there, a plateau rather than a climb",
+      escalationFor({ escalateAfterOccurrences: 2, escalatePriority: "فوری" }, 30).priority, "فوری");
+    eq("the assignee moves too when one is named",
+      escalationFor(
+        { escalateAfterOccurrences: 1, escalateAssignedTo: "MODULE_RESPONSIBLE_purchaseOrders" }, 2,
+      ).assignedTo, "MODULE_RESPONSIBLE_purchaseOrders");
+    /*
+     * An empty string is «not set», the same as absent: the form's own «همان
+     * مسئول قبلی» sends one, and looking it up would resolve nobody and fall
+     * back to admin — a reminder quietly reassigned away from whoever was on it.
+     */
+    eq("an empty assignee is «unchanged», not «nobody»",
+      escalationFor({ escalateAfterOccurrences: 1, escalateAssignedTo: "" }, 5).assignedTo, undefined);
+    ok("a threshold with nothing behind it is reported, not silently obeyed",
+      !escalationIsConfigured({ escalateAfterOccurrences: 3 })
+      && escalationIsConfigured({ escalateAfterOccurrences: 3, escalatePriority: "بالا" }));
+
+    /*
+     * The interaction that would otherwise cancel itself out in silence:
+     * escalation exists *because* the reminder was ignored, which means it is
+     * still open, which means `skipIfOpenSameKind` skips the very firing that
+     * would have escalated it. So the escalation is applied to the card that is
+     * already there — which is also the honest reading of the word, and keeps
+     * the board as clean as the switch intended.
+     */
+    const engineSrc = strip5(readFileSync("src/server/services/workflowService.ts", "utf8"));
+    ok("the engine source survived having its comments stripped",
+      engineSrc.includes("executeRule"));
+    ok("the engine reads the escalation through the one rule",
+      /escalationFor\(config, occurrence\)/.test(engineSrc));
+    ok("...an event-driven rule reads as the first firing",
+      /Math\.max\(1, Math\.trunc\(Number\(enrichedPayload\.occurrence\) \|\| 1\)\)/.test(engineSrc));
+    ok("...the escalated assignee goes through the same token resolution",
+      /escalation\.assignedTo \|\| config\.assignedTo/.test(engineSrc));
+    ok("...and the escalated priority reaches the created task",
+      /escalation\.priority \|\| config\.priority/.test(engineSrc));
+    ok("...a skipped duplicate escalates the card that is already there",
+      /if \(open\) \{[\s\S]{0,1200}task\.updateMany/.test(engineSrc));
+    /*
+     * Only ever a task this rule raised. The duplicate check matches by kind
+     * and record, so it can perfectly well find one a person typed, and quietly
+     * reassigning somebody's own work would be worse than not escalating.
+     */
+    ok("...only one this rule raised",
+      /open\.workflowRuleId === rule\.id/.test(engineSrc));
+    ok("...and only when something would actually change",
+      /Object\.keys\(wants\)\.length > 0/.test(engineSrc));
+
+    // Absent means off, in both halves, or a live rule changes behaviour on
+    // the deploy that ships this.
+    ok("a schedule with no repeat is unchanged",
+      occurrenceDue("1405/05/24", 5, "1406/05/24") === 1);
+
+    const settings3 = strip5(readFileSync("src/components/SettingsView.tsx", "utf8"));
+    ok("the editor offers the repeat", settings3.includes("repeatEveryDays"));
+    ok("...and its ceiling", settings3.includes("maxOccurrences"));
+    ok("...and the escalation, only where it can do anything",
+      /scheduleRepeats\(editingRule\.schedule\)[\s\S]{0,2000}escalateAfterOccurrences/.test(settings3));
+    /*
+     * A repeat applies to every action on the rule, a message to the customer
+     * included. Saying so is the whole guard: adding a silent exception would
+     * be the failure shape this codebase keeps repairing, from the other side.
+     */
+    ok("...and warns that a repeat repeats the customer message too",
+      /scheduleRepeats\(schedule\) && \(/.test(settings3) && settings3.includes("ارسال پیام"));
+    ok("the assistant may draft a repeat",
+      draftSrc3.includes("repeatEveryDays") && draftSrc3.includes("escalateAfterOccurrences"));
+    /*
+     * The escalated priority is checked against the list exactly as the
+     * ordinary one is — an invented value would save cleanly and escalate to a
+     * word the board cannot order.
+     */
+    ok("...and an invented escalated priority is dropped rather than stored",
+      /TASK_PRIORITIES as readonly string\[\]\)\.includes\(String\(config\.escalatePriority\)\)/
+        .test(draftSrc3));
   }
 
   /* ------------------- «چقدر در این وضعیت مانده» ------------------- */

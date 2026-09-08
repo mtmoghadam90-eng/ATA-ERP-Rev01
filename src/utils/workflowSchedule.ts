@@ -1,4 +1,4 @@
-import { addDaysToShamsi, getTodayShamsi } from "../dateUtils";
+import { addDaysToShamsi, getShamsiDaysDifference, getTodayShamsi } from "../dateUtils";
 import { toPersianDigits } from "../numUtils";
 import { normalizeJalali } from "../server/dates";
 
@@ -41,6 +41,27 @@ export interface WorkflowSchedule {
    * what every rule written before this existed meant.
    */
   direction?: "after" | "before";
+  /**
+   * Fire again every N days while the record still matches. Absent or 0 means
+   * once and never again, which is what every rule written before this meant.
+   *
+   * One reminder is the right shape for «۳ روز پس از ارسال، پیگیری کن» and the
+   * wrong one for the case this whole line of work started from: the supplier
+   * has not answered for a week, somebody is reminded once, nobody acts, and
+   * nothing ever asks again. A repeat is only safe now that `closeWhenResolved`
+   * exists — without it the loop had no way to end except a counter, and a
+   * counter is a guess about how long the problem will last.
+   */
+  repeatEveryDays?: number;
+  /**
+   * Stop after this many firings. Absent or 0 is no ceiling.
+   *
+   * The ceiling is deliberately **not** how a repeat is meant to end — the
+   * record moving on is, which is what `closeWhenResolved` retires the reminder
+   * for. It is a stop for the case nobody planned: a record that stays stuck
+   * for a year should not still be raising its 120th card.
+   */
+  maxOccurrences?: number;
 }
 
 export type ScheduleDirection = "after" | "before";
@@ -235,6 +256,59 @@ export function isDue(
 }
 
 /**
+ * Which firing of a repeating rule has come due for this record, 1-based.
+ *
+ * Zero means «not due yet». One means the first and only firing of an ordinary
+ * rule — a schedule with no repeat answers 1 for ever, which is exactly what it
+ * used to do with no number at all.
+ *
+ * It is **derived from the dates, never counted from the rows already written**,
+ * the same rule `planHijriShift` follows: asking the same question twice gives
+ * the same answer, and a firing the sweep never got to leaves no gap behind it.
+ * That is also what decides the catch-up behaviour, which is the half worth
+ * being deliberate about — a server that was off for a fortnight comes back and
+ * fires **one** reminder, the occurrence that is due *now*, rather than the five
+ * it missed. Five cards on one order the morning the server returns is the board
+ * noise this feature exists to avoid, in its purest form.
+ *
+ * A `maxOccurrences` ceiling stops it: past the ceiling it answers 0, so the
+ * record simply stops being reminded about rather than being reminded for ever.
+ */
+export function occurrenceDue(
+  baseJalali: string | null | undefined,
+  days: number,
+  todayJalali = getTodayShamsi(),
+  direction: ScheduleDirection = "after",
+  repeatEveryDays?: number | null,
+  maxOccurrences?: number | null,
+): number {
+  const first = dueDay(baseJalali, days, direction);
+  const today = normalizeJalali(todayJalali);
+  if (!first || !today) return 0;
+  const firstDue = normalizeJalali(first)!;
+  if (firstDue > today) return 0;
+
+  const every = Math.max(0, Math.trunc(Number(repeatEveryDays) || 0));
+  const ceiling = Math.max(0, Math.trunc(Number(maxOccurrences) || 0));
+
+  // No repeat: the first firing is the only one there will ever be, and no
+  // ceiling of one or more can forbid it.
+  if (every === 0) return 1;
+
+  const elapsed = Math.max(0, getShamsiDaysDifference(firstDue, today));
+  const n = 1 + Math.floor(elapsed / every);
+  return ceiling > 0 && n > ceiling ? 0 : n;
+}
+
+/**
+ * Whether a schedule repeats at all — one reading, so the sweep, the editor and
+ * the sentence beneath it cannot disagree about what «۰ روز» means.
+ */
+export function scheduleRepeats(schedule: WorkflowSchedule | undefined): boolean {
+  return Math.max(0, Math.trunc(Number(schedule?.repeatEveryDays) || 0)) > 0;
+}
+
+/**
  * How far back a sweep needs to look.
  *
  * A rule that fires 5 days after issue does not need to consider a proforma
@@ -243,6 +317,18 @@ export function isDue(
  * enough to survive a server that was off for a fortnight.
  */
 export const SWEEP_WINDOW_DAYS = 45;
+
+/**
+ * The same window for a rule that repeats, and it has to be far larger.
+ *
+ * A one-shot rule that was due two months ago is history: it fired then, or the
+ * feature did not exist, and raising it today would be noise. A **repeating**
+ * rule is the opposite — the record is still stuck, which is the entire thing
+ * being reported — so a 45-day lookback would silently stop chasing exactly the
+ * orders that have been ignored longest, which is the worst possible place for
+ * it to give up. A year back, and `take` still bounds what is read.
+ */
+export const REPEAT_SWEEP_WINDOW_DAYS = 365;
 
 /**
  * The band of base dates a sweep has to look at.
@@ -257,12 +343,14 @@ export function sweepRange(
   days: number,
   todayJalali = getTodayShamsi(),
   direction: ScheduleDirection = "after",
+  lookbackDays: number = SWEEP_WINDOW_DAYS,
 ): { from: string; to: string } {
   const today = normalizeJalali(todayJalali) ?? todayJalali;
   const offset = Math.max(0, Math.trunc(Number(days) || 0));
+  const back = Math.max(0, Math.trunc(Number(lookbackDays) || 0));
   return direction === "before"
-    ? { from: addDaysToShamsi(today, -SWEEP_WINDOW_DAYS), to: addDaysToShamsi(today, offset) }
-    : { from: addDaysToShamsi(today, -(offset + SWEEP_WINDOW_DAYS)), to: today };
+    ? { from: addDaysToShamsi(today, -back), to: addDaysToShamsi(today, offset) }
+    : { from: addDaysToShamsi(today, -(offset + back)), to: today };
 }
 
 /** The sentence a rule reads as: «۳ روز قبل از تاریخ اعتبار پیش‌فاکتور». */
@@ -272,7 +360,18 @@ export function describeSchedule(schedule: WorkflowSchedule | undefined): string
   if (!subject) return "";
   const days = Math.max(0, Math.trunc(Number(schedule.days) || 0));
   const side = schedule.direction === "before" ? "قبل از" : "پس از";
-  return days === 0
+  const base = days === 0
     ? `در روز ${subject.label}`
     : `${toPersianDigits(days)} روز ${side} ${subject.label}`;
+
+  // The repeat is part of the sentence, not a second line: a rule that fires
+  // every three days for ever and one that fires once read identically without
+  // it, and the difference is the whole point of setting it.
+  if (!scheduleRepeats(schedule)) return base;
+  const every = Math.max(0, Math.trunc(Number(schedule.repeatEveryDays) || 0));
+  const ceiling = Math.max(0, Math.trunc(Number(schedule.maxOccurrences) || 0));
+  const tail = ceiling > 0
+    ? `و سپس هر ${toPersianDigits(every)} روز، حداکثر ${toPersianDigits(ceiling)} بار`
+    : `و سپس هر ${toPersianDigits(every)} روز تا زمانی که شرط برقرار است`;
+  return `${base} ${tail}`;
 }

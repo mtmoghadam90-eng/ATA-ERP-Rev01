@@ -5,6 +5,7 @@ import { getTodayShamsi, addDaysToShamsi } from "../../dateUtils";
 import { notifyModuleResponsible } from "./notificationService";
 import { expandDateFields } from "../dates";
 import { matchesConditions } from "../../utils/workflowConditions";
+import { escalationFor } from "../../utils/workflowEscalation";
 import { isChannel, renderTemplate } from "../../utils/messaging";
 import { messageVariables, queueForCustomer } from "./messaging/messageService";
 import { FINISHED_TASK_STATUSES, normalizeTaskKind } from "../../utils/salesFollowUp";
@@ -137,8 +138,21 @@ export async function executeRule(
       if (action.type === "create_task" && action.taskConfig) {
         const config = action.taskConfig;
 
-        // Resolve assignee
-        let finalAssignedTo = config.assignedTo || "admin";
+        /*
+         * What this firing becomes if it has been ignored long enough.
+         *
+         * Empty for every rule that does not escalate, and for every firing
+         * before the threshold — which is every firing of a rule that does not
+         * repeat, since `occurrence` is 1 for ever there. The payload carries
+         * the occurrence; an event-driven rule has none and reads as 1.
+         */
+        const occurrence = Math.max(1, Math.trunc(Number(enrichedPayload.occurrence) || 1));
+        const escalation = escalationFor(config, occurrence);
+
+        // Resolve assignee — the escalated one wins where there is one, and it
+        // goes through exactly the same token resolution, so «مدیر خرید» can be
+        // named as MODULE_RESPONSIBLE_purchaseOrders here as anywhere else.
+        let finalAssignedTo = escalation.assignedTo || config.assignedTo || "admin";
         if (finalAssignedTo.startsWith("MODULE_RESPONSIBLE_")) {
           const mod = finalAssignedTo.replace("MODULE_RESPONSIBLE_", "");
           finalAssignedTo = settings?.moduleResponsibles?.[mod] || "admin";
@@ -206,9 +220,54 @@ export async function executeRule(
               relatedToId: related.relatedToId,
               status: { notIn: [...FINISHED_TASK_STATUSES] },
             },
-            select: { id: true },
+            select: {
+              id: true, workflowRuleId: true, priority: true,
+              assignedToUserId: true, assignedToName: true,
+            },
           });
-          if (open) continue;
+          if (open) {
+            /*
+             * The escalation applies to the card that is already there, rather
+             * than raising a second one.
+             *
+             * Without this the two switches cancel each other out in silence:
+             * escalation exists precisely because the reminder was ignored,
+             * which means it is still open, which means `skipIfOpenSameKind`
+             * skips the firing that would have escalated it. A rule configured
+             * with both would print correctly on its card and never escalate —
+             * exactly the shape of failure this engine keeps being repaired for.
+             *
+             * Escalating in place is also the honest reading of the word: «این
+             * دیگر مال مدیر خرید است» is a change to the request that exists,
+             * not a new request. And it keeps the board clean, which is the
+             * whole reason `skipIfOpenSameKind` was switched on.
+             *
+             * Only ever a task **this rule** raised: the duplicate check matches
+             * by kind and record, so it can perfectly well find a task a person
+             * typed, and quietly reassigning somebody's own work would be worse
+             * than not escalating at all. Written only when something actually
+             * changes, so a sweep that finds nothing to do writes nothing.
+             */
+            const wants: Record<string, unknown> = {};
+            if (escalation.priority && open.priority !== escalation.priority) {
+              wants.priority = escalation.priority;
+            }
+            if (escalation.assignedTo && open.assignedToUserId !== assignee.assignedToUserId) {
+              wants.assignedToUserId = assignee.assignedToUserId;
+              wants.assignedToName = assignee.assignedToName;
+            }
+            if (open.workflowRuleId === rule.id && Object.keys(wants).length > 0) {
+              await db.task.updateMany({
+                where: {
+                  id: open.id,
+                  workflowRuleId: rule.id,
+                  status: { notIn: [...FINISHED_TASK_STATUSES] },
+                },
+                data: wants,
+              });
+            }
+            continue;
+          }
         }
 
         // Create task
@@ -219,7 +278,7 @@ export async function executeRule(
               `وظیفه خودکار: ${rule.name}`,
             description: replaceTemplateVars(config.descTemplate, enrichedPayload) || "",
             ...expandDateFields({ dueDate }, ["dueDate"]),
-            priority: config.priority || "متوسط",
+            priority: escalation.priority || config.priority || "متوسط",
             status: TASK_TODO,
             taskKind,
             assignedToUserId: assignee.assignedToUserId,

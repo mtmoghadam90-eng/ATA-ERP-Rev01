@@ -1832,9 +1832,17 @@ model WorkflowFiring {
   entityId   String   @db.NVarChar(36)
   /// The day the rule was due for this record, kept for the audit trail.
   dueDay     String?  @db.NVarChar(10)
+  /// Which firing this is, 1-based — see `occurrenceDue` in workflowSchedule.ts.
+  ///
+  /// It is in the unique key, and that is the whole of what makes a repeating
+  /// rule possible: an ordinary rule always writes 1 and is unchanged, while a
+  /// repeat writes 2, 3, … as each becomes due. Derived from the dates rather
+  /// than counted from the rows here, so a firing the sweep never reached
+  /// leaves no gap that would shift every later number.
+  occurrence Int      @default(1)
   firedAt    DateTime @default(now())
 
-  @@unique([ruleId, entityId], map: "workflow_firings_rule_entity_uq")
+  @@unique([ruleId, entityId, occurrence], map: "workflow_firings_rule_entity_occurrence_uq")
   @@index([entityType, entityId])
   @@map("workflow_firings")
 }
