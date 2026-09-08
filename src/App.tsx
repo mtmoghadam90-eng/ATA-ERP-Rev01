@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import MessagingView from './components/MessagingView';
+import StuckWorkView from './components/StuckWorkView';
 import DashboardView from './components/DashboardView';
 import CustomersView from './components/CustomersView';
 import ProductsView from './components/ProductsView';
@@ -553,6 +554,8 @@ export default function App() {
             initialTab={referralsTab}
           />
         );
+      case 'stuckWork':
+        return <StuckWorkView onOpenProject={(code) => openProjectIn('projects', code)} />;
       case 'messaging':
         return (
           <MessagingView

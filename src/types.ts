@@ -851,6 +851,20 @@ export interface ERPSettings {
    * remembered so re-importing does not silently undo the correction.
    */
   hijriHolidayShift?: Record<string, number>;
+  /**
+   * How many days in a state before «کارهای متوقف» calls it stuck, per state.
+   *
+   * Absent falls back to `DEFAULT_STUCK_THRESHOLDS` in
+   * `src/utils/stuckWork.ts` — deliberately, because a report that says nothing
+   * until somebody fills in a form they were never told about reads as broken
+   * rather than as unconfigured. A stored **zero** is a real answer («we never
+   * chase this state») and wins over the default like any other value.
+   */
+  stuckThresholds?: {
+    purchaseOrder?: Record<string, number>;
+    afterSales?: Record<string, number>;
+    projectStage?: Record<string, number>;
+  };
   dropdownItems: {
     industries: string[];
     customerTypes: string[];
