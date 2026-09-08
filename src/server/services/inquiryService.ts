@@ -16,6 +16,7 @@ import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
 import { inquiryWorkflowStatus } from "../../utils/moduleStatuses";
+import { syncProjectStage } from "./projectService";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 import {
   HistorySummary, discountKeepFraction, netUnitPrice, summarizeHistory,
@@ -462,6 +463,18 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
 
     await appendAutoSteps(tx, inquiry.id, null, todayJalali);
 
+    /*
+     * The project's stage moves with it.
+     *
+     * Asking a supplier is where a job goes *before* a quotation exists, and
+     * until this call the stage looked at no inquiry at all: a project with
+     * three unanswered inquiries read «جدید», exactly like one nobody had
+     * touched. Inside the transaction, like every other caller — a stage that
+     * only settled after the write committed would be wrong for as long as
+     * anybody was looking.
+     */
+    await syncProjectStage(tx, inquiry.projectId, todayJalali, user);
+
     return tx.supplierInquiry.findUnique({
       where: { id: inquiry.id },
       include: { items: { orderBy: { lineNo: "asc" } }, steps: { orderBy: { stepNo: "asc" } } },
@@ -574,6 +587,23 @@ export async function updateInquiry(
       isWinner: before.isWinner,
       items: before.items as unknown as PricedItem[],
     }, todayJalali);
+
+    /*
+     * The answer arriving is a stage move, and it is the one that matters:
+     * «در انتظار پاسخ تأمین‌کننده» becomes «بررسی پیشنهاد تأمین‌کننده» the
+     * moment a price is entered, with no sweep and nothing stored saying the
+     * inquiry was outstanding — the same shape as the board's parked column.
+     *
+     * Both project ids, because an inquiry can be moved between jobs: the one
+     * it has left is as much in need of recalculating as the one it joined.
+     */
+    await syncProjectStage(tx, before.projectId, todayJalali, user);
+    const moved = await tx.supplierInquiry.findUnique({
+      where: { id }, select: { projectId: true },
+    });
+    if (moved?.projectId && moved.projectId !== before.projectId) {
+      await syncProjectStage(tx, moved.projectId, todayJalali, user);
+    }
 
     return tx.supplierInquiry.findUnique({
       where: { id },
@@ -778,7 +808,13 @@ export async function deleteInquiry(
   if (!existing) return "not-found";
 
   // Items and steps cascade; an inquiry is not referenced by anything else.
-  await db.supplierInquiry.delete({ where: { id } });
+  // The stage goes with it: deleting the last unanswered inquiry on a job is a
+  // move, and leaving «در انتظار پاسخ تأمین‌کننده» behind would keep the
+  // project waiting on something that no longer exists.
+  await db.$transaction(async (tx) => {
+    await tx.supplierInquiry.delete({ where: { id } });
+    await syncProjectStage(tx, existing.projectId, todayJalali, user);
+  });
 
   // Audit log
   await logAction(

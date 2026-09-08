@@ -9494,6 +9494,115 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
       proformas: [{ status: "ارسال شده", isCancelled: true }, { status: "پیش‌نویس" }],
     }), "تهیه پیش‌فاکتور");
 
+  /* -- waiting on a supplier, before any quotation exists -- */
+  /*
+   * The blind spot these two stages close: a job with three unanswered
+   * inquiries twenty days old used to read «جدید», exactly like one created
+   * this morning and touched by nobody. The derivation looked at no inquiry.
+   */
+  eq("an unanswered inquiry is what the job is waiting on",
+    deriveProjectStage({
+      projectStatus: "جدید",
+      supplierInquiries: [{ status: INQUIRY_SENT }],
+    }), "در انتظار پاسخ تأمین‌کننده");
+  eq("...and an offer that has come back moves it on",
+    deriveProjectStage({
+      projectStatus: "جدید",
+      supplierInquiries: [{ status: INQUIRY_INITIAL_OFFER }],
+    }), "بررسی پیشنهاد تأمین‌کننده");
+  // The least-advanced open thing wins here as it does in the chain below.
+  eq("one answer does not release a job still waiting on another",
+    deriveProjectStage({
+      supplierInquiries: [{ status: INQUIRY_FINAL_OFFER }, { status: INQUIRY_SENT }],
+    }), "در انتظار پاسخ تأمین‌کننده");
+  // A chosen winner is decided and holds nothing back.
+  eq("a winning inquiry is not something to wait for",
+    deriveProjectStage({
+      supplierInquiries: [{ status: INQUIRY_WINNER }],
+    }), "بررسی پیشنهاد تأمین‌کننده");
+  /*
+   * An unanswered inquiry outranks a half-written quotation: the draft cannot
+   * be finished until the price arrives, so the supplier is what the job is
+   * actually waiting on.
+   */
+  eq("...and it outranks a draft quotation",
+    deriveProjectStage({
+      proformas: [{ status: "پیش‌نویس" }],
+      supplierInquiries: [{ status: INQUIRY_SENT }],
+    }), "در انتظار پاسخ تأمین‌کننده");
+  /*
+   * But a **sent** quotation wins over everything here, and that is the
+   * dividing line: once it has gone out the customer has an answer, and the
+   * job is waiting on the customer. Reading the inquiries first would drag a
+   * project that had already quoted *backwards* the moment somebody asked a
+   * supplier about extra scope.
+   */
+  eq("a sent quotation is never overtaken by an inquiry",
+    deriveProjectStage({
+      proformas: [{ status: "ارسال شده" }],
+      supplierInquiries: [{ status: INQUIRY_SENT }],
+    }), "پیگیری پیش‌فاکتور");
+  // And nothing changes for a job that has no inquiries at all.
+  eq("no inquiry, no change",
+    deriveProjectStage({ projectStatus: "در حال مذاکره", supplierInquiries: [] }),
+    "در حال مذاکره");
+
+  /*
+   * The order is the rule — `stageRank` is the index — so the two new stages
+   * have to sit between negotiating and writing the quotation, or «the
+   * least-advanced open thing» picks the wrong one in the chain below.
+   */
+  ok("the supplier stages sit where the work actually happens",
+    stageRank("در حال مذاکره") < stageRank("در انتظار پاسخ تأمین‌کننده")
+    && stageRank("در انتظار پاسخ تأمین‌کننده") < stageRank("بررسی پیشنهاد تأمین‌کننده")
+    && stageRank("بررسی پیشنهاد تأمین‌کننده") < stageRank("تهیه پیش‌فاکتور"));
+
+  /*
+   * And the stage is only ever derived from the module's own status rule. A
+   * second reading of «has the supplier answered» here is how two screens come
+   * to disagree, which is the fault the trigger catalogue exists to end.
+   */
+  const stageSrc = strip(readFileSync("src/utils/projectStage.ts", "utf8"));
+  ok("the stage source survived having its comments stripped",
+    stageSrc.includes("deriveProjectStage"));
+  ok("the supplier stages read `inquiryWorkflowStatus`'s own values",
+    stageSrc.includes("INQUIRY_SENT") && stageSrc.includes("INQUIRY_WINNER"));
+  ok("...and never a price or a flag of their own",
+    !/priceRial|priceForeign|isWinner|offerConfirmed/.test(stageSrc));
+
+  /*
+   * The caller has to read them, or the two stages are unreachable — a stage
+   * nothing computes is worse than no stage, because the column looks answered.
+   */
+  const projSrc = strip(readFileSync("src/server/services/projectService.ts", "utf8"));
+  ok("`syncProjectStage` reads the project's inquiries",
+    /supplierInquiry\.findMany/.test(projSrc)
+    && /supplierInquiries: inquiries\.map/.test(projSrc));
+
+  /*
+   * And the inquiry's own writes have to move it. Creating one, answering it
+   * and deleting the last one are all stage moves, and inside the transaction
+   * like every other caller.
+   */
+  const inqSrc = strip(readFileSync("src/server/services/inquiryService.ts", "utf8"));
+  ok("every inquiry write re-derives the project's stage",
+    (inqSrc.match(/await syncProjectStage\(/g) ?? []).length >= 4,
+    (inqSrc.match(/await syncProjectStage\(/g) ?? []).length);
+  /*
+   * And every one of them inside the transaction — `tx`, never the plain
+   * client. A stage that only settled after the write committed would be wrong
+   * for as long as anybody was looking at it, and a failure there would leave
+   * the inquiry saved with the project still waiting on nothing.
+   *
+   * The first version of this check looked for a `});` shortly before the
+   * call, which matched `delete({ where: { id } });` on the line above a
+   * perfectly correct one — a check that fails on the code it is meant to bless.
+   */
+  ok("...inside the transaction, never after it",
+    !/syncProjectStage\(\s*(db|getDb\(\))\b/.test(inqSrc)
+    && (inqSrc.match(/syncProjectStage\(\s*tx\b/g) ?? []).length
+       === (inqSrc.match(/await syncProjectStage\(/g) ?? []).length);
+
   /* -- decided against -- */
   eq("a lost project is lost", deriveProjectStage({ isLost: true }), "باخته");
   eq("...and a cancelled one cancelled",
