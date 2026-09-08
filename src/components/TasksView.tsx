@@ -1624,6 +1624,27 @@ export default function TasksView({
             }
             if (body.next) await tasksApi.update(body.next.taskId, fields(body.next));
 
+            /*
+              Editing an open chase and recording its result are one form now,
+              so this handler does both — in that order, so the corrected words
+              are on the row before the completion closes it.
+
+              The completion itself is the *same* call the tick button makes,
+              never a second implementation: `completeFollowUp` closes the task,
+              records the answer, moves the quotation's follow-up state and
+              raises the replacement in one transaction, and a second path here
+              would be a second copy of every one of those rules.
+            */
+            if (body.complete) {
+              const outcome = await salesFollowUpApi.complete(followUpRow.taskId, body.complete);
+              setFollowUpRow(null);
+              list.refresh();
+              void topUpBoard();
+              const prompt = settlementCategoryPrompt(outcome, ACTIVITY_CATEGORY.PROFORMAS);
+              if (prompt) categoryCompletion?.promptCompletion(prompt);
+              return;
+            }
+
             setFollowUpRow(null);
             list.refresh();
           }}
