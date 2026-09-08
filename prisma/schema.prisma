@@ -1641,6 +1641,26 @@ model Task {
   /// on every automatic task creation, and the queue's own join.
   @@index([taskKind, relatedToType, relatedToId, status])
   @@index([taskKind, status, dueDate])
+
+  /**
+   * Which rule raised this task, and what about — the link that lets the rule
+   * close its own reminder when the record no longer matches it.
+   *
+   * `workflowEntityType`/`workflowEntityId` are **not** `relatedToType`/
+   * `relatedToId` above. Those say what the task is *about* for the person
+   * reading it, which for a purchase-order rule is usually the project rather
+   * than the order the rule actually fired on. The type is stored beside the id
+   * rather than looked up from the rule's schedule at closing time, so changing
+   * a rule's subject cannot make the resolver read the wrong table for tasks
+   * already raised.
+   *
+   * Null for every task a person raised, which is what null means here.
+   */
+  workflowRuleId     String? @db.NVarChar(64)
+  workflowRuleName   String? @db.NVarChar(200)
+  workflowEntityType String? @db.NVarChar(40)
+  workflowEntityId   String? @db.NVarChar(36)
+
   @@map("tasks")
 }
 

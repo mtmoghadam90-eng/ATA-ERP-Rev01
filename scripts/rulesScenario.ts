@@ -176,6 +176,7 @@ import {
   SCHEDULE_SUBJECTS, TIME_TRIGGER, describeSchedule, dueDay, isDue, scheduledRules, sweepRange,
 } from "../src/utils/workflowSchedule";
 import { statusChangeColumns } from "../src/utils/statusDwell";
+import { matchesConditions } from "../src/utils/workflowConditions";
 import {
   assertLinesCosted, normalizeLineCost, stampSentDate,
 } from "../src/server/services/proformaService";
@@ -9317,6 +9318,94 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     SCHEDULE_SUBJECTS.project_creation.payloadIdKey, "projectId");
   eq("...and a purchase order's",
     SCHEDULE_SUBJECTS.purchase_order_arrival.payloadIdKey, "purchaseOrderId");
+
+  /* ---------------- closing what the rule itself finished ---------------- */
+  /*
+   * `skipIfOpenSameKind` stops a *second* reminder and nothing ever retired the
+   * first — so the supplier answered, the order cleared customs, and the
+   * reminder sat on somebody's board for ever. A board filling with dead
+   * reminders is a board people stop reading, which makes a working automation
+   * worse than none: this had to land before repeating reminders, not after.
+   */
+  {
+    const strip4 = (text: string) =>
+      text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+    /* The condition rule is read from one place by both halves. */
+    ok("a matching condition matches",
+      matchesConditions([{ field: "status", operator: "equals", value: "حمل و ترانزیت" }],
+        { status: "حمل و ترانزیت" }));
+    ok("...and a record that moved on does not",
+      !matchesConditions([{ field: "status", operator: "equals", value: "حمل و ترانزیت" }],
+        { status: "ترخیص گمرک" }));
+    ok("no conditions is a match, as it always was",
+      matchesConditions([], { anything: 1 }) && matchesConditions(undefined, {}));
+    /*
+     * Preserved exactly, and deliberately: an operator this build does not know
+     * matches. Changing it would silently alter live rules, and the alternative
+     * — an unrecognised condition blocking every firing — is worse.
+     */
+    ok("an operator this build does not know still matches",
+      matchesConditions([{ field: "x", operator: "wat", value: "1" }], { x: 2 }));
+
+    const svc = strip4(readFileSync("src/server/services/workflowService.ts", "utf8"));
+    ok("the engine reads the conditions through that one rule",
+      svc.includes("matchesConditions(rule.conditions"));
+    // The origin is stamped on every rule-raised task, not only where the flag
+    // is on: the flag can be switched on next month, and a task raised before
+    // that would be one the resolver could never find.
+    ok("...and stamps where every task it raises came from",
+      /workflowRuleId: rule\.id/.test(svc) && /workflowEntityId:/.test(svc));
+
+    const sweepSrc2 = strip4(readFileSync("src/server/services/workflowSweep.ts", "utf8"));
+    ok("the sweep closes what it finished",
+      sweepSrc2.includes("resolveFinishedTasks"));
+    /*
+     * It walks the tasks, never the rule's subject rows: the sweep above only
+     * sees records whose base date is inside the band, and a record that has
+     * moved on has a *new* `statusChangedAt` — so it leaves the band precisely
+     * when it becomes resolvable.
+     */
+    ok("...by reading its own open tasks",
+      /task\.findMany\(\{[\s\S]{0,220}workflowRuleId: rule\.id/.test(sweepSrc2));
+    /*
+     * A `SALES_FOLLOW_UP` is never auto-closed. `completeFollowUp` is the only
+     * thing that may close one — it moves the quotation's follow-up state and
+     * raises the replacement in one transaction — and the ordinary tick refuses
+     * for the same reason. Ticking one here would leave a quotation marked as
+     * actively followed up with nothing chasing it.
+     */
+    ok("...and never a sales follow-up",
+      /taskKind: \{ not: "SALES_FOLLOW_UP" \}/.test(sweepSrc2));
+    // Conditional on it still being open, so two overlapping sweeps close once.
+    ok("...conditionally, so two sweeps close it once",
+      /task\.updateMany\(\{[\s\S]{0,200}status: \{ notIn/.test(sweepSrc2));
+    /*
+     * And the firing goes with the close, so a record that falls back into the
+     * state can be chased again — an order rejected at customs and sent back
+     * into transit is a new problem, and (ruleId, entityId) would otherwise
+     * remember the first one for ever. Only ever after a real close.
+     */
+    ok("...and the firing is cleared with it",
+      /workflowFiring\.deleteMany/.test(sweepSrc2)
+      && sweepSrc2.indexOf("result.count === 0") < sweepSrc2.indexOf("workflowFiring.deleteMany"));
+    // The type comes off the task, not the rule: a subject changed since must
+    // not send the resolver to the wrong table for a task already raised.
+    ok("...reading the model the task recorded, not the rule's current one",
+      /task\.workflowEntityType \?\? subject\.model/.test(sweepSrc2));
+    ok("...and it is bounded", /RESOLVE_LIMIT/.test(sweepSrc2));
+
+    // Absent means off, so no rule written before this changes behaviour.
+    ok("the flag is opt-in",
+      /a\.taskConfig\?\.closeWhenResolved/.test(sweepSrc2));
+
+    // The screen has to offer it, or it is a flag nobody can set.
+    const settingsSrc = strip4(readFileSync("src/components/SettingsView.tsx", "utf8"));
+    ok("the rule editor offers it", settingsSrc.includes("closeWhenResolved"));
+    // And the drafter, or a rule described in a sentence never gets it.
+    const draftSrc = readFileSync("src/utils/workflowDraft.ts", "utf8");
+    ok("the assistant may draft it", draftSrc.includes("closeWhenResolved"));
+  }
 
   /* ------------------- «چقدر در این وضعیت مانده» ------------------- */
   /*

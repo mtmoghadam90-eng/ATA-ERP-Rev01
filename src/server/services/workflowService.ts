@@ -4,6 +4,7 @@ import { loadSettings } from "../settings";
 import { getTodayShamsi, addDaysToShamsi } from "../../dateUtils";
 import { notifyModuleResponsible } from "./notificationService";
 import { expandDateFields } from "../dates";
+import { matchesConditions } from "../../utils/workflowConditions";
 import { isChannel, renderTemplate } from "../../utils/messaging";
 import { messageVariables, queueForCustomer } from "./messaging/messageService";
 import { FINISHED_TASK_STATUSES, normalizeTaskKind } from "../../utils/salesFollowUp";
@@ -120,21 +121,16 @@ export async function executeRule(
   const settings = loadedSettings ?? ((await loadSettings()) as any);
 
   {
-    // Check conditions
-    let match = true;
-    for (const cond of rule.conditions ?? []) {
-      const actualValue = enrichedPayload[cond.field];
-      if (cond.operator === "equals" && String(actualValue) !== String(cond.value))
-        match = false;
-      if (cond.operator === "not_equals" && String(actualValue) === String(cond.value))
-        match = false;
-      if (cond.operator === "greater_than" && Number(actualValue) <= Number(cond.value))
-        match = false;
-      if (cond.operator === "less_than" && Number(actualValue) >= Number(cond.value))
-        match = false;
-    }
-
-    if (!match) return;
+    /*
+     * The conditions, through the one rule that reads them.
+     *
+     * It used to be written out here and nowhere else, which was fine while
+     * firing was the only thing that asked. A rule that closes its own task
+     * when the record no longer matches asks the same question from the other
+     * end, and two readings of it is how a task comes to be raised by one half
+     * and never closed by the other.
+     */
+    if (!matchesConditions(rule.conditions, enrichedPayload)) return;
 
     // Execute actions
     for (const action of rule.actions) {
@@ -229,6 +225,25 @@ export async function executeRule(
             assignedToUserId: assignee.assignedToUserId,
             assignedToName: assignee.assignedToName,
             ...related,
+            /*
+             * Where this task came from, so the rule can close its own
+             * reminder when the record stops matching it.
+             *
+             * Stamped on every rule-raised task, not only where
+             * `closeWhenResolved` is on: the flag can be switched on next
+             * month, and a task raised before that would otherwise be one the
+             * resolver could never find. It is also simply the truth about the
+             * row, and «چه چیزی این وظیفه را ساخت» is worth answering.
+             *
+             * The entity is the record the rule **fired on**, which is not
+             * `relatedToType`/`relatedToId` above: those say what the task is
+             * about for the person reading it, and for a purchase-order rule
+             * that is usually the project.
+             */
+            workflowRuleId: rule.id ?? null,
+            workflowRuleName: rule.name ?? null,
+            workflowEntityType: enrichedPayload.entityType ?? related.relatedToType ?? null,
+            workflowEntityId: enrichedPayload.entityId ?? related.relatedToId ?? null,
           },
         });
 

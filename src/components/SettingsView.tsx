@@ -3952,6 +3952,32 @@ export default function SettingsView({
                                     برای پیگیری فروش توصیه می‌شود؛ در غیر این صورت هر بار ارسال مجدد یا ویرایش وضعیت، یک پیگیری تکراری می‌سازد.
                                   </p>
                                 </div>
+
+                                {/*
+                                  The other half of the one above: that stops a
+                                  second reminder, this retires the first. A
+                                  board filling with reminders nobody can close
+                                  is a board people stop reading.
+                                */}
+                                <div className="md:col-span-2">
+                                  <label className="flex items-center gap-2 text-[11px] font-bold text-slate-600 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
+                                    <input
+                                      type="checkbox"
+                                      checked={!!act.taskConfig.closeWhenResolved}
+                                      onChange={(e) => {
+                                        const updatedActs = [...editingRule.actions];
+                                        updatedActs[actIdx].taskConfig!.closeWhenResolved = e.target.checked;
+                                        setEditingRule({ ...editingRule, actions: updatedActs });
+                                      }}
+                                      className="w-4 h-4 accent-sky-500"
+                                    />
+                                    وقتی شرط قانون دیگر برقرار نبود، وظیفه به‌صورت خودکار بسته شود
+                                  </label>
+                                  <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                                    برای یادآوری‌ها توصیه می‌شود: وقتی تأمین‌کننده جواب داد یا سفارش از گمرک ترخیص شد، یادآوری روی تخته کار نمی‌ماند.
+                                    برای کاری که به‌هرحال باید انجام شود (مثل صدور فاکتور رسمی) خاموش بگذارید. وظایف «پیگیری فروش» هرگز خودکار بسته نمی‌شوند.
+                                  </p>
+                                </div>
                               </div>
                             )}
 

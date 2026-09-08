@@ -100,7 +100,7 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     "",
     "## اقدام‌ها (actions[].type)",
     "  create_task — ساخت وظیفه. taskConfig: titleTemplate, descTemplate,",
-    "    assignedTo, priority, dueDaysOffset, taskKind, skipIfOpenSameKind",
+    "    assignedTo, priority, dueDaysOffset, taskKind, skipIfOpenSameKind, closeWhenResolved",
     "  send_message — ارسال پیام به مشتری. messageConfig: templateId (اجباری),",
     "    channel (SMS | BALE | EMAIL یا نیامده = ترجیح پروژه), delayDays, sendAtTime",
     "  send_notification — اعلان داخلی. notificationConfig: titleTemplate,",
@@ -111,6 +111,10 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     "  taskKind: GENERAL | SALES_FOLLOW_UP",
     "  dueDaysOffset: عدد صحیح نامنفی — چند روز بعد از اجرای قانون سررسید شود",
     "  skipIfOpenSameKind: true | false",
+    // The reminder retires itself when the record stops matching. Worth the
+    // model knowing about, because a rule that chases something is exactly
+    // the rule that should not leave its own reminder behind.
+    "  closeWhenResolved: true | false — برای یادآوری‌ها true، برای کاری که به‌هرحال باید انجام شود false",
     "  assignedTo یکی از این نشانه‌ها یا نام کامل یک کاربر:",
     assignees,
     "",
@@ -332,6 +336,7 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
           dueDaysOffset: wholeNumber(config.dueDaysOffset, 0),
           taskKind,
           skipIfOpenSameKind: config.skipIfOpenSameKind === true,
+          closeWhenResolved: config.closeWhenResolved === true,
         },
       });
       continue;
