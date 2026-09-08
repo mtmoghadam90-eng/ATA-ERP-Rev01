@@ -3658,8 +3658,8 @@ export default function SettingsView({
                           written to end, reintroduced through the one override
                           left standing over it.
                         */
-                        const valueOptions: readonly string[] =
-                          fieldOptions.find((f) => f.value === cond.field)?.options ?? [];
+                        const chosenField = fieldOptions.find((f) => f.value === cond.field);
+                        const valueOptions: readonly string[] = chosenField?.options ?? [];
 
                         return (
                           <div key={condIdx} className="flex flex-wrap items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-150 animate-fade-in text-xs">
@@ -3735,6 +3735,26 @@ export default function SettingsView({
                             >
                               <Trash2 size={14} />
                             </button>
+
+                            {/*
+                              What the chosen field actually means, from the
+                              same catalogue the assistant's drafter reads.
+
+                              A dropdown of values is not a definition. «مرحله
+                              پروژه: جدید» tells somebody what may be written and
+                              nothing about what «جدید» *says* — and a person who
+                              cannot tell that it means «نه استعلامی ثبت شده و نه
+                              پیش‌فاکتوری» writes a different rule or none at all,
+                              which is the same fault the drafter hit from the
+                              other side. Drawn only where the catalogue has
+                              something to add: a heading over nothing is worse
+                              than no heading.
+                            */}
+                            {chosenField?.hint && (
+                              <p className="w-full text-[10px] text-slate-500 leading-5 border-t border-slate-200 pt-2 mt-1">
+                                {chosenField.hint}
+                              </p>
+                            )}
                           </div>
                         );
                       })}

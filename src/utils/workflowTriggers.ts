@@ -57,6 +57,22 @@ export interface TriggerField {
    * a dropdown would be worse than a box.
    */
   options?: readonly string[];
+  /**
+   * One Persian sentence saying what this field *answers*, for a reader who has
+   * only its name and its values.
+   *
+   * Written for the assistant's rule drafter, and it exists because of a real
+   * refusal: «اگر ۳ روز از ایجاد پروژه گذشت و استعلام قیمت ثبت نشد…» was turned
+   * down as inexpressible, when `stage = جدید` says exactly that. A **derived**
+   * field is the case that needs it — the value «جدید» does not announce that it
+   * means «نه استعلامی ثبت شده و نه پیش‌فاکتوری», so a reader looking for a
+   * field *named* «استعلام ثبت نشده» finds none and concludes the system cannot
+   * answer, which is the trigger catalogue's own silent failure arriving from
+   * the other side: not a rule that never fires, but a rule never written.
+   *
+   * A stored column whose values speak for themselves needs none.
+   */
+  hint?: string;
 }
 
 export interface TriggerSpec {
@@ -426,25 +442,49 @@ export function isAssigneeToken(value: string): boolean {
 
 export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
   proforma: [
-    { value: "status", label: "وضعیت ارسال پیش‌فاکتور", options: PROFORMA_STORED_STATUSES },
+    {
+      value: "status", label: "وضعیت ارسال پیش‌فاکتور", options: PROFORMA_STORED_STATUSES,
+      hint: "فقط همین دو مقدار را دارد. «برنده»، «باخته» و «لغو شده» نتیجه نهایی‌اند، "
+        + "ستون دیگری هستند و اینجا هرگز ذخیره نمی‌شوند.",
+    },
     { value: "currency", label: "ارز سند" },
     { value: "finalAmount", label: "مبلغ نهایی" },
   ],
   project: [
-    { value: "status", label: "وضعیت پروژه", options: PROJECT_STATUSES },
+    {
+      value: "status", label: "وضعیت پروژه", options: PROJECT_STATUSES,
+      hint: "نتیجه تجاری فروش است و بس — برنده/باخته/در جریان. با ترخیص گمرک یا "
+        + "تحویل کالا تکان نمی‌خورد؛ برای «کار کجاست» از فیلد stage «مرحله پروژه» استفاده کن.",
+    },
     /*
      * The stage, which is what a dwell rule on a project asks about: «۷ روز در
      * انتظار پاسخ تأمین‌کننده مانده» is this field plus the
      * `project_stage_changed` schedule. The status beside it is the sales
      * outcome and does not move when goods clear customs, which is exactly why
      * the two are separate columns.
+     *
+     * The hint is the fix for a reported refusal — see `TriggerField.hint`.
      */
-    { value: "stage", label: "مرحله پروژه", options: PROJECT_STAGES },
+    {
+      value: "stage", label: "مرحله پروژه", options: PROJECT_STAGES,
+      hint: "کار روی این پروژه تا کجا رسیده — محاسبه‌شده از رکوردهای خودش، نه دستی. "
+        + "«جدید» یعنی هنوز نه استعلام قیمتی ثبت شده و نه پیش‌فاکتوری صادر شده؛ "
+        + "«در حال مذاکره» همان و فقط وضعیت پروژه دستی روی مذاکره است؛ "
+        + "«در انتظار پاسخ تأمین‌کننده» یعنی استعلام رفته و قیمتی برنگشته؛ "
+        + "«بررسی پیشنهاد تأمین‌کننده» یعنی قیمت آمده و هنوز برنده انتخاب نشده؛ "
+        + "«تهیه پیش‌فاکتور» یعنی پیش‌فاکتور در دست تهیه است؛ «پیگیری پیش‌فاکتور» یعنی "
+        + "برای مشتری ارسال شده. پس هر پرسشی از جنس «فلان کار هنوز انجام نشده» یا "
+        + "«اینجا گیر کرده» را با همین فیلد بپرس.",
+    },
   ],
   purchaseOrder: [
     { value: "status", label: "وضعیت سفارش خرید", options: PURCHASE_ORDER_STATUSES },
   ],
-  supplierInquiry: [{ value: "isWinner", label: "آفر برنده است", options: ["true", "false"] }],
+  supplierInquiry: [{
+    value: "isWinner", label: "آفر برنده است", options: ["true", "false"],
+    hint: "false یعنی این استعلام هنوز برنده اعلام نشده — که هم «جواب نیامده» را می‌گیرد "
+      + "و هم «جواب آمده و تصمیم گرفته نشده»؛ این دو را از هم جدا نمی‌کند.",
+  }],
   delivery: [{ value: "actualDeliveryDateJalali", label: "تاریخ تحویل قطعی" }],
   afterSalesService: [
     { value: "status", label: "وضعیت خدمات پس از فروش", options: AFTER_SALES_STATUSES },
