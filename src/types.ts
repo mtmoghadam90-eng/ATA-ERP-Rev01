@@ -1074,6 +1074,16 @@ export interface User {
     settings: boolean;
     users: boolean;
     packagingDelivery?: boolean;
+    /**
+     * «کارهای متوقف» — the dwell report.
+     *
+     * A module flag like the rest, so absent means granted and no account
+     * written before it existed loses the screen. Each *section* of the report
+     * is gated again by its own module's permission inside the service, so
+     * denying this closes the screen while granting it still shows only the
+     * parts that account may see.
+     */
+    stuckWork?: boolean;
     /** The messaging module: templates, the outbox, and sending by hand. */
     messaging?: boolean;
     /**

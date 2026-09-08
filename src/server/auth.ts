@@ -130,6 +130,16 @@ export const KEY_PERMISSION: Record<string, string | null> = {
    */
   erp_referrals: "tasks",
   erp_messaging: "messaging",
+  /*
+   * «کارهای متوقف». Its own key, so denying the module on the users screen
+   * actually closes the report rather than only hiding the menu item — the
+   * sidebar and the route guard already read `permissions.stuckWork`, and a
+   * screen hidden in the browser while the endpoint still answers is a gate
+   * that is not one. Each *section* of the report is gated again by its own
+   * module's permission inside the service, so this decides «may you open it»
+   * and that decides «what may you see in it».
+   */
+  erp_stuck_work: "stuckWork",
   // Readable by everyone (as a name directory — see toUserDirectory); writing is
   // gated separately by USERS_WRITE_PERMISSION.
   erp_users: null,

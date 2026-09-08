@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { User, ERPSettings } from '../types';
+import { PERMISSION_FLAGS, defaultPermissions } from '../utils/permissions';
 import ConfirmModal from './ConfirmModal';
 import NumberField from './NumberField';
 import { uploadFile } from '../imageUtils';
@@ -90,81 +91,34 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
   const [userToDeleteId, setUserToDeleteId] = useState<string | null>(null);
   const [userToDeleteName, setUserToDeleteName] = useState<string>('');
   
-  // Module permissions state
-  const [permissions, setPermissions] = useState({
-    dashboard: true,
-    customers: true,
-    projects: true,
-    proformas: true,
-    products: true,
-    suppliers: true,
-    purchaseOrders: true,
-    transactions: true,
-    tasks: true,
-    referrals: true,
-    messaging: true,
-    settings: false,
-    users: false,
-    // Off unless granted. Unlike the module flags this one hides fields rather
-    // than screens, so a new account should not learn what the company pays
-    // just because nobody thought about it.
-    costs: false,
-    // Same reasoning, more so: the assistant reads across every module at once.
-    assistant: false,
-    // Same again: everybody has the tasks module because everybody needs their
-    // own work, so a flag inheriting «absent means granted» would put the whole
-    // company's board back in front of every account.
-    tasksAll: false,
-  });
+  /*
+   * Module permissions state, from the one catalogue.
+   *
+   * This was a hand-typed object beside a hand-typed list, and both had
+   * drifted: «کارهای متوقف» had just been added and reached neither, and
+   * «بسته‌بندی و تحویل» had been missing since it was built — so that module and
+   * «خدمات پس از فروش», which borrows its key, had never been configurable at
+   * all. A module missing from this screen cannot be granted or denied, which
+   * is why it is derived rather than remembered.
+   */
+  const [permissions, setPermissions] = useState<User['permissions']>(
+    () => defaultPermissions('user'),
+  );
 
-  // Module Persian names and descriptions
-  const moduleList = [
-    { id: 'dashboard', name: 'داشبورد', desc: 'نمودارها و خلاصه آمارهای کلیدی سیستم' },
-    { id: 'customers', name: 'مشتریان', desc: 'مدیریت و ثبت اطلاعات کارفرمایان و صنایع' },
-    { id: 'projects', name: 'پروژه‌ها (فرصت‌ها)', desc: 'خط لوله فروش و پرونده‌های فعال تجاری' },
-    { id: 'proformas', name: 'پیش‌فاکتورها', desc: 'صدور و پیگیری پیش‌فاکتورهای ریالی کارفرمایان' },
-    { id: 'products', name: 'کالاها و تجهیزات', desc: 'مدیریت مشخصات فنی کالاها، دسته‌بندی و تعریف تجهیزات ابزاردقیق' },
-    { id: 'suppliers', name: 'تأمین‌کنندگان', desc: 'ثبت اطلاعات سازندگان و همکاران خارجی/داخلی' },
-    { id: 'purchaseOrders', name: 'سفارشات خرید خارجی', desc: 'سفارشات خارجی، مراحل ساخت و اسناد حمل' },
-    { id: 'transactions', name: 'دریافت و پرداخت ریالی', desc: 'تراکنش‌های بانکی، تنخواه‌ها و مطالبات مالی' },
-    // «کارتابل ارجاعات کار» no longer has a flag of its own: it is a tab in
-    // this module, and its endpoints are gated by this permission (see
-    // `erp_referrals` in `src/server/auth.ts`). A value stored on an account
-    // from before the merge is simply never read again.
-    { id: 'tasks', name: 'وظایف و پیگیری', desc: 'تخته کار، کارتابل ارجاعات همکاران، پیگیری فروش و اعلان‌های سیستم' },
-    { id: 'messaging', name: 'ارسال پیام', desc: 'قالب‌های پیام، صف و سوابق ارسال پیامک، بله و ایمیل. تنظیمات درگاه‌ها جداگانه با دسترسی «تنظیمات سیستم» کنترل می‌شود.' },
-    { id: 'settings', name: 'تنظیمات سیستم', desc: 'تغییر الگوهای پیش‌فاکتور، فیلدهای دلخواه و تنظیمات عمومی' },
-    { id: 'users', name: 'مدیریت کاربران', desc: 'تعریف پرسنل، تغییر رمز عبور و تنظیم سطح دسترسی ماژول‌ها' },
-    { id: 'assistant', name: 'دستیار هوشمند', desc: 'پنل پرسش و پاسخ هوش مصنوعی در داشبورد. جداگانه از دسترسی داشبورد کنترل می‌شود؛ می‌توانید داشبورد را بدهید و این را ندهید. دستیار فقط همان داده‌هایی را می‌بیند که خود کاربر اجازه دیدنش را دارد.' },
-    // Not a screen: it governs fields inside modules the user already has.
-    { id: 'costs', name: 'مشاهده بهای خرید', desc: 'دیدن قیمت تمام شده: ماشین‌حساب قیمت کالا، هزینه‌های سفارش خرید و مبالغ آفر تأمین‌کنندگان. بدون این دسترسی، این اعداد نمایش داده نمی‌شوند و سفارش خرید و استعلام قابل ذخیره نیست.' },
-    // Also not a screen: it widens what the tasks board shows, not whether it
-    // can be opened at all.
-    { id: 'tasksAll', name: 'مشاهده وظایف همه کاربران', desc: 'دیدن وظایف کل تیم در صفحه «وظایف و پیگیری». بدون این دسترسی هر کاربر فقط وظایفی را می‌بیند که به او ارجاع شده یا خودش ثبت کرده است. برای مدیر فروش یا سرپرست تیم مناسب است.' },
-  ];
+  /*
+   * What the grid draws, modules first and in the catalogue's own order,
+   * followed by the three flags that govern fields rather than screens.
+   */
+  const moduleList = PERMISSION_FLAGS;
 
   const handleRoleChange = (selectedRole: 'admin' | 'user') => {
     setRole(selectedRole);
     // If admin is selected, auto-enable all permissions
     if (selectedRole === 'admin') {
-      setPermissions({
-        dashboard: true,
-        customers: true,
-        projects: true,
-        proformas: true,
-        products: true,
-        suppliers: true,
-        purchaseOrders: true,
-        transactions: true,
-        tasks: true,
-        referrals: true,
-        messaging: true,
-        settings: true,
-        users: true,
-        costs: true,
-        assistant: true,
-        tasksAll: true,
-      });
+      // Derived too: the copy that used to live here was the one that silently
+      // left a newly added module *off* for the one role meant to have all of
+      // them.
+      setPermissions(defaultPermissions('admin'));
     }
   };
 
@@ -187,28 +141,11 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     setMinActiveTasks(0);
     setMaxActiveTasks(0);
     setSignatureImage('');
-    setPermissions({
-      dashboard: true,
-      customers: true,
-      projects: true,
-      proformas: true,
-      products: true,
-      suppliers: true,
-      purchaseOrders: true,
-      transactions: false,
-      tasks: true,
-      referrals: true,
-      messaging: true,
-      settings: false,
-      users: false,
-      costs: false,
-      // Off for a new account: it reads across every module at once, so it is
-      // granted deliberately rather than inherited from a template.
-      assistant: false,
-      // Off too: a new colleague sees their own work, and somebody decides
-      // afterwards whether they should see the team's.
-      tasksAll: false,
-    });
+    // The third hand-typed copy, and the one that had drifted furthest: it
+    // withheld the ledger while the component's initial state granted it, so
+    // the two disagreed about what a new account gets. `OFF_BY_DEFAULT` keeps
+    // this form's answer, which is the one that ever ran.
+    setPermissions(defaultPermissions('user'));
     setShowPassword(false);
     setShowAddModal(true);
   };

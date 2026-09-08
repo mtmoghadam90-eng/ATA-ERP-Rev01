@@ -5,16 +5,25 @@ import { stuckWorkReport } from "../services/stuckWorkService";
 /**
  * «کارهای متوقف» — what is sitting still, across the chain.
  *
- * Read-only, and needing **only a session**: every row comes through its own
- * module's permission inside the service, and a section the caller may not see
- * comes back marked withheld rather than empty. A separate permission key here
- * would be a second thing to keep in step with the three that already decide
- * what this person may look at — the shape `erp_users` takes, and for the same
- * reason.
+ * Read-only, and gated **twice**, which is not one gate too many.
+ *
+ * `erp_stuck_work` → the `stuckWork` module decides whether this screen may be
+ * opened at all. It was session-only at first, on the reasoning that the three
+ * section permissions inside the service already decide everything — and that
+ * was wrong in one respect that mattered: the module is in `APP_MODULES`, so
+ * the sidebar and the route guard were already reading `permissions.stuckWork`
+ * and hiding the screen for an account denied it, while this endpoint went on
+ * answering. A screen hidden in the browser whose API still replies is a gate
+ * that is not one.
+ *
+ * Inside the service each **section** is still gated by its own module's
+ * permission, and one the caller may not see comes back marked withheld rather
+ * than empty. So this answers «may you open it» and that answers «what is in it
+ * for you», which are two different questions.
  */
 export function registerStuckWorkRoutes(app: express.Express, deps: RouteDeps): void {
   app.get("/api/stuck-work", async (req, res) => {
-    const user = await deps.requireAuth(req, res);
+    const user = await deps.requireKeyAccess(req, res, "erp_stuck_work", "read");
     if (!user) return;
     try {
       const report = await stuckWorkReport(user, {
