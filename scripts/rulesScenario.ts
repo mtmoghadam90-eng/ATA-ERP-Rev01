@@ -198,7 +198,7 @@ import {
   FOLLOW_UP_STATES, TASK_KINDS, completionRefusalReason, correctionRefusalReason,
   followUpActivityText, followUpHealthOf, healthRank, isOpenWithoutNextAction,
   isTaskFinished, isTerminalOutcome, isChaseableOutcome, normalizeFollowUpState,
-  normalizeTaskKind, recordedDecision, stateAfterDecision,
+  deferralAfterChaseMoved, normalizeTaskKind, recordedDecision, stateAfterDecision,
   versionRefusalReason, impliedSettlement,
 } from "../src/utils/salesFollowUp";
 import { copiedProformaDates } from "../src/utils/proformaCopy";
@@ -4953,6 +4953,78 @@ head("Sales follow-up: chasing a quotation");
   eq("recording a next action keeps the chase open", stateAfterDecision("NEXT_ACTION"), "OPEN");
   eq("deferring parks it", stateAfterDecision("DEFER"), "DEFERRED");
   eq("giving up closes it", stateAfterDecision("NO_RESPONSE"), "NO_RESPONSE");
+
+  /* -- and a parked quotation follows its open chase, wherever it is moved -- */
+  /*
+   * The deferral is one date in two places — `Proforma.deferredUntil`, which
+   * `followUpHealthOf` reads to decide the quotation is still inside the agreed
+   * pause, and the open chase's own due date, which draws the board column.
+   * Correcting the *closed* chase moves both; the **open** one can be moved
+   * from two other places (the edit form and «کشیدن به جلو») and both moved the
+   * task alone, so a card pulled onto somebody's plate today stayed hidden from
+   * the overdue list until the old date came round.
+   */
+  {
+    const today = "1405/06/23";
+    eq("pulling a parked chase to today ends the pause",
+      JSON.stringify(deferralAfterChaseMoved("DEFERRED", today, today)),
+      JSON.stringify({ followUpState: "OPEN", deferredUntil: null }));
+    eq("...and a date already past ends it too",
+      JSON.stringify(deferralAfterChaseMoved("DEFERRED", "1405/05/01", today)),
+      JSON.stringify({ followUpState: "OPEN", deferredUntil: null }));
+    eq("pushing it back moves the pause with it",
+      JSON.stringify(deferralAfterChaseMoved("DEFERRED", "1405/09/01", today)),
+      JSON.stringify({ followUpState: "DEFERRED", deferredUntil: "1405/09/01" }));
+    /*
+     * And **only** a parked quotation follows. A next action raised for next
+     * Tuesday also has a future due date and the quotation is OPEN — correctly,
+     * since «موکول» is a statement about the customer and not about a date —
+     * so reading every forward-dated chase as a deferral would park half the
+     * queue.
+     */
+    ok("a quotation that is not parked is left alone",
+      deferralAfterChaseMoved("OPEN", "1405/09/01", today) === null
+      && deferralAfterChaseMoved("NO_RESPONSE", "1405/09/01", today) === null);
+    ok("...and a chase with no date writes nothing",
+      deferralAfterChaseMoved("DEFERRED", "", today) === null
+      && deferralAfterChaseMoved("DEFERRED", null, today) === null);
+    /*
+     * The fault itself, held against the reader that hid the row: with the
+     * proforma left behind the queue answers «parked» for a card somebody has
+     * on their plate today.
+     */
+    const row = {
+      hasOpenFollowUpTask: true, nextActionDueDateJalali: today,
+    };
+    eq("the stale half reported the quotation as parked",
+      followUpHealthOf(
+        { ...row, followUpState: "DEFERRED", deferredUntilJalali: "1405/08/01" } as never, today),
+      "DEFERRED");
+    eq("...and once both halves move, it is on the list",
+      followUpHealthOf(
+        { ...row, followUpState: "OPEN", deferredUntilJalali: null } as never, today),
+      "DUE_TODAY");
+  }
+  /* -- written where the task's date is written, and only there -- */
+  {
+    const strip = (src: string) =>
+      src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    const svc = strip(readFileSync("src/server/services/taskService.ts", "utf8"));
+    ok("the task service survived having its comments stripped",
+      svc.includes("export async function updateTask"));
+    ok("one writer keeps the deferral on the chase's day",
+      /async function syncDeferralToChase\(/.test(svc)
+      && (svc.match(/syncDeferralToChase\(/g) ?? []).length === 3);
+    /*
+     * Inside the task's own transaction, or a failure leaves the board on one
+     * date and the queue on another — precisely the state this closes.
+     */
+    ok("...called inside the write that moves the task",
+      /await db\.\$transaction\(async \(tx\) => \{[\s\S]{0,400}syncDeferralToChase\(tx, saved/
+        .test(svc));
+    ok("...and from the board's pull-forward as well",
+      /lane === "DOING" && from === "WAITING"\) \{\s*await syncDeferralToChase\(/.test(svc));
+  }
   // Not NO_RESPONSE: the chase ended because the sale ended, which the outcome
   // already records. Writing "no response" would claim the customer went quiet
   // on a quotation they had just approved.

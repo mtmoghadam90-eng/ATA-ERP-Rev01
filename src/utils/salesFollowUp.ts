@@ -469,6 +469,49 @@ export function stateAfterDecision(decision: FollowUpDecision): FollowUpState {
 }
 
 /**
+ * What a *parked* quotation becomes when its open chase is moved to a new day.
+ *
+ * A deferral is one date stored in two places, on purpose: `deferredUntil` on
+ * the proforma, which is what `followUpHealthOf` reads to decide the quotation
+ * is still inside the agreed pause, and the open chase's own due date, which is
+ * what puts the card in «در انتظار مشتری» on the board. Correcting the closed
+ * chase moves both — but the *open* one can be moved from two other places, the
+ * edit form and the board's «کشیدن به جلو», and both moved the task alone.
+ *
+ * So a chase pulled onto somebody's plate today sat in «در حال انجام» while the
+ * sales queue went on reporting the quotation as parked and **hid it from the
+ * overdue list** until the old date came round; pushing the date back had the
+ * mirror fault, un-parking it early. The board's own comment claimed the two
+ * agreed. They did not.
+ *
+ * Two rules, and the second is the one worth being deliberate about:
+ *
+ *  * **Only a quotation that is actually DEFERRED follows.** A next action
+ *    raised for next Tuesday also has a future due date, and the quotation is
+ *    OPEN — correctly, because «موکول» means the customer asked us to wait,
+ *    which is a statement about them and not about a date. Treating every
+ *    forward-dated chase as a deferral would park half the queue.
+ *  * **A pause that has arrived is not a pause.** Moved to today or earlier,
+ *    the deferral is over and the quotation goes back to OPEN with the date
+ *    cleared — which is exactly what pulling a card forward means, and leaving
+ *    a stale date behind is what hid the row.
+ *
+ * `null` means «nothing to write», so the ordinary case costs no extra query.
+ */
+export function deferralAfterChaseMoved(
+  followUpState: FollowUpState | string | null | undefined,
+  newDueDateJalali: string | null | undefined,
+  todayJalali: string,
+): { followUpState: FollowUpState; deferredUntil: string | null } | null {
+  if (normalizeFollowUpState(followUpState) !== "DEFERRED") return null;
+  const due = String(newDueDateJalali ?? "").trim();
+  if (!due) return null;
+  return due > String(todayJalali ?? "").trim()
+    ? { followUpState: "DEFERRED", deferredUntil: due }
+    : { followUpState: "OPEN", deferredUntil: null };
+}
+
+/**
  * Which decision a *recorded* follow-up was completed with.
  *
  * Nothing stores it — `completeFollowUp` spends the decision immediately and
