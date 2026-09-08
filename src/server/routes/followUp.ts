@@ -5,9 +5,11 @@ import { getTodayShamsi } from "../../dateUtils";
 import {
   FOLLOW_UP_FILTERABLE, FOLLOW_UP_SORTABLE,
   completeFollowUp, followUpRowForTask, followUpSummary, listFollowUpQueue, projectFollowUpReport,
-  reactivateFollowUp, updateFollowUpResult,
+  reactivateFollowUp, correctFollowUp,
 } from "../services/followUpService";
-import { SETTLE_OUTCOMES, type FollowUpCompletionInput } from "../../utils/salesFollowUp";
+import {
+  FOLLOW_UP_DECISIONS, SETTLE_OUTCOMES, type FollowUpCompletionInput,
+} from "../../utils/salesFollowUp";
 
 /**
  * The sales follow-up queue and the completion flow.
@@ -172,24 +174,40 @@ export function registerFollowUpRoutes(app: express.Express, deps: RouteDeps): v
   });
 
   /**
-   * Corrects the result recorded on a chase that is already closed.
+   * Corrects what a closed chase recorded — the result, the note, and the
+   * decision with its date.
    *
-   * Two columns and nothing else — see `updateFollowUpResult`. It is a PUT
-   * rather than a second POST to `/complete` precisely because none of the
-   * completion's other work may run again.
+   * A PUT rather than a second POST to `/complete` precisely because the two
+   * things that may never happen twice — closing the chase and settling the
+   * sale — are not what this does. See `correctFollowUp`.
+   *
+   * `decision` is read **strictly against the four names**, and anything else
+   * (including its absence) is «not edited»: a caller that merely echoes what
+   * the form displayed must not rewrite the quotation's state, and a value this
+   * build does not know is a caller guessing.
    */
   app.put("/api/sales-follow-up/tasks/:taskId/result", async (req, res) => {
     const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const outcome = await updateFollowUpResult(
+      const str = (key: string) => (typeof body[key] === "string" ? (body[key] as string) : null);
+      const decision = FOLLOW_UP_DECISIONS.find((d) => d === body.decision) ?? null;
+      const outcome = await correctFollowUp(
         req.params.taskId,
         {
-          followUpResult: typeof body.followUpResult === "string" ? body.followUpResult : null,
-          completionNote: typeof body.completionNote === "string" ? body.completionNote : null,
+          followUpResult: str("followUpResult"),
+          completionNote: str("completionNote"),
+          decision,
+          deferredUntil: str("deferredUntil"),
+          nextTitle: str("nextTitle"),
+          nextDescription: str("nextDescription"),
+          nextDueDate: str("nextDueDate"),
+          nextAssignedToName: str("nextAssignedToName"),
+          nextPriority: str("nextPriority"),
         },
         user,
+        getTodayShamsi(),
       );
       if (outcome.ok === false) {
         const status = outcome.code === "not-found" ? 404 : outcome.code === "forbidden" ? 403 : 400;

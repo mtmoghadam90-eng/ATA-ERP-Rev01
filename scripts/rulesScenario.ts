@@ -194,10 +194,11 @@ import {
 import { formatMoney } from "../src/numUtils";
 import { renderProformaDocument } from "../src/utils/proformaDocument";
 import {
-  AUTO_CLOSE_NOTE, DEFAULT_FOLLOW_UP_RESULTS, FOLLOW_UP_HEALTH, FOLLOW_UP_STATES,
-  TASK_KINDS, completionRefusalReason, followUpActivityText, followUpHealthOf,
-  healthRank, isOpenWithoutNextAction, isTaskFinished, isTerminalOutcome,
-  isChaseableOutcome, normalizeFollowUpState, normalizeTaskKind, stateAfterDecision,
+  AUTO_CLOSE_NOTE, DEFAULT_FOLLOW_UP_RESULTS, FOLLOW_UP_DECISIONS, FOLLOW_UP_HEALTH,
+  FOLLOW_UP_STATES, TASK_KINDS, completionRefusalReason, correctionRefusalReason,
+  followUpActivityText, followUpHealthOf, healthRank, isOpenWithoutNextAction,
+  isTaskFinished, isTerminalOutcome, isChaseableOutcome, normalizeFollowUpState,
+  normalizeTaskKind, recordedDecision, stateAfterDecision,
   versionRefusalReason, impliedSettlement,
 } from "../src/utils/salesFollowUp";
 import { copiedProformaDates } from "../src/utils/proformaCopy";
@@ -7659,7 +7660,16 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     /impliedSettlement\(followUpResult\)/.test(modal)
     && /follow-up-settle-yes/.test(modal) && /follow-up-settle-no/.test(modal));
   ok("and the terminal option unlocks when the answer is yes",
-    /!outcomeIsTerminal && !settleOutcome/.test(modal));
+    /&& !\(isCorrecting \? false : settleOutcome\)/.test(modal));
+  /*
+   * Correcting, there is nothing to unlock it with: the settlement is the one
+   * question a correction never re-asks, so «بدون اقدام بعدی» is reachable
+   * there only when the outcome already says the sale is over. The pure rule
+   * refuses it either way, so the disabled button is a courtesy.
+   */
+  ok("...and stays locked on a correction, which asks no settlement",
+    /decision === "TERMINAL" && !ctx\.outcomeIsTerminal/.test(
+      readFileSync("src/utils/salesFollowUp.ts", "utf8")));
 }
 
 /* ── The tasks board: what a card names, and hiding what is done ─────────── */
@@ -9123,74 +9133,141 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   ok("...in correcting mode only once it is closed",
     /taskLane\(task\.status\) === 'DONE'/.test(view));
   /*
-   * The recorded answer goes through the endpoint that touches two columns,
-   * and only once the chase is closed — an open one has no result to correct.
+   * Everything the completion *decided* goes through the correction endpoint,
+   * and only once the chase is closed — an open one has no recorded result and
+   * no recorded decision to correct.
    */
-  ok("...writing the answer through the endpoint that touches two columns",
-    /if \(followUpRow\.editing\?\.closed\) \{\s*await salesFollowUpApi\.updateResult\(/.test(view));
+  ok("...correcting the recorded answer through the one correction endpoint",
+    /if \(followUpRow\.editing\?\.closed\) \{\s*await salesFollowUpApi\.correct\(/.test(view));
   /*
-   * The rows are written with *partial* payloads naming only what changed, so
-   * the status is never among them: `completeFollowUp` is the only thing that
-   * may close a follow-up, and an edit must not do it by accident.
+   * And the decision travels with it rather than being applied field by field
+   * here. The replacement used to be a *separate* `tasksApi.update` from this
+   * screen, which moved its due date and left the proforma's own deferral
+   * column behind — two halves of one date, disagreeing.
+   */
+  const editSlice = view.slice(view.indexOf("onSaveEdits={async"),
+    view.indexOf("onSubmit={async", view.indexOf("onSaveEdits={async")));
+  ok("...with the decision inside that one call",
+    /\.\.\.\(body\.correction \?\? \{\}\)/.test(editSlice));
+  ok("...and the replacement no longer written from the screen",
+    !/body\.next/.test(editSlice));
+  /*
+   * The chase's own fields are ordinary task columns and stay a *partial* task
+   * write naming only what changed, so the status is never among them:
+   * `completeFollowUp` is the only thing that may close a follow-up.
    */
   ok("...and the chase's own fields as a partial task write",
-    /await tasksApi\.update\(followUpRow\.taskId, fields\(body\.action\)\)/.test(view)
-    && !/status:/.test(view.slice(view.indexOf("onSaveEdits"), view.indexOf("onSaveEdits") + 1400)));
-  ok("...and the replacement only when there is one",
-    /if \(body\.next\) await tasksApi\.update\(body\.next\.taskId, fields\(body\.next\)\)/.test(view));
+    /await tasksApi\.update\(followUpRow\.taskId, \{\s*title: body\.action\.title,/.test(view)
+    && !/status:/.test(editSlice));
 
   /* -- and the form knows the difference -- */
   const modal = strip(readFileSync("src/components/FollowUpCompletionModal.tsx", "utf8"));
   ok("the modal has a correcting mode", /const isEditing = !!editing;/.test(modal));
   /*
-   * The lower half is withheld from the **closed** shape alone, and the guard
-   * has to say `isCorrecting` rather than `isEditing` for that to be true.
-   *
-   * None of it may be answered a second time there: the task is closed, the
-   * state has moved, the replacement exists as its own task, and the sale may
-   * already be settled. On an *open* chase none of that has happened, so the
-   * same blocks are exactly the questions still to be asked — hiding them was
-   * what made «ویرایش» a second, smaller form than the tick on the same card.
+   * An **open** chase shows its own fields and nothing else: no call has
+   * happened, so there is no result to correct and no decision to change, and a
+   * blank completion form wearing the word «ویرایش» is what that produced.
    */
-  for (const [what, pattern] of [
-    ["the deferral", /\{!isCorrecting && decision === 'DEFER' &&/],
-    ["the settlement question", /\{suggested && !outcomeIsTerminal && !isCorrecting &&/],
-    ["the decision", /\{!isCorrecting && \(\s*<div>/],
-  ] as const) {
-    ok(`...and asks ${what} on every shape but the closed one`, pattern.test(modal));
-  }
+  ok("...and records nothing on a chase that is still open",
+    /\{!isEditingAction && \(/.test(modal));
   /*
-   * The next action is *shown* when editing a closed chase — a person filled it
-   * in through this form and expects to correct it here — but only when one is
-   * actually open. Offering the block with nothing behind it is how a second
-   * next action comes to exist.
+   * A **closed** one asks the decision again, which is the whole of what was
+   * missing: nothing stores it, the task cannot be completed twice, and a chase
+   * recorded as «موکول به تاریخ دیگر» with the wrong date had no correction
+   * anywhere in the application.
    */
-  ok("...and edits the existing next action rather than raising one",
-    /\{\(\(isCorrecting && !!editing\?\.next\) \|\| \(!isCorrecting && decision === 'NEXT_ACTION'\)\) &&/
+  ok("the closed shape reads back the recorded decision",
+    /const recorded: FollowUpDecision = recordedDecision\(\{/.test(modal)
+    && /hasOpenNextAction: !!editing\?\.next,/.test(modal));
+  ok("...and seeds the buttons from it rather than from a default",
+    /setDecision\(editing\?\.closed/.test(modal));
+  ok("...and seeds the deferral from the date that is stored",
+    /row\.deferredUntilJalali/.test(modal));
+  ok("...and offers the decision only while the sale is live",
+    /const decisionIsEditable = isCorrecting && !outcomeIsTerminal;/.test(modal)
+    && /\{\(!isEditing \|\| decisionIsEditable\) && \(/.test(modal));
+  /*
+   * The settlement question is the one thing a correction may never re-ask: it
+   * is what would re-date a sale the customer-value ranking counts from.
+   */
+  ok("...and never re-asks the settlement",
+    /\{suggested && !outcomeIsTerminal && !isEditing &&/.test(modal));
+  /*
+   * On a deferral the replacement's due date *is* the deferral date, so it is
+   * drawn once. Two boxes for one day is how the proforma's column and the
+   * task's due date came to disagree in the first place.
+   */
+  ok("...and draws one date for a deferral, not two",
+    /\{decision !== 'DEFER' && \(\s*<div>\s*<ShamsiDatePicker\s*label="تاریخ اقدام بعدی"/
       .test(modal));
+  /*
+   * And the form runs the *same pure function the server re-runs*, rather than
+   * a second reading of the rule written out beside it.
+   */
+  ok("...and refuses through the shared rule",
+    /correctionRefusalReason\(/.test(modal));
   // Keyed on the task being worked on: correcting a closed chase, the row's
   // own `nextActionTaskId` is the replacement, a different task.
   ok("...seeded on the task being corrected",
     /const key = editing\?\.taskId \?\? row\.nextActionTaskId;/.test(modal));
 
-  /* -- the server writes two columns, and refuses the rest -- */
+  /* -- the server owns the transition, and refuses the two that may not repeat -- */
   const service = strip(readFileSync("src/server/services/followUpService.ts", "utf8"));
-  const correction = service.slice(service.indexOf("export async function updateFollowUpResult"));
+  const correction = service.slice(service.indexOf("export async function correctFollowUp"));
   const body = correction.slice(0, correction.indexOf("export async function followUpRowForTask"));
-  ok("the correction writes only the result and the note",
-    /data: \{ followUpResult, completionNote: toNullableString\(input\.completionNote\) \}/.test(body));
   /*
-   * None of the completion's other work may run again — a second next action,
-   * or a re-dated sale the customer-value ranking counts from.
+   * The decision's three consequences move together or the screens contradict
+   * each other: the deferral is stored **both** on the proforma (what the queue
+   * and the health badge read) and as the replacement's due date (what puts the
+   * card in «در انتظار مشتری»), so one transaction writes both.
    */
-  ok("...and nothing else",
-    !/tx\.task\.create/.test(body) && !/syncProjectStatus/.test(body)
-    && !/scheduleCustomerValueRecalculation/.test(body));
+  ok("the correction writes the state, the deferral and the replacement together",
+    /await db\.\$transaction\(async \(tx\) => \{/.test(body)
+    && /followUpState: stateAfterDecision\(decision\)/.test(body)
+    && /expandDateFields\(\{ deferredUntil: String\(input\.deferredUntil\) \}/.test(body));
+  /*
+   * The two things that may never happen twice. The chase's own status is not
+   * touched — `completeFollowUp` is the only thing that closes a follow-up —
+   * and no commercial outcome is written, so a sale keeps the date the
+   * customer-value ranking counts from.
+   */
+  ok("...and never closes the chase again",
+    !/status: "انجام شده"/.test(body));
+  ok("...and never settles the sale",
+    !/syncProjectStatus/.test(body) && !/scheduleCustomerValueRecalculation/.test(body)
+    && !/settleOutcome/.test(body));
+  /*
+   * A replacement it should not have raised is **cancelled**, not completed: it
+   * was never done, it should never have existed. Conditional, so two
+   * overlapping saves cancel it once.
+   */
+  ok("...cancelling a replacement the corrected decision does not want",
+    /status: TASK_CANCELLED/.test(body) && /updateMany\(\{\s*where: \{ id: replacementId, \.\.\.OPEN_TASK \}/
+      .test(body));
+  // And raising one the corrected decision does want, since nothing else could:
+  // the closed chase cannot be completed a second time.
+  ok("...and raising one when the correction adds a chase",
+    /tx\.task\.create\(\{/.test(body) && /status: TASK_TODO,/.test(body));
+  // The assignee is resolved from a name, never compared exactly — ی/ي and the
+  // two digit sets are the whole reason `resolveAssignee` exists.
+  ok("...resolving the assignee by folded name",
+    /await resolveAssignee\(/.test(body));
+  ok("...and re-running the shared refusal rule rather than a copy of it",
+    /correctionRefusalReason\(input, \{/.test(body));
   ok("...refusing a chase that is still open",
     /!\(FINISHED_TASK_STATUSES as readonly string\[\]\)\.includes\(task\.status\)/.test(body));
   ok("...and anything that is not a follow-up",
     /task\.taskKind !== "SALES_FOLLOW_UP"/.test(body));
-  ok("...and a result nobody typed", /ثبت نتیجه پیگیری الزامی است/.test(body));
+  ok("...and a result nobody typed",
+    /ثبت نتیجه پیگیری الزامی است/.test(
+      strip(readFileSync("src/utils/salesFollowUp.ts", "utf8"))));
+  // The route reads the decision strictly against the four names, so a caller
+  // echoing something else is «not edited» rather than a guess written in.
+  {
+    const r = strip(readFileSync("src/server/routes/followUp.ts", "utf8"));
+    ok("...and the route accepts only a decision the engine knows",
+      /FOLLOW_UP_DECISIONS\.find\(\(d\) => d === body\.decision\) \?\? null/.test(r));
+  }
   const route = strip(readFileSync("src/server/routes/followUp.ts", "utf8"));
   ok("the route is a PUT, not a second complete",
     /app\.put\("\/api\/sales-follow-up\/tasks\/:taskId\/result"/.test(route));
@@ -9316,9 +9393,9 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    * resolved — which is the stronger version of the same guarantee.
    */
   const view = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
-  const editWrite = view.slice(view.indexOf("onSaveEdits"), view.indexOf("onSaveEdits") + 1400);
+  const editWrite = view.slice(view.indexOf("onSaveEdits"), view.indexOf("onSaveEdits") + 2400);
   ok("the follow-up edit sends the assignee by name, with no id",
-    /assignedToName: a\.assignedToName/.test(editWrite)
+    /assignedToName: body\.action\.assignedToName/.test(editWrite)
     && !/assignedToUserId/.test(editWrite));
 
   /* -- and the edit button always carries the chase -- */
@@ -9329,38 +9406,72 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     /const isCorrecting = editing\?\.closed === true;/.test(modal)
     && /const isEditingAction = isEditing && !isCorrecting;/.test(modal));
   /*
-   * Editing an open chase is the whole form, and what the button does is
-   * decided by whether a result was chosen. That is the one signal, and it is
-   * the honest one: the result is the field the completion cannot be written
-   * without, and picking one is deliberate in a way that correcting a date is
-   * not.
+   * Editing an open chase shows the chase and nothing else. It briefly showed
+   * the whole completion form, which is the wrong answer twice over: it is not
+   * what «ویرایش» means, and picking a result while correcting a date would
+   * close the follow-up.
    */
-  ok("...and completing from the edit form turns on a chosen result",
-    /const willComplete = isEditingAction && followUpResult\.trim\(\) !== '';/.test(modal));
+  ok("...and never completes a follow-up from the edit form",
+    !/willComplete/.test(modal) && !/salesFollowUpApi/.test(modal));
   /*
-   * The form hands the completion over; it never performs one. There is
-   * exactly one completion path in this application and a second here would be
-   * a second copy of the transaction, the settlement question and the
-   * replacement it raises.
+   * `recordedDecision` is the exact inverse of `stateAfterDecision` plus one
+   * bit — DEFER and NO_RESPONSE own a state each, while NEXT_ACTION and
+   * TERMINAL both leave the quotation OPEN and are told apart by whether a
+   * replacement is still being chased. Held as a round trip so the pair cannot
+   * drift, in both directions.
    */
-  ok("...and the form hands the completion to the screen rather than running it",
-    /complete: willComplete \? body : undefined,/.test(modal)
-    && !/salesFollowUpApi/.test(modal));
-  /*
-   * And the screen writes the corrected words *before* the completion closes
-   * the row, or the edit would land on a task that was already finished with.
-   */
-  const editStart = view.indexOf("onSaveEdits={async");
-  const editHandler = view.slice(editStart, view.indexOf("onSubmit={async", editStart));
-  ok("...and the screen corrects the row before completing it",
-    editHandler.indexOf("tasksApi.update(followUpRow.taskId") <
-      editHandler.indexOf("salesFollowUpApi.complete(followUpRow.taskId"),
-    [editHandler.indexOf("tasksApi.update(followUpRow.taskId"),
-      editHandler.indexOf("salesFollowUpApi.complete(followUpRow.taskId")]);
-  ok("...through the same call the tick button makes",
-    /if \(body\.complete\) \{/.test(editHandler)
-    && /salesFollowUpApi\.complete\(followUpRow\.taskId, body\.complete\)/.test(editHandler)
-    && /settlementCategoryPrompt\(outcome, ACTIVITY_CATEGORY\.PROFORMAS\)/.test(editHandler));
+  for (const d of FOLLOW_UP_DECISIONS) {
+    eq(`«${d}» is read back from the state it leaves`,
+      recordedDecision({
+        followUpState: stateAfterDecision(d),
+        hasOpenNextAction: d === "NEXT_ACTION" || d === "DEFER",
+      }),
+      d);
+  }
+  /* -- and the correction rule itself -- */
+  {
+    const live = { recorded: "DEFER" as const, outcomeIsTerminal: false };
+    eq("a correction needs a result like any completion",
+      correctionRefusalReason({ decision: "DEFER", deferredUntil: "1405/07/01" }, live),
+      "ثبت نتیجه پیگیری الزامی است.");
+    eq("a deferral corrected without a date is refused",
+      correctionRefusalReason({ followUpResult: "خرید به تعویق افتاد" }, live),
+      "تاریخ پیگیری مجدد را وارد کنید.");
+    ok("...and accepted with one",
+      correctionRefusalReason(
+        { followUpResult: "خرید به تعویق افتاد", deferredUntil: "1405/08/01" }, live) === null);
+    /*
+     * Absent means «not edited», so the commonest correction — a typo in the
+     * note — must not have to restate a decision it is not changing.
+     */
+    ok("an absent decision is the recorded one, not a blank",
+      correctionRefusalReason(
+        { followUpResult: "در حال بررسی", deferredUntil: "1405/08/01" },
+        { recorded: "DEFER", outcomeIsTerminal: false }) === null);
+    ok("...and it is what a NEXT_ACTION correction is measured against",
+      correctionRefusalReason(
+        { followUpResult: "در حال بررسی" },
+        { recorded: "NEXT_ACTION", outcomeIsTerminal: false })
+      === "عنوان اقدام بعدی الزامی است.");
+    /*
+     * A settled sale is corrected in its words and not in its plan: moving the
+     * decision would put a chase back on a won or lost quotation, which
+     * `reactivateFollowUp` refuses outright.
+     */
+    ok("a settled quotation keeps its result editable",
+      correctionRefusalReason(
+        { followUpResult: "تأیید نهایی خرید" },
+        { recorded: "TERMINAL", outcomeIsTerminal: true }) === null);
+    ok("...and refuses a changed decision",
+      correctionRefusalReason(
+        { followUpResult: "تأیید نهایی خرید", decision: "NEXT_ACTION", nextTitle: "x", nextDueDate: "1405/07/01" },
+        { recorded: "TERMINAL", outcomeIsTerminal: true })?.includes("نهایی شده") === true);
+    // And «بدون اقدام بعدی» is the outcome's answer, never this form's.
+    ok("a live quotation may not be corrected to «no next action»",
+      correctionRefusalReason(
+        { followUpResult: "در حال بررسی", decision: "TERMINAL" },
+        { recorded: "DEFER", outcomeIsTerminal: false })?.includes("انتخاب‌شدنی نیست") === true);
+  }
 
   ok("the comment stripper left these sources intact",
     service.length > 10000 && view.length > 10000 && modal.length > 4000);

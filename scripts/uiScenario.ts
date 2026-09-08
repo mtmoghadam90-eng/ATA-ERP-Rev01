@@ -1142,12 +1142,12 @@ head("Follow-up editing: the form opens carrying the follow-up");
     for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
   };
 
-  const open = async (editing: unknown) => {
+  const open = async (editing: unknown, rowOverrides: Record<string, unknown> = {}) => {
     const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
     const root = createRoot(host);
     await act(async () => {
       root.render(React.createElement(FollowUpCompletionModal, {
-        row: ROW as never,
+        row: { ...ROW, ...rowOverrides } as never,
         resultOptions: ["در حال بررسی فنی", "خرید به تعویق افتاد"],
         userNames: ["کارشناس فروش", "مریم کاظمی"],
         outcomeIsTerminal: false,
@@ -1176,7 +1176,7 @@ head("Follow-up editing: the form opens carrying the follow-up");
       title: "قیمت رقیب را بگیر", description: "با واحد فنی هماهنگ کن",
       dueDate: "1405/06/20", assignee: "مریم کاظمی", priority: "بالا",
     });
-    ok("an open chase opens the follow-up form", m.text("h3") === "ویرایش پیگیری");
+    ok("an open chase opens as an edit of the action", m.text("h3") === "ویرایش اقدام پیگیری");
     ok("...with its own title", m.value("#follow-up-action-title") === "قیمت رقیب را بگیر",
       m.value("#follow-up-action-title"));
     ok("...and its own description",
@@ -1185,31 +1185,19 @@ head("Follow-up editing: the form opens carrying the follow-up");
     ok("...and the priority it carries",
       m.value("#follow-up-action-priority") === "بالا", m.value("#follow-up-action-priority"));
     /*
-      And the rest of the form, which used to be missing entirely.
-
-      Nothing has happened to an open chase, so the result, the note, the
-      decision and the next action are the questions still ahead of it — hiding
-      them made «ویرایش» a second, smaller form than the tick on the same card,
-      which is exactly how it was reported.
+      And nothing about a call that has not happened. It briefly showed the
+      whole completion form, which is the wrong answer twice over: it is not
+      what «ویرایش» means, and picking a result while correcting a date would
+      close the follow-up.
     */
-    ok("...and the note box", m.value("#follow-up-note") === "");
-    ok("...and the decision block", !!m.host.querySelector("#follow-up-decision-TERMINAL"));
+    ok("...and no result box", m.value("#follow-up-note") === undefined);
+    ok("...and no decision block", m.host.querySelector("#follow-up-decision-TERMINAL") === null);
     /*
-      The next action here is the one that *would* be raised, so it carries the
-      usual defaults rather than a replacement that does not exist yet.
+      No next action either: the row's open task *is* this one, and offering it
+      under a second heading would show the same fields twice.
     */
-    ok("...and the next action, seeded from the quotation",
-      m.value("#next-action-title") === "پیگیری پیش‌فاکتور PF-1405-08",
-      m.value("#next-action-title"));
-    /*
-      Correcting a date must not demand a result nobody has heard, so the
-      button is ready with the result box empty — and it saves rather than
-      completes, which is the whole of what «willComplete» decides.
-    */
-    ok("...and the button is ready with no result chosen",
-      !(m.host.querySelector("#follow-up-submit") as HTMLButtonElement).disabled);
-    ok("...and says it will save rather than complete",
-      m.text("#follow-up-submit") === "ذخیره تغییرات", m.text("#follow-up-submit"));
+    ok("...and no next-action block", m.value("#next-action-title") === undefined);
+    ok("...and the button is ready", !(m.host.querySelector("#follow-up-submit") as HTMLButtonElement).disabled);
     m.close();
   }
 
@@ -1256,8 +1244,56 @@ head("Follow-up editing: the form opens carrying the follow-up");
       settled. Answering any again would raise a second next action or re-date
       a sale the ranking counts from.
     */
-    ok("...and re-asks no decision",
-      m.host.querySelector("#follow-up-decision-TERMINAL") === null);
+    /*
+      The decision **is** re-asked, and that is the fix: nothing stores it, the
+      task cannot be completed twice, and a chase recorded as «موکول به تاریخ
+      دیگر» with the wrong date had no correction anywhere in the application.
+      This row is a NEXT_ACTION — an open replacement on a quotation that is
+      still OPEN — so the buttons open on that.
+    */
+    ok("...and asks the decision again, seeded from what was recorded",
+      !!m.host.querySelector("#follow-up-decision-NEXT_ACTION")
+      && (m.host.querySelector("#follow-up-decision-NEXT_ACTION") as HTMLElement)
+        .className.includes("border-sky-400"));
+    /*
+      The settlement is the one question a correction never re-asks: it is what
+      would re-date a sale the customer-value ranking counts from.
+    */
+    ok("...and never the settlement", !m.host.textContent?.includes("وضعیت تجاری پیش‌فاکتور را"));
+    m.close();
+  }
+
+  /* -- a deferral: the stored date is what opens, and it is one field -- */
+  {
+    const m = await open({
+      taskId: "t-deferred", closed: true, followUpResult: "خرید به تعویق افتاد",
+      completionNote: "بعد از نوروز تماس بگیرید",
+      title: "تماس اول", description: "", dueDate: "1405/06/09",
+      assignee: "کارشناس فروش", priority: "متوسط",
+      next: {
+        taskId: "t-next", title: "پیگیری مجدد", description: "",
+        dueDate: "1405/08/01", assignee: "کارشناس فروش", priority: "متوسط",
+      },
+    }, { followUpState: "DEFERRED", deferredUntilJalali: "1405/08/01" });
+    /*
+      The reported case, end to end: «خرید به تعویق افتاد تا فلان تاریخ» with
+      the wrong date. The form has to open *on the deferral*, with the stored
+      date in the box, or there is nothing to correct.
+    */
+    ok("a deferred chase opens on the deferral",
+      (m.host.querySelector("#follow-up-decision-DEFER") as HTMLElement)
+        ?.className.includes("border-sky-400") === true);
+    const dates = [...m.host.querySelectorAll("#shamsi-datepicker-input")]
+      .map((el) => (el as HTMLInputElement).value);
+    ok("...carrying the date that is stored", dates.includes("1405/08/01"), dates);
+    /*
+      One date, not two. The deferral is stored both on the proforma and as the
+      replacement's due date, and two boxes for one day is how those came to
+      disagree — so the correcting form draws the chase's own date and the
+      deferral, and no third box labelled «تاریخ اقدام بعدی».
+    */
+    ok("...and draws one date box for it, not two",
+      !m.host.textContent?.includes("تاریخ اقدام بعدی"), dates);
     m.close();
   }
 

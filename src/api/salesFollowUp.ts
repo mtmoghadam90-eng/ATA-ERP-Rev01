@@ -174,15 +174,31 @@ export const salesFollowUpApi = {
     }>(`/api/sales-follow-up/tasks/${taskId}/complete`, body),
 
   /**
-   * Corrects what was recorded on a chase that is already closed.
+   * Corrects what a closed chase recorded, decision included.
    *
-   * Two columns and nothing else: the completion's other work — the task
-   * closing, the follow-up state, the replacement task, a settled sale — has
-   * already happened, and re-running any of it would raise a second next
-   * action or re-date a sale the ranking counts from.
+   * The two things that may never happen twice are not here: the chase is
+   * already closed and stays closed, and no commercial outcome is written, so
+   * a sale keeps the date the customer-value ranking counts from. Everything
+   * the decision *produced* — the quotation's follow-up state, its deferral
+   * date and the replacement task — moves in one transaction, because the
+   * deferral is stored both on the proforma and as the replacement's due date
+   * and correcting one alone left the two disagreeing.
+   *
+   * `decision` absent means «not edited».
    */
-  updateResult: (taskId: string, body: { followUpResult: string; completionNote?: string }) =>
-    api.put<{ taskId: string }>(`/api/sales-follow-up/tasks/${taskId}/result`, body),
+  correct: (taskId: string, body: {
+    followUpResult: string;
+    completionNote?: string;
+    decision?: FollowUpDecision;
+    deferredUntil?: string;
+    nextTitle?: string;
+    nextDescription?: string;
+    nextDueDate?: string;
+    nextAssignedToName?: string;
+    nextPriority?: string;
+  }) =>
+    api.put<{ taskId: string; nextTaskId: string | null }>(
+      `/api/sales-follow-up/tasks/${taskId}/result`, body),
 
   /**
    * One project's whole follow-up story, settled quotations included.
