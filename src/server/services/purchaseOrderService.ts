@@ -13,6 +13,7 @@ import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
 import { syncProjectStage } from "./projectService";
+import { statusChangeColumns } from "../../utils/statusDwell";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 
 /**
@@ -664,6 +665,17 @@ export async function createPurchaseOrder(
     const data = { ...scalarData(input), ...computeTotals(items, input) };
     // An order can be entered already arrived, e.g. when recording history.
     receivedDateImpliesStatus(data);
+    /*
+     * The clock starts at the first status, not at the first change of it.
+     *
+     * Waiting at the manufacturer is usually the longest leg of the whole job
+     * and it is the first one — left unstamped until something moved, it would
+     * be the one leg no dwell rule could ever see.
+     */
+    Object.assign(
+      data,
+      statusChangeColumns(null, data.status as string | undefined, todayJalali) ?? {},
+    );
 
     const po = await tx.purchaseOrder.create({
       data: data as Prisma.PurchaseOrderUncheckedCreateInput,
@@ -873,6 +885,18 @@ export async function updatePurchaseOrder(
     if (!existing) return null;
 
     const data: Record<string, unknown> = scalarData(input);
+    /*
+     * «از کِی در این وضعیت است» — written only when the status actually moves.
+     *
+     * The one clock a dwell rule can count from: «۱۰ روز در وضعیت حمل و
+     * ترانزیت مانده» is measurable from this and from nothing the record
+     * carried before, since `orderDateJalali` answers a different question that
+     * gets worse the longer the job runs.
+     */
+    Object.assign(
+      data,
+      statusChangeColumns(before.status, data.status as string | undefined, todayJalali) ?? {},
+    );
     if (input.items !== undefined) {
       Object.assign(data, computeTotals(input.items, input));
     } else if (

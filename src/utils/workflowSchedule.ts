@@ -49,7 +49,9 @@ export interface ScheduleSubject {
   /** The date's own name — the sentence around it is built by describeSchedule. */
   label: string;
   /** The Prisma model to sweep. */
-  model: "proforma" | "project" | "purchaseOrder" | "packagingDelivery" | "supplierInquiry";
+  model:
+    | "proforma" | "project" | "purchaseOrder" | "packagingDelivery"
+    | "supplierInquiry" | "afterSalesService";
   /** The Jalali column the count starts from. */
   dateField: string;
   /** The trigger name the rule's payload is built for. */
@@ -130,6 +132,46 @@ export const SCHEDULE_SUBJECTS: Record<string, ScheduleSubject> = {
     label: "تاریخ ثبت استعلام قیمت",
     model: "supplierInquiry", dateField: "creationDateJalali", entityType: "supplierInquiry",
     payloadIdKey: "supplierInquiryId",
+  },
+
+  /*
+   * ------------------------ «چقدر در این وضعیت مانده» ------------------------
+   *
+   * The three subjects that answer «how long has this been stuck», which no
+   * date the records already carried could answer.
+   *
+   * They are ordinary schedule subjects rather than a new kind of trigger, and
+   * that is the whole design: «N days after this date» plus the rule's own
+   * condition on the status *is* a dwell rule. «۱۰ روز پس از آخرین تغییر
+   * وضعیت، در صورتی که وضعیت «حمل و ترانزیت» است» needs nothing the engine did
+   * not already have — a second trigger type would have been a second copy of
+   * the sweep, the firing guard and the condition evaluator.
+   *
+   * The date each counts from is written only on a real move
+   * (`statusChangeColumns`, and `syncProjectStage` for the project), which is
+   * what makes it mean «since when» rather than «last saved».
+   */
+  purchase_order_status_changed: {
+    label: "آخرین تغییر وضعیت سفارش خرید",
+    model: "purchaseOrder", dateField: "statusChangedAtJalali", entityType: "purchaseOrder",
+    payloadIdKey: "purchaseOrderId",
+  },
+  after_sales_status_changed: {
+    label: "آخرین تغییر وضعیت خدمات پس از فروش",
+    model: "afterSalesService", dateField: "statusChangedAtJalali",
+    entityType: "afterSalesService", payloadIdKey: "afterSalesServiceId",
+  },
+  /*
+   * The project needed no new column: `stageChangedAt` has meant «since when»
+   * since the stage existed. And because the stage now reaches back before any
+   * quotation (20260916, PR #124), «۷ روز در انتظار پاسخ تأمین‌کننده مانده» is
+   * a rule this subject can express — the original supplier-chase case, reached
+   * through the project rather than through a column on the inquiry.
+   */
+  project_stage_changed: {
+    label: "آخرین تغییر مرحله پروژه",
+    model: "project", dateField: "stageChangedAtJalali", entityType: "project",
+    payloadIdKey: "projectId",
   },
 };
 

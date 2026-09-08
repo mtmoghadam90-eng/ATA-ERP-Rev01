@@ -175,6 +175,7 @@ import { describeProformaChanges, proformaChangeSentence } from "../src/server/s
 import {
   SCHEDULE_SUBJECTS, TIME_TRIGGER, describeSchedule, dueDay, isDue, scheduledRules, sweepRange,
 } from "../src/utils/workflowSchedule";
+import { statusChangeColumns } from "../src/utils/statusDwell";
 import {
   assertLinesCosted, normalizeLineCost, stampSentDate,
 } from "../src/server/services/proformaService";
@@ -216,7 +217,7 @@ import {
   MAX_PRODUCT_DOCUMENTS, documentsByKind, normalizeProductDocuments, parseProductDocuments,
 } from "../src/utils/productDocuments";
 import {
-  WORKFLOW_TRIGGERS, conditionValues, triggerFields,
+  SCHEDULE_MODEL_FIELDS, WORKFLOW_TRIGGERS, conditionValues, triggerFields,
 } from "../src/utils/workflowTriggers";
 import { PROFORMA_STORED_STATUSES } from "../src/utils/moduleStatuses";
 import {
@@ -9316,6 +9317,113 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     SCHEDULE_SUBJECTS.project_creation.payloadIdKey, "projectId");
   eq("...and a purchase order's",
     SCHEDULE_SUBJECTS.purchase_order_arrival.payloadIdKey, "purchaseOrderId");
+
+  /* ------------------- «چقدر در این وضعیت مانده» ------------------- */
+  /*
+   * The engine could always say «N days after a date the record carries», and
+   * could never say how long a record had been *stuck* — the question people
+   * actually have about an order sitting in transit. The dates it had to count
+   * from were the wrong ones: `orderDateJalali` answers «how long since it was
+   * placed», which gets worse the longer the job runs, so an order placed six
+   * months ago that reached customs yesterday reads as badly overdue.
+   *
+   * Deliberately three ordinary schedule subjects rather than a new trigger
+   * type: «N days after this date» plus the rule's own condition on the status
+   * *is* a dwell rule, and a second trigger type would have been a second copy
+   * of the sweep, the firing guard and the condition evaluator.
+   */
+  for (const key of [
+    "purchase_order_status_changed", "after_sales_status_changed", "project_stage_changed",
+  ]) {
+    ok(`«${key}» is a schedule subject`, !!SCHEDULE_SUBJECTS[key]);
+  }
+  eq("a purchase order's dwell counts from when its status moved",
+    SCHEDULE_SUBJECTS.purchase_order_status_changed?.dateField, "statusChangedAtJalali");
+  /*
+   * The project needed no new column — `stageChangedAt` has meant «since when»
+   * since the stage existed — and because the stage now reaches back before any
+   * quotation, «۷ روز در انتظار پاسخ تأمین‌کننده مانده» is expressible through
+   * it: the supplier-chase case, reached through the project.
+   */
+  eq("...and a project's from when its stage moved",
+    SCHEDULE_SUBJECTS.project_stage_changed?.dateField, "stageChangedAtJalali");
+
+  /*
+   * The check that matters, and the one that caught a real omission while this
+   * was being written: **every condition field the editor offers for a
+   * schedule's model must be a key the sweep actually selects.**
+   *
+   * A rule whose condition names a field the payload does not carry saves
+   * cleanly, prints correctly on its card and never fires — the exact silent
+   * failure the trigger catalogue exists to end, arriving through the one door
+   * the catalogue does not watch. `stage` was missing from the project's
+   * payload when the subject was added, and nothing else would have said so.
+   */
+  {
+    const sweepSrc = readFileSync("src/server/services/workflowSweep.ts", "utf8");
+    const missing: string[] = [];
+    for (const subject of Object.values(SCHEDULE_SUBJECTS)) {
+      const block = sweepSrc.slice(
+        sweepSrc.indexOf(`  ${subject.model}: {`),
+        sweepSrc.indexOf("},", sweepSrc.indexOf(`  ${subject.model}: {`)),
+      );
+      if (!block) { missing.push(`${subject.model}: no PAYLOAD_SELECT`); continue; }
+      // The date it counts from has to come back, or `isDue` reads undefined.
+      if (!block.includes(`${subject.dateField}: true`)) {
+        missing.push(`${subject.model}.${subject.dateField}`);
+      }
+      for (const field of SCHEDULE_MODEL_FIELDS[subject.model] ?? []) {
+        if (!block.includes(`${field.value}: true`)) {
+          missing.push(`${subject.model}.${field.value}`);
+        }
+      }
+    }
+    ok("every field a scheduled rule can ask about is one the sweep selects",
+      missing.length === 0, missing);
+  }
+
+  /* The clock itself: written only on a real move, or it means «last saved». */
+  ok("the same status is not a move",
+    statusChangeColumns("حمل و ترانزیت", "حمل و ترانزیت", "1405/06/07") === null);
+  ok("...and a different one is",
+    statusChangeColumns("حمل و ترانزیت", "ترخیص گمرک", "1405/06/07") !== null);
+  /*
+   * A first status *is* a move. Waiting at the manufacturer is usually the
+   * longest leg of the job and it is the first one — unstamped until something
+   * moved, it would be the one leg no dwell rule could ever see.
+   */
+  ok("a record's first status starts the clock",
+    statusChangeColumns(null, "پرداخت و سفارش به سازنده", "1405/06/07") !== null);
+  /*
+   * And a save that says nothing about the status has not moved it: a partial
+   * write omits the field, and reading absent as «it became blank» would
+   * restart the clock on every unrelated edit — the same fault as stamping on
+   * every save, wearing a different hat.
+   */
+  ok("a save that does not mention the status leaves it alone",
+    statusChangeColumns("ترخیص گمرک", undefined, "1405/06/07") === null);
+  eq("the stamped day is the day it moved",
+    statusChangeColumns(null, "x", "1405/06/07")?.statusChangedAtJalali, "1405/06/07");
+
+  {
+    const strip3 = (text: string) =>
+      text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    /*
+     * One writer, shared. Two services stamping this by hand is how one comes
+     * to write on every save while the other writes only on a move, and the
+     * two clocks then mean different things under one column name.
+     */
+    for (const file of [
+      "src/server/services/purchaseOrderService.ts",
+      "src/server/services/deliveryService.ts",
+    ]) {
+      const src = strip3(readFileSync(file, "utf8"));
+      ok(`${file.split("/").pop()} stamps through the shared rule`,
+        src.includes("statusChangeColumns("));
+      ok(`...and never assigns the column by hand`,
+        !/statusChangedAt:\s/.test(src));
+    }
+  }
 
   {
     const strip2 = (text: string) =>

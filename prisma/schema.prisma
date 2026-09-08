@@ -965,6 +965,18 @@ model PurchaseOrder {
   @@index([projectId])
   @@index([status])
   @@index([orderDate])
+
+  /// When the status last actually moved — «از کِی در این وضعیت است».
+  ///
+  /// Written only on a real change (`statusChangeColumns`), which is the whole
+  /// point: stamped on every save it would mean «last edited» and every dwell
+  /// rule built on it would be silent for ever. NULL means this application has
+  /// never seen the record move, and `dueDay` reads a missing base date as
+  /// unscheduled rather than overdue — so a row written before this column
+  /// existed starts counting from its next real move.
+  statusChangedAt       DateTime?
+  statusChangedAtJalali String?   @db.NVarChar(10)
+
   @@map("purchase_orders")
 }
 
@@ -1285,6 +1297,18 @@ model AfterSalesService {
 
   @@index([projectId])
   @@index([status])
+
+  /// When the status last actually moved — «از کِی در این وضعیت است».
+  ///
+  /// Written only on a real change (`statusChangeColumns`), which is the whole
+  /// point: stamped on every save it would mean «last edited» and every dwell
+  /// rule built on it would be silent for ever. NULL means this application has
+  /// never seen the record move, and `dueDay` reads a missing base date as
+  /// unscheduled rather than overdue — so a row written before this column
+  /// existed starts counting from its next real move.
+  statusChangedAt       DateTime?
+  statusChangedAtJalali String?   @db.NVarChar(10)
+
   @@map("after_sales_services")
 }
 

@@ -13,6 +13,7 @@ import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
 import { syncProjectStage } from "./projectService";
+import { statusChangeColumns } from "../../utils/statusDwell";
 import { deliveryWorkflowStatus } from "../../utils/moduleStatuses";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 
@@ -799,7 +800,11 @@ function serviceScalarData(input: ServiceInput): Record<string, unknown> {
  * Read back from the database rather than from the request, so the roll-up
  * describes what was actually stored.
  */
-async function applyServiceHeader(tx: Prisma.TransactionClient, serviceId: string): Promise<void> {
+async function applyServiceHeader(
+  tx: Prisma.TransactionClient,
+  serviceId: string,
+  todayJalali: string,
+): Promise<void> {
   const rows = await tx.afterSalesServiceItem.findMany({
     where: { serviceId },
     orderBy: { lineNo: "asc" },
@@ -812,6 +817,19 @@ async function applyServiceHeader(tx: Prisma.TransactionClient, serviceId: strin
   const header = deriveServiceHeader(rows);
   if (!header) return;
 
+  /*
+   * «از کِی در این وضعیت است», stamped here because this is the one place the
+   * header status is written — rolled up from the rows on both the create and
+   * the update path, so neither needs to remember to do it.
+   *
+   * Only on a real move: a save that re-derives the same status must leave the
+   * date alone, or it would mean «last edited» and every dwell rule counting
+   * from it would be silent for ever.
+   */
+  const current = await tx.afterSalesService.findUnique({
+    where: { id: serviceId }, select: { status: true },
+  });
+
   await tx.afterSalesService.update({
     where: { id: serviceId },
     data: {
@@ -819,6 +837,7 @@ async function applyServiceHeader(tx: Prisma.TransactionClient, serviceId: strin
       issueDescription: header.issueDescription,
       actionsTaken: header.actionsTaken,
       status: header.status,
+      ...(statusChangeColumns(current?.status, header.status, todayJalali) ?? {}),
       ...expandDateFields(
         { startDate: header.startDate, endDate: header.endDate, returnDate: header.returnDate },
         SERVICE_DATE_FIELDS,
@@ -846,7 +865,7 @@ export async function createService(input: ServiceInput, user: AuthUser, todayJa
       delegate: tx.afterSalesServiceItem, parentWhere: { serviceId: service.id },
       rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapServiceItem,
     });
-    await applyServiceHeader(tx, service.id);
+    await applyServiceHeader(tx, service.id, todayJalali);
     // An open service record is the last stage a delivered project can be at.
     await syncProjectStage(tx, service.projectId, todayJalali, user);
 
@@ -927,7 +946,7 @@ export async function updateService(id: string, input: ServiceInput, user: AuthU
     }
     // Also on a save that sent no rows: the header still has to agree with what
     // is stored, and a caller may have edited only the record itself.
-    await applyServiceHeader(tx, id);
+    await applyServiceHeader(tx, id, todayJalali);
 
     const row = await tx.afterSalesService.findUnique({
       where: { id }, select: { projectId: true },

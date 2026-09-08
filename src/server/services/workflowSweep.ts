@@ -33,10 +33,23 @@ const PAYLOAD_SELECT: Record<string, Record<string, boolean>> = {
   project: {
     id: true, code: true, name: true, status: true, customerId: true, salesExpert: true,
     creationDateJalali: true,
+    /*
+     * The stage and the day it last moved. A dwell rule asks about the stage in
+     * its condition — «۷ روز در انتظار پاسخ تأمین‌کننده مانده» — and a payload
+     * without it would match nothing while saving, printing and reading
+     * perfectly: exactly the silent failure the trigger catalogue exists to end.
+     */
+    stage: true, stageChangedAtJalali: true,
   },
   purchaseOrder: {
     id: true, poNumber: true, status: true, projectId: true, supplierId: true,
-    orderDateJalali: true, expectedDeliveryDateJalali: true,
+    orderDateJalali: true, expectedDeliveryDateJalali: true, statusChangedAtJalali: true,
+  },
+  afterSalesService: {
+    // No customer of its own — it hangs off the project, and `enrichPayload`
+    // resolves the customer from `projectId` the way it does everywhere else.
+    id: true, itemName: true, status: true, projectId: true, proformaNumber: true,
+    statusChangedAtJalali: true,
   },
   packagingDelivery: {
     id: true, packingListNumber: true, projectId: true, proformaId: true,
