@@ -1607,46 +1607,49 @@ export default function TasksView({
             it and a rename cannot leave the task belonging to nobody.
           */
           onSaveEdits={async (body) => {
-            const fields = (a: typeof body.action) => ({
-              title: a.title,
-              description: a.description,
-              dueDate: a.dueDate,
-              assignedToName: a.assignedToName,
-              priority: a.priority,
+            /*
+              Two writes, and the split is the record each one owns.
+
+              The **chase's own fields** are ordinary task columns — a title, a
+              date, an assignee — and go through the tasks route as a *partial*
+              write naming only what changed, so the status is never among them:
+              `completeFollowUp` is the only thing that may close a follow-up.
+
+              Everything the completion **decided** goes through the correction
+              endpoint in one transaction: the result, the note, the decision,
+              its deferral date and the replacement task. That used to be two
+              client-side writes — `updateResult` for the words and
+              `tasksApi.update` for the replacement — which moved the
+              replacement's due date and left the proforma's own deferral column
+              behind, so the queue and the board printed two different dates for
+              one deferral. The server owns the transition now (raise, move or
+              cancel the replacement) because deciding which of the three to do
+              from here would be a second copy of that rule.
+            */
+            await tasksApi.update(followUpRow.taskId, {
+              title: body.action.title,
+              description: body.action.description,
+              dueDate: body.action.dueDate,
+              assignedToName: body.action.assignedToName,
+              priority: body.action.priority,
             });
 
-            await tasksApi.update(followUpRow.taskId, fields(body.action));
             if (followUpRow.editing?.closed) {
-              await salesFollowUpApi.updateResult(followUpRow.taskId, {
+              await salesFollowUpApi.correct(followUpRow.taskId, {
                 followUpResult: body.followUpResult,
                 completionNote: body.completionNote || undefined,
+                ...(body.correction ?? {}),
               });
-            }
-            if (body.next) await tasksApi.update(body.next.taskId, fields(body.next));
-
-            /*
-              Editing an open chase and recording its result are one form now,
-              so this handler does both — in that order, so the corrected words
-              are on the row before the completion closes it.
-
-              The completion itself is the *same* call the tick button makes,
-              never a second implementation: `completeFollowUp` closes the task,
-              records the answer, moves the quotation's follow-up state and
-              raises the replacement in one transaction, and a second path here
-              would be a second copy of every one of those rules.
-            */
-            if (body.complete) {
-              const outcome = await salesFollowUpApi.complete(followUpRow.taskId, body.complete);
-              setFollowUpRow(null);
-              list.refresh();
-              void topUpBoard();
-              const prompt = settlementCategoryPrompt(outcome, ACTIVITY_CATEGORY.PROFORMAS);
-              if (prompt) categoryCompletion?.promptCompletion(prompt);
-              return;
             }
 
             setFollowUpRow(null);
             list.refresh();
+            /*
+              A correction can cancel the replacement or raise one, so the
+              board's own floor may have moved — the same reason completing a
+              chase tops it up.
+            */
+            void topUpBoard();
           }}
           onSubmit={async (body) => {
             // Against the task that was pressed, never the row's own

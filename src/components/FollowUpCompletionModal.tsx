@@ -5,7 +5,8 @@ import ShamsiDatePicker from './ShamsiDatePicker';
 import { SearchableSelect } from './SearchableSelect';
 import {
   DEFAULT_FOLLOW_UP_RESULTS, FollowUpDecision, SETTLE_OUTCOMES, SETTLE_OUTCOME_LABELS,
-  SettleOutcome, completionRefusalReason, impliedSettlement,
+  SettleOutcome, completionRefusalReason, correctionRefusalReason, impliedSettlement,
+  recordedDecision,
 } from '../utils/salesFollowUp';
 import { getTodayShamsi, addDaysToShamsi } from '../dateUtils';
 import { TASK_PRIORITIES } from '../utils/moduleStatuses';
@@ -48,28 +49,33 @@ interface Props {
    * opens the form it was filled in on. What that form shows depends on
    * whether the chase is closed:
    *
-   *  * **open** — the whole form, with the chase's own fields filled in at the
-   *    top. Nothing has happened to this follow-up yet, so there is nothing
-   *    here to protect: the result, the note, the decision, the next action
-   *    and the settlement question are all still ahead of it. Hiding them made
-   *    «ویرایش» a second, smaller form, so somebody who opened it and then
-   *    decided to record the call had to close it and press a different button
-   *    on the same card. It is one form, and what the button does depends on
-   *    whether a result was chosen: without one it saves the corrections, with
-   *    one it saves them and then completes the follow-up.
+   *  * **open** — the chase *itself* and nothing else: what it is for, when it
+   *    is due, whose it is, how urgent. No call has happened, so there is no
+   *    result to correct and no decision to change; recording one is the tick
+   *    on the same card, which opens this form in its completing shape.
    *  * **closed** — everything that was recorded, in one place: the chase's own
    *    fields, what the customer said, and the next action it raised. A person
    *    filled all of that in through one form and expects to correct it through
    *    the same one; that the system keeps it as two task rows is not their
    *    problem.
    *
-   * The restriction is on the **closed** shape alone, and it is not a
-   * preference: there the decision, the deferral and the settlement question
-   * have already been answered — the task is closed, the proforma's follow-up
-   * state moved, the replacement exists as its own task with its own card and
-   * the sale may be settled — so asking any of them again would raise a second
-   * next action or re-date a sale the customer-value ranking counts from.
-   * Correcting writes fields; it never re-runs the completion.
+   * **The closed shape asks the decision again, and that is the point.** A
+   * chase recorded as «موکول به تاریخ دیگر» with the wrong date could not be
+   * corrected anywhere in the application — the decision is spent the moment it
+   * is completed and stored nowhere — so `recordedDecision` reads it back out
+   * of the state it left behind and the form shows it, changeable. Correcting
+   * it moves the quotation's follow-up state, its deferral date and the
+   * replacement task **together, in one transaction on the server**, because
+   * the deferral is stored both on the proforma and as the replacement's due
+   * date and moving one alone left the two disagreeing.
+   *
+   * What stays out of the closed shape is the **settlement question**, and only
+   * that. It is the one thing that would re-date a sale the customer-value
+   * ranking counts from, so a correction may change what is *chasing* a
+   * quotation and never what the quotation *is*. On a settled document the
+   * decision is not offered either — moving it would put a chase back on a won
+   * or lost sale — and the form says so instead of greying a control in
+   * silence.
    */
   editing?: {
     taskId: string;
@@ -101,21 +107,26 @@ interface Props {
     followUpResult: string;
     completionNote: string;
     /*
-      Set when editing an open chase turned into recording its result.
+      The decision as it now stands, on a closed chase.
 
-      The completion is not performed here: it is handed to the screen that
-      owns the rows, which writes the chase's corrected fields first and then
-      calls the *same* `salesFollowUpApi.complete` the tick button calls. One
-      completion path, so the transaction, the settlement question and the
-      next action it raises are one implementation rather than two.
+      Absent while editing an open one — there is no recorded decision to
+      change — and otherwise always sent, because the correction endpoint reads
+      an absent `decision` as «not edited» and this form is where it *is*
+      edited. The deferral date and the replacement travel with it: they are
+      the decision's consequences and the server writes them in one
+      transaction.
     */
-    complete?: FollowUpCompletionBody;
+    correction?: {
+      decision: FollowUpDecision;
+      deferredUntil?: string;
+      nextTitle?: string;
+      nextDescription?: string;
+      nextDueDate?: string;
+      nextAssignedToName?: string;
+      nextPriority?: string;
+    };
     action: {
       title: string; description: string; dueDate: string;
-      assignedToName: string; priority: string;
-    };
-    next?: {
-      taskId: string; title: string; description: string; dueDate: string;
       assignedToName: string; priority: string;
     };
   }) => Promise<void>;
@@ -207,7 +218,17 @@ export default function FollowUpCompletionModal({
     const key = editing?.taskId ?? row.nextActionTaskId;
     if (seededFor.current === key) return;
     seededFor.current = key;
-    setDecision('NEXT_ACTION');
+    /*
+      Correcting, the buttons start on what was actually recorded — a form that
+      opened on «اقدام بعدی» for a chase that was deferred would be describing
+      the record wrongly before anybody touched it.
+    */
+    setDecision(editing?.closed
+      ? recordedDecision({
+        followUpState: row.followUpState,
+        hasOpenNextAction: !!editing?.next,
+      })
+      : 'NEXT_ACTION');
     setFollowUpResult(editing?.followUpResult ?? '');
     setCompletionNote(editing?.completionNote ?? '');
     /*
@@ -230,24 +251,41 @@ export default function FollowUpCompletionModal({
     setNextDueDate(editing?.next?.dueDate || addDaysToShamsi(getTodayShamsi(), 3));
     setNextAssignee(editing?.next?.assignee ?? row.salesExpert ?? '');
     setNextPriority(editing?.next?.priority || 'متوسط');
-    setDeferredUntil(addDaysToShamsi(getTodayShamsi(), 14));
+    /*
+      The stored deferral, which is the field this whole correction exists for:
+      «خرید به تعویق افتاد تا فلان تاریخ» with the wrong date had no correction
+      anywhere in the application.
+    */
+    setDeferredUntil(
+      (editing?.closed && row.deferredUntilJalali)
+      || addDaysToShamsi(getTodayShamsi(), 14),
+    );
     setSettleOutcome(null);
     setSettleLossReason('');
     setError(null);
-  }, [row.nextActionTaskId, row.proformaNumber, row.salesExpert, editing]);
+  }, [
+    row.nextActionTaskId, row.proformaNumber, row.salesExpert,
+    row.followUpState, row.deferredUntilJalali, editing,
+  ]);
 
   const options = resultOptions.length > 0 ? resultOptions : DEFAULT_FOLLOW_UP_RESULTS;
 
   /*
-   * Editing an open chase and recording its result are one form, so the form
-   * has to say which of the two the button will do.
-   *
-   * A chosen result is the signal, and it is the honest one: it is the field
-   * the completion cannot be written without, and picking one from a dropdown
-   * is a deliberate act rather than something somebody does while correcting a
-   * date. Until then nothing is closed and no replacement is raised.
+   * What the closed chase was completed with, read back out of the state it
+   * left behind — nothing stores the decision itself. The form seeds its
+   * buttons from this, so «موکول به تاریخ دیگر» opens showing that it was a
+   * deferral, with the stored date beside it.
    */
-  const willComplete = isEditingAction && followUpResult.trim() !== '';
+  const recorded: FollowUpDecision = recordedDecision({
+    followUpState: row.followUpState,
+    hasOpenNextAction: !!editing?.next,
+  });
+  /*
+   * Offered only while the sale is still live. On a settled document moving it
+   * would put a chase back on a won or lost quotation, which `reactivateFollowUp`
+   * refuses outright — so the form says that rather than greying a control.
+   */
+  const decisionIsEditable = isCorrecting && !outcomeIsTerminal;
 
   const body: FollowUpCompletionBody = {
     decision,
@@ -287,25 +325,30 @@ export default function FollowUpCompletionModal({
     rules are about a decision, a date and an outcome — none of which is being
     taken again.
   */
-  const editRefusal = !isEditing ? null
+  /* The chase's own fields, which every editing shape shows. */
+  const actionRefusal = !isEditing ? null
     : !actionTitle.trim() ? 'عنوان اقدام الزامی است.'
       : !actionDueDate.trim() ? 'تاریخ اقدام الزامی است.'
-        : isCorrecting && !followUpResult.trim() ? 'ثبت نتیجه پیگیری الزامی است.'
-          : editing?.next && !nextTitle.trim() ? 'عنوان اقدام بعدی الزامی است.'
-            : editing?.next && !nextDueDate.trim() ? 'تاریخ اقدام بعدی الزامی است.'
-              : null;
-
-  const completionRefusal =
-    completionRefusalReason(body, { todayJalali: today, outcomeIsTerminal });
+        : null;
   /*
-    Once a result is chosen the button really does complete the follow-up, so
-    it has to answer the completion's own rule as well — the server runs the
-    same one and would refuse anyway, and a button that submits what the server
-    refuses is a form that reads as broken.
+    And the correction's own rule, which is the *same pure function the server
+    re-runs* rather than a second reading of it written out here — that is what
+    stops the form submitting what the server would refuse.
   */
-  const refusal = isEditing
-    ? (editRefusal ?? (willComplete ? completionRefusal : null))
-    : completionRefusal;
+  const refusal = isCorrecting
+    ? (actionRefusal ?? correctionRefusalReason(
+      {
+        followUpResult,
+        decision,
+        deferredUntil: deferredUntil,
+        nextTitle,
+        nextDueDate,
+      },
+      { recorded, outcomeIsTerminal },
+    ))
+    : isEditing
+      ? actionRefusal
+      : completionRefusalReason(body, { todayJalali: today, outcomeIsTerminal });
 
   const submit = async () => {
     if (refusal) { setError(refusal); return; }
@@ -316,8 +359,27 @@ export default function FollowUpCompletionModal({
         await onSaveEdits?.({
           followUpResult,
           completionNote,
-          // Absent unless a result was chosen — see `willComplete`.
-          complete: willComplete ? body : undefined,
+          /*
+            The decision and everything it produced, on a closed chase only.
+            Sent whole rather than as a diff: the server owns the transition
+            (raise, move or cancel the replacement) and a form that decided
+            which of those to do would be a second copy of that rule.
+          */
+          correction: isCorrecting
+            ? {
+              decision,
+              deferredUntil: decision === 'DEFER' ? deferredUntil : undefined,
+              nextTitle: decision === 'NEXT_ACTION' || decision === 'DEFER'
+                ? nextTitle : undefined,
+              nextDescription: decision === 'NEXT_ACTION' || decision === 'DEFER'
+                ? nextDescription : undefined,
+              nextDueDate: decision === 'NEXT_ACTION' ? nextDueDate : undefined,
+              nextAssignedToName: decision === 'NEXT_ACTION' || decision === 'DEFER'
+                ? (nextAssignee || undefined) : undefined,
+              nextPriority: decision === 'NEXT_ACTION' || decision === 'DEFER'
+                ? nextPriority : undefined,
+            }
+            : undefined,
           action: {
             title: actionTitle,
             description: actionDescription,
@@ -326,20 +388,12 @@ export default function FollowUpCompletionModal({
             priority: actionPriority,
           },
           /*
-            Only when the chase actually raised one that is still open. There
-            is nothing to write otherwise, and inventing a next action from an
-            empty form is how a second one comes to exist.
+            The replacement is **not** written from here any more. It used to be
+            a separate `tasksApi.update`, which moved its due date and left the
+            proforma's own deferral column behind — the two halves of one date
+            disagreeing. It travels inside `correction` now, so the server
+            writes both in one transaction.
           */
-          next: editing?.next
-            ? {
-                taskId: editing.next.taskId,
-                title: nextTitle,
-                description: nextDescription,
-                dueDate: nextDueDate,
-                assignedToName: nextAssignee,
-                priority: nextPriority,
-              }
-            : undefined,
         });
       } else await onSubmit(body);
     } catch (err) {
@@ -359,7 +413,7 @@ export default function FollowUpCompletionModal({
         <div className="px-5 py-4 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>
             <h3 className="text-sm font-bold text-slate-800">
-              {isEditingAction ? 'ویرایش پیگیری'
+              {isEditingAction ? 'ویرایش اقدام پیگیری'
                 : isCorrecting ? 'ویرایش نتیجه پیگیری'
                 : 'ثبت نتیجه پیگیری'}
             </h3>
@@ -442,34 +496,27 @@ export default function FollowUpCompletionModal({
           )}
 
           {/*
-            The result, on every shape of this form.
-
-            It was hidden while editing an open chase, on the reasoning that no
-            call had happened — true of the record, and it made «ویرایش» a
-            different and smaller form than the one the same card's tick opens.
-            Here it is simply *optional*: leave it and the button saves the
-            corrections, choose one and the button goes on to complete the
-            follow-up exactly as the tick does.
+            Editing an open chase records nothing: there has been no call yet,
+            and a result box on a form for «what should be done next» is a blank
+            completion form wearing the word «ویرایش».
           */}
+          {!isEditingAction && (
           <div>
             <label className="block text-[11px] font-bold text-slate-600 mb-1">
-              نتیجه پیگیری{' '}
-              {isEditingAction
-                ? <span className="font-normal text-slate-400">(اختیاری)</span>
-                : <span className="text-rose-500">*</span>}
+              نتیجه پیگیری <span className="text-rose-500">*</span>
             </label>
             <SearchableSelect
               value={followUpResult}
               onChange={setFollowUpResult}
               options={options.map((o) => ({ value: o, label: o }))}
               placeholder="-- انتخاب کنید --"
-              required={!isEditingAction}
+              required
             />
             <p className="text-[10px] text-slate-400 mt-1">
               این فهرست در تنظیمات قابل ویرایش است و «دلیل باخت» نیست.
-              {isEditingAction && ' تا وقتی نتیجه‌ای انتخاب نشود، هیچ پیگیری‌ای بسته نمی‌شود.'}
             </p>
           </div>
+          )}
 
           {/*
             The question, asked only when the result actually implies an
@@ -480,7 +527,7 @@ export default function FollowUpCompletionModal({
             call knows. Declining leaves the proforma exactly as it was, which
             is what happened before this existed.
           */}
-          {suggested && !outcomeIsTerminal && !isCorrecting && (
+          {suggested && !outcomeIsTerminal && !isEditing && (
             <div className="border border-sky-200 bg-sky-50/70 rounded-xl p-3.5 space-y-2.5">
               <p className="text-[11px] font-bold text-sky-900 leading-relaxed">
                 این نتیجه یعنی تکلیف پیش‌فاکتور روشن شده. وضعیت تجاری آن را هم به
@@ -573,6 +620,7 @@ export default function FollowUpCompletionModal({
             </div>
           )}
 
+          {!isEditingAction && (
           <div>
             <label className="block text-[11px] font-bold text-slate-600 mb-1">یادداشت</label>
             <textarea
@@ -584,6 +632,7 @@ export default function FollowUpCompletionModal({
               id="follow-up-note"
             />
           </div>
+          )}
 
           {/*
             «مرحله بعد چه باشد؟» is not a question that can be re-answered.
@@ -594,27 +643,33 @@ export default function FollowUpCompletionModal({
           */}
           {isCorrecting && (
             <p className="text-[10px] text-slate-500 bg-slate-50 border border-slate-150 rounded-xl p-2.5 leading-relaxed">
-              {editing?.next
-                ? 'این پیگیری قبلاً ثبت شده است. اقدام انجام‌شده، نتیجه و اقدام بعدی همگی اینجا قابل ویرایش‌اند.'
-                : 'این پیگیری قبلاً ثبت شده و اقدام بعدی بازی ندارد؛ اقدام انجام‌شده و نتیجه‌ی آن قابل ویرایش است.'}
-              {' '}تصمیم پیگیری، تعیین وضعیت تجاری و ساخت اقدام بعدیِ تازه دوباره انجام نمی‌شود.
+              {decisionIsEditable
+                ? 'این پیگیری قبلاً ثبت شده است. اقدام انجام‌شده، نتیجه، تصمیم و تاریخ آن، و اقدام بعدی همگی'
+                  + ' اینجا قابل اصلاح‌اند. تنها چیزی که دوباره پرسیده نمی‌شود «تعیین وضعیت تجاری پیش‌فاکتور»'
+                  + ' است، چون تاریخ فروشی را که رتبه‌بندی ارزش مشتری از رویش حساب می‌کند جابه‌جا می‌کند.'
+                : 'نتیجه تجاری این پیش‌فاکتور نهایی شده است، پس تصمیم پیگیری قابل تغییر نیست؛'
+                  + ' نتیجه و یادداشت ثبت‌شده قابل اصلاح‌اند.'}
             </p>
           )}
 
           {isEditingAction && (
             <p className="text-[10px] text-slate-500 bg-slate-50 border border-slate-150 rounded-xl p-2.5 leading-relaxed">
-              {willComplete
-                ? 'با زدن دکمه، اول تغییرات این اقدام ذخیره می‌شود و بعد نتیجه روی همین پیگیری ثبت'
-                  + ' می‌گردد — همان کاری که دکمهٔ تیک روی کارت انجام می‌دهد.'
-                : 'این پیگیری هنوز باز است. می‌توانید فقط خودِ اقدام را اصلاح کنید، یا همین‌جا نتیجهٔ'
-                  + ' تماس را هم ثبت کنید؛ تا وقتی نتیجه‌ای انتخاب نشده، چیزی بسته نمی‌شود.'}
+              این پیگیری هنوز باز است و نتیجه‌ای برایش ثبت نشده. اینجا خودِ اقدام ویرایش می‌شود؛
+              برای ثبت نتیجه، روی همین کارت دکمهٔ تیک را بزنید.
             </p>
           )}
 
-          {!isCorrecting && (
+          {/*
+            Asked on a completion, and asked again on a correction — which is
+            the whole of what was missing. A chase recorded as a deferral with
+            the wrong date could not be corrected anywhere, because nothing
+            stores the decision and the task is closed.
+          */}
+          {(!isEditing || decisionIsEditable) && (
           <div>
             <span className="block text-[11px] font-bold text-slate-600 mb-2">
-              مرحله بعد چه باشد؟ <span className="text-rose-500">*</span>
+              {isCorrecting ? 'تصمیم ثبت‌شده' : 'مرحله بعد چه باشد؟'}{' '}
+              <span className="text-rose-500">*</span>
             </span>
             <div className="grid grid-cols-1 gap-2">
               {DECISIONS.map((d) => {
@@ -627,7 +682,15 @@ export default function FollowUpCompletionModal({
                  * the call where the customer confirms the purchase is the call
                  * after which no next action is needed.
                  */
-                const disabled = d.value === 'TERMINAL' && !outcomeIsTerminal && !settleOutcome;
+                /*
+                  Correcting, there is no settlement to unlock it with: the
+                  question is deliberately not re-asked, so «بدون اقدام بعدی»
+                  can only be chosen when the outcome already says the sale is
+                  over. `correctionRefusalReason` refuses it either way.
+                */
+                const disabled = d.value === 'TERMINAL'
+                  && !outcomeIsTerminal
+                  && !(isCorrecting ? false : settleOutcome);
                 return (
                   <button
                     key={d.value}
@@ -653,12 +716,14 @@ export default function FollowUpCompletionModal({
           </div>
           )}
 
-          {((isCorrecting && !!editing?.next) || (!isCorrecting && decision === 'NEXT_ACTION')) && (
+          {((decisionIsEditable && (decision === 'NEXT_ACTION' || decision === 'DEFER'))
+            || (isCorrecting && !decisionIsEditable && !!editing?.next)
+            || (!isEditing && decision === 'NEXT_ACTION')) && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-50 border border-slate-100 rounded-xl p-3">
               {isCorrecting && (
                 <div className="md:col-span-3 flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
                   <CalendarClock size={12} className="text-sky-500" />
-                  اقدام بعدی
+                  {decision === 'DEFER' ? 'پیگیری مجددِ همین پیش‌فاکتور' : 'اقدام بعدی'}
                 </div>
               )}
               <div className="md:col-span-3">
@@ -684,15 +749,22 @@ export default function FollowUpCompletionModal({
                   id="next-action-description"
                 />
               </div>
-              <div>
-                <ShamsiDatePicker
-                  label="تاریخ اقدام بعدی"
-                  value={nextDueDate}
-                  onChange={setNextDueDate}
-                  required
-                  compact
-                />
-              </div>
+              {/*
+                On a deferral the replacement's date *is* the deferral date —
+                one field, drawn once. Two boxes for one day is how the
+                proforma's column and the task's due date came to disagree.
+              */}
+              {decision !== 'DEFER' && (
+                <div>
+                  <ShamsiDatePicker
+                    label="تاریخ اقدام بعدی"
+                    value={nextDueDate}
+                    onChange={setNextDueDate}
+                    required
+                    compact
+                  />
+                </div>
+              )}
               <div>
                 <label className="block text-[11px] font-bold text-slate-600 mb-1">مسئول پیگیری</label>
                 <SearchableSelect
@@ -720,7 +792,7 @@ export default function FollowUpCompletionModal({
             </div>
           )}
 
-          {!isCorrecting && decision === 'DEFER' && (
+          {(!isEditing || decisionIsEditable) && decision === 'DEFER' && (
             <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
               <ShamsiDatePicker
                 label="پیگیری مجدد در تاریخ"
@@ -758,9 +830,7 @@ export default function FollowUpCompletionModal({
             id="follow-up-submit"
             className="px-5 py-2 text-xs font-bold bg-sky-500 hover:bg-sky-600 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition"
           >
-            {saving ? 'در حال ثبت…'
-              : willComplete ? 'ذخیره و ثبت نتیجه'
-                : isEditing ? 'ذخیره تغییرات' : 'ثبت نتیجه'}
+            {saving ? 'در حال ثبت…' : isEditing ? 'ثبت ویرایش' : 'ثبت نتیجه'}
           </button>
         </div>
       </div>

@@ -468,6 +468,109 @@ export function stateAfterDecision(decision: FollowUpDecision): FollowUpState {
   return "OPEN";
 }
 
+/**
+ * Which decision a *recorded* follow-up was completed with.
+ *
+ * Nothing stores it — `completeFollowUp` spends the decision immediately and
+ * keeps only its consequences — so correcting one has to read it back out of
+ * the state it left behind. That is exact, and it is the inverse of
+ * `stateAfterDecision` plus one bit: DEFER and NO_RESPONSE each own a state of
+ * their own, while NEXT_ACTION and TERMINAL both leave the quotation OPEN and
+ * are told apart by whether a replacement is still being chased. `test:rules`
+ * holds the round trip over every decision.
+ *
+ * Deriving it rather than adding a column is the rule this codebase keeps: a
+ * second copy of «what was decided» is how two records come to disagree, and
+ * this one would be written once and read months later.
+ */
+export function recordedDecision(facts: {
+  followUpState?: FollowUpState | string | null;
+  /** True while the chase raised a replacement that is still open. */
+  hasOpenNextAction: boolean;
+}): FollowUpDecision {
+  const state = normalizeFollowUpState(facts.followUpState);
+  if (state === "DEFERRED") return "DEFER";
+  if (state === "NO_RESPONSE") return "NO_RESPONSE";
+  return facts.hasOpenNextAction ? "NEXT_ACTION" : "TERMINAL";
+}
+
+/**
+ * Correcting what a completed follow-up recorded.
+ *
+ * Every field a person filled in on the completion form is history somebody
+ * may need to fix — a result picked in a hurry, a note, and above all **the
+ * decision and its date**: «خرید به تعویق افتاد تا فلان تاریخ» with the wrong
+ * date had no correction anywhere in the application, which is how this was
+ * reported. Only the database could change it.
+ *
+ * `decision` is **absent = «not edited»**, the same distinction `syncChildren`
+ * draws, because most corrections are a typo in the note and re-sending a
+ * decision that was merely displayed would rewrite the quotation's state on
+ * every save.
+ *
+ * The settlement is deliberately not here. A correction may move what is
+ * *chasing* a quotation; it may not re-date a sale the customer-value ranking
+ * counts from, which is why a settled quotation accepts a corrected result and
+ * refuses a changed decision.
+ */
+export interface FollowUpCorrectionInput {
+  followUpResult?: string | null;
+  completionNote?: string | null;
+  /** Absent means the recorded decision stands. */
+  decision?: FollowUpDecision | null;
+  /** DEFER: the day the customer asked to be left until. */
+  deferredUntil?: string | null;
+  /** NEXT_ACTION: the replacement, created if the correction needs one. */
+  nextTitle?: string | null;
+  nextDescription?: string | null;
+  nextDueDate?: string | null;
+  nextAssignedToName?: string | null;
+  nextPriority?: string | null;
+}
+
+/**
+ * The same rule the correcting form runs and the server re-runs.
+ *
+ * The form must not be able to submit what the server would refuse, and the
+ * server must never trust that it did not — n8n drives the same endpoint.
+ */
+export function correctionRefusalReason(
+  input: FollowUpCorrectionInput,
+  ctx: { recorded: FollowUpDecision; outcomeIsTerminal: boolean },
+): string | null {
+  if (!String(input.followUpResult ?? "").trim()) return "ثبت نتیجه پیگیری الزامی است.";
+
+  const decision = input.decision ?? ctx.recorded;
+  /*
+   * A settled sale is corrected in its words and not in its plan.
+   *
+   * Moving the decision here would put a chase back on a won, lost or
+   * cancelled quotation — which `reactivateFollowUp` refuses outright — or
+   * take one off a document the sweep has already closed. The result and the
+   * note stay editable, because those are what somebody actually mistypes.
+   */
+  if (ctx.outcomeIsTerminal && decision !== ctx.recorded) {
+    return "نتیجه تجاری این پیش‌فاکتور نهایی شده است؛ فقط نتیجه و یادداشت پیگیری قابل اصلاح‌اند.";
+  }
+  /*
+   * «بدون اقدام بعدی» is not something a correction may *choose*: it says the
+   * sale is already over, and that is the outcome's answer rather than this
+   * form's. Recorded, it stands; picked here on a live quotation it would
+   * leave the document with nothing chasing it and nothing saying why.
+   */
+  if (decision === "TERMINAL" && !ctx.outcomeIsTerminal) {
+    return "تا وقتی نتیجه تجاری پیش‌فاکتور نهایی نشده، «بدون اقدام بعدی» انتخاب‌شدنی نیست.";
+  }
+  if (decision === "DEFER" && !String(input.deferredUntil ?? "").trim()) {
+    return "تاریخ پیگیری مجدد را وارد کنید.";
+  }
+  if (decision === "NEXT_ACTION") {
+    if (!String(input.nextTitle ?? "").trim()) return "عنوان اقدام بعدی الزامی است.";
+    if (!String(input.nextDueDate ?? "").trim()) return "تاریخ اقدام بعدی الزامی است.";
+  }
+  return null;
+}
+
 /* -------------------------------- timeline -------------------------------- */
 
 /**

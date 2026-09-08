@@ -16,11 +16,12 @@ import { logAction } from "./auditService";
 import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
 import {
   AUTO_CLOSE_NOTE, CHASEABLE_OUTCOMES, FINISHED_TASK_STATUSES, FollowUpCompletionInput,
-  FollowUpHealth, completionRefusalReason, followUpActivityText, followUpHealthOf,
-  healthRank, isTerminalOutcome, normalizeFollowUpState, stateAfterDecision,
+  FollowUpCorrectionInput, FollowUpHealth, completionRefusalReason, correctionRefusalReason,
+  followUpActivityText, followUpHealthOf, healthRank, isTerminalOutcome,
+  normalizeFollowUpState, recordedDecision, stateAfterDecision,
   type SettleOutcome,
 } from "../../utils/salesFollowUp";
-import { TASK_TODO } from "../../utils/workBoard";
+import { TASK_CANCELLED, TASK_TODO } from "../../utils/workBoard";
 import { resolveAssignee } from "./assigneeLookup";
 
 /**
@@ -793,41 +794,49 @@ async function buildQueueRows(
  * Otherwise somebody could be given a follow-up and be unable to open it.
  */
 /**
- * Corrects what was recorded on a chase that is already closed.
+ * Corrects what a completed follow-up recorded — including its decision.
  *
- * A follow-up and an ordinary task are different things, so pressing «ویرایش»
- * on one has to open the form it was filled in on — and for a closed one there
- * is exactly one thing left to correct: what the customer said, and the note
- * about the call. Somebody picked «تماس گرفته شد؛ پاسخی نداد» when they meant
- * «قیمت رقیب را دارند», and the only way back was the database.
+ * A follow-up spends its decision the moment it is completed: the state moves,
+ * the replacement is raised, and the decision itself is stored nowhere. So a
+ * chase recorded as «موکول به تاریخ دیگر» with the wrong date could not be
+ * corrected **anywhere in the application** — not the date, not the decision,
+ * not even by re-completing it, since the task is closed. Only the database
+ * could change it. That is what was reported. This is the one correction path.
  *
- * Deliberately **not** `completeFollowUp` with different arguments. That
- * function closes a task, moves the proforma's follow-up state, raises the
- * replacement and may settle the sale — every one of which has already
- * happened here, and re-running any of it would raise a second next action or
- * re-date a sale the customer-value ranking counts from. This writes two
- * columns and nothing else.
+ * Still deliberately **not** `completeFollowUp` with different arguments, and
+ * the difference is exact: that function *closes* a chase and may *settle a
+ * sale*, and neither may happen twice. This never touches the closed chase's
+ * status and never writes an outcome — so a sale keeps the date the ranking
+ * counts from, whatever is corrected here.
  *
- * The next action is not editable from here either: it is its own task, on its
- * own card, with its own edit box. One record to change rather than two.
+ * What it does own is the decision's **consequences**, because those are the
+ * decision: the quotation's follow-up state, its deferral date, and the
+ * replacement task. They move together in one transaction or the queue, the
+ * board column and the printed date disagree — which they already did, since
+ * the deferral is stored both on the proforma (what the queue reads) and as
+ * the replacement's due date (what «در انتظار مشتری» reads), and correcting one
+ * left the other behind.
  */
-export async function updateFollowUpResult(
+export async function correctFollowUp(
   taskId: string,
-  input: { followUpResult?: string | null; completionNote?: string | null },
+  input: FollowUpCorrectionInput,
   user: AuthUser,
+  todayJalali: string,
 ): Promise<
-  | { ok: true; taskId: string }
+  | { ok: true; taskId: string; nextTaskId: string | null }
   | { ok: false; reason: string; code: "not-found" | "forbidden" | "invalid" }
 > {
   const db = getDb();
   const task = await db.task.findUnique({
     where: { id: taskId },
     select: {
-      id: true, taskKind: true, status: true, assignedToUserId: true, createdByUserId: true,
+      id: true, taskKind: true, status: true, priority: true,
+      assignedToUserId: true, assignedToName: true, createdByUserId: true,
+      relatedToType: true, relatedToId: true,
       followUpResult: true, completionNote: true,
     },
   });
-  if (!task || task.taskKind !== "SALES_FOLLOW_UP") {
+  if (!task || task.taskKind !== "SALES_FOLLOW_UP" || !task.relatedToId) {
     return { ok: false, reason: "پیگیری فروش یافت نشد.", code: "not-found" };
   }
   /*
@@ -853,31 +862,164 @@ export async function updateFollowUpResult(
     };
   }
 
-  const followUpResult = toNullableString(input.followUpResult, 200);
-  if (!followUpResult) {
-    return { ok: false, reason: "ثبت نتیجه پیگیری الزامی است.", code: "invalid" };
-  }
+  const proformaId = task.relatedToId;
+  const proforma = await db.proforma.findUnique({
+    where: { id: proformaId },
+    select: {
+      id: true, proformaNumber: true, followUpState: true, deferredUntilJalali: true,
+      project: { select: { salesExpert: true } },
+    },
+  });
+  if (!proforma) return { ok: false, reason: "پیش‌فاکتور یافت نشد.", code: "not-found" };
 
-  await db.task.update({
-    where: { id: taskId },
-    data: { followUpResult, completionNote: toNullableString(input.completionNote) },
+  /*
+   * The replacement this chase raised, if it is still being chased.
+   *
+   * It is what tells NEXT_ACTION from TERMINAL — both leave the quotation OPEN
+   * — so it is read before the decision is derived rather than after.
+   */
+  const openNext = await db.task.findFirst({
+    where: {
+      taskKind: "SALES_FOLLOW_UP", relatedToType: "proforma", relatedToId: proformaId,
+      id: { not: taskId }, ...OPEN_TASK,
+    },
+    select: { id: true, priority: true, assignedToUserId: true, assignedToName: true },
+    orderBy: { createdAt: "desc" },
   });
 
-  await afterCommit("follow-up result correction", async () => {
+  const outcome = await outcomeOf(db as unknown as Prisma.TransactionClient, proformaId);
+  const recorded = recordedDecision({
+    followUpState: proforma.followUpState,
+    hasOpenNextAction: !!openNext,
+  });
+  // The same pure rule the form runs, re-run here: n8n drives this endpoint too.
+  const refusal = correctionRefusalReason(input, {
+    recorded,
+    outcomeIsTerminal: isTerminalOutcome(outcome),
+  });
+  if (refusal) return { ok: false, reason: refusal, code: "invalid" };
+
+  const decision = input.decision ?? recorded;
+  const followUpResult = toNullableString(input.followUpResult, 200)!;
+  const completionNote = toNullableString(input.completionNote);
+  const before = { ...task, followUpState: proforma.followUpState, deferredUntilJalali: proforma.deferredUntilJalali };
+
+  /*
+   * The assignee is resolved from a *name*, exactly as the completion does it:
+   * an exact string comparison is not the same question (ی/ي, ک/ك, the two
+   * digit sets), and a miss used to leave a chase assigned on the card and
+   * belonging to nobody.
+   */
+  const assigneeName = toNullableString(input.nextAssignedToName, 200)
+    ?? openNext?.assignedToName
+    ?? proforma.project?.salesExpert
+    ?? task.assignedToName;
+
+  const nextTaskId = await db.$transaction(async (tx) => {
+    await tx.task.update({
+      where: { id: taskId },
+      data: { followUpResult, completionNote },
+    });
+
+    let replacementId: string | null = openNext?.id ?? null;
+
+    if (decision === "NEXT_ACTION" || decision === "DEFER") {
+      /*
+       * The deferral lives in two places by design — the proforma's own column,
+       * which the queue and the health badge read, and the replacement's due
+       * date, which is what puts the card in «در انتظار مشتری» on the board —
+       * so a correction writes both or the screens contradict each other.
+       */
+      const dueDate = decision === "DEFER"
+        ? String(input.deferredUntil)
+        : String(input.nextDueDate);
+      const title = decision === "DEFER"
+        ? (toNullableString(input.nextTitle, 200) ?? `پیگیری مجدد پیش‌فاکتور ${proforma.proformaNumber}`)
+        : String(input.nextTitle);
+      const assignee = await resolveAssignee(
+        assigneeName, openNext?.assignedToUserId ?? task.assignedToUserId, tx,
+      );
+      const fields = {
+        title,
+        description: input.nextDescription != null ? String(input.nextDescription) : undefined,
+        priority: toNullableString(input.nextPriority, 20) ?? openNext?.priority ?? task.priority,
+        ...expandDateFields({ dueDate }, ["dueDate"]),
+        assignedToUserId: assignee.assignedToUserId,
+        assignedToName: assignee.assignedToName || task.assignedToName,
+      };
+
+      if (replacementId) {
+        await tx.task.update({ where: { id: replacementId }, data: fields });
+      } else {
+        /*
+         * A correction that *adds* a chase — «I recorded this as unanswered and
+         * it was not». There is nothing else to raise one with: the closed task
+         * cannot be completed a second time, and `reactivateFollowUp` would
+         * make a chase unrelated to the answer being corrected.
+         */
+        const created = await tx.task.create({
+          data: {
+            ...fields,
+            description: fields.description ?? completionNote ?? "",
+            taskKind: "SALES_FOLLOW_UP",
+            relatedToType: "proforma",
+            relatedToId: proformaId,
+            relatedToName: proforma.proformaNumber,
+            status: TASK_TODO,
+          } as Prisma.TaskUncheckedCreateInput,
+        });
+        replacementId = created.id;
+      }
+    } else if (replacementId) {
+      /*
+       * «عدم پاسخ» and «بدون اقدام بعدی» both mean nothing is chasing this
+       * quotation, so a replacement raised by the decision being corrected is
+       * **cancelled** rather than completed: it was never done, it should never
+       * have been raised. A conditional `updateMany` so two overlapping saves
+       * cancel it once.
+       */
+      await tx.task.updateMany({
+        where: { id: replacementId, ...OPEN_TASK },
+        data: {
+          status: TASK_CANCELLED,
+          ...expandDateFields({ completedAt: todayJalali }, ["completedAt"]),
+        },
+      });
+      replacementId = null;
+    }
+
+    await tx.proforma.update({
+      where: { id: proformaId },
+      data: {
+        followUpState: stateAfterDecision(decision),
+        // Cleared unless this decision *is* the deferral, exactly as on the
+        // completion: a quotation being actively chased must not keep a date
+        // saying it is parked.
+        ...(decision === "DEFER"
+          ? expandDateFields({ deferredUntil: String(input.deferredUntil) }, ["deferredUntil"])
+          : { deferredUntil: null, deferredUntilJalali: null }),
+      },
+    });
+
+    return replacementId;
+  });
+
+  await afterCommit("follow-up correction", async () => {
+    const moved = decision !== recorded ? ` — تصمیم: ${recorded} ← ${decision}` : "";
     await logAction(
       {
         action: "UPDATE",
         module: "وظایف",
         entityId: taskId,
-        description: `اصلاح نتیجه پیگیری: ${task.followUpResult ?? "-"} ← ${followUpResult}`,
-        beforeState: task,
+        description: `اصلاح پیگیری: ${task.followUpResult ?? "-"} ← ${followUpResult}${moved}`,
+        beforeState: before,
       },
       user,
-      getTodayShamsi(),
+      todayJalali,
     );
   });
 
-  return { ok: true, taskId };
+  return { ok: true, taskId, nextTaskId };
 }
 
 export async function followUpRowForTask(
