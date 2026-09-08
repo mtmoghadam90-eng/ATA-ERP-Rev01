@@ -430,10 +430,23 @@ export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
     { value: "currency", label: "ارز سند" },
     { value: "finalAmount", label: "مبلغ نهایی" },
   ],
-  project: [{ value: "status", label: "وضعیت پروژه", options: PROJECT_STATUSES }],
+  project: [
+    { value: "status", label: "وضعیت پروژه", options: PROJECT_STATUSES },
+    /*
+     * The stage, which is what a dwell rule on a project asks about: «۷ روز در
+     * انتظار پاسخ تأمین‌کننده مانده» is this field plus the
+     * `project_stage_changed` schedule. The status beside it is the sales
+     * outcome and does not move when goods clear customs, which is exactly why
+     * the two are separate columns.
+     */
+    { value: "stage", label: "مرحله پروژه", options: PROJECT_STAGES },
+  ],
   purchaseOrder: [
     { value: "status", label: "وضعیت سفارش خرید", options: PURCHASE_ORDER_STATUSES },
   ],
   supplierInquiry: [{ value: "isWinner", label: "آفر برنده است", options: ["true", "false"] }],
   delivery: [{ value: "actualDeliveryDateJalali", label: "تاریخ تحویل قطعی" }],
+  afterSalesService: [
+    { value: "status", label: "وضعیت خدمات پس از فروش", options: AFTER_SALES_STATUSES },
+  ],
 };
