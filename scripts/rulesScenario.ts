@@ -34,6 +34,9 @@ import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr } from "../src/dateUtils";
 import { escalationFor, escalationIsConfigured } from "../src/utils/workflowEscalation";
 import {
+  FIELD_LEVEL_PERMISSIONS, PERMISSION_FLAGS, defaultPermissions,
+} from "../src/utils/permissions";
+import {
   DEFAULT_STUCK_THRESHOLDS, FALLBACK_STUCK_DAYS, PO_STAGE_PAIRS, STUCK_SECTIONS,
   STUCK_STATE_LISTS, dwellDays, overdueRatio, severityFor, thresholdFor,
 } from "../src/utils/stuckWork";
@@ -80,6 +83,7 @@ import { TASK_SORTABLE, laneTimestamps } from "../src/server/services/taskServic
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
 import { lossReasonRefusal } from "../src/server/services/projectService";
 import type { ERPSettings } from "../src/types";
+import { SCREEN_PERMISSION_ALIAS } from "../src/types";
 import { buildTaskWhere } from "../src/server/services/taskService";
 import type { AuthUser } from "../src/server/auth";
 import type { ListQuery } from "../src/server/listing";
@@ -6409,10 +6413,19 @@ head("Tasks: a board shows your own work, not the company's");
   const hook = readFileSync("src/api/useTaskList.ts", "utf8");
   ok("the board opens on what was given to me", /scope: "toMe",/.test(hook));
 
-  const users = readFileSync("src/components/UsersView.tsx", "utf8");
-  ok("the permission can be granted in Settings", /id: 'tasksAll'/.test(users));
+  /*
+   * It has to be grantable, and the users screen reads `PERMISSION_FLAGS` now —
+   * so the question is asked of the catalogue rather than of that file's text,
+   * which is both the truth and one less thing to rewrite when the screen moves.
+   */
+  ok("the permission can be granted in Settings",
+    PERMISSION_FLAGS.some((f) => f.id === "tasksAll"));
+  // Two halves: the edit form reads a stored value strictly, and a brand-new
+  // account starts without it. The second used to be a hand-typed object.
   ok("and is unticked unless explicitly held",
-    /tasksAll: user\.permissions\?\.tasksAll === true/.test(users));
+    /tasksAll: user\.permissions\?\.tasksAll === true/
+      .test(readFileSync("src/components/UsersView.tsx", "utf8"))
+    && (defaultPermissions("user") as Record<string, boolean>).tasksAll === false);
 
   /*
    * Referrals were already right, and must stay so.
@@ -9875,6 +9888,121 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
 }
 
 /* ==========================================================================
+ * A module nobody can grant is a module nobody can configure
+ * ========================================================================== */
+/*
+ * The rule, stated as a rule: **whenever the modules change, the users screen
+ * changes with them.** It was the sixth hand-typed copy of that list, and
+ * unlike the other five the drift was not cosmetic — a module missing from it
+ * cannot be granted or denied at all.
+ *
+ * Two were missing when this was written. «کارهای متوقف» had just been added
+ * and never reached the screen, which is how it was reported. And
+ * «بسته‌بندی و تحویل کالا» had been missing since it was built — so that module
+ * and «خدمات پس از فروش», which borrows its key, had never once been
+ * configurable by anybody, and nothing said so.
+ *
+ * `PERMISSION_FLAGS` is derived from `APP_MODULES` now, so «a module added is
+ * configurable on the same commit» is a property rather than something to
+ * remember. These checks are what keep it one.
+ */
+head("Permissions: every module is configurable");
+{
+  const flagIds = new Set(PERMISSION_FLAGS.map((f) => f.id));
+  const aliased = new Set(Object.keys(SCREEN_PERMISSION_ALIAS));
+
+  /*
+   * Direction one: every module that has a key of its own is offered. This is
+   * the check that would have caught both faults.
+   */
+  {
+    const missing = APP_MODULES
+      .filter((m) => !aliased.has(m.id) && !flagIds.has(m.id))
+      .map((m) => m.id);
+    ok("every module with a key of its own can be granted or denied",
+      missing.length === 0, missing);
+  }
+
+  /*
+   * Direction two: nothing is offered that is not a module or one of the three
+   * deliberate field-level flags. A switch writing a key nothing reads is the
+   * same fault wearing the opposite hat — `referrals` was exactly that, a
+   * ticked box for a module that no longer exists.
+   */
+  {
+    const known = new Set<string>([
+      ...APP_MODULES.map((m) => m.id),
+      ...FIELD_LEVEL_PERMISSIONS.map((f) => f.id),
+    ]);
+    const stray = PERMISSION_FLAGS.map((f) => f.id).filter((id) => !known.has(id));
+    ok("...and nothing is offered that is not one", stray.length === 0, stray);
+    ok("no switch survives for the retired referrals module", !flagIds.has("referrals"));
+  }
+
+  /*
+   * A screen that borrows another module's key is deliberately **not** offered:
+   * a switch for it would write a key `KEY_PERMISSION` never consults.
+   */
+  {
+    const offered = [...aliased].filter((id) => flagIds.has(id));
+    ok("a screen with no key of its own gets no switch", offered.length === 0, offered);
+    // ...and the module it borrows *is* offered, or neither screen is reachable.
+    for (const borrowed of Object.values(SCREEN_PERMISSION_ALIAS)) {
+      ok(`«${borrowed}» is offered, since a screen borrows it`, flagIds.has(borrowed as string));
+    }
+  }
+
+  /* Every flag says what granting it does; a blank switch explains nothing. */
+  {
+    const blank = PERMISSION_FLAGS.filter((f) => !f.name.trim() || !f.desc.trim()).map((f) => f.id);
+    ok("every switch is named and described", blank.length === 0, blank);
+  }
+
+  /*
+   * The defaults were written out twice by hand beside the list, so a module
+   * added reached neither — and the admin branch silently left it **off** for
+   * the one role that is meant to have everything.
+   */
+  {
+    const admin = defaultPermissions("admin") as Record<string, boolean>;
+    const off = PERMISSION_FLAGS.map((f) => f.id).filter((id) => admin[id] !== true);
+    ok("«مدیر سیستم» gets every flag", off.length === 0, off);
+
+    const fresh = defaultPermissions("user") as Record<string, boolean>;
+    // A module is on by default — the same answer `hasPermission` gives for an
+    // absent key, so a fresh account and an older one see the same thing.
+    ok("a new account gets the ordinary modules", fresh.stuckWork === true
+      && fresh.packagingDelivery === true && fresh.customers === true);
+    // Administrative screens are not ordinary modules.
+    ok("...but not settings or users", fresh.settings === false && fresh.users === false);
+    /*
+     * And none of the three field-level flags, each read strictly on the
+     * server: absent denies, so a ticked box on a new account would be the
+     * screen disagreeing with what the route would actually allow.
+     */
+    for (const flag of FIELD_LEVEL_PERMISSIONS) {
+      ok(`...and not «${flag.id}», which is read strictly`,
+        fresh[flag.id] === false);
+    }
+  }
+
+  /* The screen must read the catalogue rather than growing a seventh copy. */
+  {
+    const src = readFileSync("src/components/UsersView.tsx", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+    ok("the users screen reads the catalogue",
+      /const moduleList = PERMISSION_FLAGS/.test(src));
+    ok("...and its defaults come from there too",
+      /defaultPermissions\('user'\)/.test(src) && /defaultPermissions\('admin'\)/.test(src));
+    // The shapes that drifted: a list and an object typed out by hand.
+    ok("no hand-typed module list survives in it",
+      !/id: 'purchaseOrders', name:/.test(src));
+    ok("...and no hand-typed permission object either",
+      !/dashboard: true,[\s\S]{0,80}customers: true,/.test(src));
+  }
+}
+
+/* ==========================================================================
  * «کارهای متوقف» — what is sitting still, across the chain
  * ========================================================================== */
 /*
@@ -10067,9 +10195,19 @@ head("Stuck work: the dwell report");
     ok("it writes nothing at all",
       !/\.(create|update|updateMany|delete|deleteMany|upsert)\(/.test(svc));
 
+    /*
+     * Gated twice, and the outer gate was missing at first. The module is in
+     * `APP_MODULES`, so the sidebar and the route guard were already hiding the
+     * screen for an account denied it while this endpoint went on answering —
+     * a screen hidden in the browser whose API still replies is a gate that is
+     * not one. The inner gate (each section through its own module) is what the
+     * checks above hold.
+     */
     const route = strip(readFileSync("src/server/routes/stuckWork.ts", "utf8"));
-    ok("the route needs only a session, since the service gates each section",
-      /deps\.requireAuth/.test(route) && !/requireKeyAccess/.test(route));
+    ok("opening the report needs the module it belongs to",
+      /requireKeyAccess\(req, res, "erp_stuck_work", "read"\)/.test(route));
+    ok("...and that key names the module's own permission",
+      KEY_PERMISSION.erp_stuck_work === "stuckWork");
   }
 
   /* ----------------------- the screen and its settings --------------------- */
