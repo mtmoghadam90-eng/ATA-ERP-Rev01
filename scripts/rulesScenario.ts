@@ -203,6 +203,9 @@ import {
 } from "../src/utils/salesFollowUp";
 import { copiedProformaDates } from "../src/utils/proformaCopy";
 import {
+  MIN_COLUMN_PERCENT, columnsAreDefault, normalizeColumnWidths, resizeColumns,
+} from "../src/utils/columnWidths";
+import {
   RESULT_PURCHASE_CONFIRMED, RESULT_PURCHASE_CANCELLED, RESULT_LOST_TO_COMPETITOR,
   settlementCategoryPrompt,
 } from "../src/utils/salesFollowUp";
@@ -11061,13 +11064,13 @@ head("Stuck work: the dwell report");
     ok("the width list was found at all", widths.length > 0, widths);
     eq("...and they are a whole table", widths.reduce((a, b) => a + b, 0), 100);
     /*
-     * One entry per header, counted out of the header row itself — bounded by
-     * the row's own `</tr>`, since a JSX comment marking the filter row is the
-     * one thing the stripper above has already removed.
+     * The headers are drawn from a list rather than written out, so «one `<col>`
+     * per column» is now held between the two lists below rather than by
+     * counting `<th>`s — there is one, inside the map.
      */
     const head = view.slice(view.indexOf("<colgroup>"));
     const headers = (head.slice(0, head.indexOf("</tr>")).match(/<th /g) ?? []).length;
-    eq("...one for each column", widths.length, headers);
+    eq("...drawn from one mapped header rather than eight literals", headers, 1);
     /*
      * With the width fixed, a long unbroken value overflows its cell instead of
      * widening the column, so the two free-text ones say what to do about it.
@@ -11079,6 +11082,100 @@ head("Stuck work: the dwell report");
     // on most rows.
     ok("the actions no longer wrap",
       !/flex flex-wrap items-center justify-center gap-1\.5/.test(view));
+
+    /* -- and each person may set them for themselves -- */
+    /*
+     * The defaults decide the layout for somebody who has never touched it; the
+     * widths a person drags are theirs, in this browser, through the same
+     * `viewPreferences` the filters and the sort order already use. Not a
+     * column on the account: it is how one person likes to look at a screen,
+     * not worth a write to a database shared with Report Server, and losing it
+     * costs one drag.
+     */
+    ok("the widths come from the person's own preferences",
+      /readViewPreferences\('projects\.view'/.test(view)
+      && /normalizeColumnWidths\(/.test(view));
+    ok("...and the colgroup draws those rather than the defaults",
+      /\{columnWidths\.map\(\(w, i\) => \(/.test(view));
+    /*
+     * Written when the drag *ends*. A resize is fifty updates a second and
+     * `localStorage` is synchronous on the main thread.
+     */
+    ok("...stored on release, not on every pointer move",
+      /onDone=\{\(\) => \{[\s\S]{0,200}storeColumnWidths\(current\)/.test(view));
+    /*
+     * One list for the headers and one for the widths would be two orders to
+     * keep in step, and a colgroup one `<col>` out shifts every column after it.
+     */
+    const labels = view.slice(view.indexOf("const PROJECT_COLUMN_LABELS = ["));
+    const labelCount = (labels.slice(0, labels.indexOf("]")).match(/^\s*"/gm) ?? []).length;
+    eq("the headers and the widths are one order", labelCount, widths.length);
+    // Offered only once something has moved; a button that usually does nothing
+    // teaches the reader it says nothing.
+    ok("the reset appears only when a width has been changed",
+      /!columnsAreDefault\(columnWidths, PROJECT_COLUMN_WIDTHS\)/.test(view));
+  }
+
+  /* -- the resize arithmetic, which keeps the table whole -- */
+  {
+    const start = [8, 25, 11, 8, 14, 9, 12, 13];
+    const total = (a: readonly number[]) => a.reduce((x, y) => x + y, 0);
+    /*
+     * **The pair moves, never one column.** Widening one and leaving the rest
+     * is what a naïve implementation does and it makes the total drift from 100
+     * on every drag — after a dozen the grid is no longer a whole table and
+     * `table-fixed` distributes the remainder on its own.
+     */
+    const grown = resizeColumns(start, 0, 5);
+    eq("a boundary moved gives the neighbour's width to this one", grown[0], 13);
+    eq("...and takes exactly that from the neighbour", grown[1], 20);
+    eq("...so the table stays whole", total(grown), 100);
+    /*
+     * Both floors bite, and the drag stops against them rather than being
+     * refused: a column dragged to nothing is one whose own grip can never be
+     * grabbed again, so the person would have to reset the whole row.
+     */
+    const squashed = resizeColumns(start, 0, -50);
+    eq("a drag past this column's own floor stops at it", squashed[0], MIN_COLUMN_PERCENT);
+    eq("...still whole", total(squashed), 100);
+    const crowded = resizeColumns(start, 0, 50);
+    eq("a drag past the neighbour's floor stops at that", crowded[1], MIN_COLUMN_PERCENT);
+    eq("...still whole", total(crowded), 100);
+    // The last column has nothing on its far side to take width from.
+    eq("the last boundary is not a boundary",
+      JSON.stringify(resizeColumns(start, start.length - 1, 5)), JSON.stringify(start));
+    /*
+     * And it holds over a long session, which is the only version of this claim
+     * that means anything: a rule that drifts by a hundredth per drag is fine
+     * once and wrong by the afternoon.
+     */
+    let acc = [...start];
+    for (let i = 0; i < 500; i++) acc = resizeColumns(acc, i % 7, (i % 2 ? 1 : -1) * 3.7);
+    ok("500 drags leave it exactly whole", Math.abs(total(acc) - 100) < 1e-9, total(acc));
+    ok("...and nothing below the floor", Math.min(...acc) >= MIN_COLUMN_PERCENT, acc);
+
+    /*
+     * A stored list is vetted rather than trusted. `readViewPreferences`
+     * compares `typeof`, and `typeof []` is «object» — an array is precisely
+     * the shape that check cannot see into, so this is where it is seen into.
+     * A half-understood list is discarded whole: a grid drawn from one is worse
+     * than the defaults, and one drag puts it back.
+     */
+    for (const [what, stored] of [
+      ["a list from a build with other columns", [10, 90]],
+      ["a total that has drifted", [8, 25, 11, 8, 14, 9, 12, 40]],
+      ["a string among the numbers", [8, "25", 11, 8, 14, 9, 12, 13]],
+      ["something that is not an array", { 0: 8 }],
+      ["nothing at all", undefined],
+    ] as const) {
+      eq(`${what} falls back to the defaults`,
+        JSON.stringify(normalizeColumnWidths(stored, start)), JSON.stringify(start));
+    }
+    eq("a good list is kept",
+      JSON.stringify(normalizeColumnWidths([10, 23, 11, 8, 14, 9, 12, 13], start)),
+      JSON.stringify([10, 23, 11, 8, 14, 9, 12, 13]));
+    ok("the defaults are recognised as untouched", columnsAreDefault(start, start));
+    ok("...and a moved boundary is not", !columnsAreDefault(grown, start));
   }
 
   /* -- and it is written where it can move -- */
