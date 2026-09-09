@@ -65,6 +65,7 @@ import { oversizedUploadReason } from '../utils/uploadLimits';
 import { readViewPreferences, writeViewPreferences } from '../utils/viewPreferences';
 import {
   MIN_COLUMN_PERCENT, columnsAreDefault, normalizeColumnWidths, resizeColumns,
+  tableMinWidthPx,
 } from '../utils/columnWidths';
 import ColumnResizeHandle from './ColumnResizeHandle';
 
@@ -126,6 +127,35 @@ const PROJECT_COLUMN_LABELS = [
   "وضعیت پروژه",
   "مرحله جاری",
   "عملیات",
+] as const;
+
+/**
+ * The least width, in pixels, at which each column is still worth reading.
+ *
+ * `tableMinWidthPx` turns these plus the widths in force into the table's
+ * `min-width`, which is the only thing that ever produces the sideways
+ * scrollbar. It replaced a hardcoded `min-w-[1280px]` — and hardcoding it is
+ * what made both of the reported faults: dragging the columns narrower could
+ * not remove the scroll, and «عملیات» sat off the left edge of a 1000px screen
+ * at x=-281 together with the one grip that resizes it, so the last column was
+ * unadjustable in the plainest sense — its handle was not on the screen.
+ *
+ * They are pixels and not percentages because what a column must show does not
+ * scale with the monitor: «ATA-05-38» is nine mono characters wide wherever it
+ * is read. Their sum, 944, is the best case — the width below which no
+ * arrangement of these eight columns fits — and it is reached when the shares
+ * are proportional to the floors, which is a layout a person can actually drag
+ * towards.
+ */
+const PROJECT_COLUMN_MIN_PX = [
+  100, // شماره پروژه — «ATA-05-38», mono and never wrapped
+  160, // نام و مشخصات پروژه — prose, and the one column that may wrap
+  100, // کارفرما / مشتری
+  96,  // ارزش پایپ‌لاین — a figure and its currency
+  130, // تاریخ‌های کلیدی — «label: date» rows
+  92,  // وضعیت پروژه — one pill
+  116, // مرحله جاری — one pill, and the stage names are long
+  150, // عملیات — a labelled button and two icons, on one row
 ] as const;
 
 /**
@@ -3362,7 +3392,25 @@ export default function ProjectsView({
             </button>
           </div>
         )}
-        <div className="overflow-x-auto">
+        {/*
+          The grid is its own scroller, and that is what freezes the header.
+
+          `position: sticky` sticks to the nearest *scrolling* ancestor, and
+          `overflow-x-auto` alone is one: Tailwind sets only `overflow-x`, and
+          CSS computes the other axis from `visible` to `auto`, so this box was
+          already a vertical scroll container — one whose content never
+          overflowed it. A sticky header inside therefore had nothing to stick
+          against and scrolled away with the page, silently. Verified in a real
+          browser both ways round: pinned here, inert with the page scrolling
+          instead.
+
+          So the box scrolls in both directions and is bounded. The cap is in
+          `vh` rather than a `calc` off the header and the toolbar, because
+          those move whenever anything above the grid changes and a stale
+          subtraction shows as a grid that will not reach the bottom of its own
+          card.
+        */}
+        <div className="overflow-auto max-h-[70vh]">
           {/*
             The widths are declared, not negotiated.
 
@@ -3381,14 +3429,36 @@ export default function ProjectsView({
             holds both, because a colgroup one `<col>` short silently shifts
             every column after it.
           */}
-          <table className="w-full text-right border-collapse table-fixed min-w-[1280px]">
+          <table
+            className="w-full text-right border-collapse table-fixed"
+            /*
+              Derived from this person's own widths, never hardcoded: it is the
+              least width at which every column reaches its floor at the share
+              it has been given, so widening a cramped column lowers it and the
+              scrollbar goes of its own accord once their layout genuinely fits.
+            */
+            style={{ minWidth: `${tableMinWidthPx(columnWidths, PROJECT_COLUMN_MIN_PX)}px` }}
+          >
             <colgroup>
               {columnWidths.map((w, i) => (
                 <col key={i} style={{ width: `${w}%` }} />
               ))}
             </colgroup>
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-xs font-bold">
+            {/*
+              Both rows, pinned together with no measurement.
+
+              `position: sticky` on the `<thead>` carries the labels and the
+              column filters as one block; sticking each `<th>` would need the
+              filter row's `top` to be the label row's rendered height, which
+              nothing here knows and which changes with the font.
+
+              The rule beneath it is a `box-shadow` and not the `border-b` it
+              replaced: a collapsed border belongs to the table's own border
+              grid and is not painted with a sticky element, so the header
+              floated over the rows with no line under it.
+            */}
+            <thead className="sticky top-0 z-20 shadow-[inset_0_-1px_0_var(--color-hairline)]">
+              <tr className="bg-slate-50 text-slate-500 text-xs font-bold">
                 {/*
                   Each header carries the grip for its **own** left edge, which
                   in this right-to-left table is the boundary with the column
@@ -3424,8 +3494,17 @@ export default function ProjectsView({
                   </th>
                 ))}
               </tr>
-              {/* Column Filters Row */}
-              <tr className="bg-slate-50/50 border-b border-slate-100">
+              {/*
+                Column Filters Row.
+
+                Opaque, not `bg-slate-50/50`: the header is sticky now, so it is
+                painted over the rows sliding beneath it and a half-transparent
+                fill shows them straight through the boxes somebody is typing
+                into. Its own `border-b` went the same way as the label row's —
+                a collapsed border is not painted with a sticky element — and
+                the `<thead>`'s shadow draws the one rule the block needs.
+              */}
+              <tr className="bg-slate-50">
                 <th className="p-2">
                   <input
                     type="text"
