@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  REMINDER_REPEATS, REMINDER_REPEAT_LABELS, ReminderRepeat, describeReminder, occurrenceKey,
+  REMINDER_REPEATS, REMINDER_REPEAT_LABELS, ReminderRepeat, describeReminder,
+  normalizeRepeat, occurrenceKey, repeatOccursOn, splitAnchor,
 } from '../utils/reminderRepeat';
 import { X, ChevronRight, ChevronLeft, Bell, Calendar, User, Clock } from 'lucide-react';
 import { Task } from '../types';
@@ -109,7 +110,79 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
   const [newReminderTime, setNewReminderTime] = useState('');
   /* Offered only once a time is set — a period with no hour has nothing to repeat. */
   const [newReminderRepeat, setNewReminderRepeat] = useState<ReminderRepeat | ''>('');
+  /*
+   * The reminder editor, which lives here and nowhere else now.
+   *
+   * The task form used to carry it, and it does not belong there: a task
+   * already reaches its owner's board on its own day, while a reminder is a
+   * different thing — something that should speak at an hour, possibly again
+   * next week. Taking it off that form without putting it here would have
+   * stranded every reminder already set, with no way to change one or switch it
+   * off, so the two halves are one change.
+   */
+  const [editingReminderFor, setEditingReminderFor] = useState<string | null>(null);
+  const [editTime, setEditTime] = useState('');
+  const [editRepeat, setEditRepeat] = useState<ReminderRepeat | ''>('');
+  const [editUntil, setEditUntil] = useState('');
   const [saving, setSaving] = useState(false);
+
+  /** Opens the editor over what the task already carries, series first. */
+  const openReminderEditor = (t: Task) => {
+    const anchor = splitAnchor(t.reminderAnchor);
+    setEditingReminderFor(t.id);
+    setEditTime(anchor?.time || t.reminderTime || '09:00');
+    setEditRepeat(normalizeRepeat(t.reminderRepeat) ?? '');
+    setEditUntil(t.reminderRepeatUntilJalali || '');
+  };
+
+  /*
+   * Saves the reminder onto the task, and nothing else.
+   *
+   * A partial write: the title, the assignee and the status of a task are not
+   * this screen's business, and posting a whole record read a moment ago would
+   * write back whatever it held over anything changed since.
+   */
+  const saveReminder = async (t: Task, day: string) => {
+    setSaving(true);
+    try {
+      await tasksApi.update(t.id, {
+        reminderEnabled: true,
+        reminderDate: day,
+        reminderTime: editTime,
+        reminderRepeat: editRepeat || null,
+        reminderAnchor: editRepeat ? occurrenceKey(day, editTime) : null,
+        reminderRepeatUntilJalali: editRepeat ? (editUntil || null) : null,
+      });
+      setEditingReminderFor(null);
+      await load();
+    } catch (err) {
+      console.error('Failed to save reminder:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /* Switching one off clears the series with it — a period with no reminder is
+     two columns disagreeing about one record. */
+  const clearReminder = async (t: Task) => {
+    setSaving(true);
+    try {
+      await tasksApi.update(t.id, {
+        reminderEnabled: false,
+        reminderDate: null,
+        reminderTime: null,
+        reminderRepeat: null,
+        reminderAnchor: null,
+        reminderRepeatUntilJalali: null,
+      });
+      setEditingReminderFor(null);
+      await load();
+    } catch (err) {
+      console.error('Failed to clear reminder:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const selectedDateStr = selectedDay
     ? `${currentYear}/${pad2(currentMonthIndex + 1)}/${pad2(selectedDay)}`
@@ -228,9 +301,29 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
   };
 
   // Get tasks for a specific year, month, and day
+  /*
+   * What a day holds: the work due on it **and** the reminders that speak on it.
+   *
+   * A repeating reminder's stored date stays on the day it was first set, so a
+   * calendar reading `dueDate` alone would show «هفتگی» once and never again —
+   * which makes the repeat unfindable and, now that the task form no longer
+   * edits reminders, uneditable. This is also simply what a calendar is for.
+   *
+   * One reader for the day cell and the list, so the dot on a day and what
+   * opening it shows cannot disagree.
+   */
   const getTasksForDay = (d: number) => {
     const targetDateStr = `${currentYear}/${String(currentMonthIndex + 1).padStart(2, '0')}/${String(d).padStart(2, '0')}`;
-    return myTasks.filter(t => t.dueDate === targetDateStr);
+    return myTasks.filter((t) => {
+      if (t.dueDate === targetDateStr) return true;
+      if (!t.reminderEnabled) return false;
+      if (t.reminderDate === targetDateStr) return true;
+      const anchor = splitAnchor(t.reminderAnchor);
+      const until = String(t.reminderRepeatUntilJalali ?? '').trim();
+      if (!anchor || !normalizeRepeat(t.reminderRepeat)) return false;
+      if (until && targetDateStr > until) return false;
+      return repeatOccursOn(anchor.date, normalizeRepeat(t.reminderRepeat), targetDateStr);
+    });
   };
 
   // Select priority dot color
@@ -472,7 +565,83 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
                           </span>
                         </div>
                       )}
+                      {/*
+                        The only place a reminder is set, changed or switched
+                        off. It used to be a block on the task form, which is
+                        the wrong home: a task already reaches its owner's board
+                        on its own day, while a reminder is a different thing —
+                        an hour, and possibly an hour again next week.
+                      */}
+                      <button
+                        type="button"
+                        data-reminder-edit={t.id}
+                        onClick={() => (editingReminderFor === t.id
+                          ? setEditingReminderFor(null)
+                          : openReminderEditor(t))}
+                        className="flex items-center gap-1 text-sky-600 hover:text-sky-800 font-bold mr-auto"
+                      >
+                        <Bell size={10} />
+                        {t.reminderEnabled ? 'ویرایش یادآور' : 'افزودن یادآور'}
+                      </button>
                     </div>
+
+                    {editingReminderFor === t.id && (
+                      <div className="space-y-2 bg-amber-50/50 border border-amber-100 rounded-lg p-2 mt-1">
+                        <div className="flex gap-2">
+                          <input
+                            type="time"
+                            value={editTime}
+                            onChange={(e) => setEditTime(e.target.value)}
+                            data-reminder-time
+                            className="w-24 border border-slate-200 rounded px-2 py-1 text-[11px] bg-white outline-none font-mono"
+                            dir="ltr"
+                          />
+                          <select
+                            value={editRepeat}
+                            onChange={(e) => setEditRepeat((e.target.value || '') as ReminderRepeat | '')}
+                            data-reminder-repeat
+                            className="flex-1 border border-slate-200 rounded px-2 py-1 text-[11px] bg-white outline-none"
+                          >
+                            <option value="">بدون تکرار</option>
+                            {REMINDER_REPEATS.map((r) => (
+                              <option key={r} value={r}>{REMINDER_REPEAT_LABELS[r]}</option>
+                            ))}
+                          </select>
+                        </div>
+                        {/* Offered only once there is a series to end. */}
+                        {editRepeat && (
+                          <input
+                            type="text"
+                            value={editUntil}
+                            onChange={(e) => setEditUntil(e.target.value)}
+                            placeholder="تکرار تا تاریخ (اختیاری) ۱۴۰۵/۱۲/۲۹"
+                            data-reminder-until
+                            className="w-full border border-slate-200 rounded px-2 py-1 text-[11px] bg-white outline-none font-mono"
+                            dir="ltr"
+                          />
+                        )}
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={saving || !editTime}
+                            onClick={() => { void saveReminder(t, selectedDateStr); }}
+                            className="flex-1 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white rounded text-[11px] font-bold transition"
+                          >
+                            ذخیره یادآور
+                          </button>
+                          {t.reminderEnabled && (
+                            <button
+                              type="button"
+                              disabled={saving}
+                              onClick={() => { void clearReminder(t); }}
+                              className="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 rounded text-[11px] font-bold transition"
+                            >
+                              حذف
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Inline Status Changer */}
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 mt-1 bg-slate-50/50 p-1.5 rounded-lg border border-slate-200/40">
