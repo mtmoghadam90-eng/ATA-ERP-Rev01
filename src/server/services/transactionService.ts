@@ -9,6 +9,7 @@ import { toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
+import { afterCommit } from "../afterCommit";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 
 /**
@@ -465,6 +466,32 @@ export async function updateTransaction(
     user,
     todayJalali,
   );
+
+  /*
+   * Only the creation was ever reported, so a document later confirmed or
+   * annulled fired nothing and no rule could react to it.
+   *
+   * On a real move only, like every other status trigger here: an ordinary edit
+   * that never touches the status is not an event, and firing on every save
+   * would make «وقتی سند مالی باطل شد …» arrive on every corrected typo.
+   */
+  if (before.status !== transaction.status) {
+    await afterCommit("transaction_status_change", () => processWorkflowRules(
+      "transaction_status_change",
+      {
+        transactionId: transaction.id,
+        transactionNumber: transaction.documentNumber,
+        type: transaction.type,
+        amountRIYAL: Number(transaction.amountRial ?? 0),
+        oldStatus: before.status,
+        newStatus: transaction.status,
+        status: transaction.status,
+        projectId: transaction.projectId,
+        customerId: transaction.customerId,
+      },
+      user,
+    ));
+  }
 
   await logProjectFact(
     {

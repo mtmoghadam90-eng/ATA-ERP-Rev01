@@ -9,6 +9,8 @@ import { notifyModuleResponsible, notifyUser } from "./notificationService";
 import { TASK_TODO } from "../../utils/workBoard";
 import { resolveAssignee as sharedResolveAssignee } from "./assigneeLookup";
 import { notifyStaffBySms } from "./staffNotifications";
+import { afterCommit } from "../afterCommit";
+import { processWorkflowRules } from "./workflowService";
 
 /**
  * The project's own milestones and their automation rules.
@@ -122,6 +124,34 @@ export async function runMilestoneRules(
     select: { id: true, name: true, code: true, milestoneRules: true },
   });
   if (!project) return 0;
+
+  /*
+   * The workflow engine hears about it too, and **before** the early return
+   * below.
+   *
+   * These are two different engines: the rules parsed underneath belong to *this
+   * project* and are rebuilt by hand on every job, while a workflow rule is
+   * written once for the company. So «هر وقت این مرحله در هر پروژه‌ای بسته شد …»
+   * had no way to be said at all — and a project carrying no milestone rules of
+   * its own returns below, which is exactly the project such a rule is for.
+   *
+   * One firing per milestone rather than one for the batch: a rule conditions on
+   * `milestoneTitle`, and a single event naming several would match on whichever
+   * happened to be first.
+   */
+  for (const done of completed) {
+    await afterCommit("project_milestone_completed", () => processWorkflowRules(
+      "project_milestone_completed",
+      {
+        milestoneId: done.id,
+        milestoneTitle: done.name,
+        projectId: project.id,
+        projectName: project.name,
+        projectCode: project.code,
+      },
+      user,
+    ));
+  }
 
   const rules = parseMilestoneRules(project.milestoneRules);
   if (rules.length === 0) return 0;

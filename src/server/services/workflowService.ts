@@ -1,4 +1,5 @@
 import { getDb } from "../db";
+import { TRIGGER_ENTITY, WorkflowTriggerType } from "../../utils/workflowTriggers";
 import { AuthUser } from "../auth";
 import { loadSettings } from "../settings";
 import { getTodayShamsi, addDaysToShamsi } from "../../dateUtils";
@@ -212,12 +213,36 @@ export async function executeRule(
          * engine for every rule, and because the answer has to be read at the
          * moment of writing to be worth anything.
          */
-        if (config.skipIfOpenSameKind && related.relatedToId) {
-          const open = await db.task.findFirst({
-            where: {
+        /*
+         * What «the same reminder» means, when there is a link and when there
+         * is not.
+         *
+         * The link is the first answer and stays the first answer: two rules
+         * chasing one project should not each raise a card. But `related` is
+         * null for a record that belongs to no project — a general warehouse
+         * purchase order is the reported case — and the old check simply
+         * *skipped itself* there, so every firing added another card with
+         * nothing saying why. The fallback asks the narrower question this rule
+         * can always answer: «have I already raised one on this very record?»
+         */
+        const sameWork = related.relatedToId
+          ? {
               taskKind,
               relatedToType: related.relatedToType,
               relatedToId: related.relatedToId,
+            }
+          : enrichedPayload.entityId
+            ? {
+                taskKind,
+                workflowRuleId: rule.id ?? null,
+                workflowEntityId: String(enrichedPayload.entityId),
+              }
+            : null;
+
+        if (config.skipIfOpenSameKind && sameWork) {
+          const open = await db.task.findFirst({
+            where: {
+              ...sameWork,
               status: { notIn: [...FINISHED_TASK_STATUSES] },
             },
             select: {
@@ -463,6 +488,23 @@ export async function executeRule(
  */
 export async function enrichPayload(payload: any, triggerType: string, db: any = getDb()): Promise<any> {
   const enriched = { ...payload };
+
+  /*
+   * Which record this rule is firing on.
+   *
+   * Written **after** the spread and only when the caller has not said, exactly
+   * as the scheduled sweep does with `payloadIdKey` — a proforma payload carries
+   * its own `projectId`, and «which project does this belong to» is a different
+   * question from «which record fired this». Without it, a rule on a purchase
+   * order with no project raised a task carrying no record at all, which
+   * `closeWhenResolved` could never retire and `skipIfOpenSameKind` could never
+   * see.
+   */
+  const subject = TRIGGER_ENTITY[triggerType as WorkflowTriggerType];
+  if (subject && !enriched.entityId && enriched[subject.idKey]) {
+    enriched.entityType = enriched.entityType ?? subject.entityType;
+    enriched.entityId = String(enriched[subject.idKey]);
+  }
 
   /*
    * 0. The proforma first, because it names the project.

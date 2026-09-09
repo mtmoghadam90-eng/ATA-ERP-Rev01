@@ -12,6 +12,7 @@ import {
 import { syncProjectStatus } from "./proformaService";
 import { scheduleCustomerValueRecalculation } from "./customerValueRecalc";
 import { afterCommit } from "../afterCommit";
+import { processWorkflowRules } from "./workflowService";
 import { logAction } from "./auditService";
 import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
 import {
@@ -357,6 +358,31 @@ export async function completeFollowUp(
    * unable to fail the write, like every other caller.
    */
   if (settleOutcome) scheduleCustomerValueRecalculation();
+
+  /*
+   * The chase is closed — a «پایان کار» the engine could not hear.
+   *
+   * Deliberately not the same event as the outcome moving: «تأیید نهایی خرید»
+   * settles the sale and already fires `proforma_outcome_change` through
+   * `syncProjectStatus` above, while a deferral, a silence and an ordinary next
+   * action settle nothing and fired **nothing at all** — so a rule like «اگر
+   * پیگیری با نتیجهٔ فلان بسته شد، به مدیر فروش اطلاع بده» had no event to hang
+   * on. `settledOutcome` travels with it so a rule can ask for either half.
+   */
+  await afterCommit("follow_up_completed", () => processWorkflowRules(
+    "follow_up_completed",
+    {
+      taskId,
+      proformaId: proforma.id,
+      proformaNumber: proforma.proformaNumber,
+      projectId: proforma.projectId,
+      followUpResult: followUpResult ?? null,
+      decision,
+      settledOutcome: settleOutcome ?? null,
+      nextTaskId: result.nextTaskId ?? null,
+    },
+    user,
+  ));
 
   // The timeline and the audit entry are after-commit work: neither may fail a
   // completion that has already happened.
