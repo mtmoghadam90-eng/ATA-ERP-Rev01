@@ -66,6 +66,11 @@ export interface TaskRow {
   reminderEnabled: boolean;
   reminderDateJalali: string | null;
   reminderTime: string | null;
+  /** The series, its end, and the occurrence already answered. */
+  reminderRepeat: string | null;
+  reminderAnchor: string | null;
+  reminderRepeatUntilJalali: string | null;
+  reminderAckedFor: string | null;
   createdAt: string;
   /** The task card draws a custom-fields block from these. */
   customValues: string | null;
@@ -101,6 +106,9 @@ export interface TaskWriteInput {
   reminderEnabled?: boolean;
   reminderDate?: string | null;
   reminderTime?: string | null;
+  reminderRepeat?: string | null;
+  reminderAnchor?: string | null;
+  reminderRepeatUntilJalali?: string | null;
   customValues?: unknown;
 }
 
@@ -157,6 +165,13 @@ export const tasksApi = {
     api.put<{ task: TaskRow }>(`/api/tasks/${id}`, input).then((r) => r.task),
 
   remove: (id: string) => api.delete<Record<string, never>>(`/api/tasks/${id}`),
+  /**
+   * «دیدم» — one occurrence answered, so it does not come back today and the
+   * next one in the series still does. Named rather than flagged, and not in the
+   * route's writable list, so only this call can write it.
+   */
+  ackReminder: (id: string, occurrence: string) =>
+    api.post<{ success: boolean }>(`/api/tasks/${id}/reminder-ack`, { occurrence }),
 };
 
 /* ------------------------------- adapter ------------------------------- */
@@ -207,6 +222,10 @@ export function rowToTask(row: TaskRow): Task {
     reminderEnabled: row.reminderEnabled,
     reminderDate: row.reminderDateJalali ?? undefined,
     reminderTime: row.reminderTime ?? undefined,
+    reminderRepeat: row.reminderRepeat ?? undefined,
+    reminderAnchor: row.reminderAnchor ?? undefined,
+    reminderRepeatUntilJalali: row.reminderRepeatUntilJalali ?? undefined,
+    reminderAckedFor: row.reminderAckedFor ?? undefined,
     // The card draws a custom-fields block from these. Tasks have no detail
     // endpoint at all — the row *is* the record here, so a field the adapter
     // drops is gone for good.
@@ -238,5 +257,8 @@ export function taskToWriteInput(
     reminderEnabled: task.reminderEnabled,
     reminderDate: task.reminderDate ?? null,
     reminderTime: task.reminderTime ?? null,
+    reminderRepeat: task.reminderRepeat ?? null,
+    reminderAnchor: task.reminderAnchor ?? null,
+    reminderRepeatUntilJalali: task.reminderRepeatUntilJalali ?? null,
   };
 }

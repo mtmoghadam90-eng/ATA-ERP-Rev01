@@ -759,6 +759,8 @@ export const flattenTasks = (tasks: any[]): Row[] =>
     assigned_to: s(t.assignedTo),
     reminder_enabled: b(t.reminderEnabled),
     reminder_date: s(t.reminderDate),
+    // A repeating reminder reported as a single date reads as a one-off.
+    reminder_repeat: s(t.reminderRepeat),
     custom_values: customJson(t.customValues),
   }));
 

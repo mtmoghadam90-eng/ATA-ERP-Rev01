@@ -31,7 +31,7 @@ import {
   discountKeepFraction, netUnitPrice, summarizeHistory,
 } from "../src/utils/inquiryPriceHistory";
 import { toNumber } from "../src/server/childSync";
-import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr } from "../src/dateUtils";
+import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr, getShamsiDaysDifference } from "../src/dateUtils";
 import { escalationFor, escalationIsConfigured } from "../src/utils/workflowEscalation";
 import {
   FIELD_LEVEL_PERMISSIONS, PERMISSION_FLAGS, defaultPermissions,
@@ -202,6 +202,10 @@ import {
   versionRefusalReason, impliedSettlement,
 } from "../src/utils/salesFollowUp";
 import { copiedProformaDates } from "../src/utils/proformaCopy";
+import {
+  REMINDER_REPEATS, dueReminderAt, nextOccurrenceOnOrAfter, normalizeRepeat,
+  occurrenceKey, repeatOccursOn, shamsiMonthLength,
+} from "../src/utils/reminderRepeat";
 import {
   MAX_TABLE_MIN_PX, MIN_COLUMN_PERCENT, columnsAreDefault, normalizeColumnWidths,
   resizeColumns, tableMinWidthPx,
@@ -13160,6 +13164,195 @@ head("Competitors: who we lose to, and by how much");
   // server rather than read off the campaign: a segment is a live query.
   ok("the send confirmation re-counts the recipients",
     tab.includes("previewSegment") && tab.includes("SendConfirmation"));
+}
+
+/* ===================== a reminder that comes back ======================== */
+{
+  /*
+   * The reported ask was «برای یادآوری در تقویم، تکرار هم بذار», and the first
+   * thing the code said back was larger: `GET /api/tasks/reminders` was
+   * registered *after* `GET /api/tasks/:id`, so Express matched the second with
+   * the id «reminders», `getTask` answered 404 without calling `next()`, and the
+   * browser's poll — which checks `response.ok` and returns quietly — saw
+   * nothing. **No reminder had ever fired**, and nothing on any screen said so.
+   * Verified against a real Express router before it was moved.
+   */
+  const routes = readFileSync("src/server/routes/tasks.ts", "utf8");
+  const remindersAt = routes.indexOf('app.get("/api/tasks/reminders"');
+  const ackAt = routes.indexOf('app.post("/api/tasks/:id/reminder-ack"');
+  const byIdAt = routes.indexOf('app.get("/api/tasks/:id"');
+  ok("the reminders route is registered before /api/tasks/:id",
+    remindersAt > -1 && byIdAt > -1 && remindersAt < byIdAt, { remindersAt, byIdAt });
+  ok("...and so is the acknowledgement",
+    ackAt > -1 && ackAt < byIdAt, { ackAt, byIdAt });
+  /*
+   * The acknowledgement has one writer. In the route's `WRITABLE` list a form
+   * posting a whole record — which this one does — would silence the very
+   * occurrence the dialog was opened to answer.
+   */
+  ok("the acknowledgement is not writable through the ordinary update",
+    !/"reminderAckedFor"/.test(routes));
+  ok("...while the series and its end are",
+    /"reminderRepeat", "reminderAnchor", "reminderRepeatUntilJalali"/.test(routes));
+
+  /* -- the calendar arithmetic, against this application's own converter -- */
+  /*
+   * A period is named rather than counted in days because the first six Shamsi
+   * months are 31 days, the next five 30 and Esfand 29 or 30. The month lengths
+   * are held against `gregorianToJalali` rather than against a second table:
+   * a private copy of the leap rule is one more thing to drift.
+   */
+  for (const y of [1403, 1404, 1405, 1406, 1407, 1408]) {
+    const summed = Array.from({ length: 12 }, (_, i) => shamsiMonthLength(y, i + 1))
+      .reduce((a, b) => a + b, 0);
+    eq(`${y}'s months add up to its real length`,
+      summed, getShamsiDaysDifference(`${y}/01/01`, `${y + 1}/01/01`));
+  }
+  ok("1403 and 1408 are the leap years in that range, and only those",
+    [1403, 1404, 1405, 1406, 1407, 1408].filter((y) => shamsiMonthLength(y, 12) === 30)
+      .join(",") === "1403,1408");
+
+  // Weekly is every seventh day and nothing between, for a whole year.
+  {
+    const anchor = "1404/07/12";
+    let hits = 0, wrong = 0;
+    for (let i = 0; i <= 365; i++) {
+      const on = repeatOccursOn(anchor, "WEEKLY", addDaysToShamsi(anchor, i));
+      if (on) hits++;
+      if (on !== (i % 7 === 0)) wrong++;
+    }
+    eq("weekly falls on every seventh day and no other", wrong, 0);
+    eq("...53 times over 366 days", hits, 53);
+  }
+
+  /*
+   * **Monthly on the 31st clamps, it does not skip.** A strict reading would
+   * drop Mehr through Esfand, so «ماهانه» would fire six months a year — and
+   * somebody who asks for a monthly reminder means every month.
+   */
+  {
+    const anchor = "1404/01/31";
+    const got: string[] = [];
+    for (let i = 0; i <= 400; i++) {
+      const d = addDaysToShamsi(anchor, i);
+      if (repeatOccursOn(anchor, "MONTHLY", d)) got.push(d);
+    }
+    eq("monthly fires exactly once per month across the span",
+      new Set(got.map((d) => d.slice(0, 7))).size, got.length);
+    ok("...clamping into a 30-day month", got.includes("1404/07/30"), got);
+    ok("...and into Esfand of a common year", got.includes("1404/12/29"), got);
+  }
+  // Yearly on 30 Esfand of a leap year survives the four common ones after it.
+  ok("yearly clamps 30 Esfand into a common year",
+    repeatOccursOn("1403/12/30", "YEARLY", "1404/12/29")
+    && repeatOccursOn("1403/12/30", "YEARLY", "1408/12/30"));
+  ok("a series never reaches back before its own anchor",
+    !repeatOccursOn("1404/07/12", "WEEKLY", "1404/07/05"));
+
+  /*
+   * The next occurrence is the *first* one on or after the day asked about —
+   * held over a sweep rather than by example, because «the first» is the whole
+   * claim and an off-by-one period would still look right in one case.
+   */
+  for (const rule of REMINDER_REPEATS) {
+    let broken = "";
+    for (let i = 0; i < 30 && !broken; i++) {
+      const from = addDaysToShamsi("1404/03/07", i * 3);
+      const next = nextOccurrenceOnOrAfter("1404/03/07", rule, from);
+      if (!next) { broken = `answered null at ${from}`; break; }
+      if (next < from) { broken = `${next} is before ${from}`; break; }
+      if (!repeatOccursOn("1404/03/07", rule, next)) { broken = `${next} is not an occurrence`; break; }
+      for (let k = 0; ; k++) {
+        const d = addDaysToShamsi(from, k);
+        if (d >= next) break;
+        if (repeatOccursOn("1404/03/07", rule, d)) { broken = `skipped ${d}`; break; }
+      }
+    }
+    eq(`${rule}: the next occurrence is the first one on or after`, broken, "");
+  }
+  ok("past its end there is no next one",
+    nextOccurrenceOnOrAfter("1404/07/12", "WEEKLY", "1404/09/01", "1404/08/01") === null);
+
+  /* ----------------------- what a reminder owes, and when ------------------ */
+  const weekly = {
+    reminderEnabled: true, reminderRepeat: "WEEKLY", reminderAnchor: "1404/07/12 09:00",
+  };
+  const key = (d: string, t: string) => occurrenceKey(d, t);
+  eq("owed at its own minute",
+    dueReminderAt(weekly, "1404/07/19", "09:00"), key("1404/07/19", "09:00"));
+  /*
+   * **The catch-up is the half that makes repeating work at all.** The poll used
+   * to match the current minute exactly, so a machine opened at 09:05 never saw
+   * the 09:00 reminder — for a weekly one, missed every week for ever.
+   */
+  ok("still owed later the same day", dueReminderAt(weekly, "1404/07/19", "23:59") !== null);
+  ok("not owed before its minute", dueReminderAt(weekly, "1404/07/19", "08:59") === null);
+  /*
+   * **And bounded to that day.** Reading every past reminder as still owed would
+   * empty months of history onto the first person to sign in after this ships —
+   * the fault the dwell migration avoided by backfilling nothing.
+   */
+  ok("yesterday's one-off has gone, so nobody is flooded on the first sign-in",
+    dueReminderAt(
+      { reminderEnabled: true, reminderDateJalali: "1404/07/18", reminderTime: "09:00" },
+      "1404/07/19", "09:30",
+    ) === null);
+  ok("a one-off dated today still works with no repeat at all",
+    dueReminderAt(
+      { reminderEnabled: true, reminderDateJalali: "1404/07/19", reminderTime: "09:00" },
+      "1404/07/19", "09:30",
+    ) === key("1404/07/19", "09:00"));
+
+  /*
+   * **The acknowledgement names an occurrence, never a flag.** A boolean would
+   * silence the series after its first appearance, which is the feature.
+   */
+  ok("an answered occurrence goes quiet",
+    dueReminderAt({ ...weekly, reminderAckedFor: "1404/07/19 09:00" }, "1404/07/19", "10:00") === null);
+  ok("...and the next one still speaks",
+    dueReminderAt({ ...weekly, reminderAckedFor: "1404/07/19 09:00" }, "1404/07/26", "10:00")
+      === key("1404/07/26", "09:00"));
+
+  /*
+   * **A snooze moves this occurrence and never the series.** That is why the
+   * anchor is stored apart from `reminderDate`/`reminderTime` — the same shape
+   * as a holiday keeping what the source said beside the date in force.
+   */
+  const snoozed = { ...weekly, reminderDateJalali: "1404/07/19", reminderTime: "14:00" };
+  ok("a snooze within the day is silent until the moved time",
+    dueReminderAt(snoozed, "1404/07/19", "13:59") === null);
+  eq("...speaks at it", dueReminderAt(snoozed, "1404/07/19", "14:00"), key("1404/07/19", "14:00"));
+  eq("...and leaves the series where it was",
+    dueReminderAt(snoozed, "1404/07/26", "09:00"), key("1404/07/26", "09:00"));
+  ok("a snooze into tomorrow silences today",
+    dueReminderAt({ ...weekly, reminderDateJalali: "1404/07/20", reminderTime: "09:00" },
+      "1404/07/19", "23:00") === null);
+
+  /* Absent is off, in every direction, so nothing on disk changes behaviour. */
+  ok("a disabled reminder is silent",
+    dueReminderAt({ ...weekly, reminderEnabled: false }, "1404/07/19", "10:00") === null);
+  ok("no anchor and no date is silent rather than guessed",
+    dueReminderAt({ reminderEnabled: true, reminderRepeat: "WEEKLY" }, "1404/07/19", "10:00") === null);
+  ok("a period this build does not know reads as off, not as something invented",
+    normalizeRepeat("FORTNIGHTLY") === null
+    && dueReminderAt({ ...weekly, reminderRepeat: "FORTNIGHTLY" }, "1404/07/19", "10:00") === null);
+  ok("past its end it is silent",
+    dueReminderAt({ ...weekly, reminderRepeatUntilJalali: "1404/07/20" }, "1404/07/26", "09:00") === null);
+
+  /*
+   * The form edits the **series**, so re-saving writes the same anchor back
+   * rather than dragging it to wherever the last snooze left the occurrence.
+   */
+  const view = readFileSync("src/components/TasksView.tsx", "utf8");
+  ok("the task form seeds its boxes from the anchor", view.includes("splitAnchor(task.reminderAnchor)"));
+  ok("...and writes the anchor from those same boxes",
+    /reminderAnchor: reminderEnabled && reminderRepeat/.test(view));
+  ok("...clearing it when the repeat is switched off",
+    /reminderRepeat: reminderEnabled \? \(reminderRepeat \|\| null\) : null/.test(view));
+  const cal = readFileSync("src/components/TaskCalendarModal.tsx", "utf8");
+  ok("the calendar's quick-add offers the repeat too", cal.includes("newReminderRepeat"));
+  ok("...anchored on the day and hour chosen there",
+    /occurrenceKey\(selectedDateStr, newReminderTime\)/.test(cal));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

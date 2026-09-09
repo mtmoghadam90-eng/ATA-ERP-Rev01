@@ -21,6 +21,10 @@ import {
 import { Task, Customer, Project, ERPSettings } from '../types';
 import type { User as AppUser } from '../types';
 import { getTodayShamsi } from '../dateUtils';
+import {
+  REMINDER_REPEATS, REMINDER_REPEAT_LABELS, ReminderRepeat, describeReminder,
+  normalizeRepeat, occurrenceKey, splitAnchor,
+} from '../utils/reminderRepeat';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import WorkBoard, { BoardCard } from './WorkBoard';
@@ -436,6 +440,14 @@ export default function TasksView({
   const [assignedTo, setAssignedTo] = useState('');
   const [status, setStatus] = useState<Task['status']>('در حال انجام');
   const [reminderEnabled, setReminderEnabled] = useState(false);
+  /*
+    The series, separate from the occurrence. `reminderDate`/`reminderTime` are
+    *this* occurrence — where a snooze writes — so a repeating reminder's form
+    shows and writes the **anchor** instead, and re-saving therefore puts the
+    same series back rather than dragging it to wherever the last snooze left it.
+  */
+  const [reminderRepeat, setReminderRepeat] = useState<ReminderRepeat | ''>('');
+  const [reminderRepeatUntil, setReminderRepeatUntil] = useState('');
   const [reminderDate, setReminderDate] = useState(getTodayShamsi());
   const [reminderTime, setReminderTime] = useState('09:00');
 
@@ -489,6 +501,8 @@ export default function TasksView({
     setReminderEnabled(false);
     setReminderDate(getTodayShamsi());
     setReminderTime('09:00');
+    setReminderRepeat('');
+    setReminderRepeatUntil('');
     setCustomValues({});
     setNewTaskKind('GENERAL');
     setFollowUpProformaId('');
@@ -536,8 +550,17 @@ export default function TasksView({
     setAssignedTo(task.assignedTo || '');
     setStatus(task.status);
     setReminderEnabled(task.reminderEnabled || false);
-    setReminderDate(task.reminderDate || getTodayShamsi());
-    setReminderTime(task.reminderTime || '09:00');
+    setReminderRepeat(normalizeRepeat(task.reminderRepeat) ?? '');
+    setReminderRepeatUntil(task.reminderRepeatUntilJalali || '');
+    /*
+      The series' own date and time, not this occurrence's. A repeating
+      reminder's `reminderDate` is wherever the last occurrence or snooze left
+      it, so seeding from that and saving again would drag the whole series
+      along behind one snooze.
+    */
+    const anchor = splitAnchor(task.reminderAnchor);
+    setReminderDate(anchor?.date || task.reminderDate || getTodayShamsi());
+    setReminderTime(anchor?.time || task.reminderTime || '09:00');
     setCustomValues(task.customValues || {});
     setShowModal(true);
   };
@@ -631,6 +654,19 @@ export default function TasksView({
       reminderEnabled,
       reminderDate: reminderEnabled ? reminderDate : undefined,
       reminderTime: reminderEnabled ? reminderTime : undefined,
+      /*
+        The anchor is written from the same two boxes, so a repeating reminder's
+        series and its first occurrence agree by construction and re-saving is
+        idempotent. Switching the repeat off clears it — a period of «بدون تکرار»
+        beside a live anchor is two columns disagreeing about one reminder.
+      */
+      reminderRepeat: reminderEnabled ? (reminderRepeat || null) : null,
+      reminderAnchor: reminderEnabled && reminderRepeat
+        ? occurrenceKey(reminderDate, reminderTime)
+        : null,
+      reminderRepeatUntilJalali: reminderEnabled && reminderRepeat
+        ? (reminderRepeatUntil || null)
+        : null,
     };
 
     if (editingTask) {
@@ -1401,9 +1437,18 @@ export default function TasksView({
               </div>
 
               {task.reminderEnabled && (
+                /*
+                  A repeating reminder says its period and when it next speaks;
+                  a date alone would be this occurrence, which for a series that
+                  has already run is a date in the past.
+                */
                 <div className="text-[11px] text-amber-700 flex items-center gap-1.5 font-mono bg-amber-50 px-2 py-1 rounded border border-amber-200" title={`یادآور فعال برای ${task.reminderDate} ساعت ${task.reminderTime}`}>
                   <Bell size={12} className="text-amber-500 animate-pulse" />
-                  <span>یادآور: {task.reminderDate} {task.reminderTime}</span>
+                  <span>
+                    یادآور: {task.reminderRepeat
+                      ? describeReminder(task, getTodayShamsi())
+                      : `${task.reminderDate} ${task.reminderTime}`}
+                  </span>
                 </div>
               )}
 
@@ -2025,6 +2070,44 @@ export default function TasksView({
                           className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none text-right font-mono"
                         />
                       </div>
+                      {/*
+                        The period is named rather than «هر N روز»: the first six
+                        Shamsi months are 31 days, the next five 30 and Esfand 29
+                        or 30, so a rule counted in days drifts a month at a time.
+                      */}
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-semibold text-slate-500">تکرار</label>
+                        <select
+                          value={reminderRepeat}
+                          onChange={(e) => setReminderRepeat((e.target.value || '') as ReminderRepeat | '')}
+                          className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none text-right bg-white"
+                        >
+                          <option value="">بدون تکرار</option>
+                          {REMINDER_REPEATS.map((r) => (
+                            <option key={r} value={r}>{REMINDER_REPEAT_LABELS[r]}</option>
+                          ))}
+                        </select>
+                      </div>
+                      {/*
+                        Offered only once there is a series to end. A reminder
+                        that repeats for ever with no way to stop it but editing
+                        the task is the one people switch off altogether; blank
+                        stays «بدون پایان», which is a deliberate answer.
+                      */}
+                      {reminderRepeat && (
+                        <div className="sm:col-span-2">
+                          <ShamsiDatePicker
+                            label="تکرار تا تاریخ (اختیاری)"
+                            value={reminderRepeatUntil}
+                            onChange={(val) => setReminderRepeatUntil(val)}
+                          />
+                          <p className="text-[10px] text-slate-500 mt-1">
+                            {reminderRepeatUntil
+                              ? `${REMINDER_REPEAT_LABELS[reminderRepeat]} از ${reminderDate} تا ${reminderRepeatUntil}`
+                              : `${REMINDER_REPEAT_LABELS[reminderRepeat]} از ${reminderDate}، بدون پایان`}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
