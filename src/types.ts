@@ -642,7 +642,19 @@ export interface Task {
   id: string;
   title: string;
   description: string;
-  relatedToType: 'مشتری' | 'پروژه' | 'پیش‌فاکتور' | 'سفارش خرید' | 'عمومی' | 'خدمات پس از فروش' | 'بسته‌بندی و تحویل' | 'استعلام تامین‌کننده';
+  /*
+   * What the task is about.
+   *
+   * «تأمین‌کننده», «محصول» and «تراکنش» arrived with «ذخیره و اقدام بعدی»:
+   * those three forms can now raise a task and had no value to name what it
+   * concerned, so the card would have read «عمومی» and lost the one thing it
+   * is for. The column is a plain string — `taskRelationKind` resolves only
+   * the three it can join to — so this union is the list of spellings this
+   * application writes, and the task form's own dropdown must offer every
+   * one of them or a `<select>` renders its placeholder over a perfectly
+   * good value.
+   */
+  relatedToType: 'مشتری' | 'پروژه' | 'پیش‌فاکتور' | 'سفارش خرید' | 'عمومی' | 'خدمات پس از فروش' | 'بسته‌بندی و تحویل' | 'استعلام تامین‌کننده' | 'تأمین‌کننده' | 'محصول' | 'تراکنش';
   /** Who raised it, kept beside the id so history survives a deactivated account. */
   createdByName?: string;
   /**
@@ -903,6 +915,15 @@ export interface ERPSettings {
      * not a lost sale.
      */
     followUpResults?: string[];
+    /**
+     * «نوع اقدام بعدی» — what the shared next-action modal offers.
+     *
+     * A plain company list: nothing in the code reads any of these strings, so
+     * they can be renamed and reordered freely. Contrast `followUpResults`,
+     * where three entries are keyed on by `impliedSettlement` and therefore need
+     * a settings patch to reach a live document.
+     */
+    nextActionKinds?: string[];
   };
   /**
    * Why a project or a proforma line was lost.

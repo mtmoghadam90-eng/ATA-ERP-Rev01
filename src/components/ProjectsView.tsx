@@ -68,6 +68,9 @@ import {
   tableMinWidthPx,
 } from '../utils/columnWidths';
 import ColumnResizeHandle from './ColumnResizeHandle';
+import { useNextAction } from '../utils/useNextAction';
+import SaveWithNextActionButton from './SaveWithNextActionButton';
+import { NextActionPrompt } from './NextActionModal';
 
 /**
  * What the sidebar calls each module, so a link reads as the place it goes.
@@ -1007,8 +1010,13 @@ export default function ProjectsView({
     setAttachments(proj.attachments || []);
     setShowModal(true);
   };
+  const nextAction = useNextAction();
+
   const handleSave = (e) => {
     e.preventDefault();
+    // Read once, at the top: the checks below can refuse this save, and a flag
+    // left set would arm the next one instead.
+    const wantsNextAction = nextAction.takeArmed();
     if (!customerId) {
       alert('لطفاً مشتری پروژه را انتخاب کنید.');
       return;
@@ -1097,11 +1105,18 @@ export default function ProjectsView({
           technicalContactId: technicalContactId || null,
         });
 
-        if (editingProject) await projectsApi.update(editingProject.id, payload);
-        else await projectsApi.create(payload);
+        const saved = editingProject
+          ? await projectsApi.update(editingProject.id, payload)
+          : await projectsApi.create(payload);
 
         list.refresh();
         setShowModal(false);
+        void nextAction.ask(wantsNextAction, saved, (project) => ({
+          relatedToType: 'پروژه',
+          relatedToId: project.id,
+          relatedToName: project.name || project.code || '',
+          assignedTo: currentUser?.fullName,
+        }));
       } catch (err) {
         reportError(err, 'ذخیره پروژه با خطا مواجه شد.');
       } finally {
@@ -4805,6 +4820,7 @@ export default function ProjectsView({
                 >
                   انصراف
                 </button>
+                <SaveWithNextActionButton onArm={nextAction.arm} disabled={isUploading} />
                 <button
                   type="submit"
                   disabled={isUploading}
@@ -6313,6 +6329,9 @@ export default function ProjectsView({
         settings={settings}
         onClose={() => setShowSatisfactionLetters(false)}
       />
+
+      {/* Asked only once the project is really on the server, with its id. */}
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
 </div>
   );
 }

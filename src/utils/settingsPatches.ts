@@ -23,6 +23,7 @@
  */
 
 import type { ERPSettings } from "../types";
+import { DEFAULT_NEXT_ACTION_KINDS } from "./nextAction";
 import {
   RESULT_LOST_TO_COMPETITOR, RESULT_PURCHASE_CANCELLED, RESULT_PURCHASE_CONFIRMED,
 } from "./salesFollowUp";
@@ -82,6 +83,30 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
           ...settings.messaging,
           staffSms: { enabled: true, templates: { ...DEFAULT_STAFF_TEMPLATES } },
         },
+      };
+    },
+  },
+  {
+    id: "next-action-kinds-1",
+    describe: "انواع اقدام بعدی برای دکمهٔ «ذخیره و اقدام بعدی»",
+    /*
+     * A list, not a rule.
+     *
+     * Nothing in the code reads any of these strings — unlike the three
+     * follow-up results above, which `impliedSettlement` keys on by name. It is
+     * here for the plainer reason that a live settings document never sees a
+     * default added to `seedData`, so on every existing installation the
+     * dropdown would open empty and the button would read as broken rather than
+     * as unconfigured. Appended only, so a company that deletes one keeps it
+     * deleted.
+     */
+    apply: (settings) => {
+      const next = appendMissing(
+        settings.dropdownItems?.nextActionKinds, [...DEFAULT_NEXT_ACTION_KINDS]);
+      if (!next) return null;
+      return {
+        ...settings,
+        dropdownItems: { ...settings.dropdownItems, nextActionKinds: next },
       };
     },
   },

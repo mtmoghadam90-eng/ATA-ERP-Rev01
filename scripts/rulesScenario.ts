@@ -13416,5 +13416,232 @@ head("Competitors: who we lose to, and by how much");
     && /selectedDay \? getTasksForDay\(selectedDay\)/.test(cal));
 }
 
+/* ==========================================================================
+ * «ذخیره و اقدام بعدی»: the question beside the button that was going to be
+ * pressed anyway.
+ * ========================================================================== */
+{
+  head("Next action: one form, ten save buttons, and the save comes first");
+
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  const {
+    DEFAULT_NEXT_ACTION_DAYS, DEFAULT_NEXT_ACTION_KINDS,
+    nextActionDraft, nextActionRefusal, nextActionTitle,
+  } = await import("../src/utils/nextAction");
+
+  /* ---------------------------- what it starts as ------------------------ */
+
+  const src = {
+    relatedToType: "مشتری", relatedToId: "c-1", relatedToName: "فولاد مبارکه",
+    assignedTo: "علی رضایی",
+  };
+  const today = "1404/07/12";
+  const draft = nextActionDraft(src, today);
+
+  /*
+   * Every field is a default a person then corrects, and each is the answer
+   * that is right more often than any other. The assignee is whoever pressed
+   * save — handing it on is a decision, not a default — and the record carries
+   * over, because re-picking it is the commonest reason a form like this is
+   * abandoned half way.
+   */
+  eq("the assignee carries over", draft.assignedTo, "علی رضایی");
+  eq("a save by nobody in particular assigns to nobody",
+    nextActionDraft({ relatedToType: "مشتری", relatedToId: "c", relatedToName: "x" }, today)
+      .assignedTo, "");
+  eq("the priority starts at متوسط", draft.priority, "متوسط");
+
+  /*
+   * The kind is the one thing only the person knows, and the description is
+   * empty on purpose: seeding it from what was just saved is the
+   * `description: completionNote` fault the follow-up card was corrected for —
+   * a card telling somebody what to do would describe what somebody else had
+   * already done.
+   */
+  eq("the kind starts empty", draft.kind, "");
+  eq("the description starts empty, never seeded from the record", draft.description, "");
+
+  /*
+   * The date is a few *working* days out, so it never lands on a holiday: a
+   * next action dated on Nowruz is one nobody does.
+   */
+  eq(`${DEFAULT_NEXT_ACTION_DAYS} working days ahead`,
+    draft.dueDate, addWorkingDaysToShamsi(today, DEFAULT_NEXT_ACTION_DAYS));
+  const acrossNowruz = nextActionDraft(src, "1404/12/28").dueDate;
+  ok(`across Nowruz it still clears the holidays (${acrossNowruz})`,
+    acrossNowruz > "1405/01/04", acrossNowruz);
+
+  /* ------------------------------ the refusals --------------------------- */
+
+  /*
+   * Two required fields and no more. The kind is what the list is for, and the
+   * date is what puts the card in front of anybody: an undated task sorts last
+   * in its column by `laneTimestamps`' own rule and is exactly the work that
+   * goes missing. The description is optional — demanding a sentence for
+   * «تماس تلفنی» teaches people to type a full stop.
+   */
+  ok("no kind is refused", !!nextActionRefusal({ ...draft, kind: "" }));
+  ok("no date is refused",
+    !!nextActionRefusal({ ...draft, kind: "تماس تلفنی", dueDate: "" }));
+  ok("a kind and a date are enough",
+    nextActionRefusal({ ...draft, kind: "تماس تلفنی", description: "" }) === null);
+
+  /* -------------------------------- the title ---------------------------- */
+
+  eq("the kind leads and the record is named after it",
+    nextActionTitle("تماس تلفنی", src), "تماس تلفنی — فولاد مبارکه");
+  eq("a record with no name leaves the kind standing alone",
+    nextActionTitle("تماس تلفنی",
+      { relatedToType: "عمومی", relatedToId: "", relatedToName: "" }), "تماس تلفنی");
+
+  /* --------------------------- the settings list ------------------------- */
+
+  /*
+   * A live settings document never sees a default added to `seedData`, so on
+   * every existing installation the dropdown would open empty and the button
+   * would read as broken rather than as unconfigured — the way the settle-the-
+   * sale feature was reported. The patch appends, and only appends.
+   */
+  const patched = applySettingsPatches({ dropdownItems: {} } as never);
+  eq("the kinds reach a document that has none",
+    patched?.next.dropdownItems?.nextActionKinds?.length,
+    DEFAULT_NEXT_ACTION_KINDS.length);
+  const trimmed = applySettingsPatches({
+    dropdownItems: { nextActionKinds: [DEFAULT_NEXT_ACTION_KINDS[0]] },
+    appliedPatches: patched?.next.appliedPatches,
+  } as never);
+  ok("...and one deliberately deleted afterwards stays deleted", trimmed === null);
+
+  const settingsView = readFileSync("src/components/SettingsView.tsx", "utf8");
+  ok("the kinds are editable in Settings",
+    /'nextActionKinds',/.test(settingsView) && /nextActionKinds: '/.test(settingsView));
+
+  /* ---------------------- one button, on every form ---------------------- */
+
+  /*
+   * The forms that offer it. Ten of them — every module a person finishes a
+   * piece of work on — and **not the proforma**, which has its own sales
+   * follow-up: an ordinary task beside a chase would leave the quotation
+   * showing one next action and the board two.
+   */
+  const HOSTS = [
+    "CustomersView", "ProjectsView", "ProductsView", "SuppliersView",
+    "PurchaseOrdersView", "TransactionsView", "TasksView",
+    "PackagingDeliveryView", "AfterSalesServicesView", "SupplierInquiriesView",
+  ];
+  for (const name of HOSTS) {
+    const code = readFileSync(`src/components/${name}.tsx`, "utf8");
+    const bare = strip(code);
+    ok(`${name} draws the shared button`, /<SaveWithNextActionButton/.test(bare));
+    ok(`${name} draws the shared prompt`, /<NextActionPrompt/.test(bare));
+    /*
+     * Read once, at the top of the submit. A handler has many ways not to reach
+     * its save — a blank required field, a duplicate, a refused rule — and a
+     * flag left set through one of those would arm the *next* save instead:
+     * somebody presses «ذخیره و اقدام بعدی», is told to fill a field in,
+     * presses plain «ذخیره», and is asked for a next action they never wanted.
+     */
+    ok(`${name} consumes the arming at the top of its submit`,
+      /takeArmed\(\)/.test(bare));
+    ok(`${name} asks only after the save`, /nextAction\.ask\(/.test(bare));
+  }
+  ok("the proforma form is deliberately not among them",
+    !/SaveWithNextActionButton/.test(
+      readFileSync("src/components/ProformasView.tsx", "utf8")));
+
+  /*
+   * One component, so ten footers cannot grow ten spellings of the same button
+   * — the wording is what teaches people the feature exists.
+   */
+  const button = readFileSync("src/components/SaveWithNextActionButton.tsx", "utf8");
+  ok("the button is one component", /export default function SaveWithNextActionButton/.test(button));
+  /*
+   * And it is a `type="submit"`, not an onClick that saves: the form's own
+   * handler is where the validation and the write already live, and a second
+   * path into them is a second copy of all of it — the five customer creation
+   * forms, in miniature. So a form whose validation refuses the save asks no
+   * question about a record it did not write.
+   */
+  ok("...that submits the form rather than saving on its own",
+    /type="submit"/.test(button) && !/Api\.|fetch\(/.test(strip(button)));
+
+  /* ------------------------- the modal writes nothing --------------------- */
+
+  const modal = readFileSync("src/components/NextActionModal.tsx", "utf8");
+  ok("the save button exists once, in the modal",
+    (modal.match(/data-next-action-save/g) ?? []).length === 1);
+  ok("the modal writes nothing itself",
+    !/tasksApi|api\.post/.test(strip(modal)));
+  /*
+   * Seeded on the record it is about, never on the object prop. The screens
+   * behind it build that object inline and re-render on their own (the badge
+   * poll, any live-data event), so an effect watching the object would reset a
+   * half-typed form every time. That is the price-calculator bug.
+   */
+  ok("...and seeds on the record, never on the object prop",
+    /\}, \[key\]\)/.test(modal) && !/\}, \[source\]\)/.test(modal));
+
+  /* ------------------------ save first, then ask ------------------------- */
+
+  const hook = strip(readFileSync("src/utils/useNextAction.ts", "utf8"));
+  /*
+   * The order is forced rather than chosen: a record created by this save has
+   * no id until the server has written it, so a next action raised beforehand
+   * could only point at nothing — and a card nobody can trace back to its job
+   * is the thing this feature exists to avoid.
+   */
+  ok("the question waits for the record to come back",
+    /const record = await saved;/.test(hook));
+  /*
+   * And an undefined answer is a failed save: every module's helper reports its
+   * own error and returns nothing, which is exactly the signal needed. Raising
+   * a next action for a record the server refused would leave a card pointing
+   * at a job that does not exist.
+   */
+  ok("...and a refused save asks nothing",
+    /if \(record === undefined \|\| record === null\) return;/.test(hook));
+  ok("the arming is consumed, so it cannot leak into the next save",
+    /armed\.current = false;\s*return wanted;/.test(hook));
+  /*
+   * There is no `POST /api/next-action`: a next action *is* a task, and a
+   * second creation path would be a second copy of the assignee resolution, the
+   * capacity check and the workflow trigger that route already runs.
+   */
+  ok("...through the tasks route, not a second creation path",
+    /from '\.\.\/api\/tasks'/.test(hook));
+  /*
+   * A name and no id, so `resolveAssignee` folds ی/ي and the two digit sets and
+   * a spelling difference cannot leave the task belonging to nobody.
+   */
+  ok("...naming the assignee rather than guessing an id",
+    /assignedToName: draft\.assignedTo/.test(hook) && !/assignedToUserId:/.test(hook));
+
+  /* --------------- the relation the card will name is real --------------- */
+
+  /*
+   * Three spellings arrived with this feature, because those three forms had no
+   * value to name what the task was about and would have read «عمومی» — losing
+   * the one thing the card is for.
+   */
+  const types = readFileSync("src/types.ts", "utf8");
+  for (const spelling of ["تأمین‌کننده", "محصول", "تراکنش"]) {
+    ok(`«${spelling}» is a relation a task may carry`,
+      new RegExp(`'${spelling}'`).test(types));
+  }
+  /*
+   * And the task form must survive one it cannot offer. A `<select>` whose
+   * value matches no option renders the *first* one — «عمومی» — so saving an
+   * ordinary edit of such a task would silently rewrite its relation and
+   * detach it from the record it was raised about.
+   */
+  const tasksView = readFileSync("src/components/TasksView.tsx", "utf8");
+  ok("the task form keeps a relation it has no picker for",
+    /RELATABLE_HERE\.includes\(relatedToType\)/.test(strip(tasksView)));
+  ok("...and keeps its name too, rather than re-deriving it to nothing",
+    /resolvedRelatedName = editingTask\.relatedToName/.test(strip(tasksView)));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }

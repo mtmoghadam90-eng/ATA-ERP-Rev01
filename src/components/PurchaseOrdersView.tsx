@@ -63,6 +63,9 @@ import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import CostAccessNotice from './CostAccessNotice';
 import { canSeeCosts } from '../utils/permissions';
 import { useProjectJump } from "../api/useProjectJump";
+import { useNextAction } from '../utils/useNextAction';
+import SaveWithNextActionButton from './SaveWithNextActionButton';
+import { NextActionPrompt } from './NextActionModal';
 
 /**
  * Purchase orders screen.
@@ -219,6 +222,9 @@ export default function PurchaseOrdersView({
       // the fact, or filling the whole timeline in one go. That used to produce
       // no prompt at all: only an *update* was ever examined.
       offerCategoryClose(saved);
+      // Returned so «ذخیره و اقدام بعدی» can name the order that was really
+      // written — a new one has no id until the server has answered.
+      return saved;
     } catch (err) {
       reportError(err, 'ثبت سفارش خرید با خطا مواجه شد.');
     }
@@ -244,6 +250,7 @@ export default function PurchaseOrdersView({
       // promotes the status server-side, and reading `po.status` — what we
       // sent — missed exactly that case.
       offerCategoryClose(saved, oldStatus);
+      return saved;
     } catch (err) {
       reportError(err, 'ثبت تغییرات سفارش خرید با خطا مواجه شد.');
     }
@@ -811,8 +818,13 @@ export default function PurchaseOrdersView({
     : Number((subTotalForeign + remittanceFeeForeign + shippingCostForeign).toFixed(2));
 
   // Handle Save
+  const nextAction = useNextAction();
+
   const handleSavePO = (e: React.FormEvent) => {
     e.preventDefault();
+    // Read once, at the top: the supplier check below can refuse this save, and
+    // a flag left set would arm the next one instead.
+    const wantsNextAction = nextAction.takeArmed();
     if (!supplierId) return;
 
     // Custom Fields Validation
@@ -859,8 +871,9 @@ export default function PurchaseOrdersView({
       return;
     }
 
+    let saved;
     if (editingPO) {
-      updatePurchaseOrder({
+      saved = updatePurchaseOrder({
         ...editingPO,
         poNumber: cleanCode(poNumber) || editingPO.poNumber,
         supplierId,
@@ -905,7 +918,7 @@ export default function PurchaseOrdersView({
         notes
       }, editingPO.status);
     } else {
-      addPurchaseOrder({
+      saved = addPurchaseOrder({
         poNumber: cleanCode(poNumber),
         supplierId,
         supplierName,
@@ -951,6 +964,12 @@ export default function PurchaseOrdersView({
     }
 
     setShowCreateModal(false);
+    void nextAction.ask(wantsNextAction, saved, (po) => ({
+      relatedToType: 'سفارش خرید',
+      relatedToId: po.id,
+      relatedToName: po.poNumber || '',
+      assignedTo: currentUser?.fullName,
+    }));
   };
 
   // Open Status Adjust modal
@@ -2318,6 +2337,7 @@ export default function PurchaseOrdersView({
                 >
                   انصراف
                 </button>
+                <SaveWithNextActionButton onArm={nextAction.arm} />
                 <button
                   type="submit"
                   className="px-5 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-sky-500/15"
@@ -2663,6 +2683,10 @@ export default function PurchaseOrdersView({
           }}
         />
       )}
+
+
+      {/* Asked only once the order is really on the server, with its id. */}
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
 
     </div>
   );

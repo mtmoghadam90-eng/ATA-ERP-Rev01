@@ -57,6 +57,9 @@ import type { ProformaRow } from '../api/proformas';
 import { projectsApi } from '../api/projects';
 import { createCustomerWithLinks } from '../api/customerAdapter';
 import { detailToProject, projectToWriteInput } from '../api/projectAdapter';
+import { useNextAction } from '../utils/useNextAction';
+import SaveWithNextActionButton from './SaveWithNextActionButton';
+import { NextActionPrompt } from './NextActionModal';
 
 /**
  * Tasks board.
@@ -163,8 +166,9 @@ export default function TasksView({
 
   const addTask = async (task: Partial<Task>) => {
     try {
-      await tasksApi.create(taskToWriteInput(task));
+      const created = await tasksApi.create(taskToWriteInput(task));
       list.refresh();
+      return created;
     } catch (err) {
       reportError(err, 'ثبت وظیفه با خطا مواجه شد.');
     }
@@ -172,10 +176,11 @@ export default function TasksView({
 
   const updateTask = async (task: Task) => {
     try {
-      await tasksApi.update(task.id, taskToWriteInput(task));
+      const saved = await tasksApi.update(task.id, taskToWriteInput(task));
       // Finishing something is exactly when the floor can have been crossed.
       void topUpBoard();
       list.refresh();
+      return saved;
     } catch (err) {
       reportError(err, 'ثبت تغییرات وظیفه با خطا مواجه شد.');
     }
@@ -430,6 +435,8 @@ export default function TasksView({
   // Form states
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  /** The relations this form can actually pick a target for. */
+  const RELATABLE_HERE: Task['relatedToType'][] = ['عمومی', 'مشتری', 'پروژه'];
   const [relatedToType, setRelatedToType] = useState<Task['relatedToType']>('عمومی');
   const [relatedToId, setRelatedToId] = useState('');
   const [priority, setPriority] = useState<Task['priority']>('متوسط');
@@ -537,8 +544,13 @@ export default function TasksView({
   /** A chase being raised from scratch — the form that asks a quotation for. */
   const isNewFollowUp = !editingTask && newTaskKind === 'SALES_FOLLOW_UP';
 
+  const nextAction = useNextAction();
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    // Read once, at the top: a chase is routed elsewhere below and the required
+    // fields can refuse this save, and a flag left set would arm the next one.
+    const wantsNextAction = nextAction.takeArmed();
 
     /*
      * A chase goes to the follow-up flow, not to `POST /api/tasks`.
@@ -607,6 +619,17 @@ export default function TasksView({
       resolvedRelatedName = customers.find(c => c.id === relatedToId)?.companyName || '';
     } else if (relatedToType === 'پروژه') {
       resolvedRelatedName = projects.find(p => p.id === relatedToId)?.name || '';
+    } else if (editingTask && relatedToType === editingTask.relatedToType) {
+      /*
+       * A relation this form cannot resolve — a purchase order, a transaction,
+       * whatever a next action was raised about from another module's save
+       * button. The name was written by the screen that knew it, and only the
+       * two branches above can recompute one, so re-deriving here would answer
+       * `''` and **erase the label on every ordinary edit** of such a task.
+       * Kept as stored, and only while the type has not been changed: changing
+       * it is a person saying it is about something else.
+       */
+      resolvedRelatedName = editingTask.relatedToName || '';
     }
 
     const taskPayload = {
@@ -622,17 +645,30 @@ export default function TasksView({
       customValues,
     };
 
-    if (editingTask) {
-      updateTask({
-        id: editingTask.id,
-        ...taskPayload
-      });
-    } else {
-      addTask(taskPayload);
-    }
+    const saved = editingTask
+      ? updateTask({ id: editingTask.id, ...taskPayload })
+      : addTask(taskPayload);
 
     setShowModal(false);
     setIsTaskModalFullscreen(false);
+    /*
+     * A task's next action is about the same job, not about the task.
+     *
+     * Every other form here saves a record and the next action names *it* —
+     * a customer, an order, a delivery. A task is already the shape of a next
+     * action, so pointing a second one at the first would produce a card
+     * reading «تماس تلفنی — تماس تلفنی» and no way back to the work. It carries
+     * the task's own relation instead, which is the project or the customer the
+     * work is really about; a task related to nothing raises a next action
+     * related to nothing, which is honest.
+     */
+    void nextAction.ask(wantsNextAction, saved, (task) => ({
+      relatedToType: task.relatedToType || 'عمومی',
+      relatedToId: task.relatedToId || '',
+      relatedToName: task.relatedToName || task.title || '',
+      assignedTo: currentUser?.fullName,
+      priority: task.priority,
+    }));
   };
 
   /*
@@ -1836,6 +1872,24 @@ export default function TasksView({
                       <option value="عمومی">عمومی (فاقد مرجع)</option>
                       <option value="مشتری">مشتریان</option>
                       <option value="پروژه">پروژه‌ها و مناقصات</option>
+                      {/*
+                        The value the task already carries, when this form has
+                        no picker for it — «سفارش خرید», «تراکنش», anything a
+                        next action raised from another module's save button.
+                        Without it the `<select>` matches no option, renders the
+                        first one instead, and **saving rewrites the relation to
+                        «عمومی»**, silently detaching the task from the record it
+                        was raised about. Offered as disabled because there is
+                        nowhere here to name which order or which transaction;
+                        it is shown so it survives an edit, not so it can be
+                        chosen.
+                      */}
+                      {!RELATABLE_HERE.includes(relatedToType) && (
+                        <option value={relatedToType} disabled>
+                          {relatedToType}
+                          {editingTask?.relatedToName ? `: ${editingTask.relatedToName}` : ''}
+                        </option>
+                      )}
                     </select>
                   </div>
 
@@ -2007,6 +2061,13 @@ export default function TasksView({
                 >
                   انصراف
                 </button>
+                {/*
+                  Not offered for a chase: that form posts to the follow-up
+                  endpoint, which raises its own replacement inside
+                  `completeFollowUp` — a second, ordinary task beside it would
+                  leave the quotation showing one next action and the board two.
+                */}
+                {!isNewFollowUp && <SaveWithNextActionButton onArm={nextAction.arm} />}
                 <button
                   type="submit"
                   className="px-5 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-sky-500/15"
@@ -2041,6 +2102,10 @@ export default function TasksView({
           }}
         />
       )}
+
+
+      {/* Asked only once the task is really on the server, with its id. */}
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
 
     </div>
   );

@@ -50,6 +50,9 @@ import { unknownImportCategories } from '../utils/productCategories';
 import { useProductList } from '../api/useProductList';
 import { useList } from '../api/useList';
 import { formatMoney } from '../numUtils';
+import { useNextAction } from '../utils/useNextAction';
+import SaveWithNextActionButton from './SaveWithNextActionButton';
+import { NextActionPrompt } from './NextActionModal';
 
 /**
  * Product catalogue and stock ledger.
@@ -131,8 +134,11 @@ export default function ProductsView({
    */
   const addProduct = async (product: Partial<Product>) => {
     try {
-      await productsApi.create(productToWriteInput(product));
+      const created = await productsApi.create(productToWriteInput(product));
       list.refresh();
+      // Returned so «ذخیره و اقدام بعدی» can name the record that was really
+      // written — a new one has no id until the server has answered.
+      return created;
     } catch (err) {
       reportError(err, 'ثبت کالا با خطا مواجه شد.');
     }
@@ -140,8 +146,9 @@ export default function ProductsView({
 
   const updateProduct = async (product: Product) => {
     try {
-      await productsApi.update(product.id, productToWriteInput(product));
+      const saved = await productsApi.update(product.id, productToWriteInput(product));
       list.refresh();
+      return saved;
     } catch (err) {
       reportError(err, 'ثبت تغییرات کالا با خطا مواجه شد.');
     }
@@ -865,8 +872,13 @@ export default function ProductsView({
     reader.readAsArrayBuffer(batchFile);
   };
 
+  const nextAction = useNextAction();
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    // Read once, at the top: the code and custom-field checks below can refuse
+    // this save, and a flag left set would arm the next one instead.
+    const wantsNextAction = nextAction.takeArmed();
 
     // Custom Fields Validation
     const moduleFields = (settings?.customFields || []).filter(f => f.module === 'products');
@@ -893,8 +905,9 @@ export default function ProductsView({
       return;
     }
 
+    let saved;
     if (editingProduct) {
-      updateProduct({
+      saved = updateProduct({
         ...editingProduct,
         displayName,
         name: displayName, // Synchronize name with displayName
@@ -919,7 +932,7 @@ export default function ProductsView({
         ...calcSeedOf(simpleCalcDetails),
       });
     } else {
-      addProduct({
+      saved = addProduct({
         displayName,
         name: displayName,
         category,
@@ -948,6 +961,12 @@ export default function ProductsView({
       });
     }
     setShowModal(false);
+    void nextAction.ask(wantsNextAction, saved, (product) => ({
+      relatedToType: 'محصول',
+      relatedToId: product.id,
+      relatedToName: product.displayName || product.name || '',
+      assignedTo: currentUser?.fullName,
+    }));
   };
 
   // Filters
@@ -3092,6 +3111,7 @@ export default function ProductsView({
                 >
                   انصراف
                 </button>
+                <SaveWithNextActionButton onArm={nextAction.arm} />
                 <button
                   type="submit"
                   className="px-5 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-sky-500/15"
@@ -3693,6 +3713,10 @@ export default function ProductsView({
           </div>
         </div>
       )}
+
+
+      {/* Asked only once the product is really on the server, with its id. */}
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
 
     </div>
   );

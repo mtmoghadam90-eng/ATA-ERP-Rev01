@@ -518,7 +518,7 @@ export default function App() {
       case 'suppliers':
         return (
           // Reads its own data from the API.
-          <SuppliersView settings={store.settings} />
+          <SuppliersView settings={store.settings} currentUser={store.currentUser} />
         );
       case 'projects':
         return (
@@ -541,6 +541,7 @@ export default function App() {
       case 'transactions':
         return (
           <TransactionsView
+            currentUser={store.currentUser}
             projectJump={jumpFor('transactions')}
             onProjectJumpApplied={clearJump}
             onOpenProject={(code) => openProjectIn('projects', code)} 

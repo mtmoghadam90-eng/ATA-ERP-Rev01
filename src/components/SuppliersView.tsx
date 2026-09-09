@@ -12,10 +12,13 @@ import {
   Minimize2,
   Loader2
 } from 'lucide-react';
-import { Supplier, ERPSettings } from '../types';
+import { Supplier, ERPSettings, User } from '../types';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import { exportToCSV } from '../excelUtils';
+import { useNextAction } from '../utils/useNextAction';
+import SaveWithNextActionButton from './SaveWithNextActionButton';
+import { NextActionPrompt } from './NextActionModal';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import ConfirmModal from './ConfirmModal';
 import { ApiError } from '../api/client';
@@ -28,10 +31,13 @@ import { useSupplierList } from '../api/useSupplierList';
  */
 interface SuppliersViewProps {
   settings: ERPSettings;
+  /** Whoever is signed in — the next action starts assigned to them. */
+  currentUser?: User | null;
 }
 
 export default function SuppliersView({
-  settings
+  settings,
+  currentUser = null,
 }: SuppliersViewProps) {
   const list = useSupplierList();
   const search = list.search;
@@ -55,8 +61,11 @@ export default function SuppliersView({
 
   const addSupplier = async (supplier: Partial<Supplier>) => {
     try {
-      await suppliersApi.create(supplierToWriteInput(supplier));
+      const created = await suppliersApi.create(supplierToWriteInput(supplier));
       list.refresh();
+      // Returned so «ذخیره و اقدام بعدی» can name the record that was really
+      // written — a new one has no id until the server has answered.
+      return created;
     } catch (err) {
       reportError(err, 'ثبت تأمین‌کننده با خطا مواجه شد.');
     }
@@ -64,8 +73,9 @@ export default function SuppliersView({
 
   const updateSupplier = async (supplier: Supplier) => {
     try {
-      await suppliersApi.update(supplier.id, supplierToWriteInput(supplier));
+      const saved = await suppliersApi.update(supplier.id, supplierToWriteInput(supplier));
       list.refresh();
+      return saved;
     } catch (err) {
       reportError(err, 'ثبت تغییرات تأمین‌کننده با خطا مواجه شد.');
     }
@@ -157,8 +167,12 @@ export default function SuppliersView({
     setShowModal(true);
   };
 
+  const nextAction = useNextAction();
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    // Read once, at the top: a refusal below must not arm the next save.
+    const wantsNextAction = nextAction.takeArmed();
 
     /*
      * Checked here because the control is a row of toggle chips, not an
@@ -199,16 +213,23 @@ export default function SuppliersView({
       customValues
     };
 
-    if (editingSupplier) {
-      updateSupplier({
-        ...editingSupplier,
-        ...data
-      });
-    } else {
-      addSupplier(data);
-    }
+    /*
+     * The save is started exactly as it always was — not awaited, so the modal
+     * still closes the instant the button is pressed — and the promise is
+     * handed on. `afterSave` awaits it *only* when «ذخیره و اقدام بعدی» was the
+     * button pressed, so the plain save keeps its behaviour byte for byte.
+     */
+    const saved = editingSupplier
+      ? updateSupplier({ ...editingSupplier, ...data })
+      : addSupplier(data);
     setShowModal(false);
     setIsSupplierModalFullscreen(false);
+    void nextAction.ask(wantsNextAction, saved, (supplier) => ({
+      relatedToType: 'تأمین‌کننده',
+      relatedToId: supplier.id,
+      relatedToName: supplier.name || '',
+      assignedTo: currentUser?.fullName,
+    }));
   };
 
   // The server has already searched, sorted and paged this. What remains are
@@ -769,6 +790,7 @@ export default function SuppliersView({
                 >
                   انصراف
                 </button>
+                <SaveWithNextActionButton onArm={nextAction.arm} />
                 <button
                   type="submit"
                   className="px-5 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-sky-500/15"
@@ -781,6 +803,13 @@ export default function SuppliersView({
           </div>
         </div>
       )}
+
+      {/*
+        Asked after the save has landed, never before: a supplier created by
+        this save has no id until the server answers, and a next action naming
+        nothing is a card nobody can trace back.
+      */}
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
 
       {/* Confirm Delete Modal */}
       <ConfirmModal
