@@ -207,7 +207,7 @@ import {
   occurrenceKey, repeatOccursOn, shamsiMonthLength,
 } from "../src/utils/reminderRepeat";
 import {
-  MAX_TABLE_MIN_PX, MIN_COLUMN_PERCENT, columnsAreDefault, normalizeColumnWidths,
+  MIN_COLUMN_PX, columnsAreDefault, normalizeColumnWidths,
   resizeColumns, tableMinWidthPx,
 } from "../src/utils/columnWidths";
 import {
@@ -11067,7 +11067,7 @@ head("Stuck work: the dwell report");
      * screen (measured at x=-281) together with the one grip that resizes it.
      */
     ok("...and the width it asks for is derived from them",
-      /minWidth: `\$\{tableMinWidthPx\(columnWidths, PROJECT_COLUMN_MIN_PX\)\}px`/.test(view));
+      /width: `max\(100%, \$\{tableMinWidthPx\(columnWidths\)\}px\)`/.test(view));
     ok("...with no hardcoded minimum left on the table",
       !/table-fixed min-w-\[/.test(view));
 
@@ -11080,7 +11080,7 @@ head("Stuck work: the dwell report");
     const widths = (listed.slice(0, listed.indexOf("]")).match(/^\s*(\d+),/gm) ?? [])
       .map((m) => Number(m.trim().replace(",", "")));
     ok("the width list was found at all", widths.length > 0, widths);
-    eq("...and they are a whole table", widths.reduce((a, b) => a + b, 0), 100);
+    ok("...and they are stored as pixel widths", widths.every((width) => width >= MIN_COLUMN_PX), widths);
     /*
      * The headers are drawn from a list rather than written out, so «one `<col>`
      * per column» is now held between the two lists below rather than by
@@ -11133,13 +11133,6 @@ head("Stuck work: the dwell report");
     ok("the reset appears only when a width has been changed",
       /!columnsAreDefault\(columnWidths, PROJECT_COLUMN_WIDTHS\)/.test(view));
 
-    /* -- one floor per column, in the same order as the other two lists -- */
-    const floorsSrc = view.slice(view.indexOf("const PROJECT_COLUMN_MIN_PX = ["));
-    const floors = (floorsSrc.slice(0, floorsSrc.indexOf("]")).match(/^\s*(\d+),/gm) ?? [])
-      .map((m) => Number(m.trim().replace(",", "")));
-    eq("there is a pixel floor for every column", floors.length, widths.length);
-    ok("...and every one of them is a real width", floors.every((f) => f >= 40), floors);
-
     /* -- «تیتر ستون فریز بشه و با اسکرول بیاد پایین» -- */
     /*
      * `position: sticky` sticks to the nearest *scrolling* ancestor, and
@@ -11168,158 +11161,37 @@ head("Stuck work: the dwell report");
       && /<tr className="bg-slate-50">/.test(view));
   }
 
-  /* -- when the grid has to scroll sideways, and when it must not -- */
+  /* -- resizing changes the table's actual pixel width -- */
   {
-    /*
-     * The reported pair: «ستون آخر رو نمیتونم تنظیم کنم» and «اگر عرض‌ها را
-     * جوری تنظیم کردم که در صفحه‌ام جا شد، اسکرول افقی را بردار». They are one
-     * number. A hardcoded `min-width` is the only thing that ever forces the
-     * horizontal scrollbar — percentages of a fixed width cannot overflow — so
-     * at a 1000px container the table stayed 1280px wide, «عملیات» rendered at
-     * x=-281 and the single grip that resizes it at x=-115: off the screen, and
-     * therefore un-draggable in the plainest possible sense.
-     */
-    const widths = [8, 25, 11, 8, 14, 9, 12, 13];
-    const floors = [100, 160, 100, 96, 130, 92, 116, 150];
+    const widths = [102, 320, 141, 102, 179, 115, 154, 166];
+    eq("the table width is the sum of its columns",
+      tableMinWidthPx(widths), widths.reduce((sum, width) => sum + width, 0));
 
-    /*
-     * Column *i* renders at `tableWidth × pct[i] / 100`, so the table is wide
-     * enough for it exactly when `tableWidth ≥ floor[i] × 100 / pct[i]`. The
-     * largest of those is the least width at which *every* column fits.
-     */
-    eq("the table asks for what its most cramped column needs",
-      tableMinWidthPx(widths, floors), 1250);
-    eq("...which is that column's own requirement", Math.ceil(100 * 100 / 8), 1250);
+    const narrower = resizeColumns(widths, 7, 100);
+    eq("the leftmost operations column can be resized", narrower[7], 100);
+    ok("shrinking a column reduces the table width, allowing overflow-auto to remove its scrollbar",
+      tableMinWidthPx(narrower) < tableMinWidthPx(widths));
+    eq("resizing one column does not unexpectedly move its neighbour", narrower[6], widths[6]);
 
-    /*
-     * The promise the person was made: widening a cramped column lowers what
-     * the table asks for, so their own layout can put the scrollbar away.
-     */
-    const roomier = [10, 20, 11, 10, 13, 10, 12, 14];
-    ok("widening the cramped columns lowers it",
-      tableMinWidthPx(roomier, floors) < tableMinWidthPx(widths, floors),
-      [tableMinWidthPx(roomier, floors), tableMinWidthPx(widths, floors)]);
-    /*
-     * And the best case is the sum of the floors, reached when the shares are
-     * proportional to them — the width below which no arrangement of these
-     * columns fits. It is a real target somebody can drag towards, which is
-     * what makes «جا شد» a thing they can actually reach rather than a promise
-     * the arithmetic quietly withholds.
-     */
-    const total = floors.reduce((a, b) => a + b, 0);
-    const proportional = floors.map((f) => (f * 100) / total);
-    /*
-     * To the pixel the answer rounds up to: `floor × 100 ÷ (floor × 100 / sum)`
-     * is the sum in arithmetic and a hair above it in floating point, and the
-     * result is a CSS pixel, so it is ceilinged. Asserting equality here would
-     * be asserting that a division came back exact.
-     */
-    ok("the best case is the sum of the floors",
-      Math.abs(tableMinWidthPx(proportional, floors) - total) <= 1,
-      [tableMinWidthPx(proportional, floors), total]);
-    ok("...and no arrangement beats it", [
-      [30, 10, 10, 10, 10, 10, 10, 10], [4, 24, 12, 12, 12, 12, 12, 12],
-      [12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5],
-    ].every((w) => tableMinWidthPx(w, floors) >= total));
-    /*
-     * Which is the claim that matters, so it is held against a sweep rather
-     * than three hand-picked lists: whatever anybody drags, the table never
-     * asks for less room than its columns need.
-     */
-    let best = Infinity;
-    for (let t = 0; t < 300; t++) {
-      const w = floors.map(() => MIN_COLUMN_PERCENT + Math.random() * 20);
-      const sum = w.reduce((a, b) => a + b, 0);
-      best = Math.min(best, tableMinWidthPx(w.map((x) => (x * 100) / sum), floors));
-    }
-    ok("...over 300 random layouts either", best >= total, best);
+    const squashed = resizeColumns(widths, 7, 0);
+    eq("a column remains reachable after an over-drag", squashed[7], MIN_COLUMN_PX);
+    eq("invalid indexes leave the widths alone",
+      JSON.stringify(resizeColumns(widths, widths.length, 100)), JSON.stringify(widths));
 
-    /* Squeezing one raises it again — the scrollbar comes back, as asked. */
-    const squeezed = [...widths];
-    squeezed[7] = MIN_COLUMN_PERCENT;
-    squeezed[1] = widths[1] + widths[7] - MIN_COLUMN_PERCENT;
-    ok("squeezing a column past its floor brings the scroll back",
-      tableMinWidthPx(squeezed, floors) > tableMinWidthPx(widths, floors));
-    /*
-     * But capped. A 150px floor at 4% demands 3750px, and honouring that would
-     * honour the floor over the person's own instruction: they made that column
-     * narrow to give the room to something else, and a sideways scroll that
-     * long is a grid nobody can read.
-     */
-    eq("...but never past the cap",
-      tableMinWidthPx([MIN_COLUMN_PERCENT, 96 - 5 * 4, 4, 4, 4, 4, 4, 4], floors),
-      MAX_TABLE_MIN_PX);
-    ok("...and the cap is past any screen, so it bites only on a squeezed layout",
-      MAX_TABLE_MIN_PX > total * 2, MAX_TABLE_MIN_PX);
-
-    /* A share of nothing has no requirement; it must not divide by zero. */
-    ok("a column with no share is skipped rather than dividing by zero",
-      Number.isFinite(tableMinWidthPx([0, 100, 0, 0, 0, 0, 0, 0], floors)));
-    eq("...and only that column's neighbours are asked",
-      tableMinWidthPx([0, 100, 0, 0, 0, 0, 0, 0], floors), 160);
-    eq("no columns at all asks for nothing", tableMinWidthPx([], []), 0);
-  }
-
-  /* -- the resize arithmetic, which keeps the table whole -- */
-  {
-    const start = [8, 25, 11, 8, 14, 9, 12, 13];
-    const total = (a: readonly number[]) => a.reduce((x, y) => x + y, 0);
-    /*
-     * **The pair moves, never one column.** Widening one and leaving the rest
-     * is what a naïve implementation does and it makes the total drift from 100
-     * on every drag — after a dozen the grid is no longer a whole table and
-     * `table-fixed` distributes the remainder on its own.
-     */
-    const grown = resizeColumns(start, 0, 5);
-    eq("a boundary moved gives the neighbour's width to this one", grown[0], 13);
-    eq("...and takes exactly that from the neighbour", grown[1], 20);
-    eq("...so the table stays whole", total(grown), 100);
-    /*
-     * Both floors bite, and the drag stops against them rather than being
-     * refused: a column dragged to nothing is one whose own grip can never be
-     * grabbed again, so the person would have to reset the whole row.
-     */
-    const squashed = resizeColumns(start, 0, -50);
-    eq("a drag past this column's own floor stops at it", squashed[0], MIN_COLUMN_PERCENT);
-    eq("...still whole", total(squashed), 100);
-    const crowded = resizeColumns(start, 0, 50);
-    eq("a drag past the neighbour's floor stops at that", crowded[1], MIN_COLUMN_PERCENT);
-    eq("...still whole", total(crowded), 100);
-    // The last column has nothing on its far side to take width from.
-    eq("the last boundary is not a boundary",
-      JSON.stringify(resizeColumns(start, start.length - 1, 5)), JSON.stringify(start));
-    /*
-     * And it holds over a long session, which is the only version of this claim
-     * that means anything: a rule that drifts by a hundredth per drag is fine
-     * once and wrong by the afternoon.
-     */
-    let acc = [...start];
-    for (let i = 0; i < 500; i++) acc = resizeColumns(acc, i % 7, (i % 2 ? 1 : -1) * 3.7);
-    ok("500 drags leave it exactly whole", Math.abs(total(acc) - 100) < 1e-9, total(acc));
-    ok("...and nothing below the floor", Math.min(...acc) >= MIN_COLUMN_PERCENT, acc);
-
-    /*
-     * A stored list is vetted rather than trusted. `readViewPreferences`
-     * compares `typeof`, and `typeof []` is «object» — an array is precisely
-     * the shape that check cannot see into, so this is where it is seen into.
-     * A half-understood list is discarded whole: a grid drawn from one is worse
-     * than the defaults, and one drag puts it back.
-     */
     for (const [what, stored] of [
-      ["a list from a build with other columns", [10, 90]],
-      ["a total that has drifted", [8, 25, 11, 8, 14, 9, 12, 40]],
-      ["a string among the numbers", [8, "25", 11, 8, 14, 9, 12, 13]],
-      ["something that is not an array", { 0: 8 }],
+      ["a list from a build with other columns", [100, 200]],
+      ["old percentage widths", [8, 25, 11, 8, 14, 9, 12, 13]],
+      ["a string among the numbers", [102, "320", 141, 102, 179, 115, 154, 166]],
+      ["something that is not an array", { 0: 102 }],
       ["nothing at all", undefined],
     ] as const) {
       eq(`${what} falls back to the defaults`,
-        JSON.stringify(normalizeColumnWidths(stored, start)), JSON.stringify(start));
+        JSON.stringify(normalizeColumnWidths(stored, widths)), JSON.stringify(widths));
     }
-    eq("a good list is kept",
-      JSON.stringify(normalizeColumnWidths([10, 23, 11, 8, 14, 9, 12, 13], start)),
-      JSON.stringify([10, 23, 11, 8, 14, 9, 12, 13]));
-    ok("the defaults are recognised as untouched", columnsAreDefault(start, start));
-    ok("...and a moved boundary is not", !columnsAreDefault(grown, start));
+    eq("a good pixel list is kept",
+      JSON.stringify(normalizeColumnWidths(narrower, widths)), JSON.stringify(narrower));
+    ok("the defaults are recognised as untouched", columnsAreDefault(widths, widths));
+    ok("...and a resized column is not", !columnsAreDefault(narrower, widths));
   }
 
   /* -- and it is written where it can move -- */
