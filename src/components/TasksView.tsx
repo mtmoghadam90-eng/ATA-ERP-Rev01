@@ -22,6 +22,9 @@ import { Task, Customer, Project, ERPSettings } from '../types';
 import type { User as AppUser } from '../types';
 import { getTodayShamsi } from '../dateUtils';
 import { describeReminder } from '../utils/reminderRepeat';
+import NextActionModal from './NextActionModal';
+import { offersNextAction } from '../utils/nextAction';
+import { useNextAction } from '../utils/useNextAction';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import WorkBoard, { BoardCard } from './WorkBoard';
@@ -45,7 +48,7 @@ import { readViewPreferences, writeViewPreferences } from '../utils/viewPreferen
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import QuickAddModal from './QuickAddModal';
-import { Bell, Loader2 } from 'lucide-react';
+import { ArrowLeft, Bell, Loader2 } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { rowToTask, tasksApi, taskToWriteInput, type WorkLoad } from '../api/tasks';
 import { useTaskList } from '../api/useTaskList';
@@ -643,6 +646,19 @@ export default function TasksView({
    * proformas module, which meant leaving this screen to press a second button.
    * The form opens here instead. Everything else ticks as it always did.
    */
+  /*
+   * «انجام شد و اقدام بعدی» — Odoo's rule, and the reason it is a second button
+   * rather than a dialog after the tick.
+   *
+   * Asking every time something is finished would be the prompt people learn to
+   * dismiss; offered as a button beside «انجام شد» it costs nothing at all when
+   * the answer is no, and is there at the one moment the person knows what
+   * follows. A sales follow-up is not offered it (`offersNextAction`): a chase
+   * already raises its replacement inside `completeFollowUp`, and a second,
+   * ordinary task beside it would be two next actions for one quotation.
+   */
+  const nextAction = useNextAction();
+
   const handleToggleComplete = (task: Task) => {
     if (task.taskKind === 'SALES_FOLLOW_UP' && task.status !== 'انجام شده') {
       void openFollowUp(task.id);
@@ -1241,6 +1257,25 @@ export default function TasksView({
                 )}
               </button>
               
+              {/*
+                The second button, and only where it means something: an open,
+                ordinary task. A finished one has nothing to follow yet, and a
+                chase raises its own replacement.
+              */}
+              {task.status !== 'انجام شده' && offersNextAction(task.taskKind) && (
+                <button
+                  onClick={() => nextAction.start(
+                    task,
+                    (src) => updateTask({ ...(src as unknown as Task), status: 'انجام شده' }),
+                  )}
+                  title="انجام شد و اقدام بعدی را ثبت کن"
+                  data-next-action-open={task.id}
+                  className="mt-1 w-5 h-5 rounded-md flex items-center justify-center border border-emerald-300 text-emerald-600 hover:bg-emerald-50 transition flex-shrink-0"
+                >
+                  <ArrowLeft size={11} />
+                </button>
+              )}
+              
               <div className="space-y-1 flex-1 min-w-0">
                 {/* Same gesture as the board: the title opens the record. */}
                 <button
@@ -1560,6 +1595,31 @@ export default function TasksView({
                   }
 
                 }}
+                /*
+                  The same button the inbox draws, on the same thread — this is
+                  where a referral is read once the two screens were merged, so
+                  leaving it out here would offer it in the tab nobody opens and
+                  not on the board. The completion is this screen's: a referral
+                  closes through `submitReferralReply` with the `done` outcome,
+                  which is the one path that also tells the person who asked.
+                */
+                onDoneWithNext={() => nextAction.start({
+                  title: openReferral.actionRequired ?? openReferral.activity?.text ?? 'ارجاع',
+                  // Two ids, two questions. The referral is what gets closed;
+                  // the project is what the new card will say it concerns.
+                  recordId: openReferral.id,
+                  relatedToType: 'پروژه',
+                  relatedToId: openReferral.activity?.group?.project?.id ?? null,
+                  relatedToName: openReferral.activity?.group?.project?.name ?? null,
+                  assignedTo: openReferral.assignedToName ?? '',
+                  priority: 'متوسط',
+                }, async (src) => {
+                  await submitReferralReply(String(src.recordId ?? ''), {
+                    text: '', attachment: null, outcome: 'done', forwardToUserId: '',
+                  });
+                  setOpenReferral(null);
+                  refreshReferrals();
+                })}
                 onEditAction={async (text) => {
                   await inboxApi.updateReferralAction(openReferral.id, text);
                   refreshReferrals();
@@ -1577,6 +1637,23 @@ export default function TasksView({
         so the three questions it asks, the refusals it enforces and the outcome
         it can settle are one implementation, not two.
       */}
+      {/*
+        One next-action form for both screens that offer it.
+
+        It writes nothing: the host performs the two writes, in the order whose
+        failure is the visible one. See `submitNextAction`.
+      */}
+      <NextActionModal
+        open={!!nextAction.source}
+        source={nextAction.source}
+        kinds={settings.dropdownItems?.nextActionKinds ?? []}
+        people={users.map((u) => u.fullName)}
+        saving={nextAction.saving}
+        error={nextAction.error}
+        onSubmit={(draft) => { void nextAction.submit(draft); }}
+        onClose={nextAction.close}
+      />
+
       {followUpRow && (
         <FollowUpCompletionModal
           row={followUpRow.row}

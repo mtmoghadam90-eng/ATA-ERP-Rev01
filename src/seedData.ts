@@ -1,4 +1,5 @@
 import { DEFAULT_FOLLOW_UP_RESULTS } from './utils/salesFollowUp';
+import { DEFAULT_NEXT_ACTION_KINDS } from "./utils/nextAction";
 import { DEFAULT_MODULE_ORDER } from './appModules';
 import { ExchangeRate, ERPSettings } from './types';
 import { DEFAULT_CUSTOMER_VALUE_SETTINGS } from './utils/customerValue';
@@ -197,6 +198,7 @@ export const DEFAULT_SETTINGS: ERPSettings = {
     returnReasons: ['خرابی قطعه', 'مغایرت با درخواست', 'اشکال در نصب', 'تعمیر و نگهداری دوره‌ای', 'ارتقا سیستم', 'سایر'],
     proformaSentMethods: ['ایمیل', 'واتس‌اپ', 'تلگرام', 'پست', 'حضوری', 'سایر'],
     followUpResults: [...DEFAULT_FOLLOW_UP_RESULTS],
+    nextActionKinds: [...DEFAULT_NEXT_ACTION_KINDS],
     equipmentTypes: [
       'فلومتر کوریولیس',
       'فلومتر التراسونیک',

@@ -13416,5 +13416,273 @@ head("Competitors: who we lose to, and by how much");
     && /selectedDay \? getTasksForDay\(selectedDay\)/.test(cal));
 }
 
+/* ==========================================================================
+ * «انجام شد و اقدام بعدی»: the choice is in the button, not in a dialog.
+ * ========================================================================== */
+{
+  head("Next action: one form, two screens, and two writes in one order");
+
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  const {
+    DEFAULT_NEXT_ACTION_DAYS, DEFAULT_NEXT_ACTION_KINDS, FOLLOW_UP_KIND_NAME,
+    nextActionDraft, nextActionRefusal, nextActionTitle, offersNextAction,
+  } = await import("../src/utils/nextAction");
+
+  /* ------------------------- who is offered one -------------------------- */
+
+  /*
+   * A sales follow-up is refused, and it is the sharpest rule in the file: a
+   * chase already raises its replacement inside `completeFollowUp`, in the same
+   * transaction that records what the customer said. An ordinary task beside it
+   * would leave the quotation showing one next action and the board two — the
+   * two-columns-disagreeing fault this codebase keeps repairing.
+   */
+  ok("a sales follow-up is not offered a next action",
+    !offersNextAction(FOLLOW_UP_KIND_NAME));
+  ok("...however it is spaced", !offersNextAction("  SALES_FOLLOW_UP  "));
+  ok("an ordinary task is", offersNextAction("GENERAL"));
+  /*
+   * And a kind this build does not know is offered one. The safe direction:
+   * every automation writes its own `taskKind`, and a value nobody anticipated
+   * is a task like any other — refusing it would silently take the button away
+   * from work nobody had thought about, which is where it is most wanted.
+   */
+  ok("...as is a kind nobody anticipated", offersNextAction("SOMETHING_NEW"));
+  ok("...and one with no kind at all", offersNextAction(null));
+
+  /* ---------------------------- what it starts as ------------------------ */
+
+  const source = {
+    title: "بررسی نقشه",
+    relatedToType: "پروژه", relatedToId: "p-1", relatedToName: "پالایشگاه",
+    assignedTo: "علی رضایی", priority: "بالا",
+  };
+  const today = "1404/07/12";
+  const draft = nextActionDraft(source, today);
+
+  /*
+   * Every field here is a default a person then corrects, and each is the
+   * answer that is right more often than any other. The assignee is whoever
+   * just did the work — handing it on is a decision, not a default — and the
+   * priority is inherited, because urgent work rarely becomes routine the
+   * moment one step of it is finished.
+   */
+  eq("the assignee carries over", draft.assignedTo, "علی رضایی");
+  eq("the priority carries over", draft.priority, "بالا");
+  eq("a source with no priority starts at متوسط",
+    nextActionDraft({ title: "x" }, today).priority, "متوسط");
+  eq("...and with no assignee, at nobody",
+    nextActionDraft({ title: "x" }, today).assignedTo, "");
+
+  /*
+   * The kind is empty because it is the one thing only the person knows, and
+   * the description is empty on purpose: seeding it with what was just finished
+   * is the `description: completionNote` fault the follow-up card was corrected
+   * for — a card telling somebody what to do would describe what somebody else
+   * had already done.
+   */
+  eq("the kind starts empty", draft.kind, "");
+  eq("the description starts empty, never seeded from what was just done",
+    draft.description, "");
+
+  /*
+   * The date is a few *working* days out, so it never lands on a holiday: a
+   * next action dated on Nowruz is one nobody does.
+   */
+  eq(`${DEFAULT_NEXT_ACTION_DAYS} working days ahead`,
+    draft.dueDate, addWorkingDaysToShamsi(today, DEFAULT_NEXT_ACTION_DAYS));
+  const acrossNowruz = nextActionDraft(source, "1404/12/28").dueDate;
+  ok(`across Nowruz it still clears the holidays (${acrossNowruz})`,
+    acrossNowruz > "1405/01/04", acrossNowruz);
+
+  /* ------------------------------ the refusals --------------------------- */
+
+  /*
+   * Two required fields and no more. The kind is what the list is for, and the
+   * date is what puts the card in front of anybody: an undated task sorts last
+   * in its column by `laneTimestamps`' own rule and is exactly the work that
+   * goes missing. The description is optional — a kind plus a date is a
+   * complete instruction for «تماس تلفنی», and demanding a sentence for it
+   * teaches people to type a full stop.
+   */
+  ok("no kind is refused", !!nextActionRefusal({ ...draft, kind: "" }));
+  ok("no date is refused",
+    !!nextActionRefusal({ ...draft, kind: "تماس تلفنی", dueDate: "" }));
+  ok("a kind and a date are enough",
+    nextActionRefusal({ ...draft, kind: "تماس تلفنی", description: "" }) === null);
+
+  /* -------------------------------- the title ---------------------------- */
+
+  eq("the kind leads and what it follows is named after it",
+    nextActionTitle("تماس تلفنی", source), "تماس تلفنی — پس از «بررسی نقشه»");
+  eq("a source with no title leaves the kind standing alone",
+    nextActionTitle("تماس تلفنی", { title: "" }), "تماس تلفنی");
+
+  /* --------------------------- the settings list ------------------------- */
+
+  /*
+   * A live settings document never sees a default added to `seedData`, so on
+   * every existing installation the dropdown would open empty and the button
+   * would read as broken rather than as unconfigured — the way the settle-the-
+   * sale feature was reported. The patch appends, and only appends.
+   */
+  const patched = applySettingsPatches({ dropdownItems: {} } as never);
+  eq("the kinds reach a document that has none",
+    patched?.next.dropdownItems?.nextActionKinds?.length,
+    DEFAULT_NEXT_ACTION_KINDS.length);
+  /*
+   * ...and only once. The patch is recorded even where it changed nothing, so
+   * an entry a company deliberately deletes afterwards stays deleted rather
+   * than reappearing on the next restart.
+   */
+  const trimmed = applySettingsPatches({
+    dropdownItems: { nextActionKinds: [DEFAULT_NEXT_ACTION_KINDS[0]] },
+    appliedPatches: patched?.next.appliedPatches,
+  } as never);
+  ok("...and one deliberately deleted afterwards stays deleted", trimmed === null);
+
+  /*
+   * The list is a company's own and must be editable, which means being in the
+   * screen's allowlist: a key missing from it is a list nobody can change.
+   */
+  const settingsView = readFileSync("src/components/SettingsView.tsx", "utf8");
+  ok("the kinds are editable in Settings",
+    /'nextActionKinds',/.test(settingsView)
+    && /nextActionKinds: '/.test(settingsView));
+
+  /* ------------------------- one form, not two --------------------------- */
+
+  const modal = readFileSync("src/components/NextActionModal.tsx", "utf8");
+  const tasksView = readFileSync("src/components/TasksView.tsx", "utf8");
+  const referralsView = readFileSync("src/components/ReferralsView.tsx", "utf8");
+  const thread = readFileSync("src/components/ReferralThread.tsx", "utf8");
+
+  /*
+   * There is one of these. Two copies of the form would be two answers to what
+   * a next action inherits from the record it follows, which is precisely what
+   * the pure rules above exist to settle — so the save button may live in
+   * exactly one file.
+   */
+  for (const [name, src] of [
+    ["the tasks list", tasksView], ["a referral's thread", referralsView],
+  ] as const) {
+    ok(`${name} opens the shared modal`, /<NextActionModal/.test(src)
+      && /from '\.\/NextActionModal'/.test(src));
+    ok(`...and has no copy of the form in it`,
+      !/data-next-action-save/.test(src));
+  }
+  ok("the save button exists once, in the modal",
+    (modal.match(/data-next-action-save/g) ?? []).length === 1);
+
+  /*
+   * And the modal writes nothing. The two hosts finish two different kinds of
+   * record and only they know how — the same division as
+   * `ProductConfiguratorModal`, which builds a mutation and lets its host save
+   * it.
+   */
+  ok("the modal writes nothing itself",
+    !/tasksApi|inboxApi|api\.post|submitReferralReply/.test(strip(modal)));
+
+  /*
+   * It is seeded on what means «start again» — opening, and the record it
+   * follows — never on the object prop. `source` is built inline by the screen
+   * behind it, and those screens re-render on their own (the badge poll, any
+   * live-data event), so an effect watching the object would reset a half-typed
+   * form every time. That is the price-calculator bug, and `test:ui` renders it.
+   */
+  ok("...and seeds on a key, never on the object prop",
+    /\}, \[key, open\]\)/.test(modal) && !/\}, \[source\]\)/.test(modal));
+
+  /* --------------------- the order of the two writes --------------------- */
+
+  const hook = strip(readFileSync("src/utils/useNextAction.ts", "utf8"));
+  const created = hook.indexOf("tasksApi.create");
+  const completed = hook.indexOf("await complete(");
+
+  /*
+   * The order is the decision, and it is chosen for which failure announces
+   * itself. Completing first and failing to create leaves the work recorded as
+   * done and the next action silently lost — the card is off the board, so
+   * nobody sees the gap. Creating first and failing to complete leaves the
+   * original still sitting there: visible, wrong in a way somebody notices, and
+   * fixed by pressing the button again.
+   */
+  ok("the next action is raised before what it follows is completed",
+    created > 0 && completed > created, { created, completed });
+  /*
+   * Which is safe only because pressing it again cannot raise a second one.
+   * Two requests, so the conditional-write shape has to be here rather than in
+   * a transaction.
+   */
+  ok("...and a retry after a failed completion does not raise a second one",
+    /if \(!createdRef\.current\) \{/.test(hook));
+  /*
+   * There is no `POST /api/next-action`: a next action *is* a task, and a
+   * second creation path would be a second copy of the assignee resolution, the
+   * capacity check and the workflow trigger that route already runs — the five
+   * customer creation forms, in miniature.
+   */
+  ok("...through the tasks route, not a second creation path",
+    /from '\.\.\/api\/tasks'/.test(hook));
+  /*
+   * A name and no id, so `resolveAssignee` folds ی/ي and the two digit sets and
+   * a spelling difference cannot leave the task belonging to nobody.
+   */
+  ok("...naming the assignee rather than guessing an id",
+    /assignedToName: draft\.assignedTo/.test(hook)
+    && !/assignedToUserId:/.test(hook));
+
+  /* ------------------------ where the button appears --------------------- */
+
+  /*
+   * Offered only where it means something. A finished task has nothing to
+   * follow yet, and a chase raises its own replacement.
+   */
+  ok("the tasks list offers it only on an open, ordinary task",
+    /task\.status !== 'انجام شده' && offersNextAction\(task\.taskKind\)/
+      .test(strip(tasksView)));
+  /*
+   * On a referral the same two gates plus one more: the thread is drawn in two
+   * places and only the inbox owns the form, so in the project's feed the
+   * button is simply absent rather than drawn and inert — a control that looks
+   * live and is not is the fault this codebase keeps naming.
+   */
+  ok("a referral offers it to the assignee, while it is open, where a host can raise one",
+    /isOpen && isAssignee && onDoneWithNext &&/.test(strip(thread)));
+  /*
+   * And it is drawn wherever that thread is drawn. The referrals screen became
+   * a tab of «وظایف و پیگیری», so the board's own referral popup is where one
+   * is actually read — offering the button in the tab nobody opens and not on
+   * the board would be the merge undone.
+   */
+  ok("...on the board's referral popup as well as in the inbox",
+    /onDoneWithNext=/.test(strip(tasksView))
+    && /onDoneWithNext=/.test(strip(referralsView)));
+  /*
+   * Two ids, two questions. The referral is what gets closed; the project is
+   * what the new card will say it concerns — the same distinction
+   * `workflowEntityId` draws against `relatedToId`.
+   */
+  ok("a referral closes by its own id while its next action names the project",
+    /recordId: referral\.id/.test(referralsView)
+    && /relatedToId: referral\.activity\?\.group\?\.project\?\.id/.test(referralsView));
+
+  /*
+   * The completion is named at the press, not when the hook is built. A screen
+   * drawing both a task list and a referral thread finishes two kinds of record
+   * and would otherwise need two hooks, two modals and a standing question
+   * about which of them is open — so `start` takes it, and the tasks screen
+   * passes a different one from each of its two buttons.
+   */
+  ok("the completion is named by whoever pressed the button",
+    /export function useNextAction\(\)/.test(hook)
+    && /const start = \(next: NextActionSource, complete: NextActionCompletion\)/.test(hook));
+  ok("...so one screen can finish two kinds of record with one form",
+    (tasksView.match(/nextAction\.start\(/g) ?? []).length === 2
+    && (tasksView.match(/<NextActionModal/g) ?? []).length === 1);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
