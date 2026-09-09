@@ -49,6 +49,8 @@ import FollowUpCompletionModal from "../src/components/FollowUpCompletionModal";
 import ActivityComposer from "../src/components/ActivityComposer";
 import StuckThresholdsPanel from "../src/components/StuckThresholdsPanel";
 import ColumnResizeHandle from "../src/components/ColumnResizeHandle";
+import NextActionModal from "../src/components/NextActionModal";
+import type { NextActionDraft } from "../src/utils/nextAction";
 import { resizeColumns } from "../src/utils/columnWidths";
 import type { Product } from "../src/types";
 import type { ExchangeRate } from "../src/types";
@@ -1479,6 +1481,105 @@ head("Column widths: the grip is on the left and pulling it left widens");
   act(() => { root.unmount(); });
   host.remove();
 }
+
+head("Next action: the form survives the board carrying on underneath it");
+
+/*
+ * The same family as the price calculator above, and the reason this modal
+ * seeds on a key rather than on its `source` prop.
+ *
+ * Both screens that open it build that object inline, and both re-render on
+ * their own — the sidebar badge poll comes back every minute, and any write
+ * anywhere fires a live-data event. An effect watching the object would reset a
+ * half-typed next action every time one of those landed. Nothing about that is
+ * visible to the type-checker or to the rules tests: every value is right, only
+ * the moment of assignment is wrong. It needs a render.
+ */
+{
+  const source = {
+    title: "بررسی نقشه",
+    relatedToType: "پروژه", relatedToId: "p-1", relatedToName: "پالایشگاه آبادان",
+    assignedTo: "علی رضایی", priority: "بالا",
+  };
+  const saved: NextActionDraft[] = [];
+  let rerender: () => void = () => {};
+
+  function Host() {
+    const [, setTick] = useState(0);
+    rerender = () => setTick((t) => t + 1);
+    return React.createElement(NextActionModal, {
+      open: true,
+      // A fresh object every render — the shape that caused the bug.
+      source: { ...source },
+      kinds: ["تماس تلفنی", "جلسه یا بازدید"],
+      people: ["علی رضایی", "مریم احمدی"],
+      onSubmit: (draft: NextActionDraft) => { saved.push(draft); },
+      onClose: () => {},
+    });
+  }
+
+  const nHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const nRoot = createRoot(nHost);
+  act(() => { nRoot.render(React.createElement(Host)); });
+
+  const q = <T extends Element>(sel: string) =>
+    nHost.querySelector(sel) as T | null;
+
+  const kind = q<HTMLSelectElement>("[data-next-action-kind]");
+  const desc = q<HTMLTextAreaElement>("[data-next-action-description]");
+  const who = q<HTMLSelectElement>("[data-next-action-assignee]");
+  const priority = q<HTMLSelectElement>("[data-next-action-priority]");
+  const save = q<HTMLButtonElement>("[data-next-action-save]");
+
+  ok("the form drew its five fields", !!kind && !!desc && !!who && !!priority && !!save);
+
+  /*
+   * What it inherits, seen through the boxes rather than through the rule: the
+   * person who just did the work and the urgency it had. The kind is the one
+   * thing only they know, so it starts empty and is the field the cursor lands
+   * in.
+   */
+  ok("the assignee is carried over", who?.value === "علی رضایی", who?.value);
+  ok("...and the priority", priority?.value === "بالا", priority?.value);
+  ok("...while the kind starts empty", kind?.value === "", kind?.value);
+  ok("...and it names what it follows", nHost.textContent?.includes("بررسی نقشه") === true);
+  ok("...and the job it belongs to, without asking again",
+    nHost.textContent?.includes("پالایشگاه آبادان") === true);
+
+  /*
+   * The refusal is enforced where the person is, not only on the way out: an
+   * undated or unkinded next action is exactly the card that goes missing.
+   */
+  act(() => { save?.click(); });
+  ok("saving with no kind is refused", saved.length === 0, saved.length);
+  ok("...and says why", nHost.textContent?.includes("نوع اقدام") === true);
+
+  act(() => { handlers(kind!).onChange?.({ target: { value: "تماس تلفنی" } }); });
+  act(() => {
+    handlers(desc!).onChange?.({ target: { value: "قیمت رقیب را بگیر" } });
+  });
+  ok("the kind is held", kind?.value === "تماس تلفنی", kind?.value);
+
+  // The screen behind carries on living. None of it is the user's doing.
+  for (let i = 0; i < 5; i++) act(() => { rerender(); });
+
+  ok("what was typed survives the screen behind it re-rendering",
+    kind?.value === "تماس تلفنی" && desc?.value === "قیمت رقیب را بگیر",
+    { kind: kind?.value, desc: desc?.value });
+
+  act(() => { save?.click(); });
+  ok("...and saves exactly once, carrying it", saved.length === 1, saved.length);
+  ok("...with the kind, the description and the inherited assignee",
+    saved[0]?.kind === "تماس تلفنی"
+    && saved[0]?.description === "قیمت رقیب را بگیر"
+    && saved[0]?.assignedTo === "علی رضایی"
+    && !!saved[0]?.dueDate,
+    saved[0]);
+
+  act(() => { nRoot.unmount(); });
+  nHost.remove();
+}
+
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {

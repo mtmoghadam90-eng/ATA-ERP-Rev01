@@ -24,6 +24,9 @@ import { ApiError } from '../api/client';
 import { NotificationRow, ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
 import ReferralThread, { ReferralComposerSubmit } from './ReferralThread';
 import { useRevalidate } from '../api/liveData';
+import NextActionModal from './NextActionModal';
+import { useNextAction } from '../utils/useNextAction';
+import type { NextActionSource } from '../utils/nextAction';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { REFERRAL_DONE, REFERRAL_PENDING, referralIsOpen } from '../utils/workBoard';
 
@@ -396,6 +399,26 @@ export default function ReferralsView({
    * gesture is offered in both places and a second copy of the sequence is how
    * one of them comes to reopen a referral without saying why.
    */
+  /*
+   * «اتمام کار و اقدام بعدی» on a referral, through the shared form.
+   *
+   * The completion is this screen's — a referral closes through
+   * `submitReferralReply` with the `done` outcome, which is the one path that
+   * also tells the person who asked — and everything else, including the order
+   * of the two writes, is the hook's. `relatedToId` carries the **project**,
+   * because that is what a referral is always about and what the new task's
+   * card will name.
+   */
+  const nextAction = useNextAction();
+
+  /** How a referral is closed once its next action is recorded. */
+  const closeReferral = async (src: NextActionSource) => {
+    await submitReferralReply(String(src.recordId ?? ''), {
+      text: '', attachment: null, outcome: 'done', forwardToUserId: '',
+    });
+    refresh();
+  };
+
   const handleReplySubmit = async (referralId: string, body: ReferralComposerSubmit) => {
     try {
       const outcome = await submitReferralReply(referralId, {
@@ -897,6 +920,18 @@ export default function ReferralsView({
                               });
                             }}
                             onSubmit={(body) => handleReplySubmit(referral.id, body)}
+                            onDoneWithNext={() => nextAction.start({
+                              title: referral.actionRequired ?? 'ارجاع',
+                              // Two ids, two questions. The referral is what
+                              // gets closed; the project is what the new card
+                              // will say it concerns.
+                              recordId: referral.id,
+                              relatedToType: 'پروژه',
+                              relatedToId: referral.activity?.group?.project?.id ?? null,
+                              relatedToName: referral.activity?.group?.project?.name ?? null,
+                              assignedTo: referral.assignedToName ?? '',
+                              priority: 'متوسط',
+                            }, closeReferral)}
                             onEditAction={(text) => handleEditAction(referral.id, text)}
                           />
                         </div>
@@ -911,6 +946,20 @@ export default function ReferralsView({
         )}
       </div>
 
+      {/*
+        The same form the tasks list opens — one next action, one shape, whether
+        it follows a task or a request from a colleague.
+      */}
+      <NextActionModal
+        open={!!nextAction.source}
+        source={nextAction.source}
+        kinds={settings.dropdownItems?.nextActionKinds ?? []}
+        people={users.map((u) => u.fullName)}
+        saving={nextAction.saving}
+        error={nextAction.error}
+        onSubmit={(draft) => { void nextAction.submit(draft); }}
+        onClose={nextAction.close}
+      />
     </div>
   );
 }

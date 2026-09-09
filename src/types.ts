@@ -903,6 +903,15 @@ export interface ERPSettings {
      * not a lost sale.
      */
     followUpResults?: string[];
+    /**
+     * «نوع اقدام بعدی» — what the shared next-action modal offers.
+     *
+     * A plain company list: nothing in the code reads any of these strings, so
+     * they can be renamed and reordered freely. Contrast `followUpResults`,
+     * where three entries are keyed on by `impliedSettlement` and therefore need
+     * a settings patch to reach a live document.
+     */
+    nextActionKinds?: string[];
   };
   /**
    * Why a project or a proforma line was lost.
