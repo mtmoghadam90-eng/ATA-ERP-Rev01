@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ArrowLeft,
   CheckCircle2, MessageSquare, Paperclip, Pencil, RefreshCcw, Send, X,
 } from 'lucide-react';
 
@@ -68,22 +67,13 @@ interface Props {
   onSubmit?: (body: ReferralComposerSubmit) => Promise<void>;
   /** Corrects the request. Only offered to the person who raised it. */
   onEditAction?: (text: string) => Promise<void>;
-  /**
-   * «اتمام کار و اقدام بعدی» — offered only where a host can raise one.
-   *
-   * Optional on purpose: the thread is drawn in two places and only the inbox
-   * owns the next-action form, so the button simply is not there in the
-   * project's feed rather than being drawn and doing nothing — a control that
-   * looks live and is not is the fault this codebase keeps naming.
-   */
-  onDoneWithNext?: () => void;
   /** Smaller type, for the activity feed. */
   compact?: boolean;
 }
 
 export default function ReferralThread({
   referral, currentUserId, formatDate, users = [],
-  onPickAttachment, onSubmit, onEditAction, onDoneWithNext, compact = false,
+  onPickAttachment, onSubmit, onEditAction, compact = false,
 }: Props) {
   /*
    * Open, which is not the same question as «در انتظار اقدام».
@@ -354,27 +344,6 @@ export default function ReferralThread({
                 >
                   <CheckCircle2 size={13} />
                   ثبت اتمام کار
-                </button>
-              )}
-
-              {/*
-                The same two buttons Odoo puts side by side, and for the same
-                reason: the choice is in the button rather than in a dialog
-                after the fact, so it costs nothing at all when the answer is
-                «no» and is there at the one moment the person knows what
-                follows. It is offered only while the request is open and only
-                to the person doing it.
-              */}
-              {isOpen && isAssignee && onDoneWithNext && (
-                <button
-                  type="button"
-                  onClick={onDoneWithNext}
-                  disabled={busy}
-                  data-referral-done-next={referral.id}
-                  className="px-4 py-1.5 bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 rounded-lg text-[11px] font-bold transition flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  <ArrowLeft size={13} />
-                  اتمام کار و اقدام بعدی
                 </button>
               )}
 
