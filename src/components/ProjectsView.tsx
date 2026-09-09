@@ -64,7 +64,7 @@ import { APP_MODULES } from "../appModules";
 import { oversizedUploadReason } from '../utils/uploadLimits';
 import { readViewPreferences, writeViewPreferences } from '../utils/viewPreferences';
 import {
-  MIN_COLUMN_PERCENT, columnsAreDefault, normalizeColumnWidths, resizeColumns,
+  columnsAreDefault, normalizeColumnWidths, resizeColumns,
   tableMinWidthPx,
 } from '../utils/columnWidths';
 import ColumnResizeHandle from './ColumnResizeHandle';
@@ -79,31 +79,28 @@ const MODULE_NAMES: Record<string, string> =
   Object.fromEntries(APP_MODULES.map((m) => [m.id, m.name]));
 
 /**
- * The grid's column widths, as percentages, in the order the headers are drawn.
+ * The grid's default column widths, in pixels, in header order.
  *
  * The table is `table-fixed`, so these are the whole of what decides the
  * layout — under `table-auto` a `w-*` is only a hint the browser overrules
  * with the content, which is how «تاریخ‌های کلیدی» came to render at nearly
  * 380px and «عملیات» to wrap one button onto two lines.
  *
- * Percentages rather than pixels because this grid is read on a wide monitor
- * and on a laptop, and a pixel width that suits one starves the other; the
- * table's own `min-w` is what stops them collapsing on the narrow end, with
- * the container scrolling sideways as it always did.
+ * Pixel widths let each divider change the total table width. Once their sum
+ * fits the viewport, `overflow-auto` removes the horizontal scrollbar itself.
  *
- * The share is roughly the length of what each column actually holds: the name
- * carries a title plus a meta row and takes a quarter, while a project code is
- * nine mono characters that must never wrap and needs almost nothing.
+ * The defaults follow the length of what each column actually holds: the name
+ * carries a title plus a meta row, while a project code is nine mono characters.
  */
 const PROJECT_COLUMN_WIDTHS = [
-  8,  // شماره پروژه — «ATA-05-38», nowrap
-  25, // نام و مشخصات پروژه — the title, the gap badge and the meta row
-  11, // کارفرما / مشتری
-  8,  // ارزش پایپ‌لاین
-  14, // تاریخ‌های کلیدی — «label: date» rows
-  9,  // وضعیت پروژه — one pill
-  12, // مرحله جاری — one pill, and the stage names are long
-  13, // عملیات — a labelled button and two icons, on one row
+  102, // شماره پروژه — «ATA-05-38», nowrap
+  320, // نام و مشخصات پروژه — the title, the gap badge and the meta row
+  141, // کارفرما / مشتری
+  102, // ارزش پایپ‌لاین
+  179, // تاریخ‌های کلیدی — «label: date» rows
+  115, // وضعیت پروژه — one pill
+  154, // مرحله جاری — one pill, and the stage names are long
+  166, // عملیات — a labelled button and two icons, on one row
 ] as const;
 
 /**
@@ -127,35 +124,6 @@ const PROJECT_COLUMN_LABELS = [
   "وضعیت پروژه",
   "مرحله جاری",
   "عملیات",
-] as const;
-
-/**
- * The least width, in pixels, at which each column is still worth reading.
- *
- * `tableMinWidthPx` turns these plus the widths in force into the table's
- * `min-width`, which is the only thing that ever produces the sideways
- * scrollbar. It replaced a hardcoded `min-w-[1280px]` — and hardcoding it is
- * what made both of the reported faults: dragging the columns narrower could
- * not remove the scroll, and «عملیات» sat off the left edge of a 1000px screen
- * at x=-281 together with the one grip that resizes it, so the last column was
- * unadjustable in the plainest sense — its handle was not on the screen.
- *
- * They are pixels and not percentages because what a column must show does not
- * scale with the monitor: «ATA-05-38» is nine mono characters wide wherever it
- * is read. Their sum, 944, is the best case — the width below which no
- * arrangement of these eight columns fits — and it is reached when the shares
- * are proportional to the floors, which is a layout a person can actually drag
- * towards.
- */
-const PROJECT_COLUMN_MIN_PX = [
-  100, // شماره پروژه — «ATA-05-38», mono and never wrapped
-  160, // نام و مشخصات پروژه — prose, and the one column that may wrap
-  100, // کارفرما / مشتری
-  96,  // ارزش پایپ‌لاین — a figure and its currency
-  130, // تاریخ‌های کلیدی — «label: date» rows
-  92,  // وضعیت پروژه — one pill
-  116, // مرحله جاری — one pill, and the stage names are long
-  150, // عملیات — a labelled button and two icons, on one row
 ] as const;
 
 /**
@@ -3421,27 +3389,25 @@ export default function ProjectsView({
             every column was reading as two or three lines of something that
             fits on one.
 
-            `table-fixed` plus a `colgroup` makes the widths authoritative, and
-            they are **percentages** because this screen is read on a 1080p
-            monitor and on a laptop, and pixels would leave the widest column
-            short on one of the two. `COLUMN_WIDTHS` is the single list — it
-            must sum to 100 and have one entry per `<th>`, and `test:rules`
-            holds both, because a colgroup one `<col>` short silently shifts
-            every column after it.
+            `table-fixed` plus a `colgroup` makes the pixel widths authoritative.
+            Their sum is the requested table width, while `max(100%, …)` keeps
+            the grid filling the card after it becomes narrow enough.
+            `PROJECT_COLUMN_WIDTHS` is the single list and has one entry per
+            `<th>`; `test:rules` holds those counts together because a colgroup
+            one `<col>` short silently shifts every column after it.
           */}
           <table
             className="w-full text-right border-collapse table-fixed"
             /*
-              Derived from this person's own widths, never hardcoded: it is the
-              least width at which every column reaches its floor at the share
-              it has been given, so widening a cramped column lowers it and the
-              scrollbar goes of its own accord once their layout genuinely fits.
+              Derived from this person's own pixel widths, never hardcoded.
+              Shrinking columns reduces the total; once it fits the card, the
+              browser removes the horizontal scrollbar automatically.
             */
-            style={{ minWidth: `${tableMinWidthPx(columnWidths, PROJECT_COLUMN_MIN_PX)}px` }}
+            style={{ width: `max(100%, ${tableMinWidthPx(columnWidths)}px)` }}
           >
             <colgroup>
               {columnWidths.map((w, i) => (
-                <col key={i} style={{ width: `${w}%` }} />
+                <col key={i} style={{ width: `${w}px` }} />
               ))}
             </colgroup>
             {/*
@@ -3462,34 +3428,28 @@ export default function ProjectsView({
                 {/*
                   Each header carries the grip for its **own** left edge, which
                   in this right-to-left table is the boundary with the column
-                  after it — so the last one has none, there being nothing on
-                  its far side to take width from.
+                  after it. The last (leftmost) column has one too: its outer
+                  edge changes the total table width rather than a neighbour.
                 */}
                 {PROJECT_COLUMN_LABELS.map((label, i) => (
                   <th key={label} className={`p-3 relative${i === 7 ? ' text-center' : ''}`}>
-                    {i < PROJECT_COLUMN_LABELS.length - 1 && (
-                      <ColumnResizeHandle
-                        onResize={(widthPx, tableWidthPx) => {
-                          const from = dragStart.current ?? columnWidths;
-                          dragStart.current = from;
-                          if (!tableWidthPx) return;
-                          /*
-                            `widthPx` is *this* column's new width, measured
-                            from its right edge — which does not move, because
-                            every column before it is unchanged. So the pair
-                            being moved is this one and the next, and the delta
-                            is simply how much this column grew.
-                          */
-                          const target = (widthPx / tableWidthPx) * 100;
-                          setColumnWidths(
-                            resizeColumns(from, i, target - from[i], MIN_COLUMN_PERCENT));
-                        }}
-                        onDone={() => {
-                          dragStart.current = null;
-                          setColumnWidths((current) => { storeColumnWidths(current); return current; });
-                        }}
-                      />
-                    )}
+                    <ColumnResizeHandle
+                      onResize={(widthPx) => {
+                        const from = dragStart.current ?? columnWidths;
+                        dragStart.current = from;
+                        /*
+                          `widthPx` is *this* column's new width, measured
+                          from its right edge — which does not move, because
+                          every column before it is unchanged. Each column is
+                          independent, including the leftmost operations column.
+                        */
+                        setColumnWidths(resizeColumns(from, i, widthPx));
+                      }}
+                      onDone={() => {
+                        dragStart.current = null;
+                        setColumnWidths((current) => { storeColumnWidths(current); return current; });
+                      }}
+                    />
                     {label}
                   </th>
                 ))}
