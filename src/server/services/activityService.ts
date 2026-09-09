@@ -193,6 +193,30 @@ export async function upsertCategoryGroup(
   if (closing && !wasClosed) {
     await applyCategoryMilestoneTriggers(
       input.projectId, data.categoryName, "category_complete", user, getTodayShamsi());
+    /*
+     * «پایان کار» — the plainest end-of-work event this application has, and it
+     * had no trigger at all.
+     *
+     * Closing a category only ever reached the line above, which is the
+     * *per-project* milestone engine: a rule for it had to be rebuilt by hand on
+     * every job, so «وقتی دستهٔ خرید تمام شد به تدارکات وظیفه بده» could not be
+     * written once. On the transition only, never on every save of a group that
+     * is already closed — re-closing is not a fresh event.
+     *
+     * `afterCommit` for the reason every other rule firing uses it: a rule
+     * creates tasks and sends messages, and anything it throws must not come
+     * back out of this route as a failed save.
+     */
+    await afterCommit("activity_category_completed", () => processWorkflowRules(
+      "activity_category_completed",
+      {
+        groupId: (group as { id?: string }).id,
+        projectId: input.projectId,
+        categoryId: input.categoryId,
+        categoryName: data.categoryName,
+      },
+      user,
+    ));
   }
 
   return { group };

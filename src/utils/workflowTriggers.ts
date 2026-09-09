@@ -92,6 +92,7 @@ const G = {
   SERVICE: "خدمات پس از فروش",
   MONEY: "مالی و پرداخت‌ها",
   WORK: "وظایف و ارجاعات",
+  DONE: "پایان کار",
   TIME: "زمان‌بندی",
 } as const;
 
@@ -296,6 +297,14 @@ export const WORKFLOW_TRIGGERS: Record<WorkflowTriggerType, TriggerSpec> = {
       { value: "currency", label: "ارز سند", options: ["rial", "foreign"] },
     ],
   },
+  transaction_status_change: {
+    label: "تغییر وضعیت سند مالی",
+    group: G.MONEY,
+    fields: [
+      { value: "newStatus", label: "وضعیت جدید سند" },
+      { value: "oldStatus", label: "وضعیت قبلی سند" },
+    ],
+  },
 
   /* ------------------------------- work -------------------------------- */
   task_created: {
@@ -341,6 +350,52 @@ export const WORKFLOW_TRIGGERS: Record<WorkflowTriggerType, TriggerSpec> = {
   },
 
   /* -------------------------------- time ------------------------------- */
+  /* --------------------------- end of work ------------------------------ */
+  /*
+   * The three plainest «پایان کار» events, none of which had a trigger.
+   *
+   * Closing an activity category only ever reached the *per-project* milestone
+   * engine, so «وقتی دستهٔ خرید این پروژه تمام شد …» had to be rebuilt by hand on
+   * every job; a milestone closing was the same fault from the other side; and a
+   * sales chase closing fired nothing unless its result happened to settle the
+   * sale, which is one result out of eight.
+   */
+  activity_category_completed: {
+    label: "اتمام کار یک دستهٔ فعالیت پروژه",
+    group: G.DONE,
+    fields: [
+      /*
+       * Free text, not a dropdown: the categories are
+       * `settings.activityCategories` — a company's own editable list — so a
+       * fixed option list here would be a second copy that drifts from it, and
+       * offering the wrong words is the fault this catalogue exists to end.
+       */
+      { value: "categoryName", label: "نام دستهٔ فعالیت" },
+    ],
+  },
+  project_milestone_completed: {
+    label: "تکمیل یک مرحلهٔ (Milestone) پروژه",
+    group: G.DONE,
+    fields: [
+      { value: "milestoneTitle", label: "عنوان مرحله" },
+    ],
+  },
+  follow_up_completed: {
+    label: "ثبت نتیجهٔ یک پیگیری فروش",
+    group: G.DONE,
+    fields: [
+      /*
+       * The result is `settings.dropdownItems.followUpResults`, editable by the
+       * company, so free text for the same reason as the category above.
+       */
+      { value: "followUpResult", label: "نتیجهٔ پیگیری" },
+      {
+        value: "settledOutcome", label: "وضعیت نهایی ثبت‌شده", options: PROFORMA_OUTCOMES,
+        hint: "فقط وقتی پر می‌شود که همان تماس فروش را قطعی کرده باشد — «تأیید نهایی خرید»، "
+          + "«لغو خرید توسط مشتری» یا «واگذاری به رقیب». تعویق و بی‌پاسخی چیزی اینجا نمی‌گذارند.",
+      },
+    ],
+  },
   time_elapsed: {
     label: "زمان‌بندی‌شده (N روز پیش از/پس از یک تاریخ)",
     group: G.TIME,
@@ -354,6 +409,62 @@ export const WORKFLOW_TRIGGERS: Record<WorkflowTriggerType, TriggerSpec> = {
 };
 
 /** The dropdown, grouped, in the order the catalogue declares. */
+/**
+ * Which record each event fires on, and the payload key holding its id.
+ *
+ * The scheduled sweep has had this since `ScheduleSubject.payloadIdKey`: a rule
+ * has to *name* the row it fired on, or the task it raises belongs to nothing.
+ * The event half never did — `workflowEntityType`/`workflowEntityId` were filled
+ * in from `relatedToType`/`relatedToId`, which `create_task` sets from the
+ * proforma or the project and otherwise leaves null. So a rule on a purchase
+ * order with **no project** — a general warehouse purchase, which this
+ * application supports on purpose — raised a task carrying no record at all:
+ * `closeWhenResolved` could never retire it, the escalation could never find it,
+ * and `skipIfOpenSameKind` **silently did nothing**, because it needs a
+ * `relatedToId` to compare. Nothing failed; the reminders simply piled up.
+ *
+ * Spelled out per trigger rather than derived as `${entity}Id`, exactly as the
+ * schedule's own key is, so it sits beside the trigger it belongs to and
+ * `test:rules` can hold each key against what the service really emits.
+ *
+ * `time_elapsed` is null because the sweep supplies its own — it knows which row
+ * it selected, and this map would be a second answer to that question.
+ */
+export const TRIGGER_ENTITY: Record<
+  WorkflowTriggerType, { entityType: string; idKey: string } | null
+> = {
+  proforma_created: { entityType: "proforma", idKey: "proformaId" },
+  proforma_status_change: { entityType: "proforma", idKey: "proformaId" },
+  proforma_outcome_change: { entityType: "proforma", idKey: "proformaId" },
+  project_created: { entityType: "project", idKey: "projectId" },
+  project_status_change: { entityType: "project", idKey: "projectId" },
+  project_stage_change: { entityType: "project", idKey: "projectId" },
+  customer_created: { entityType: "customer", idKey: "customerId" },
+  customer_updated: { entityType: "customer", idKey: "customerId" },
+  supplier_created: { entityType: "supplier", idKey: "supplierId" },
+  supplier_inquiry_created: { entityType: "supplierInquiry", idKey: "inquiryId" },
+  supplier_inquiry_status_change: { entityType: "supplierInquiry", idKey: "inquiryId" },
+  purchase_order_created: { entityType: "purchaseOrder", idKey: "purchaseOrderId" },
+  purchase_order_status_change: { entityType: "purchaseOrder", idKey: "purchaseOrderId" },
+  product_created: { entityType: "product", idKey: "productId" },
+  product_low_stock: { entityType: "product", idKey: "productId" },
+  packaging_delivery_created: { entityType: "delivery", idKey: "deliveryId" },
+  packaging_delivery_status_change: { entityType: "delivery", idKey: "deliveryId" },
+  after_sales_service_created: { entityType: "afterSalesService", idKey: "serviceId" },
+  after_sales_service_status_change: { entityType: "afterSalesService", idKey: "serviceId" },
+  transaction_created: { entityType: "transaction", idKey: "transactionId" },
+  transaction_status_change: { entityType: "transaction", idKey: "transactionId" },
+  task_created: { entityType: "task", idKey: "taskId" },
+  task_status_change: { entityType: "task", idKey: "taskId" },
+  task_completed: { entityType: "task", idKey: "taskId" },
+  referral_created: { entityType: "referral", idKey: "referralId" },
+  referral_status_change: { entityType: "referral", idKey: "referralId" },
+  activity_category_completed: { entityType: "categoryGroup", idKey: "groupId" },
+  project_milestone_completed: { entityType: "milestone", idKey: "milestoneId" },
+  follow_up_completed: { entityType: "task", idKey: "taskId" },
+  time_elapsed: null,
+};
+
 export function triggerGroups(): { group: string; triggers: WorkflowTriggerType[] }[] {
   const out: { group: string; triggers: WorkflowTriggerType[] }[] = [];
   for (const [id, spec] of Object.entries(WORKFLOW_TRIGGERS) as [WorkflowTriggerType, TriggerSpec][]) {

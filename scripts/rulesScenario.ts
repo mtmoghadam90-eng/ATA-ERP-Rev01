@@ -238,7 +238,7 @@ import {
   MAX_PRODUCT_DOCUMENTS, documentsByKind, normalizeProductDocuments, parseProductDocuments,
 } from "../src/utils/productDocuments";
 import {
-  SCHEDULE_MODEL_FIELDS, WORKFLOW_TRIGGERS, conditionValues, triggerFields,
+  SCHEDULE_MODEL_FIELDS, TRIGGER_ENTITY, WORKFLOW_TRIGGERS, conditionValues, triggerFields,
 } from "../src/utils/workflowTriggers";
 import { PROFORMA_STORED_STATUSES } from "../src/utils/moduleStatuses";
 import {
@@ -260,7 +260,7 @@ import {
 import {
   DETAIL_LABELS, SUMMARY_LIMIT, cardDetail, hasMoreToShow, summarizeText,
 } from "../src/utils/cardSummary";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
 
@@ -9014,9 +9014,21 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     /status: \{ not: REFERRAL_DONE \}/.test(service));
   // In the same transaction: a reply in the feed and «در انتظار اقدام» in the
   // inbox is the disagreement this whole change exists to prevent.
+  /*
+   * Bounded to `addActivity`'s own body, not to the whole file. It used to read
+   * the *first* `db.$transaction` and the *first* `await afterCommit` anywhere
+   * in the module — which happened to belong to this function until another one
+   * above it grew an after-commit block, and then the check failed against code
+   * that was perfectly correct. A slice has to be bounded on something that
+   * means what it is being asked about.
+   */
+  const addAt = service.indexOf("export async function addActivity");
+  const addBody = service.slice(addAt, service.indexOf("\nexport ", addAt + 10));
+  ok("the addActivity body was found at all",
+    addAt > -1 && addBody.includes("tx.referralMessage.create"), addBody.length);
   ok("...inside the message's own transaction",
-    service.indexOf("tx.referralMessage.create") > service.indexOf("db.$transaction")
-    && service.indexOf("tx.referralMessage.create") < service.indexOf("await afterCommit"));
+    addBody.indexOf("tx.referralMessage.create") > addBody.indexOf("db.$transaction")
+    && addBody.indexOf("tx.referralMessage.create") < addBody.indexOf("await afterCommit"));
 
   /*
    * The request *is* the message, so editing one has to edit the other — and
@@ -9589,6 +9601,128 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   ok("the catalogue names no trigger the union does not",
     Object.keys(WORKFLOW_TRIGGERS).every((id) => declared.includes(id)),
     Object.keys(WORKFLOW_TRIGGERS).filter((id) => !declared.includes(id)));
+
+  /* ------- every event is emitted, and every event names its record ------- */
+  /*
+   * A trigger in the catalogue that no service fires is a rule that can be
+   * written, saves cleanly, prints correctly on its card and **never runs** —
+   * the catalogue's own silent failure. So the services are read for what they
+   * actually emit, and the two lists are held together in both directions.
+   */
+  const serviceSrc = readdirSync("src/server/services", { recursive: true } as never)
+    .map((f) => `src/server/services/${String(f)}`)
+    .filter((f) => f.endsWith(".ts") && statSync(f).isFile())
+    .map((f) => readFileSync(f, "utf8"))
+    .join("\n");
+  const emitted = new Set(
+    [...serviceSrc.matchAll(/processWorkflowRules\(\s*\n?\s*"([a-z_]+)"/g)].map((m) => m[1]),
+  );
+  for (const id of Object.keys(WORKFLOW_TRIGGERS)) {
+    // The scheduled one is fired by the sweep, from the rule rather than a record.
+    if (id === "time_elapsed") continue;
+    ok(`«${id}» is really emitted by a service`, emitted.has(id));
+  }
+  ok("...and nothing is emitted that the catalogue does not offer",
+    [...emitted].every((id) => id in WORKFLOW_TRIGGERS),
+    [...emitted].filter((id) => !(id in WORKFLOW_TRIGGERS)));
+
+  /*
+   * **A rule has to name the record it fired on.**
+   *
+   * The scheduled half has had this since `payloadIdKey`; the event half never
+   * did, and `workflowEntityType`/`workflowEntityId` were filled in from
+   * `relatedToType`/`relatedToId` — which `create_task` sets from the proforma
+   * or the project and otherwise leaves null. So a rule on a purchase order with
+   * **no project** (a general warehouse purchase, supported on purpose) raised a
+   * task carrying no record: `closeWhenResolved` could never retire it and
+   * `skipIfOpenSameKind` silently did nothing, because it needs a `relatedToId`.
+   */
+  for (const id of Object.keys(WORKFLOW_TRIGGERS)) {
+    ok(`«${id}» says which record it fires on`, id in TRIGGER_ENTITY);
+  }
+  eq("...and only the scheduled trigger is exempt",
+    Object.entries(TRIGGER_ENTITY).filter(([, v]) => v === null).map(([k]) => k).join(","),
+    "time_elapsed");
+  /*
+   * The key each one names has to be a key the service really puts on the
+   * event — the same failure one level down, and the only check that can see it.
+   */
+  const payloads = new Map<string, Set<string>>();
+  for (const m of serviceSrc.matchAll(
+    /processWorkflowRules\(\s*\n?\s*"([a-z_]+)",\s*\{([\s\S]{0,900}?)\n\s*\},/g)) {
+    /*
+     * `key: value` **and** the shorthand `key,` — `follow_up_completed` passes
+     * `{ taskId, … }`, and a scanner that read only the first shape reported a
+     * key the payload plainly carries as missing.
+     */
+    const keys = [...m[2].matchAll(/^\s*([A-Za-z]+)\s*[:,]/gm)].map((k) => k[1]);
+    const set = payloads.get(m[1]) ?? new Set<string>();
+    keys.forEach((k) => set.add(k));
+    payloads.set(m[1], set);
+  }
+  for (const [id, subject] of Object.entries(TRIGGER_ENTITY)) {
+    if (!subject) continue;
+    const keys = payloads.get(id);
+    if (!keys) continue; // shape the scanner could not read; the emit check above covers existence
+    ok(`«${id}» names «${subject.idKey}», which its payload carries`,
+      keys.has(subject.idKey), [...keys]);
+  }
+
+  /* ------------------ the four end-of-work events, by name ---------------- */
+  /*
+   * Each was a «پایان کار» with no trigger at all. The category close is the
+   * plainest of them: it only ever reached `applyCategoryMilestoneTriggers` —
+   * the *per-project* milestone engine — so a rule for it had to be rebuilt by
+   * hand on every job.
+   */
+  for (const id of [
+    "activity_category_completed", "project_milestone_completed",
+    "follow_up_completed", "transaction_status_change",
+  ]) {
+    ok(`«${id}» exists and fires`, id in WORKFLOW_TRIGGERS && emitted.has(id));
+  }
+  /*
+   * The category close fires on the **transition**, not on every save: a
+   * re-closed category is not a fresh event, which is the rule the milestone
+   * trigger beside it already followed.
+   */
+  const actSrc = readFileSync("src/server/services/activityService.ts", "utf8");
+  ok("closing a category fires only on the transition",
+    /if \(closing && !wasClosed\) \{[\s\S]{0,900}?activity_category_completed/.test(actSrc));
+  /*
+   * And the milestone fires **before** the early return for a project with no
+   * milestone rules of its own — which is exactly the project a company-wide
+   * rule is written for.
+   */
+  const msSrc = readFileSync("src/server/services/milestoneAutomation.ts", "utf8");
+  const fireAt = msSrc.indexOf("project_milestone_completed");
+  const bailAt = msSrc.indexOf("if (rules.length === 0) return 0;");
+  ok("a milestone is announced before the per-project rules are consulted",
+    fireAt > -1 && bailAt > -1 && fireAt < bailAt, { fireAt, bailAt });
+  // A status trigger that fired on every save would arrive on every typo.
+  const txSrc = readFileSync("src/server/services/transactionService.ts", "utf8");
+  ok("a financial document announces a real move, not every edit",
+    /if \(before\.status !== transaction\.status\) \{[\s\S]{0,400}?transaction_status_change/
+      .test(txSrc));
+
+  /* --------- «the same reminder» when there is no link to compare --------- */
+  /*
+   * The link stays the first answer — two rules chasing one project should not
+   * each raise a card — but it is null for a record belonging to no project, and
+   * the old check simply skipped itself there. Held against the clause the
+   * engine builds rather than a second reading of the rule.
+   */
+  const wf = readFileSync("src/server/services/workflowService.ts", "utf8");
+  ok("the engine names the record from the catalogue",
+    /TRIGGER_ENTITY\[triggerType as WorkflowTriggerType\]/.test(wf)
+    && /enriched\.entityId = String\(enriched\[subject\.idKey\]\)/.test(wf));
+  ok("...only when the caller has not already said",
+    /!enriched\.entityId && enriched\[subject\.idKey\]/.test(wf));
+  ok("the duplicate check falls back to the record the rule fired on",
+    /workflowEntityId: String\(enrichedPayload\.entityId\)/.test(wf)
+    && /workflowRuleId: rule\.id \?\? null,/.test(wf));
+  ok("...and is still skipped when there is nothing at all to compare",
+    /: null;\n\n        if \(config\.skipIfOpenSameKind && sameWork\)/.test(wf));
 
   /* -- the values are the modules' own, not a second typing of them -- */
   eq("the purchase order offers its real statuses",

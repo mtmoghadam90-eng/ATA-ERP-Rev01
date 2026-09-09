@@ -1292,6 +1292,12 @@ export interface WorkflowRule {
     | 'after_sales_service_created'
     | 'after_sales_service_status_change'
     | 'transaction_created'
+    /**
+     * A financial document's status moving — «پیش‌نویس» → «تأیید شده», or an
+     * annulment. Only the creation was reported before, so a document that was
+     * later cancelled fired nothing and no rule could react to it.
+     */
+    | 'transaction_status_change'
     | 'task_created'
     | 'task_status_change'
     /**
@@ -1311,6 +1317,29 @@ export interface WorkflowRule {
      * Configured in `schedule` and swept once a day — see
      * src/utils/workflowSchedule.ts.
      */
+    /**
+     * «پایان کار» on an activity category, which is the plainest end-of-work
+     * event this application has and had no trigger at all: closing one only
+     * ever reached `applyCategoryMilestoneTriggers`, the *per-project* milestone
+     * engine, so «وقتی دستهٔ خرید تمام شد به تدارکات وظیفه بده» had to be built
+     * by hand on every project instead of once as a rule.
+     */
+    | 'activity_category_completed'
+    /**
+     * A project milestone going open → done, for the same reason: the milestone
+     * engine is per project, so nothing could say «هر وقت این مرحله در هر
+     * پروژه‌ای بسته شد».
+     */
+    | 'project_milestone_completed'
+    /**
+     * A sales chase closed — the call happened and its result was recorded.
+     *
+     * Deliberately *not* the same as the outcome moving: «تأیید نهایی خرید»
+     * settles the sale and already fires `proforma_outcome_change`, while a
+     * deferral, a silence and an ordinary next action settle nothing and fired
+     * nothing at all.
+     */
+    | 'follow_up_completed'
     | 'time_elapsed';
   /** Only for `time_elapsed` — see src/utils/workflowSchedule.ts. */
   schedule?: {
