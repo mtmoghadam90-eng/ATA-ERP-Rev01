@@ -62,6 +62,11 @@ import { useProjectJump } from "../api/useProjectJump";
 import { moduleForCategory } from "../utils/projectLinks";
 import { APP_MODULES } from "../appModules";
 import { oversizedUploadReason } from '../utils/uploadLimits';
+import { readViewPreferences, writeViewPreferences } from '../utils/viewPreferences';
+import {
+  MIN_COLUMN_PERCENT, columnsAreDefault, normalizeColumnWidths, resizeColumns,
+} from '../utils/columnWidths';
+import ColumnResizeHandle from './ColumnResizeHandle';
 
 /**
  * What the sidebar calls each module, so a link reads as the place it goes.
@@ -98,6 +103,29 @@ const PROJECT_COLUMN_WIDTHS = [
   9,  // وضعیت پروژه — one pill
   12, // مرحله جاری — one pill, and the stage names are long
   13, // عملیات — a labelled button and two icons, on one row
+] as const;
+
+/**
+ * The headers, in the same order, so one list decides both.
+ *
+ * They were eight literal `<th>`s beside an eight-entry width list, which is
+ * two orders to keep in step — and a `colgroup` one `<col>` out silently shifts
+ * every column after it. `test:rules` holds the two lengths together.
+ *
+ * «مرحله» is not «وضعیت» and both are here: the status is how the sale went and
+ * the stage is where the work has got to. A project can be «برنده (موفق)» and
+ * «ترخیص گمرک» at once, and «الان در چه مرحله‌ای است؟» is answered only by the
+ * second.
+ */
+const PROJECT_COLUMN_LABELS = [
+  "شماره پروژه",
+  "نام و مشخصات پروژه",
+  "کارفرما / مشتری",
+  "ارزش پایپ‌لاین",
+  "تاریخ‌های کلیدی",
+  "وضعیت پروژه",
+  "مرحله جاری",
+  "عملیات",
 ] as const;
 
 /**
@@ -211,6 +239,42 @@ export default function ProjectsView({
       return null;
     }
   };
+
+  /*
+   * The column widths this person has set for themselves.
+   *
+   * `viewPreferences` is the home for it and not a column on the account: it is
+   * how one person likes to look at a screen in *this* browser, it is not worth
+   * a write to a database shared with Report Server, and losing it costs one
+   * drag. `PROJECT_COLUMN_WIDTHS` stays the default the reset returns to.
+   *
+   * The stored value is vetted by `normalizeColumnWidths` rather than trusted:
+   * `readViewPreferences` compares `typeof`, and `typeof []` is «object», so an
+   * array is precisely the shape that check cannot see into.
+   */
+  const [columnWidths, setColumnWidths] = useState<number[]>(() => normalizeColumnWidths(
+    readViewPreferences('projects.view', currentUser?.id, { columnWidths: [] as number[] })
+      .columnWidths,
+    PROJECT_COLUMN_WIDTHS,
+  ));
+  /*
+   * Written when the drag ends, never on every pointer move: a resize is fifty
+   * updates a second and `localStorage` is synchronous on the main thread.
+   */
+  const storeColumnWidths = (next: number[]) => {
+    writeViewPreferences('projects.view', currentUser?.id, { columnWidths: next });
+  };
+  const resetColumnWidths = () => {
+    const fresh = [...PROJECT_COLUMN_WIDTHS];
+    setColumnWidths(fresh);
+    storeColumnWidths(fresh);
+  };
+  /*
+   * The list as it stood when this drag began. Each move is measured from it
+   * rather than from the value being written, so a drag cannot accumulate its
+   * own rounding — the pointer's position is the whole truth.
+   */
+  const dragStart = useRef<number[] | null>(null);
 
   const [colFilters, setColFilters] = useState<any>({});
   const customFieldFilters = list.filters.customFields;
@@ -3275,6 +3339,29 @@ export default function ProjectsView({
 
       {/* Projects Table List */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        {/*
+          Offered only once something has been moved.
+
+          A button that is always there but usually does nothing teaches the
+          reader it says nothing; drawn the moment a width differs from the
+          default, it is the answer to «this is now a mess» at exactly the point
+          somebody is looking for one.
+        */}
+        {!columnsAreDefault(columnWidths, PROJECT_COLUMN_WIDTHS) && (
+          <div className="px-4 py-1.5 bg-sky-50/60 border-b border-sky-100 flex items-center justify-between gap-3">
+            <span className="text-[10px] text-slate-500">
+              عرض ستون‌ها را خودتان تنظیم کرده‌اید. این تنظیم فقط برای شما و روی همین مرورگر ذخیره می‌شود.
+            </span>
+            <button
+              type="button"
+              onClick={resetColumnWidths}
+              id="reset-project-columns"
+              className="text-[10px] font-bold text-sky-700 hover:text-sky-900 shrink-0"
+            >
+              بازگشت به عرض پیش‌فرض
+            </button>
+          </div>
+        )}
         <div className="overflow-x-auto">
           {/*
             The widths are declared, not negotiated.
@@ -3296,28 +3383,46 @@ export default function ProjectsView({
           */}
           <table className="w-full text-right border-collapse table-fixed min-w-[1280px]">
             <colgroup>
-              {PROJECT_COLUMN_WIDTHS.map((w, i) => (
+              {columnWidths.map((w, i) => (
                 <col key={i} style={{ width: `${w}%` }} />
               ))}
             </colgroup>
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-xs font-bold">
-                <th className="p-3">شماره پروژه</th>
-                <th className="p-3">نام و مشخصات پروژه</th>
-                <th className="p-3">کارفرما / مشتری</th>
-                <th className="p-3">ارزش پایپ‌لاین</th>
-                <th className="p-3">تاریخ‌های کلیدی</th>
-                <th className="p-3">وضعیت پروژه</th>
                 {/*
-                  «مرحله» is not «وضعیت».
-
-                  The status is how the sale went and the stage is where the
-                  work has got to — a project can be «برنده (موفق)» and «ترخیص
-                  گمرک» at the same time, and «الان در چه مرحله‌ای است؟» is
-                  answered only by the second.
+                  Each header carries the grip for its **own** left edge, which
+                  in this right-to-left table is the boundary with the column
+                  after it — so the last one has none, there being nothing on
+                  its far side to take width from.
                 */}
-                <th className="p-3">مرحله جاری</th>
-                <th className="p-3 text-center">عملیات</th>
+                {PROJECT_COLUMN_LABELS.map((label, i) => (
+                  <th key={label} className={`p-3 relative${i === 7 ? ' text-center' : ''}`}>
+                    {i < PROJECT_COLUMN_LABELS.length - 1 && (
+                      <ColumnResizeHandle
+                        onResize={(widthPx, tableWidthPx) => {
+                          const from = dragStart.current ?? columnWidths;
+                          dragStart.current = from;
+                          if (!tableWidthPx) return;
+                          /*
+                            `widthPx` is *this* column's new width, measured
+                            from its right edge — which does not move, because
+                            every column before it is unchanged. So the pair
+                            being moved is this one and the next, and the delta
+                            is simply how much this column grew.
+                          */
+                          const target = (widthPx / tableWidthPx) * 100;
+                          setColumnWidths(
+                            resizeColumns(from, i, target - from[i], MIN_COLUMN_PERCENT));
+                        }}
+                        onDone={() => {
+                          dragStart.current = null;
+                          setColumnWidths((current) => { storeColumnWidths(current); return current; });
+                        }}
+                      />
+                    )}
+                    {label}
+                  </th>
+                ))}
               </tr>
               {/* Column Filters Row */}
               <tr className="bg-slate-50/50 border-b border-slate-100">

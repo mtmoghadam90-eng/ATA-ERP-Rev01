@@ -48,6 +48,8 @@ import WorkBoard from "../src/components/WorkBoard";
 import FollowUpCompletionModal from "../src/components/FollowUpCompletionModal";
 import ActivityComposer from "../src/components/ActivityComposer";
 import StuckThresholdsPanel from "../src/components/StuckThresholdsPanel";
+import ColumnResizeHandle from "../src/components/ColumnResizeHandle";
+import { resizeColumns } from "../src/utils/columnWidths";
 import type { Product } from "../src/types";
 import type { ExchangeRate } from "../src/types";
 
@@ -1359,6 +1361,122 @@ head("Stuck thresholds: a leg is asked about once");
   // The inert figure is not shown as if it were in force.
   ok("...and the refused value is not printed as a setting",
     box("projectStage", "حمل و ترانزیت")?.value === "");
+  act(() => { root.unmount(); });
+  host.remove();
+}
+
+/*
+ * Dragging a column divider, in a right-to-left table.
+ *
+ * The pure arithmetic is held by `test:rules`; what only a render can show is
+ * the **direction**, which is the whole of the risk here. This application is
+ * RTL, so a column's start edge is its right one and the grip is on its left:
+ * pulling that grip leftwards has to make the column *wider*. A sign written
+ * the wrong way round type-checks, passes every pure rule, and resizes the
+ * wrong column the wrong way.
+ */
+head("Column widths: the grip is on the left and pulling it left widens");
+
+{
+  const widths = [8, 25, 11, 8, 14, 9, 12, 13];
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  let seen: number[] | null = null;
+  let done = 0;
+
+  await act(async () => {
+    root.render(React.createElement(
+      "table",
+      null,
+      React.createElement(
+        "thead",
+        null,
+        React.createElement(
+          "tr",
+          null,
+          React.createElement(
+            "th",
+            null,
+            React.createElement(ColumnResizeHandle, {
+              onResize: (widthPx: number, tableWidthPx: number) => {
+                const target = (widthPx / tableWidthPx) * 100;
+                seen = resizeColumns(widths, 1, target - widths[1]);
+              },
+              onDone: () => { done += 1; },
+            }),
+          ),
+        ),
+      ),
+    ));
+  });
+
+  const grip = host.querySelector("[data-column-resizer]") as HTMLElement;
+  ok("the grip is drawn", !!grip);
+  /*
+   * jsdom has no layout, so the two rectangles the component measures are
+   * stubbed: a 1000px table whose second column runs from x=700 to x=950, i.e.
+   * 250px — a quarter, which is what the list says.
+   */
+  const th = grip.closest("th") as HTMLElement;
+  const table = grip.closest("table") as HTMLElement;
+  th.getBoundingClientRect = () => ({ right: 950, left: 700, width: 250 }) as never;
+  table.getBoundingClientRect = () => ({ right: 1000, left: 0, width: 1000 }) as never;
+  grip.setPointerCapture = () => {};
+  grip.releasePointerCapture = () => {};
+
+  const send = (type: string, clientX: number, target: EventTarget) => {
+    const ev = new dom.window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "clientX", { value: clientX });
+    Object.defineProperty(ev, "pointerId", { value: 1 });
+    act(() => { target.dispatchEvent(ev); });
+  };
+
+  send("pointerdown", 700, grip);
+  /*
+   * Pulled 50px to the **left** of where this column's left edge was: 250px
+   * becomes 300px, a quarter becomes 30% of a 1000px table, and the neighbour
+   * — which has 11 to give — comes down to 6.
+   */
+  send("pointermove", 650, dom.window);
+  ok("pulling the grip leftwards widens this column",
+    !!seen && (seen as never as number[])[1] > widths[1], seen);
+  ok("...by exactly what the pointer says",
+    Math.round((seen as never as number[])[1]) === 30, seen);
+  ok("...and the neighbour gives up exactly that much",
+    Math.round((seen as never as number[])[2]) === 6, seen);
+  ok("...leaving the table whole",
+    Math.abs((seen as never as number[]).reduce((a, b) => a + b, 0) - 100) < 0.001);
+  /*
+   * Pulled further than the neighbour can afford, it stops against the
+   * neighbour's minimum rather than pushing it to nothing — which would leave a
+   * column whose own grip could never be grabbed again.
+   */
+  send("pointermove", 500, dom.window);
+  ok("a drag past the neighbour's floor stops at it",
+    Math.round((seen as never as number[])[2]) === 4, seen);
+  ok("...and still leaves the table whole",
+    Math.abs((seen as never as number[]).reduce((a, b) => a + b, 0) - 100) < 0.001);
+  /*
+   * And every move is measured from where the drag *started*, never from the
+   * value it last wrote — so coming back lands on the figure it began with
+   * rather than accumulating whatever the previous move clamped away.
+   */
+  send("pointermove", 700, dom.window);
+  ok("coming back lands where it began",
+    JSON.stringify(seen) === JSON.stringify(widths), seen);
+
+  // And the other way: pushed right of where it started, the column narrows.
+  send("pointermove", 800, dom.window);
+  ok("pushing it rightwards narrows it",
+    !!seen && (seen as never as number[])[1] < widths[1], seen);
+
+  send("pointerup", 800, dom.window);
+  ok("the drag reports once when it ends", done === 1, done);
+  // And stops reporting: a move after the release must not keep resizing.
+  const before = JSON.stringify(seen);
+  send("pointermove", 500, dom.window);
+  ok("...and nothing moves after that", JSON.stringify(seen) === before, seen);
+
   act(() => { root.unmount(); });
   host.remove();
 }
