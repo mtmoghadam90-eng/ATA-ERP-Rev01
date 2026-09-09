@@ -691,6 +691,11 @@ export interface Task {
   reminderEnabled?: boolean;
   reminderDate?: string;
   reminderTime?: string;
+  /** The series («YYYY/MM/DD HH:MM»), its period, its end, and what was answered. */
+  reminderRepeat?: string;
+  reminderAnchor?: string;
+  reminderRepeatUntilJalali?: string;
+  reminderAckedFor?: string;
 }
 
 export interface ExchangeRate {

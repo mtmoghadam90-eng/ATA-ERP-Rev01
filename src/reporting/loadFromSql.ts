@@ -474,6 +474,7 @@ export async function readSqlCollections(): Promise<StoreCollections> {
       assignedTo: t.assignedToName,
       reminderEnabled: t.reminderEnabled,
       reminderDate: t.reminderDateJalali,
+      reminderRepeat: t.reminderRepeat,
       customValues: parseJson(t.customValues, undefined),
     })),
 

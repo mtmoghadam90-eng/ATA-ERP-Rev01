@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import {
+  REMINDER_REPEATS, REMINDER_REPEAT_LABELS, ReminderRepeat, describeReminder, occurrenceKey,
+} from '../utils/reminderRepeat';
 import { X, ChevronRight, ChevronLeft, Bell, Calendar, User, Clock } from 'lucide-react';
 import { Task } from '../types';
 import { rowToTask, taskToWriteInput, tasksApi } from '../api/tasks';
@@ -104,6 +107,8 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
   const [newTitle, setNewTitle] = useState('');
   const [newPriority, setNewPriority] = useState<Task['priority']>('متوسط');
   const [newReminderTime, setNewReminderTime] = useState('');
+  /* Offered only once a time is set — a period with no hour has nothing to repeat. */
+  const [newReminderRepeat, setNewReminderRepeat] = useState<ReminderRepeat | ''>('');
   const [saving, setSaving] = useState(false);
 
   const selectedDateStr = selectedDay
@@ -127,9 +132,16 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
         reminderEnabled: !!newReminderTime,
         reminderDate: newReminderTime ? selectedDateStr : null,
         reminderTime: newReminderTime || null,
+        // The chosen day and hour are the series' anchor; every later occurrence
+        // is derived from it rather than stored, so nothing has to advance.
+        reminderRepeat: newReminderTime ? (newReminderRepeat || null) : null,
+        reminderAnchor: newReminderTime && newReminderRepeat
+          ? occurrenceKey(selectedDateStr, newReminderTime)
+          : null,
       });
       setNewTitle('');
       setNewReminderTime('');
+      setNewReminderRepeat('');
       setNewPriority('متوسط');
       await load();
     } catch (err) {
@@ -453,7 +465,11 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
                       {t.reminderEnabled && (
                         <div className="flex items-center gap-1 text-amber-600">
                           <Bell size={10} className="animate-pulse" />
-                          <span>یادآور: {t.reminderTime}</span>
+                          <span>
+                            یادآور: {t.reminderRepeat
+                              ? describeReminder(t, getTodayShamsi())
+                              : t.reminderTime}
+                          </span>
                         </div>
                       )}
                     </div>
@@ -516,6 +532,23 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
                   dir="ltr"
                 />
               </div>
+              {/*
+                The repeat appears only once an hour is chosen: without one the
+                task is simply due that day and there is no moment to repeat.
+              */}
+              {newReminderTime && (
+                <select
+                  value={newReminderRepeat}
+                  onChange={(e) => setNewReminderRepeat((e.target.value || '') as ReminderRepeat | '')}
+                  title="تکرار یادآوری"
+                  className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-[11px] bg-white outline-none focus:border-sky-500"
+                >
+                  <option value="">بدون تکرار</option>
+                  {REMINDER_REPEATS.map((r) => (
+                    <option key={r} value={r}>{REMINDER_REPEAT_LABELS[r]}</option>
+                  ))}
+                </select>
+              )}
               <button
                 type="button"
                 onClick={() => { void createTaskForDay(); }}

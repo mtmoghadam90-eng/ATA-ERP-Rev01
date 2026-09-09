@@ -327,7 +327,6 @@ model CustomerAgreement {
 
 /**
  * Who we lose to, and win against.
- *
  * A table rather than a free-text column on the proforma, for the reason the
  * product categories are a list: one competitor entered twice is two rows, and
  * every figure about either is half the truth.
@@ -562,7 +561,7 @@ model Project {
   customerId String   @db.NVarChar(36)
   customer   Customer @relation("ProjectCustomer", fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  status      String  @db.NVarChar(50)
+  status               String    @db.NVarChar(50)
   /// Where the *work* has got to, as opposed to how the sale went.
   ///
   /// `status` is the commercial outcome and everything reads it that way — the
@@ -571,21 +570,21 @@ model Project {
   /// its goods shipped. So the stage is its own derived column, written by
   /// `syncProjectStage` in the same transaction as whatever moved it.
   /// `src/utils/projectStage.ts` is the rule.
-  stage             String?   @db.NVarChar(60)
-  stageChangedAt    DateTime?
-  stageChangedAtJalali String? @db.NVarChar(10)
+  stage                String?   @db.NVarChar(60)
+  stageChangedAt       DateTime?
+  stageChangedAtJalali String?   @db.NVarChar(10)
   /// A stage a person set by hand — «توقف پروژه توسط کارفرما» and the like,
   /// which no record implies. Locked pins it for good; unlocked shows it now
   /// and hands control back at the next recalculation, clearing this.
-  manualStage       String?   @db.NVarChar(60)
-  manualStageLocked Boolean   @default(false)
-  lossReason  String? @db.NVarChar(300)
+  manualStage          String?   @db.NVarChar(60)
+  manualStageLocked    Boolean   @default(false)
+  lossReason           String?   @db.NVarChar(300)
 
   /// Derived from the deciding quotations in the same transaction as the status
   /// and the loss reason — never typed a second time on this form.
   competitorId String?     @db.NVarChar(36)
   competitor   Competitor? @relation(fields: [competitorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  description String? @db.NVarChar(Max)
+  description  String?     @db.NVarChar(Max)
 
   creationDate             DateTime  @db.Date
   creationDateJalali       String?   @db.NVarChar(10)
@@ -749,7 +748,7 @@ model Proforma {
   /// the same rule as `ProformaItem.unitCost`, and what makes the gap a
   /// percentage that does not move with the exchange rate.
   competitorAmount Decimal? @db.Decimal(19, 2)
-  currency    String  @default("ریال") @db.NVarChar(20)
+  currency         String   @default("ریال") @db.NVarChar(20)
 
   issueDate          DateTime  @db.Date
   issueDateJalali    String?   @db.NVarChar(10)
@@ -961,11 +960,6 @@ model PurchaseOrder {
   items        PurchaseOrderItem[]
   transactions Transaction[]
 
-  @@index([supplierId])
-  @@index([projectId])
-  @@index([status])
-  @@index([orderDate])
-
   /// When the status last actually moved — «از کِی در این وضعیت است».
   ///
   /// Written only on a real change (`statusChangeColumns`), which is the whole
@@ -977,6 +971,10 @@ model PurchaseOrder {
   statusChangedAt       DateTime?
   statusChangedAtJalali String?   @db.NVarChar(10)
 
+  @@index([supplierId])
+  @@index([projectId])
+  @@index([status])
+  @@index([orderDate])
   @@map("purchase_orders")
 }
 
@@ -1295,9 +1293,6 @@ model AfterSalesService {
 
   items AfterSalesServiceItem[]
 
-  @@index([projectId])
-  @@index([status])
-
   /// When the status last actually moved — «از کِی در این وضعیت است».
   ///
   /// Written only on a real change (`statusChangeColumns`), which is the whole
@@ -1309,6 +1304,8 @@ model AfterSalesService {
   statusChangedAt       DateTime?
   statusChangedAtJalali String?   @db.NVarChar(10)
 
+  @@index([projectId])
+  @@index([status])
   @@map("after_sales_services")
 }
 
@@ -1622,15 +1619,46 @@ model Task {
   createdByUserId String? @db.NVarChar(36)
   createdByName   String? @db.NVarChar(200)
 
-  reminderEnabled    Boolean   @default(false)
-  reminderDate       DateTime? @db.Date
-  reminderDateJalali String?   @db.NVarChar(10)
-  reminderTime       String?   @db.NVarChar(5)
+  reminderEnabled           Boolean   @default(false)
+  reminderDate              DateTime? @db.Date
+  reminderDateJalali        String?   @db.NVarChar(10)
+  reminderTime              String?   @db.NVarChar(5)
+  /**
+   * The series, and this occurrence.
+   * `reminderDate`/`reminderTime` above are *this* occurrence — where a one-off
+   * lives and where a snooze writes. `reminderAnchor` is what the series is made
+   * of («YYYY/MM/DD HH:MM»), kept apart so a snooze moves today without dragging
+   * every later occurrence with it. `reminderAckedFor` names the occurrence
+   * already answered, in the same spelling, so closing one survives a refresh
+   * and the next is owed again on its own day. All null = does not repeat, which
+   * is every reminder written before this. The rules are `src/utils/reminderRepeat.ts`.
+   */
+  reminderRepeat            String?   @db.NVarChar(20)
+  reminderAnchor            String?   @db.NVarChar(20)
+  reminderRepeatUntilJalali String?   @db.NVarChar(10)
+  reminderAckedFor          String?   @db.NVarChar(20)
 
   customValues String? @db.NVarChar(Max)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  /**
+   * Which rule raised this task, and what about — the link that lets the rule
+   * close its own reminder when the record no longer matches it.
+   * `workflowEntityType`/`workflowEntityId` are **not** `relatedToType`/
+   * `relatedToId` above. Those say what the task is *about* for the person
+   * reading it, which for a purchase-order rule is usually the project rather
+   * than the order the rule actually fired on. The type is stored beside the id
+   * rather than looked up from the rule's schedule at closing time, so changing
+   * a rule's subject cannot make the resolver read the wrong table for tasks
+   * already raised.
+   * Null for every task a person raised, which is what null means here.
+   */
+  workflowRuleId     String? @db.NVarChar(64)
+  workflowRuleName   String? @db.NVarChar(200)
+  workflowEntityType String? @db.NVarChar(40)
+  workflowEntityId   String? @db.NVarChar(36)
 
   @@index([assignedToUserId, status])
   /// «کارهایی که من سپرده‌ام» — the other half of the board's own scope.
@@ -1641,26 +1669,7 @@ model Task {
   /// on every automatic task creation, and the queue's own join.
   @@index([taskKind, relatedToType, relatedToId, status])
   @@index([taskKind, status, dueDate])
-
-  /**
-   * Which rule raised this task, and what about — the link that lets the rule
-   * close its own reminder when the record no longer matches it.
-   *
-   * `workflowEntityType`/`workflowEntityId` are **not** `relatedToType`/
-   * `relatedToId` above. Those say what the task is *about* for the person
-   * reading it, which for a purchase-order rule is usually the project rather
-   * than the order the rule actually fired on. The type is stored beside the id
-   * rather than looked up from the rule's schedule at closing time, so changing
-   * a rule's subject cannot make the resolver read the wrong table for tasks
-   * already raised.
-   *
-   * Null for every task a person raised, which is what null means here.
-   */
-  workflowRuleId     String? @db.NVarChar(64)
-  workflowRuleName   String? @db.NVarChar(200)
-  workflowEntityType String? @db.NVarChar(40)
-  workflowEntityId   String? @db.NVarChar(36)
-
+  @@index([reminderEnabled, reminderRepeat])
   @@map("tasks")
 }
 
@@ -2019,12 +2028,12 @@ model Campaign {
   id   String @id @default(uuid()) @db.NVarChar(36)
   name String @db.NVarChar(200)
 
-  segmentId String?          @db.NVarChar(36)
-  segment   CustomerSegment? @relation(fields: [segmentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  segmentId   String?          @db.NVarChar(36)
+  segment     CustomerSegment? @relation(fields: [segmentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   /// Denormalised so a sent campaign still says who it went to after the
   /// segment is renamed or removed — the same reason a category group keeps
   /// `categoryName`.
-  segmentName String? @db.NVarChar(200)
+  segmentName String?          @db.NVarChar(200)
 
   channel    String  @db.NVarChar(20)
   templateId String? @db.NVarChar(36)
@@ -2032,7 +2041,7 @@ model Campaign {
   body       String  @db.NVarChar(Max)
 
   /// DRAFT | SENDING | SENT | CANCELLED
-  status String @db.NVarChar(20) @default("DRAFT")
+  status String @default("DRAFT") @db.NVarChar(20)
 
   scheduledAt       DateTime?
   scheduledAtJalali String?   @db.NVarChar(10)

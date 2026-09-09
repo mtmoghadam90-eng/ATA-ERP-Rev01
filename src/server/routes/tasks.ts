@@ -6,14 +6,19 @@ import { RouteDeps, sendError } from "./types";
 import { getTodayShamsi } from "../../dateUtils";
 import {
   TASK_FILTERABLE, TASK_SORTABLE, TaskInput,
-  createTask, deleteTask, getTask, listTasks, moveTasksToLane, taskSummary, updateTask,
+  ackReminder, createTask, deleteTask, getTask, listDueReminders, listTasks,
+  moveTasksToLane, taskSummary, updateTask,
 } from "../services/taskService";
 import { topUpActiveWork } from "../services/workLoadService";
 
 const WRITABLE: (keyof TaskInput)[] = [
   "title", "description", "relatedToType", "relatedToId", "relatedToName",
   "priority", "status", "dueDate", "assignedToUserId", "assignedToName",
-  "reminderEnabled", "reminderDate", "reminderTime", "customValues",
+  "reminderEnabled", "reminderDate", "reminderTime",
+  // The series and its end. `reminderAckedFor` is deliberately not here: the
+  // ack endpoint is its only writer, or a form posting the whole record would
+  // silence the very occurrence it was opened to answer.
+  "reminderRepeat", "reminderAnchor", "reminderRepeatUntilJalali", "customValues",
   /*
    * `taskKind` is deliberately **not** here.
    *
@@ -180,6 +185,76 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
     }
   });
 
+  /*
+    Both reminder routes are registered **before** `/api/tasks/:id`, and that is
+    not a tidiness rule here — it is the bug this file shipped with. `GET
+    /api/tasks/reminders` sat at the bottom of the file, so Express matched it
+    against `/api/tasks/:id` with the id «reminders», `getTask` found no such
+    task and answered 404 without calling `next()`, and the handler below was
+    never reached. The browser polls that endpoint every ten seconds, checks
+    `response.ok` and returns quietly — so **no reminder has ever fired**, with
+    nothing on any screen to say so. Verified against a real Express router,
+    which is also how `/api/tasks/summary` was confirmed to be safe: it is
+    registered above the same route and always was.
+  */
+  /**
+   * The reminders this person is owed right now.
+   *
+   * It used to ask for an exact `date = X AND time = Y` match, which is why a
+   * reminder was only ever seen inside its own minute: a machine opened at 09:05
+   * never saw the 09:00 one, and a weekly reminder would have been missed every
+   * week for ever. `listDueReminders` answers «owed and not yet acknowledged»
+   * instead, from the reminder's own time until the end of its own day.
+   *
+   * Each row carries the `reminderOccurrence` it is owed for, which is what the
+   * acknowledgement below names — so answering today says nothing about the next
+   * one in the series.
+   */
+  app.get("/api/tasks/reminders", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { date, time } = req.query as { date?: string; time?: string };
+      if (!date || !time) {
+        res.status(400).json({ success: false, error: "date و time الزامی هستند." });
+        return;
+      }
+      res.json({ success: true, tasks: await listDueReminders(user, date, time) });
+    } catch (err) {
+      sendError(res, err, "GET /api/tasks/reminders");
+    }
+  });
+
+  /**
+   * «دیدم» — one occurrence answered.
+   *
+   * Registered before `/api/tasks/:id` so a task whose id is the literal string
+   * «reminders» cannot shadow it, the rule every sub-path route here follows.
+   *
+   * The occurrence is required rather than defaulted: acknowledging «the current
+   * one» computed on the server would race the poll across midnight and silence
+   * tomorrow's, and the browser already knows exactly which one it drew.
+   */
+  app.post("/api/tasks/:id/reminder-ack", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      const occurrence = String((req.body ?? {}).occurrence ?? "").trim();
+      if (!occurrence) {
+        res.status(400).json({ success: false, error: "occurrence الزامی است." });
+        return;
+      }
+      const done = await ackReminder(req.params.id, occurrence, user);
+      if (!done) {
+        res.status(404).json({ success: false, error: "این یادآور یافت نشد." });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      sendError(res, err, "POST /api/tasks/:id/reminder-ack");
+    }
+  });
+
   app.get("/api/tasks/:id", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
@@ -241,36 +316,6 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
       res.json({ success: true });
     } catch (err) {
       sendError(res, err, "DELETE /api/tasks/:id");
-    }
-  });
-
-  /**
-   * Returns tasks with reminders enabled that match the current date and time.
-   * Used by App.tsx for real-time reminder notifications.
-   */
-  app.get("/api/tasks/reminders", async (req, res) => {
-    const user = await deps.requireAuth(req, res);
-    if (!user) return;
-    try {
-      const { date, time } = req.query as { date?: string; time?: string };
-      if (!date || !time) {
-        res.status(400).json({ success: false, error: "date و time الزامی هستند." });
-        return;
-      }
-      const result = await listTasks(
-        {
-          page: 1,
-          pageSize: 100,
-          search: "",
-          order: "asc",
-          filters: {}
-        },
-        user,
-        { reminderDate: date, reminderTime: time }
-      );
-      res.json({ success: true, tasks: result.rows });
-    } catch (err) {
-      sendError(res, err, "GET /api/tasks/reminders");
     }
   });
 }

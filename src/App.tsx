@@ -22,6 +22,7 @@ import { ensureHolidayCalendar } from './api/holidays';
 import { ShieldAlert, Bell, Inbox, Menu, Calendar, CheckCircle2, Clock, User, Sun, Moon } from 'lucide-react';
 import TaskCalendarModal from './components/TaskCalendarModal';
 import { getTodayShamsi, toShamsiStr } from './dateUtils';
+import { describeReminder } from './utils/reminderRepeat';
 import ShamsiDatePicker from './components/ShamsiDatePicker';
 import ConfirmModal from './components/ConfirmModal';
 import ProjectConfirmationUploadModal from './components/ProjectConfirmationUploadModal';
@@ -335,7 +336,15 @@ export default function App() {
         const data = await response.json();
         if (!data.success || !data.tasks || data.tasks.length === 0) return;
 
-        // Find first task not already triggered
+        /*
+          The first one not already shown in this session.
+
+          The row carries the `reminderOccurrence` it is owed for, computed by
+          the server against the Shamsi calendar, and that string is what an
+          acknowledgement names — so answering today's says nothing about next
+          Monday's. Keyed by id here only to avoid drawing the same card twice
+          before it is answered; the durable half is `reminderAckedFor`.
+        */
         const matchingTask = data.tasks.find((t: any) => !triggeredReminders.includes(t.id));
 
         if (matchingTask) {
@@ -797,7 +806,11 @@ export default function App() {
                     </div>
                     <div className="flex items-center gap-1.5 mr-auto font-mono">
                       <Clock size={12} />
-                      <span>زمان یادآور: {activeReminderTask.reminderTime}</span>
+                      <span>
+                        زمان یادآور: {activeReminderTask.reminderRepeat
+                          ? describeReminder(activeReminderTask, getTodayShamsi())
+                          : activeReminderTask.reminderTime}
+                      </span>
                     </div>
                   </div>
 
@@ -818,6 +831,31 @@ export default function App() {
                       <CheckCircle2 size={14} />
                       تغییر وضعیت به انجام شده
                     </button>
+                    {/*
+                      «دیدم» — the plain dismiss this dialog never had.
+
+                      Its only two answers used to be «mark the task done» and
+                      «snooze», and neither is what somebody means about a
+                      *repeating* reminder: the task is not finished, and it is
+                      not being pushed to a different hour. Acknowledging names
+                      the occurrence, so it is quiet for the rest of today and
+                      speaks again on its own next day, and unlike the in-memory
+                      list it survives a refresh.
+                    */}
+                    <button
+                      onClick={() => {
+                        if (activeReminderTask.reminderOccurrence) {
+                          tasksApi.ackReminder(
+                            activeReminderTask.id, activeReminderTask.reminderOccurrence,
+                          ).catch((err) => console.error('Failed to acknowledge reminder:', err));
+                        }
+                        setActiveReminderTask(null);
+                        setShowSnoozeOptions(false);
+                      }}
+                      className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition cursor-pointer"
+                    >
+                      دیدم
+                    </button>
                     <button
                       onClick={() => {
                         const now = new Date();
@@ -827,7 +865,7 @@ export default function App() {
                       }}
                       className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition cursor-pointer"
                     >
-                      بستن و بعداً پیگیری می‌کنم
+                      بعداً
                     </button>
                   </div>
                 </>

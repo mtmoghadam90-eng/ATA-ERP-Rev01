@@ -10,6 +10,9 @@ import {
 } from "../../utils/workBoard";
 import { FOLLOW_UP_KIND, deferralAfterChaseMoved } from "../../utils/salesFollowUp";
 import { capacityRefusalMessage } from "../../utils/workLimits";
+import {
+  ReminderFacts, dueReminderAt, normalizeRepeat,
+} from "../../utils/reminderRepeat";
 import { capacityByUser } from "./workLoadService";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate } from "../dates";
 import { toJsonColumn, toNullableString } from "../childSync";
@@ -174,8 +177,6 @@ export function buildTaskWhere(
     dateTo?: unknown;
     overdue?: unknown;
     relatedToId?: unknown;
-    reminderDate?: unknown;
-    reminderTime?: unknown;
     scope?: TaskScope;
     /** «انجام‌شده‌ها را پنهان کن» — the board's declutter toggle. */
     hideCompleted?: unknown;
@@ -293,13 +294,12 @@ export function buildTaskWhere(
     and.push({ status: { notIn: [TASK_DONE, TASK_CANCELLED] } });
   }
 
-  // Filter for reminder notifications — exact date and time match
-  if (typeof extra.reminderDate === "string" && extra.reminderDate) {
-    and.push({ reminderEnabled: true, reminderDateJalali: extra.reminderDate });
-  }
-  if (typeof extra.reminderTime === "string" && extra.reminderTime) {
-    and.push({ reminderTime: extra.reminderTime });
-  }
+  /*
+    The reminder filter used to live here as an exact `date = X AND time = Y`
+    match, which is why a reminder was only ever seen inside its own minute.
+    Reminders are read by `listDueReminders` now: a repeating one is derived from
+    its anchor, which no SQL clause over a Shamsi calendar can express.
+  */
 
   return and.length === 0 ? {} : { AND: and };
 }
@@ -311,6 +311,8 @@ const LIST_SELECT = {
   dueDate: true, dueDateJalali: true,
   assignedToUserId: true, assignedToName: true,
   reminderEnabled: true, reminderDateJalali: true, reminderTime: true,
+  reminderRepeat: true, reminderAnchor: true,
+  reminderRepeatUntilJalali: true, reminderAckedFor: true,
   createdAt: true,
   // What kind of work it is, and — for a sales follow-up — what came of it.
   // The card needs the kind to send the user to the follow-up flow rather than
@@ -335,8 +337,6 @@ export async function listTasks(
     dateTo?: unknown;
     overdue?: unknown;
     relatedToId?: unknown;
-    reminderDate?: unknown;
-    reminderTime?: unknown;
     scope?: TaskScope;
     /** «انجام‌شده‌ها را پنهان کن» — the board's declutter toggle. */
     hideCompleted?: unknown;
@@ -548,6 +548,9 @@ export interface TaskInput {
   reminderEnabled?: boolean;
   reminderDate?: string | null;
   reminderTime?: string | null;
+  reminderRepeat?: string | null;
+  reminderAnchor?: string | null;
+  reminderRepeatUntilJalali?: string | null;
   customValues?: unknown;
 }
 
@@ -566,6 +569,18 @@ function scalarData(input: TaskInput): Record<string, unknown> {
   if ("assignedToName" in input) set("assignedToName", toNullableString(input.assignedToName, 200));
   if ("reminderEnabled" in input) set("reminderEnabled", !!input.reminderEnabled);
   if ("reminderTime" in input) set("reminderTime", toNullableString(input.reminderTime, 5));
+  /*
+    The period is normalised rather than stored as typed, so a value this build
+    does not know is written as «does not repeat» instead of as a rule nothing
+    can read. `reminderAckedFor` is deliberately absent: `ackReminder` is its
+    only writer, or a form posting a whole record would silence the very
+    occurrence it was opened to answer.
+  */
+  if ("reminderRepeat" in input) set("reminderRepeat", normalizeRepeat(input.reminderRepeat));
+  if ("reminderAnchor" in input) set("reminderAnchor", toNullableString(input.reminderAnchor, 20));
+  if ("reminderRepeatUntilJalali" in input) {
+    set("reminderRepeatUntilJalali", toNullableString(input.reminderRepeatUntilJalali, 10));
+  }
   if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
 
   return { ...out, ...expandDateFields(input as Record<string, unknown>, TASK_DATE_FIELDS) };
@@ -1136,4 +1151,96 @@ export async function deleteTask(id: string, user: AuthUser, todayJalali: string
   );
 
   return "ok";
+}
+
+/* ------------------------------- reminders -------------------------------- */
+
+/**
+ * The reminders this person is owed right now.
+ *
+ * Two things make this its own reader rather than an extra on `listTasks`.
+ *
+ * **A repeating reminder cannot be found by a `where`.** Its occurrences are
+ * derived from an anchor across the Shamsi calendar — months of 31, 30 and 29
+ * days, and a leap Esfand — which no clause over a date column can express. So
+ * the query narrows to *candidates* and `dueReminderAt` decides, the same
+ * rank-then-page shape the follow-up queue and the stuck-work report already
+ * take.
+ *
+ * **The candidate set is small by construction**: `reminderEnabled` is false for
+ * almost every task, and the two arms are «a one-off dated today» and «a
+ * repeating one still running». `visibilityClause` is applied like everywhere
+ * else, so a reminder only ever reaches the two people its task belongs to.
+ *
+ * A finished task is excluded: a reminder that goes on speaking about work
+ * already done is the thing that makes people stop reading reminders, and for a
+ * repeating one it would do so for ever.
+ */
+export async function listDueReminders(
+  user: AuthUser,
+  todayJalali: string,
+  nowTime: string,
+): Promise<Array<Record<string, unknown> & { reminderOccurrence: string }>> {
+  const db = getDb();
+  const visible = visibilityClause(user);
+
+  const rows = await db.task.findMany({
+    where: {
+      AND: [
+        ...(visible ? [visible] : []),
+        { reminderEnabled: true },
+        { status: { notIn: [TASK_DONE, TASK_CANCELLED] } },
+        {
+          OR: [
+            { reminderDateJalali: todayJalali },
+            {
+              reminderRepeat: { not: null },
+              OR: [
+                { reminderRepeatUntilJalali: null },
+                { reminderRepeatUntilJalali: { gte: todayJalali } },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    select: LIST_SELECT,
+    take: REMINDER_SCAN_LIMIT,
+  });
+
+  const due: Array<Record<string, unknown> & { reminderOccurrence: string }> = [];
+  for (const row of rows) {
+    const occurrence = dueReminderAt(row as ReminderFacts, todayJalali, nowTime);
+    if (occurrence) due.push({ ...(row as Record<string, unknown>), reminderOccurrence: occurrence });
+  }
+  return due;
+}
+
+/**
+ * A bound on the candidate scan, for the same reason every other scan here has
+ * one: a query with no `take` is one that gets slower for ever.
+ */
+const REMINDER_SCAN_LIMIT = 500;
+
+/**
+ * Records that somebody has answered one occurrence.
+ *
+ * **The occurrence is named, not merely flagged**, so acknowledging today says
+ * nothing about next Monday — a boolean would silence the series after its first
+ * appearance, which is the whole feature. It is written as a conditional
+ * `updateMany` so it can never reach a task this person may not see, and so two
+ * tabs answering at once write it once.
+ */
+export async function ackReminder(
+  id: string,
+  occurrence: string,
+  user: AuthUser,
+): Promise<boolean> {
+  const db = getDb();
+  const visible = visibilityClause(user);
+  const result = await db.task.updateMany({
+    where: { AND: [{ id }, ...(visible ? [visible] : [])] },
+    data: { reminderAckedFor: occurrence.slice(0, 20) },
+  });
+  return result.count > 0;
 }
