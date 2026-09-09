@@ -50,6 +50,7 @@ import ActivityComposer from "../src/components/ActivityComposer";
 import StuckThresholdsPanel from "../src/components/StuckThresholdsPanel";
 import ColumnResizeHandle from "../src/components/ColumnResizeHandle";
 import NextActionModal from "../src/components/NextActionModal";
+import SaveWithNextActionButton from "../src/components/SaveWithNextActionButton";
 import type { NextActionDraft } from "../src/utils/nextAction";
 import { resizeColumns } from "../src/utils/columnWidths";
 import type { Product } from "../src/types";
@@ -1482,24 +1483,81 @@ head("Column widths: the grip is on the left and pulling it left widens");
   host.remove();
 }
 
-head("Next action: the form survives the board carrying on underneath it");
+head("Next action: the second save button arms, then submits");
+
+/*
+ * The one mechanic here a rules test cannot see.
+ *
+ * «ذخیره و اقدام بعدی» is a `type="submit"` with an `onClick` that only marks
+ * the press. Everything depends on those two happening in that order: if the
+ * form's submit handler ran before the click handler, `takeArmed()` would read
+ * false on every press and the button would be an ordinary save — silently, in
+ * every one of the ten forms. It type-checks either way and no pure rule can
+ * tell. It needs a real DOM.
+ */
+{
+  const order: string[] = [];
+  let armedAtSubmit: boolean | null = null;
+  let armed = false;
+
+  function Form() {
+    return React.createElement(
+      'form',
+      {
+        onSubmit: (e: { preventDefault: () => void }) => {
+          e.preventDefault();
+          order.push('submit');
+          // What the host's handler reads at the top of its own submit.
+          armedAtSubmit = armed;
+          armed = false;
+        },
+      },
+      React.createElement(SaveWithNextActionButton, {
+        onArm: () => { order.push('arm'); armed = true; },
+      }),
+      React.createElement('button', { type: 'submit', 'data-plain': true }, 'ذخیره'),
+    );
+  }
+
+  const fHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const fRoot = createRoot(fHost);
+  act(() => { fRoot.render(React.createElement(Form)); });
+
+  const second = fHost.querySelector("[data-save-with-next-action]") as HTMLButtonElement | null;
+  const plain = fHost.querySelector("[data-plain]") as HTMLButtonElement | null;
+  ok("both save buttons are drawn", !!second && !!plain);
+
+  act(() => { second?.click(); });
+  ok("pressing it arms and then submits, in that order",
+    order.join(">") === "arm>submit", order.join(">"));
+  ok("...so the handler sees the press it was made for", armedAtSubmit === true, armedAtSubmit);
+
+  /*
+   * And the plain button is untouched: the great majority of saves are somebody
+   * fixing a typo, and being asked for a next action then is the prompt people
+   * learn to dismiss.
+   */
+  order.length = 0;
+  act(() => { plain?.click(); });
+  ok("the plain save asks nothing", order.join(">") === "submit" && armedAtSubmit === false,
+    { order: order.join(">"), armedAtSubmit });
+
+  act(() => { fRoot.unmount(); });
+  fHost.remove();
+}
+
+head("Next action: the form survives the screen carrying on underneath it");
 
 /*
  * The same family as the price calculator above, and the reason this modal
- * seeds on a key rather than on its `source` prop.
- *
- * Both screens that open it build that object inline, and both re-render on
- * their own — the sidebar badge poll comes back every minute, and any write
- * anywhere fires a live-data event. An effect watching the object would reset a
- * half-typed next action every time one of those landed. Nothing about that is
- * visible to the type-checker or to the rules tests: every value is right, only
- * the moment of assignment is wrong. It needs a render.
+ * seeds on the record rather than on its `source` prop. All ten screens build
+ * that object inline and re-render on their own — the sidebar badge poll comes
+ * back every minute, and any write anywhere fires a live-data event.
  */
 {
   const source = {
-    title: "بررسی نقشه",
-    relatedToType: "پروژه", relatedToId: "p-1", relatedToName: "پالایشگاه آبادان",
-    assignedTo: "علی رضایی", priority: "بالا",
+    relatedToType: 'مشتری', relatedToId: 'c-1', relatedToName: 'فولاد مبارکه',
+    assignedTo: 'علی رضایی',
   };
   const saved: NextActionDraft[] = [];
   let rerender: () => void = () => {};
@@ -1508,7 +1566,6 @@ head("Next action: the form survives the board carrying on underneath it");
     const [, setTick] = useState(0);
     rerender = () => setTick((t) => t + 1);
     return React.createElement(NextActionModal, {
-      open: true,
       // A fresh object every render — the shape that caused the bug.
       source: { ...source },
       kinds: ["تماس تلفنی", "جلسه یا بازدید"],
@@ -1522,47 +1579,27 @@ head("Next action: the form survives the board carrying on underneath it");
   const nRoot = createRoot(nHost);
   act(() => { nRoot.render(React.createElement(Host)); });
 
-  const q = <T extends Element>(sel: string) =>
-    nHost.querySelector(sel) as T | null;
+  const kind = nHost.querySelector("[data-next-action-kind]") as HTMLSelectElement | null;
+  const desc = nHost.querySelector("[data-next-action-description]") as HTMLTextAreaElement | null;
+  const who = nHost.querySelector("[data-next-action-assignee]") as HTMLSelectElement | null;
+  const save = nHost.querySelector("[data-next-action-save]") as HTMLButtonElement | null;
+  ok("the form drew its fields", !!kind && !!desc && !!who && !!save);
 
-  const kind = q<HTMLSelectElement>("[data-next-action-kind]");
-  const desc = q<HTMLTextAreaElement>("[data-next-action-description]");
-  const who = q<HTMLSelectElement>("[data-next-action-assignee]");
-  const priority = q<HTMLSelectElement>("[data-next-action-priority]");
-  const save = q<HTMLButtonElement>("[data-next-action-save]");
-
-  ok("the form drew its five fields", !!kind && !!desc && !!who && !!priority && !!save);
-
-  /*
-   * What it inherits, seen through the boxes rather than through the rule: the
-   * person who just did the work and the urgency it had. The kind is the one
-   * thing only they know, so it starts empty and is the field the cursor lands
-   * in.
-   */
-  ok("the assignee is carried over", who?.value === "علی رضایی", who?.value);
-  ok("...and the priority", priority?.value === "بالا", priority?.value);
+  ok("the person who pressed save is carried over", who?.value === "علی رضایی", who?.value);
   ok("...while the kind starts empty", kind?.value === "", kind?.value);
-  ok("...and it names what it follows", nHost.textContent?.includes("بررسی نقشه") === true);
-  ok("...and the job it belongs to, without asking again",
-    nHost.textContent?.includes("پالایشگاه آبادان") === true);
+  ok("...and the record is named rather than asked for again",
+    nHost.textContent?.includes("فولاد مبارکه") === true);
 
-  /*
-   * The refusal is enforced where the person is, not only on the way out: an
-   * undated or unkinded next action is exactly the card that goes missing.
-   */
+  // An undated or unkinded next action is exactly the card that goes missing,
+  // so the refusal is enforced where the person is standing.
   act(() => { save?.click(); });
   ok("saving with no kind is refused", saved.length === 0, saved.length);
   ok("...and says why", nHost.textContent?.includes("نوع اقدام") === true);
 
   act(() => { handlers(kind!).onChange?.({ target: { value: "تماس تلفنی" } }); });
-  act(() => {
-    handlers(desc!).onChange?.({ target: { value: "قیمت رقیب را بگیر" } });
-  });
-  ok("the kind is held", kind?.value === "تماس تلفنی", kind?.value);
+  act(() => { handlers(desc!).onChange?.({ target: { value: "قیمت رقیب را بگیر" } }); });
 
-  // The screen behind carries on living. None of it is the user's doing.
   for (let i = 0; i < 5; i++) act(() => { rerender(); });
-
   ok("what was typed survives the screen behind it re-rendering",
     kind?.value === "تماس تلفنی" && desc?.value === "قیمت رقیب را بگیر",
     { kind: kind?.value, desc: desc?.value });
@@ -1579,7 +1616,6 @@ head("Next action: the form survives the board carrying on underneath it");
   act(() => { nRoot.unmount(); });
   nHost.remove();
 }
-
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {

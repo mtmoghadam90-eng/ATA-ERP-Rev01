@@ -65,6 +65,9 @@ import type { ProjectRow } from '../api/projects';
 import type { ProformaRow } from '../api/proformas';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import { useProjectJump } from "../api/useProjectJump";
+import { useNextAction } from '../utils/useNextAction';
+import SaveWithNextActionButton from './SaveWithNextActionButton';
+import { NextActionPrompt } from './NextActionModal';
 
 /**
  * Packing lists.
@@ -1034,8 +1037,14 @@ ${sheets}
   };
 
   // Submit delivery info
+  const nextAction = useNextAction();
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Read once, at the top: the project, the line and the quantity checks
+    // below can all refuse this save, and a flag left set would arm the next
+    // one instead.
+    const wantsNextAction = nextAction.takeArmed();
     if (!selectedProjectId) {
       alert('لطفاً پروژه مرتبط را انتخاب کنید.');
       return;
@@ -1142,9 +1151,16 @@ ${sheets}
        */
       const hadDeliveryDate = editingDeliveryId ? editingDeliveryWasDelivered : false;
 
-      if (editingDeliveryId) await deliveriesApi.update(editingDeliveryId, payload);
-      else await deliveriesApi.create(payload);
+      const saved = editingDeliveryId
+        ? await deliveriesApi.update(editingDeliveryId, payload)
+        : await deliveriesApi.create(payload);
       list.refresh();
+      void nextAction.ask(wantsNextAction, saved, (delivery) => ({
+        relatedToType: 'بسته‌بندی و تحویل',
+        relatedToId: delivery.id,
+        relatedToName: delivery.packingListNumber || '',
+        assignedTo: currentUser?.fullName,
+      }));
 
       /*
        * Delivery recorded — however it was recorded.
@@ -2138,6 +2154,7 @@ ${sheets}
             >
               ثبت و صدور پکینگ لیست کالا
             </button>
+            <SaveWithNextActionButton onArm={nextAction.arm} className="!px-6 !py-3 !text-xs !font-bold" />
             <button
               type="button"
               onClick={() => {
@@ -2506,6 +2523,10 @@ ${sheets}
           }
         }
       `}</style>
+
+      {/* Asked only once the packing list is really on the server, with its id. */}
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+
     </div>
   );
 }

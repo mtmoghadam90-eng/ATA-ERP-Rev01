@@ -3,25 +3,23 @@ import { tasksApi } from '../api/tasks';
 import { TASK_TODO } from './workBoard';
 import { NextActionDraft, NextActionSource, nextActionTitle } from './nextAction';
 
-/** How the record that was finished is actually closed. The host's half. */
-export type NextActionCompletion = (source: NextActionSource) => Promise<unknown>;
-
 /**
- * The host half of «انجام شد و اقدام بعدی», in one place.
+ * The host half of «ذخیره و ثبت اقدام بعدی», in one place.
  *
- * Three buttons offer it — the tasks list, a referral's thread on the board,
- * and the same thread in the inbox — and they finish two different kinds of
- * record, so the *completion* is theirs. What must not be theirs is the rest:
- * which order the two writes go in, what the new task inherits, and what
- * happens when one of them fails. Two copies of that is two answers to the same
- * question, which is the fault this codebase keeps repairing (`queueMessage`,
- * `resolveAssignee`, the five customer forms).
+ * Ten forms offer the button and each saves a different kind of record, so the
+ * *save* is theirs. What must not be theirs is the rest: when the question is
+ * asked, what the new task inherits, and what happens when one of the two
+ * writes fails. Ten copies of that is ten answers to one question, which is the
+ * fault this codebase keeps repairing (`queueMessage`, `resolveAssignee`, the
+ * five customer forms).
  *
- * **The completion is named at `start`, not at construction.** A screen that
- * draws both a task list and a referral thread finishes two kinds of record and
- * would otherwise need two of these — two modals, two pieces of state, and a
- * standing question about which one is open. The person presses one button, and
- * that press is the moment the host knows what it is closing.
+ * **The save happens first, and that is forced rather than chosen.** A record
+ * created by this save has no id until the server has written it, so a next
+ * action raised beforehand could only point at nothing — and a card nobody can
+ * trace back to its job is the thing this feature exists to avoid. The two are
+ * therefore two requests and not one transaction, which is honest: the save is
+ * true on its own, and if the task cannot be created afterwards the record is
+ * still correctly saved and the modal says so with the draft still in it.
  *
  * It creates an **ordinary task** through the tasks route. There is deliberately
  * no `POST /api/next-action`: a next action *is* a task, and a second creation
@@ -32,68 +30,80 @@ export function useNextAction() {
   const [source, setSource] = useState<NextActionSource | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const completeRef = useRef<NextActionCompletion | null>(null);
   /*
-   * The task already created, if the completion after it failed.
+   * Which button was pressed.
    *
-   * A retry must not raise a second next action. This is the conditional-write
-   * shape in the one place here that genuinely spans two requests.
+   * A ref and not state: the form submits in the same tick the button is
+   * pressed, so a `setState` would not have landed by the time the handler
+   * reads it back, and every save would read as the plain one.
    */
-  const createdRef = useRef<string | null>(null);
+  const armed = useRef(false);
 
-  const start = (next: NextActionSource, complete: NextActionCompletion) => {
-    createdRef.current = null;
-    completeRef.current = complete;
-    setError(null);
-    setSource(next);
-  };
-
-  const close = () => {
-    setSource(null);
-    setError(null);
-  };
+  /** «ذخیره و ثبت اقدام بعدی» was pressed; the form then submits as usual. */
+  const arm = () => { armed.current = true; };
 
   /**
-   * Raises the next action, **then** completes what it follows.
+   * Reads which button was pressed **and clears it**, at the top of the submit.
    *
-   * The order is the decision, and it is chosen for which failure announces
-   * itself. Completing first and failing to create leaves the work recorded as
-   * done and the next action silently lost — the card is off the board, so
-   * nobody sees the gap. Creating first and failing to complete leaves the
-   * original still sitting on the board: visible, wrong in a way somebody
-   * notices, and fixed by pressing the button again.
+   * Read-and-clear rather than a plain read, because a submit handler has many
+   * ways not to reach its save: a required field is blank, a duplicate is
+   * found, the contact rule refuses. Leaving the flag set through one of those
+   * would arm the *next* save instead — somebody presses «ذخیره و اقدام بعدی»,
+   * is told to fill in a field, presses plain «ذخیره», and is asked for a next
+   * action they did not request. Consumed once, at the top, it cannot happen.
    *
-   * They are two requests rather than one transaction because they are two
-   * facts: the completion is true on its own, and the next action is new work.
-   * That is the opposite of `completeFollowUp`, where the replacement *is* part
-   * of the decision and a half-done pair leaves a quotation marked as actively
-   * chased with nothing chasing it.
+   * A form that defers its save behind a confirmation carries the answer down
+   * to it rather than reading the flag again later.
    */
+  const takeArmed = () => {
+    const wanted = armed.current;
+    armed.current = false;
+    return wanted;
+  };
+
+  const close = () => { setSource(null); setError(null); };
+
+  /**
+   * Asks the question once the save has actually landed — and only then.
+   *
+   * `saved` is whatever the form's own save resolved to, so **an undefined
+   * answer is a failed save**: every module's helper reports its own error and
+   * returns nothing, which is exactly the signal needed here. Raising a next
+   * action for a record that was refused would leave a card pointing at a job
+   * that does not exist.
+   */
+  const ask = async <T,>(
+    wanted: boolean,
+    saved: Promise<T | undefined> | T | undefined,
+    describe: (record: NonNullable<T>) => NextActionSource,
+  ) => {
+    if (!wanted) return;
+    const record = await saved;
+    if (record === undefined || record === null) return;
+    setError(null);
+    setSource(describe(record as NonNullable<T>));
+  };
+
+  /** Raises the task the person has just described. */
   const submit = async (draft: NextActionDraft) => {
-    const complete = completeRef.current;
-    if (!source || !complete) return;
+    if (!source) return;
     setSaving(true);
     setError(null);
     try {
-      if (!createdRef.current) {
-        const created = await tasksApi.create({
-          title: nextActionTitle(draft.kind, source),
-          description: draft.description || null,
-          relatedToType: source.relatedToType ?? null,
-          relatedToId: source.relatedToId ?? null,
-          relatedToName: source.relatedToName ?? null,
-          priority: draft.priority,
-          dueDate: draft.dueDate,
-          // A name with no id, so the server resolves it through
-          // `resolveAssignee` and a spelling difference cannot leave the task
-          // belonging to nobody.
-          assignedToName: draft.assignedTo || null,
-          status: TASK_TODO,
-        });
-        createdRef.current = created.id;
-      }
-      await complete(source);
-      createdRef.current = null;
+      await tasksApi.create({
+        title: nextActionTitle(draft.kind, source),
+        description: draft.description || null,
+        relatedToType: source.relatedToType,
+        relatedToId: source.relatedToId,
+        relatedToName: source.relatedToName,
+        priority: draft.priority,
+        dueDate: draft.dueDate,
+        // A name with no id, so the server resolves it through
+        // `resolveAssignee` and a spelling difference cannot leave the task
+        // belonging to nobody.
+        assignedToName: draft.assignedTo || null,
+        status: TASK_TODO,
+      });
       setSource(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'ثبت اقدام بعدی انجام نشد.');
@@ -102,5 +112,5 @@ export function useNextAction() {
     }
   };
 
-  return { source, saving, error, start, close, submit };
+  return { source, saving, error, arm, takeArmed, close, ask, submit };
 }

@@ -395,7 +395,7 @@ export default function SettingsView({
     leadQualities: 'سطوح کیفیت سرنخ‌ها (مشتریان/پروژه‌ها)',
     communicationMethods: 'روش‌های اصلی ارتباط با مشتری (وظایف)',
     taskPriorities: 'اولویت‌های وظایف و پیگیری‌ها (وظایف)',
-    nextActionKinds: 'انواع اقدام بعدی (وظایف/ارجاعات)',
+    nextActionKinds: 'انواع اقدام بعدی (دکمهٔ «ذخیره و اقدام بعدی»)',
     positions: 'سمت‌های افراد حقیقی (کاربران)',
     receiptTypes: 'انواع دریافت و پرداخت (تراکنش‌ها)',
     shippingMethods: 'نحوه ارسال کالا (پکینگ لیست/خرید)',

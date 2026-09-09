@@ -88,7 +88,7 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
   },
   {
     id: "next-action-kinds-1",
-    describe: "انواع اقدام بعدی برای دکمهٔ «انجام شد و اقدام بعدی»",
+    describe: "انواع اقدام بعدی برای دکمهٔ «ذخیره و اقدام بعدی»",
     /*
      * A list, not a rule.
      *

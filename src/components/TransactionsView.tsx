@@ -21,7 +21,7 @@ import {
   Printer,
   Loader2
 } from 'lucide-react';
-import { Transaction, Customer, Supplier, Project, ERPSettings, Proforma } from '../types';
+import { Transaction, Customer, Supplier, Project, ERPSettings, Proforma, User } from '../types';
 import { getTodayShamsi } from '../dateUtils';
 import { formatERPNumber, formatMoney } from '../numUtils';
 import ShamsiDatePicker from './ShamsiDatePicker';
@@ -31,6 +31,9 @@ import ConfirmModal from './ConfirmModal';
 import DeleteActivitiesOption from './DeleteActivitiesOption';
 import QuickAddModal from './QuickAddModal';
 import { SearchableSelect } from './SearchableSelect';
+import { useNextAction } from '../utils/useNextAction';
+import SaveWithNextActionButton from './SaveWithNextActionButton';
+import { NextActionPrompt } from './NextActionModal';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import { buildCustomerOptions } from '../utils/customerLabel';
 import { getContactInfoError } from '../utils/customerValidation';
@@ -65,6 +68,8 @@ import { useProjectJump } from "../api/useProjectJump";
  * the per-project financial figures are their own paginated query.
  */
 interface TransactionsViewProps {
+  /** Whoever is signed in — the next action starts assigned to them. */
+  currentUser?: User | null;
   /**
    * A project code this screen was opened with — see `openProjectIn` in
    * `App.tsx`. Applied to the search box once and then cleared, so returning
@@ -87,6 +92,7 @@ interface TransactionsViewProps {
 }
 
 export default function TransactionsView({
+  currentUser = null,
   projectJump, onProjectJumpApplied, onOpenProject,
   initialPrintDocId,
   onClearInitialPrintDocId,
@@ -235,10 +241,13 @@ export default function TransactionsView({
 
   const addTransaction = async (tx: Partial<Transaction>) => {
     try {
-      await transactionsApi.create(transactionToWriteInput(tx));
+      const created = await transactionsApi.create(transactionToWriteInput(tx));
       list.refresh();
       finance.refresh();
       await promptCloseFinanceCategory(tx);
+      // Returned so «ذخیره و اقدام بعدی» can name the document that was really
+      // written — a new one has no id until the server has answered.
+      return created;
     } catch (err) {
       reportError(err, 'ثبت تراکنش با خطا مواجه شد.');
     }
@@ -246,12 +255,13 @@ export default function TransactionsView({
 
   const updateTransaction = async (tx: Transaction) => {
     try {
-      await transactionsApi.update(tx.id, transactionToWriteInput(tx));
+      const saved = await transactionsApi.update(tx.id, transactionToWriteInput(tx));
       list.refresh();
       finance.refresh();
       // An edit can be what settles a project too — a draft confirmed, or an
       // amount corrected upwards.
       await promptCloseFinanceCategory(tx);
+      return saved;
     } catch (err) {
       // A reversed entry and its reversal are frozen; the server says so.
       reportError(err, 'ثبت تغییرات تراکنش با خطا مواجه شد.');
@@ -667,8 +677,13 @@ export default function TransactionsView({
     setShowModal(true);
   };
 
+  const nextAction = useNextAction();
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    // Read once, at the top: every validation below can refuse this save, and a
+    // flag left set would arm the next one instead.
+    const wantsNextAction = nextAction.takeArmed();
 
     // 1. شناسه تراکنش
     if (!documentNumber || documentNumber.trim() === '') {
@@ -948,16 +963,22 @@ export default function TransactionsView({
       reversalOfTransactionId: reversalOfTransactionId || undefined
     };
 
-    if (editingTransaction) {
-      updateTransaction({
-        id: editingTransaction.id,
-        ...transactionPayload
-      });
-    } else {
-      addTransaction(transactionPayload);
-    }
+    /*
+     * Started exactly as before — not awaited, so the modal still closes the
+     * instant the button is pressed — and the promise handed on. `ask` awaits
+     * it only when «ذخیره و اقدام بعدی» was the button pressed.
+     */
+    const saved = editingTransaction
+      ? updateTransaction({ id: editingTransaction.id, ...transactionPayload })
+      : addTransaction(transactionPayload);
 
     setShowModal(false);
+    void nextAction.ask(wantsNextAction, saved, (tx) => ({
+      relatedToType: 'تراکنش',
+      relatedToId: tx.id,
+      relatedToName: tx.documentNumber || '',
+      assignedTo: currentUser?.fullName,
+    }));
   };
 
   // The server searched, filtered by type, sorted and paged this already.
@@ -2271,6 +2292,7 @@ export default function TransactionsView({
                 >
                   انصراف
                 </button>
+                <SaveWithNextActionButton onArm={nextAction.arm} />
                 <button
                   type="submit"
                   className="px-5 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition"
@@ -2932,6 +2954,9 @@ export default function TransactionsView({
           </div>
         </div>
       )}
+
+      {/* Asked only once the voucher is really on the server, with its id. */}
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
 
       {/* Duplicate customer warning */}
       <DuplicateCustomerModal

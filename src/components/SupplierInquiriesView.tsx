@@ -77,6 +77,9 @@ import {
 } from '../api/productVariants';
 import { detailToProduct } from '../api/productAdapter';
 import { productsApi } from '../api/products';
+import { useNextAction } from '../utils/useNextAction';
+import SaveWithNextActionButton from './SaveWithNextActionButton';
+import { NextActionPrompt } from './NextActionModal';
 
 /**
  * Supplier inquiries screen.
@@ -381,18 +384,30 @@ export default function SupplierInquiriesView({
     }
   };
 
+  const nextAction = useNextAction();
+
   const handleSubmitInquiry = async (
     data: Partial<SupplierInquiry>,
     initialStep?: InquiryWriteInput['initialStep'],
   ) => {
+    // Read once, and here rather than in the form below: the form is a child
+    // that reports its answer upwards, and this is the one place both branches
+    // of the save meet.
+    const wantsNextAction = nextAction.takeArmed();
     try {
-      if (editingInquiry) {
-        await supplierInquiriesApi.update(editingInquiry.id, inquiryToWriteInput({ ...editingInquiry, ...data }));
-      } else {
-        await supplierInquiriesApi.create({ ...inquiryToWriteInput(data), initialStep });
-      }
+      const saved = editingInquiry
+        ? await supplierInquiriesApi.update(editingInquiry.id, inquiryToWriteInput({ ...editingInquiry, ...data }))
+        : await supplierInquiriesApi.create({ ...inquiryToWriteInput(data), initialStep });
       setIsInquiryModalOpen(false);
       list.refresh();
+      void nextAction.ask(wantsNextAction, saved, (inquiry) => ({
+        relatedToType: 'استعلام تامین‌کننده',
+        relatedToId: inquiry.id,
+        // An inquiry has no number of its own: it is known by the supplier
+        // asked and the job it was asked for, which is what the card prints.
+        relatedToName: [inquiry.supplier?.name, inquiry.project?.code].filter(Boolean).join(' — '),
+        assignedTo: currentUser?.fullName,
+      }));
     } catch (err) {
       reportError(err, 'ثبت استعلام با خطا مواجه شد.');
     }
@@ -1242,6 +1257,7 @@ export default function SupplierInquiriesView({
                   projectPicker={projectPicker}
                   getCurrencyRate={getCurrencyRate}
                   settings={settings}
+                  onArmNextAction={nextAction.arm}
                   canEditCatalogue={hasModulePermission(currentUser, 'products')}
                   onClose={() => setIsInquiryModalOpen(false)}
                   onSubmit={handleSubmitInquiry}
@@ -1306,6 +1322,10 @@ export default function SupplierInquiriesView({
           />
         )}
       </ConfirmModal>
+
+      {/* Asked only once the inquiry is really on the server, with its id. */}
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+
     </div>
   );
 }
@@ -1355,6 +1375,8 @@ interface InquiryFormInnerProps {
   onClose: () => void;
   /** The second argument describes how the inquiry was sent; create only. */
   onSubmit: (data: Partial<SupplierInquiry>, initialStep?: InitialStepDetails) => void;
+  /** Marks the press so the host asks for a next action once the save lands. */
+  onArmNextAction: () => void;
 }
 
 function InquiryFormInner({
@@ -1372,7 +1394,8 @@ function InquiryFormInner({
   settings,
   canEditCatalogue,
   onClose,
-  onSubmit
+  onSubmit,
+  onArmNextAction,
 }: InquiryFormInnerProps) {
   const [projectId, setProjectId] = useState<string>(() => {
     if (editingInquiry) return editingInquiry.projectId || '';
@@ -2269,6 +2292,7 @@ function InquiryFormInner({
         >
           انصراف
         </button>
+        <SaveWithNextActionButton onArm={onArmNextAction} className="!py-2 !text-xs !font-bold" />
         <button
           type="submit"
           className="px-4 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-xs font-bold transition shadow-md shadow-sky-500/10"

@@ -22,9 +22,6 @@ import { Task, Customer, Project, ERPSettings } from '../types';
 import type { User as AppUser } from '../types';
 import { getTodayShamsi } from '../dateUtils';
 import { describeReminder } from '../utils/reminderRepeat';
-import NextActionModal from './NextActionModal';
-import { offersNextAction } from '../utils/nextAction';
-import { useNextAction } from '../utils/useNextAction';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import WorkBoard, { BoardCard } from './WorkBoard';
@@ -48,7 +45,7 @@ import { readViewPreferences, writeViewPreferences } from '../utils/viewPreferen
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import QuickAddModal from './QuickAddModal';
-import { ArrowLeft, Bell, Loader2 } from 'lucide-react';
+import { Bell, Loader2 } from 'lucide-react';
 import { ApiError } from '../api/client';
 import { rowToTask, tasksApi, taskToWriteInput, type WorkLoad } from '../api/tasks';
 import { useTaskList } from '../api/useTaskList';
@@ -60,6 +57,9 @@ import type { ProformaRow } from '../api/proformas';
 import { projectsApi } from '../api/projects';
 import { createCustomerWithLinks } from '../api/customerAdapter';
 import { detailToProject, projectToWriteInput } from '../api/projectAdapter';
+import { useNextAction } from '../utils/useNextAction';
+import SaveWithNextActionButton from './SaveWithNextActionButton';
+import { NextActionPrompt } from './NextActionModal';
 
 /**
  * Tasks board.
@@ -166,8 +166,9 @@ export default function TasksView({
 
   const addTask = async (task: Partial<Task>) => {
     try {
-      await tasksApi.create(taskToWriteInput(task));
+      const created = await tasksApi.create(taskToWriteInput(task));
       list.refresh();
+      return created;
     } catch (err) {
       reportError(err, 'ثبت وظیفه با خطا مواجه شد.');
     }
@@ -175,10 +176,11 @@ export default function TasksView({
 
   const updateTask = async (task: Task) => {
     try {
-      await tasksApi.update(task.id, taskToWriteInput(task));
+      const saved = await tasksApi.update(task.id, taskToWriteInput(task));
       // Finishing something is exactly when the floor can have been crossed.
       void topUpBoard();
       list.refresh();
+      return saved;
     } catch (err) {
       reportError(err, 'ثبت تغییرات وظیفه با خطا مواجه شد.');
     }
@@ -433,6 +435,8 @@ export default function TasksView({
   // Form states
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  /** The relations this form can actually pick a target for. */
+  const RELATABLE_HERE: Task['relatedToType'][] = ['عمومی', 'مشتری', 'پروژه'];
   const [relatedToType, setRelatedToType] = useState<Task['relatedToType']>('عمومی');
   const [relatedToId, setRelatedToId] = useState('');
   const [priority, setPriority] = useState<Task['priority']>('متوسط');
@@ -540,8 +544,13 @@ export default function TasksView({
   /** A chase being raised from scratch — the form that asks a quotation for. */
   const isNewFollowUp = !editingTask && newTaskKind === 'SALES_FOLLOW_UP';
 
+  const nextAction = useNextAction();
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    // Read once, at the top: a chase is routed elsewhere below and the required
+    // fields can refuse this save, and a flag left set would arm the next one.
+    const wantsNextAction = nextAction.takeArmed();
 
     /*
      * A chase goes to the follow-up flow, not to `POST /api/tasks`.
@@ -610,6 +619,17 @@ export default function TasksView({
       resolvedRelatedName = customers.find(c => c.id === relatedToId)?.companyName || '';
     } else if (relatedToType === 'پروژه') {
       resolvedRelatedName = projects.find(p => p.id === relatedToId)?.name || '';
+    } else if (editingTask && relatedToType === editingTask.relatedToType) {
+      /*
+       * A relation this form cannot resolve — a purchase order, a transaction,
+       * whatever a next action was raised about from another module's save
+       * button. The name was written by the screen that knew it, and only the
+       * two branches above can recompute one, so re-deriving here would answer
+       * `''` and **erase the label on every ordinary edit** of such a task.
+       * Kept as stored, and only while the type has not been changed: changing
+       * it is a person saying it is about something else.
+       */
+      resolvedRelatedName = editingTask.relatedToName || '';
     }
 
     const taskPayload = {
@@ -625,17 +645,30 @@ export default function TasksView({
       customValues,
     };
 
-    if (editingTask) {
-      updateTask({
-        id: editingTask.id,
-        ...taskPayload
-      });
-    } else {
-      addTask(taskPayload);
-    }
+    const saved = editingTask
+      ? updateTask({ id: editingTask.id, ...taskPayload })
+      : addTask(taskPayload);
 
     setShowModal(false);
     setIsTaskModalFullscreen(false);
+    /*
+     * A task's next action is about the same job, not about the task.
+     *
+     * Every other form here saves a record and the next action names *it* —
+     * a customer, an order, a delivery. A task is already the shape of a next
+     * action, so pointing a second one at the first would produce a card
+     * reading «تماس تلفنی — تماس تلفنی» and no way back to the work. It carries
+     * the task's own relation instead, which is the project or the customer the
+     * work is really about; a task related to nothing raises a next action
+     * related to nothing, which is honest.
+     */
+    void nextAction.ask(wantsNextAction, saved, (task) => ({
+      relatedToType: task.relatedToType || 'عمومی',
+      relatedToId: task.relatedToId || '',
+      relatedToName: task.relatedToName || task.title || '',
+      assignedTo: currentUser?.fullName,
+      priority: task.priority,
+    }));
   };
 
   /*
@@ -646,19 +679,6 @@ export default function TasksView({
    * proformas module, which meant leaving this screen to press a second button.
    * The form opens here instead. Everything else ticks as it always did.
    */
-  /*
-   * «انجام شد و اقدام بعدی» — Odoo's rule, and the reason it is a second button
-   * rather than a dialog after the tick.
-   *
-   * Asking every time something is finished would be the prompt people learn to
-   * dismiss; offered as a button beside «انجام شد» it costs nothing at all when
-   * the answer is no, and is there at the one moment the person knows what
-   * follows. A sales follow-up is not offered it (`offersNextAction`): a chase
-   * already raises its replacement inside `completeFollowUp`, and a second,
-   * ordinary task beside it would be two next actions for one quotation.
-   */
-  const nextAction = useNextAction();
-
   const handleToggleComplete = (task: Task) => {
     if (task.taskKind === 'SALES_FOLLOW_UP' && task.status !== 'انجام شده') {
       void openFollowUp(task.id);
@@ -1257,25 +1277,6 @@ export default function TasksView({
                 )}
               </button>
               
-              {/*
-                The second button, and only where it means something: an open,
-                ordinary task. A finished one has nothing to follow yet, and a
-                chase raises its own replacement.
-              */}
-              {task.status !== 'انجام شده' && offersNextAction(task.taskKind) && (
-                <button
-                  onClick={() => nextAction.start(
-                    task,
-                    (src) => updateTask({ ...(src as unknown as Task), status: 'انجام شده' }),
-                  )}
-                  title="انجام شد و اقدام بعدی را ثبت کن"
-                  data-next-action-open={task.id}
-                  className="mt-1 w-5 h-5 rounded-md flex items-center justify-center border border-emerald-300 text-emerald-600 hover:bg-emerald-50 transition flex-shrink-0"
-                >
-                  <ArrowLeft size={11} />
-                </button>
-              )}
-              
               <div className="space-y-1 flex-1 min-w-0">
                 {/* Same gesture as the board: the title opens the record. */}
                 <button
@@ -1595,31 +1596,6 @@ export default function TasksView({
                   }
 
                 }}
-                /*
-                  The same button the inbox draws, on the same thread — this is
-                  where a referral is read once the two screens were merged, so
-                  leaving it out here would offer it in the tab nobody opens and
-                  not on the board. The completion is this screen's: a referral
-                  closes through `submitReferralReply` with the `done` outcome,
-                  which is the one path that also tells the person who asked.
-                */
-                onDoneWithNext={() => nextAction.start({
-                  title: openReferral.actionRequired ?? openReferral.activity?.text ?? 'ارجاع',
-                  // Two ids, two questions. The referral is what gets closed;
-                  // the project is what the new card will say it concerns.
-                  recordId: openReferral.id,
-                  relatedToType: 'پروژه',
-                  relatedToId: openReferral.activity?.group?.project?.id ?? null,
-                  relatedToName: openReferral.activity?.group?.project?.name ?? null,
-                  assignedTo: openReferral.assignedToName ?? '',
-                  priority: 'متوسط',
-                }, async (src) => {
-                  await submitReferralReply(String(src.recordId ?? ''), {
-                    text: '', attachment: null, outcome: 'done', forwardToUserId: '',
-                  });
-                  setOpenReferral(null);
-                  refreshReferrals();
-                })}
                 onEditAction={async (text) => {
                   await inboxApi.updateReferralAction(openReferral.id, text);
                   refreshReferrals();
@@ -1637,23 +1613,6 @@ export default function TasksView({
         so the three questions it asks, the refusals it enforces and the outcome
         it can settle are one implementation, not two.
       */}
-      {/*
-        One next-action form for both screens that offer it.
-
-        It writes nothing: the host performs the two writes, in the order whose
-        failure is the visible one. See `submitNextAction`.
-      */}
-      <NextActionModal
-        open={!!nextAction.source}
-        source={nextAction.source}
-        kinds={settings.dropdownItems?.nextActionKinds ?? []}
-        people={users.map((u) => u.fullName)}
-        saving={nextAction.saving}
-        error={nextAction.error}
-        onSubmit={(draft) => { void nextAction.submit(draft); }}
-        onClose={nextAction.close}
-      />
-
       {followUpRow && (
         <FollowUpCompletionModal
           row={followUpRow.row}
@@ -1913,6 +1872,24 @@ export default function TasksView({
                       <option value="عمومی">عمومی (فاقد مرجع)</option>
                       <option value="مشتری">مشتریان</option>
                       <option value="پروژه">پروژه‌ها و مناقصات</option>
+                      {/*
+                        The value the task already carries, when this form has
+                        no picker for it — «سفارش خرید», «تراکنش», anything a
+                        next action raised from another module's save button.
+                        Without it the `<select>` matches no option, renders the
+                        first one instead, and **saving rewrites the relation to
+                        «عمومی»**, silently detaching the task from the record it
+                        was raised about. Offered as disabled because there is
+                        nowhere here to name which order or which transaction;
+                        it is shown so it survives an edit, not so it can be
+                        chosen.
+                      */}
+                      {!RELATABLE_HERE.includes(relatedToType) && (
+                        <option value={relatedToType} disabled>
+                          {relatedToType}
+                          {editingTask?.relatedToName ? `: ${editingTask.relatedToName}` : ''}
+                        </option>
+                      )}
                     </select>
                   </div>
 
@@ -2084,6 +2061,13 @@ export default function TasksView({
                 >
                   انصراف
                 </button>
+                {/*
+                  Not offered for a chase: that form posts to the follow-up
+                  endpoint, which raises its own replacement inside
+                  `completeFollowUp` — a second, ordinary task beside it would
+                  leave the quotation showing one next action and the board two.
+                */}
+                {!isNewFollowUp && <SaveWithNextActionButton onArm={nextAction.arm} />}
                 <button
                   type="submit"
                   className="px-5 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-sky-500/15"
@@ -2118,6 +2102,10 @@ export default function TasksView({
           }}
         />
       )}
+
+
+      {/* Asked only once the task is really on the server, with its id. */}
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
 
     </div>
   );

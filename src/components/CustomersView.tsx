@@ -37,6 +37,9 @@ import { useCustomerList } from '../api/useCustomerList';
 import { SegmentSaveModal } from './SegmentSaveModal';
 import { useEntitySearch } from '../api/useEntitySearch';
 import type { CustomerRow } from '../api/customers';
+import { useNextAction } from '../utils/useNextAction';
+import SaveWithNextActionButton from './SaveWithNextActionButton';
+import { NextActionPrompt } from './NextActionModal';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import { IRAN_PROVINCES, canonicalizeProvince } from '../utils/iranProvinces';
 import { getContactInfoError } from '../utils/customerValidation';
@@ -511,8 +514,21 @@ export default function CustomersView({
   // helper is gone; see customersApi.setLinks.
 
   // Handle Save
+  const nextAction = useNextAction();
+  /*
+   * «ذخیره و اقدام بعدی» pressed on a save the duplicate check then held back.
+   * State rather than a ref: the confirmation is a separate render, and the
+   * flag has to survive it — `takeArmed` deliberately clears its own so a
+   * refused save cannot arm the next one.
+   */
+  const [dupPendingNextAction, setDupPendingNextAction] = useState(false);
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Read once, at the top: the contact rule, a custom field or the duplicate
+    // check below can all refuse this save, and a flag left set would arm the
+    // next one instead.
+    const wantsNextAction = nextAction.takeArmed();
 
     // At least one identifying contact field is required beyond the name.
     const contactError = getContactInfoError({ mobile, phone, email, province });
@@ -556,6 +572,9 @@ export default function CustomersView({
           reason: m.reason,
         })));
         setDupCandidateName(candidateName);
+        // The save is now behind a confirmation, so the answer travels with it
+        // rather than being read again from a flag that has been consumed.
+        setDupPendingNextAction(wantsNextAction);
         return;
       }
     } catch (err) {
@@ -565,7 +584,7 @@ export default function CustomersView({
       return;
     }
 
-    await performSave();
+    await performSave(wantsNextAction);
   };
 
   /**
@@ -576,7 +595,7 @@ export default function CustomersView({
    * the agreements are a child collection. The old version rebuilt the entire
    * customer array to express all three at once.
    */
-  const performSave = async () => {
+  const performSave = async (wantsNextAction = false) => {
     if (saving) return;
     setSaving(true);
     setDupMatches([]);
@@ -670,6 +689,12 @@ export default function CustomersView({
       list.refresh();
       setShowModal(false);
       setIsCustomerModalFullscreen(false);
+      void nextAction.ask(wantsNextAction, saved, (customer) => ({
+        relatedToType: 'مشتری',
+        relatedToId: customer.id,
+        relatedToName: customer.companyName || '',
+        assignedTo: currentUser?.fullName,
+      }));
     } catch (err) {
       reportError(err, 'ذخیره مشتری با خطا مواجه شد.');
     } finally {
@@ -2405,6 +2430,7 @@ export default function CustomersView({
                 >
                   انصراف
                 </button>
+                <SaveWithNextActionButton onArm={nextAction.arm} disabled={saving} />
                 <button
                   type="submit"
                   className="px-5 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-xl text-sm font-medium transition shadow-lg shadow-sky-500/15"
@@ -2418,6 +2444,9 @@ export default function CustomersView({
           </div>
         </div>
       )}
+
+      {/* Asked only once the customer is really on the server, with its id. */}
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
 
       {/* Confirm Delete Modal */}
       <ConfirmModal
@@ -2480,7 +2509,7 @@ export default function CustomersView({
           setShowModal(false);
           setSearch(existing.companyName || '');
         }}
-        onCreateAnyway={() => performSave()}
+        onCreateAnyway={() => performSave(dupPendingNextAction)}
         onCancel={() => setDupMatches([])}
       />
 

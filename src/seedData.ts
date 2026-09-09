@@ -1,5 +1,5 @@
 import { DEFAULT_FOLLOW_UP_RESULTS } from './utils/salesFollowUp';
-import { DEFAULT_NEXT_ACTION_KINDS } from "./utils/nextAction";
+import { DEFAULT_NEXT_ACTION_KINDS } from './utils/nextAction';
 import { DEFAULT_MODULE_ORDER } from './appModules';
 import { ExchangeRate, ERPSettings } from './types';
 import { DEFAULT_CUSTOMER_VALUE_SETTINGS } from './utils/customerValue';

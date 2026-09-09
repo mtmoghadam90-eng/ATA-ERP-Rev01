@@ -42,6 +42,9 @@ import { proformasApi } from '../api/proformas';
 import { detailToProforma } from '../api/proformaAdapter';
 import type { ProjectRow } from '../api/projects';
 import type { ProformaRow } from '../api/proformas';
+import { useNextAction } from '../utils/useNextAction';
+import SaveWithNextActionButton from './SaveWithNextActionButton';
+import { NextActionPrompt } from './NextActionModal';
 
 /**
  * After-sales service.
@@ -382,8 +385,13 @@ export default function AfterSalesServicesView({
     }
   };
 
+  const nextAction = useNextAction();
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Read once, at the top: the checks below can refuse this save, and a flag
+    // left set would arm the next one instead.
+    const wantsNextAction = nextAction.takeArmed();
 
     if (isFieldRequired(settings, 'afterSalesServices', 'projectId') && !selectedProjectId) {
       alert('فیلد "پروژه (مشتری)" الزامی است.');
@@ -421,9 +429,18 @@ export default function AfterSalesServicesView({
         ? 'در حال تعمیر/خدمات'
         : 'در حال بررسی';
 
-      if (editingService) await afterSalesApi.update(editingService.id, payload);
-      else await afterSalesApi.create(payload);
+      const saved = editingService
+        ? await afterSalesApi.update(editingService.id, payload)
+        : await afterSalesApi.create(payload);
       list.refresh();
+      void nextAction.ask(wantsNextAction, saved, (service) => ({
+        relatedToType: 'خدمات پس از فروش',
+        relatedToId: service.id,
+        // The job has no number of its own: it is known by the goods and the
+        // project it belongs to, which is what the card needs to print.
+        relatedToName: [service.itemName, service.project?.code].filter(Boolean).join(' — '),
+        assignedTo: currentUser?.fullName,
+      }));
 
       // Prompt for category completion when status changes to "تحویل داده شده"
       if (categoryCompletion && selectedProjectId &&
@@ -1040,6 +1057,7 @@ export default function AfterSalesServicesView({
                 >
                   انصراف
                 </button>
+                <SaveWithNextActionButton onArm={nextAction.arm} className="!py-2.5 !font-bold !text-sm" />
                 <button
                   type="submit"
                   className="px-5 py-2.5 text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all font-bold text-sm"
@@ -1202,6 +1220,10 @@ export default function AfterSalesServicesView({
           </div>
         </div>
       )}
+
+
+      {/* Asked only once the job is really on the server, with its id. */}
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
 
     </div>
   );
