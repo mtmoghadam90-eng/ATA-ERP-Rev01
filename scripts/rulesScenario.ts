@@ -11017,6 +11017,68 @@ head("Stuck work: the dwell report");
     eq("the derived value is kept beside the manual one",
       resolveStage(derived, { manualStage: "توقف پروژه", manualStageLocked: true }, true)
         .derivedStage, derived);
+    /*
+     * And the reported fault, at the level of the rule: the write that *sets*
+     * an unlocked override is not a recalculation of it. Called with `true` —
+     * which is what `syncProjectStage` did unconditionally — the save that
+     * stored the stage answered «the records decide» and cleared the value in
+     * the same breath, so an unlocked manual stage was unreachable: it was
+     * consumed by its own save, on create and on edit alike.
+     */
+    eq("the save that sets an unlocked stage keeps it",
+      resolveStage(derived, { manualStage: "توقف پروژه" }, false).stage, "توقف پروژه");
+    ok("...and does not use it up",
+      resolveStage(derived, { manualStage: "توقف پروژه" }, false).clearManual === false);
+  }
+
+  /* -- the grid's own widths, which the browser used to overrule -- */
+  {
+    /*
+     * `table-auto` treats a `w-*` on a `<th>` as a suggestion and redistributes
+     * by content, so «تاریخ‌های کلیدی» asked for `w-64` and rendered near 380px
+     * while «عملیات» asked for `w-24` and wrapped its one button onto two
+     * lines. `table-fixed` plus a colgroup is what makes the list authoritative
+     * — and a colgroup one `<col>` short silently shifts every column after it.
+     *
+     * Read out of the source rather than imported: this suite holds no React,
+     * and pulling a `.tsx` component in for one array would bring it.
+     */
+    const view = strip(readFileSync("src/components/ProjectsView.tsx", "utf8"));
+    ok("the projects view survived having its comments stripped",
+      view.includes("PROJECT_COLUMN_WIDTHS"));
+    ok("the grid's widths are authoritative",
+      /className="w-full text-right border-collapse table-fixed min-w-\[\d+px\]"/.test(view)
+      && /<colgroup>/.test(view));
+
+    /*
+     * The number at the head of each line, not every digit in it: each entry
+     * carries a trailing comment naming its column, and «ATA-05-38» in one of
+     * them added 43 to the total the first time this was written.
+     */
+    const listed = view.slice(view.indexOf("const PROJECT_COLUMN_WIDTHS = ["));
+    const widths = (listed.slice(0, listed.indexOf("]")).match(/^\s*(\d+),/gm) ?? [])
+      .map((m) => Number(m.trim().replace(",", "")));
+    ok("the width list was found at all", widths.length > 0, widths);
+    eq("...and they are a whole table", widths.reduce((a, b) => a + b, 0), 100);
+    /*
+     * One entry per header, counted out of the header row itself — bounded by
+     * the row's own `</tr>`, since a JSX comment marking the filter row is the
+     * one thing the stripper above has already removed.
+     */
+    const head = view.slice(view.indexOf("<colgroup>"));
+    const headers = (head.slice(0, head.indexOf("</tr>")).match(/<th /g) ?? []).length;
+    eq("...one for each column", widths.length, headers);
+    /*
+     * With the width fixed, a long unbroken value overflows its cell instead of
+     * widening the column, so the two free-text ones say what to do about it.
+     */
+    ok("the free-text columns break rather than overflow",
+      /font-bold text-sm text-slate-900 break-words/.test(view)
+      && /font-medium text-slate-700 break-words/.test(view));
+    // And the action toolbar is one row now; wrapping it was the tallest thing
+    // on most rows.
+    ok("the actions no longer wrap",
+      !/flex flex-wrap items-center justify-center gap-1\.5/.test(view));
   }
 
   /* -- and it is written where it can move -- */
@@ -11031,6 +11093,25 @@ head("Stuck work: the dwell report");
     /if \(resolved\.stage !== project\.stage\)/.test(project));
   ok("...reading the outcome from the column, not deriving it twice",
     /isWon: isWonStatus\(project\.status\)/.test(project));
+  /*
+   * The caller decides whether this is a recalculation, and it used to be
+   * hardcoded `true` — which made an unlocked override impossible to store.
+   */
+  ok("...and whether this counts as a recalculation is the caller's to say",
+    /resolveStage\(derived, project, opts\?\.recalculating !== false\)/.test(project)
+    && !/resolveStage\(derived, project, true\)/.test(project));
+  /*
+   * A project write that *names* the manual stage is the write that sets it, so
+   * it must not consume it. Every other path — a purchase order, an inquiry, a
+   * packing list, an after-sales job — still does, which is what «the first
+   * recalculation after it» has always meant.
+   */
+  ok("...and the write that names the override does not consume it",
+    /function namesManualStage\(/.test(project)
+    && (project.match(/recalculating: !namesManualStage\(input\)/g) ?? []).length === 2);
+  ok("...while the record paths pass nothing and recalculate as before",
+    /await syncProjectStage\(tx, po\.projectId, todayJalali, user\);/.test(
+      strip(readFileSync("src/server/services/purchaseOrderService.ts", "utf8"))));
 
   // After `syncProjectStatus`, which writes the status the stage reads — and in
   // the same transaction, so the two cannot be seen disagreeing.

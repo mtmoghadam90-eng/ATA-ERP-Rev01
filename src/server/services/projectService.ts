@@ -314,6 +314,19 @@ export async function projectSummary(user: AuthUser) {
  * `stageChangedAt` mean «since when has it been here» rather than «when was
  * this project last saved».
  */
+/**
+ * Whether a write is the one that *sets* the manual stage.
+ *
+ * The form posts the whole record, so it names the key on every save — which
+ * is the right answer rather than a shortcut: re-saving a project is not the
+ * records moving, and «the first recalculation after it» has always meant a
+ * purchase order, an inquiry, a packing list or an after-sales job moving on.
+ * Those paths still consume an unlocked override exactly as before.
+ */
+function namesManualStage(input: { manualStage?: string | null }): boolean {
+  return "manualStage" in input;
+}
+
 export async function syncProjectStage(
   tx: Prisma.TransactionClient,
   projectId: string | null | undefined,
@@ -325,6 +338,21 @@ export async function syncProjectStage(
    * `processWorkflowRules` already takes an absent user.
    */
   user?: AuthUser,
+  /**
+   * Whether this call is a *recalculation*, which is what uses an unlocked
+   * override up.
+   *
+   * `true` for every record that moves — a purchase order, an inquiry, a
+   * packing list, an after-sales job — because that is «the records disagree
+   * with what you pinned, so the pin goes». It is **false for the write that
+   * sets the override itself**, and that was the bug: the project save called
+   * this at the end, `resolveStage` saw an unlocked manual stage while
+   * recalculating and answered «clear it», so choosing a stage by hand stored
+   * nothing and the column snapped straight back to the derived value. There
+   * was no way to reach an unlocked override at all — it was consumed by its
+   * own save, every time, on create and on edit alike.
+   */
+  opts?: { recalculating?: boolean },
 ): Promise<void> {
   if (!projectId) return;
 
@@ -383,7 +411,7 @@ export async function syncProjectStage(
     afterSales: afterSales.map((s) => ({ open: s.status !== "تحویل داده شده" })),
   });
 
-  const resolved = resolveStage(derived, project, true);
+  const resolved = resolveStage(derived, project, opts?.recalculating !== false);
 
   const data: Record<string, unknown> = {};
   if (resolved.stage !== project.stage) {
@@ -685,9 +713,14 @@ export async function createProject(input: ProjectInput, user: AuthUser, todayJa
       rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapItem,
     });
 
-    // So a new project has a stage from the moment it exists, rather than a
-    // blank column until something happens to it.
-    await syncProjectStage(tx, project.id, todayJalali, user);
+    /*
+      So a new project has a stage from the moment it exists, rather than a
+      blank column until something happens to it — and keeping the stage the
+      person chose on the form, which this used to wipe on the way in.
+    */
+    await syncProjectStage(tx, project.id, todayJalali, user, {
+      recalculating: !namesManualStage(input),
+    });
     await syncMilestones(tx, project.id, input.milestones ?? []);
 
     return project;
@@ -818,9 +851,12 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
      * The stage, from what this save left the project as.
      *
      * A person moving «جدید» to «در حال مذاکره» by hand moves the stage too,
-     * and so does setting or clearing a manual stage on the form.
+     * and so does setting or clearing a manual stage on the form — which is
+     * why a save that *names* the override is not a recalculation of it.
      */
-    await syncProjectStage(tx, id, todayJalali, user);
+    await syncProjectStage(tx, id, todayJalali, user, {
+      recalculating: !namesManualStage(input),
+    });
 
     return project;
   });
