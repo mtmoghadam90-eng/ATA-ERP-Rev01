@@ -13346,19 +13346,74 @@ head("Competitors: who we lose to, and by how much");
     dueReminderAt({ ...weekly, reminderRepeatUntilJalali: "1404/07/20" }, "1404/07/26", "09:00") === null);
 
   /*
-   * The form edits the **series**, so re-saving writes the same anchor back
+   * The editor edits the **series**, so re-saving writes the same anchor back
    * rather than dragging it to wherever the last snooze left the occurrence.
+   * It lived on the task form when this was written; see below for why it does
+   * not any more.
    */
-  const view = readFileSync("src/components/TasksView.tsx", "utf8");
-  ok("the task form seeds its boxes from the anchor", view.includes("splitAnchor(task.reminderAnchor)"));
-  ok("...and writes the anchor from those same boxes",
-    /reminderAnchor: reminderEnabled && reminderRepeat/.test(view));
-  ok("...clearing it when the repeat is switched off",
-    /reminderRepeat: reminderEnabled \? \(reminderRepeat \|\| null\) : null/.test(view));
   const cal = readFileSync("src/components/TaskCalendarModal.tsx", "utf8");
   ok("the calendar's quick-add offers the repeat too", cal.includes("newReminderRepeat"));
   ok("...anchored on the day and hour chosen there",
     /occurrenceKey\(selectedDateStr, newReminderTime\)/.test(cal));
+
+  /* ---------------- a reminder is not a task, and lives apart -------------- */
+  /*
+   * The task form used to carry the whole reminder block, and that is the wrong
+   * home: a task already reaches its owner's board on its own day, while a
+   * reminder is a different thing — an hour, and possibly an hour again next
+   * week. It is edited in the calendar the header icon opens and nowhere else.
+   */
+  const tv = readFileSync("src/components/TasksView.tsx", "utf8");
+  for (const ctrl of [
+    "setReminderEnabled", "setReminderDate", "setReminderTime",
+    "setReminderRepeat", "setReminderRepeatUntil",
+  ]) {
+    ok(`the task form no longer edits «${ctrl}»`, !tv.includes(ctrl));
+  }
+  ok("...and writes none of the reminder columns",
+    !/reminderEnabled,\n|reminderAnchor:/.test(tv));
+  /*
+   * But the card still *says* a reminder exists — reading one is not editing
+   * one, and a task that speaks at nine with nothing on it saying so is worse
+   * than the block that was removed.
+   */
+  ok("...while the card still reports one", /task\.reminderEnabled &&/.test(tv));
+
+  /*
+   * Taking it off that form without putting it here would have stranded every
+   * reminder already set, with no way to change one or switch it off. The two
+   * halves are one change, so they are held together.
+   */
+  ok("the editor seeds its boxes from the series, not from this occurrence",
+    /const anchor = splitAnchor\(t\.reminderAnchor\);[\s\S]{0,300}?setEditRepeat/.test(cal));
+  ok("...and writes the anchor back from those same boxes, so re-saving is idempotent",
+    /reminderAnchor: editRepeat \? occurrenceKey\(day, editTime\) : null/.test(cal));
+  ok("the calendar is where a reminder is set, changed and removed",
+    /data-reminder-edit=/.test(cal) && /const saveReminder/.test(cal)
+    && /const clearReminder/.test(cal));
+  ok("...and switching one off clears its series with it",
+    /reminderEnabled: false,[\s\S]{0,240}?reminderAnchor: null/.test(cal));
+  /*
+   * A partial write: the title, the assignee and the status of a task are not
+   * this screen's business, and posting a whole record read a moment ago would
+   * write back whatever it held over anything changed since.
+   */
+  ok("...writing only the reminder columns",
+    !/taskToWriteInput/.test(cal.slice(cal.indexOf("const saveReminder"),
+      cal.indexOf("const clearReminder"))));
+  /*
+   * And a day shows the reminders that *speak* on it, not only the work due on
+   * it: a repeating reminder's stored date stays where it was first set, so a
+   * calendar reading `dueDate` alone would show «هفتگی» once and never again —
+   * which now means uneditable, since this is the only editor.
+   */
+  ok("a day holds what is due and what speaks on it",
+    /repeatOccursOn\(anchor\.date, normalizeRepeat\(t\.reminderRepeat\), targetDateStr\)/
+      .test(cal));
+  ok("...through the one reader the day cell and the list share",
+    (cal.match(/const getTasksForDay/g) ?? []).length === 1
+    && /const dayTasks = getTasksForDay\(dayNum\)/.test(cal)
+    && /selectedDay \? getTasksForDay\(selectedDay\)/.test(cal));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
