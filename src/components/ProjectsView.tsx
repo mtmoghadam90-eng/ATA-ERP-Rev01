@@ -73,6 +73,34 @@ const MODULE_NAMES: Record<string, string> =
   Object.fromEntries(APP_MODULES.map((m) => [m.id, m.name]));
 
 /**
+ * The grid's column widths, as percentages, in the order the headers are drawn.
+ *
+ * The table is `table-fixed`, so these are the whole of what decides the
+ * layout — under `table-auto` a `w-*` is only a hint the browser overrules
+ * with the content, which is how «تاریخ‌های کلیدی» came to render at nearly
+ * 380px and «عملیات» to wrap one button onto two lines.
+ *
+ * Percentages rather than pixels because this grid is read on a wide monitor
+ * and on a laptop, and a pixel width that suits one starves the other; the
+ * table's own `min-w` is what stops them collapsing on the narrow end, with
+ * the container scrolling sideways as it always did.
+ *
+ * The share is roughly the length of what each column actually holds: the name
+ * carries a title plus a meta row and takes a quarter, while a project code is
+ * nine mono characters that must never wrap and needs almost nothing.
+ */
+const PROJECT_COLUMN_WIDTHS = [
+  8,  // شماره پروژه — «ATA-05-38», nowrap
+  25, // نام و مشخصات پروژه — the title, the gap badge and the meta row
+  11, // کارفرما / مشتری
+  8,  // ارزش پایپ‌لاین
+  14, // تاریخ‌های کلیدی — «label: date» rows
+  9,  // وضعیت پروژه — one pill
+  12, // مرحله جاری — one pill, and the stage names are long
+  13, // عملیات — a labelled button and two icons, on one row
+] as const;
+
+/**
  * Projects screen.
  *
  * Reads through the API rather than props holding whole collections. Per-row
@@ -3248,14 +3276,37 @@ export default function ProjectsView({
       {/* Projects Table List */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-right border-collapse min-w-[1000px]">
+          {/*
+            The widths are declared, not negotiated.
+
+            This was an ordinary `table-auto`, where a `w-*` on a `<th>` is a
+            *suggestion*: the browser redistributes by content, so «تاریخ‌های
+            کلیدی» asked for `w-64` and rendered at nearly 380px while «عملیات»
+            asked for `w-24` and wrapped its one button onto two lines. Almost
+            every column was reading as two or three lines of something that
+            fits on one.
+
+            `table-fixed` plus a `colgroup` makes the widths authoritative, and
+            they are **percentages** because this screen is read on a 1080p
+            monitor and on a laptop, and pixels would leave the widest column
+            short on one of the two. `COLUMN_WIDTHS` is the single list — it
+            must sum to 100 and have one entry per `<th>`, and `test:rules`
+            holds both, because a colgroup one `<col>` short silently shifts
+            every column after it.
+          */}
+          <table className="w-full text-right border-collapse table-fixed min-w-[1280px]">
+            <colgroup>
+              {PROJECT_COLUMN_WIDTHS.map((w, i) => (
+                <col key={i} style={{ width: `${w}%` }} />
+              ))}
+            </colgroup>
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-xs font-bold">
-                <th className="p-3 w-44">شماره پروژه</th>
+                <th className="p-3">شماره پروژه</th>
                 <th className="p-3">نام و مشخصات پروژه</th>
                 <th className="p-3">کارفرما / مشتری</th>
                 <th className="p-3">ارزش پایپ‌لاین</th>
-                <th className="p-3 w-64">تاریخ‌های کلیدی</th>
+                <th className="p-3">تاریخ‌های کلیدی</th>
                 <th className="p-3">وضعیت پروژه</th>
                 {/*
                   «مرحله» is not «وضعیت».
@@ -3266,7 +3317,7 @@ export default function ProjectsView({
                   answered only by the second.
                 */}
                 <th className="p-3">مرحله جاری</th>
-                <th className="p-3 text-center w-24">عملیات</th>
+                <th className="p-3 text-center">عملیات</th>
               </tr>
               {/* Column Filters Row */}
               <tr className="bg-slate-50/50 border-b border-slate-100">
@@ -3361,7 +3412,7 @@ export default function ProjectsView({
                   {/* Name */}
                   <td className="p-3 text-slate-900">
                     <div className="flex items-start gap-1.5">
-                      <div className="font-bold text-sm text-slate-900">{p.name}</div>
+                      <div className="font-bold text-sm text-slate-900 break-words">{p.name}</div>
                       {/*
                         A small warning that the record itself is incomplete.
 
@@ -3417,7 +3468,9 @@ export default function ProjectsView({
                   </td>
 
                   {/* Customer */}
-                  <td className="p-3 font-medium text-slate-700">
+                  {/* `break-words` because the width is now fixed: a long name
+                      widened the column before and would overflow it now. */}
+                  <td className="p-3 font-medium text-slate-700 break-words">
                     {p.customerName}
                   </td>
 
@@ -3538,13 +3591,15 @@ export default function ProjectsView({
 
                   {/* Actions */}
                   <td className="p-3 text-center">
-                    <div className="flex flex-wrap items-center justify-center gap-1.5">
+                    {/* One row, not three. The column is wide enough for it now,
+                        and a wrapped toolbar was the tallest thing on most rows. */}
+                    <div className="flex items-center justify-center gap-1.5">
                       <button
                         onClick={() => { void openProjectDetails(p); }}
-                        className="p-1.5 bg-sky-50 text-sky-700 hover:bg-sky-100 rounded transition flex items-center gap-1 text-[10px] font-bold border border-sky-100 shadow-sm"
+                        className="p-1.5 bg-sky-50 text-sky-700 hover:bg-sky-100 rounded transition flex items-center gap-1 text-[10px] font-bold border border-sky-100 shadow-sm whitespace-nowrap"
                         title="جزئیات پروژه"
                       >
-                        <Clock size={13} className="text-sky-500" />
+                        <Clock size={13} className="text-sky-500 shrink-0" />
                         <span>جزئیات پروژه</span>
                         {(activeCategoryCounts.get(p.id) ?? 0) > 0 && (
                           <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
