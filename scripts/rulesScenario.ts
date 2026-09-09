@@ -203,7 +203,8 @@ import {
 } from "../src/utils/salesFollowUp";
 import { copiedProformaDates } from "../src/utils/proformaCopy";
 import {
-  MIN_COLUMN_PERCENT, columnsAreDefault, normalizeColumnWidths, resizeColumns,
+  MAX_TABLE_MIN_PX, MIN_COLUMN_PERCENT, columnsAreDefault, normalizeColumnWidths,
+  resizeColumns, tableMinWidthPx,
 } from "../src/utils/columnWidths";
 import {
   RESULT_PURCHASE_CONFIRMED, RESULT_PURCHASE_CANCELLED, RESULT_LOST_TO_COMPETITOR,
@@ -11050,8 +11051,21 @@ head("Stuck work: the dwell report");
     ok("the projects view survived having its comments stripped",
       view.includes("PROJECT_COLUMN_WIDTHS"));
     ok("the grid's widths are authoritative",
-      /className="w-full text-right border-collapse table-fixed min-w-\[\d+px\]"/.test(view)
+      /className="w-full text-right border-collapse table-fixed"/.test(view)
       && /<colgroup>/.test(view));
+    /*
+     * And the room it asks for is derived from those widths, never hardcoded.
+     *
+     * A `min-w-[1280px]` was the whole of both reported faults: percentages of
+     * a fixed width cannot overflow, so the `min-width` is the only thing that
+     * ever produces the sideways scrollbar — dragging the columns narrower
+     * could not remove it, and «عملیات» stayed off the left edge of a 1000px
+     * screen (measured at x=-281) together with the one grip that resizes it.
+     */
+    ok("...and the width it asks for is derived from them",
+      /minWidth: `\$\{tableMinWidthPx\(columnWidths, PROJECT_COLUMN_MIN_PX\)\}px`/.test(view));
+    ok("...with no hardcoded minimum left on the table",
+      !/table-fixed min-w-\[/.test(view));
 
     /*
      * The number at the head of each line, not every digit in it: each entry
@@ -11114,6 +11128,132 @@ head("Stuck work: the dwell report");
     // teaches the reader it says nothing.
     ok("the reset appears only when a width has been changed",
       /!columnsAreDefault\(columnWidths, PROJECT_COLUMN_WIDTHS\)/.test(view));
+
+    /* -- one floor per column, in the same order as the other two lists -- */
+    const floorsSrc = view.slice(view.indexOf("const PROJECT_COLUMN_MIN_PX = ["));
+    const floors = (floorsSrc.slice(0, floorsSrc.indexOf("]")).match(/^\s*(\d+),/gm) ?? [])
+      .map((m) => Number(m.trim().replace(",", "")));
+    eq("there is a pixel floor for every column", floors.length, widths.length);
+    ok("...and every one of them is a real width", floors.every((f) => f >= 40), floors);
+
+    /* -- «تیتر ستون فریز بشه و با اسکرول بیاد پایین» -- */
+    /*
+     * `position: sticky` sticks to the nearest *scrolling* ancestor, and
+     * `overflow-x-auto` alone is one — Tailwind sets only `overflow-x` and CSS
+     * computes the other axis from `visible` to `auto`, so the old wrapper was
+     * already a vertical scroll container whose content never overflowed it. A
+     * sticky header inside had nothing to stick against and scrolled away with
+     * the page, silently: no error, no warning, nothing to read in the source.
+     * So the grid is its own bounded scroller in both directions, and that is
+     * what the check holds — the `sticky` alone would pass while doing nothing.
+     */
+    ok("the grid scrolls in both directions, bounded, so a sticky header has something to stick to",
+      /<div className="overflow-auto max-h-\[\d+vh\]">/.test(view));
+    ok("...and the header block is pinned as one, rather than each row measured",
+      /<thead className="sticky top-0 z-\d+/.test(view));
+    /*
+     * A collapsed border belongs to the table's own border grid and is not
+     * painted with a sticky element, so the rule under the header has to be a
+     * shadow; and a translucent fill lets the rows sliding underneath show
+     * straight through the boxes somebody is typing into.
+     */
+    ok("...with its rule drawn as a shadow, which a collapsed border cannot be",
+      /<thead className="sticky[^"]*shadow-\[inset_0_-1px_0_/.test(view));
+    ok("...and both header rows opaque, with no border-b left to not paint",
+      /<tr className="bg-slate-50 text-slate-500 text-xs font-bold">/.test(view)
+      && /<tr className="bg-slate-50">/.test(view));
+  }
+
+  /* -- when the grid has to scroll sideways, and when it must not -- */
+  {
+    /*
+     * The reported pair: «ستون آخر رو نمیتونم تنظیم کنم» and «اگر عرض‌ها را
+     * جوری تنظیم کردم که در صفحه‌ام جا شد، اسکرول افقی را بردار». They are one
+     * number. A hardcoded `min-width` is the only thing that ever forces the
+     * horizontal scrollbar — percentages of a fixed width cannot overflow — so
+     * at a 1000px container the table stayed 1280px wide, «عملیات» rendered at
+     * x=-281 and the single grip that resizes it at x=-115: off the screen, and
+     * therefore un-draggable in the plainest possible sense.
+     */
+    const widths = [8, 25, 11, 8, 14, 9, 12, 13];
+    const floors = [100, 160, 100, 96, 130, 92, 116, 150];
+
+    /*
+     * Column *i* renders at `tableWidth × pct[i] / 100`, so the table is wide
+     * enough for it exactly when `tableWidth ≥ floor[i] × 100 / pct[i]`. The
+     * largest of those is the least width at which *every* column fits.
+     */
+    eq("the table asks for what its most cramped column needs",
+      tableMinWidthPx(widths, floors), 1250);
+    eq("...which is that column's own requirement", Math.ceil(100 * 100 / 8), 1250);
+
+    /*
+     * The promise the person was made: widening a cramped column lowers what
+     * the table asks for, so their own layout can put the scrollbar away.
+     */
+    const roomier = [10, 20, 11, 10, 13, 10, 12, 14];
+    ok("widening the cramped columns lowers it",
+      tableMinWidthPx(roomier, floors) < tableMinWidthPx(widths, floors),
+      [tableMinWidthPx(roomier, floors), tableMinWidthPx(widths, floors)]);
+    /*
+     * And the best case is the sum of the floors, reached when the shares are
+     * proportional to them — the width below which no arrangement of these
+     * columns fits. It is a real target somebody can drag towards, which is
+     * what makes «جا شد» a thing they can actually reach rather than a promise
+     * the arithmetic quietly withholds.
+     */
+    const total = floors.reduce((a, b) => a + b, 0);
+    const proportional = floors.map((f) => (f * 100) / total);
+    /*
+     * To the pixel the answer rounds up to: `floor × 100 ÷ (floor × 100 / sum)`
+     * is the sum in arithmetic and a hair above it in floating point, and the
+     * result is a CSS pixel, so it is ceilinged. Asserting equality here would
+     * be asserting that a division came back exact.
+     */
+    ok("the best case is the sum of the floors",
+      Math.abs(tableMinWidthPx(proportional, floors) - total) <= 1,
+      [tableMinWidthPx(proportional, floors), total]);
+    ok("...and no arrangement beats it", [
+      [30, 10, 10, 10, 10, 10, 10, 10], [4, 24, 12, 12, 12, 12, 12, 12],
+      [12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5, 12.5],
+    ].every((w) => tableMinWidthPx(w, floors) >= total));
+    /*
+     * Which is the claim that matters, so it is held against a sweep rather
+     * than three hand-picked lists: whatever anybody drags, the table never
+     * asks for less room than its columns need.
+     */
+    let best = Infinity;
+    for (let t = 0; t < 300; t++) {
+      const w = floors.map(() => MIN_COLUMN_PERCENT + Math.random() * 20);
+      const sum = w.reduce((a, b) => a + b, 0);
+      best = Math.min(best, tableMinWidthPx(w.map((x) => (x * 100) / sum), floors));
+    }
+    ok("...over 300 random layouts either", best >= total, best);
+
+    /* Squeezing one raises it again — the scrollbar comes back, as asked. */
+    const squeezed = [...widths];
+    squeezed[7] = MIN_COLUMN_PERCENT;
+    squeezed[1] = widths[1] + widths[7] - MIN_COLUMN_PERCENT;
+    ok("squeezing a column past its floor brings the scroll back",
+      tableMinWidthPx(squeezed, floors) > tableMinWidthPx(widths, floors));
+    /*
+     * But capped. A 150px floor at 4% demands 3750px, and honouring that would
+     * honour the floor over the person's own instruction: they made that column
+     * narrow to give the room to something else, and a sideways scroll that
+     * long is a grid nobody can read.
+     */
+    eq("...but never past the cap",
+      tableMinWidthPx([MIN_COLUMN_PERCENT, 96 - 5 * 4, 4, 4, 4, 4, 4, 4], floors),
+      MAX_TABLE_MIN_PX);
+    ok("...and the cap is past any screen, so it bites only on a squeezed layout",
+      MAX_TABLE_MIN_PX > total * 2, MAX_TABLE_MIN_PX);
+
+    /* A share of nothing has no requirement; it must not divide by zero. */
+    ok("a column with no share is skipped rather than dividing by zero",
+      Number.isFinite(tableMinWidthPx([0, 100, 0, 0, 0, 0, 0, 0], floors)));
+    eq("...and only that column's neighbours are asked",
+      tableMinWidthPx([0, 100, 0, 0, 0, 0, 0, 0], floors), 160);
+    eq("no columns at all asks for nothing", tableMinWidthPx([], []), 0);
   }
 
   /* -- the resize arithmetic, which keeps the table whole -- */

@@ -94,3 +94,59 @@ export function columnsAreDefault(
   return widths.length === defaults.length
     && widths.every((w, i) => Math.abs(w - defaults[i]) < 0.01);
 }
+
+/**
+ * The widest a derived minimum may get.
+ *
+ * The rule below asks «how wide must the table be for *every* column to reach
+ * its floor at the share it has been given», and a column deliberately squeezed
+ * to `MIN_COLUMN_PERCENT` answers with a number no monitor has: a 150px floor at
+ * 4% demands 3750px. Honouring that would be honouring the floor over the
+ * person's own instruction — they made that column narrow precisely to give the
+ * room to something else, and a sideways scroll that long is a grid nobody can
+ * read anyway. So the derivation is capped, well past any screen, where it bites
+ * only on a layout somebody has deliberately squeezed.
+ */
+export const MAX_TABLE_MIN_PX = 2400;
+
+/**
+ * How much room the table needs before it has to scroll sideways.
+ *
+ * This replaced a hardcoded `min-w-[1280px]`, and the hardcoding was the whole
+ * fault. Percentages of a fixed width cannot overflow, so a `min-width` is the
+ * *only* thing that ever forces the horizontal scrollbar — which meant a person
+ * dragging their columns narrower changed nothing about whether the grid fitted
+ * their screen, and «عملیات», the last column, stayed off the left edge along
+ * with the one grip that resizes it. That is both halves of what was reported:
+ * the scrollbar that would not go, and the last column that could not be
+ * adjusted, are one number.
+ *
+ * With `table-fixed`, column *i* renders at `tableWidth × pct[i] / 100`, so the
+ * table is wide enough for that column exactly when
+ * `tableWidth ≥ floor[i] × 100 / pct[i]`. Taking the largest of those is the
+ * least width at which **every** column reaches its floor — and because it is
+ * computed from the widths the person is dragging, widening a cramped column
+ * lowers it, and the scrollbar goes when their own layout genuinely fits.
+ * Squeezing one raises it, and the scrollbar comes back. Nothing is toggled and
+ * there is no state saying «scrolling»: `overflow-x-auto` answers it.
+ *
+ * The floors are per column because the columns are not alike — a project code
+ * is nine mono characters that must never wrap, a title is prose that may. Their
+ * *sum* is the best case, reached when the shares are proportional to them; that
+ * is the width below which no arrangement of these columns fits, and it is a
+ * real target a person can drag towards rather than a wall.
+ */
+export function tableMinWidthPx(
+  widths: readonly number[],
+  floorsPx: readonly number[],
+  cap: number = MAX_TABLE_MIN_PX,
+): number {
+  let required = 0;
+  for (let i = 0; i < floorsPx.length; i++) {
+    const pct = widths[i];
+    const floor = floorsPx[i];
+    if (!Number.isFinite(pct) || pct <= 0 || !Number.isFinite(floor) || floor <= 0) continue;
+    required = Math.max(required, (floor * 100) / pct);
+  }
+  return Math.min(cap, Math.ceil(required));
+}
