@@ -48,3 +48,28 @@ export function addresseeOf(
     .filter(Boolean)
     .join(" ");
 }
+
+/**
+ * The name a colleague is greeted by on their own dashboard.
+ *
+ * «سلام، جناب آقای مهندس محمد مقدم عزیز» is how the company writes to a
+ * *customer*, and it is the wrong register for the card somebody sees when
+ * they sign in to their own workspace — that is «سلام، محمد عزیز». So this is
+ * deliberately not `addresseeOf` with the honorific switched off: the two
+ * answer different questions, and the greeting keeps only the first name while
+ * every outgoing document keeps the whole formal form.
+ *
+ * **The zero-width joiner is not a space.** «علی‌رضا» is one name written with
+ * a ZWNJ inside it, and splitting on it answers «علی» — a different person's
+ * name, printed at somebody every morning. `initialsOf` folds the ZWNJ to a
+ * space on purpose (two initials out of one compound name is right), which is
+ * exactly why this cannot reuse that rule.
+ *
+ * An empty or unnamed account answers an empty string, and the caller decides
+ * what to draw instead — greeting somebody by a blank is worse than not
+ * greeting them.
+ */
+export function firstNameOf(name: string | null | undefined): string {
+  const words = String(name ?? "").trim().split(/\s+/).filter(Boolean);
+  return words[0] ?? "";
+}

@@ -260,7 +260,7 @@ import {
   DETAIL_LABELS, SUMMARY_LIMIT, cardDetail, hasMoreToShow, summarizeText,
 } from "../src/utils/cardSummary";
 import { activeTemplateOf, brandLogoUrl } from "../src/utils/brand";
-import { addresseeOf, namePrefixFor } from "../src/utils/honorific";
+import { addresseeOf, firstNameOf, namePrefixFor } from "../src/utils/honorific";
 import { AVATAR_SIZES, avatarColors, avatarHue, initialsOf } from "../src/utils/avatar";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -2596,6 +2596,42 @@ head("How a customer is addressed");
     addresseeOf("", "شرکت پتروشیمی نمونه"), "شرکت پتروشیمی نمونه");
   eq("and an honorific with nobody to attach it to is nothing",
     addresseeOf("مرد", ""), "جناب آقای مهندس");
+
+  /*
+   * ---- and a person's own workspace uses neither half of that ----
+   *
+   * «جناب آقای مهندس محمد مقدم عزیز» is the register for a customer, not for
+   * the card somebody sees when they sign in. The greeting keeps the first
+   * name and nothing else, which is a different question from `addresseeOf`
+   * rather than the same one with the honorific switched off.
+   */
+  eq("the greeting keeps the first name", firstNameOf("محمد مقدم"), "محمد");
+  eq("...and drops every further word", firstNameOf("سید محمد حسین رضایی"), "سید");
+  eq("...and a single name is already the answer", firstNameOf("محمد"), "محمد");
+  /*
+   * The one that would print a different person's name at them every morning:
+   * «علی‌رضا» is ONE name written with a zero-width joiner inside it. Folding
+   * the ZWNJ to a space — which `initialsOf` does on purpose — answers «علی».
+   */
+  eq("...and the zero-width joiner is not a space", firstNameOf("علی‌رضا مقدم"), "علی‌رضا");
+  eq("...surrounding space is not a word", firstNameOf("  محمد  مقدم "), "محمد");
+  eq("...and an unnamed account answers nothing to draw", firstNameOf(""), "");
+  eq("...as does a null one", firstNameOf(null), "");
+
+  /* The card reads that rule, and no longer the formal one. */
+  /*
+   * Comments first: the note above the greeting quotes the very literal it
+   * replaced («سلام، جناب آقای …»), so a check reading the raw file fails on
+   * the sentence saying it was fixed.
+   */
+  const stripComments = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const dash = stripComments(readFileSync("src/components/DashboardView.tsx", "utf-8"));
+  ok("the welcome card greets by first name", /firstNameOf\(currentUser\?\.fullName\)/.test(dash));
+  ok("...and not by the customer-facing form",
+    !/addresseeOf/.test(dash) && !/جناب آقای/.test(dash));
+  ok("...falling through to the generic title rather than «سلام،  عزیز»",
+    /پیشخوان مدیریت منابع/.test(dash));
 }
 
 
@@ -14031,14 +14067,16 @@ head("Competitors: who we lose to, and by how much");
    * The case the dashboard got wrong: it wrote «جناب آقای» for everybody,
    * because `User` had no gender column to read at all. Blank is the answer,
    * not a guess — guessing greets a woman as a man on the strength of an
-   * unfilled field.
+   * unfilled field. That rule still governs every document and every message
+   * that leaves the building; it is the *welcome card* that turned out to want
+   * neither half of it — see the greeting block above, where `firstNameOf` and
+   * what the card actually reads are held.
    */
   eq("nobody has said", namePrefixFor(null), "");
   eq("...and the name then stands alone, with no double space",
     addresseeOf(null, "محمد رضایی"), "محمد رضایی");
   const dash = strip(readFileSync("src/components/DashboardView.tsx", "utf-8"));
-  ok("the welcome card reads the rule", /addresseeOf\(\s*currentUser\.gender/.test(dash));
-  ok("...and no longer writes an honorific out itself",
+  ok("...and the card writes no honorific out itself either",
     !/جناب آقای/.test(dash) && !/سرکار خانم/.test(dash));
 
   /* ---- the disc drawn when there is no photograph ---- */
@@ -14145,13 +14183,44 @@ head("Competitors: who we lose to, and by how much");
    * missing column.
    */
   const authSrc = strip(readFileSync("src/server/services/userService.ts", "utf-8"));
-  const sessionSelect = authSrc.split("export async function findAuthUser")[1]
-    ?.split("});")[0] ?? "";
-  ok("findAuthUser is the /api/me projection", sessionSelect.length > 0);
+  const findAuth = authSrc.split("export async function findAuthUser")[1]
+    ?.split("export async function")[0] ?? "";
+  ok("findAuthUser is the /api/me projection", findAuth.length > 0);
+
+  /*
+   * ---- and the select is not the half that matters ----
+   *
+   * The first version of this check read the `select` alone and PASSED while
+   * the fault shipped: the columns were selected and then dropped by a
+   * hand-written return literal below them, and `AuthUser` declares both
+   * optional so `npm run lint` had nothing to say either. The symptom named
+   * neither — the avatar drew in the activity feed (the directory projection)
+   * and never in the sidebar (`currentUser`), which reads as a feature that
+   * does not work.
+   *
+   * So the rule is that the select is the SINGLE list: the function spreads
+   * the row it read, exactly as `authenticateUser` does, and a literal that
+   * has to be kept in step with the select beside it may not come back.
+   */
   for (const field of ["gender", "avatarUrl"] as const) {
-    ok(`...and carries ${field}, or it survives login and vanishes on refresh`,
-      new RegExp(`${field}:\\s*true`).test(sessionSelect), sessionSelect.slice(0, 240));
+    ok(`...selects ${field}`, new RegExp(`${field}:\\s*true`).test(findAuth));
   }
+  ok("...and spreads the row rather than rebuilding it, so the select decides",
+    /\.\.\.columns/.test(findAuth) && !/fullName:\s*user\.fullName/.test(findAuth),
+    findAuth.slice(-320));
+  /* The three keys that are deliberately not the column, still deliberate. */
+  ok("...with isActive kept out, permissions parsed and position undefined",
+    /isActive: _isActive/.test(findAuth)
+    && /permissions: _storedPermissions/.test(findAuth)
+    && /position: position \?\? undefined/.test(findAuth));
+
+  /*
+   * The other half of the same fault, from the other end: `authenticateUser`
+   * spreads too, which is why login alone was never the bug.
+   */
+  const authenticate = authSrc.split("export async function authenticateUser")[1]
+    ?.split("export async function")[0] ?? "";
+  ok("authenticateUser spreads its row as well", /\.\.\.safeUser/.test(authenticate));
 
   /* ---- both projections, and the one field that stays out of the directory ---- */
   const userService = strip(readFileSync("src/server/services/userService.ts", "utf-8"));
