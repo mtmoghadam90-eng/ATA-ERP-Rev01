@@ -12,7 +12,6 @@
     "lint": "tsc --noEmit",
     "sync:report": "tsx scripts/sync-reporting.ts",
     "seed:db": "tsx scripts/seedDb.ts",
-    "db:prepare-test": "tsx scripts/prepareTestDb.ts",
     "fix:project-loss-reasons": "tsx scripts/backfillProjectLossReasons.ts",
     "fix:project-stages": "tsx scripts/backfillProjectStages.ts",
     "fix:task-assignees": "tsx scripts/backfillTaskAssignees.ts",
