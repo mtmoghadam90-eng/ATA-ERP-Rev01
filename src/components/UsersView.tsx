@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User, ERPSettings } from '../types';
-import { PERMISSION_FLAGS, defaultPermissions } from '../utils/permissions';
+import { PERMISSION_FLAGS, defaultPermissions, effectivePermissions } from '../utils/permissions';
 import ConfirmModal from './ConfirmModal';
 import NumberField from './NumberField';
 import Avatar from './Avatar';
@@ -269,24 +269,23 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     setSignatureImage(user.signatureImage || '');
     setGender(user.gender || '');
     setAvatarUrl(user.avatarUrl || '');
+    /*
+     * Every flag resolved by the rule its own consumer uses, rather than four
+     * of them normalised by hand.
+     *
+     * That hand-typed list was `costs`, `messaging`, `assistant`, `tasksAll` —
+     * and it drifted the moment a fifth optional flag arrived. `stuckWork` and
+     * `packagingDelivery` are absent on every account written before those
+     * modules existed, so they came through the spread as `undefined`: the box
+     * drew **unticked** while the sidebar, the route guard and the server all
+     * read absent as granted. An administrator saw «کارهای متوقف» already off,
+     * changed nothing, saved, and the user went on seeing the screen — which is
+     * exactly how it was reported. `effectivePermissions` is the one reading.
+     */
     setPermissions({
       ...user.permissions,
-      // Absent means denied for this one (see canSeeCosts), so the box has to
-      // show unticked rather than inheriting whatever spread produced.
-      costs: user.permissions?.costs === true,
-      // A module flag, so absent means granted — the same reading the route
-      // guard uses. An account written before this module existed keeps
-      // working rather than losing a screen it never knew it had.
-      messaging: user.permissions?.messaging !== false,
-      // Read strictly, like `costs`: an absent flag denies. An account written
-      // before the assistant existed must not silently gain it.
-      assistant: user.permissions?.assistant === true,
-      // Strict as well, and for the sharpest reason of the three: every account
-      // has the tasks module, so «absent means granted» here would hand the
-      // whole company's board to everybody — which is the fault this flag was
-      // introduced to fix.
-      tasksAll: user.permissions?.tasksAll === true,
-    });
+      ...effectivePermissions(user.permissions),
+    } as User['permissions']);
     setShowPassword(false);
     setShowEditModal(true);
   };
@@ -512,15 +511,15 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                   {moduleList.map((m) => {
                     /*
                      * What the server would actually answer, which is not the
-                     * stored flag alone. A system administrator passes every
-                     * check regardless of what their permissions object says,
-                     * and theirs predates the newer flags — so this summary
-                     * struck through capabilities they plainly have, while the
-                     * edit form beside it showed the same boxes ticked.
+                     * stored flag alone — twice over. A system administrator
+                     * passes every check whatever their permissions object
+                     * says; and `=== true` struck through every module flag an
+                     * older account simply never had written, which the route
+                     * guard grants. `effectivePermissions` answers the second
+                     * half and `isSystemAdmin` the first.
                      */
                     const hasAccess = user.isSystemAdmin
-                      || (user.permissions
-                        && user.permissions[m.id as keyof typeof user.permissions] === true);
+                      || effectivePermissions(user.permissions)[m.id];
                     return (
                       <span 
                         key={m.id}

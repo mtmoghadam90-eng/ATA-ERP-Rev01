@@ -34,7 +34,8 @@ import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr, getShamsiDaysDifference } from "../src/dateUtils";
 import { escalationFor, escalationIsConfigured } from "../src/utils/workflowEscalation";
 import {
-  FIELD_LEVEL_PERMISSIONS, PERMISSION_FLAGS, defaultPermissions,
+  FIELD_LEVEL_PERMISSIONS, PERMISSION_FLAGS,
+  defaultPermissions, effectivePermissions, hasModulePermission,
 } from "../src/utils/permissions";
 import {
   DEFAULT_STUCK_THRESHOLDS, FALLBACK_STUCK_DAYS, PO_STAGE_PAIRS, STUCK_SECTIONS,
@@ -144,7 +145,9 @@ import {
   paymentPhrase,
 } from "../src/utils/deliveryNotes";
 import { DEFAULT_SETTINGS } from "../src/seedData";
-import { KEY_PERMISSION, canSeeAllTasks, canSeeCosts } from "../src/server/auth";
+import {
+  KEY_PERMISSION, SETTINGS_WRITE_PERMISSION, canSeeAllTasks, canSeeCosts,
+} from "../src/server/auth";
 import {
   preserveLineCosts, redactCustomerValue, redactInquiry, redactProduct,
   redactPurchaseOrder, redactProforma, redactValueDetail, redactValueSummary,
@@ -6754,11 +6757,20 @@ head("Tasks: a board shows your own work, not the company's");
    */
   ok("the permission can be granted in Settings",
     PERMISSION_FLAGS.some((f) => f.id === "tasksAll"));
-  // Two halves: the edit form reads a stored value strictly, and a brand-new
-  // account starts without it. The second used to be a hand-typed object.
+  /*
+   * Two halves: the edit form reads a stored value strictly, and a brand-new
+   * account starts without it.
+   *
+   * The first used to be pinned as the literal line `tasksAll:
+   * user.permissions?.tasksAll === true` inside `UsersView` — one of exactly
+   * four flags normalised by hand there, which is the list that drifted and let
+   * «کارهای متوقف» read as denied while the route guard granted it. The
+   * property is what matters and `effectivePermissions` is where it lives now,
+   * so this asks the rule rather than the file's text.
+   */
   ok("and is unticked unless explicitly held",
-    /tasksAll: user\.permissions\?\.tasksAll === true/
-      .test(readFileSync("src/components/UsersView.tsx", "utf8"))
+    effectivePermissions({}).tasksAll === false
+    && effectivePermissions({ tasksAll: true }).tasksAll === true
     && (defaultPermissions("user") as Record<string, boolean>).tasksAll === false);
 
   /*
@@ -10620,6 +10632,134 @@ head("Permissions: every module is configurable");
       !/id: 'purchaseOrders', name:/.test(src));
     ok("...and no hand-typed permission object either",
       !/dashboard: true,[\s\S]{0,80}customers: true,/.test(src));
+
+    /*
+     * ---- and the switch has to say what the application will do ----
+     *
+     * Reported as «دسترسی کارهای متوقف را غیرفعال کردم ولی همچنان می‌بیندش»,
+     * and the screen was reading the stored value three ways while the
+     * application read it a fourth.
+     *
+     * A module flag is **absent** on every account written before that module
+     * existed — `stuckWork`, `packagingDelivery` and `messaging` are optional
+     * on the type for exactly that reason — and the sidebar, the route guard
+     * and `hasPermission` all read absent as **granted**. But the checkbox read
+     * the raw value, so `undefined` drew **unticked**; the summary chip beside
+     * it read `=== true`, so the same module drew **struck through**; and the
+     * seeding normalised four keys by hand, a list that drifted the moment a
+     * fifth optional flag arrived.
+     *
+     * So an administrator saw the box already off, changed nothing, saved, and
+     * the key stayed absent — the user went on seeing the screen. One press
+     * made it worse in a way nobody could read: `!undefined` is `true`, which
+     * grants it explicitly, so it took two presses to deny something the screen
+     * had been calling denied all along.
+     */
+    /*
+     * Scoped to the `setPermissions` call, not the file.
+     *
+     * The first version of this was `/effectivePermissions\(user\.permissions\)/`
+     * over the whole source — and it **passed** with the seeding's call deleted,
+     * because the summary chip calls the same function further down. A check a
+     * second call site can answer for is a check that holds nothing.
+     *
+     * The second version bounded the slice on `});`, which is not unique here:
+     * it captured forty thousand characters, most of the file, and passed for
+     * the same reason. `);` closes this call and nothing inside it, so the slice
+     * is the seeding and only the seeding — which is why the length is asserted
+     * beside it rather than trusted.
+     */
+    const seeding = src.split("setPermissions({")[1]?.split(");")[0] ?? "";
+    ok("the edit form's seeding was found, and is the seeding alone",
+      seeding.length > 0 && seeding.length < 400, String(seeding.length));
+    ok("the form seeds from the one resolution rule",
+      /effectivePermissions\(user\.permissions\)/.test(seeding), seeding.slice(0, 200));
+    ok("...and the summary chip reads it too, rather than === true",
+      !/user\.permissions\[m\.id[\s\S]{0,40}=== true/.test(src));
+    ok("...so no hand-normalised list of four survives",
+      !/costs: user\.permissions\?\.costs === true/.test(src)
+      && !/messaging: user\.permissions\?\.messaging !== false/.test(src));
+  }
+
+  /*
+   * The rule itself, held against the readers it has to agree with rather than
+   * against a second reading of it.
+   */
+  {
+    const stored: Record<string, boolean> = { customers: true, settings: false };
+    const asUser = { isSystemAdmin: false, permissions: stored } as never;
+    const eff = effectivePermissions(stored);
+
+    for (const flag of PERMISSION_FLAGS) {
+      const expected = flag.fieldLevel
+        ? stored[flag.id] === true
+        : hasModulePermission(asUser, flag.id as never);
+      eq(`«${flag.id}» resolves the way its reader does`, eff[flag.id], expected);
+    }
+    ok("every flag resolves to a real boolean",
+      PERMISSION_FLAGS.every((f) => typeof eff[f.id] === "boolean"));
+
+    /* The reported case, both directions. */
+    eq("an absent module flag is granted, as the route guard grants it",
+      effectivePermissions({}).stuckWork, true);
+    eq("...and an explicit false denies it",
+      effectivePermissions({ stuckWork: false }).stuckWork, false);
+    /* Which is what makes ONE press deny it rather than two. */
+    const seeded = effectivePermissions({});
+    eq("one press of the box denies", !seeded.stuckWork, false);
+
+    /* A field-level flag goes the other way: absent denies. */
+    for (const flag of FIELD_LEVEL_PERMISSIONS) {
+      eq(`«${flag.id}» is denied when absent`, effectivePermissions({})[flag.id], false);
+      eq(`...and granted only when explicitly true`,
+        effectivePermissions({ [flag.id]: true })[flag.id], true);
+    }
+    eq("costs agrees with canSeeCosts", effectivePermissions({ costs: true }).costs,
+      canSeeCosts({ isSystemAdmin: false, permissions: { costs: true } } as never));
+  }
+
+  /*
+   * ---- and a module the screen can deny must be one the SERVER denies ----
+   *
+   * A screen hidden in the browser whose endpoint still answers is a gate that
+   * is not one — which is what `stuckWork` was before it got `erp_stuck_work`.
+   * This walks the whole catalogue rather than trusting that it stays true, so
+   * a module added without a server key fails here rather than shipping as a
+   * menu item that hides nothing.
+   */
+  {
+    /*
+     * Both maps, because a key can be enforced by either.
+     *
+     * `erp_users` is `null` in `KEY_PERMISSION` **on purpose**: reading it
+     * answers a name-only directory projection rather than a refusal, since the
+     * assignment pickers need every colleague's name, and the write is gated by
+     * `SETTINGS_WRITE_PERMISSION` instead. Reading only the first map reports
+     * «users» as ungated, which is how the first version of this check failed
+     * against perfectly correct code.
+     */
+    const gated = new Set([
+      ...Object.values(KEY_PERMISSION),
+      ...Object.values(SETTINGS_WRITE_PERMISSION),
+    ].filter(Boolean) as string[]);
+    /*
+     * `dashboard` is the one deliberate exemption and it is not a hole: the
+     * endpoint takes only a session and `dashboardSummary` narrows what it
+     * counts to what that account may already reach (`hasPermission(user,
+     * "proformas")` decides company-wide against own-records). Denying the
+     * module hides the screen; it does not close an endpoint that could answer
+     * with anything the person cannot otherwise see.
+     */
+    const SESSION_ONLY = new Set(["dashboard"]);
+    const ungated = APP_MODULES
+      .map((m) => (SCREEN_PERMISSION_ALIAS[m.id] as string) ?? m.id)
+      .filter((key) => !gated.has(key) && !SESSION_ONLY.has(key));
+    ok("every module the users screen can deny is denied by the server too",
+      ungated.length === 0, ungated);
+    /* Named, so the exemption cannot quietly grow. */
+    eq("...with exactly one deliberate exemption", SESSION_ONLY.size, 1);
+    ok("...and the exempt one really is session-only",
+      !gated.has("dashboard"));
   }
 }
 

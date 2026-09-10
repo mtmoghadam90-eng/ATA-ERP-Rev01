@@ -215,3 +215,52 @@ export function defaultPermissions(role: 'admin' | 'user'): User['permissions'] 
   };
   return { ...base, ...derived };
 }
+
+/**
+ * The stored permissions resolved to a real boolean per flag.
+ *
+ * **The users screen was reading the stored value three different ways and the
+ * application a fourth**, and that is exactly how «دسترسی کارهای متوقف را
+ * غیرفعال کردم ولی همچنان می‌بیندش» happens.
+ *
+ * A module flag is **absent** on every account written before that module
+ * existed — `stuckWork`, `packagingDelivery` and `messaging` are all optional
+ * on the type for that reason. The sidebar, the route guard and the server all
+ * read absent as **granted** (`!== false`, and rightly: an account must not
+ * lose a screen the day a newer module ships). But the edit form's checkbox
+ * read the raw value, so `undefined` drew **unticked**; the summary chip beside
+ * it read `=== true`, so the same module drew **struck through**; and the
+ * form's seeding normalised exactly four keys by hand — `costs`, `messaging`,
+ * `assistant`, `tasksAll` — which is a list that drifted the moment a fifth
+ * arrived.
+ *
+ * So an administrator opened the form, saw «کارهای متوقف» already unticked,
+ * changed nothing, saved — and the key was still absent, so the user went on
+ * seeing the screen. Pressing the box once made it *worse* in a way nobody
+ * could read: `!undefined` is `true`, which grants it explicitly. It took two
+ * presses to deny something the screen had been calling denied all along.
+ *
+ * One rule, and it is the consumers' own: a **module** flag answers `!== false`
+ * and a **field-level** flag answers `=== true`, which is precisely what
+ * `hasModulePermission` and `canSeeCosts` do — `test:rules` holds this function
+ * against both of them over every flag rather than against a second reading.
+ *
+ * `isSystemAdmin` is deliberately **not** consulted. It belongs at the call
+ * site: the summary chip wants «what would the server answer», which includes
+ * it, while the edit form wants «what does this record actually say», which
+ * does not — seeding an administrator's form from an all-true object would
+ * write all-true into their stored record on the next save.
+ *
+ * Saving from a form seeded this way writes **every** key explicitly, so the
+ * ambiguity is gone for that account from then on.
+ */
+export function effectivePermissions(
+  stored: Partial<Record<string, boolean>> | null | undefined,
+): Record<string, boolean> {
+  const resolved: Record<string, boolean> = {};
+  for (const flag of PERMISSION_FLAGS) {
+    const value = stored?.[flag.id];
+    resolved[flag.id] = flag.fieldLevel ? value === true : value !== false;
+  }
+  return resolved;
+}
