@@ -150,7 +150,7 @@ export const KEY_PERMISSION: Record<string, string | null> = {
 };
 
 /** Keys any authenticated user may read but only privileged users may write. */
-const SETTINGS_WRITE_PERMISSION: Record<string, string> = {
+export const SETTINGS_WRITE_PERMISSION: Record<string, string> = {
   erp_settings: "settings",
   erp_exchange_rates: "settings",
   erp_users: "users",
