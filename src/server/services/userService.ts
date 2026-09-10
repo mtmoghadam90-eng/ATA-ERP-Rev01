@@ -440,18 +440,27 @@ export async function findAuthUser(
     }
   }
 
-  return {
-    id: user.id,
-    username: user.username,
-    // /api/me answers with this, and the sidebar prints the name and the
-    // position; omitting them left the UI with a user it could not render.
-    fullName: user.fullName,
-    position: user.position ?? undefined,
-    role: user.role,
-    isSystemAdmin: user.isSystemAdmin,
-    permissions,
-    sessionEpoch: user.sessionEpoch,
-  };
+  /*
+   * Spread the row rather than rebuilding it field by field, so the `select`
+   * above is the single list — which is exactly how `authenticateUser` already
+   * works, and exactly why the two behaved differently.
+   *
+   * The reported fault: `gender` and `avatarUrl` were added to the select and
+   * NOT to the hand-written literal that used to stand here, so `/api/me`
+   * answered without them on every page load. `AuthUser` declares both
+   * optional, so `npm run lint` had nothing to say; the avatar showed in the
+   * activity feed (which reads the directory projection) and never in the
+   * sidebar (which reads `currentUser`), and the dashboard's greeting had no
+   * gender to read. A literal that has to be kept in step with a select beside
+   * it is a second list, and a second list drifts.
+   *
+   * Only three keys are not simply the column: `isActive` was the gate above
+   * and is not the caller's business, `permissions` is the parsed map rather
+   * than the stored JSON string, and `position` is `undefined` rather than
+   * null so an absent one reads the same as an unselected one.
+   */
+  const { isActive: _isActive, permissions: _storedPermissions, position, ...columns } = user;
+  return { ...columns, position: position ?? undefined, permissions };
 }
 
 export async function authenticateUser(

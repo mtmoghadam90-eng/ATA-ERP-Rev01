@@ -28,7 +28,7 @@ import {
   CartesianGrid 
 } from 'recharts';
 import { Task, User, ERPSettings } from '../types';
-import { addresseeOf } from '../utils/honorific';
+import { firstNameOf } from '../utils/honorific';
 import { canSeeCosts } from '../utils/permissions';
 import CustomerValueMatrix from './CustomerValueMatrix';
 import { getTodayShamsi } from '../dateUtils';
@@ -280,17 +280,23 @@ export default function DashboardView({
             </div>
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">
               {/*
-                * The honorific comes from the account, and used to be typed in.
+                * A person's own workspace greets them by their first name.
                 *
-                * This read «سلام، جناب آقای …» for everybody — there was no
-                * gender column on `User` to consult, so the card greeted every
-                * woman in the company as a man. `namePrefixFor` is the rule the
-                * proformas and the customer messages have always used, and it
-                * answers **blank** for an account that has not said, so an
-                * unfilled field costs the honorific and never guesses one.
+                * This read «سلام، جناب آقای …» for everybody, typed in as a
+                * string literal, so it greeted every woman in the company as a
+                * man. Reading the honorific from the account fixed the lie and
+                * kept the wrong register: «جناب آقای مهندس محمد مقدم عزیز» is
+                * how this company writes to a *customer*, and nobody wants to
+                * be addressed that way by their own dashboard every morning.
+                * `firstNameOf` is the rule — the surname and the honorific
+                * both go, and the formal form stays where it belongs, on the
+                * documents and the messages that leave the building.
+                *
+                * An account with no name falls through to the generic title
+                * rather than printing «سلام،  عزیز» around a blank.
                 */}
-              {currentUser
-                ? `سلام، ${addresseeOf(currentUser.gender, currentUser.fullName)} عزیز`
+              {firstNameOf(currentUser?.fullName)
+                ? `سلام، ${firstNameOf(currentUser?.fullName)} عزیز`
                 : 'پیشخوان مدیریت منابع (ERP)'}
             </h1>
             <p className="text-slate-300 text-sm max-w-xl font-normal leading-relaxed">
