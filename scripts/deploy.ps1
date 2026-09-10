@@ -91,12 +91,38 @@ if (-not (Test-Path ".git")) {
     Fail "This folder is not a git clone. Run the one-time setup first (see docs/deployment.md)."
     exit 2
 }
+#
+# `$ErrorActionPreference = "Stop"` does NOT apply to a native command like
+# `git`: a failing `git fetch` writes «fatal: unable to access ...» to stderr,
+# throws nothing, and execution simply carries on. The next line then resets to
+# the *stale local* `origin/main`, `$before -eq $after` is true, and the script
+# reports «already up to date» — a deploy that fetched nothing, built the code
+# that was already there, and announced success. That is not hypothetical: a
+# server left on 329cd02 reported itself up to date for four releases, and the
+# features in them were reported as broken rather than as undeployed, which is
+# the worst shape a failure can take. So every native git call is checked on
+# `$LASTEXITCODE`, and «already up to date» is only reachable after a fetch
+# that really reached GitHub.
+#
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $before = (git rev-parse --short HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { Fail "git rev-parse failed - is this a git clone?"; exit 3 }
+
     git fetch origin --quiet
+    if ($LASTEXITCODE -ne 0) {
+        Fail "git fetch failed - this server could not reach GitHub. NOTHING was deployed."
+        Write-Host "      The code on this server is unchanged (still $before)." -ForegroundColor Yellow
+        Write-Host "      Check the network/proxy, then run this script again." -ForegroundColor Yellow
+        exit 3
+    }
+
     git reset --hard origin/main --quiet
+    if ($LASTEXITCODE -ne 0) { Fail "git reset failed - the working tree was not updated."; exit 3 }
+
     $after = (git rev-parse --short HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { Fail "git rev-parse failed after the reset."; exit 3 }
+
     if ($before -eq $after) { Ok "already up to date ($after)" }
     else {
         Ok "updated $before -> $after"

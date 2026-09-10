@@ -6500,6 +6500,81 @@ head("Migrations: no sqlcmd batch separators");
 }
 
 
+head("Deploy: a fetch that never reached GitHub is not «already up to date»");
+{
+  /*
+   * The worst shape a failure can take here is a success. `deploy.ps1` sets
+   * `$ErrorActionPreference = "Stop"`, which does NOT apply to a native command
+   * like `git` — so a `git fetch` that cannot reach GitHub writes «fatal: unable
+   * to access ...» to stderr, throws nothing, and the next line resets the tree
+   * to the *stale local* `origin/main`. `$before -eq $after` is then true and the
+   * script reports «already up to date (329cd02)» beside the fatal error it just
+   * printed. Four releases sat undeployed behind that line and were reported as
+   * broken features rather than as absent ones, which is the reading the sentence
+   * invites: it says the server has the code.
+   *
+   * So the rule is not «check the exit code somewhere in the file» — the script
+   * already checks `$LASTEXITCODE` after npm and prisma. It is that each of the
+   * git calls in the pull step is checked, and `git fetch` above all, because it
+   * is the only one whose silent failure still leaves a working application to
+   * announce success over.
+   */
+  const deploy = readFileSync("scripts/deploy.ps1", "utf8");
+  const lines = deploy.split(/\r?\n/);
+
+  /* Never bound a slice on a marker that is not unique. */
+  const pullStart = lines.findIndex(l => /Step 3 /.test(l));
+  const pullEnd = lines.findIndex(l => /Step 4 /.test(l));
+  ok("the pull step is found in the script", pullStart >= 0 && pullEnd > pullStart);
+  const pull = lines.slice(pullStart, pullEnd);
+
+  /*
+   * Comments quote the very expression they explain, so a check reading the raw
+   * file is answered by the note saying it was fixed — the trap the calendar's
+   * own check closes by stripping first. PowerShell comments start at `#`.
+   */
+  const code = pull
+    .map(l => l.replace(/#.*$/, ""))
+    .filter(l => l.trim().length > 0);
+
+  const isGitCall = (l: string) => /(^|\s)git\s+(fetch|reset|rev-parse)\b/.test(l);
+  const unchecked: string[] = [];
+  for (let i = 0; i < code.length; i += 1) {
+    const line = code[i];
+    if (!isGitCall(line)) continue;
+    /*
+     * The window stops at the NEXT git call, which is the whole of the rule: a
+     * window three lines wide let the *reset's* check answer for the *fetch*,
+     * so removing the fetch's check passed. Each call answers for itself.
+     */
+    const window: string[] = [line];
+    for (let j = i + 1; j < code.length && !isGitCall(code[j]); j += 1) {
+      window.push(code[j]);
+      if (window.length > 4) break;
+    }
+    if (!/\$LASTEXITCODE/.test(window.join(" "))) unchecked.push(line.trim());
+  }
+  ok("every git call in the pull step is checked on $LASTEXITCODE",
+    unchecked.length === 0, unchecked);
+
+  const fetchIndex = code.findIndex(l => /git\s+fetch\b/.test(l));
+  ok("the pull step really does fetch", fetchIndex >= 0);
+  ok("...and the line after the fetch is the exit-code check",
+    /\$LASTEXITCODE -ne 0/.test(code[fetchIndex + 1] ?? ""));
+  ok("...which stops the deploy rather than carrying on",
+    /exit 3/.test([code[fetchIndex + 1], code[fetchIndex + 2], code[fetchIndex + 3],
+      code[fetchIndex + 4], code[fetchIndex + 5]].join(" ")));
+
+  /*
+   * And the sentence that misled: it must still be reachable only below the
+   * fetch's own check, never above it.
+   */
+  const upToDate = code.findIndex(l => /already up to date/.test(l));
+  ok("«already up to date» is reported after the fetch is verified",
+    upToDate > fetchIndex);
+}
+
+
 head("Tasks: a board shows your own work, not the company's");
 {
   /*
@@ -14102,4 +14177,15 @@ head("Competitors: who we lose to, and by how much");
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
-if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
+if (fails.length) {
+  console.log("Failures:");
+  fails.forEach(f => console.log("  • " + f));
+  /*
+   * A suite that prints «1 failed» and exits 0 is a gate that is not one — the
+   * same fault as a screen hidden in the browser whose endpoint still answers.
+   * `test:ui` has always set this; this file printed its failures and let every
+   * caller carry on, which is exactly how a broken rule reaches a commit hook,
+   * a CI step or `deploy.ps1` and is read as a pass.
+   */
+  process.exitCode = 1;
+}
