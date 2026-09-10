@@ -28,8 +28,18 @@ import { FOLLOW_UP_KIND } from "./salesFollowUp";
 export const BOARD_LANES = ["WAITING", "TODO", "DOING", "DONE"] as const;
 export type BoardLane = (typeof BOARD_LANES)[number];
 
+/*
+ * The column headings.
+ *
+ * WAITING is «در انتظار» and not «در انتظار مشتری»: the column note under the
+ * heading already says what it holds — a chase whose next-contact date has not
+ * come — and a heading that repeats it is a heading that has to be read twice
+ * in a column two hundred pixels wide. The prose throughout this codebase still
+ * calls the lane by its longer name, which is what it *means*; this is what it
+ * is *called* on the board.
+ */
 export const LANE_LABELS: Record<BoardLane, string> = {
-  WAITING: "در انتظار مشتری",
+  WAITING: "در انتظار",
   TODO: "برای انجام",
   DOING: "در حال انجام",
   DONE: "انجام شده",
@@ -446,8 +456,14 @@ export interface ReferralFilterSubject {
 export const LANE_FILTERS = ["WAITING", "TODO", "DOING", "DONE", "CANCELLED"] as const;
 export type LaneFilter = (typeof LANE_FILTERS)[number];
 
+/*
+ * The same words as `LANE_LABELS`, because the filter names the column it
+ * selects: a dropdown offering «در انتظار مشتری» against a board headed
+ * «در انتظار» is one column under two names, which is the drift this file
+ * exists to prevent everywhere else.
+ */
 export const LANE_FILTER_LABELS: Record<LaneFilter, string> = {
-  WAITING: "در انتظار مشتری",
+  WAITING: "در انتظار",
   TODO: "برای انجام",
   DOING: "در حال انجام",
   DONE: "انجام شده",

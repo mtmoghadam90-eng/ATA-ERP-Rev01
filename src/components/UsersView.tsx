@@ -200,7 +200,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
       <p className="text-[10px] text-slate-600 leading-relaxed">
         خالی یا صفر یعنی بدون محدودیت. با رسیدن به حداکثر، انتقال کار جدید به «در حال انجام»
         انجام نمی‌شود؛ با افتادن زیر حداقل، سیستم فوری‌ترین کارها را از «برای انجام» و
-        «در انتظار مشتری» بالا می‌آورد.
+        «در انتظار» بالا می‌آورد.
       </p>
     </div>
   );
