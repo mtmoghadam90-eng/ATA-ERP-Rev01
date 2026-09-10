@@ -430,13 +430,25 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
               {/* User Card Top Row */}
               <div className="flex justify-between items-start">
                 <div className="flex items-center gap-3">
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg ${
-                    user.role === 'admin' 
-                      ? 'bg-sky-50 text-sky-600 border border-sky-200' 
-                      : 'bg-slate-50 text-slate-600 border border-slate-200'
-                  }`}>
-                    {user.fullName.substring(0, 2)}
-                  </div>
+                  {/*
+                    * The person, not a monogram this screen drew itself.
+                    *
+                    * This was a hand-rolled disc and it was wrong twice over.
+                    * `fullName.substring(0, 2)` takes the first two *characters*
+                    * of the whole string, so «محمد مقدم» read «مح» rather than
+                    * «مم» — the sidebar carried the identical line until the
+                    * avatar replaced it there. And it was tinted by **role**,
+                    * which says nothing the «مدیر سیستم» badge two centimetres
+                    * to the right does not, while costing the per-name hue that
+                    * is the whole point of a disc in a two-column grid: every
+                    * non-admin looked exactly alike.
+                    *
+                    * `Avatar` answers both and draws the photograph when there
+                    * is one — its own doc has named this grid as one of its
+                    * three places since it was written; only the call site was
+                    * missing.
+                    */}
+                  <Avatar size="md" name={user.fullName} url={user.avatarUrl} />
                   <div>
                     <div className="flex items-center gap-2">
                       <h3 className="font-bold text-slate-800 text-base">{user.fullName}</h3>

@@ -14316,6 +14316,25 @@ head("Competitors: who we lose to, and by how much");
     !/fullName\.substring\(0, 2\)/.test(sidebar));
 
   /*
+   * ---- and the users grid, which carried the identical line ----
+   *
+   * `Avatar`'s own doc has named this grid as one of its three places since it
+   * was written; only the call site was missing, so the card went on drawing a
+   * disc of its own. Two faults in one line: `substring(0, 2)` takes the first
+   * two *characters* of the whole string («محمد مقدم» → «مح», not «مم»), and
+   * the tint was by **role**, which says nothing the «مدیر سیستم» badge beside
+   * the name does not while costing the per-name hue — every non-admin looked
+   * exactly alike in a two-column grid.
+   */
+  const usersGrid = strip(readFileSync("src/components/UsersView.tsx", "utf-8"));
+  ok("the users grid draws the person, photograph and all",
+    /<Avatar\s+size="md"[\s\S]{0,80}user\.avatarUrl/.test(usersGrid.replace(/\s+/g, " ")));
+  ok("...rather than its own substring monogram",
+    !/fullName\.substring\(0, 2\)/.test(usersGrid));
+  ok("...and no longer tints the disc by role",
+    !/role === 'admin'[\s\S]{0,120}bg-sky-50 text-sky-600/.test(usersGrid));
+
+  /*
    * ---- the two projections that BOTH become `currentUser` ----
    *
    * Reported as «the sidebar shows no avatar», and it was exactly this: login
