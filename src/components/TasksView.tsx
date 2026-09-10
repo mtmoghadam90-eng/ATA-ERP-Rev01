@@ -32,6 +32,7 @@ import ReferralThread from './ReferralThread';
 import FollowUpCompletionModal from './FollowUpCompletionModal';
 import {
   BOARD_SORTS, BoardSort, LANE_FILTERS, LANE_FILTER_LABELS, MovableLane, SORT_LABELS,
+  TASK_TODO,
   referralPassesTaskFilters, serverOrderFor, sortBoardCards, taskLane,
 } from '../utils/workBoard';
 import { ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
@@ -166,7 +167,19 @@ export default function TasksView({
 
   const addTask = async (task: Partial<Task>) => {
     try {
-      const created = await tasksApi.create(taskToWriteInput(task));
+      /*
+       * The status is dropped on the way in, and that is not tidying.
+       *
+       * The status `<select>` below is drawn `{editingTask && …}` — while
+       * *creating*, nobody is shown it and nobody chooses — so whatever the
+       * state holds is a default, and it sent «در حال انجام». That overrode
+       * `createTask`'s «برای انجام» and put every new task straight into the
+       * middle column of the board. Omitting the key leaves where a new task
+       * starts as one rule, in the service; the update path still sends the
+       * status, because there a person really did pick it.
+       */
+      const { status: _unchosen, ...withoutStatus } = taskToWriteInput(task);
+      const created = await tasksApi.create(withoutStatus);
       list.refresh();
       return created;
     } catch (err) {
@@ -442,7 +455,7 @@ export default function TasksView({
   const [priority, setPriority] = useState<Task['priority']>('متوسط');
   const [dueDate, setDueDate] = useState(getTodayShamsi());
   const [assignedTo, setAssignedTo] = useState('');
-  const [status, setStatus] = useState<Task['status']>('در حال انجام');
+  const [status, setStatus] = useState<Task['status']>(TASK_TODO);
 
   /*
    * Which kind of work is being raised, chosen before anything is typed.
@@ -490,7 +503,7 @@ export default function TasksView({
     setPriority('متوسط');
     setDueDate(getTodayShamsi());
     setAssignedTo('');
-    setStatus('در حال انجام');
+    setStatus(TASK_TODO);
     setCustomValues({});
     setNewTaskKind('GENERAL');
     setFollowUpProformaId('');
@@ -2019,6 +2032,16 @@ export default function TasksView({
                       onChange={(e) => setStatus(e.target.value as Task['status'])}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white font-medium"
                     >
+                      {/*
+                        * «برای انجام» has to be here now that tasks start in it.
+                        *
+                        * A `<select>` whose value matches no option renders the
+                        * **first** one, so without this a task sitting in the
+                        * first column would open reading «در حال انجام» and be
+                        * silently rewritten to it on save — the same fault this
+                        * form already had on «مرتبط با».
+                        */}
+                      <option value="برای انجام">برای انجام</option>
                       <option value="در حال انجام">در حال انجام</option>
                       <option value="انجام شده">انجام شده</option>
                       <option value="کنسل شده">کنسل شده</option>
