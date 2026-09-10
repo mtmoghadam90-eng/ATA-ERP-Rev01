@@ -13784,5 +13784,91 @@ head("Competitors: who we lose to, and by how much");
     /resolvedRelatedName = editingTask\.relatedToName/.test(strip(tasksView)));
 }
 
+/* ==========================================================================
+ * A test copy of the database, and the one guard that makes it safe to make.
+ * ========================================================================== */
+{
+  head("Test database: the copy is refused unless it is really a copy");
+
+  const { databaseNameFrom, prepareRefusal } =
+    await import("./prepareTestDb");
+
+  const LIVE = "sqlserver://192.168.1.104:1433;database=ata_erp;user=ata_app;password=x";
+  const TEST = "sqlserver://192.168.1.104:1433;database=ata_erp_test;user=ata_app;password=x";
+
+  eq("the database name is read out of the JDBC string", databaseNameFrom(LIVE), "ata_erp");
+  eq("...whatever surrounds it", databaseNameFrom(TEST), "ata_erp_test");
+  eq("a string naming none answers null",
+    databaseNameFrom("sqlserver://host:1433;user=a;password=b"), null);
+
+  /*
+   * The whole risk is one command run against the wrong `DATABASE_URL` — and the
+   * live `.env` is the one already sitting in the folder, so it is the easiest
+   * mistake there is. `prepareTestDb` switches message sending **off**, which on
+   * the live database would silence every customer notification with nothing on
+   * any screen to say so. The name is therefore the guard.
+   */
+  ok("the live database is refused", !!prepareRefusal(LIVE));
+  ok("...and the refusal names it, so the message is actionable",
+    (prepareRefusal(LIVE) ?? "").includes("ata_erp"));
+  eq("a test database is allowed", prepareRefusal(TEST), null);
+  ok("an unset connection string is refused rather than guessed at",
+    !!prepareRefusal(undefined) && !!prepareRefusal("   "));
+  ok("...as is one that names no database at all",
+    !!prepareRefusal("sqlserver://host:1433;user=a;password=b"));
+  /*
+   * Case-insensitive: somebody who types ATA_ERP_TEST means it, and refusing
+   * that would teach them to reach for the override.
+   */
+  eq("case does not decide it",
+    prepareRefusal(LIVE.replace("ata_erp", "ATA_ERP_TEST")), null);
+  /*
+   * And the honest limit, pinned rather than pretended away: a live database
+   * that merely *contains* the letters would pass. This is the only property of
+   * a connection string visible without asking the server anything, and its job
+   * is to turn a silent catastrophe into a refusal with a sentence — not to be
+   * a proof.
+   */
+  eq("a name like «erp_latest» passes, which the guide says out loud",
+    prepareRefusal(LIVE.replace("ata_erp", "erp_latest")), null);
+
+  /*
+   * The script must not scrub the data. A copy with the names changed no longer
+   * reproduces what it was made to reproduce, which is its only purpose — so
+   * only the switch that decides whether a message leaves the building is moved.
+   */
+  const prep = readFileSync("scripts/prepareTestDb.ts", "utf8");
+  ok("it moves the sending switch", prep.includes("dryRun: true"));
+  /*
+   * And importing it must not *perform* that write — this very block imports the
+   * two pure rules, and a top-level call would run the script against whatever
+   * `.env` is in the folder, which on a developer's machine is the live one.
+   */
+  ok("...only when the script is what was invoked", /invokedDirectly/.test(prep));
+  ok("...and writes nothing else to the copy",
+    (prep.match(/\.update\(|\.updateMany\(|\.deleteMany\(|\.create\(/g) ?? []).length === 1);
+
+  /*
+   * The copy script's own two refusals, which are the ones that protect the
+   * *live* database: restoring over it, and making a copy whose name the
+   * preparation step would then refuse — leaving a copy nobody could make safe.
+   */
+  const copy = readFileSync("scripts/copy-to-test-db.ps1", "utf8");
+  ok("the copy script refuses to restore over the live database",
+    /TestDatabase -eq \$LiveDatabase/.test(copy));
+  ok("...and refuses a name the preparation step could not accept",
+    /TestDatabase -notmatch "test"/.test(copy));
+  /*
+   * `COPY_ONLY`, because a plain backup takes over the log chain of whatever
+   * real backup schedule this server runs — a test copy must not quietly break
+   * the ability to restore the live database.
+   */
+  ok("...and reads the live database without disturbing its backup chain",
+    /WITH COPY_ONLY/.test(copy));
+
+  ok("the guide exists and names the hazard",
+    readFileSync("docs/test-database.md", "utf8").includes("dryRun"));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
