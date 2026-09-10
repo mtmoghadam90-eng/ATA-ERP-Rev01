@@ -260,6 +260,7 @@ import {
 import {
   DETAIL_LABELS, SUMMARY_LIMIT, cardDetail, hasMoreToShow, summarizeText,
 } from "../src/utils/cardSummary";
+import { activeTemplateOf, brandLogoUrl } from "../src/utils/brand";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -13782,6 +13783,101 @@ head("Competitors: who we lose to, and by how much");
     /RELATABLE_HERE\.includes\(relatedToType\)/.test(strip(tasksView)));
   ok("...and keeps its name too, rather than re-deriving it to nothing",
     /resolvedRelatedName = editingTask\.relatedToName/.test(strip(tasksView)));
+}
+
+{
+  head("Brand: one reading of the company logo, and one field on the way out");
+
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* The rule itself. Null is an ordinary answer, not a fault. */
+  eq("no settings yet", brandLogoUrl(undefined), null);
+  eq("no templates at all", brandLogoUrl({}), null);
+  eq("a template list that is not a list", brandLogoUrl({ proformaTemplates: "x" }), null);
+  eq("one template with a logo and no active id",
+    brandLogoUrl({ proformaTemplates: [{ name: "a", logoUrl: "/uploads/a.png" }] }), "/uploads/a.png");
+  eq("the active template's, not the first",
+    brandLogoUrl({
+      activeTemplateId: "b",
+      proformaTemplates: [{ name: "a", logoUrl: "/a.png" }, { name: "b", logoUrl: "/b.png" }],
+    }), "/b.png");
+  eq("an active id naming a template that is gone falls back to the first",
+    brandLogoUrl({
+      activeTemplateId: "gone",
+      proformaTemplates: [{ name: "a", logoUrl: "/a.png" }, { name: "b", logoUrl: "/b.png" }],
+    }), "/a.png");
+  /*
+   * The active template having no logo does NOT borrow another's: the mark on
+   * the sign-in page would then be one this company does not print documents
+   * with, which is worse than the app's own glyph.
+   */
+  eq("an active template with no logo answers null rather than the first's",
+    brandLogoUrl({
+      activeTemplateId: "b",
+      proformaTemplates: [{ name: "a", logoUrl: "/a.png" }, { name: "b" }],
+    }), null);
+  eq("a blank string is not a logo",
+    brandLogoUrl({ proformaTemplates: [{ name: "a", logoUrl: "   " }] }), null);
+  eq("nor is a number", brandLogoUrl({ proformaTemplates: [{ name: "a", logoUrl: 7 }] }), null);
+  ok("the template itself is reachable for anything else that needs it",
+    activeTemplateOf({ activeTemplateId: "b", proformaTemplates: [{ name: "a" }, { name: "b" }] })
+      ?.name === "b");
+
+  /* One reading, not four. */
+  const appSrc = strip(readFileSync("src/App.tsx", "utf-8"));
+  ok("App.tsx reads the rule rather than spelling the template lookup out again",
+    /brandLogoUrl\(store\.settings\)/.test(appSrc)
+    && !/proformaTemplates\?\.\find/.test(appSrc),
+    appSrc.match(/proformaTemplates[^\n]*/g));
+
+  /*
+   * The endpoint. It asks for no credentials, so what it may answer with is the
+   * whole of its discipline: one projected string, never the settings document.
+   */
+  const adminSrc = readFileSync("src/server/routes/admin.ts", "utf-8");
+  const handler = strip(adminSrc).split('app.get("/api/brand"')[1]?.split("app.get(")[0] ?? "";
+  ok("there is a /api/brand handler", handler.length > 0);
+  ok("...which answers the projected logo and nothing else",
+    /res\.json\(\{\s*success:\s*true,\s*logoUrl:\s*brandLogoUrl\(await getSettings\(\)\)\s*\}\)/
+      .test(handler),
+    handler.slice(0, 200));
+  /*
+   * Read the response's own keys rather than searching for a word. Written as
+   * `!/settings:/` first, and a negative check walked straight past it: the leak
+   * introduced to test it was the *shorthand* `{ ..., settings }`, which carries
+   * no colon — the same trap the trigger catalogue's check documents.
+   */
+  const answered = /res\.json\(\{([^}]*)\}\)/.exec(handler)?.[1] ?? "";
+  const answeredKeys = answered
+    .split(",")
+    .map((part) => part.split(":")[0].trim())
+    .filter(Boolean)
+    .sort();
+  ok("...never the settings document itself, under any spelling",
+    answeredKeys.join("|") === "logoUrl|success", answeredKeys);
+  ok("...and asks for no session, which is the point of it",
+    !/requireAuth|requireKeyAccess/.test(handler), handler.slice(0, 200));
+  ok("...while /api/settings still does",
+    /app\.get\("\/api\/settings"[\s\S]{0,200}?requireKeyAccess\(req, res, "erp_settings", "read"\)/
+      .test(strip(adminSrc)));
+  ok("...and a settings read that fails still lets somebody sign in",
+    /catch\s*\{[\s\S]{0,160}?logoUrl:\s*null/.test(handler), handler.slice(0, 400));
+
+  /*
+   * The fallback mark is one component. It was written out inside Sidebar.tsx,
+   * and the login screen needing the same glyph is exactly the moment a second
+   * copy gets made.
+   */
+  const sidebar = strip(readFileSync("src/components/Sidebar.tsx", "utf-8"));
+  const login = strip(readFileSync("src/components/LoginView.tsx", "utf-8"));
+  for (const [name, src] of [["the sidebar", sidebar], ["the login screen", login]] as const) {
+    ok(`${name} draws the shared mark`, /<BrandMark\b/.test(src));
+    ok(`...and keeps no gauge of its own`, !/M12 22s8-4 8-10V5/.test(src), name);
+  }
+  ok("the login screen no longer draws a clock", !/\bClock\b/.test(login));
+  ok("...and reads the public endpoint rather than the settings document",
+    /fetchBrandLogo/.test(login) && !/api\/settings/.test(login));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

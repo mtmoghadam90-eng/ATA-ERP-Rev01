@@ -51,6 +51,7 @@ import StuckThresholdsPanel from "../src/components/StuckThresholdsPanel";
 import ColumnResizeHandle from "../src/components/ColumnResizeHandle";
 import NextActionModal from "../src/components/NextActionModal";
 import SaveWithNextActionButton from "../src/components/SaveWithNextActionButton";
+import LoginView from "../src/components/LoginView";
 import type { NextActionDraft } from "../src/utils/nextAction";
 import { resizeColumns } from "../src/utils/columnWidths";
 import type { Product } from "../src/types";
@@ -1615,6 +1616,92 @@ head("Next action: the form survives the screen carrying on underneath it");
 
   act(() => { nRoot.unmount(); });
   nHost.remove();
+}
+
+/*
+ * The login screen's mark.
+ *
+ * It cannot read `store.settings` — nobody has signed in — so it asks a
+ * public endpoint for the one field it needs. Three things a rule test cannot
+ * see, because all three are about *when* the value arrives:
+ *
+ *  - the screen draws before the request resolves, and must draw the fallback
+ *    rather than an empty tile or a broken image;
+ *  - the logo replaces it once it lands, without the form moving;
+ *  - a server that cannot answer leaves the fallback standing, because a
+ *    login screen that will not render is worse than one without a logo.
+ */
+head("Login screen: the company logo, with a mark to fall back to");
+
+async function renderLogin(reply: () => Promise<unknown>) {
+  const gl = globalThis as unknown as Record<string, unknown>;
+  const realFetch = gl.fetch;
+  const asked: string[] = [];
+  gl.fetch = async (url: unknown) => {
+    asked.push(String(url));
+    return reply();
+  };
+
+  const lHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const lRoot = createRoot(lHost);
+  act(() => {
+    lRoot.render(React.createElement(LoginView, {
+      onLogin: async () => ({ success: false }),
+      onLoginSuccess: () => {},
+    }));
+  });
+
+  const beforeMark = lHost.querySelector("[data-brand-mark]")?.getAttribute("data-brand-mark");
+
+  // Let the fetch and its `.then` settle, then let React commit the state.
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+  return {
+    asked, lHost,
+    beforeMark,
+    done: () => { act(() => { lRoot.unmount(); }); lHost.remove(); gl.fetch = realFetch; },
+  };
+}
+
+{
+  const okJson = (body: unknown) => Promise.resolve({
+    ok: true, status: 200, json: async () => body,
+  });
+
+  // 1. A configured logo.
+  const withLogo = await renderLogin(() => okJson({ success: true, logoUrl: "/uploads/logo.png" }));
+  ok("it asks the public brand endpoint, not the settings document",
+    withLogo.asked.some((u) => u.includes("/api/brand"))
+    && !withLogo.asked.some((u) => u.includes("/api/settings")),
+    withLogo.asked);
+  ok("...drawing its own mark until the answer lands",
+    withLogo.beforeMark === "fallback", withLogo.beforeMark);
+  const img = withLogo.lHost.querySelector("[data-brand-mark=\"logo\"]");
+  ok("...then the logo itself", img?.getAttribute("src") === "/uploads/logo.png",
+    img?.getAttribute("src"));
+  ok("...on a white ground, since a mark drawn for paper can be dark",
+    !!withLogo.lHost.querySelector("div.bg-white"));
+  ok("...and no clock is left on the screen",
+    !withLogo.lHost.querySelector(".animate-spin-slow"));
+  withLogo.done();
+
+  // 2. A fresh installation: no logo uploaded yet. This is most databases on
+  //    their first day, so it is the state that has to look deliberate.
+  const noLogo = await renderLogin(() => okJson({ success: true, logoUrl: null }));
+  ok("no logo configured leaves the mark standing",
+    !!noLogo.lHost.querySelector("[data-brand-mark=\"fallback\"]")
+    && !noLogo.lHost.querySelector("[data-brand-mark=\"logo\"]"));
+  noLogo.done();
+
+  // 3. The endpoint is unreachable. Signing in must not depend on it.
+  const broken = await renderLogin(() => Promise.reject(new Error("down")));
+  ok("an unreachable endpoint leaves the mark standing too",
+    !!broken.lHost.querySelector("[data-brand-mark=\"fallback\"]")
+    && !broken.lHost.querySelector("[data-brand-mark=\"logo\"]"));
+  ok("...and the form is still there to sign in with",
+    broken.lHost.querySelectorAll("input").length >= 2,
+    broken.lHost.querySelectorAll("input").length);
+  broken.done();
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

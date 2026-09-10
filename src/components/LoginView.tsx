@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
-import { Clock, ShieldAlert, UserCheck, Eye, EyeOff, Lock, KeyRound, AlertTriangle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ShieldAlert, UserCheck, Eye, EyeOff, Lock, KeyRound, AlertTriangle } from 'lucide-react';
+import BrandMark from './BrandMark';
+import { fetchBrandLogo } from '../api/brand';
 
 interface LoginViewProps {
   onLogin: (username: string, password?: string) => Promise<{ success: boolean; mustChangePassword?: boolean; message?: string }>;
@@ -19,6 +21,27 @@ export default function LoginView({ onLogin, onLoginSuccess }: LoginViewProps) {
   const [isSubmittingChange, setIsSubmittingChange] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
+
+  /*
+   * The company logo, asked of the server because there is no session yet.
+   *
+   * Null until it lands and null when none is configured, which the mark below
+   * treats as the same thing on purpose — both mean "draw our own glyph", and
+   * distinguishing them would only let the tile flash empty while the request
+   * is in flight. The tile is a fixed size in both states, so the logo arriving
+   * late cannot move the form under somebody's finger on a phone.
+   */
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    void fetchBrandLogo().then((url) => {
+      if (alive) setLogoUrl(url);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -96,8 +119,18 @@ export default function LoginView({ onLogin, onLoginSuccess }: LoginViewProps) {
 
         {/* Brand Header */}
         <div className="p-8 text-center bg-slate-900/60 border-b border-slate-800/50">
-          <div className="mx-auto w-12 h-12 bg-sky-500 rounded-xl text-white flex items-center justify-center shadow-lg shadow-sky-500/20 mb-4">
-            <Clock className="animate-spin-slow text-white" size={24} />
+          {/*
+            * A logo is drawn on white and the fallback mark on the brand blue.
+            * The printed document already puts the logo on `#ffffff` for the
+            * reason that decides it here: a mark drawn for paper can be dark,
+            * and dark on sky-500 is a tile with nothing legible in it.
+            */}
+          <div
+            className={`mx-auto w-12 h-12 rounded-xl flex items-center justify-center shadow-lg shadow-sky-500/20 mb-4 overflow-hidden ${
+              logoUrl ? 'bg-white p-1' : 'bg-sky-500 text-white'
+            }`}
+          >
+            <BrandMark logoUrl={logoUrl} size={24} />
           </div>
           <h1 className="text-xl font-bold text-slate-100">سامانه جامع ERP ابزار تامین ارشیا</h1>
           <p className="text-xs text-sky-400 mt-1.5 tracking-wider font-mono">ARSHIA ERP PORTAL v2.5</p>
