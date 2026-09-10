@@ -138,7 +138,7 @@ const LANE_CLASS: Record<BoardLane, string> = {
  * assume is broken.
  */
 const LANE_NOTE: Partial<Record<BoardLane, string>> = {
-  WAITING: 'پیگیری‌هایی که تاریخ اقدام بعدی‌شان نرسیده است. روز سررسید خودکار به «در حال انجام» می‌روند.',
+  WAITING: 'کارهایی که تاریخ‌شان نرسیده است. روز سررسید خودکار جابه‌جا می‌شوند: اقدام بعدی به «برای انجام» و پیگیری فروش به «در حال انجام».',
 };
 
 export default function WorkBoard({

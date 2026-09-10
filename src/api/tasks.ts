@@ -94,6 +94,12 @@ export interface TaskSummary {
 
 export interface TaskWriteInput {
   title?: string;
+  /**
+   * Settled at creation and ignored on an edit, since a task's kind decides
+   * which column it is drawn in. The server refuses «SALES_FOLLOW_UP» here — a
+   * chase is raised through `reactivateFollowUp`, which owns its rules.
+   */
+  taskKind?: string | null;
   description?: string | null;
   relatedToType?: string | null;
   relatedToId?: string | null;

@@ -20,17 +20,25 @@ const WRITABLE: (keyof TaskInput)[] = [
   // silence the very occurrence it was opened to answer.
   "reminderRepeat", "reminderAnchor", "reminderRepeatUntilJalali", "customValues",
   /*
-   * `taskKind` is deliberately **not** here.
+   * `taskKind` is writable, and **`SALES_FOLLOW_UP` is refused in the service**.
    *
-   * The form asks which kind of task is being raised, and a follow-up does not
-   * become one by having a word written on it: it belongs to a quotation, it
-   * moves that quotation's `followUpState`, it must not be the second open
-   * chase on the same document, and it cannot exist on a settled sale. All of
-   * that is `reactivateFollowUp`, which the form posts to instead — the same
-   * endpoint the sales queue's «فعال‌سازی مجدد» uses. A second way to create
-   * one would be a second set of those rules to keep in step, which is the
-   * fault the five customer creation forms are the standing example of.
+   * It was left out entirely at first, for a reason that still holds: a
+   * follow-up does not become one by having a word written on it. It belongs to
+   * a quotation, it moves that quotation's `followUpState`, it must not be the
+   * second open chase on the same document, and it cannot exist on a settled
+   * sale — all of which is `reactivateFollowUp`, the same endpoint the sales
+   * queue's «فعال‌سازی مجدد» posts to. A second way to create one would be a
+   * second set of those rules to keep in step, which is the fault the five
+   * customer creation forms are the standing example of.
+   *
+   * But «اقدام بعدی» needs a kind of its own to be parked in «در انتظار» until
+   * its day, and it is an ordinary task in every other respect. So the key
+   * travels and the *one* value that carries all those rules is named and
+   * refused (`assertCreatableKind`), which keeps the protection exactly where
+   * it was rather than in the shape of a missing key. n8n drives this endpoint
+   * too, so the refusal is on the server and not in a form.
    */
+  "taskKind",
 ];
 
 function pickInput(body: unknown): TaskInput {
