@@ -209,6 +209,17 @@ export interface AuthUser {
   /** Shown by the UI, which greets the user and prints their initials. */
   fullName?: string;
   position?: string;
+  /**
+   * The two fields the signed-in person's own screens draw about themselves.
+   *
+   * `/api/me` answers with this object, and that is what `currentUser` becomes
+   * on **every load after the first** — so a field the browser reads has to be
+   * here as well as in `SAFE_SELECT`, or it arrives at sign-in and is gone on
+   * the next refresh. That is exactly how the sidebar's avatar was reported
+   * missing; `test:rules` now holds the two projections against each other.
+   */
+  gender?: string | null;
+  avatarUrl?: string | null;
   role?: string;
   isSystemAdmin?: boolean;
   permissions?: Record<string, boolean>;

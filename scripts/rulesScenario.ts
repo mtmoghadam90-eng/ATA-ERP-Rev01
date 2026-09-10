@@ -14058,6 +14058,26 @@ head("Competitors: who we lose to, and by how much");
   ok("...rather than its old substring initials",
     !/fullName\.substring\(0, 2\)/.test(sidebar));
 
+  /*
+   * ---- the two projections that BOTH become `currentUser` ----
+   *
+   * Reported as «the sidebar shows no avatar», and it was exactly this: login
+   * answers through `authenticateUser` (SAFE_SELECT) while **every later page
+   * load** answers through `/api/me` → `findAuthUser`, which has a select of its
+   * own. The field was added to the first and not the second, so it arrived at
+   * sign-in and was gone on the next refresh — with the screen falling back to
+   * initials, which looks like a feature that does not work rather than a
+   * missing column.
+   */
+  const authSrc = strip(readFileSync("src/server/services/userService.ts", "utf-8"));
+  const sessionSelect = authSrc.split("export async function findAuthUser")[1]
+    ?.split("});")[0] ?? "";
+  ok("findAuthUser is the /api/me projection", sessionSelect.length > 0);
+  for (const field of ["gender", "avatarUrl"] as const) {
+    ok(`...and carries ${field}, or it survives login and vanishes on refresh`,
+      new RegExp(`${field}:\\s*true`).test(sessionSelect), sessionSelect.slice(0, 240));
+  }
+
   /* ---- both projections, and the one field that stays out of the directory ---- */
   const userService = strip(readFileSync("src/server/services/userService.ts", "utf-8"));
   const directory = userService.split("DIRECTORY_SELECT = {")[1]?.split("}")[0] ?? "";
