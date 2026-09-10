@@ -89,9 +89,10 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
   /*
    * Both blank by default and both stay blank until somebody answers.
    *
-   * `gender` decides the honorific through `namePrefixFor`, which writes
-   * nothing at all for an unanswered account — so the empty option is a real
-   * choice here and not a prompt to be nagged about.
+   * `gender` decides the honorific the staff SMS opens with, through
+   * `staffPrefixFor` — which writes nothing at all for an unanswered account,
+   * so the empty option is a real choice here and not a prompt to be nagged
+   * about.
    */
   const [gender, setGender] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
@@ -733,7 +734,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                       >
                         {/*
                           * The blank option is a real answer and stays first.
-                          * `namePrefixFor` writes no honorific for it, which is
+                          * `staffPrefixFor` writes no honorific for it, which is
                           * the correct outcome rather than a gap to be filled —
                           * guessing writes «جناب آقای» to a woman.
                           */}
@@ -1052,7 +1053,7 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                       >
                         {/*
                           * The blank option is a real answer and stays first.
-                          * `namePrefixFor` writes no honorific for it, which is
+                          * `staffPrefixFor` writes no honorific for it, which is
                           * the correct outcome rather than a gap to be filled —
                           * guessing writes «جناب آقای» to a woman.
                           */}

@@ -18,9 +18,10 @@ import {
 const WRITABLE: (keyof UserInput)[] = [
   "username", "fullName", "role", "isSystemAdmin", "position",
   "signatureImage", "isActive", "permissions", "mobile",
-  // «جنسیت» decides the honorific through `namePrefixFor`; «تصویر پروفایل» is
-  // the picture drawn beside this person's name. Both are optional and both
-  // are null on every account already on disk.
+  // «جنسیت» decides the honorific the staff SMS opens with, through
+  // `staffPrefixFor`; «تصویر پروفایل» is the picture drawn beside this
+  // person's name. Both are optional and both are null on every account
+  // already on disk.
   "gender", "avatarUrl",
   // «حداقل / حداکثر کار همزمان» — how much work this person may hold in «در
   // حال انجام» at once. Normalised in the service, so anything but a positive

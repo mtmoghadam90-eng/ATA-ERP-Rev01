@@ -53,9 +53,19 @@ export const STAFF_NOTIFICATION_LABELS: Record<StaffNotificationKind, string> = 
  * placeholder in a real text message, and one supplied but not offered is a
  * variable nobody can discover.
  *
- * Deliberately **not** the customer-facing list: a colleague is not addressed
- * as «جناب آقای مهندس», and none of `customerName`, `contactName` or
- * `namePrefix` means anything here.
+ * Deliberately **not** the customer-facing list: none of `customerName`,
+ * `contactName` or `namePrefix` means anything here, and `namePrefix`
+ * especially — «جناب آقای مهندس» is the register of a document that leaves the
+ * building and is absurd in a text saying a colleague has handed you a job.
+ *
+ * That was first read as «a colleague gets no honorific at all», which left
+ * `User.gender` with no reader anywhere once the dashboard's greeting dropped
+ * to a first name — a field on both user forms writing a column nothing
+ * consulted. The register was the thing that was wrong, not the honorific:
+ * `assigneePrefix`/`assigneeAddressee` carry the **staff** one («آقای»,
+ * «خانم», `STAFF_HONORIFICS`), which is what a person here actually writes to
+ * a person. `assigneeName` is untouched beside them, so every template already
+ * saved keeps its wording exactly.
  */
 export interface StaffVariable {
   key: string;
@@ -65,6 +75,12 @@ export interface StaffVariable {
 
 export const STAFF_VARIABLES: StaffVariable[] = [
   { key: "assigneeName", label: "نام همکار (گیرنده)", sample: "علی رضایی" },
+  { key: "assigneePrefix", label: "پیشوند همکار (آقای/خانم)", sample: "آقای" },
+  {
+    key: "assigneeAddressee",
+    label: "خطاب همکار (پیشوند + نام)",
+    sample: "آقای علی رضایی",
+  },
   { key: "actorName", label: "نام ارجاع‌دهنده", sample: "مهندس احمدی" },
   { key: "title", label: "عنوان کار یا متن ارجاع", sample: "ارسال دیتاشیت فلومتر به مشتری" },
   { key: "dueDate", label: "تاریخ سررسید", sample: "1405/06/12" },
@@ -88,9 +104,34 @@ export const STAFF_SAMPLE_VALUES: Record<string, string> =
  * A blank line is deliberately avoided: some gateways normalise it away and the
  * part count then differs between the preview and what arrives.
  */
+/**
+ * The wording the templates carried before the honorific was wired in.
+ *
+ * Frozen historical values, deliberately written out rather than derived: the
+ * `staff-sms-1` patch **copies** the defaults into `settings.messaging.staffSms`
+ * the first time it runs, so on every database that has restarted since that
+ * shipped the stored wording is what a later edit of `DEFAULT_STAFF_TEMPLATES`
+ * can never reach — «a default reaches only a fresh installation», arriving
+ * through the door the patch mechanism opened rather than the one it closed.
+ *
+ * `staff-sms-addressee-1` replaces a stored template **only when it is
+ * character-for-character one of these**, which is the same rule
+ * `isGeneratedPaymentBody` follows in the proforma notes: a mechanism that
+ * manages a piece of text may take back exactly what it put there, and nothing
+ * else. Anything anybody has edited stays theirs.
+ */
+export const SUPERSEDED_STAFF_TEMPLATES: Record<StaffNotificationKind, string[]> = {
+  TASK_ASSIGNED: [
+    "{actorName} وظیفه‌ای به شما ارجاع داد: {title} | سررسید: {dueDate} | اولویت: {priority}",
+  ],
+  REFERRAL_RAISED: [
+    "{actorName} در پروژه {projectCode} از شما درخواست کرد: {title}",
+  ],
+};
+
 export const DEFAULT_STAFF_TEMPLATES: Record<StaffNotificationKind, string> = {
-  TASK_ASSIGNED: "{actorName} وظیفه‌ای به شما ارجاع داد: {title} | سررسید: {dueDate} | اولویت: {priority}",
-  REFERRAL_RAISED: "{actorName} در پروژه {projectCode} از شما درخواست کرد: {title}",
+  TASK_ASSIGNED: "{assigneeAddressee} عزیز، {actorName} وظیفه‌ای به شما ارجاع داد: {title} | سررسید: {dueDate} | اولویت: {priority}",
+  REFERRAL_RAISED: "{assigneeAddressee} عزیز، {actorName} در پروژه {projectCode} از شما درخواست کرد: {title}",
 };
 
 /* -------------------------------- the rules ------------------------------- */
@@ -164,6 +205,18 @@ export interface StaffSmsSubject {
 export interface StaffRecipient {
   isActive: boolean;
   mobile: string | null;
+}
+
+/**
+ * What the message is written to, as opposed to whether it may be sent.
+ *
+ * Separate from `StaffRecipient` on purpose: that one is the refusal rules, and
+ * a missing gender is not a refusal — an account that has not said is addressed
+ * by its bare name and the text goes out exactly as before.
+ */
+export interface StaffAddressee {
+  fullName: string | null;
+  gender: string | null;
 }
 
 /**

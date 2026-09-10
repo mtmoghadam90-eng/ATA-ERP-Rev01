@@ -260,7 +260,10 @@ import {
   DETAIL_LABELS, SUMMARY_LIMIT, cardDetail, hasMoreToShow, summarizeText,
 } from "../src/utils/cardSummary";
 import { activeTemplateOf, brandLogoUrl } from "../src/utils/brand";
-import { addresseeOf, firstNameOf, namePrefixFor } from "../src/utils/honorific";
+import {
+  HONORIFICS, STAFF_HONORIFICS, addresseeOf, firstNameOf, genderOf,
+  namePrefixFor, staffAddresseeOf, staffPrefixFor,
+} from "../src/utils/honorific";
 import { AVATAR_SIZES, avatarColors, avatarHue, initialsOf } from "../src/utils/avatar";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -2632,6 +2635,58 @@ head("How a customer is addressed");
     !/addresseeOf/.test(dash) && !/جناب آقای/.test(dash));
   ok("...falling through to the generic title rather than «سلام،  عزیز»",
     /پیشخوان مدیریت منابع/.test(dash));
+
+  /*
+   * ---- and the colleague register, which is where gender ended up ----
+   *
+   * Dropping the honorific from the dashboard left `User.gender` with no
+   * reader anywhere: a field on both user forms writing a column nothing
+   * consulted, which is the fault this codebase keeps repairing. The staff SMS
+   * is the reader, and the register is the whole point of it being a second
+   * list rather than the same one — «جناب آقای مهندس رضایی» is what a proforma
+   * says to a customer and is absurd in a text saying a colleague has handed
+   * you a job.
+   */
+  eq("a colleague is «آقای»", staffPrefixFor("مرد"), "آقای");
+  eq("...or «خانم»", staffPrefixFor("زن"), "خانم");
+  ok("...and never the customer's register",
+    staffPrefixFor("مرد") !== namePrefixFor("مرد")
+    && staffPrefixFor("زن") !== namePrefixFor("زن"));
+  ok("...which still says what it always said",
+    namePrefixFor("مرد") === HONORIFICS.MALE && namePrefixFor("زن") === HONORIFICS.FEMALE);
+  ok("...the two lists share no wording",
+    !Object.values(HONORIFICS).some(v => (Object.values(STAFF_HONORIFICS) as string[]).includes(v)));
+
+  /*
+   * One fold, so a spelling the customer wording accepts and the staff wording
+   * refuses is impossible. Both readings go through `genderOf`.
+   */
+  for (const spelling of ["مرد", "آقا"]) {
+    eq(`«${spelling}» folds to MALE`, genderOf(spelling), "MALE");
+    ok(`...and both registers agree about it`,
+      staffPrefixFor(spelling) === STAFF_HONORIFICS.MALE
+      && namePrefixFor(spelling) === HONORIFICS.MALE);
+  }
+  for (const spelling of ["زن", "خانم"]) {
+    eq(`«${spelling}» folds to FEMALE`, genderOf(spelling), "FEMALE");
+    ok(`...and both registers agree about it too`,
+      staffPrefixFor(spelling) === STAFF_HONORIFICS.FEMALE
+      && namePrefixFor(spelling) === HONORIFICS.FEMALE);
+  }
+  eq("an unfilled gender folds to nothing", genderOf(null), null);
+  eq("...and so does a company's", genderOf(""), null);
+  eq("...which neither register turns into a guess", staffPrefixFor(null), "");
+
+  /*
+   * The ordinary case on the day this ships: nobody has filled the field in,
+   * so the text reads exactly as it did before the honorific existed — a bare
+   * name with no leading space.
+   */
+  eq("an account that has not said is addressed by its name",
+    staffAddresseeOf(null, "علی رضایی"), "علی رضایی");
+  eq("...and one that has, by both", staffAddresseeOf("زن", "مریم رضایی"), "خانم مریم رضایی");
+  eq("...an honorific with nobody to attach it to is nothing",
+    staffAddresseeOf("مرد", ""), "آقای");
 }
 
 
@@ -12213,6 +12268,17 @@ head("Staff SMS: only the work a person hands to another person");
    * was asked for, so a live document that has never heard of the key must
    * behave as though it is switched on.
    */
+  /*
+   * The wording as a live database stores it today, written out here rather
+   * than imported: this is the *document's* content, and a check that read the
+   * constant would move with it and assert nothing.
+   */
+  const SUPERSEDED_DOC = {
+    TASK_ASSIGNED:
+      "{actorName} وظیفه‌ای به شما ارجاع داد: {title} | سررسید: {dueDate} | اولویت: {priority}",
+    REFERRAL_RAISED: "{actorName} در پروژه {projectCode} از شما درخواست کرد: {title}",
+  } as const;
+
   ok("an unconfigured settings document has it on", staffSmsEnabled(undefined));
   ok("...and only an explicit false turns it off",
     staffSmsEnabled({}) && !staffSmsEnabled({ enabled: false }));
@@ -12238,6 +12304,84 @@ head("Staff SMS: only the work a person hands to another person");
   ok("and a document that already carries it is left exactly alone",
     (alreadySet?.next as { messaging?: { staffSms?: { enabled?: boolean } } })
       ?.messaging?.staffSms?.enabled === false);
+
+  /*
+   * ---- and the honorific has to reach a document that already exists ----
+   *
+   * The patch above COPIES the wording in, so every live database stores the
+   * text of the day it restarted and a later improvement to
+   * `DEFAULT_STAFF_TEMPLATES` reaches a fresh installation and nothing else —
+   * the fault this whole mechanism exists to answer, arriving through the door
+   * the mechanism opened. Without `staff-sms-addressee-1` the honorific would
+   * be a variable in the palette that the message nobody edited never uses.
+   */
+  type StaffDoc = { messaging?: { staffSms?: { templates?: Record<string, string> } } };
+  const templatesOf = (doc: unknown) =>
+    (doc as StaffDoc)?.messaging?.staffSms?.templates ?? {};
+
+  const untouched = applySettingsPatches({
+    appliedPatches: ["staff-sms-notifications-1"],
+    messaging: { staffSms: { enabled: true, templates: { ...SUPERSEDED_DOC } } },
+  } as unknown as ERPSettings);
+  for (const kind of STAFF_NOTIFICATION_KINDS) {
+    eq(`an unedited ${kind} template is brought forward`,
+      templatesOf(untouched?.next)[kind], DEFAULT_STAFF_TEMPLATES[kind]);
+  }
+  ok("...so the message it produces greets the colleague",
+    DEFAULT_STAFF_TEMPLATES.TASK_ASSIGNED.includes("{assigneeAddressee}")
+    && DEFAULT_STAFF_TEMPLATES.REFERRAL_RAISED.includes("{assigneeAddressee}"));
+
+  /*
+   * The half that matters: a company's own wording is theirs. This is the one
+   * patch that replaces rather than appends, and it may only ever take back
+   * character-for-character what an earlier patch itself wrote.
+   */
+  const MINE = "سلام {assigneeName}، {actorName} یه کار داد بهت: {title}";
+  const edited = applySettingsPatches({
+    appliedPatches: ["staff-sms-notifications-1"],
+    messaging: {
+      staffSms: {
+        enabled: true,
+        templates: {
+          TASK_ASSIGNED: MINE,
+          REFERRAL_RAISED: SUPERSEDED_DOC.REFERRAL_RAISED,
+        },
+      },
+    },
+  } as unknown as ERPSettings);
+  eq("an edited template is left exactly as it was",
+    templatesOf(edited?.next).TASK_ASSIGNED, MINE);
+  eq("...while its unedited neighbour still moves",
+    templatesOf(edited?.next).REFERRAL_RAISED, DEFAULT_STAFF_TEMPLATES.REFERRAL_RAISED);
+
+  /*
+   * Even one added space is somebody having touched it. The comparison is
+   * exact for that reason, and «close enough» here would rewrite a person's
+   * wording under them.
+   */
+  const nearlyDefault = applySettingsPatches({
+    appliedPatches: ["staff-sms-notifications-1"],
+    messaging: {
+      staffSms: { templates: { TASK_ASSIGNED: SUPERSEDED_DOC.TASK_ASSIGNED + " " } },
+    },
+  } as unknown as ERPSettings);
+  eq("a template differing by one space is not the patch's to take back",
+    templatesOf(nearlyDefault?.next).TASK_ASSIGNED, SUPERSEDED_DOC.TASK_ASSIGNED + " ");
+
+  /* Applied once: a second run changes nothing, so an edit afterwards sticks. */
+  ok("the patch is recorded and does not run twice",
+    applySettingsPatches(untouched!.next) === null);
+
+  /*
+   * And a document that has never had `staff-sms-notifications-1` is that
+   * patch's business, not this one's — two writers for one value is how they
+   * come to disagree.
+   */
+  const virgin = applySettingsPatches({ messaging: {} } as unknown as ERPSettings);
+  for (const kind of STAFF_NOTIFICATION_KINDS) {
+    eq(`a fresh document gets the current ${kind} wording, written once`,
+      templatesOf(virgin?.next)[kind], DEFAULT_STAFF_TEMPLATES[kind]);
+  }
 
   /* ------------------------------ the number ----------------------------- */
 
