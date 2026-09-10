@@ -159,7 +159,7 @@ export async function topUpActiveWork(
 
   type Candidate = {
     id: string;
-    what: "task" | "chase";
+    what: "task" | "parked";
     priority?: string | null;
     dueDate?: string | null;
     createdAt: string;
@@ -173,7 +173,7 @@ export async function topUpActiveWork(
       dueDate: t.dueDateJalali, createdAt: t.createdAt.toISOString(),
     })),
     ...waitingTasks.map((t) => ({
-      id: t.id, what: "chase" as const, priority: t.priority, started: t.startedAt,
+      id: t.id, what: "parked" as const, priority: t.priority, started: t.startedAt,
       dueDate: t.dueDateJalali, createdAt: t.createdAt.toISOString(),
     })),
   ];
@@ -184,8 +184,12 @@ export async function topUpActiveWork(
       where: { id: card.id },
       data: {
         status: TASK_DOING,
-        // The chase's column *is* its date, so a promotion has to move it.
-        ...(card.what === "chase" ? expandDateFields({ dueDate: todayJalali }, ["dueDate"]) : {}),
+        /*
+         * A parked card's column *is* its date, so a promotion has to move it.
+         * Two kinds sit there — a chase and a next action — and both are pulled
+         * forward the same way; a status alone would put either straight back.
+         */
+        ...(card.what === "parked" ? expandDateFields({ dueDate: todayJalali }, ["dueDate"]) : {}),
         /*
          * Stamped once and never cleared. The day work began on something is a
          * fact, and a card pushed back to the queue and picked up again did

@@ -16,6 +16,7 @@
  */
 
 import { FOLLOW_UP_KIND } from "./salesFollowUp";
+import { NEXT_ACTION_KIND } from "./nextAction";
 
 /**
  * The four columns, in the order they are drawn (RTL: right to left).
@@ -82,6 +83,32 @@ export const TASK_CANCELLED = "کنسل شده";
 export const TASK_STATUSES = [TASK_TODO, TASK_DOING, TASK_DONE, TASK_CANCELLED] as const;
 
 /**
+ * The kinds whose column is their **due date** rather than their status word.
+ *
+ * Two of them, for the same reason and with the same mechanism: a sales chase
+ * is a call agreed for a day, and a next action raised by «ذخیره و اقدام بعدی»
+ * is a piece of work agreed for a day. Until that day there is nothing to do
+ * about either, so both sit in «در انتظار» — and both leave it the morning it
+ * arrives with **no sweep, no nightly job and no second status column to keep
+ * in step**, because nothing was ever stored saying they were there.
+ *
+ * Named as a set because two readers derive the column — `taskBoardLane` for
+ * the board and `laneWhere` for the query behind the filter and the badge — and
+ * a kind added to one and not the other is a card the screen draws in a column
+ * its own filter cannot find. `test:rules` holds the two against each other
+ * over every combination of status, kind and date.
+ *
+ * `Task.taskKind` is NOT NULL with a default of «GENERAL», which is what makes
+ * `notIn` safe in `laneWhere`: on a nullable column SQL evaluates that to
+ * unknown and would drop exactly the rows it is meant to keep.
+ */
+export const PARKED_KINDS = [FOLLOW_UP_KIND, NEXT_ACTION_KIND] as const;
+
+export function isParkedKind(kind: string | null | undefined): boolean {
+  return (PARKED_KINDS as readonly string[]).includes(String(kind ?? "").trim());
+}
+
+/**
  * Which column a task belongs in.
  *
  * **«کنسل شده» is closed work and lands in «انجام شده»**, marked as cancelled
@@ -127,10 +154,28 @@ export function taskBoardLane(
 ): BoardLane {
   const lane = taskLane(task.status);
   if (lane === "DONE") return "DONE";
-  if (String(task.taskKind ?? "") !== FOLLOW_UP_KIND) return lane;
+
+  const kind = String(task.taskKind ?? "").trim();
+  if (!isParkedKind(kind)) return lane;
 
   const due = String(task.dueDate ?? "").trim();
-  return due && due > todayJalali ? "WAITING" : "DOING";
+  if (due && due > todayJalali) return "WAITING";
+
+  /*
+   * The day has come — and the two kinds go to different columns.
+   *
+   * A **chase** lands in «در حال انجام» whatever its status word says, because
+   * the call is due today and its status was never a statement about that (the
+   * automations write «در انتظار», the completion flow «برای انجام», an old row
+   * «در حال انجام»).
+   *
+   * A **next action** lands wherever its own status says, which for one raised
+   * by «ذخیره و اقدام بعدی» is «برای انجام»: it is an ordinary piece of work
+   * that was simply scheduled, so on its day it joins the queue to be picked
+   * up rather than announcing itself as already in progress. Somebody then
+   * moves it on, and the status word it gains keeps it there.
+   */
+  return kind === FOLLOW_UP_KIND ? "DOING" : lane;
 }
 
 /**
@@ -175,7 +220,10 @@ export function laneWhere(lane: BoardLane, today: Date | null): Record<string, u
   if (lane === "DONE") return finished;
 
   const chase = { taskKind: FOLLOW_UP_KIND };
-  const notChase = { taskKind: { not: FOLLOW_UP_KIND } };
+  const nextAction = { taskKind: NEXT_ACTION_KIND };
+  // Safe as an exclusion because `taskKind` is NOT NULL with a default.
+  const ordinary = { taskKind: { notIn: [...PARKED_KINDS] } };
+  const parked = { taskKind: { in: [...PARKED_KINDS] } };
   const open = { status: { notIn: [TASK_DONE, TASK_CANCELLED] } };
 
   if (lane === "WAITING") {
@@ -183,22 +231,47 @@ export function laneWhere(lane: BoardLane, today: Date | null): Record<string, u
     // chase» here would empty «در حال انجام» of the calls due today, which is
     // the one thing this column must never do.
     if (!today) return { id: { in: [] as string[] } };
-    return { AND: [chase, open, { dueDate: { gt: today } }] };
+    return { AND: [parked, open, { dueDate: { gt: today } }] };
   }
 
-  if (lane === "TODO") {
-    // Ordinary work waiting to be picked up. A chase is never here: its column
-    // is its date, and a date is not a thing to be picked up.
-    return { AND: [notChase, { status: TASK_TODO }] };
-  }
-
+  /*
+   * «Its day has come», spelled out rather than written as `NOT (dueDate > x)`.
+   *
+   * `dueDate` is nullable, and SQL evaluates that negation to unknown for a
+   * NULL — dropping exactly the undated rows the rule above says are due now.
+   */
   const dueNow = today
     ? { OR: [{ dueDate: null }, { dueDate: { lte: today } }] }
     : {};
+
+  if (lane === "TODO") {
+    /*
+     * Ordinary work waiting to be picked up, plus a **next action whose day has
+     * come**: on its date it joins this queue rather than announcing itself as
+     * in progress, which is the one place the two parked kinds differ.
+     *
+     * A chase is never here at all — parked it is in «در انتظار» and due it is
+     * in «در حال انجام», and a date is not a thing to be picked up.
+     */
+    return {
+      OR: [
+        { AND: [ordinary, { status: TASK_TODO }] },
+        { AND: [nextAction, { status: TASK_TODO }, dueNow] },
+      ],
+    };
+  }
+
   return {
     OR: [
-      { AND: [notChase, { status: { notIn: [TASK_TODO, TASK_DONE, TASK_CANCELLED] } }] },
+      { AND: [ordinary, { status: { notIn: [TASK_TODO, TASK_DONE, TASK_CANCELLED] } }] },
       { AND: [chase, open, dueNow] },
+      // A next action somebody has already picked up, on or after its day.
+      {
+        AND: [
+          nextAction, dueNow,
+          { status: { notIn: [TASK_TODO, TASK_DONE, TASK_CANCELLED] } },
+        ],
+      },
     ],
   };
 }

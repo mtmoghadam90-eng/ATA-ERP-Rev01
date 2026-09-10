@@ -34,6 +34,18 @@ import { addWorkingDaysToShamsi } from "../dateUtils";
  * can change in the date box in front of them. It is a starting point, not a
  * rule.
  */
+/**
+ * `Task.taskKind` for a next action raised by «ذخیره و اقدام بعدی».
+ *
+ * A kind of its own, and not `GENERAL`, because the board treats it
+ * differently: it is work agreed for a **day**, so until that day comes it sits
+ * in «در انتظار» rather than in «برای انجام» — see `taskBoardLane`. Nothing
+ * else about it differs from an ordinary task: it is ticked, edited, moved and
+ * texted exactly as one, which is the whole reason it is not a second kind of
+ * follow-up.
+ */
+export const NEXT_ACTION_KIND = "NEXT_ACTION";
+
 export const DEFAULT_NEXT_ACTION_DAYS = 3;
 
 /**

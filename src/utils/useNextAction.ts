@@ -1,7 +1,9 @@
 import { useRef, useState } from 'react';
 import { tasksApi } from '../api/tasks';
 import { TASK_TODO } from './workBoard';
-import { NextActionDraft, NextActionSource, nextActionTitle } from './nextAction';
+import {
+  NEXT_ACTION_KIND, NextActionDraft, NextActionSource, nextActionTitle,
+} from './nextAction';
 
 /**
  * The host half of «ذخیره و ثبت اقدام بعدی», in one place.
@@ -103,6 +105,15 @@ export function useNextAction() {
         // belonging to nobody.
         assignedToName: draft.assignedTo || null,
         status: TASK_TODO,
+        /*
+         * Its own kind, which is what parks it in «در انتظار» until its day.
+         *
+         * The status is «برای انجام» all along — that is the column it lands in
+         * the morning its date arrives — and the kind is what says «not yet».
+         * Nothing else about it differs from an ordinary task: it is ticked,
+         * edited, moved and texted exactly as one.
+         */
+        taskKind: NEXT_ACTION_KIND,
       });
       setSource(null);
     } catch (err) {

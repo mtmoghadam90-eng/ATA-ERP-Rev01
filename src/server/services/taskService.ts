@@ -7,6 +7,7 @@ import { resolveAssignee } from "./assigneeLookup";
 import {
   BoardLane, LANE_FILTERS, MovableLane, TASK_CANCELLED, TASK_DOING, TASK_DONE, TASK_TODO,
   laneWhere, onPlateWhere, taskBoardLane, taskLane, taskStatusForLane,
+  isParkedKind,
 } from "../../utils/workBoard";
 import { FOLLOW_UP_KIND, deferralAfterChaseMoved } from "../../utils/salesFollowUp";
 import { capacityRefusalMessage } from "../../utils/workLimits";
@@ -536,6 +537,13 @@ export async function taskSummary(
 
 export interface TaskInput {
   title?: string;
+  /**
+   * Settled at creation and never on an edit — see `createTask`.
+   *
+   * «SALES_FOLLOW_UP» is refused here (`creatableKindRefusal`); a chase is
+   * raised through `reactivateFollowUp`, which owns the rules that make it one.
+   */
+  taskKind?: string | null;
   description?: string | null;
   relatedToType?: string | null;
   relatedToId?: string | null;
@@ -778,11 +786,17 @@ export async function moveTasksToLane(
       data: {
         status,
         /*
-         * Pulling a parked chase forward *is* moving its date.
+         * Pulling a **parked** card forward *is* moving its date.
          *
-         * The column comes from the date and nothing else, so a status on its
-         * own would put the card back where it was on the next render. Today
-         * is also what it now means: somebody said they would call today.
+         * The column of a chase or a next action comes from the date, so a
+         * status on its own would put the card back where it was on the next
+         * render — a press that appears to work and undoes itself. Today is
+         * also what it now means: somebody said they would do it today.
+         *
+         * Both parked kinds, and both destinations. A next action may be pulled
+         * into «برای انجام» as well as into «در حال انجام» — «I will do this
+         * today» and «I am doing it now» are both real answers — while a chase
+         * is refused «برای انجام» above, so only «در حال انجام» reaches here.
          *
          * The queue does **not** read this date while the quotation is parked —
          * it reads `Proforma.deferredUntil` — which this used to claim it did.
@@ -790,7 +804,7 @@ export async function moveTasksToLane(
          * are written here rather than because they happen to say the same
          * thing.
          */
-        ...(row.taskKind === FOLLOW_UP_KIND && lane === "DOING" && from === "WAITING"
+        ...(from === "WAITING" && isParkedKind(row.taskKind)
           ? expandDateFields({ dueDate: todayJalali }, ["dueDate"])
           : {}),
         ...laneTimestamps(row, status, todayJalali),
@@ -813,7 +827,30 @@ export async function moveTasksToLane(
   return { moved, refused, reasons: [...reasons] };
 }
 
+
+/**
+ * Refuses the one `taskKind` this endpoint may not write.
+ *
+ * A sales follow-up is not a task with a word on it: it belongs to a quotation,
+ * it moves that quotation's `followUpState`, it must not be the second open
+ * chase on one document and it cannot exist on a settled sale. `reactivateFollowUp`
+ * owns all of that, and a second way in would be a second copy of every rule.
+ *
+ * Everything else goes through — «NEXT_ACTION» because that is what
+ * «ذخیره و اقدام بعدی» raises, and a kind this build does not know because
+ * refusing an unfamiliar value would break an integration to guard against
+ * nothing: the board files any kind it does not recognise as an ordinary task.
+ */
+export function creatableKindRefusal(kind: unknown): string | null {
+  return String(kind ?? "").trim() === FOLLOW_UP_KIND
+    ? "پیگیری فروش از این مسیر ساخته نمی‌شود؛ از «فعال‌سازی مجدد پیگیری» روی همان پیش‌فاکتور استفاده کنید."
+    : null;
+}
+
 export async function createTask(input: TaskInput, user: AuthUser, todayJalali: string) {
+  const refusal = creatableKindRefusal(input.taskKind);
+  if (refusal) throw new Error(refusal);
+
   const db = getDb();
   const author = await db.user.findUnique({
     where: { id: user.id }, select: { fullName: true },
@@ -831,6 +868,19 @@ export async function createTask(input: TaskInput, user: AuthUser, todayJalali: 
        */
       status: TASK_TODO,
       ...scalarData(input),
+      /*
+       * Written here and **not** in `scalarData`, which the update path shares.
+       *
+       * A task's kind decides which column it is drawn in, so an edit that
+       * could rewrite it could park an ordinary task in «در انتظار» for ever,
+       * or un-park a next action by making it «GENERAL» — neither of which is
+       * anything a person means by correcting a title. It is a fact about how
+       * the record was raised, settled once, at creation. Absent leaves the
+       * column default («GENERAL»).
+       */
+      ...(input.taskKind === undefined
+        ? {}
+        : { taskKind: toNullableString(input.taskKind, 30) ?? "GENERAL" }),
       /*
        * The account behind the name, and the creator only as a last resort.
        *

@@ -7879,9 +7879,17 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    * And it excludes the chases, which have no «برای انجام» at all: their column
    * is the next-contact date, so one sitting in the first column would be a
    * card nothing could move and nothing would ever bring forward.
+   *
+   * Written as `notIn` over the parked kinds rather than `not` over one, since
+   * a **next action** parks on its date too — the difference is that when its
+   * day comes it lands *here* rather than in «در حال انجام», which is the
+   * second clause. `taskKind` is NOT NULL with a default, so the exclusion is
+   * safe; on a nullable column SQL would evaluate it to unknown and drop
+   * exactly the rows it is meant to keep.
    */
   ok("...and it is ordinary work only",
-    laneClause("TODO").includes('"taskKind":{"not":"SALES_FOLLOW_UP"}'), laneClause("TODO"));
+    laneClause("TODO").includes('"taskKind":{"notIn":["SALES_FOLLOW_UP","NEXT_ACTION"]}'),
+    laneClause("TODO"));
   // A cancelled task is finished work and sits in the last column with the
   // done ones, so asking for that column finds both.
   ok("the last column holds the cancelled ones too",
@@ -11630,7 +11638,16 @@ head("Work board: «در انتظار مشتری», and how much one person may 
 
   const DATES = [null, "1405/02/01", TODAY, "1405/03/11", "1405/04/01"];
   const STATUSES = [TASK_TODO, TASK_DOING, TASK_DONE, TASK_CANCELLED, "در انتظار", "منتظر تأیید"];
-  const KINDS = ["GENERAL", "SALES_FOLLOW_UP"];
+  /*
+   * Both parked kinds and an ordinary one.
+   *
+   * «NEXT_ACTION» parks on its date exactly as a chase does, and differs in one
+   * thing only: on the day it arrives it lands in «برای انجام» rather than in
+   * «در حال انجام». That difference is what the whole sweep below is for — the
+   * board and the query have to answer it identically, or a card is drawn in a
+   * column its own filter cannot find.
+   */
+  const KINDS = ["GENERAL", "SALES_FOLLOW_UP", "NEXT_ACTION"];
 
   let mismatches: string[] = [];
   let examined = 0;
@@ -11670,6 +11687,107 @@ head("Work board: «در انتظار مشتری», and how much one person may 
     }
   }
   ok("and no task is in two columns or in none", uncovered === 0, uncovered);
+
+  /* ---------------- a next action waits for its own day ------------------ */
+
+  /*
+   * What «ذخیره و اقدام بعدی» raises is work agreed for a **day**, so it has no
+   * business sitting in «برای انجام» for a fortnight beforehand: the column
+   * exists to say what can be picked up now, and a queue full of things nobody
+   * may start yet is a queue people stop reading — the same argument that keeps
+   * a parked chase out of the badge.
+   *
+   * The mechanism is the chase's, unchanged: the column is **derived** from the
+   * date, so the card leaves «در انتظار» the morning it is due with no sweep,
+   * no nightly job and no second status column to keep in step. Nothing is ever
+   * stored saying it was parked.
+   */
+  const nextAction = { status: TASK_TODO, taskKind: "NEXT_ACTION" };
+  eq("a next action dated ahead waits",
+    taskBoardLane({ ...nextAction, dueDate: "1405/04/01" }, TODAY), "WAITING");
+  /*
+   * And on its day it joins «برای انجام» — which is the one place the two
+   * parked kinds part company. A chase is a call that is due *now* and lands in
+   * «در حال انجام»; a next action is ordinary work that was scheduled, so it
+   * queues to be picked up rather than announcing itself as already underway.
+   */
+  eq("...and on its own day it is «برای انجام»",
+    taskBoardLane({ ...nextAction, dueDate: TODAY }, TODAY), "TODO");
+  eq("...and stays where it is put once somebody starts it",
+    taskBoardLane({ ...nextAction, status: TASK_DOING, dueDate: TODAY }, TODAY), "DOING");
+  /*
+   * Finished is finished, whatever the date says. Reading the date first would
+   * park a completed card for ever.
+   */
+  eq("...and a finished one is finished even if dated ahead",
+    taskBoardLane({ ...nextAction, status: TASK_DONE, dueDate: "1405/04/01" }, TODAY), "DONE");
+
+  /* The chase's own behaviour is untouched — that was the explicit ask. */
+  const parkedChase = { status: TASK_TODO, taskKind: "SALES_FOLLOW_UP" };
+  eq("a chase dated ahead still waits",
+    taskBoardLane({ ...parkedChase, dueDate: "1405/04/01" }, TODAY), "WAITING");
+  eq("...and on its day still lands in «در حال انجام»",
+    taskBoardLane({ ...parkedChase, dueDate: TODAY }, TODAY), "DOING");
+  eq("...ignoring its status word, exactly as before",
+    taskBoardLane({ ...parkedChase, status: "در انتظار", dueDate: TODAY }, TODAY), "DOING");
+
+  /*
+   * An ordinary task is not parked at all. Its due date is a deadline, not a
+   * start date, and a task due next month is work somebody may perfectly well
+   * do this afternoon.
+   */
+  eq("an ordinary task ignores its date entirely",
+    taskBoardLane({ status: TASK_TODO, taskKind: "GENERAL", dueDate: "1405/04/01" }, TODAY),
+    "TODO");
+  /*
+   * A kind this build does not know is ordinary work too — refusing to draw it
+   * would hide a card, and the safe direction here is always to show it.
+   */
+  eq("...and so does a kind nobody anticipated",
+    taskBoardLane({ status: TASK_TODO, taskKind: "SOMETHING_NEW", dueDate: "1405/04/01" }, TODAY),
+    "TODO");
+
+  /*
+   * The badge follows for free: it is TODO ∪ DOING, so a next action agreed for
+   * next Tuesday is not counted as work on somebody's plate today.
+   */
+  const parkedRow: Row = {
+    status: TASK_TODO, taskKind: "NEXT_ACTION", dueDate: jalali("1405/04/01"),
+  };
+  ok("a parked next action is not on anybody's plate yet",
+    !matchesLane(onPlateWhere(todayDate), parkedRow));
+  ok("...and is, the day it arrives",
+    matchesLane(onPlateWhere(todayDate),
+      { status: TASK_TODO, taskKind: "NEXT_ACTION", dueDate: jalali(TODAY) }));
+
+  /*
+   * Pulling one forward moves the **date**, for either parked kind: the column
+   * comes from the date and nothing else, so writing a status alone would put
+   * the card straight back on the next render — a press that appears to work
+   * and undoes itself.
+   */
+  const boardMove = readFileSync("src/server/services/taskService.ts", "utf8");
+  ok("a move out of «در انتظار» moves the date, whichever kind is parked",
+    /from === "WAITING" && isParkedKind\(row\.taskKind\)/.test(boardMove));
+  /*
+   * The two refusals stay narrowed to the chase. A next action *is* ordinary
+   * work: it is ticked and pulled into «برای انجام» like any other task, and
+   * refusing either would be a control that looks live and is not.
+   */
+  ok("...while only a chase is refused «برای انجام» and the bare tick",
+    /row\.taskKind === FOLLOW_UP_KIND && lane === "TODO"/.test(boardMove)
+    && /row\.taskKind === FOLLOW_UP_KIND && lane === "DONE"/.test(boardMove));
+  /*
+   * And only a chase moves a quotation's deferral with it — that column belongs
+   * to a proforma, which a next action need not have at all.
+   */
+  ok("...and only a chase carries its quotation's deferral",
+    /row\.taskKind === FOLLOW_UP_KIND && lane === "DOING" && from === "WAITING"/.test(boardMove));
+
+  /* The button is what stamps the kind, or nothing would ever be parked. */
+  const hookSrc = readFileSync("src/utils/useNextAction.ts", "utf8");
+  ok("the save button raises its task as a next action",
+    /taskKind: NEXT_ACTION_KIND/.test(hookSrc) && /status: TASK_TODO/.test(hookSrc));
 
   /* ---------------- what the inbox badge counts, and what it does not ------- */
 
@@ -11839,12 +11957,13 @@ head("Work board: «در انتظار مشتری», and how much one person may 
   ok("a referral counts toward the load as much as a task",
     /projectReferral\.count/.test(load) && /task\.count/.test(load));
   /*
-   * Promoting a parked chase means moving its **date**. Writing a status onto
-   * one would leave the card exactly where it was, because that column is
-   * derived from the date and nothing else.
+   * Promoting a parked card means moving its **date**. Writing a status onto
+   * one would leave it exactly where it was, because that column is derived
+   * from the date and nothing else — and both kinds that sit there, a chase and
+   * a next action, are pulled forward the same way.
    */
-  ok("pulling a parked chase forward moves its date",
-    /card\.what === "chase" \? expandDateFields\(\{ dueDate: todayJalali \}/.test(load));
+  ok("pulling a parked card forward moves its date",
+    /card\.what === "parked" \? expandDateFields\(\{ dueDate: todayJalali \}/.test(load));
   ok("...and the day work began is stamped once, not re-dated",
     /card\.started \? \{\} : expandDateFields\(\{ startedAt/.test(load));
   // An account with neither limit is the common case and must cost one read.
@@ -11879,8 +11998,30 @@ head("Work board: «در انتظار مشتری», and how much one person may 
     .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
   ok("the task route source survived having its comments stripped",
     taskRouteSrc.includes("WRITABLE"));
-  ok("`taskKind` is not writable on a plain task",
-    !/"taskKind"/.test(taskRouteSrc));
+  /*
+   * `taskKind` travels now, because «اقدام بعدی» needs a kind of its own to be
+   * parked. What must not travel is the one value that carries a whole set of
+   * rules with it — so the protection moved from «the key is missing» to a
+   * named refusal, which is where it can also be enforced against n8n.
+   */
+  ok("`taskKind` reaches the service", /"taskKind"/.test(taskRouteSrc));
+  const taskServiceSrc = readFileSync("src/server/services/taskService.ts", "utf8");
+  ok("...and a chase is refused through it",
+    /creatableKindRefusal\(input\.taskKind\)/.test(taskServiceSrc)
+    && /=== FOLLOW_UP_KIND$/m.test(
+      taskServiceSrc.slice(taskServiceSrc.indexOf("export function creatableKindRefusal"),
+        taskServiceSrc.indexOf("export async function createTask"))));
+  /*
+   * And it is settled at creation only: a task's kind decides which column it
+   * is drawn in, so an edit that could rewrite it could park an ordinary task
+   * in «در انتظار» for ever, or un-park a next action by making it «GENERAL».
+   */
+  const scalarStart = taskServiceSrc.indexOf("function scalarData");
+  ok("...and never rewritten by an edit", !/taskKind/.test(
+    // `scalarData`'s own body — the update path shares it, and bounding this on
+    // the next function along would sweep in `moveBoardCards`, which reads the
+    // kind perfectly legitimately.
+    taskServiceSrc.slice(scalarStart, taskServiceSrc.indexOf("\n}", scalarStart))));
   // Or Express reads «board» as a task id.
   ok("the top-up endpoint is registered before the id routes",
     taskRouteSrc.indexOf('"/api/tasks/board/top-up"') > 0
