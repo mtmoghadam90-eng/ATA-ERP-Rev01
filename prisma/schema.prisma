@@ -47,6 +47,27 @@ model User {
   signatureImage String? @db.NVarChar(500)
   isActive       Boolean @default(true)
 
+  /// Which honorific this person is addressed by, and nothing else.
+  ///
+  /// «مرد» or «زن» — `namePrefixFor` in src/utils/honorific.ts is the single
+  /// reading, the same one every proforma and every customer message goes
+  /// through. **Null is an ordinary answer**: it means nobody has said, and the
+  /// rule then writes no honorific at all rather than guessing one, because
+  /// guessing writes «جناب آقای» to a woman on the strength of a blank field.
+  /// Deliberately absent from `DIRECTORY_SELECT` — it decides how *this*
+  /// account is greeted and no colleague needs to enumerate it.
+  gender String? @db.NVarChar(10)
+
+  /// A picture of the person, drawn beside their name.
+  ///
+  /// A `/uploads/user-avatars/...` path. It is in `DIRECTORY_SELECT` and
+  /// `mobile` is not, which is the whole distinction: a face is *for* being
+  /// recognised by colleagues — that is the entire feature — while a phone
+  /// number is not something every account may enumerate through the pickers.
+  /// Null draws the person's initials on a colour derived from their name, so
+  /// an account with no picture is still told apart at a glance.
+  avatarUrl String? @db.NVarChar(500)
+
   /// Where a notification reaches this person when the application is shut.
   ///
   /// The board says what is on somebody's plate the next time they open it,

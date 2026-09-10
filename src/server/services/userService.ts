@@ -24,6 +24,12 @@ const SEARCH_FIELDS = ["username", "fullName", "position"] as const;
 const SAFE_SELECT = {
   id: true, username: true, fullName: true, role: true, isSystemAdmin: true,
   position: true, signatureImage: true, isActive: true, permissions: true,
+  // Which honorific this account is greeted by. Here and not in the directory:
+  // it decides how *this* person is addressed, and no colleague needs it.
+  gender: true,
+  // The picture drawn beside this person's name. In both projections — see the
+  // note on DIRECTORY_SELECT for why it parts company with `mobile`.
+  avatarUrl: true,
   // Where a task or a referral reaches this person when the app is shut.
   // Deliberately absent from `DIRECTORY_SELECT`: a colleague's phone number is
   // not something every account may enumerate through the assignment pickers.
@@ -44,7 +50,15 @@ const SAFE_SELECT = {
 const DIRECTORY_SELECT = {
   // signatureImage is here because printed documents carry the creator's
   // signature; it is a document asset, not an account detail.
+  //
+  // `avatarUrl` is here and `mobile` is not, and that is the whole distinction
+  // rather than an inconsistency: a face exists *to be recognised by
+  // colleagues* — the feed drawing it beside each message is the entire
+  // feature — while a phone number is not something every account may
+  // enumerate through the assignment pickers. `gender` stays out for the same
+  // reason as `mobile`: nobody but this account's own greeting reads it.
   id: true, fullName: true, position: true, isActive: true, signatureImage: true,
+  avatarUrl: true,
 } satisfies Prisma.UserSelect;
 
 function canManage(user: AuthUser): boolean {
@@ -100,6 +114,8 @@ export interface UserInput {
   isSystemAdmin?: boolean;
   position?: string | null;
   signatureImage?: string | null;
+  gender?: string | null;
+  avatarUrl?: string | null;
   isActive?: boolean;
   permissions?: unknown;
   /** «موبایل» — where the staff notification is sent. See `staffNotifications`. */
@@ -125,6 +141,8 @@ function scalarData(input: UserInput): Record<string, unknown> {
    */
   if ("mobile" in input) set("mobile", toNullableString(input.mobile, 20));
   if ("signatureImage" in input) set("signatureImage", toNullableString(input.signatureImage, 500));
+  if ("gender" in input) set("gender", toNullableString(input.gender, 10));
+  if ("avatarUrl" in input) set("avatarUrl", toNullableString(input.avatarUrl, 500));
   if ("isActive" in input) set("isActive", !!input.isActive);
   if ("permissions" in input) set("permissions", toJsonColumn(input.permissions));
   /*

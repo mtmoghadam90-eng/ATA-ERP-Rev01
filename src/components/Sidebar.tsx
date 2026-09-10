@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { APP_MODULES } from '../appModules';
 import { MODULE_ICONS } from './moduleIcons';
 import BrandMark from './BrandMark';
+import Avatar from './Avatar';
 import { User, SCREEN_PERMISSION_ALIAS } from '../types';
 
 interface SidebarProps {
@@ -123,9 +124,23 @@ export default function Sidebar({
         {currentUser && (
           <div className="px-4 py-4 border-b border-slate-800 bg-slate-900/50 flex flex-col gap-2">
             <div className={`flex items-center ${isOpen ? 'gap-3' : 'justify-center'}`}>
-              <div className="w-10 h-10 rounded-full bg-slate-700 border-2 border-sky-500/50 flex items-center justify-center font-bold text-sky-400 flex-shrink-0 shadow-inner">
-                {currentUser.fullName.substring(0, 2)}
-              </div>
+              {/*
+                * The signed-in account's picture, where its initials disc was.
+                *
+                * That disc drew `fullName.substring(0, 2)` — the first two
+                * letters of the *first* word, so «محمد رضایی» read «مح» rather
+                * than «مر». `initialsOf` takes one letter from each end of the
+                * name, which is what initials are. The fallback is drawn on the
+                * person's own colour so it looks like the photograph it stands
+                * in for, rather than changing the shape of this corner the day
+                * somebody uploads one.
+                */}
+              <Avatar
+                size="md"
+                name={currentUser.fullName}
+                url={currentUser.avatarUrl}
+                className="border-2 border-sky-500/50 flex-shrink-0 shadow-inner"
+              />
               {isOpen && (
                 <div className="flex flex-col overflow-hidden">
                   <span className="text-xs font-semibold text-slate-200 truncate">{currentUser.fullName}</span>

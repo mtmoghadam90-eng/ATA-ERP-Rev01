@@ -28,6 +28,7 @@ import {
   CartesianGrid 
 } from 'recharts';
 import { Task, User, ERPSettings } from '../types';
+import { addresseeOf } from '../utils/honorific';
 import { canSeeCosts } from '../utils/permissions';
 import CustomerValueMatrix from './CustomerValueMatrix';
 import { getTodayShamsi } from '../dateUtils';
@@ -278,7 +279,19 @@ export default function DashboardView({
               سامانه جامع ارشیا ERP
             </div>
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">
-              {currentUser ? `سلام، جناب آقای ${currentUser.fullName} عزیز` : 'پیشخوان مدیریت منابع (ERP)'}
+              {/*
+                * The honorific comes from the account, and used to be typed in.
+                *
+                * This read «سلام، جناب آقای …» for everybody — there was no
+                * gender column on `User` to consult, so the card greeted every
+                * woman in the company as a man. `namePrefixFor` is the rule the
+                * proformas and the customer messages have always used, and it
+                * answers **blank** for an account that has not said, so an
+                * unfilled field costs the honorific and never guesses one.
+                */}
+              {currentUser
+                ? `سلام، ${addresseeOf(currentUser.gender, currentUser.fullName)} عزیز`
+                : 'پیشخوان مدیریت منابع (ERP)'}
             </h1>
             <p className="text-slate-300 text-sm max-w-xl font-normal leading-relaxed">
               خوش آمدید. آخرین وضعیت پرونده‌های بازرگانی، زنجیره تأمین تجهیزات، و ارجاعات کارگاهی شما در یک نگاه آماده است.

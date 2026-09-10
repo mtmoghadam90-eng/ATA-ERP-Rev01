@@ -990,6 +990,16 @@ export interface ProjectActivity {
   text: string;
   createdAt: string;
   createdBy?: string;
+  /**
+   * The author's picture, joined from their account rather than stored here.
+   *
+   * `createdBy` stays the name that is *printed*, because it is kept on the row
+   * precisely so a message outlives the account that wrote it. This is absent
+   * for a removed user and for anybody who has not uploaded one, and the screen
+   * falls back to initials drawn from that same stored name — so the disc is
+   * never empty and never has to guess.
+   */
+  createdByAvatarUrl?: string | null;
   /** The first attachment, kept so older markup and readers still work. */
   attachment: { name: string; size: string; content?: string } | null;
   /** Every attachment on the entry, in the order they were added. */
@@ -1054,6 +1064,24 @@ export interface User {
   isSystemAdmin?: boolean;
   position?: string;
   signatureImage?: string;
+  /**
+   * «مرد» or «زن» — which honorific this person is addressed by.
+   *
+   * `namePrefixFor` in `src/utils/honorific.ts` is the single reading, the same
+   * one every proforma and customer message goes through. **Absent is an
+   * ordinary answer** and means nobody has said: the rule then writes no
+   * honorific at all, because guessing writes «جناب آقای» to a woman on the
+   * strength of a blank field.
+   */
+  gender?: string | null;
+  /**
+   * A picture of this person, drawn beside their name.
+   *
+   * Absent for every account until somebody uploads one, which is why every
+   * reader falls back to initials on a colour derived from the name rather than
+   * to a blank or a glyph shared with everybody else.
+   */
+  avatarUrl?: string | null;
   /**
    * Where a task or a referral reaches this person when the application is shut.
    *

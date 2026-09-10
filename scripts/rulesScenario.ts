@@ -110,7 +110,6 @@ import {
   normalizeSenderLine,
   shouldRetry, smsConfigRefusal, smsLength, smsProviderOf, templateVariables,
 } from "../src/utils/messaging";
-import { addresseeOf, namePrefixFor } from "../src/utils/honorific";
 import {
   ALL_DEMAND_SOURCES, DEMAND_SOURCE_SPECS, DemandLine, demandGroupingOf,
   demandOutcomeOf, demandRefusal, demandSourceOf, describeDemand, foldDemand,
@@ -261,6 +260,8 @@ import {
   DETAIL_LABELS, SUMMARY_LIMIT, cardDetail, hasMoreToShow, summarizeText,
 } from "../src/utils/cardSummary";
 import { activeTemplateOf, brandLogoUrl } from "../src/utils/brand";
+import { addresseeOf, namePrefixFor } from "../src/utils/honorific";
+import { AVATAR_SIZES, avatarColors, avatarHue, initialsOf } from "../src/utils/avatar";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
@@ -13940,6 +13941,144 @@ head("Competitors: who we lose to, and by how much");
   eq("...but a next action still waits for its own day",
     taskBoardLane({ status: TASK_TODO, taskKind: "NEXT_ACTION", dueDate: "1405/06/25" }, "1405/06/18"),
     "WAITING");
+}
+
+{
+  head("A person beside their name: the honorific, and the avatar");
+
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* ---- the honorific the welcome card used to type in by hand ---- */
+  eq("a man", namePrefixFor("مرد"), "جناب آقای مهندس");
+  eq("a woman", namePrefixFor("زن"), "سرکار خانم مهندس");
+  /*
+   * The case the dashboard got wrong: it wrote «جناب آقای» for everybody,
+   * because `User` had no gender column to read at all. Blank is the answer,
+   * not a guess — guessing greets a woman as a man on the strength of an
+   * unfilled field.
+   */
+  eq("nobody has said", namePrefixFor(null), "");
+  eq("...and the name then stands alone, with no double space",
+    addresseeOf(null, "محمد رضایی"), "محمد رضایی");
+  const dash = strip(readFileSync("src/components/DashboardView.tsx", "utf-8"));
+  ok("the welcome card reads the rule", /addresseeOf\(\s*currentUser\.gender/.test(dash));
+  ok("...and no longer writes an honorific out itself",
+    !/جناب آقای/.test(dash) && !/سرکار خانم/.test(dash));
+
+  /* ---- the disc drawn when there is no photograph ---- */
+  /*
+   * How many letters fit is a fact about the box, so it lives in the size table
+   * rather than at each call site — the feed's is one, because two Persian
+   * letters inside 16px are about seven pixels tall and read as a smudge.
+   */
+  eq("the feed's disc carries one letter", AVATAR_SIZES.xs.initials, 1);
+  ok("...and is the smallest of the four",
+    Math.min(...Object.values(AVATAR_SIZES).map((v) => v.px)) === AVATAR_SIZES.xs.px);
+  eq("one letter at the feed's size", initialsOf("محمد رضایی", 1), "م");
+  eq("initials are one letter from each end", initialsOf("محمد رضایی", 2), "مر");
+  eq("...not the first two of one word", initialsOf("محمد", 2), "م");
+  eq("nothing to draw", initialsOf("   ", 2), "");
+  /*
+   * The colour has to be stable or it is decoration that misleads, and it folds
+   * the spellings `resolveAssignee` already folds — one person typed two ways
+   * is one person here too.
+   */
+  ok("the same person is one colour however their name is typed",
+    avatarHue("محمد رضایی") === avatarHue("محمد رضایي"));
+  ok("...and two people are two colours",
+    avatarHue("محمد رضایی") !== avatarHue("سارا کریمی"));
+  ok("a nameless disc still answers a hue", Number.isFinite(avatarHue("")));
+
+  /*
+   * The ink against its own ground, recomputed at every hue with the WCAG
+   * formula rather than trusted. The first values written here failed — 3.42:1
+   * at hue 60, because yellow carries far more luminance than its lightness
+   * figure suggests — so this is the check that caught a real fault rather than
+   * one that merely records a decision.
+   */
+  const hslToRgb = (h: number, sPct: number, lPct: number): [number, number, number] => {
+    const sat = sPct / 100, li = lPct / 100;
+    const k = (n: number) => (n + h / 30) % 12;
+    const a = sat * Math.min(li, 1 - li);
+    const f = (n: number) => li - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    return [f(0) * 255, f(8) * 255, f(4) * 255];
+  };
+  const luminance = ([r, g, b]: [number, number, number]) => {
+    const ch = (v: number) => {
+      const x = v / 255;
+      return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+  };
+  const contrast = (a: [number, number, number], b: [number, number, number]) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const parseHsl = (css: string): [number, number, number] => {
+    const m = /hsl\((\d+)\s+(\d+)%\s+(\d+)%/.exec(css)!;
+    return hslToRgb(Number(m[1]), Number(m[2]), Number(m[3]));
+  };
+  // Pinned against a known pair, so a broken formula cannot pass everything.
+  ok("the contrast formula is right (black on white = 21)",
+    Math.abs(contrast([0, 0, 0], [255, 255, 255]) - 21) < 0.01);
+
+  let worst = { hue: -1, ratio: 99 };
+  for (let hue = 0; hue < 360; hue++) {
+    const { bg, fg } = avatarColors(`hue-probe-${hue}`);
+    const r = contrast(parseHsl(bg), parseHsl(fg));
+    if (r < worst.ratio) worst = { hue, ratio: r };
+  }
+  ok(`the initials clear 4.5:1 at every hue the rule can produce (worst ${worst.ratio.toFixed(2)})`,
+    worst.ratio >= 4.5, worst);
+
+  /* ---- where the avatar is drawn, and what it replaced ---- */
+  const feed = strip(readFileSync("src/components/ProjectsView.tsx", "utf-8"));
+  /*
+   * Whitespace-collapsed first: that file indents to roughly fifty columns, so
+   * a props match written against the raw text is measuring the indentation
+   * rather than the markup — the first version of this check failed for that
+   * and nothing about it was wrong.
+   */
+  const feedFlat = feed.replace(/\s+/g, " ");
+  ok("the feed draws the author's avatar",
+    /<Avatar[^>]{0,80}act\.createdByAvatarUrl/.test(feedFlat));
+  ok("...at the smallest size", /<Avatar size="xs"/.test(feedFlat));
+  /*
+   * The point of the whole exercise: the card gained no element. The chip
+   * already carried a generic `<User size={10} />`, identical on every message,
+   * and the avatar took its place — so a screen full of messages did not get
+   * busier. A stray `<User` back in this file would mean both are drawn.
+   */
+  ok("...in place of the generic glyph, which is gone",
+    !/<User\s+size=\{10\}/.test(feed));
+
+  const sidebar = strip(readFileSync("src/components/Sidebar.tsx", "utf-8"));
+  ok("the sidebar draws it too", /<Avatar/.test(sidebar));
+  ok("...rather than its old substring initials",
+    !/fullName\.substring\(0, 2\)/.test(sidebar));
+
+  /* ---- both projections, and the one field that stays out of the directory ---- */
+  const userService = strip(readFileSync("src/server/services/userService.ts", "utf-8"));
+  const directory = userService.split("DIRECTORY_SELECT = {")[1]?.split("}")[0] ?? "";
+  ok("the directory carries the avatar, since colleagues are who it is for",
+    /avatarUrl:\s*true/.test(directory), directory);
+  /*
+   * And not the two that are nobody else's business. `mobile` was already the
+   * precedent; `gender` joins it because it decides how *this* account is
+   * greeted and no picker needs to enumerate it.
+   */
+  ok("...and neither the mobile nor the gender",
+    !/mobile:\s*true/.test(directory) && !/gender:\s*true/.test(directory), directory);
+
+  /* ---- both user forms, or one path silently drops the fields ---- */
+  const usersView = readFileSync("src/components/UsersView.tsx", "utf-8");
+  eq("the create form and the edit form both send the gender",
+    (usersView.match(/^\s+gender,$/gm) ?? []).length, 2);
+  eq("...and both send the avatar",
+    (usersView.match(/^\s+avatarUrl,$/gm) ?? []).length, 2);
+  ok("the upload names a Latin folder, or the file lands in the uploads root",
+    /uploadFile\(file, 'user-avatars'\)/.test(usersView));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

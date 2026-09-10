@@ -285,6 +285,14 @@ export interface ActivityRow {
   text: string;
   authorUserId: string | null;
   authorName: string | null;
+  /**
+   * The author's account, joined for the one field the feed draws.
+   *
+   * Null when the account has been removed — `authorName` is kept on the row
+   * for exactly that case and stays what is printed, so the picture is the only
+   * thing lost rather than the attribution.
+   */
+  author?: { id: string; fullName: string; avatarUrl: string | null } | null;
   /** The first attachment, in the three columns that always held it. */
   attachmentName: string | null;
   attachmentSize: string | null;

@@ -19,6 +19,10 @@ export interface UserRow {
   isSystemAdmin: boolean;
   position: string | null;
   signatureImage: string | null;
+  /** «مرد» / «زن» / null — which honorific greets this account. */
+  gender: string | null;
+  /** The picture drawn beside this person's name; null until one is uploaded. */
+  avatarUrl: string | null;
   isActive: boolean;
   /** Serialized `Record<string, boolean>`; absent means unrestricted. */
   permissions: string | null;
@@ -46,6 +50,8 @@ export interface UserWriteInput {
   isSystemAdmin?: boolean;
   position?: string | null;
   signatureImage?: string | null;
+  gender?: string | null;
+  avatarUrl?: string | null;
   isActive?: boolean;
   permissions?: unknown;
   mobile?: string | null;
@@ -107,6 +113,16 @@ export function rowToUser(row: UserRow): User {
     isSystemAdmin: row.isSystemAdmin,
     position: row.position ?? "",
     signatureImage: row.signatureImage ?? "",
+    /*
+     * Null is carried through as null rather than flattened to "".
+     *
+     * `namePrefixFor` reads «not said» and «not a man or a woman» as the same
+     * answer, so either would work for `gender` — but `avatarUrl` is handed to
+     * `<Avatar url=…>`, where "" is falsy and null is falsy and only one of
+     * them is honest about what the column holds.
+     */
+    gender: row.gender,
+    avatarUrl: row.avatarUrl,
     isActive: row.isActive,
     permissions: parseJson<Record<string, boolean>>(row.permissions, {}),
     mobile: row.mobile ?? "",
@@ -125,6 +141,11 @@ export function userToWriteInput(user: Partial<User>): UserWriteInput {
     isSystemAdmin: user.isSystemAdmin,
     position: user.position ?? null,
     signatureImage: user.signatureImage ?? null,
+    // Null rather than undefined, for the reason spelled out on the work
+    // limits below: an absent key is «not edited», so clearing the box on the
+    // form has to send something.
+    gender: user.gender || null,
+    avatarUrl: user.avatarUrl || null,
     isActive: user.isActive,
     permissions: user.permissions,
     mobile: user.mobile ?? null,
