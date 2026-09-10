@@ -78,6 +78,7 @@ function activityToView(act: ActivityRow): ProjectActivity {
     text: act.text,
     createdAt: act.createdAt,
     createdBy: act.authorName ?? undefined,
+    createdByAvatarUrl: act.author?.avatarUrl ?? null,
     attachment: toAttachment(act.attachmentName, act.attachmentSize, act.attachmentUrl),
     attachments,
     // One message can name several colleagues, and each is its own request.

@@ -374,6 +374,18 @@ export interface ActivityInput {
  * parent again.
  */
 const ACTIVITY_INCLUDE = {
+  /*
+   * The author's picture, joined rather than matched by name.
+   *
+   * `authorUserId` is a real foreign key, so the feed can ask for the account
+   * directly — which is the whole reason this needs none of the `nameKey`
+   * folding `resolveAssignee` has to do: there is an id here and a name is not
+   * the only thing to go on. `authorName` stays beside it and stays the thing
+   * that is *printed*, because it is kept precisely so a message outlives the
+   * account that wrote it; the join answers null for a removed user and the
+   * screen falls back to initials from that stored name.
+   */
+  author: { select: { id: true, fullName: true, avatarUrl: true } },
   referrals: {
     orderBy: { createdAt: "asc" },
     include: { messages: { orderBy: { createdAt: "asc" } } },

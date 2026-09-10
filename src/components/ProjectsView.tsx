@@ -5,7 +5,7 @@ import { formatMoney } from '../numUtils';
 import {
   Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, AlertTriangle, TrendingUp, X,
   CornerUpLeft, ListChecks, RefreshCcw, Inbox,
-  FileSpreadsheet, Clock, Sliders, User, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
+  FileSpreadsheet, Clock, Sliders, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
  CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
   ChevronRight, Loader2, Image as ImageIcon, Maximize2, Minimize2, ArrowLeftRight, Flag, Zap,
   ExternalLink, Award, Users
@@ -55,6 +55,7 @@ import {
   ActivityAttachment, MAX_ACTIVITY_ATTACHMENTS, normalizeAttachments,
 } from '../utils/attachments';
 import { productsApi } from '../api/products';
+import Avatar from './Avatar';
 import { createCustomerWithLinks } from '../api/customerAdapter';
 import { productToWriteInput, detailToProduct } from '../api/productAdapter';
 import SatisfactionLettersModal from './SatisfactionLettersModal';
@@ -5697,8 +5698,23 @@ export default function ProjectsView({
                                           <div className="flex items-center gap-2">
                                             <span className="font-mono">{formatDateTimeToShamsi(act.createdAt)}</span>
                                             {act.createdBy && (
+                                              /*
+                                                * The author's face where the generic glyph was.
+                                                *
+                                                * This chip already carried a `<User size={10} />` —
+                                                * identical on every message and therefore telling the
+                                                * reader nothing. The avatar goes exactly there: same
+                                                * chip, same row, one element, and the card gains no
+                                                * height. That is what makes «who wrote this» faster to
+                                                * read without making a screen full of messages busier,
+                                                * which was the whole of the ask.
+                                                */
                                               <span className="text-slate-500 font-bold bg-slate-100 px-1.5 py-0.5 rounded flex items-center gap-1">
-                                                <User size={10} />
+                                                <Avatar
+                                                  size="xs"
+                                                  name={act.createdBy}
+                                                  url={act.createdByAvatarUrl}
+                                                />
                                                 {act.createdBy}
                                               </span>
                                             )}

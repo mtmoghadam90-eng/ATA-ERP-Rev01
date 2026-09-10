@@ -52,6 +52,7 @@ import ColumnResizeHandle from "../src/components/ColumnResizeHandle";
 import NextActionModal from "../src/components/NextActionModal";
 import SaveWithNextActionButton from "../src/components/SaveWithNextActionButton";
 import LoginView from "../src/components/LoginView";
+import Avatar from "../src/components/Avatar";
 import type { NextActionDraft } from "../src/utils/nextAction";
 import { resizeColumns } from "../src/utils/columnWidths";
 import type { Product } from "../src/types";
@@ -1702,6 +1703,79 @@ async function renderLogin(reply: () => Promise<unknown>) {
     broken.lHost.querySelectorAll("input").length >= 2,
     broken.lHost.querySelectorAll("input").length);
   broken.done();
+}
+
+/*
+ * The avatar, at the size the feed draws it.
+ *
+ * The ask carried a constraint as firm as the feature — a screen already full
+ * of messages must not get busier — and a rule test cannot see a rendered box.
+ * What it can see: that the disc is exactly the size the table says, that it is
+ * one element rather than a wrapper full of them, and that an account with no
+ * photograph still gets something that separates it from the next person.
+ */
+head("Avatar: one element, at the size the table says");
+
+{
+  const aHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const aRoot = createRoot(aHost);
+
+  // 1. A photograph, at the feed's size.
+  act(() => {
+    aRoot.render(React.createElement(Avatar, {
+      size: "xs", name: "محمد رضایی", url: "/uploads/user-avatars/m.png",
+    }));
+  });
+  const photo = aHost.querySelector('[data-avatar="photo"]') as HTMLElement | null;
+  ok("a photograph draws the image", !!photo, aHost.innerHTML.slice(0, 120));
+  ok("...at exactly 16px, the size the table names",
+    photo?.style.width === "16px" && photo?.style.height === "16px",
+    photo?.style.width);
+  ok("...and is one element, not a wrapper of them",
+    aHost.children.length === 1 && (photo?.children.length ?? 0) === 0);
+  ok("...carrying the name for anybody who cannot see it",
+    photo?.getAttribute("alt") === "محمد رضایی");
+
+  // 2. No photograph — most accounts, on the day this ships.
+  act(() => {
+    aRoot.render(React.createElement(Avatar, { size: "xs", name: "محمد رضایی" }));
+  });
+  const disc = aHost.querySelector('[data-avatar="initials"]') as HTMLElement | null;
+  ok("no photograph still draws a disc", !!disc);
+  ok("...with one letter at the feed's size, not two",
+    disc?.textContent === "م", disc?.textContent);
+  ok("...still 16px, so the row cannot move when a photo arrives later",
+    disc?.style.width === "16px", disc?.style.width);
+  const firstInk = disc?.style.color ?? "";
+  ok("...on a colour of its own", !!firstInk);
+
+  // 3. A different colleague must look different — that is the whole feature.
+  act(() => {
+    aRoot.render(React.createElement(Avatar, { size: "xs", name: "سارا کریمی" }));
+  });
+  const other = aHost.querySelector('[data-avatar="initials"]') as HTMLElement | null;
+  ok("a different person gets a different colour",
+    (other?.style.color ?? "") !== firstInk, [firstInk, other?.style.color]);
+
+  // 4. The larger sizes take two letters, and the size really changes.
+  act(() => {
+    aRoot.render(React.createElement(Avatar, { size: "md", name: "محمد رضایی" }));
+  });
+  const big = aHost.querySelector('[data-avatar="initials"]') as HTMLElement | null;
+  ok("the sidebar's size draws both initials", big?.textContent === "مر", big?.textContent);
+  ok("...and is bigger than the feed's", big?.style.width === "40px", big?.style.width);
+
+  // 5. Nobody at all — an activity row whose author was removed.
+  act(() => {
+    aRoot.render(React.createElement(Avatar, { size: "xs", name: null }));
+  });
+  const nameless = aHost.querySelector('[data-avatar="initials"]') as HTMLElement | null;
+  ok("a nameless author still draws a disc rather than collapsing", !!nameless);
+  ok("...with no letter in it, and hidden from a screen reader",
+    nameless?.textContent === "" && nameless?.getAttribute("aria-hidden") === "true");
+
+  act(() => { aRoot.unmount(); });
+  aHost.remove();
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

@@ -3,6 +3,7 @@ import { User, ERPSettings } from '../types';
 import { PERMISSION_FLAGS, defaultPermissions } from '../utils/permissions';
 import ConfirmModal from './ConfirmModal';
 import NumberField from './NumberField';
+import Avatar from './Avatar';
 import { uploadFile } from '../imageUtils';
 import { ApiError } from '../api/client';
 import { rowToUser, userToWriteInput, usersApi } from '../api/users';
@@ -85,6 +86,15 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
   const [maxActiveTasks, setMaxActiveTasks] = useState(0);
   const [showPassword, setShowPassword] = useState(false);
   const [signatureImage, setSignatureImage] = useState('');
+  /*
+   * Both blank by default and both stay blank until somebody answers.
+   *
+   * `gender` decides the honorific through `namePrefixFor`, which writes
+   * nothing at all for an unanswered account — so the empty option is a real
+   * choice here and not a prompt to be nagged about.
+   */
+  const [gender, setGender] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
 
   // Delete confirm state
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -141,6 +151,8 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     setMinActiveTasks(0);
     setMaxActiveTasks(0);
     setSignatureImage('');
+    setGender('');
+    setAvatarUrl('');
     // The third hand-typed copy, and the one that had drifted furthest: it
     // withheld the ledger while the component's initial state granted it, so
     // the two disagreed about what a new account gets. `OFF_BY_DEFAULT` keeps
@@ -222,6 +234,8 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
           role,
           position,
           signatureImage,
+          gender,
+          avatarUrl,
           permissions,
           isActive: true,
           mobile,
@@ -252,6 +266,8 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
     setMinActiveTasks(user.minActiveTasks ?? 0);
     setMaxActiveTasks(user.maxActiveTasks ?? 0);
     setSignatureImage(user.signatureImage || '');
+    setGender(user.gender || '');
+    setAvatarUrl(user.avatarUrl || '');
     setPermissions({
       ...user.permissions,
       // Absent means denied for this one (see canSeeCosts), so the box has to
@@ -290,6 +306,8 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
         role,
         position,
         signatureImage,
+        gender,
+        avatarUrl,
         permissions,
         isActive: selectedUser.isActive,
         mobile,
@@ -658,6 +676,76 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                 </div>
               </div>
 
+              {/* Profile picture and honorific */}
+              <div className="space-y-1.5 bg-slate-50 p-4 rounded-xl border border-slate-200/60">
+                <label className="text-xs font-bold text-slate-700 block">تصویر پروفایل و نحوه خطاب</label>
+                <div className="flex flex-col sm:flex-row items-center gap-4 mt-2">
+                  <div className="relative shrink-0">
+                    <Avatar size="lg" name={fullName} url={avatarUrl || null} />
+                    {avatarUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setAvatarUrl('')}
+                        className="absolute -top-1 -right-1 p-0.5 bg-red-600 text-white rounded-full hover:bg-red-700 transition"
+                        title="حذف تصویر پروفایل"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex-1 w-full space-y-2">
+                    <div className="relative border border-dashed border-slate-300 hover:border-sky-500 rounded-lg py-2 px-3 text-center cursor-pointer bg-white transition">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            try {
+                              /*
+                               * A Latin folder name, deliberately. `/api/upload`
+                               * strips anything but `[A-Za-z0-9_-]`, so a Persian
+                               * one reduces to an empty string and the file lands
+                               * in the uploads root instead — silently.
+                               */
+                              setAvatarUrl(await uploadFile(file, 'user-avatars'));
+                            } catch (err: any) {
+                              console.error(err);
+                              alert(err.message || 'خطا در بارگذاری تصویر پروفایل');
+                            }
+                          }
+                          if (e.target) e.target.value = '';
+                        }}
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                      />
+                      <span className="text-[11px] text-slate-500 font-semibold">
+                        انتخاب تصویر پروفایل
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-500 block mb-1">جنسیت</label>
+                      <select
+                        value={gender}
+                        onChange={(e) => setGender(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-right"
+                      >
+                        {/*
+                          * The blank option is a real answer and stays first.
+                          * `namePrefixFor` writes no honorific for it, which is
+                          * the correct outcome rather than a gap to be filled —
+                          * guessing writes «جناب آقای» to a woman.
+                          */}
+                        <option value="">— نامشخص (بدون پیشوند) —</option>
+                        <option value="مرد">مرد — جناب آقای</option>
+                        <option value="زن">زن — سرکار خانم</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Signature Image Upload */}
               <div className="space-y-1.5 bg-slate-50 p-4 rounded-xl border border-slate-200/60">
                 <label className="text-xs font-bold text-slate-700 block">تصویر نمونه امضا جهت درج در پیش‌فاکتورها</label>
@@ -903,6 +991,76 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                     >
                       {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Profile picture and honorific */}
+              <div className="space-y-1.5 bg-slate-50 p-4 rounded-xl border border-slate-200/60">
+                <label className="text-xs font-bold text-slate-700 block">تصویر پروفایل و نحوه خطاب</label>
+                <div className="flex flex-col sm:flex-row items-center gap-4 mt-2">
+                  <div className="relative shrink-0">
+                    <Avatar size="lg" name={fullName} url={avatarUrl || null} />
+                    {avatarUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setAvatarUrl('')}
+                        className="absolute -top-1 -right-1 p-0.5 bg-red-600 text-white rounded-full hover:bg-red-700 transition"
+                        title="حذف تصویر پروفایل"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex-1 w-full space-y-2">
+                    <div className="relative border border-dashed border-slate-300 hover:border-sky-500 rounded-lg py-2 px-3 text-center cursor-pointer bg-white transition">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (e: React.ChangeEvent<HTMLInputElement>) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            try {
+                              /*
+                               * A Latin folder name, deliberately. `/api/upload`
+                               * strips anything but `[A-Za-z0-9_-]`, so a Persian
+                               * one reduces to an empty string and the file lands
+                               * in the uploads root instead — silently.
+                               */
+                              setAvatarUrl(await uploadFile(file, 'user-avatars'));
+                            } catch (err: any) {
+                              console.error(err);
+                              alert(err.message || 'خطا در بارگذاری تصویر پروفایل');
+                            }
+                          }
+                          if (e.target) e.target.value = '';
+                        }}
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                      />
+                      <span className="text-[11px] text-slate-500 font-semibold">
+                        انتخاب تصویر پروفایل
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-500 block mb-1">جنسیت</label>
+                      <select
+                        value={gender}
+                        onChange={(e) => setGender(e.target.value)}
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-right"
+                      >
+                        {/*
+                          * The blank option is a real answer and stays first.
+                          * `namePrefixFor` writes no honorific for it, which is
+                          * the correct outcome rather than a gap to be filled —
+                          * guessing writes «جناب آقای» to a woman.
+                          */}
+                        <option value="">— نامشخص (بدون پیشوند) —</option>
+                        <option value="مرد">مرد — جناب آقای</option>
+                        <option value="زن">زن — سرکار خانم</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
               </div>
