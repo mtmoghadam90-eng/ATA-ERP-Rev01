@@ -96,6 +96,28 @@ powershell -ExecutionPolicy Bypass -File E:\Apps\ATA-ERP-Rev01\scripts\deploy.ps
 
 نکته‌ی کلیدی: تا وقتی type-check و build سبز نشوند، سرویس **ری‌استارت نمی‌شود** — پس یک کامیت خراب نمی‌تواند برنامه را از کار بیندازد.
 
+### اگر سرور به GitHub وصل نشود
+
+مرحله‌ی ۳ حالا کد خروج `git` را بررسی می‌کند و اگر `git fetch` شکست بخورد **متوقف می‌شود**:
+
+```
+[3] Fetching the latest code
+fatal: unable to access 'https://github.com/...': Could not connect to server
+    FAILED - git fetch failed - this server could not reach GitHub. NOTHING was deployed.
+      The code on this server is unchanged (still 329cd02).
+      Check the network/proxy, then run this script again.
+```
+
+پیش از این چنین نبود: `$ErrorActionPreference = "Stop"` روی دستورات native مثل `git` اثر ندارد، پس `git fetch` بی‌سروصدا شکست می‌خورد، خط بعدی روی `origin/main` **محلیِ کهنه** ری‌ست می‌کرد و اسکریپت `OK - already up to date` می‌نوشت. نتیجه: چهار نسخه روی سرور نرفت و به‌جای «مستقر نشده»، به‌عنوان «کار نمی‌کند» گزارش شد.
+
+اگر این پیام را دیدید، هیچ چیزی روی سرور عوض نشده. برای بررسی نسخه‌ی فعلی:
+
+```powershell
+cd E:\Apps\ATA-ERP-Rev01
+git log -1 --oneline
+git ls-remote origin HEAD    # آخرین کامیت روی GitHub
+```
+
 ### خروجی موفق
 
 ```
