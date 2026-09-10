@@ -6148,7 +6148,16 @@ export default function ProjectsView({
               title: draft.title,
               description: draft.description,
               priority: draft.priority,
-              status: 'در حال انجام',
+              /*
+               * No status: `createTask` writes «برای انجام».
+               *
+               * This wrote «در حال انجام» — a value nobody chose, since this
+               * modal draws no status control — so a note somebody turned into
+               * a task for themselves landed in «در حال انجام» on the board,
+               * beside the work they were actually doing. Where a new task
+               * starts is one rule and it lives in the service; naming it here
+               * is the second copy that overrode it.
+               */
               dueDate: draft.dueDate,
               assignedToUserId: currentUser?.id ?? null,
               assignedToName: currentUser?.fullName ?? null,

@@ -197,7 +197,9 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
       await tasksApi.create({
         title,
         priority: newPriority,
-        status: 'در حال انجام',
+        // No status: `createTask` writes «برای انجام». This box has no status
+        // control either, so the «در حال انجام» it used to send was a value
+        // nobody chose — see the note in ProjectsView's task-from-a-message.
         dueDate: selectedDateStr,
         assignedToName: currentUser?.fullName ?? null,
         // A time turns it into a reminder on the same day; without one it is

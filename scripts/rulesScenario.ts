@@ -13880,5 +13880,67 @@ head("Competitors: who we lose to, and by how much");
     /fetchBrandLogo/.test(login) && !/api\/settings/.test(login));
 }
 
+{
+  head("A new task starts in «برای انجام», whichever door it came through");
+
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /*
+   * Where a new task starts is one rule and it lives in `createTask`. Three
+   * client call sites each wrote «در حال انجام» over it — and none of the three
+   * draws a status control, so it was a value nobody chose. A note turned into
+   * a task, a day's task typed into the calendar and an ordinary «وظیفه جدید»
+   * all landed in the middle column beside the work actually in hand.
+   */
+  const service = strip(readFileSync("src/server/services/taskService.ts", "utf-8"));
+  ok("the service is where a new task's status is decided",
+    /db\.task\.create\(\{[\s\S]{0,200}?status:\s*TASK_TODO/.test(service));
+
+  const CREATE_SITES: Array<[string, string]> = [
+    ["the activity feed's task-from-a-message", "src/components/ProjectsView.tsx"],
+    ["the calendar's add-for-this-day", "src/components/TaskCalendarModal.tsx"],
+    ["the ordinary task form", "src/components/TasksView.tsx"],
+  ];
+  for (const [label, file] of CREATE_SITES) {
+    const src = strip(readFileSync(file, "utf-8"));
+    /*
+     * Read only the create call, not the file: `TasksView` legitimately sends a
+     * status on the *update* path (there a person really did pick one from the
+     * dropdown), and `TaskCalendarModal` writes one when a card is ticked.
+     */
+    const call = src.split("tasksApi.create(")[1]?.split(");")[0] ?? "";
+    ok(`${label} calls tasksApi.create`, call.length > 0, file);
+    ok(`...and names no status of its own`, !/\bstatus\b/.test(call), call.slice(0, 200));
+  }
+
+  /*
+   * The other half, and it only became necessary because of the change above.
+   * A `<select>` whose value matches no option renders the **first** one, so a
+   * task now sitting in «برای انجام» would open reading «در حال انجام» and be
+   * silently rewritten to it on save — the fault this very form already had on
+   * «مرتبط با».
+   */
+  const tasksView = readFileSync("src/components/TasksView.tsx", "utf-8");
+  const statusSelect = tasksView.split("وضعیت انجام کار")[1]?.split("</select>")[0] ?? "";
+  ok("the edit form's status select exists", statusSelect.length > 0);
+  for (const value of TASK_STATUSES) {
+    ok(`...and offers «${value}»`, statusSelect.includes(`value="${value}"`), value);
+  }
+
+  /* And the board really does draw that status in the first column. */
+  eq("«برای انجام» is the TODO lane", taskLane(TASK_TODO), "TODO");
+  eq("...for an ordinary task on the board too",
+    taskBoardLane({ status: TASK_TODO, taskKind: "GENERAL", dueDate: "1405/06/20" }, "1405/06/18"),
+    "TODO");
+  /*
+   * The one kind that deliberately does not follow: a next action is parked by
+   * its date, so «برای انجام» plus a future day is still «در انتظار».
+   */
+  eq("...but a next action still waits for its own day",
+    taskBoardLane({ status: TASK_TODO, taskKind: "NEXT_ACTION", dueDate: "1405/06/25" }, "1405/06/18"),
+    "WAITING");
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) { console.log("Failures:"); fails.forEach(f => console.log("  • " + f)); }
