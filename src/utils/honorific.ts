@@ -17,19 +17,56 @@ export const HONORIFICS = {
 } as const;
 
 /**
+ * The same person, addressed by a colleague rather than by the company.
+ *
+ * «جناب آقای مهندس» is the register of a document that leaves the building —
+ * it is on every proforma and every customer message, and it is absurd in a
+ * text message telling somebody that a colleague has just handed them a job.
+ * «آقای رضایی» is what a person actually writes to a person here, so the two
+ * registers are two named lists rather than one list used in two places, and
+ * neither can be softened into the other by a call site.
+ *
+ * They share the one thing that must not be written twice — deciding which of
+ * the two a stored gender means — through `genderOf`.
+ */
+export const STAFF_HONORIFICS = {
+  MALE: "آقای",
+  FEMALE: "خانم",
+} as const;
+
+/**
+ * Which honorific a stored gender calls for, or null when there is none.
+ *
+ * The single fold, so a spelling accepted by the customer-facing wording and
+ * refused by the staff wording is impossible. Null rather than a guess for the
+ * two cases that are neither a man nor a woman: a company (which has no gender
+ * and is addressed by its name) and a person whose gender was never filled in.
+ */
+export function genderOf(
+  gender: string | null | undefined,
+): "MALE" | "FEMALE" | null {
+  const value = String(gender ?? "").trim();
+  if (value === "مرد" || value === "آقا") return "MALE";
+  if (value === "زن" || value === "خانم") return "FEMALE";
+  return null;
+}
+
+/**
  * The honorific for a gender, or an empty string when there is nobody to
  * address by one.
  *
- * Blank rather than a guess for the two cases that are not a man or a woman: a
- * company (which has no gender and is addressed by its name) and a person whose
- * gender was never filled in. Guessing here writes «جناب آقای مهندس» to a woman
+ * Blank rather than a guess: guessing here writes «جناب آقای مهندس» to a woman
  * on the strength of a blank field, which is worse than writing nothing.
  */
 export function namePrefixFor(gender: string | null | undefined): string {
-  const value = String(gender ?? "").trim();
-  if (value === "مرد" || value === "آقا") return HONORIFICS.MALE;
-  if (value === "زن" || value === "خانم") return HONORIFICS.FEMALE;
-  return "";
+  const which = genderOf(gender);
+  return which ? HONORIFICS[which] : "";
+}
+
+/** The staff register of the same rule — «آقای», «خانم», or nothing. */
+export function staffPrefixFor(gender: string | null | undefined): string {
+  const which = genderOf(gender);
+  return which ? STAFF_HONORIFICS[which] : "";
 }
 
 /**
@@ -45,6 +82,27 @@ export function addresseeOf(
   name: string | null | undefined,
 ): string {
   return [namePrefixFor(gender), String(name ?? "").trim()]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/**
+ * The staff register of the same join — «آقای علی رضایی», or the bare name.
+ *
+ * The whole name and not a surname: a surname would have to be guessed out of
+ * `fullName` by taking the last word, and «سید محمد حسین رضایی» is exactly the
+ * shape that guess gets wrong. «آقای علی رضایی» is a little formal and is never
+ * *wrong*, which is the right trade for a message sent automatically.
+ *
+ * An account whose gender nobody filled in comes out as its plain name, with
+ * no leading space — which is most accounts on the day this ships, so it is
+ * the ordinary case rather than an edge one.
+ */
+export function staffAddresseeOf(
+  gender: string | null | undefined,
+  name: string | null | undefined,
+): string {
+  return [staffPrefixFor(gender), String(name ?? "").trim()]
     .filter(Boolean)
     .join(" ");
 }

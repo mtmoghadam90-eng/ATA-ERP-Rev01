@@ -1,6 +1,7 @@
 import { getDb } from "../db";
 import { loadSettings } from "../settings";
 import { CHANNELS, renderTemplate } from "../../utils/messaging";
+import { staffAddresseeOf, staffPrefixFor } from "../../utils/honorific";
 import {
   StaffNotificationKind, StaffSkipReason, StaffSmsSettings,
   normalizeMobile, staffRecipientRefusal, staffSmsRefusal, staffTemplateFor,
@@ -88,7 +89,13 @@ export async function notifyStaffBySms(
 
   const assignee = await db.user.findUnique({
     where: { id: String(input.assigneeUserId) },
-    select: { id: true, fullName: true, isActive: true, mobile: true },
+    /*
+     * `gender` is here for the honorific and nowhere else. It is deliberately
+     * out of `DIRECTORY_SELECT` — a colleague's gender is not something every
+     * account may enumerate through the assignment pickers, the same rule
+     * `mobile` beside it follows — so this projection asks for it by name.
+     */
+    select: { id: true, fullName: true, isActive: true, mobile: true, gender: true },
   });
   const recipientRefusal = staffRecipientRefusal(assignee);
   if (recipientRefusal) return { queued: false, skipped: recipientRefusal };
@@ -111,6 +118,14 @@ export async function notifyStaffBySms(
    */
   const body = renderTemplate(staffTemplateFor(input.kind, staff), {
     assigneeName: assignee?.fullName ?? "",
+    /*
+     * The staff register, never the customer one: «آقای رضایی» and not «جناب
+     * آقای مهندس رضایی», which is what a proforma says and is absurd in a text
+     * about a task. An account whose gender nobody filled in resolves to the
+     * bare name, so the message reads exactly as it did before this existed.
+     */
+    assigneePrefix: staffPrefixFor(assignee?.gender),
+    assigneeAddressee: staffAddresseeOf(assignee?.gender, assignee?.fullName),
     actorName: input.actorName ?? "یک همکار",
     title: input.title ?? "",
     dueDate: input.dueDate ?? "—",

@@ -20,6 +20,18 @@
  * them every restart. And a patch only ever **adds**: it never renames, reorders
  * or removes, because the list is the user's and this is a floor under it, not a
  * replacement for it.
+ *
+ * There is **one** exception and it proves the rule rather than loosening it.
+ * A patch that *wrote* a value may later replace that exact value — the case is
+ * `staff-sms-addressee-1`, because `staff-sms-notifications-1` copies the
+ * message wording into the document, which then puts every later improvement to
+ * that wording out of reach of every database but a brand-new one: the very
+ * fault this file exists to answer, arriving through the door this file opened.
+ * It is safe only under the condition that makes it not an overwrite — the
+ * stored value must be **character-for-character** what the earlier patch
+ * itself wrote, so anything a person has touched is untouched. A patch may
+ * never replace a value it did not write, and `test:rules` holds this one
+ * against an edited document.
  */
 
 import type { ERPSettings } from "../types";
@@ -27,7 +39,10 @@ import { DEFAULT_NEXT_ACTION_KINDS } from "./nextAction";
 import {
   RESULT_LOST_TO_COMPETITOR, RESULT_PURCHASE_CANCELLED, RESULT_PURCHASE_CONFIRMED,
 } from "./salesFollowUp";
-import { DEFAULT_STAFF_TEMPLATES } from "./staffNotifications";
+import {
+  DEFAULT_STAFF_TEMPLATES, STAFF_NOTIFICATION_KINDS, SUPERSEDED_STAFF_TEMPLATES,
+  type StaffNotificationKind,
+} from "./staffNotifications";
 
 export interface SettingsPatch {
   /** Recorded in `settings.appliedPatches`; never reused for different content. */
@@ -82,6 +97,59 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
         messaging: {
           ...settings.messaging,
           staffSms: { enabled: true, templates: { ...DEFAULT_STAFF_TEMPLATES } },
+        },
+      };
+    },
+  },
+  {
+    id: "staff-sms-addressee-1",
+    describe: "افزودن خطاب همکار («آقای/خانم») به متن پیش‌فرض پیامک ارجاع کار",
+    /*
+     * The one patch that replaces rather than appends, and the reason it may.
+     *
+     * `staff-sms-notifications-1` above **copies** the wording into the settings document the
+     * first time it runs, so every live database now stores the text of the day
+     * it restarted — and a later edit of `DEFAULT_STAFF_TEMPLATES` reaches a
+     * fresh installation and nothing else. That is the very rule this file
+     * exists for, arriving through the door this file opened. Without this the
+     * honorific would be a variable in the palette that the message nobody
+     * edited never uses, which reads as a feature that was wired up and does
+     * nothing.
+     *
+     * It is still not an overwrite: a stored template is replaced **only when
+     * it is character-for-character** one of the wordings a previous patch
+     * itself wrote (`SUPERSEDED_STAFF_TEMPLATES`). Anything a person has
+     * touched — a word changed, a variable moved, a space added — is left
+     * exactly as it is. Same rule as `isGeneratedPaymentBody` in the proforma
+     * notes: a mechanism that manages a piece of text may take back precisely
+     * what it put there and nothing else.
+     *
+     * A document with no `staffSms` at all is left to `staff-sms-notifications-1`,
+     * which
+     * writes the current defaults; patching it here as well would be two
+     * writers for one value.
+     */
+    apply: (settings) => {
+      const staff = settings.messaging?.staffSms;
+      const stored = staff?.templates;
+      if (!staff || !stored) return null;
+
+      const next: Partial<Record<StaffNotificationKind, string>> = { ...stored };
+      let changed = false;
+      for (const kind of STAFF_NOTIFICATION_KINDS) {
+        const current = stored[kind];
+        if (typeof current !== "string") continue;
+        if (!SUPERSEDED_STAFF_TEMPLATES[kind].includes(current)) continue;
+        next[kind] = DEFAULT_STAFF_TEMPLATES[kind];
+        changed = true;
+      }
+      if (!changed) return null;
+
+      return {
+        ...settings,
+        messaging: {
+          ...settings.messaging,
+          staffSms: { ...staff, templates: next },
         },
       };
     },

@@ -1067,11 +1067,16 @@ export interface User {
   /**
    * «مرد» or «زن» — which honorific this person is addressed by.
    *
-   * `namePrefixFor` in `src/utils/honorific.ts` is the single reading, the same
-   * one every proforma and customer message goes through. **Absent is an
-   * ordinary answer** and means nobody has said: the rule then writes no
-   * honorific at all, because guessing writes «جناب آقای» to a woman on the
-   * strength of a blank field.
+   * Read by the **staff SMS**, through `staffPrefixFor`/`staffAddresseeOf`, so
+   * a text saying a colleague has handed somebody a job opens «آقای رضایی
+   * عزیز». Deliberately the staff register and not `namePrefixFor`: «جناب آقای
+   * مهندس» belongs on a proforma and is absurd between colleagues. Both
+   * readings fold the stored value through the one `genderOf`.
+   *
+   * **Absent is an ordinary answer** and means nobody has said: the rule then
+   * writes no honorific at all and the message goes out addressed by the bare
+   * name, because guessing writes «آقای» to a woman on the strength of a blank
+   * field.
    */
   gender?: string | null;
   /**
