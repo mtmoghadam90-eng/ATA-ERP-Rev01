@@ -37,9 +37,9 @@ export const AVATAR_SIZES = {
    */
   /** A message in a project's feed — the smallest thing on the card. */
   xs: { px: 16, initials: 1 },
-  /** A row in the users grid, and anywhere a list names people. */
+  /** Anywhere a compact list names people. */
   sm: { px: 32, initials: 2 },
-  /** The sidebar's signed-in account. */
+  /** The sidebar's signed-in account, and a card in the users grid. */
   md: { px: 40, initials: 2 },
   /** The users form's own preview of what was uploaded. */
   lg: { px: 64, initials: 2 },
