@@ -17,6 +17,7 @@ import AfterSalesServicesView from './components/AfterSalesServicesView';
 import PackagingDeliveryView from './components/PackagingDeliveryView';
 import SupplierInquiriesView from './components/SupplierInquiriesView';
 import LoginView from './components/LoginView';
+import { brandLogoUrl } from './utils/brand';
 import { useERPStore, onSessionExpired } from './useERPStore';
 import { ensureHolidayCalendar } from './api/holidays';
 import { ShieldAlert, Bell, Inbox, Menu, Calendar, CheckCircle2, Clock, User, Sun, Moon } from 'lucide-react';
@@ -389,10 +390,7 @@ export default function App() {
    * "Rendered more hooks than during the previous render". A white page, and
    * neither the type-checker nor the build can see it coming.
    */
-  useBrowserTab(
-    store.settings?.proformaTemplates?.find((t) => t.name === store.settings?.activeTemplateId)?.logoUrl
-      ?? store.settings?.proformaTemplates?.[0]?.logoUrl,
-  );
+  useBrowserTab(brandLogoUrl(store.settings));
 
   if (!store.isInitialized) {
     return (
@@ -633,8 +631,7 @@ export default function App() {
   };
 
 
-  const activeTemplate = store.settings?.proformaTemplates?.find(t => t.name === store.settings?.activeTemplateId) || store.settings?.proformaTemplates?.[0];
-  const logoUrl = activeTemplate?.logoUrl;
+  const logoUrl = brandLogoUrl(store.settings);
   const isStandalone = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('standalone') === 'true';
 
   return (

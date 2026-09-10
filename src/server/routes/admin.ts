@@ -2,6 +2,7 @@ import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
 import { getTodayShamsi } from "../../dateUtils";
+import { brandLogoUrl } from "../../utils/brand";
 import { RATE_NAMES, scrapeRates } from "../rateSource";
 import {
   AUDIT_FILTERABLE, AUDIT_SORTABLE,
@@ -20,6 +21,29 @@ const denied = (res: express.Response, message: string) =>
 
 export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void {
   /* ------------------------------ settings ------------------------------ */
+
+  /*
+   * The company logo, and nothing else, without a session.
+   *
+   * The login screen draws it, and at that moment nobody has signed in — so it
+   * cannot go through `GET /api/settings`, which needs `erp_settings`. It
+   * answers one string: `brandLogoUrl` projects it and the settings document
+   * itself never leaves this handler, which is the whole discipline of an
+   * endpoint that asks for no credentials.
+   *
+   * It reveals nothing that is not already public on this LAN: the image lives
+   * under `/uploads`, which is `express.static` with no guard, so the file is
+   * reachable by anybody who has its URL already. Null when none is configured
+   * — an ordinary answer, and the screen has its own mark for it.
+   */
+  app.get("/api/brand", async (_req, res) => {
+    try {
+      res.json({ success: true, logoUrl: brandLogoUrl(await getSettings()) });
+    } catch {
+      // A brand that cannot be read must not stop anybody signing in.
+      res.json({ success: true, logoUrl: null });
+    }
+  });
 
   app.get("/api/settings", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, "erp_settings", "read");
