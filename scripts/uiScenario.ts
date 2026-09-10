@@ -53,6 +53,7 @@ import NextActionModal from "../src/components/NextActionModal";
 import SaveWithNextActionButton from "../src/components/SaveWithNextActionButton";
 import LoginView from "../src/components/LoginView";
 import Avatar from "../src/components/Avatar";
+import TaskCalendarModal from "../src/components/TaskCalendarModal";
 import type { NextActionDraft } from "../src/utils/nextAction";
 import { resizeColumns } from "../src/utils/columnWidths";
 import type { Product } from "../src/types";
@@ -1776,6 +1777,78 @@ head("Avatar: one element, at the size the table says");
 
   act(() => { aRoot.unmount(); });
   aHost.remove();
+}
+
+/*
+ * The calendar's close control, and where it sits.
+ *
+ * It was inside the *day-details* panel — a `md:hidden` X and a `hidden
+ * md:block` button, exact complements, so there was only ever one and at both
+ * widths it was at the bottom. jsdom has no media queries and no layout, so
+ * neither the breakpoint nor the pixels can be asserted here; what it can see
+ * is the thing that actually decides the reading order on a phone, where the
+ * panels stack — **document order**. The close button coming before the month
+ * grid is what «at the top» means once the two panels are stacked.
+ */
+head("Calendar: the close control is above the month, not below it");
+
+{
+  const gc = globalThis as unknown as Record<string, unknown>;
+  const realFetch = gc.fetch;
+  gc.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ success: true, rows: [], page: 1, pageSize: 50, total: 0, totalPages: 0 }),
+  });
+
+  const cHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const cRoot = createRoot(cHost);
+  await act(async () => {
+    cRoot.render(React.createElement(TaskCalendarModal, {
+      isOpen: true,
+      onClose: () => {},
+      currentUser: { id: "u1", fullName: "محمد رضایی" } as never,
+    }));
+    await Promise.resolve();
+  });
+
+  const closers = [...cHost.querySelectorAll("button")]
+    .filter((b) => (b.getAttribute("title") ?? "") === "بستن");
+  ok("there is exactly one close control, not one per breakpoint",
+    closers.length === 1, closers.length);
+
+  const closeBtn = closers[0];
+  /*
+   * The *deepest* element carrying the weekday, not the first.
+   *
+   * `querySelectorAll("*").find(textContent includes …)` answers the outermost
+   * ancestor — the modal itself — and `compareDocumentPosition` then reports
+   * CONTAINS rather than FOLLOWING, so the check failed while the markup was
+   * perfectly correct. It was written that way first and this is what it cost.
+   */
+  const grid = [...cHost.querySelectorAll("*")]
+    .filter((el) => (el.textContent ?? "").trim() === "شنبه")
+    .pop();
+  ok("the month grid rendered", !!grid);
+
+  if (closeBtn && grid) {
+    /*
+     * DOCUMENT_POSITION_FOLLOWING on the button's comparison means the grid
+     * comes after it — which is «the X is above the calendar», the whole ask.
+     */
+    const rel = closeBtn.compareDocumentPosition(grid);
+    ok("...and the close control comes before it in the document",
+      (rel & dom.window.Node.DOCUMENT_POSITION_FOLLOWING) !== 0, rel);
+  }
+
+  ok("the close control is not hidden at any width",
+    !(closeBtn?.className ?? "").includes("md:hidden")
+    && !(closeBtn?.className ?? "").includes("hidden"),
+    closeBtn?.className);
+
+  act(() => { cRoot.unmount(); });
+  cHost.remove();
+  gc.fetch = realFetch;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

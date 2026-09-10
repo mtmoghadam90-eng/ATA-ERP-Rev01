@@ -342,22 +342,48 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 z-50 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-4xl overflow-hidden animate-scale-in flex flex-col md:flex-row max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-4rem)]">
+      <div className="bg-white rounded-2xl shadow-xl border border-slate-100 w-full max-w-4xl overflow-hidden animate-scale-in flex flex-col max-h-[calc(100vh-2rem)] sm:max-h-[calc(100vh-4rem)]">
         
+        {/*
+          * The modal's own header, and the only way out of it.
+          *
+          * There was no header at all: the two panels sat side by side and the
+          * close control lived inside the *second* one, as a `md:hidden` X and a
+          * `hidden md:block` button — exact complements, so there was only ever
+          * one, and at both widths it was at the **bottom**. On a phone the
+          * panels stack, so closing the calendar meant scrolling past the whole
+          * month grid to reach it.
+          *
+          * One control, above both panels, drawn at every width. It sits outside
+          * the scrolling body (`shrink-0`), so a long day list cannot push it off
+          * the screen — which is the other half of «at the top».
+          */}
+        <div className="flex items-center justify-between gap-3 px-5 sm:px-6 py-4 border-b border-slate-100 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="bg-sky-50 p-2 rounded-xl text-sky-600 shrink-0">
+              <Calendar size={20} />
+            </div>
+            <div className="min-w-0">
+              <h3 className="font-bold text-slate-800 text-base truncate">تقویم پیگیری و وظایف</h3>
+              <p className="text-xs text-slate-500 truncate">کارهای ثبت شده روزانه را پیگیری کنید</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-slate-100 text-slate-500 hover:text-slate-700 rounded-lg transition shrink-0"
+            title="بستن"
+            aria-label="بستن تقویم"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
+
         {/* Main Calendar Panel */}
         <div className="flex-1 p-5 sm:p-6 flex flex-col border-b md:border-b-0 md:border-l border-slate-100 overflow-y-auto">
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
-            <div className="flex items-center gap-2">
-              <div className="bg-sky-50 p-2 rounded-xl text-sky-600">
-                <Calendar size={20} />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-800 text-base">تقویم پیگیری و وظایف</h3>
-                <p className="text-xs text-slate-500">کارهای ثبت شده روزانه را پیگیری کنید</p>
-              </div>
-            </div>
-
+          {/* Month navigation. The title it used to sit beside is the modal's now. */}
+          <div className="flex items-center justify-end border-b border-slate-100 pb-4 mb-4">
             {/* Navigation */}
             <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 p-1 rounded-xl">
               <button 
@@ -510,13 +536,6 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
                   {selectedDay ? `${selectedDay} ${monthName} ${currentYear}` : 'انتخاب روز'}
                 </span>
               </div>
-              <button 
-                onClick={onClose} 
-                className="p-1.5 hover:bg-slate-200 text-slate-500 rounded-lg transition shrink-0 md:hidden"
-                title="بستن"
-              >
-                <X size={18} />
-              </button>
             </div>
 
             {/* Tasks list */}
@@ -731,16 +750,9 @@ export default function TaskCalendarModal({ isOpen, onClose, currentUser }: Task
             </div>
           )}
 
-          <div className="mt-4 pt-4 border-t border-slate-200/60 hidden md:block">
-            <button
-              onClick={onClose}
-              className="w-full py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-semibold transition"
-            >
-              بستن تقویم پیگیری
-            </button>
-          </div>
-
         </div>
+
+        </div>{/* body: the two panels */}
 
       </div>
     </div>

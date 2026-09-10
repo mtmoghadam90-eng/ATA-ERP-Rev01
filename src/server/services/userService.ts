@@ -422,6 +422,10 @@ export async function findAuthUser(
     select: {
       id: true, username: true, fullName: true, position: true, role: true,
       isSystemAdmin: true, isActive: true, permissions: true, sessionEpoch: true,
+      // `/api/me` returns this object, so these have to be here as well as in
+      // SAFE_SELECT: login carried them and the next page load did not, which
+      // is how the sidebar's avatar came back as initials after a refresh.
+      gender: true, avatarUrl: true,
     },
   });
   if (!user || !user.isActive) return null;
