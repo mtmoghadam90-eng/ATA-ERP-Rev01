@@ -15296,6 +15296,122 @@ head("Competitors: who we lose to, and by how much");
   ok("the status route reports the relay without its address",
     /relay: whatsappUsesRelay\(\)/.test(routes)
     && !/WHATSAPP_RELAY_URL/.test(routes));
+
+  /* --------------------- the relay service's own promises ----------------- */
+
+  {
+    const relaySrc = strip(readFileSync("relay/server.ts", "utf8"));
+    ok("the relay source survived having its comments stripped",
+      relaySrc.includes("http.createServer"));
+
+    /*
+     * **The socket is imported, never re-implemented.** The pairing, the
+     * reconnect policy, the `loggedOut` rule and the session handling are one
+     * piece of code running in two deployments — which is the whole reason the
+     * relay lives in this repository rather than in one of its own.
+     */
+    ok("the relay imports the ERP's own socket",
+      /from "\.\.\/src\/server\/services\/messaging\/whatsappClient"/.test(relaySrc));
+    ok("...and does not reimplement it", !/makeWASocket/.test(relaySrc));
+
+    /*
+     * **No token, no relay.** Starting open puts a machine on the internet that
+     * anybody can send from as the company's own line, and it looks perfectly
+     * healthy while doing it — so the refusal is at startup, which is the one
+     * moment whoever is setting it up is looking.
+     */
+    ok("it refuses to start without a token",
+      /if \(!TOKEN\)/.test(relaySrc) && /process\.exit\(1\)/.test(relaySrc));
+    ok("...and refuses a short one", /TOKEN\.length < \d+/.test(relaySrc));
+    ok("the token is compared in constant time", /timingSafeEqual/.test(relaySrc));
+
+    /*
+     * Loopback by default is a safety property, not an unconsidered default:
+     * TLS is terminated by a proxy in front, so the relay itself is unreachable
+     * from the internet.
+     */
+    ok("it binds loopback unless told otherwise",
+      /RELAY_HOST \?\? "127\.0\.0\.1"/.test(relaySrc));
+
+    /* Everything but /health is behind the token, and /health says nothing. */
+    ok("only the health check is open",
+      relaySrc.indexOf('"/health"') < relaySrc.indexOf("if (!authorised(req))"));
+    for (const path of ["/status", "/link", "/unlink", "/send"]) {
+      ok(`${path} is behind the token`,
+        relaySrc.indexOf(`"${path}"`) > relaySrc.indexOf("if (!authorised(req))"));
+    }
+
+    /*
+     * **A message body is a customer's words on a rented machine**, and a log is
+     * the one place they would accumulate. The recipient is masked for the same
+     * reason, kept only far enough to tell two sends apart.
+     */
+    /*
+     * Matched over the whole line rather than `log\([^)]*text`, which cannot
+     * cross the `)` of `mask(recipient)` and so passed with the body logged —
+     * caught by reintroducing exactly that.
+     */
+    ok("the body is never logged", !/^.*\blog\(.*\btext\b.*$/m.test(relaySrc));
+    ok("...and the recipient is masked", /log\("send", mask\(recipient\)/.test(relaySrc));
+
+    /*
+     * The floor between sends is an interlock and **not a second copy of the
+     * pacing policy**: the ERP decides when and how many, this only guarantees
+     * nothing can make the line send faster than a person types. It reads the
+     * same constant the ERP paces by, so there is still one number.
+     */
+    ok("the send floor reads the shared constant",
+      /SEND_FLOOR_MS = WHATSAPP_GAP_MS\.min/.test(relaySrc));
+    ok("...and waits it out rather than refusing",
+      /setTimeout\(r, SEND_FLOOR_MS - since\)/.test(relaySrc));
+
+    /*
+     * A refusal the socket itself made is a 200 with `ok: false`. A 5xx would
+     * make the ERP read it as a transport fault and retry it against a number
+     * that will refuse it again.
+     */
+    ok("a socket refusal answers 200, not 5xx",
+      /json\(res, 200, result\)/.test(relaySrc));
+
+    /* It is a relay and must not grow into a second messaging module. */
+    for (const forbidden of ["prisma", "getDb", "queueMessage", "renderTemplate", "express"]) {
+      ok(`the relay carries no ${forbidden}`, !relaySrc.includes(forbidden));
+    }
+
+    /*
+     * **The two baileys pins must be the same string.** It is a release
+     * candidate of an unofficial protocol client where a patch changes the
+     * handshake, and two hosts running two versions of it against one account is
+     * the shape of fault nobody would look for.
+     */
+    const rootPkg = JSON.parse(readFileSync("package.json", "utf8")) as
+      { dependencies: Record<string, string> };
+    const relayPkg = JSON.parse(readFileSync("relay/package.json", "utf8")) as
+      { dependencies: Record<string, string> };
+    eq("the relay pins the same baileys as the ERP",
+      relayPkg.dependencies["@whiskeysockets/baileys"],
+      rootPkg.dependencies["@whiskeysockets/baileys"]);
+    ok("...exactly, with no caret",
+      /^\d+\.\d+\.\d+/.test(relayPkg.dependencies["@whiskeysockets/baileys"] ?? ""));
+
+    /* A refused relay credential is this side's configuration, not WhatsApp's. */
+    eq("a refused relay token is a configuration fault",
+      whatsappFailureKind("توکن رله واتس‌اپ پذیرفته نشد؛ مقدار آن در دو طرف باید یکسان باشد."),
+      "CONFIG");
+    eq("...while WhatsApp's own refusal is still the account",
+      whatsappFailureKind("Stream Errored (unauthorized)"), "ACCOUNT");
+    /*
+     * The case the *ordering* decides, rather than one any branch would answer:
+     * a refused credential that also carries an account word. Without the
+     * config-first branch this reads as ACCOUNT and sends somebody to unlink a
+     * perfectly good device.
+     */
+    eq("...and a token refusal wins over an account word in one sentence",
+      whatsappFailureKind("توکن پذیرفته نشد: unauthorized"), "CONFIG");
+    ok("the transport answers 401 with the token's own sentence",
+      /response\.status === 401 \|\| response\.status === 403/.test(transport));
+  }
+
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

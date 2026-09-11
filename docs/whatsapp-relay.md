@@ -69,6 +69,33 @@ Both, or neither. Rules the ERP enforces (`relayConfigRefusal`):
 The settings screen marks a relayed line «از طریق رله» and names which half a
 failure belongs to — the route, the account, or the configuration.
 
+## Running it
+
+The relay is `relay/server.ts` **in this repository**, and it imports the ERP's
+own `whatsappClient.ts` rather than copying it — the pairing, the reconnect
+policy, the `loggedOut` rule and the session handling are one piece of code in
+both deployments. That is why it lives here and not in a repository of its own,
+and why the two `@whiskeysockets/baileys` pins must stay identical (`test:rules`
+holds them against each other: two hosts on two versions of an unofficial
+protocol client, against one account, is a fault nobody would go looking for).
+
+`relay/package.json` declares only baileys and `tsx`, so installing inside
+`relay/` does not pull Prisma, sharp or anything else the ERP needs.
+
+What it refuses to do:
+
+- **start without `RELAY_TOKEN`**, or with one under 24 characters — an open
+  relay looks perfectly healthy while anybody sends as the company's line;
+- **bind anything but loopback** unless told to, so only the TLS proxy in front
+  can reach it;
+- **log a message body** — those are a customer's words on a rented machine, and
+  a log is the one place they would accumulate. The recipient is masked.
+
+It also holds a floor between sends (`WHATSAPP_GAP_MS.min`, the same constant the
+ERP paces by). That is an **interlock and not a second copy of the policy**: the
+ERP decides when and how many, this only guarantees that nothing — a retry storm,
+anybody holding the token — can make the line send faster than a person types.
+
 ## The relay host
 
 - **Node 20 or newer** (`@whiskeysockets/baileys` requires it).
