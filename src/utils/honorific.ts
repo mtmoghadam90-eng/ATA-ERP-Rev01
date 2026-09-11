@@ -108,6 +108,29 @@ export function staffAddresseeOf(
 }
 
 /**
+ * Words that come before a name and are never a name.
+ *
+ * `fullName` is one free-text box, and a good many accounts are typed into it
+ * the way a colleague is addressed out loud — «مهندس حسینی» is one of the seeded
+ * ones. Taking the first word of that greets somebody «سلام، مهندس عزیز» every
+ * morning, which is not their name at all.
+ *
+ * **«سید» is deliberately not here.** It reads like a title and is part of a
+ * person's given name — «سید محمد» is one name, and dropping it would print a
+ * different person's name at them, which is the exact fault this list exists to
+ * prevent. What is on the list is only what nobody is ever called on its own.
+ */
+export const NAME_TITLES: readonly string[] = [
+  "جناب",
+  "سرکار",
+  "آقای",
+  "خانم",
+  "مهندس",
+  "دکتر",
+  "استاد",
+];
+
+/**
  * The name a colleague is greeted by on their own dashboard.
  *
  * «سلام، جناب آقای مهندس محمد مقدم عزیز» is how the company writes to a
@@ -123,11 +146,19 @@ export function staffAddresseeOf(
  * space on purpose (two initials out of one compound name is right), which is
  * exactly why this cannot reuse that rule.
  *
+ * **A title is not a first name.** `fullName` is typed by hand and «مهندس
+ * حسینی» is how a colleague is written down here, so the leading titles are
+ * dropped (`NAME_TITLES`) before the first word is taken — otherwise that
+ * account is greeted «سلام، مهندس عزیز» daily. A name that is *nothing but*
+ * titles keeps its first word rather than answering blank: whatever was typed
+ * is the only name there is.
+ *
  * An empty or unnamed account answers an empty string, and the caller decides
  * what to draw instead — greeting somebody by a blank is worse than not
  * greeting them.
  */
 export function firstNameOf(name: string | null | undefined): string {
   const words = String(name ?? "").trim().split(/\s+/).filter(Boolean);
-  return words[0] ?? "";
+  const named = words.filter((word) => !NAME_TITLES.includes(word));
+  return named[0] ?? words[0] ?? "";
 }

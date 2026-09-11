@@ -243,7 +243,20 @@ export function relayConfigRefusal(
   token: string | null | undefined,
 ): string | null {
   const address = String(url ?? "").trim();
-  if (!address) return null; // Not configured at all: the local socket, as before.
+  if (!address) {
+    /*
+     * A token with no address is half a configuration, and the half that is
+     * missing is the one that decides *where* the message goes. Answering null
+     * here sent it from the local socket without a word — the silent fallback
+     * this function exists to refuse, arriving through the only branch that did
+     * not check the pair. Both blank is the ordinary installation and is not a
+     * refusal at all.
+     */
+    if (String(token ?? "").trim()) {
+      return "آدرس رله واتس‌اپ تنظیم نشده است؛ با توکن بدون آدرس، پیام از خط همین سرور می‌رود.";
+    }
+    return null; // Not configured at all: the local socket, as before.
+  }
 
   let parsed: URL;
   try {

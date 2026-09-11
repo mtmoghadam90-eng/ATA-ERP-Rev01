@@ -5,6 +5,7 @@ import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from
 import { AuthUser, hasPermission } from "../auth";
 import { toJsonColumn, toNullableString } from "../childSync";
 import { normalizeLimit, workLimitRefusalReason } from "../../utils/workLimits";
+import { effectivePermissions } from "../../utils/permissions";
 
 /**
  * User account data access.
@@ -190,24 +191,41 @@ export async function createUser(
  * Key order is not meaning. The stored string was written by whichever client
  * last saved the account, so comparing the text would report a change every
  * time the order differed — and a reported change revokes the sessions.
+ *
+ * **Nor is an absent key.** A module flag that is missing means *granted*, and
+ * a field-level flag that is missing means *denied* — `effectivePermissions` is
+ * the single reading of that, and it is the one this comparison has to use.
+ * Every account written before a module existed stores that module's key
+ * nowhere, and the users form now seeds itself from the effective values and
+ * writes every key out explicitly on save. So opening somebody's permissions,
+ * changing nothing and pressing save wrote a document that differs *textually*
+ * from the stored one and not by a single grant — and the epoch bump signed
+ * that person out of a session that should never have been touched. The
+ * withdrawal this epoch exists for has to be a withdrawal somebody made.
+ *
+ * A stored key that is not a flag at all (a retired module's leftover) is read
+ * by nothing and therefore decides nothing here either.
  */
 export function samePermissions(next: unknown, stored: unknown): boolean {
-  const flatten = (value: unknown): string => {
-    if (value == null) return "";
+  const read = (value: unknown): Record<string, boolean> => {
     let parsed: unknown = value;
     if (typeof value === "string") {
       try {
         parsed = JSON.parse(value);
       } catch {
-        return value;
+        parsed = null;
       }
     }
-    if (!parsed || typeof parsed !== "object") return String(parsed);
-    return Object.entries(parsed as Record<string, unknown>)
+    const flags = parsed && typeof parsed === "object"
+      ? (parsed as Partial<Record<string, boolean>>)
+      : null;
+    return effectivePermissions(flags);
+  };
+  const flatten = (value: unknown): string =>
+    Object.entries(read(value))
       .map(([k, v]) => `${k}=${v}`)
       .sort()
       .join("&");
-  };
   return flatten(next) === flatten(stored);
 }
 

@@ -289,7 +289,7 @@ import {
 } from "../src/utils/cardSummary";
 import { activeTemplateOf, brandLogoUrl } from "../src/utils/brand";
 import {
-  HONORIFICS, STAFF_HONORIFICS, addresseeOf, firstNameOf, genderOf,
+  HONORIFICS, NAME_TITLES, STAFF_HONORIFICS, addresseeOf, firstNameOf, genderOf,
   namePrefixFor, staffAddresseeOf, staffPrefixFor,
 } from "../src/utils/honorific";
 import { AVATAR_SIZES, avatarColors, avatarHue, initialsOf } from "../src/utils/avatar";
@@ -751,10 +751,45 @@ ok("nor the same flags in another order",
   samePermissions(JSON.stringify({ customers: true, costs: true, dashboard: true }), permsStored));
 ok("a flipped flag is",
   !samePermissions(JSON.stringify({ dashboard: true, customers: true, costs: false }), permsStored));
-ok("and so is a new one",
-  !samePermissions(JSON.stringify({ dashboard: true, customers: true, costs: true, users: true }), permsStored));
 ok("two accounts with nothing stored match", samePermissions(null, null));
 ok("but nothing stored against something is a change", !samePermissions(null, permsStored));
+
+/*
+ * And an absent key is not a denial, which is where this signed people out.
+ *
+ * A module flag that is missing means *granted* — `hasPermission`, the sidebar,
+ * the route guard and `effectivePermissions` all read it that way — and every
+ * account written before a module existed stores that module's key nowhere. The
+ * users form now seeds from the effective values and writes every key out
+ * explicitly, so opening somebody's permissions, changing nothing and pressing
+ * save produced a document that differed *textually* from the stored one by a
+ * handful of keys and by not one grant. The epoch bumped and that person was
+ * signed out of a session nobody had decided to end.
+ *
+ * The two directions are what say the comparison reads by meaning rather than
+ * merely reading less: writing a module key out as granted is no change, and
+ * writing it out as **denied** is one.
+ */
+ok("writing an absent module key out as granted is not a change",
+  samePermissions(
+    JSON.stringify({ dashboard: true, customers: true, costs: true, users: true }),
+    permsStored));
+ok("...but writing it out as denied is",
+  !samePermissions(
+    JSON.stringify({ dashboard: true, customers: true, costs: true, users: false }),
+    permsStored));
+ok("...and a field-level flag is the other way round: absent means denied",
+  !samePermissions(
+    JSON.stringify({ dashboard: true, customers: true, costs: true, tasksAll: true }),
+    permsStored));
+ok("...so writing that one out as denied changes nothing",
+  samePermissions(
+    JSON.stringify({ dashboard: true, customers: true, costs: true, tasksAll: false }),
+    permsStored));
+ok("a key no flag names decides nothing either way",
+  samePermissions(
+    JSON.stringify({ dashboard: true, customers: true, costs: true, referrals: false }),
+    permsStored));
 
 /*
  * The contacts of a company are found on the server, in either direction.
@@ -2649,6 +2684,29 @@ head("How a customer is addressed");
   eq("...and an unnamed account answers nothing to draw", firstNameOf(""), "");
   eq("...as does a null one", firstNameOf(null), "");
 
+  /*
+   * A title is not a first name, and one of the seeded accounts is exactly that.
+   *
+   * `fullName` is one free-text box and «مهندس حسینی» is how a colleague is
+   * written down here, so taking the first word greeted that account «سلام،
+   * مهندس عزیز» every morning — not their name at all, and the same shape of
+   * fault the ZWNJ case above exists for.
+   */
+  eq("a title is not the name it precedes", firstNameOf("مهندس حسینی"), "حسینی");
+  eq("...nor is a stacked one", firstNameOf("جناب آقای مهندس رضایی"), "رضایی");
+  eq("...and the name after it still wins over the rest",
+    firstNameOf("دکتر محمد مقدم"), "محمد");
+  /*
+   * «سید» is deliberately not on that list: it reads like a title and is part of
+   * a person's given name, so dropping it would print a different person's name
+   * at them — which is the fault, not the fix.
+   */
+  eq("...but «سید» is part of a name and stays",
+    firstNameOf("سید محمد حسین رضایی"), "سید");
+  eq("...and a name that is nothing but a title keeps what was typed",
+    firstNameOf("مهندس"), "مهندس");
+  ok("...the title list never names «سید»", !NAME_TITLES.includes("سید"));
+
   /* The card reads that rule, and no longer the formal one. */
   /*
    * Comments first: the note above the greeting quotes the very literal it
@@ -2704,6 +2762,26 @@ head("How a customer is addressed");
   eq("an unfilled gender folds to nothing", genderOf(null), null);
   eq("...and so does a company's", genderOf(""), null);
   eq("...which neither register turns into a guess", staffPrefixFor(null), "");
+
+  /*
+   * And the form that asks the question describes the register it feeds.
+   *
+   * `User.gender` has exactly one reader — the staff notification, which greets
+   * a colleague «آقای رضایی» — and both user forms offered «مرد — جناب آقای»,
+   * which is the register of a proforma sent to a customer and wording this
+   * column never produces. The labels are read from `STAFF_HONORIFICS` so the
+   * two cannot come apart again, and there are two forms rather than one (the
+   * create and the edit), which is the five-customer-creation-forms rule.
+   */
+  /* Comments first: the note beside each picker names the register it replaced. */
+  const usersView = readFileSync("src/components/UsersView.tsx", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  eq("both gender pickers label «مرد» from the staff register",
+    (usersView.match(/STAFF_HONORIFICS\.MALE/g) ?? []).length, 2);
+  eq("...and «زن» too",
+    (usersView.match(/STAFF_HONORIFICS\.FEMALE/g) ?? []).length, 2);
+  ok("...and neither writes the customer-facing honorific out",
+    !usersView.includes(HONORIFICS.MALE) && !usersView.includes(HONORIFICS.FEMALE));
 
   /*
    * The ordinary case on the day this ships: nobody has filled the field in,
@@ -6729,6 +6807,28 @@ head("Deploy: a fetch that never reached GitHub is not «already up to date»");
   const upToDate = code.findIndex(l => /already up to date/.test(l));
   ok("«already up to date» is reported after the fetch is verified",
     upToDate > fetchIndex);
+
+  /*
+   * And the suite that catches what the type-checker cannot stands between a
+   * commit and this server.
+   *
+   * `npm run lint` sees a missing import and an unused local, and nothing else
+   * here: a hook below an early return, a route registered after the id route
+   * that swallows it, a migration carrying a bare GO, two copies of one rule
+   * that have drifted — every one of those type-checks perfectly and is held
+   * only by this suite. It needs no database and no browser, which is what makes
+   * it the one that can run on the server at all, and it was the one gate the
+   * script never ran. It has to stop the deploy rather than be reported, or it
+   * is a check nobody reads at the one moment somebody is watching.
+   */
+  ok("the deploy runs the rule checks", /npm run test:rules|\$npm run test:rules/.test(deploy));
+  const rulesAt = lines.findIndex(l => /run test:rules/.test(l));
+  const buildAt = lines.findIndex(l => /run build/.test(l));
+  ok("...before it builds, so a failure costs no build", rulesAt >= 0 && buildAt > rulesAt);
+  ok("...and a failure stops the deploy and restores the previous build",
+    /\$LASTEXITCODE -ne 0/.test(lines[rulesAt + 1] ?? "")
+    && /NOT deploying/.test(lines[rulesAt + 1] ?? "")
+    && /Restore-Dist/.test(lines[rulesAt + 1] ?? ""));
 }
 
 
@@ -16293,6 +16393,18 @@ head("Competitors: who we lose to, and by how much");
   ok("...and the refusal says why", (relayConfigRefusal("https://wa.example.com", "") ?? "")
     .includes("توکن"));
   ok("an unparseable address is refused", !!relayConfigRefusal("not a url", "s3cret"));
+  /*
+   * The other half of the pair, and the one branch that did not check it: a
+   * token with no address answered null, so the message went out from the local
+   * socket with nothing naming where it had gone. A silent fallback is precisely
+   * what this function exists to refuse, and it was reachable through the
+   * shortest path in it.
+   */
+  ok("a token with no address is refused too", !!relayConfigRefusal("", "s3cret"));
+  ok("...and the refusal names the address",
+    (relayConfigRefusal("", "s3cret") ?? "").includes("آدرس"));
+  ok("...while both blank is the ordinary installation, not a refusal",
+    relayConfigRefusal("", "") === null && relayConfigRefusal(null, null) === null);
 
   eq("a pair with no token is no configuration",
     relayConfigFrom("https://wa.example.com", ""), null);
