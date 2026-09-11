@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, ERPSettings } from '../types';
 import { PERMISSION_FLAGS, defaultPermissions, effectivePermissions } from '../utils/permissions';
+import { STAFF_HONORIFICS } from '../utils/honorific';
 import ConfirmModal from './ConfirmModal';
 import NumberField from './NumberField';
 import Avatar from './Avatar';
@@ -747,11 +748,19 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                           * The blank option is a real answer and stays first.
                           * `staffPrefixFor` writes no honorific for it, which is
                           * the correct outcome rather than a gap to be filled —
-                          * guessing writes «جناب آقای» to a woman.
+                          * guessing writes «آقای» to a woman.
+                          *
+                          * The wording beside each option is read from
+                          * `STAFF_HONORIFICS`, never written out: this column's
+                          * only reader is the staff notification, which greets a
+                          * colleague «آقای رضایی». Promising «جناب آقای» here —
+                          * which is the register of a proforma sent to a
+                          * customer — described wording the application never
+                          * produces for this field.
                           */}
                         <option value="">— نامشخص (بدون پیشوند) —</option>
-                        <option value="مرد">مرد — جناب آقای</option>
-                        <option value="زن">زن — سرکار خانم</option>
+                        <option value="مرد">{`مرد — ${STAFF_HONORIFICS.MALE}`}</option>
+                        <option value="زن">{`زن — ${STAFF_HONORIFICS.FEMALE}`}</option>
                       </select>
                     </div>
                   </div>
@@ -1066,11 +1075,19 @@ export default function UsersView({ settings, currentUser }: UsersViewProps) {
                           * The blank option is a real answer and stays first.
                           * `staffPrefixFor` writes no honorific for it, which is
                           * the correct outcome rather than a gap to be filled —
-                          * guessing writes «جناب آقای» to a woman.
+                          * guessing writes «آقای» to a woman.
+                          *
+                          * The wording beside each option is read from
+                          * `STAFF_HONORIFICS`, never written out: this column's
+                          * only reader is the staff notification, which greets a
+                          * colleague «آقای رضایی». Promising «جناب آقای» here —
+                          * which is the register of a proforma sent to a
+                          * customer — described wording the application never
+                          * produces for this field.
                           */}
                         <option value="">— نامشخص (بدون پیشوند) —</option>
-                        <option value="مرد">مرد — جناب آقای</option>
-                        <option value="زن">زن — سرکار خانم</option>
+                        <option value="مرد">{`مرد — ${STAFF_HONORIFICS.MALE}`}</option>
+                        <option value="زن">{`زن — ${STAFF_HONORIFICS.FEMALE}`}</option>
                       </select>
                     </div>
                   </div>
