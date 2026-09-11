@@ -7,6 +7,7 @@ import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../child
 import { scrubProductRefs } from "../refIntegrity";
 import { deriveProjectStage, resolveStage } from "../../utils/projectStage";
 import { inquiryWorkflowStatus } from "../../utils/moduleStatuses";
+import { statusChangeColumns } from "../../utils/statusDwell";
 import { scheduleProjectStageTrigger } from "./projectStageEvents";
 import { isWonStatus } from "../proformaStatus";
 import { summarizeProject, summarizeProjects } from "./projectSummary";
@@ -703,6 +704,14 @@ export async function createProject(input: ProjectInput, user: AuthUser, todayJa
     const project = await tx.project.create({
       data: {
         ...data,
+        /*
+         * Since when has it been «جدید» — the clock a dwell rule counts from.
+         *
+         * A first status *is* a move, exactly as it is for a purchase order:
+         * «جدید» is a state a job can sit in for weeks, and unstamped until
+         * something moved it, it would be the one leg no rule could see.
+         */
+        ...(statusChangeColumns(null, data.status as string | undefined, todayJalali) ?? {}),
         // Ownership defaults to the creator so record-level rules have a subject.
         ownerUserId: input.ownerUserId ?? user.id,
       } as Prisma.ProjectUncheckedCreateInput,
@@ -831,9 +840,23 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
     });
     if (!existing) return null;
 
+    const scalars = scalarData(input);
     const project = await tx.project.update({
       where: { id },
-      data: scalarData(input) as Prisma.ProjectUncheckedUpdateInput,
+      data: {
+        ...scalars,
+        /*
+         * And the clock, if this save really moved the status.
+         *
+         * Through the shared rule rather than by hand: a save that does not
+         * mention the status has not moved it, and the same value is not a move
+         * — so correcting a typo on a lost project does not restart the three
+         * days a «پس از ثبت باخت» rule counts.
+         */
+        ...(statusChangeColumns(
+          before.status, scalars.status as string | undefined, todayJalali,
+        ) ?? {}),
+      } as Prisma.ProjectUncheckedUpdateInput,
     });
 
     // Absent means "not edited"; an empty array means "the user removed them all".

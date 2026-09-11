@@ -183,6 +183,25 @@ export const SCHEDULE_SUBJECTS: Record<string, ScheduleSubject> = {
     entityType: "afterSalesService", payloadIdKey: "afterSalesServiceId",
   },
   /*
+   * «چقدر است که این پروژه باخته/برنده/در جریان است» — the sale's own clock.
+   *
+   * The stage below answers the same question about the *work*, and the two are
+   * deliberately not interchangeable: `Project.status` is the commercial
+   * outcome and does not move when goods clear customs, while the stage does
+   * and does not move when the sale is lost. So «۳ روز پس از ثبت باخت، برای
+   * مشتری پیام برود» — a message about the sale — has to count from this
+   * column, and the project's other dates each answer something else:
+   * `creationDateJalali` is «how long since the job was opened», which gets
+   * worse the longer the job runs, and `winningDateJalali` stamps won and only
+   * won. The condition is the rule's own, as everywhere: this subject plus
+   * `status = باخته`.
+   */
+  project_status_changed: {
+    label: "آخرین تغییر وضعیت پروژه",
+    model: "project", dateField: "statusChangedAtJalali", entityType: "project",
+    payloadIdKey: "projectId",
+  },
+  /*
    * The project needed no new column: `stageChangedAt` has meant «since when»
    * since the stage existed. And because the stage now reaches back before any
    * quotation (20260916, PR #124), «۷ روز در انتظار پاسخ تأمین‌کننده مانده» is

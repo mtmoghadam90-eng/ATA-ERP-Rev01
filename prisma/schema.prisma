@@ -583,6 +583,15 @@ model Project {
   customer   Customer @relation("ProjectCustomer", fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   status               String    @db.NVarChar(50)
+  /// Since when has it carried that status — the clock a dwell rule counts from.
+  ///
+  /// `stageChangedAt` below answers the same question about the *work*, and the
+  /// two are not interchangeable: «۳ روز پس از ثبت باخت، برای مشتری پیام برود»
+  /// is about the sale, which does not move when goods clear customs. Written
+  /// only on a real move, through `statusChangeColumns` — the single writer the
+  /// purchase order and the after-sales job already share.
+  statusChangedAt       DateTime?
+  statusChangedAtJalali String?   @db.NVarChar(10)
   /// Where the *work* has got to, as opposed to how the sale went.
   ///
   /// `status` is the commercial outcome and everything reads it that way — the

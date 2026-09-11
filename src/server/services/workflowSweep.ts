@@ -44,6 +44,9 @@ const PAYLOAD_SELECT: Record<string, Record<string, boolean>> = {
      * perfectly: exactly the silent failure the trigger catalogue exists to end.
      */
     stage: true, stageChangedAtJalali: true,
+    // And the sale's own clock, for «۳ روز پس از ثبت باخت» — a different
+    // question from the stage's, which is why it is a different column.
+    statusChangedAtJalali: true,
   },
   purchaseOrder: {
     id: true, poNumber: true, status: true, projectId: true, supplierId: true,

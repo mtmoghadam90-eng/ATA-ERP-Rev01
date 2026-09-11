@@ -565,7 +565,9 @@ export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
     {
       value: "status", label: "وضعیت پروژه", options: PROJECT_STATUSES,
       hint: "نتیجه تجاری فروش است و بس — برنده/باخته/در جریان. با ترخیص گمرک یا "
-        + "تحویل کالا تکان نمی‌خورد؛ برای «کار کجاست» از فیلد stage «مرحله پروژه» استفاده کن.",
+        + "تحویل کالا تکان نمی‌خورد؛ برای «کار کجاست» از فیلد stage «مرحله پروژه» استفاده کن. "
+        + "«۳ روز پس از ثبت باخت» هم با همین فیلد گفته می‌شود: schedule.subject را "
+        + "project_status_changed بگذار (آخرین تغییر وضعیت پروژه) و شرط status = باخته.",
     },
     /*
      * The stage, which is what a dwell rule on a project asks about: «۷ روز در
