@@ -5,7 +5,8 @@ import { getTodayShamsi } from "../../dateUtils";
 import { normalizeJalali } from "../dates";
 import { WorkflowRule, enrichPayload, executeRule } from "./workflowService";
 import { matchesConditions } from "../../utils/workflowConditions";
-import { FINISHED_TASK_STATUSES } from "../../utils/salesFollowUp";
+import { FINISHED_TASK_STATUSES, isTerminalOutcome } from "../../utils/salesFollowUp";
+import { getProformaOutcome } from "../proformaStatus";
 import { expandDateFields } from "../dates";
 import {
   REPEAT_SWEEP_WINDOW_DAYS, SCHEDULE_SUBJECTS, SWEEP_WINDOW_DAYS,
@@ -27,12 +28,29 @@ import {
  */
 
 /** What the sweep reads from each model, and what it hands the rule. */
-const PAYLOAD_SELECT: Record<string, Record<string, boolean>> = {
+const PAYLOAD_SELECT: Record<string, Record<string, unknown>> = {
   proforma: {
     id: true, proformaNumber: true, status: true, projectId: true, customerId: true,
     currency: true, finalAmount: true, totalAmount: true,
     issueDateJalali: true, expiryDateJalali: true, deliveryDateJalali: true,
     sentDateJalali: true,
+    /*
+     * The state, not only the dates — see `SCHEDULE_MODEL_FIELDS.proforma`.
+     *
+     * `status` is the two-value stored column, so a quotation won a week ago
+     * still reads «ارسال شده»: without these a rule counted from `sentDate`
+     * fired on documents that had been won, lost, cancelled, superseded by a
+     * revision, or deferred at the customer's own request.
+     *
+     * The lines come down with it because the outcome is derived from them and
+     * from `isCancelled`, which is the whole reason it cannot be a column. That
+     * is the one costly key here — a document of twenty lines is twenty rows —
+     * so it is a `status` projection and nothing else, and this runs once a day.
+     */
+    isCancelled: true,
+    followUpState: true,
+    items: { select: { status: true } },
+    _count: { select: { nextVersions: true } },
   },
   project: {
     id: true, code: true, name: true, status: true, customerId: true, salesExpert: true,
@@ -67,6 +85,69 @@ const PAYLOAD_SELECT: Record<string, Record<string, boolean>> = {
     creationDateJalali: true,
   },
 };
+
+/**
+ * The values a scheduled rule can ask about that are not columns.
+ *
+ * A condition is evaluated at fire time against the record as it stands, which
+ * is the whole mechanism that lets «هفت روز بعد» mean «هفت روز بعد, **if it is
+ * still true**» — and it can only ask about what the payload carries. These
+ * three are the states that decide whether a quotation is still the situation
+ * the rule was written about, and none of them is storable:
+ *
+ *  - `outcome` is derived from the line statuses and `isCancelled`, which is
+ *    why `proformas.status` cannot answer it and why a won document read
+ *    «ارسال شده» to every rule ever written;
+ *  - `superseded` is the existence of a revision, a relation a person creates;
+ *  - `chaseCount` lives in another table entirely — one grouped read for the
+ *    whole band rather than one per row, because the sweep sees up to 500.
+ *
+ * `relatedToType` is the **Latin** `"proforma"` here on purpose: that is what
+ * `followUpService` writes, and the Persian spellings belong to tasks a person
+ * typed (see `taskRelations.ts`). A chase counts once its **result** is
+ * recorded — a cancelled one was never a conversation — which is also why this
+ * is not a count of open tasks.
+ */
+async function derivedProformaValues(
+  rows: Record<string, unknown>[],
+): Promise<Map<string, Record<string, unknown>>> {
+  const out = new Map<string, Record<string, unknown>>();
+  if (rows.length === 0) return out;
+
+  const ids = rows.map((r) => String(r.id));
+  const chases = await getDb().task.groupBy({
+    by: ["relatedToId"],
+    where: {
+      relatedToType: "proforma",
+      taskKind: "SALES_FOLLOW_UP",
+      relatedToId: { in: ids },
+      followUpResult: { not: null },
+    },
+    _count: { _all: true },
+  });
+  const chaseCount = new Map<string, number>();
+  for (const row of chases) {
+    if (row.relatedToId) chaseCount.set(String(row.relatedToId), row._count._all);
+  }
+
+  for (const row of rows) {
+    const id = String(row.id);
+    const counts = row._count as { nextVersions?: number } | undefined;
+    const outcome = getProformaOutcome(row as never);
+    out.set(id, {
+      outcome,
+      /*
+       * One condition instead of four «مخالف با …», and through the rule the
+       * follow-up queue already uses to decide what it stops chasing — so a
+       * quotation that leaves the queue leaves the automations with it.
+       */
+      settled: isTerminalOutcome(outcome),
+      superseded: (counts?.nextVersions ?? 0) > 0,
+      chaseCount: chaseCount.get(id) ?? 0,
+    });
+  }
+  return out;
+}
 
 /** The state of the once-a-day guard. Process-local, like the rate refresh's. */
 let ranFor: string | null = null;
@@ -143,6 +224,15 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
       take: 500,
     });
 
+    /*
+     * The state the row cannot carry, read once for the whole band rather than
+     * per record. Only the quotation has any: the other subjects' conditions
+     * are all stored columns.
+     */
+    const derived = subject.model === "proforma"
+      ? await derivedProformaValues(rows)
+      : new Map<string, Record<string, unknown>>();
+
     for (const row of rows) {
       const base = row[subject.dateField] as string | null;
       /*
@@ -190,6 +280,12 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
         const payload = await enrichPayload(
           {
             ...row,
+            /*
+             * Before the ids below, and after the row: these are the record's
+             * own state and a column of the same name would be the thing they
+             * exist to replace.
+             */
+            ...(derived.get(entityId) ?? {}),
             /*
              * The record this fired on, under the key the engine looks for.
              *
