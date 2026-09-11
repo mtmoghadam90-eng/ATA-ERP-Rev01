@@ -1875,6 +1875,11 @@ model WorkflowMessageSend {
   id     String @id @default(uuid()) @db.NVarChar(36)
   ruleId String @db.NVarChar(60)
 
+  /// Which message action of that rule. A rule may carry several, each with its
+  /// own «فقط یک بار» switch, so without this the first action's claim refused
+  /// the second and one configured message was silently never sent.
+  actionId String @default("") @db.NVarChar(60)
+
   /// RECORD | PROJECT | CUSTOMER — what the rule asked to send once per.
   /// Stored beside the id because changing a rule's scope asks a different
   /// question, and the old rows should stop matching rather than answer it.
@@ -1883,7 +1888,7 @@ model WorkflowMessageSend {
 
   sentAt DateTime @default(now())
 
-  @@unique([ruleId, scope, scopeId], map: "UQ_workflow_message_sends_rule_scope")
+  @@unique([ruleId, actionId, scope, scopeId], map: "UQ_workflow_message_sends_rule_action_scope")
   @@map("workflow_message_sends")
 }
 
@@ -1997,6 +2002,16 @@ model Message {
   /// True when the message was never really sent: the queue ran, the row was
   /// written, the provider was not called. For trying a new rule out safely.
   dryRun Boolean @default(false)
+
+  /// CUSTOMER | STAFF — who this is addressed to, for `isCustomerFacing`.
+  ///
+  /// On the row for the reason `dryRun` is: the holds are decided when it is
+  /// queued, and a **retry** has to decide them again. Reading it back off the
+  /// settings would answer for whoever flipped a switch since, and guessing it
+  /// from an absent `customerId` would be a second rule. Default CUSTOMER is the
+  /// safe direction for every row written before this column: a staff retry then
+  /// waits for a working day rather than a customer's going out on Ashura.
+  audience String @default("CUSTOMER") @db.NVarChar(20)
 
   /**
    * ----------------------------- provenance -----------------------------

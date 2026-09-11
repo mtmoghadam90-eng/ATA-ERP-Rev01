@@ -419,6 +419,11 @@ export async function queueMessage(input: QueueMessageInput) {
        * colleagues never being told while the board reads perfectly correctly.
        */
       dryRun: settings.dryRun && isCustomerFacing(input.audience),
+      /*
+       * Stored beside it and for the same reason: a **retry** has to decide the
+       * holds again, and the row is what says which audience it was queued for.
+       */
+      audience: input.audience ?? "CUSTOMER",
       customerId: input.customerId ?? null,
       projectId: input.projectId ?? null,
       templateId: input.templateId ?? null,
@@ -729,14 +734,37 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
         continue;
       }
 
-      // Still has attempts left: back off and leave it queued.
+      /*
+       * Still has attempts left: back off and leave it queued — through the
+       * **same** quiet-time rule the first attempt went through.
+       *
+       * The backoff alone walked straight past both holds: a send attempted at
+       * 20:55 on a working Thursday fails, and `now + 5 minutes` is 21:00 inside
+       * the quiet hours, or past midnight into a Friday nobody is written to. The
+       * message then went out at exactly the hour the window exists to prevent,
+       * on a day the switch exists to prevent — so the two switches held for a
+       * first attempt and not for a second, which is the half of a rule that
+       * makes the whole of it untrue.
+       *
+       * The row's own `dryRun` says which audience it is (the flag was stamped
+       * at insert precisely so the row answers for itself), and a staff notice
+       * is exempt from the days exactly as it was when it was queued.
+       */
       if (shouldRetry(attempts, settings.maxAttempts)) {
+        const retryAt = nextSendableTime(
+          new Date(now.getTime() + retryDelayMs(attempts)),
+          settings.quietHours,
+          settings.quietDays && isCustomerFacing(messageAudience(message.audience))
+            ? (day) => isOfficialHoliday(toShamsiStr(day))
+            : null,
+        );
         await db.message.update({
           where: { id: message.id },
           data: {
             attempts,
             lastError: result.error ?? null,
-            scheduledAt: new Date(now.getTime() + retryDelayMs(attempts)),
+            scheduledAt: retryAt,
+            scheduledAtJalali: toShamsiStr(retryAt),
           },
         });
         continue;
@@ -753,6 +781,17 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
   }
 
   return { sent, failed };
+}
+
+/**
+ * The audience a stored row was queued for.
+ *
+ * A value this build does not know answers `CUSTOMER`, which is the same safe
+ * direction the column's own default takes: an unrecognised row is held back on
+ * a quiet day rather than sent on one.
+ */
+function messageAudience(stored: string | null | undefined): MessageAudience {
+  return stored === "STAFF" ? "STAFF" : "CUSTOMER";
 }
 
 /* --------------------------------- reads --------------------------------- */
