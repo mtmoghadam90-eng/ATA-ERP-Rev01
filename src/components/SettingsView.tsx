@@ -4510,14 +4510,42 @@ export default function SettingsView({
                                       setEditingRule({ ...editingRule, actions: updatedActs });
                                     }}
                                     className="w-full border border-slate-200 rounded-lg p-2.5 bg-white font-mono"
+                                    data-notify-module
                                   >
-                                    <option value="proformas">پیش‌فاکتورها (Proformas)</option>
-                                    <option value="projects">پروژه‌ها (Projects)</option>
-                                    <option value="purchaseOrders">سفارشات خرید (Purchase Orders)</option>
-                                    <option value="inventory">انبار و کالا (Inventory)</option>
-                                    <option value="customers">مشتریان (Customers)</option>
-                                    <option value="suppliers">تأمین‌کنندگان (Suppliers)</option>
-                                    <option value="afterSales">خدمات پس از فروش (After Sales)</option>
+                                    {/*
+                                      Drawn from `RESPONSIBLE_MODULES` — the same list the
+                                      responsibles table three sections up is built from, and the
+                                      same one the assignee box reads.
+
+                                      It was seven options typed out here, and two of them were
+                                      not module ids at all: «inventory» (the module is `products`)
+                                      and «afterSales» (`afterSalesServices`). The value is a key
+                                      into `settings.moduleResponsibles`, so those two could never
+                                      match a responsible — `notifyModuleResponsible` found none
+                                      and fell back to the administrators. «وقتی موجودی کم شد به
+                                      انبار خبر بده» therefore notified the admins instead, for
+                                      ever, with nothing anywhere saying so. Six real modules were
+                                      missing from the list as well, so those could not be chosen
+                                      at all. Exactly the drift that put eleven hand-typed options
+                                      in the assignee dropdown, left standing one control away.
+                                    */}
+                                    {!RESPONSIBLE_MODULES.some((m) => m.id === act.notificationConfig!.module) && (
+                                      /*
+                                        A stored value this build does not know is drawn as a
+                                        disabled option rather than dropped: a `<select>` whose
+                                        value matches no option renders the **first** one, so a
+                                        rule saved against «inventory» would silently become
+                                        «مشتریان» the next time somebody opened it and pressed save.
+                                      */
+                                      <option value={act.notificationConfig.module} disabled>
+                                        {act.notificationConfig.module
+                                          ? `${act.notificationConfig.module} (ناشناخته — یکی از فهرست را انتخاب کنید)`
+                                          : '— انتخاب کنید —'}
+                                      </option>
+                                    )}
+                                    {RESPONSIBLE_MODULES.map((m) => (
+                                      <option key={m.id} value={m.id}>{`${m.name} (${m.id})`}</option>
+                                    ))}
                                   </select>
                                 </div>
 
