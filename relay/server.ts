@@ -2,7 +2,7 @@ import http from "http";
 import { timingSafeEqual } from "crypto";
 import { WHATSAPP_GAP_MS } from "../src/utils/whatsapp";
 import {
-  connectWhatsapp, ensureWhatsappLinkRestored, sendWhatsapp, unlinkWhatsapp,
+  connectWhatsapp, ensureWhatsappLinkRestored, sendWhatsapp, setBaileysLoader, unlinkWhatsapp,
   whatsappIsLinked, whatsappReport,
 } from "../src/server/services/messaging/whatsappClient";
 
@@ -38,6 +38,22 @@ import {
  * small and boring on a machine that holds the company's WhatsApp credentials,
  * and every dependency here is one more thing to keep patched on it.
  */
+
+/*
+ * **Where this deployment's copy of baileys is.**
+ *
+ * `relay/package.json` declares it, so `npm install` here puts it in
+ * `relay/node_modules` — and that is the point rather than an accident: a
+ * rented machine holding the company's WhatsApp credentials should carry two
+ * packages, not the ERP's whole tree with Prisma and sharp in it. But Node
+ * resolves a bare specifier from the directory of the file that writes it, and
+ * `whatsappClient.ts` sits two directories above this one, where there is no
+ * `node_modules` at all. Written there, the import simply rejected; the panel
+ * went on drawing «در انتظار اسکن کد» and the session directory was never
+ * created. So the import is written **here**, next to the package.json that
+ * declares the dependency, and handed over.
+ */
+setBaileysLoader(() => import("@whiskeysockets/baileys"));
 
 /* -------------------------------- settings -------------------------------- */
 
@@ -153,7 +169,18 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
 
   if (path === "/link" && req.method === "POST") {
     log("link requested");
-    json(res, 200, await connectWhatsapp({ force: true }));
+    const report = await connectWhatsapp({ force: true });
+    /*
+     * How it went, not only that it was asked for.
+     *
+     * «link requested» followed by silence is exactly what this log showed
+     * while the library could not be resolved from the client's own directory,
+     * and one line naming the state would have ended that hunt in seconds. The
+     * state and its reason are the relay's own words about its own socket; a
+     * message body is still never logged, and neither is the code.
+     */
+    log(`link -> ${report.state}${report.lastError ? ` - ${report.lastError}` : ""}`);
+    json(res, 200, report);
     return;
   }
 

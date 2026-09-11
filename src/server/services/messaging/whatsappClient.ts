@@ -163,6 +163,47 @@ const silentLogger = {
   error: () => {},
 } as const;
 
+/**
+ * The baileys namespace, as whichever deployment is running supplies it.
+ *
+ * **Node resolves a bare specifier from the directory of the importing file**,
+ * walking upwards — so `import("@whiskeysockets/baileys")` written *here* looks
+ * for a `node_modules` beside `src/`, at the repository root. That is exactly
+ * right for the ERP, whose whole dependency tree is installed there, and it is
+ * wrong for the relay: `relay/package.json` declares baileys and `tsx` and
+ * nothing else, precisely so a rented VPS installs neither Prisma nor sharp,
+ * and the install therefore lands in `relay/node_modules` — which this file,
+ * two directories above it, cannot see.
+ *
+ * That shipped, and it failed in the quietest way available: the import
+ * rejected, `connectWhatsapp` swallowed the rejection, and the panel sat on
+ * «در انتظار اسکن کد» for as long as anybody was willing to watch, promising a
+ * pairing code that had no socket to come from. Nothing in the relay's log said
+ * so; the session directory was never even created, which is the two lines
+ * after the import and is what finally named it.
+ *
+ * So the **host** says where its copy is. The ERP keeps the default, the relay
+ * calls `setBaileysLoader` with an `import()` written in the directory that
+ * declares the dependency, and there is still one implementation of the socket
+ * — only two resolution roots, which is what a second deployment actually is.
+ */
+type BaileysModule = Record<string, any>;
+
+let loadBaileys: () => Promise<BaileysModule> =
+  () => import("@whiskeysockets/baileys") as unknown as Promise<BaileysModule>;
+
+/**
+ * Points the client at this deployment's own copy of baileys.
+ *
+ * Called once, at startup, by a host whose dependency does not sit at the
+ * repository root. Deliberately not an argument on `connectWhatsapp`: the
+ * reconnect timer and `ensureWhatsappLinkRestored` open the socket too, and a
+ * value threaded through three call sites is a value one of them will be missing.
+ */
+export function setBaileysLoader(load: () => Promise<unknown>): void {
+  loadBaileys = () => load() as unknown as Promise<BaileysModule>;
+}
+
 /** The live socket, or null. `unknown` because its type comes from the import. */
 let sock: { ev: any; sendMessage: any; onWhatsApp: any; logout: any; end: any; user?: any } | null = null;
 /** In-flight connect, so two callers do not open two sockets on one identity. */
@@ -202,7 +243,39 @@ export async function connectWhatsapp(opts: { force?: boolean } = {}): Promise<W
   }
 
   connecting = openSocket().finally(() => { connecting = null; });
-  await connecting.catch(() => {});
+  await connecting.catch((err: unknown) => {
+    /*
+     * **A failed open is reported.** It was swallowed, and that is how a socket
+     * that never existed came to be drawn as one waiting to be scanned: the
+     * state had already been set to «در انتظار اسکن کد» on the line above the
+     * throw, the reason was dropped here, and the panel then promised a pairing
+     * code for as long as anybody watched — with nothing in any log to read.
+     *
+     * The handling is the close handler's, clause for clause, and for the same
+     * reasons: an unpaired device answers `UNLINKED` with no retry, because
+     * there is no session to restore and only a person scanning a code can get
+     * anywhere; a paired one answers `DISCONNECTED` and backs off, which is
+     * what that state's own advice promises. Nothing here has reached WhatsApp
+     * — everything that throws out of `openSocket` is local (the library, the
+     * session directory, the socket's own options) — so a retry costs the
+     * number nothing, while a *network* failure never arrives here at all: it
+     * arrives as a `close` event a few lines below.
+     */
+    sock = null;
+    const reason = describe(err);
+    clearRetry();
+    if (!whatsappIsLinked()) {
+      failures = 0;
+      setState(WHATSAPP_STATES.UNLINKED, { qr: null, linkedNumber: null, lastError: reason });
+      return;
+    }
+    failures += 1;
+    setState(WHATSAPP_STATES.DISCONNECTED, { qr: null, lastError: reason });
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      void connectWhatsapp();
+    }, retryDelayMs(failures));
+  });
   return whatsappReport();
 }
 
@@ -211,17 +284,19 @@ async function openSocket(): Promise<void> {
   setState(whatsappIsLinked() ? WHATSAPP_STATES.CONNECTING : WHATSAPP_STATES.AWAITING_SCAN);
 
   /*
-   * See the note at the top: ESM-only package, CJS bundle.
+   * See the note at the top: ESM-only package, CJS bundle — and see
+   * `loadBaileys` for why the specifier is resolved by the host rather than
+   * written at this call site.
    *
    * The symbols are read straight off the namespace and **not** through a
    * `.default ??` fallback, which was checked rather than assumed: this package
    * puts all five of them on the namespace and `default` carries none, so the
    * fallback would be dead code reading a path that does not exist.
    */
-  const baileys = await import("@whiskeysockets/baileys");
+  const baileys = await loadBaileys();
   const {
     makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason, Browsers,
-  } = baileys as unknown as Record<string, any>;
+  } = baileys;
 
   fs.mkdirSync(WHATSAPP_SESSION_DIR, { recursive: true });
   const { state: auth, saveCreds } = await useMultiFileAuthState(WHATSAPP_SESSION_DIR);

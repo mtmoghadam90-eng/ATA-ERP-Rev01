@@ -82,6 +82,73 @@ protocol client, against one account, is a fault nobody would go looking for).
 `relay/package.json` declares only baileys and `tsx`, so installing inside
 `relay/` does not pull Prisma, sharp or anything else the ERP needs.
 
+That has one consequence worth knowing, because it shipped wrong. Node resolves
+a bare specifier from the directory of the **importing** file, walking upwards —
+and `whatsappClient.ts` sits two directories above `relay/`, where there is no
+`node_modules` at all. Written there, `import("@whiskeysockets/baileys")` simply
+rejected on the relay host: the rejection was swallowed, the panel drew
+«در انتظار اسکن کد» for as long as anybody watched, and the session directory —
+two lines after the import — was never created, which is what finally named it.
+So the client does not write the specifier; the relay does, next to the
+`package.json` that declares it, and hands it over through `setBaileysLoader`.
+**Nothing needs installing at the repository root on the relay host, and no
+symlink is needed.**
+
+## Setting it up
+
+On the relay host, as root (Ubuntu 22.04 or 24.04):
+
+```bash
+# Node 20+ and git
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt-get install -y nodejs git
+
+# the code, and the relay's two packages
+git clone https://github.com/<owner>/<repo>.git /opt/ata-relay
+cd /opt/ata-relay/relay && npm install
+
+# the shared secret; the same value goes in the ERP's WHATSAPP_RELAY_TOKEN
+umask 077
+printf 'RELAY_TOKEN=%s\n' "$(openssl rand -hex 32)" > .env
+chmod 600 .env
+```
+
+`relay/server.ts` reads `process.env` and loads no `.env` itself, so systemd
+injects it:
+
+```ini
+# /etc/systemd/system/ata-wa-relay.service
+[Unit]
+Description=ATA WhatsApp relay (linked device)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/ata-relay/relay
+EnvironmentFile=/opt/ata-relay/relay/.env
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`WorkingDirectory` is load-bearing rather than tidiness: the session directory is
+`process.cwd()/whatsapp-session`, so this is what decides where the credentials
+land — inside the checkout, where `.gitignore` already covers them, so a later
+`git pull` to update the relay does not unlink the device.
+
+Then TLS in front of it. Either works; use whatever already runs on the host —
+a `reverse_proxy 127.0.0.1:8787` line in a Caddyfile, or an nginx server block
+plus `certbot --nginx -d <host>`. One setting is worth naming: give the proxy a
+read timeout of at least 120s. `POST /link` waits on WhatsApp's handshake and a
+60-second default can cut off exactly the request that was about to produce the
+pairing code — which from the ERP's screen looks like «بارکد نمی‌دهد» and says
+nothing about a proxy.
+
 What it refuses to do:
 
 - **start without `RELAY_TOKEN`**, or with one under 24 characters — an open
