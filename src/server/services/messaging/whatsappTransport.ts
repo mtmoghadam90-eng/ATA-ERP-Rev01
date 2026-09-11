@@ -225,20 +225,38 @@ export async function whatsappLink(): Promise<WhatsappReport> {
   return connectWhatsapp({ force: true });
 }
 
-/** Removes the device from the account and forgets its credentials. */
-export async function whatsappUnlink(): Promise<WhatsappReport> {
+/**
+ * Removes the device from the account and forgets its credentials.
+ *
+ * It answers whether the unlink really happened — `unlinked` — because the
+ * *channel* has to be switched off with it and that is a write this file must
+ * not make: everything here is the socket-or-relay abstraction and nothing in it
+ * touches the database, which is what lets the rule checks drive the whole relay
+ * path without one. The route owns that half; see `POST …/whatsapp/unlink`.
+ *
+ * A relay that could not be reached has told us nothing about the device, so it
+ * answers false — switching the channel off on the strength of a network fault
+ * would silence a line that is still perfectly linked.
+ */
+export async function whatsappUnlink(): Promise<WhatsappReport & { unlinked: boolean }> {
   const refusal = whatsappRelayRefusal();
-  if (refusal) return refusedReport(refusal);
+  if (refusal) return { ...refusedReport(refusal), unlinked: false };
 
   if (whatsappUsesRelay()) {
     const answer = await call<WhatsappReport>("/unlink", {
       method: "POST", body: {}, timeoutMs: RELAY_TIMEOUT_MS.link,
     });
-    return answer.data ?? refusedReport(answer.error ?? "پاسخ رله واتس‌اپ خالی بود.");
+    if (!answer.data) {
+      return {
+        ...refusedReport(answer.error ?? "پاسخ رله واتس‌اپ خالی بود."),
+        unlinked: false,
+      };
+    }
+    return { ...answer.data, unlinked: true };
   }
 
   const { unlinkWhatsapp } = await import("./whatsappClient");
-  return unlinkWhatsapp();
+  return { ...(await unlinkWhatsapp()), unlinked: true };
 }
 
 /**
