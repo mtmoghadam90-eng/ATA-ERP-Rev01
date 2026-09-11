@@ -107,6 +107,23 @@ export const AFTER_SALES_STATUSES = [
 ] as const satisfies readonly AfterSalesService["status"][];
 const _afterSalesCover: Covers<AfterSalesService["status"], typeof AFTER_SALES_STATUSES> = true;
 
+/**
+ * Is this after-sales case still open?
+ *
+ * Written as an **exclusion**, like `countsTowardBalance`, `chaseableWhere` and
+ * `laneWhere`'s middle column, and the direction is the decision: a status this
+ * build does not know counts as **open**. The reader that matters is «یک ماه پس
+ * از تحویل، بپرس نصب چطور پیش رفت» — and getting it wrong in the other
+ * direction sends «امیدواریم راضی باشید» to somebody whose complaint is open on
+ * our own desk, which is the failure worth avoiding. An unknown status merely
+ * withholds a friendly note.
+ */
+export const AFTER_SALES_CLOSED: readonly string[] = ["تکمیل شده", "تحویل داده شده"];
+
+export function afterSalesIsOpen(status: unknown): boolean {
+  return !AFTER_SALES_CLOSED.includes(String(status ?? ""));
+}
+
 /* ----------------------------- transactions ------------------------------ */
 
 export const TRANSACTION_TYPES = [

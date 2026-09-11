@@ -6,6 +6,7 @@ import { normalizeJalali } from "../dates";
 import { WorkflowRule, enrichPayload, executeRule } from "./workflowService";
 import { matchesConditions } from "../../utils/workflowConditions";
 import { FINISHED_TASK_STATUSES, isTerminalOutcome } from "../../utils/salesFollowUp";
+import { AFTER_SALES_CLOSED } from "../../utils/moduleStatuses";
 import { getProformaOutcome } from "../proformaStatus";
 import { expandDateFields } from "../dates";
 import {
@@ -167,6 +168,52 @@ async function derivedProformaValues(
 }
 
 /**
+ * How much of this project's after-sales work is still open.
+ *
+ * «یک ماه پس از تحویل کالا، بپرس نصب و راه‌اندازی چطور پیش رفت و اگر کمکی لازم
+ * است ما هستیم» is a friendly note, and a friendly note is exactly the wrong
+ * thing to send to a customer whose warranty complaint has been sitting on our
+ * own desk for three weeks — it reads as not knowing. The packing list carries
+ * no such state and could carry none: the cases are another module's rows.
+ *
+ * One grouped read for the whole band, the shape `chaseCount` takes, and the
+ * open/closed rule is `afterSalesIsOpen`'s — an exclusion, so a status nobody
+ * anticipated counts as open and withholds the note rather than sending it into
+ * a complaint.
+ */
+async function derivedDeliveryValues(
+  rows: Record<string, unknown>[],
+): Promise<Map<string, Record<string, unknown>>> {
+  const out = new Map<string, Record<string, unknown>>();
+  if (rows.length === 0) return out;
+
+  const projectIds = [...new Set(
+    rows.map((r) => String(r.projectId ?? "")).filter(Boolean),
+  )];
+  const openByProject = new Map<string, number>();
+  if (projectIds.length > 0) {
+    const groups = await getDb().afterSalesService.groupBy({
+      by: ["projectId"],
+      where: {
+        projectId: { in: projectIds },
+        status: { notIn: AFTER_SALES_CLOSED as string[] },
+      },
+      _count: { _all: true },
+    });
+    for (const group of groups) {
+      openByProject.set(String(group.projectId), group._count._all);
+    }
+  }
+
+  for (const row of rows) {
+    out.set(String(row.id), {
+      openAfterSalesCount: openByProject.get(String(row.projectId ?? "")) ?? 0,
+    });
+  }
+  return out;
+}
+
+/**
  * The quotation a recorded chase belongs to, under the key the engine reads.
  *
  * A follow-up task names its document through the polymorphic
@@ -277,7 +324,9 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
       ? await derivedProformaValues(rows)
       : subject.model === "task"
         ? derivedTaskValues(rows)
-        : new Map<string, Record<string, unknown>>();
+        : subject.model === "packagingDelivery"
+          ? await derivedDeliveryValues(rows)
+          : new Map<string, Record<string, unknown>>();
 
     for (const row of rows) {
       const base = row[subject.dateField] as string | null;
