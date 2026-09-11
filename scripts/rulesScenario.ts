@@ -89,7 +89,8 @@ import {
   PROJECT_QUOTATION_FILTERS, buildProjectWhere, lossReasonRefusal, quotationWhere,
 } from "../src/server/services/projectService";
 import { PROFORMA_SENT_STATUS } from "../src/utils/moduleStatuses";
-import type { ERPSettings } from "../src/types";
+import type { ERPSettings, WorkflowRule } from "../src/types";
+import { cloneWorkflowRule } from "../src/utils/workflowRules";
 import { SCREEN_PERMISSION_ALIAS } from "../src/types";
 import { buildTaskWhere } from "../src/server/services/taskService";
 import type { AuthUser } from "../src/server/auth";
@@ -10565,6 +10566,113 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     const engineSrc = readFileSync("src/server/services/workflowService.ts", "utf8");
     ok("...and the message action is the one that reads it",
       /queueForCustomer\(\{\s*customerId: enrichedPayload\.customerId/.test(engineSrc));
+  }
+
+  /*
+   * Copying a rule gives you a rule, not a second name for the same one.
+   *
+   * Reported as «وقتی یک قانون را کپی می‌کنم، با تغییر فیلدهای یکی آن یکی هم عوض
+   * می‌شود». Both the copy button and the edit button handed the form
+   * `{ ...rule }` — one level deep — so the two rules shared one `actions`
+   * array and one config object per action, and the editor writes into those
+   * **in place** in twenty-nine places. The edit button had the quieter half of
+   * it: the draft *was* the stored rule, so every keystroke rewrote
+   * `settings.workflows` before anybody pressed save and «انصراف» had nothing
+   * left to put back.
+   *
+   * Exercised rather than asserted: a shallow copy passes any check that only
+   * looks at the values.
+   */
+  {
+    const original: WorkflowRule = {
+      id: "wf-1", name: "پیگیری", active: true,
+      triggerType: "proforma_status_change",
+      conditions: [{ field: "newStatus", operator: "equals", value: "ارسال شده" }],
+      actions: [{
+        id: "act-1", type: "create_task",
+        taskConfig: {
+          titleTemplate: "پیگیری {proformaNumber}", descTemplate: "",
+          assignedTo: "SALES_EXPERT", priority: "متوسط", dueDaysOffset: 2,
+        },
+      }],
+    } as WorkflowRule;
+
+    const copy = cloneWorkflowRule(original);
+
+    // The values survive, or it is not a copy at all.
+    eq("a copied rule keeps its trigger", copy.triggerType, original.triggerType);
+    eq("...its conditions", copy.conditions[0].value, "ارسال شده");
+    eq("...and its action's text",
+      copy.actions[0].taskConfig?.titleTemplate, "پیگیری {proformaNumber}");
+
+    // And nothing inside it is the original's object — which is the whole bug.
+    ok("the arrays are not shared", copy.conditions !== original.conditions
+      && copy.actions !== original.actions);
+    ok("...nor the objects inside them",
+      copy.conditions[0] !== original.conditions[0]
+      && copy.actions[0] !== original.actions[0]
+      && copy.actions[0].taskConfig !== original.actions[0].taskConfig);
+
+    // The editor's own gesture, verbatim: mutate the draft in place.
+    copy.conditions[0].value = "پیش‌نویس";
+    copy.actions[0].taskConfig!.titleTemplate = "چیز دیگری";
+    copy.actions[0].taskConfig!.priority = "فوری";
+    eq("editing the copy leaves the original's condition alone",
+      original.conditions[0].value, "ارسال شده");
+    eq("...its action text", original.actions[0].taskConfig?.titleTemplate,
+      "پیگیری {proformaNumber}");
+    eq("...and its priority", original.actions[0].taskConfig?.priority, "متوسط");
+
+    // Both doors, because the edit button had the same fault more quietly.
+    const settingsSrc = readFileSync("src/components/SettingsView.tsx", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/^\s*\/\/.*$/gm, " ");
+    ok("the copy button clones deeply",
+      /\.\.\.cloneWorkflowRule\(rule\)/.test(settingsSrc));
+    ok("...and so does the edit button",
+      /setEditingRule\(cloneWorkflowRule\(rule\)\)/.test(settingsSrc));
+    ok("...with no shallow spread of a rule left on either",
+      !/setEditingRule\(\{ \.\.\.rule \}\)/.test(settingsSrc)
+      && !/\.\.\.rule,\s*\n\s*id: `wf-/.test(settingsSrc));
+  }
+
+  /*
+   * «۲ روز پس از ثبت نتیجهٔ پیگیری، لینک نظرسنجی بفرست» — which could only be
+   * said with `delayDays`, and that queues the message there and then and
+   * re-checks nothing, so a customer who cancelled the next morning still got
+   * the survey. A scheduled rule is re-evaluated at fire time; it needed a date
+   * to count from.
+   */
+  {
+    const subject = SCHEDULE_SUBJECTS.follow_up_recorded;
+    ok("a rule can count from the day a chase's result was recorded", !!subject);
+    eq("...from the completion date", subject?.dateField, "completedAtJalali");
+    /*
+     * And it is narrowed to a sales chase. A subject offered as «تاریخ اتمام
+     * وظیفه» would sweep every completed task in the band and leave «فقط
+     * پیگیری فروش» to a condition somebody has to remember — a rule firing on
+     * the wrong records is the silent failure the catalogue exists to end.
+     */
+    eq("...only for a sales chase",
+      (subject?.where as Record<string, unknown> | undefined)?.taskKind,
+      "SALES_FOLLOW_UP");
+    ok("...and only once a result is recorded",
+      JSON.stringify(subject?.where ?? {}).includes("followUpResult"));
+
+    const sweep = readFileSync("src/server/services/workflowSweep.ts", "utf8");
+    ok("the sweep applies a subject's own narrowing",
+      /\.\.\.\(subject\.where \?\? \{\}\)/.test(sweep));
+    /*
+     * The half that makes the message reach anybody: a chase names its document
+     * through `relatedToId`, and nothing downstream reads that key.
+     */
+    ok("a chase's quotation is put under the key the engine reads",
+      /proformaId: String\(row\.relatedToId\)/.test(sweep));
+    ok("...only when the relation really is a quotation",
+      /row\.relatedToType === "proforma"/.test(sweep));
+    const taskFields = (SCHEDULE_MODEL_FIELDS.task ?? []).map((f) => f.value);
+    ok("...and the rule can condition on what the customer said",
+      taskFields.includes("followUpResult"));
   }
 
   /*

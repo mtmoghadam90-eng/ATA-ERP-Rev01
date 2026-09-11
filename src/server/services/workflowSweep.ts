@@ -84,6 +84,23 @@ const PAYLOAD_SELECT: Record<string, Record<string, unknown>> = {
     id: true, projectId: true, supplierId: true, isWinner: true,
     creationDateJalali: true,
   },
+  /*
+   * Only a recorded sales chase reaches here — the subject narrows to it, so
+   * this is not «every task».
+   *
+   * `relatedToId` is the quotation the chase belongs to, and it is projected
+   * into `proformaId` below rather than being left under this name: nothing
+   * downstream reads `relatedToId`, while `enrichPayload` keys on `proformaId`
+   * to find the document's project and its customer. Without that step the rule
+   * fires, the message has nobody to go to, and the module owner is notified
+   * instead of the customer.
+   */
+  task: {
+    id: true, title: true, taskKind: true, priority: true, status: true,
+    followUpResult: true, completionNote: true,
+    relatedToType: true, relatedToId: true,
+    assignedToName: true, completedAtJalali: true,
+  },
 };
 
 /**
@@ -145,6 +162,30 @@ async function derivedProformaValues(
       superseded: (counts?.nextVersions ?? 0) > 0,
       chaseCount: chaseCount.get(id) ?? 0,
     });
+  }
+  return out;
+}
+
+/**
+ * The quotation a recorded chase belongs to, under the key the engine reads.
+ *
+ * A follow-up task names its document through the polymorphic
+ * `relatedToType`/`relatedToId` pair, and **nothing downstream reads those**:
+ * `enrichPayload` keys on `proformaId` to resolve the project and the customer,
+ * and `create_task` keys on it to decide what a task is about. So a rule
+ * counted from «ثبت نتیجهٔ پیگیری» would fire correctly and reach nobody.
+ *
+ * The Latin `"proforma"` is what `followUpService` writes; the Persian
+ * spellings belong to tasks a person typed, and a chase is never one of those.
+ */
+function derivedTaskValues(
+  rows: Record<string, unknown>[],
+): Map<string, Record<string, unknown>> {
+  const out = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    out.set(String(row.id), row.relatedToType === "proforma" && row.relatedToId
+      ? { proformaId: String(row.relatedToId) }
+      : {});
   }
   return out;
 }
@@ -219,6 +260,9 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
     const rows: Record<string, unknown>[] = await delegate.findMany({
       where: {
         [subject.dateField]: { gte: band.from, lte: band.to, not: null },
+        // The subject's own rows, where it is narrower than its table — see
+        // `ScheduleSubject.where`. Absent for every subject that is a whole one.
+        ...(subject.where ?? {}),
       },
       select,
       take: 500,
@@ -231,7 +275,9 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
      */
     const derived = subject.model === "proforma"
       ? await derivedProformaValues(rows)
-      : new Map<string, Record<string, unknown>>();
+      : subject.model === "task"
+        ? derivedTaskValues(rows)
+        : new Map<string, Record<string, unknown>>();
 
     for (const row of rows) {
       const base = row[subject.dateField] as string | null;

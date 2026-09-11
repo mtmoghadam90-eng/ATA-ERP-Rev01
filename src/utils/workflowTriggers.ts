@@ -764,6 +764,29 @@ export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
   afterSalesService: [
     { value: "status", label: "وضعیت خدمات پس از فروش", options: AFTER_SALES_STATUSES },
   ],
+  /*
+   * Only a recorded sales chase — the subject narrows to it, so a condition
+   * naming `taskKind` here would be one nobody has to remember to write.
+   *
+   * `followUpResult` is **free text** for the reason every list drawn from
+   * `settings.dropdownItems` is: it is the company's own editable wording, and
+   * a fixed option list here would be a second copy of it that drifts.
+   */
+  task: [
+    {
+      value: "followUpResult", label: "نتیجهٔ پیگیری",
+      hint: "همان چیزی که مشتری گفت، از فهرست «نتایج پیگیری» در تنظیمات — مثلاً "
+        + "«تأیید نهایی خرید» یا «موکول به تاریخ دیگر». دقیقاً همان نوشتهٔ فهرست "
+        + "را بنویس، وگرنه شرط هیچ‌وقت برقرار نمی‌شود.",
+    },
+    { value: "priority", label: "اولویت پیگیری", options: TASK_PRIORITIES },
+    {
+      value: "proformaId", label: "به پیش‌فاکتور وصل است", derived: true,
+      hint: "شناسهٔ پیش‌فاکتوری که این پیگیری روی آن ثبت شده. معمولاً شرطی روی آن "
+        + "نمی‌گذاری؛ همین که روی payload هست باعث می‌شود «{proformaNumber}» در "
+        + "متن کار کند و پیام به مشتریِ همان سند برسد.",
+    },
+  ],
 };
 
 

@@ -72,7 +72,7 @@ export interface ScheduleSubject {
   /** The Prisma model to sweep. */
   model:
     | "proforma" | "project" | "purchaseOrder" | "packagingDelivery"
-    | "supplierInquiry" | "afterSalesService";
+    | "supplierInquiry" | "afterSalesService" | "task";
   /** The Jalali column the count starts from. */
   dateField: string;
   /** The trigger name the rule's payload is built for. */
@@ -94,6 +94,20 @@ export interface ScheduleSubject {
    * against the keys the engine actually reads.
    */
   payloadIdKey: string;
+  /**
+   * The rows this subject is about, when that is narrower than its table.
+   *
+   * «ثبت نتیجهٔ پیگیری فروش» is a date on `tasks`, and `tasks` is mostly not
+   * that: a subject offered as «تاریخ اتمام وظیفه» would sweep every completed
+   * task in the band and leave «فقط پیگیری‌های فروش» to a condition somebody
+   * has to remember to write — and a rule that fires on the wrong records is
+   * the silent failure this whole catalogue exists to end. A subject is a
+   * question rather than a table, so the narrowing belongs to it.
+   *
+   * ANDed into the sweep's own date clause. Absent means the whole table, which
+   * is every subject written before this.
+   */
+  where?: Record<string, unknown>;
 }
 
 /**
@@ -167,6 +181,25 @@ export const SCHEDULE_SUBJECTS: Record<string, ScheduleSubject> = {
     label: "تاریخ تحویل قطعی کالا به کارفرما",
     model: "packagingDelivery", dateField: "actualDeliveryDateJalali",
     entityType: "packagingDelivery", payloadIdKey: "packagingDeliveryId",
+  },
+  /*
+   * «۲ روز پس از ثبت نتیجهٔ پیگیری، لینک نظرسنجی بفرست».
+   *
+   * The event exists (`follow_up_completed`) and fires at the moment, so the
+   * only way to say «two days later» was `delayDays` on the message — which
+   * queues it there and then and **re-checks nothing**, so a customer who
+   * cancelled the next morning still got the survey. A scheduled rule is
+   * re-evaluated at fire time, which is the whole difference, and it needed a
+   * date to count from: the day the result was recorded.
+   *
+   * `completedAtJalali` is that day. The rule then conditions on
+   * `followUpResult`, which is what the customer actually said.
+   */
+  follow_up_recorded: {
+    label: "ثبت نتیجهٔ پیگیری فروش",
+    model: "task", dateField: "completedAtJalali", entityType: "task",
+    payloadIdKey: "taskId",
+    where: { taskKind: "SALES_FOLLOW_UP", followUpResult: { not: null } },
   },
   inquiry_creation: {
     label: "تاریخ ثبت استعلام قیمت",

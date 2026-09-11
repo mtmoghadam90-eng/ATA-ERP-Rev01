@@ -54,6 +54,7 @@ import { decompressLZW } from '../utils/compress';
 import { SCHEDULE_SUBJECTS, describeSchedule, scheduleRepeats } from '../utils/workflowSchedule';
 import StuckThresholdsPanel from './StuckThresholdsPanel';
 import { escalationIsConfigured } from '../utils/workflowEscalation';
+import { cloneWorkflowRule } from '../utils/workflowRules';
 import {
   RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS, WORKFLOW_ACTION_TYPES,
   WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS, actionLabel, conditionFieldLabel, operatorLabel,
@@ -688,8 +689,14 @@ export default function SettingsView({
     const rules = settings.workflows || [];
     const rule = rules.find(r => r.id === ruleId);
     if (!rule) return;
+    /*
+      A **deep** copy. A spread is one level, so the copy and the original
+      shared one `actions` array and one config object per action — and the
+      editor writes into those in place, so editing the copy edited the
+      original. Reported exactly that way.
+    */
     const newRule: WorkflowRule = {
-      ...rule,
+      ...cloneWorkflowRule(rule),
       id: `wf-${Date.now()}`,
       name: `${rule.name} - کپی`,
       active: false
@@ -4749,7 +4756,11 @@ export default function SettingsView({
                             <button
                               type="button"
                               onClick={() => {
-                                setEditingRule({ ...rule });
+                                // Deep, for the same reason the copy is: the
+                                // form writes into the objects it is handed, so
+                                // a shallow draft is the stored rule and every
+                                // keystroke edits it before anybody saves.
+                                setEditingRule(cloneWorkflowRule(rule));
                                 setIsRuleFormOpen(true);
                               }}
                               className="p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-700 hover:text-slate-900"
