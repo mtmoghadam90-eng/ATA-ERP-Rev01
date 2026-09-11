@@ -42,10 +42,37 @@ import type { OutgoingMessage, SendResult } from "./drivers";
  */
 export const WHATSAPP_SESSION_DIR = path.join(process.cwd(), "whatsapp-session");
 
-/** Whether a device has been linked at all — the creds file is the evidence. */
+/**
+ * Whether a device is really **paired**, which the file's existence does not say.
+ *
+ * This read `fs.existsSync("creds.json")` and that was wrong in the direction
+ * that costs the number. `useMultiFileAuthState` seeds the credentials from
+ * `initAuthCreds()` — which sets `registered: false` — and `saveCreds` writes the
+ * file during the very first connection attempt, before anybody has scanned
+ * anything. So one failed attempt made every later reader believe a device was
+ * linked, and two guards written precisely to prevent machine-paced traffic
+ * stopped guarding:
+ *
+ *  - the reconnect after a close calls `connectWhatsapp()` **unforced**, which is
+ *    supposed to refuse when nothing is linked — instead it reopened the socket,
+ *    failed, and looped for ever;
+ *  - `ensureWhatsappLinkRestored()` opened a socket on **every server boot**,
+ *    which is a pairing code nobody is watching, raised on a schedule.
+ *
+ * Reported from behind Iran's filtering, where the socket is reset before the
+ * handshake completes (`read ECONNRESET`) and therefore no pairing code ever
+ * arrives: the panel sat on «قطع شده» and did not move, which is the loop.
+ *
+ * `creds.registered` is the flag baileys sets after a successful pairing (in
+ * `Socket/messages-recv`), so that is what «linked» means. An unreadable or
+ * half-written file answers **false** — the safe direction here, since false
+ * only means somebody has to press the button again, while true opens sockets
+ * nobody asked for.
+ */
 export function whatsappIsLinked(): boolean {
   try {
-    return fs.existsSync(path.join(WHATSAPP_SESSION_DIR, "creds.json"));
+    const raw = fs.readFileSync(path.join(WHATSAPP_SESSION_DIR, "creds.json"), "utf8");
+    return (JSON.parse(raw) as { registered?: unknown }).registered === true;
   } catch {
     return false;
   }
@@ -269,11 +296,31 @@ async function openSocket(): Promise<void> {
         return;
       }
 
+      const reason = describe(lastDisconnect?.error ?? "اتصال بسته شد.");
+
+      /*
+       * A pairing that never completed is not a dropped connection.
+       *
+       * With nothing registered there is no session to restore, so retrying is
+       * traffic with no possible outcome — which is exactly what happens behind
+       * a filter that resets the socket before the handshake: no pairing code
+       * ever arrives, and a reconnect loop just keeps knocking. It is also what
+       * the panel must say: `DISCONNECTED` promises «اتصال خودش دوباره تلاش
+       * می‌کند», and for an unpaired device that promise is false.
+       *
+       * So the close is reported as `UNLINKED` with the reason beside it, and
+       * the next attempt is a person pressing the button — which is the only
+       * thing that can succeed anyway, since somebody has to scan the code.
+       */
+      if (!whatsappIsLinked()) {
+        failures = 0;
+        clearRetry();
+        setState(WHATSAPP_STATES.UNLINKED, { qr: null, linkedNumber: null, lastError: reason });
+        return;
+      }
+
       failures += 1;
-      setState(WHATSAPP_STATES.DISCONNECTED, {
-        qr: null,
-        lastError: describe(lastDisconnect?.error ?? "اتصال بسته شد."),
-      });
+      setState(WHATSAPP_STATES.DISCONNECTED, { qr: null, lastError: reason });
       clearRetry();
       retryTimer = setTimeout(() => {
         retryTimer = null;

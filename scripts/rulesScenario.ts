@@ -15000,6 +15000,36 @@ head("Competitors: who we lose to, and by how much");
   ok("being logged out wipes the session rather than retrying",
     /loggedOut/.test(clientCode) && /wipeSession\(\)/.test(clientCode));
 
+  /*
+   * **«Linked» is `creds.registered`, never the file's existence.**
+   *
+   * This is the one that shipped wrong and was caught from a screenshot.
+   * `useMultiFileAuthState` seeds from `initAuthCreds()` (`registered: false`)
+   * and `saveCreds` writes `creds.json` during the first connection attempt —
+   * so reading the file's existence answered «linked» for a device nobody had
+   * ever scanned a code with, and the two guards that exist to keep this channel
+   * off WhatsApp's radar both stopped guarding: the unforced reconnect looped
+   * for ever, and boot opened a socket every time. Behind Iran's filtering the
+   * socket is reset before the handshake, so no code ever arrives and the loop
+   * is all there is.
+   */
+  ok("a linked device is decided by creds.registered",
+    /\.registered === true/.test(clientCode));
+  ok("...and never by the file merely existing",
+    !/existsSync\([^)]*creds\.json/.test(clientCode)
+    && !/existsSync\(\s*path\.join\(WHATSAPP_SESSION_DIR/.test(clientCode));
+  /*
+   * And a close with nothing paired is reported as UNLINKED rather than
+   * DISCONNECTED plus a retry: there is no session to restore, the state's own
+   * advice promises an automatic retry that cannot help, and only a person
+   * pressing the button can get anywhere — somebody has to scan the code.
+   */
+  ok("an unpaired close stops instead of retrying",
+    /if \(!whatsappIsLinked\(\)\) \{[\s\S]{0,260}WHATSAPP_STATES\.UNLINKED/.test(clientCode));
+  ok("...and the retry is left for a device that really is paired",
+    clientCode.indexOf("retryDelayMs(failures)")
+      > clientCode.indexOf("if (!whatsappIsLinked())"));
+
   const routes = strip(readFileSync("src/server/routes/messaging.ts", "utf8"));
   /*
    * The status endpoint is polled, so it must open no socket. A status that
