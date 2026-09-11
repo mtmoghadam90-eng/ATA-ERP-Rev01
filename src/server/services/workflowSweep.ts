@@ -237,6 +237,31 @@ function derivedTaskValues(
   return out;
 }
 
+/**
+ * The derived state of a band of rows, for whichever model they are.
+ *
+ * **One reading, because there are two readers.** The firing sweep computes
+ * these and so must `resolveFinishedTasks`: it reloads the raw row and asks
+ * `matchesConditions` the same question, so without them a rule conditioned on
+ * a derived field compared `undefined` against its value, answered «no longer
+ * matches», closed the task it had just raised and deleted the firing — and the
+ * next day's sweep raised it again. A create-and-close loop, every day, on a
+ * rule that was written correctly. Two reviewers found it independently, which
+ * is what a second copy of a derivation earns.
+ *
+ * A model with nothing derived answers an empty map, which is every subject
+ * whose conditions are all stored columns.
+ */
+async function derivedValuesFor(
+  model: string,
+  rows: Record<string, unknown>[],
+): Promise<Map<string, Record<string, unknown>>> {
+  if (model === "proforma") return derivedProformaValues(rows);
+  if (model === "task") return derivedTaskValues(rows);
+  if (model === "packagingDelivery") return derivedDeliveryValues(rows);
+  return new Map<string, Record<string, unknown>>();
+}
+
 /** The state of the once-a-day guard. Process-local, like the rate refresh's. */
 let ranFor: string | null = null;
 let running: Promise<number> | null = null;
@@ -317,16 +342,11 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
 
     /*
      * The state the row cannot carry, read once for the whole band rather than
-     * per record. Only the quotation has any: the other subjects' conditions
-     * are all stored columns.
+     * per record — and through the same `derivedValuesFor` the resolver uses,
+     * because a second copy of this is how a task comes to be raised by one
+     * half and closed by the other on the very same sweep.
      */
-    const derived = subject.model === "proforma"
-      ? await derivedProformaValues(rows)
-      : subject.model === "task"
-        ? derivedTaskValues(rows)
-        : subject.model === "packagingDelivery"
-          ? await derivedDeliveryValues(rows)
-          : new Map<string, Record<string, unknown>>();
+    const derived = await derivedValuesFor(subject.model, rows);
 
     for (const row of rows) {
       const base = row[subject.dateField] as string | null;
@@ -518,12 +538,24 @@ export async function resolveFinishedTasks(
          * A record that is gone resolves the task with it: the thing the
          * reminder was about does not exist, so there is nothing to chase.
          */
+        /*
+         * The same derived state the firing had. Without it a condition on
+         * `settled`, `outcome`, `superseded`, `chaseCount` or
+         * `openAfterSalesCount` read `undefined` here, so the rule «no longer
+         * matched» the instant it fired.
+         */
+        const derived = row
+          ? (await derivedValuesFor(model, [row as Record<string, unknown>]))
+              .get(String((row as { id?: unknown }).id)) ?? {}
+          : {};
+
         const stillMatches = row
           ? matchesConditions(
               rule.conditions,
               await enrichPayload(
                 {
                   ...row,
+                  ...derived,
                   [subject.payloadIdKey]: task.workflowEntityId,
                   entityType: model,
                   entityId: task.workflowEntityId,

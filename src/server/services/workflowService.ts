@@ -428,8 +428,37 @@ export async function executeRule(
          * module owner is told the way every other unreachable message is.
          */
         let onceRefusal: string | null = null;
+        let claimed: string | null = null;
         if (body && isMessageOnceScope(config.sendOnce)) {
-          const key = messageOnceKey(config.sendOnce, enrichedPayload);
+          /*
+           * «یک بار برای هر مشتری» on a payload that names a project and no
+           * customer is answerable, and used to be refused.
+           *
+           * `enrichPayload` resolves a customer *name* from an id and never an
+           * id from a project, so a project-backed trigger — a supplier
+           * inquiry, a packing list — carries no `customerId`. But
+           * `queueForCustomer` reads the project and finds the customer itself,
+           * so the message was perfectly deliverable and the scope key was the
+           * only thing that could not answer: switching «فقط یک بار» on turned
+           * every such rule into a permanent refusal. Read the same column the
+           * queue would, before asking for the key.
+           */
+          let scoped = enrichedPayload;
+          if (
+            config.sendOnce === "CUSTOMER"
+            && !enrichedPayload.customerId
+            && enrichedPayload.projectId
+          ) {
+            const project = await db.project.findUnique({
+              where: { id: String(enrichedPayload.projectId) },
+              select: { customerId: true },
+            });
+            if (project?.customerId) {
+              scoped = { ...enrichedPayload, customerId: project.customerId };
+            }
+          }
+
+          const key = messageOnceKey(config.sendOnce, scoped);
           if (!key) {
             onceRefusal = "این قانون «فقط یک بار» است ولی رویدادش "
               + (config.sendOnce === "PROJECT" ? "پروژه‌ای" : "مشتری‌ای")
@@ -437,8 +466,19 @@ export async function executeRule(
           } else {
             try {
               await db.workflowMessageSend.create({
-                data: { ruleId: rule.id, scope: config.sendOnce, scopeId: key },
+                data: {
+                  ruleId: rule.id,
+                  /*
+                   * The action as well as the rule: a rule may carry several
+                   * message actions, each with its own switch, and one key for
+                   * the rule made the first action's claim refuse the second.
+                   */
+                  actionId: action.id || "",
+                  scope: config.sendOnce,
+                  scopeId: key,
+                },
               });
+              claimed = key;
             } catch (err) {
               // P2002: already sent for this scope. Not a fault — the whole
               // point — and deliberately silent, unlike the refusal above.
@@ -447,6 +487,30 @@ export async function executeRule(
             }
           }
         }
+
+        /*
+         * A claim that bought nothing is given back.
+         *
+         * The row is written before the queue, because the unique index is the
+         * mechanism and an index can only decide at the moment of insert. But
+         * `queueForCustomer` can then decline — an exempted project, a customer
+         * with no address, an opt-out — and the claim would have burned the
+         * scope **for ever**: once the project was re-enabled or the number
+         * filled in, every later matching event hit P2002 and stayed silent,
+         * for a message that was never queued once. So the claim is released
+         * unless a row really went into the outbox.
+         */
+        const releaseClaim = async () => {
+          if (!claimed || !isMessageOnceScope(config.sendOnce)) return;
+          await db.workflowMessageSend.deleteMany({
+            where: {
+              ruleId: rule.id,
+              actionId: action.id || "",
+              scope: config.sendOnce,
+              scopeId: claimed,
+            },
+          });
+        };
 
         if (onceRefusal) {
           await notifyModuleResponsible(
@@ -504,6 +568,11 @@ export async function executeRule(
           // `suppressed` is somebody having deliberately exempted this project,
           // which is not news — telling the module owner about it every time
           // would train them to ignore the notices that matter.
+          // Nothing was queued, so «once» has not happened yet: see
+          // `releaseClaim`. A suppressed project is released too — the exemption
+          // is a decision about today, not about every event for ever.
+          if (!outcome.queued) await releaseClaim();
+
           if (!outcome.queued && outcome.reason && !outcome.suppressed) {
             await notifyModuleResponsible(
               "پیام‌ها",

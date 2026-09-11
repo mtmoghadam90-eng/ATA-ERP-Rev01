@@ -10550,6 +10550,44 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
       ok("the derived state reaches the payload the conditions read",
         /\.\.\.\(?derived\.get\(/.test(call));
       ok("...and the check is looking at the right call", call.includes("...row,"));
+
+      /*
+       * And the **resolver** needs them too, which is the half that shipped
+       * broken — found independently by two reviewers of two PRs.
+       *
+       * `resolveFinishedTasks` reloads the raw row and asks `matchesConditions`
+       * the same question. With the derived values missing it compared
+       * `undefined` against the condition's value, answered «no longer
+       * matches», closed the task the sweep had just raised and deleted the
+       * firing — so the next day raised it again. A create-and-close loop, for
+       * ever, on a rule written perfectly correctly.
+       *
+       * The mechanism first, purely: the condition a delivery rule is *meant*
+       * to carry, against a payload with and without its derived value.
+       */
+      eq("a condition on a derived field matches when the value is there",
+        matchesConditions(
+          [{ field: "openAfterSalesCount", operator: "equals", value: "0" }],
+          { actualDeliveryDateJalali: "1405/05/05", openAfterSalesCount: 0 },
+        ), true);
+      eq("...and answers «no» when it is missing, which is the whole fault",
+        matchesConditions(
+          [{ field: "openAfterSalesCount", operator: "equals", value: "0" }],
+          { actualDeliveryDateJalali: "1405/05/05" },
+        ), false);
+
+      // So both halves go through one function rather than two copies.
+      ok("the firing and the resolving share one derivation",
+        (sweepSrc.match(/derivedValuesFor\(/g) ?? []).length >= 3);
+      const resolverSrc = sweepSrc.slice(sweepSrc.indexOf("export async function resolveFinishedTasks"));
+      const resolverCall = resolverSrc.slice(
+        resolverSrc.indexOf("await enrichPayload("),
+        resolverSrc.indexOf("model,\n              ),"),
+      );
+      ok("...and the resolver merges them into the payload it evaluates",
+        /\.\.\.derived,/.test(resolverCall) && resolverCall.includes("...row,"));
+      ok("...computed for the row it reloaded, not left to the band",
+        /derivedValuesFor\(model, \[row as Record<string, unknown>\]\)/.test(resolverSrc));
     }
 
     /*
@@ -10770,6 +10808,69 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
       claim > 0 && send > 0 && claim < send);
     ok("...and an already-sent scope is silent rather than a fault",
       /code !== "P2002"/.test(engine.slice(claim, send)));
+
+    /*
+     * But a claim that bought nothing has to be given back.
+     *
+     * Claiming before the queue is right; **keeping** the claim when
+     * `queueForCustomer` declines is not. An exempted project, a customer with
+     * no address, an opt-out — the scope was burned for ever, so once the
+     * project was re-enabled or the number filled in, every later matching event
+     * hit P2002 and stayed silent for a message that was never queued once.
+     * Reported by code review on #175.
+     */
+    ok("a claim that queued nothing is released",
+      /if \(!outcome\.queued\) await releaseClaim\(\);/.test(engine)
+      && /workflowMessageSend\.deleteMany/.test(engine));
+    /*
+     * And the key names the action, not only the rule: a rule may carry several
+     * message actions each with its own switch, and one key for the whole rule
+     * made the first action's claim refuse the second — one configured message
+     * silently never sent, from the control written to prevent duplicates.
+     */
+    const claimCall = engine.slice(claim, engine.indexOf("});", claim));
+    ok("...and the claim is per message action",
+      /actionId: action\.id \|\| ""/.test(claimCall));
+    // Read inside the **create**: the release below carries the same key, so a
+    // check over the whole file passed while the insert had stopped naming it.
+    ok("...and the release names the same action", engine.slice(
+      engine.indexOf("workflowMessageSend.deleteMany"),
+    ).includes('actionId: action.id || ""'));
+    /*
+     * «یک بار برای هر مشتری» on a project-backed trigger is answerable, and used
+     * to be refused: `enrichPayload` never resolves a customer *id* from a
+     * project, while `queueForCustomer` does — so the scope key was the only
+     * thing that could not answer, and switching the option on turned a
+     * deliverable rule into a permanent refusal.
+     */
+    ok("...and a CUSTOMER scope resolves the customer from the project first",
+      /config\.sendOnce === "CUSTOMER"[\s\S]{0,400}project\.findUnique\([\s\S]{0,200}customerId: true/
+        .test(engine));
+
+    /*
+     * The retry is the second half of every quiet rule.
+     *
+     * `processQueue` rescheduled a failed attempt as a plain `now +
+     * retryDelayMs`, so a send attempted at 20:55 on a working Thursday went out
+     * at 21:00 inside the quiet window — or after midnight on a Friday nobody is
+     * written to. Both switches held for a first attempt and not for a second.
+     */
+    const queueSrc = readFileSync("src/server/services/messaging/messageService.ts", "utf8");
+    const retry = queueSrc.slice(queueSrc.indexOf("shouldRetry(attempts, settings.maxAttempts)"));
+    ok("a retry is scheduled through the same quiet-time rule",
+      /nextSendableTime\(\s*\n\s*new Date\(now\.getTime\(\) \+ retryDelayMs\(attempts\)\)/
+        .test(retry));
+    ok("...with the quiet days still read per audience",
+      /isCustomerFacing\(messageAudience\(message\.audience\)\)/.test(retry));
+    /*
+     * Which needs the audience **on the row**, for the reason `dryRun` is: the
+     * holds are decided when it is queued and a retry has to decide them again,
+     * and asking the settings would answer for whoever flipped a switch since.
+     */
+    ok("...and the audience is stamped on the outbox row",
+      /audience: input\.audience \?\? "CUSTOMER"/.test(queueSrc));
+    eq("an unknown stored audience reads as the customer, the safe direction",
+      /stored === "STAFF" \? "STAFF" : "CUSTOMER"/.test(queueSrc), true);
 
     /*
      * Its own table. A scheduled rule writes `(ruleId, "project", projectId)`
