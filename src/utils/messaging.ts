@@ -528,6 +528,40 @@ export function nextSendableTime(
   return at;
 }
 
+/**
+ * Who a message is addressed to, for the one rule that reads it.
+ *
+ * Absent means the customer, because that is the reading a forgotten key must
+ * fall to: a quotation follow-up slipping out on Ashura is the fault the quiet
+ * days exist to prevent, while a handover notice held back is only late.
+ */
+export const MESSAGE_AUDIENCES = ["CUSTOMER", "STAFF"] as const;
+export type MessageAudience = (typeof MESSAGE_AUDIENCES)[number];
+
+/**
+ * Whether the quiet **days** apply to a message.
+ *
+ * «اعلان همکاران از این قاعده سکوت مستثنا باشد» — and the two halves of the
+ * silence part company here, deliberately. A quiet day says «جمعه و تعطیل
+ * رسمی نباید به مشتری پیام زد»: it is a courtesy to somebody outside the
+ * company, and a colleague handed a job on a Friday they are working is not
+ * the person it protects — holding that notice until Saturday morning is how a
+ * request raised from a customer's site arrives after the visit it was about.
+ *
+ * The quiet **hours** are untouched for either audience, which is not an
+ * oversight: a task assigned at 03:00 reaching somebody's phone at 08:00 is
+ * exactly what that window was written for, and nobody wants to be woken by
+ * the board.
+ *
+ * It is a rule rather than a second switch on the settings document: a company
+ * that wanted its colleagues silenced on a holiday would be asking for the
+ * board to go quiet too, which no screen here offers, and a box beside the
+ * existing one would be two answers to one question.
+ */
+export function quietDaysApplyTo(audience: MessageAudience | null | undefined): boolean {
+  return audience !== "STAFF";
+}
+
 /* -------------------------------- retries -------------------------------- */
 
 /** Attempts before a message is given up on and marked failed. */
