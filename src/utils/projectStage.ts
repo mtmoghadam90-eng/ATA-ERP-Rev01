@@ -31,7 +31,6 @@
 
 import {
   INQUIRY_SENT, INQUIRY_WINNER, PROFORMA_SENT_STATUS, PURCHASE_ORDER_STATUSES,
-  isTechnicalProforma,
 } from "./moduleStatuses";
 
 /**
@@ -46,19 +45,28 @@ export const PROJECT_STAGES = [
   "جدید",
   "در حال مذاکره",
   /*
-   * The specification is still being settled.
+   * «داریم بررسی فنی می‌کنیم تا آفر مناسب بدهیم» — and there is usually **no
+   * document at all** yet.
    *
    * A customer sends a datasheet and an enquiry, and before anybody asks a
-   * supplier for a price or writes a commercial quotation somebody here has to
-   * decide *what* is being quoted — which instrument, which range, which
-   * connection. That work has an artefact in this application already: a
-   * **technical** proforma, which states the specification and quotes nothing.
+   * supplier for a price or writes a quotation somebody here has to work out
+   * *what* to offer: which instrument, which range, which connection. Nothing
+   * in this application records that. There is no technical-review row, and the
+   * project's own records are all still empty — which is precisely the state
+   * this names.
    *
-   * Before this stage existed such a project read «تهیه پیش‌فاکتور» or, once the
-   * technical offer had gone out, «پیگیری پیش‌فاکتور» — both of which say a
-   * price is with the customer when no price has been written. It sits here,
-   * *before* the supplier stages, because asking a supplier is what happens once
-   * the specification is settled.
+   * So it is **set by hand and derived from nothing**, the one stage in this
+   * list that is, and `deriveProjectStage` never answers it. It was first built
+   * to derive from a *technical* proforma and that was wrong twice over: it
+   * claimed the review needs a document, when the point is that it has none
+   * yet, and it would have said «بررسی فنی» about a specification already sent
+   * to the customer, which is the review finished rather than in progress.
+   *
+   * It sits here, before the supplier stages, because asking a supplier for a
+   * price is what happens once the review has decided what to ask about — which
+   * is also what hands the column back: an unlocked override is consumed by the
+   * first record that moves, so the inquiry or the quotation takes over on its
+   * own. Locked pins it, exactly as for «توقف پروژه توسط کارفرما».
    */
   "در حال بررسی فنی",
   // The two stages before a quotation exists. Until they were added, a job with
@@ -123,19 +131,7 @@ export const STAGE_FOR_PO_STATUS = {
 export interface StageFacts {
   /** The project's own sales status — the outcome, not the stage. */
   projectStatus?: string | null;
-  /**
-   * The project's quotations.
-   *
-   * `proformaType` is read because a **technical** document is not a quotation
-   * in progress — it carries no price — and reading the two kinds as one is
-   * what used to report «پیگیری پیش‌فاکتور» on a job whose only document states
-   * a specification. Absent means financial, the column's own default.
-   */
-  proformas?: {
-    status?: string | null;
-    isCancelled?: boolean | null;
-    proformaType?: string | null;
-  }[];
+  proformas?: { status?: string | null; isCancelled?: boolean | null }[];
   /** True once the sales outcome is won or part-won. */
   isWon?: boolean;
   /** True when every quotation is lost. */
@@ -188,18 +184,7 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
      * پاسخ تأمین‌کننده» the moment somebody asked a supplier about extra scope.
      */
     const live = proformas.filter((pf) => !pf.isCancelled);
-    /*
-     * A technical document and a commercial one are not two spellings of «a
-     * quotation exists». Only a **financial** one decides the quotation stages:
-     * «پیگیری پیش‌فاکتور» means a price is with the customer, and a technical
-     * offer carries none — which is exactly why the follow-up queue excludes it
-     * and the cost check exempts it. A job whose only document is technical is
-     * still settling what is being quoted, and falls through to
-     * «در حال بررسی فنی» below.
-     */
-    const financial = live.filter((pf) => !isTechnicalProforma(pf.proformaType));
-    const technical = live.filter((pf) => isTechnicalProforma(pf.proformaType));
-    if (financial.some((pf) => pf.status === PROFORMA_SENT_STATUS)) return "پیگیری پیش‌فاکتور";
+    if (live.some((pf) => pf.status === PROFORMA_SENT_STATUS)) return "پیگیری پیش‌فاکتور";
 
     /*
      * Nothing has reached the customer yet, so the least-advanced open thing
@@ -216,7 +201,7 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
       return "در انتظار پاسخ تأمین‌کننده";
     }
 
-    if (financial.length > 0) return "تهیه پیش‌فاکتور";
+    if (live.length > 0) return "تهیه پیش‌فاکتور";
     if (undecided.length > 0) return "بررسی پیشنهاد تأمین‌کننده";
 
     /*
@@ -227,17 +212,9 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
     if (inquiries.length > 0) return "بررسی پیشنهاد تأمین‌کننده";
 
     /*
-     * Only a technical document: the specification is what is being worked on.
-     *
-     * It is checked **after** the inquiries deliberately. The inquiry stages are
-     * further along the chain, and a supplier asked for a price is a supplier
-     * asked *once the specification was settled* — so an open inquiry beside a
-     * technical offer means the review produced its answer and the job has moved
-     * past it. Checking this first would drag such a project backwards, which is
-     * the fault the «sent quotation is the dividing line» rule above exists for.
+     * And never «در حال بررسی فنی»: that one is set by hand, because nothing
+     * here records a review. See the note beside it in `PROJECT_STAGES`.
      */
-    if (technical.length > 0) return "در حال بررسی فنی";
-
     // Whatever the person put on the form, which is «جدید» or «در حال مذاکره».
     return facts.projectStatus === "در حال مذاکره" ? "در حال مذاکره" : "جدید";
   }
