@@ -102,6 +102,27 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
     },
   },
   {
+    id: "quiet-days-1",
+    describe: "خاموش کردن ارسال پیام به مشتری در جمعه‌ها و تعطیلات رسمی",
+    apply: (settings) => {
+      /*
+       * Asked for, so it has to reach a live document — and a default in
+       * `seedData.ts` never does. Written **once**: from then on the checkbox
+       * decides, so somebody who switches it back off is not re-decided by any
+       * later reading of the code.
+       *
+       * Only ever an addition, as every patch here: a document that already
+       * carries the key — because a person has pressed the control — is left
+       * exactly as it is, whichever way they set it.
+       */
+      if (settings.messaging?.quietDays !== undefined) return null;
+      return {
+        ...settings,
+        messaging: { ...settings.messaging, quietDays: true },
+      };
+    },
+  },
+  {
     id: "staff-sms-addressee-1",
     describe: "افزودن خطاب همکار («آقای/خانم») به متن پیش‌فرض پیامک ارجاع کار",
     /*

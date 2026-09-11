@@ -525,6 +525,72 @@ const _everyOperatorIsOffered: Covers<
 > = true;
 void _everyOperatorIsOffered;
 
+/**
+ * «این پیام فقط یک بار برود» — and *once per what* is the whole question.
+ *
+ * A rule fires on a record, and for a customer-facing message the record is
+ * usually not the thing the customer experiences. A project here carries
+ * several supplier inquiries (one per part of the scope) and can be delivered
+ * in several consignments, so «وقتی نتیجهٔ استعلام ثبت شد به مشتری خبر بده»
+ * sends three identical messages for one job, and «یک ماه پس از تحویل» sends
+ * one per packing list. Neither is a repeat *of a record* — each firing is a
+ * different record — so nothing scoped to the record could have stopped them.
+ *
+ * There is therefore no sensible default, and the field is the switch: absent
+ * is off, and choosing an option **is** choosing the scope. Guessing one would
+ * be the code picking a number nobody typed, the way `escalateAfterOccurrences`
+ * refuses to.
+ */
+export const MESSAGE_ONCE_SCOPES = [
+  {
+    value: "RECORD", label: "یک بار برای همین رکورد",
+    hint: "همان رکوردی که قانون رویش اجرا شد. جلوی تکرار روی یک سند را می‌گیرد "
+      + "(مثلاً استعلامی که وضعیتش چند بار عوض می‌شود) و دربارهٔ سندهای دیگرِ "
+      + "همان پروژه چیزی نمی‌گوید.",
+  },
+  {
+    value: "PROJECT", label: "یک بار برای هر پروژه",
+    hint: "برای پیام‌هایی که دربارهٔ خودِ کار است، نه دربارهٔ یک سند. سه استعلام "
+      + "یا سه محمولهٔ یک پروژه یک پیام می‌گیرند.",
+  },
+  {
+    value: "CUSTOMER", label: "یک بار برای هر مشتری",
+    hint: "این جمله هرگز دو بار به این آدم نرود، از هر پروژه‌ای که باشد. برای "
+      + "پیام‌های معرفی و خوش‌آمد.",
+  },
+] as const;
+
+export type MessageOnceScope = typeof MESSAGE_ONCE_SCOPES[number]["value"];
+
+export function isMessageOnceScope(value: unknown): value is MessageOnceScope {
+  return MESSAGE_ONCE_SCOPES.some((s) => s.value === value);
+}
+
+/**
+ * What this firing is «once per», or null when the scope cannot be answered.
+ *
+ * **Null is refused rather than sent**, and that is the safe direction here: a
+ * rule whose author asked for one message per project, firing on a payload that
+ * names no project, cannot keep that promise — and sending anyway is exactly
+ * the duplicate the switch was turned on to prevent. The outbox says nothing
+ * either way, so the engine reports it the way every other unreachable message
+ * is reported.
+ */
+export function messageOnceKey(
+  scope: MessageOnceScope,
+  payload: Record<string, unknown>,
+): string | null {
+  const text = (value: unknown) => {
+    const out = String(value ?? "").trim();
+    return out || null;
+  };
+  if (scope === "PROJECT") return text(payload.projectId);
+  if (scope === "CUSTOMER") return text(payload.customerId);
+  const id = text(payload.entityId);
+  const type = text(payload.entityType);
+  return id && type ? `${type}:${id}` : null;
+}
+
 /** The Persian name of an action, or its raw id for one a stored rule invented. */
 export function actionLabel(type: string): string {
   return WORKFLOW_ACTION_TYPES.find((a) => a.value === type)?.label ?? type;
