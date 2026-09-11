@@ -42,7 +42,9 @@ function parseJsonAnswer(content: string): unknown {
   }
 }
 
-const EMPTY: DraftResult = { rule: null, warnings: [], refusal: null, summary: "" };
+const EMPTY: DraftResult = {
+  rule: null, warnings: [], refusal: null, summary: "", templateDraft: null,
+};
 
 export async function draftWorkflowRule(
   description: string,

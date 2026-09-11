@@ -602,7 +602,21 @@ export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
     hint: "false یعنی این استعلام هنوز برنده اعلام نشده — که هم «جواب نیامده» را می‌گیرد "
       + "و هم «جواب آمده و تصمیم گرفته نشده»؛ این دو را از هم جدا نمی‌کند.",
   }],
-  delivery: [{ value: "actualDeliveryDateJalali", label: "تاریخ تحویل قطعی" }],
+  /*
+   * The key is the **schedule subject's `model`**, and this one was spelled
+   * `delivery` while every packing-list subject says `packagingDelivery` — so
+   * the lookup missed and a scheduled rule on a packing list offered *no
+   * condition field at all*. The rule editor happened to hide it, because it
+   * falls back to a named entry when the model is unknown and this was the
+   * entry it fell back to; the drafter has no fallback, so the assistant could
+   * never write a condition on such a rule and its prompt advertised a model
+   * nothing could select. Exactly the drift this catalogue exists to end,
+   * arriving as a plain misspelling. `test:rules` now holds the two key sets
+   * against each other in both directions.
+   */
+  packagingDelivery: [
+    { value: "actualDeliveryDateJalali", label: "تاریخ تحویل قطعی به کارفرما" },
+  ],
   afterSalesService: [
     { value: "status", label: "وضعیت خدمات پس از فروش", options: AFTER_SALES_STATUSES },
   ],
