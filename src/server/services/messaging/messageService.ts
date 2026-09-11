@@ -198,6 +198,29 @@ async function providerConfig(channel: Channel): Promise<{
  * answers. It deliberately never returns the config: a caller that only needs
  * the flag has no business holding somebody's API key.
  */
+/**
+ * Switches a channel off, without creating a row that is not there.
+ *
+ * `channelIsActive` is what decides whether a staff notification goes out on
+ * WhatsApp, and it reads this flag rather than the socket's liveness — one
+ * indexed read instead of a round trip to the relay for every task anybody
+ * assigns. That is the right trade and it has one consequence: **something has
+ * to switch the flag off when the line genuinely goes away**, or the plan goes
+ * on choosing WhatsApp, `fallbackToSms` never fires because nothing reported a
+ * refusal, and every handover notice fails quietly into the outbox while the
+ * board reads perfectly correctly.
+ *
+ * A conditional `updateMany`: a channel nobody ever configured has no row, and
+ * inventing one that says «off» would put a provider on the settings screen that
+ * nobody added.
+ */
+export async function deactivateChannel(channel: Channel): Promise<void> {
+  await getDb().messageProvider.updateMany({
+    where: { channel, active: true },
+    data: { active: false },
+  });
+}
+
 export async function channelIsActive(channel: Channel): Promise<boolean> {
   const row = await getDb().messageProvider.findUnique({
     where: { channel },

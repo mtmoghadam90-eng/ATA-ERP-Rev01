@@ -1269,7 +1269,17 @@ function WhatsappLinkPanel({ onNotice }: { onNotice: (t: string) => void }) {
           <button
             type="button"
             disabled={busy}
-            onClick={() => void act(messagingApi.whatsappUnlink, 'اتصال واتس‌اپ قطع شد.')}
+            /*
+             * The message says both halves, because the second is a change the
+             * person did not ask for: unlinking also switches the WhatsApp
+             * channel off, since a line with no device cannot send and the
+             * staff notification reads that flag rather than the socket. Left
+             * on, every handover notice would fail quietly into the outbox.
+             */
+            onClick={() => void act(
+              messagingApi.whatsappUnlink,
+              'اتصال واتس‌اپ قطع شد و کانال واتس‌اپ غیرفعال شد؛ اعلان‌ها تا اتصال دوباره با پیامک می‌رود.',
+            )}
             className="px-3 py-1.5 border border-rose-200 bg-white rounded-lg text-[11px] font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50 flex items-center gap-1.5"
           >
             <Unlink size={12} />

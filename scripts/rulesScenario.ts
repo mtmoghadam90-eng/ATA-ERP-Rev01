@@ -6812,6 +6812,66 @@ head("A technical specification is not a quotation, in every rule that reads one
 }
 
 
+head("Unlinking WhatsApp switches the channel off with it");
+{
+  /*
+   * `channelIsActive` reads the provider row's own `active` flag and not the
+   * socket's liveness — deliberately, since asking the socket would be an HTTP
+   * round trip to the relay for every task anybody assigns, inside `afterCommit`.
+   * That trade has one consequence nobody had covered: **something has to switch
+   * the flag off when the line genuinely goes away**. Nothing did, so after an
+   * unlink `planStaffChannel` went on choosing WhatsApp, `fallbackToSms` never
+   * fired because nothing had refused, and every handover notice failed quietly
+   * into the outbox — the board reading perfectly correctly all the while.
+   */
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const route = strip(readFileSync("src/server/routes/messaging.ts", "utf8"));
+  const at = route.indexOf('"/api/messaging/whatsapp/unlink"');
+  ok("the unlink route is found", at > 0);
+  const handler = route.slice(at, route.indexOf("});", route.indexOf("sendError", at)));
+  ok("...and it switches the channel off",
+    /deactivateChannel\(CHANNELS\.WHATSAPP\)/.test(handler));
+  /*
+   * Only when the unlink really happened. A relay that could not be reached has
+   * told us nothing about the device, and switching the channel off on a network
+   * fault silences a line that is still linked.
+   */
+  ok("...only when the device really went", /report\.unlinked/.test(handler));
+
+  /*
+   * And the write is the route's, not the transport's: everything in that file is
+   * the socket-or-relay abstraction and nothing in it touches the database, which
+   * is what lets the block above drive the whole relay path without one.
+   */
+  const transport = strip(
+    readFileSync("src/server/services/messaging/whatsappTransport.ts", "utf8"));
+  ok("the transport writes no provider row itself",
+    !/deactivateChannel|messageProvider|getDb\(/.test(transport));
+
+  /*
+   * A channel nobody ever configured has no row, and inventing one that says
+   * «off» would put a provider on the settings screen that nobody added — so the
+   * write is a conditional `updateMany` rather than an upsert.
+   */
+  const svc = strip(
+    readFileSync("src/server/services/messaging/messageService.ts", "utf8"));
+  const fn = svc.slice(svc.indexOf("export async function deactivateChannel"));
+  ok("deactivating is found", fn.length > 0);
+  ok("...and creates no row that is not there",
+    /updateMany/.test(fn.slice(0, fn.indexOf("}"))) && !/upsert/.test(fn.slice(0, fn.indexOf("}"))));
+
+  /*
+   * And the person is told, because switching the channel off is a change they
+   * did not ask for — a notice that silently stops arriving on WhatsApp reads as
+   * the feature breaking.
+   */
+  const panel = strip(readFileSync("src/components/MessagingView.tsx", "utf8"));
+  ok("the button says the channel goes off too",
+    /whatsappUnlink,[\s\S]{0,200}غیرفعال/.test(panel));
+}
+
+
 head("Deploy: a fetch that never reached GitHub is not «already up to date»");
 {
   /*
@@ -16603,8 +16663,33 @@ head("Competitors: who we lose to, and by how much");
     eq("...and the raw pairing code comes back for this side to draw", linked.qr, "2@abc");
 
     seen.length = 0;
-    await t.whatsappUnlink();
+    const gone = await t.whatsappUnlink();
     eq("unlink asks /unlink", seen[0]?.url, "https://wa.example.com/unlink");
+    /*
+     * And it reports whether the device really went, because the *channel* has to
+     * be switched off with it: `channelIsActive` reads the provider row's flag
+     * rather than the socket (one indexed read instead of a round trip to the
+     * relay for every task anybody assigns), so after an unlink the staff plan
+     * went on choosing WhatsApp, `fallbackToSms` never fired — nothing had
+     * refused — and every handover notice failed quietly into the outbox while
+     * the board read perfectly correctly.
+     *
+     * The flag is written by the **route**, not here: nothing in the transport
+     * touches the database, which is what lets this whole relay path be driven
+     * without one.
+     */
+    ok("...and reports that the device really went", gone.unlinked === true);
+
+    /*
+     * A relay that could not be reached has said nothing about the device, so the
+     * answer is false — switching the channel off on the strength of a network
+     * fault would silence a line that is still perfectly linked.
+     */
+    answer = { status: 502, body: { error: "bad gateway" } };
+    const unreachable = await t.whatsappUnlink();
+    ok("an unreachable relay does not claim the device went",
+      unreachable.unlinked === false);
+    answer = { status: 200, body: { ok: true } };
 
     /*
      * Half-configured: refuses, says why, and **reaches nothing** — the silent

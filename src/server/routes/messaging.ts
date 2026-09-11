@@ -2,13 +2,14 @@ import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
 import { hasPermission } from "../auth";
-import { isChannel } from "../../utils/messaging";
+import { CHANNELS, isChannel } from "../../utils/messaging";
 import { whatsappFailureKind } from "../../utils/whatsapp";
 import {
   MESSAGE_FILTERABLE, MESSAGE_SORTABLE, ManualSendInput, TemplateInput,
-  cancelMessage, createTemplate, deleteTemplate, listMessages, listProviders,
-  listTemplates, messageSummary, messageVariables, processQueue, retryMessage,
-  providerChats, saveProvider, sendManual, testProvider, updateTemplate,
+  cancelMessage, createTemplate, deactivateChannel, deleteTemplate, listMessages,
+  listProviders,
+  listTemplates, messageSummary, messageVariables, processQueue, providerChats,
+  retryMessage, saveProvider, sendManual, testProvider, updateTemplate,
 } from "../services/messaging/messageService";
 
 /**
@@ -237,13 +238,31 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
     }
   });
 
-  /** Removes the device from the account and forgets its credentials. */
+  /**
+   * Removes the device from the account and forgets its credentials — **and
+   * switches the channel off with it**, which is the half that was missing.
+   *
+   * `channelIsActive` reads the provider row's own `active` flag rather than the
+   * socket's liveness, deliberately: asking the socket would be a round trip to
+   * the relay for every task anybody assigns. That trade has one consequence —
+   * something must switch the flag off when the line genuinely goes away — and
+   * nothing did. So after an unlink the staff plan went on choosing WhatsApp,
+   * `fallbackToSms` never fired because nothing had refused, and every handover
+   * notice failed quietly into the outbox while the board read perfectly
+   * correctly. A channel with no device is a channel that cannot send.
+   *
+   * Only when the unlink really happened: a relay that could not be reached has
+   * said nothing about the device, and switching the channel off on the strength
+   * of a network fault would silence a line that is still linked.
+   */
   app.post("/api/messaging/whatsapp/unlink", async (req, res) => {
     const user = await requireSettings(req, res);
     if (!user) return;
     try {
       const { whatsappUnlink } = await import("../services/messaging/whatsappTransport");
-      res.json({ success: true, ...(await whatsappUnlink()) });
+      const report = await whatsappUnlink();
+      if (report.unlinked) await deactivateChannel(CHANNELS.WHATSAPP);
+      res.json({ success: true, ...report });
     } catch (err) {
       sendError(res, err, "POST /api/messaging/whatsapp/unlink");
     }
