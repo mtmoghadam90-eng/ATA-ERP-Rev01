@@ -735,6 +735,25 @@ export default function SettingsView({
         })),
       });
       setIsRuleFormOpen(true);
+      /*
+        The wording the draft proposed, dropped into the template form that is
+        already on this screen.
+
+        A message action whose template does not exist yet arrives with an empty
+        `templateId`, which the save handler refuses — so without this the
+        person would read «قالب پیام را انتخاب کنید» about a message the
+        assistant had just written for them and have to retype it. The form is
+        the *existing* one and `messagingApi.createTemplate` is still the only
+        writer; all that happens here is that its boxes arrive filled in.
+      */
+      setTemplateDraft(answer.templateDraft && canWriteTemplates
+        ? {
+          actIdx: answer.templateDraft.actionIndex,
+          name: answer.templateDraft.name,
+          subject: answer.templateDraft.subject,
+          body: answer.templateDraft.body,
+        }
+        : null);
       setDraftSummary(answer.summary || '');
       setDraftWarnings(answer.warnings || []);
     } catch (err) {
@@ -3711,11 +3730,23 @@ export default function SettingsView({
                           waiting for its event.
                         */
                         const fieldOptions = editingRule.triggerType === 'time_elapsed'
-                          // A scheduled rule matches the record itself, so its
-                          // fields depend on which record the date belongs to.
+                          /*
+                            A scheduled rule matches the record itself, so its
+                            fields depend on which record the date belongs to.
+
+                            And **no fallback**: this used to end in
+                            `?? SCHEDULE_MODEL_FIELDS.delivery`, which meant a
+                            model the catalogue does not name silently offered
+                            the packing list's «تاریخ تحویل قطعی» — a condition
+                            on a field that record does not have, which is the
+                            rule-that-never-fires fault wearing a helpful face.
+                            It also hid a real misspelling for as long as it
+                            stood: `packagingDelivery` had no entry, and this
+                            line answered for it.
+                          */
                           ? (SCHEDULE_MODEL_FIELDS[
                               SCHEDULE_SUBJECTS[editingRule.schedule?.subject || 'proforma_sent']?.model ?? ''
-                            ] ?? SCHEDULE_MODEL_FIELDS.delivery)
+                            ] ?? [])
                           : triggerFields(editingRule.triggerType);
 
                         /*

@@ -10417,6 +10417,77 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
       /queueForCustomer\(\{\s*customerId: enrichedPayload\.customerId/.test(engineSrc));
   }
 
+  /*
+   * `SCHEDULE_MODEL_FIELDS` is keyed by a subject's `model`, and the two key
+   * sets have to be the same set — in **both** directions.
+   *
+   * The check above cannot see this: it reads `SCHEDULE_MODEL_FIELDS[model] ??
+   * []`, so a model with no entry has nothing to check and passes. That is
+   * precisely what happened — the packing list's entry was spelled `delivery`
+   * while every packing-list subject says `packagingDelivery`, so a scheduled
+   * rule on a packing list offered *no condition field at all* and the
+   * assistant's drafter (which has no fallback) dropped every condition written
+   * for one. The rule editor hid it, because it fell back to a named entry when
+   * the model was unknown, and the entry it fell back to was that one.
+   *
+   * The other direction matters just as much: an entry no subject names is a
+   * list of fields nothing can ever offer, advertised in the drafter's prompt
+   * as a model the model may choose.
+   */
+  {
+    const subjectModels = new Set<string>(
+      Object.values(SCHEDULE_SUBJECTS).map((s) => String(s.model)),
+    );
+    const fieldModels = new Set(Object.keys(SCHEDULE_MODEL_FIELDS));
+
+    const unlisted = [...subjectModels].filter((m) => !fieldModels.has(m));
+    ok("every model a schedule subject names has a condition-field list",
+      unlisted.length === 0, unlisted);
+
+    const orphaned = [...fieldModels].filter((m) => !subjectModels.has(m));
+    ok("...and no condition-field list names a model no subject uses",
+      orphaned.length === 0, orphaned);
+
+    // Not vacuous: the sets are real and the packing list is in both.
+    ok("...checked against a real, non-empty set of models",
+      subjectModels.size >= 5 && subjectModels.has("packagingDelivery"));
+
+    /*
+     * And the fallback that hid it is gone. An unknown model must offer nothing
+     * rather than borrowing another record's fields, which would be a condition
+     * on a column that record does not have — a rule that never fires, reached
+     * through the control meant to prevent exactly that.
+     */
+    // Comments first: the note explaining the fix quotes the expression it
+    // replaced, so a check reading the raw file fails on the very comment
+    // saying it was fixed.
+    const settingsSrc = readFileSync("src/components/SettingsView.tsx", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/^\s*\/\/.*$/gm, " ");
+    ok("the rule editor offers no fields for a model the catalogue does not name",
+      !/\?\?\s*SCHEDULE_MODEL_FIELDS\./.test(settingsSrc));
+  }
+
+  /*
+   * «یک ماه پس از تحویل کالا، نصب و راه‌اندازی را پیگیری کن» — and the day it
+   * counts from is the day the goods reached the customer, not the day the
+   * packing list was written.
+   *
+   * Those are different days routinely (the list is issued, the consignment
+   * leaves later) and sometimes the second never arrives at all, so counting
+   * from `deliveryDateJalali` would write to a customer about installing
+   * equipment they have not received.
+   */
+  {
+    const actual = SCHEDULE_SUBJECTS.delivery_actual;
+    ok("a rule can count from the actual delivery to the customer", !!actual);
+    ok("...from the actual date and not the packing list's own",
+      actual?.dateField === "actualDeliveryDateJalali"
+      && SCHEDULE_SUBJECTS.delivery_date?.dateField === "deliveryDateJalali");
+    ok("...on the packing list, so it reaches the project and the customer",
+      actual?.model === "packagingDelivery" && actual?.payloadIdKey === "packagingDeliveryId");
+  }
+
   /* The clock itself: written only on a real move, or it means «last saved». */
   ok("the same status is not a move",
     statusChangeColumns("حمل و ترانزیت", "حمل و ترانزیت", "1405/06/07") === null);
@@ -13415,6 +13486,112 @@ head("A workflow rule, drafted from a sentence");
   }, CTX);
   eq("a real template is kept", realTemplate.rule?.actions[0]?.messageConfig?.templateId, "tpl-1");
   eq("...with its channel", realTemplate.rule?.actions[0]?.messageConfig?.channel, "SMS");
+  eq("...and a matched template proposes nothing", realTemplate.templateDraft, null);
+
+  /*
+   * The wording is the half worth keeping, and it used to be thrown away.
+   *
+   * «در صورت باختن یک پروژه به مشتری پیام بده که متأسفیم…» names no stored
+   * template — most companies have none on the day they write their first rule
+   * — so the whole action was dropped and the person got a rule that did
+   * nothing, from the one screen built to stop rules that do nothing. The text
+   * is kept as a *proposal* instead, never written into the rule as a second
+   * editable copy of a message: the settings screen drops it into the «ساخت
+   * قالب جدید» form it already draws, and `messagingApi.createTemplate` stays
+   * the only writer of a template.
+   */
+  {
+    const proposed = sanitizeDraftedRule({
+      triggerType: "project_status_change",
+      conditions: [{ field: "newStatus", operator: "equals", value: "باخته" }],
+      actions: [{
+        type: "send_message",
+        messageConfig: {
+          channel: "SMS",
+          delayDays: 2,
+          newTemplate: {
+            name: "پیام پس از باخت",
+            body: "{addressee} عزیز، متأسفیم که در پروژه {projectCode} در خدمتتان نبودیم.",
+          },
+        },
+      }],
+    }, CTX);
+
+    eq("a message with no stored template keeps its action",
+      proposed.rule?.actions.length, 1);
+    eq("...with no templateId, so the save handler still asks for one",
+      proposed.rule?.actions[0]?.messageConfig?.templateId, undefined);
+    ok("...and nothing was written into the rule as a second copy of the text",
+      !proposed.rule?.actions[0]?.messageConfig?.bodyTemplate);
+    eq("...while the wording travels as a proposal",
+      proposed.templateDraft?.body,
+      "{addressee} عزیز، متأسفیم که در پروژه {projectCode} در خدمتتان نبودیم.");
+    eq("...named", proposed.templateDraft?.name, "پیام پس از باخت");
+    eq("...pointing at the action it belongs to", proposed.templateDraft?.actionIndex, 0);
+    eq("...and the rest of the action survived", proposed.rule?.actions[0]?.messageConfig?.delayDays, 2);
+    ok("...and the person is told why the rule cannot be saved yet",
+      proposed.warnings.some((w) => w.includes("ساخت قالب جدید")));
+  }
+
+  /*
+   * A customer message may name more variables than a task card can — the
+   * engine merges `messageVariables` for `send_message` only — and one it
+   * cannot resolve is printed verbatim, which here means «{مشتری}» arriving on
+   * somebody's phone. Worse than the same slip on a task card, because it
+   * leaves the building.
+   */
+  {
+    const known = sanitizeDraftedRule({
+      triggerType: "project_status_change",
+      actions: [{
+        type: "send_message",
+        messageConfig: { newTemplate: { name: "ن", body: "{addressee} — {projectCode}" } },
+      }],
+    }, CTX);
+    ok("a message using real variables draws no complaint",
+      !known.warnings.some((w) => w.includes("در متن پیام شناخته نشد")));
+
+    const invented = sanitizeDraftedRule({
+      triggerType: "project_status_change",
+      actions: [{
+        type: "send_message",
+        messageConfig: { newTemplate: { name: "ن", body: "{مشتری} عزیز" } },
+      }],
+    }, CTX);
+    ok("...and an invented one is named before it reaches a customer",
+      invented.warnings.some((w) => w.includes("مشتری") && w.includes("متن پیام")));
+    ok("...without throwing the rule away", !!invented.rule);
+  }
+
+  // Only one, because the screen draws one template form: a second would type
+  // into the first rather than being saved beside it.
+  {
+    const two = sanitizeDraftedRule({
+      triggerType: "project_status_change",
+      actions: [
+        { type: "send_message", messageConfig: { newTemplate: { name: "اول", body: "یک" } } },
+        { type: "send_message", messageConfig: { newTemplate: { name: "دوم", body: "دو" } } },
+      ],
+    }, CTX);
+    eq("the first proposed template is the one offered", two.templateDraft?.name, "اول");
+    ok("...and the second is named rather than silently lost",
+      two.warnings.some((w) => w.includes("دوم")));
+  }
+
+  // The screen's half: the proposal has to reach the form, or it is a field
+  // computed on the server and read by nobody.
+  {
+    const settings = strip(readFileSync("src/components/SettingsView.tsx", "utf8"));
+    ok("the rule editor fills its template form from the draft",
+      /setTemplateDraft\(answer\.templateDraft/.test(settings));
+    ok("...mapping the action it belongs to",
+      /actIdx: answer\.templateDraft\.actionIndex/.test(settings));
+  }
+
+  ok("the prompt tells the model to propose a template when none fits",
+    buildWorkflowDraftPrompt([]).includes("newTemplate"));
+  ok("...and that a delayed message is delayDays, not the task's own offset",
+    buildWorkflowDraftPrompt([]).includes("delayDays"));
 
   eq("a nameless rule is named after what the person asked for",
     sanitizeDraftedRule({

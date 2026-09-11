@@ -149,6 +149,25 @@ export const SCHEDULE_SUBJECTS: Record<string, ScheduleSubject> = {
     model: "packagingDelivery", dateField: "deliveryDateJalali", entityType: "packagingDelivery",
     payloadIdKey: "packagingDeliveryId",
   },
+  /*
+   * The day the goods actually reached the customer, which is a different day
+   * from the one above and the only honest base for «یک ماه پس از تحویل کالا،
+   * نصب و راه‌اندازی را پیگیری کن».
+   *
+   * `deliveryDateJalali` is when the packing list was **issued**: the goods may
+   * leave a fortnight later, or the list may be written and the consignment
+   * never go at all — and a rule counted from it would write to a customer
+   * about installing equipment they have not received. `actualDeliveryDate` is
+   * stamped when the delivery is recorded against the customer, and it is
+   * **nullable on purpose**: an undelivered consignment has no date, `dueDay`
+   * reads a missing base date as unscheduled rather than overdue, so such a
+   * record is simply not chased — which is the right silence.
+   */
+  delivery_actual: {
+    label: "تاریخ تحویل قطعی کالا به کارفرما",
+    model: "packagingDelivery", dateField: "actualDeliveryDateJalali",
+    entityType: "packagingDelivery", payloadIdKey: "packagingDeliveryId",
+  },
   inquiry_creation: {
     label: "تاریخ ثبت استعلام قیمت",
     model: "supplierInquiry", dateField: "creationDateJalali", entityType: "supplierInquiry",

@@ -146,8 +146,15 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     "  create_task — ساخت وظیفه. taskConfig: titleTemplate, descTemplate,",
     "    assignedTo, priority, dueDaysOffset, taskKind, skipIfOpenSameKind, closeWhenResolved,",
     "    escalateAfterOccurrences, escalatePriority, escalateAssignedTo",
-    "  send_message — ارسال پیام به مشتری. messageConfig: templateId (اجباری),",
+    "  send_message — ارسال پیام به مشتری. messageConfig:",
+    "    templateId — شناسهٔ یکی از قالب‌های فهرست پایین، اگر یکی از آن‌ها دقیقاً",
+    "      همان چیزی است که کاربر می‌خواهد بگوید.",
+    "    newTemplate — اگر هیچ‌کدام مناسب نیست، به‌جای templateId این را بنویس:",
+    "      {\"name\":\"یک نام کوتاه فارسی\",\"body\":\"متن پیام\"} و متن را از",
+    "      همان جمله‌ای بساز که کاربر خواسته. هر دو را با هم نفرست.",
     "    channel (SMS | BALE | EMAIL یا نیامده = ترجیح پروژه), delayDays, sendAtTime",
+    "    delayDays: عدد صحیح نامنفی — «۲ روز بعد» برای یک پیام یعنی همین، نه dueDaysOffset",
+    "      (آن مال وظیفه است).",
     "  send_notification — اعلان داخلی برای مسئول یک ماژول. notificationConfig:",
     "    titleTemplate, descTemplate, module",
     "",
@@ -223,8 +230,9 @@ export function buildWorkflowDraftPrompt(
     "   که به پیش‌فاکتور وصل نباشد، ساخته می‌شود و از هیچ صفحه‌ای بسته نمی‌شود.",
     "   برای بقیهٔ رویدادها taskKind را GENERAL بگذار.",
     "۴) برای «چند روز بعد از یک تاریخ» دو راه هست و هر دو درست‌اند: یا رویدادِ",
-    "   همان لحظه با dueDaysOffset، یا time_elapsed. اگر رویدادی برای آن لحظه",
-    "   وجود دارد آن را ترجیح بده، چون وظیفه از همان ابتدا روی تخته دیده می‌شود.",
+    "   همان لحظه به‌علاوهٔ تأخیرِ خودِ اقدام (dueDaysOffset برای وظیفه،",
+    "   delayDays برای پیام)، یا time_elapsed. اگر رویدادی برای آن لحظه وجود",
+    "   دارد آن را ترجیح بده، چون وظیفه از همان ابتدا روی تخته دیده می‌شود.",
     "۵) فقط JSON برگردان، بدون توضیح و بدون بلوک کد.",
     "",
     "شکل خروجی:",
@@ -252,6 +260,33 @@ export interface DraftContext {
   fallbackName: string;
 }
 
+/**
+ * A message the rule wants to send that no stored template says.
+ *
+ * The wording is the most valuable half of a sentence like «در صورت باختن یک
+ * پروژه به مشتری پیام بده که متأسفیم …», and before this it was thrown away:
+ * `send_message` needs a `templateId`, the model cannot invent one that exists,
+ * so the whole action was dropped with a warning and the person got a rule that
+ * did nothing. That is the «feature that does nothing» shape, reached from the
+ * one screen meant to prevent it.
+ *
+ * It is deliberately **not** written into the rule as `bodyTemplate`. Templates
+ * are edited in one place so that changing the wording changes every rule that
+ * uses it, and a second editable copy on the rule is exactly how the two come
+ * to disagree — the reason `template?.body` beats `config.bodyTemplate` in the
+ * engine. So the draft *proposes*, the settings screen opens its existing
+ * «ساخت قالب جدید» form with these boxes already filled in, and
+ * `messagingApi.createTemplate` stays the only writer of a template.
+ */
+export interface DraftTemplateProposal {
+  /** Which action in the drafted rule it belongs to. */
+  actionIndex: number;
+  name: string;
+  /** Only an email has one; blank for the other two channels. */
+  subject: string;
+  body: string;
+}
+
 export interface DraftResult {
   rule: WorkflowRule | null;
   /** One Persian sentence per thing dropped or corrected. */
@@ -260,6 +295,12 @@ export interface DraftResult {
   refusal: string | null;
   /** The model's own one-line description, when it gave one. */
   summary: string;
+  /**
+   * The wording for a message action that named no stored template. One at a
+   * time: the editor draws a single template form, and two proposals racing for
+   * it would type into each other — a second is reported as a warning instead.
+   */
+  templateDraft: DraftTemplateProposal | null;
 }
 
 const text = (value: unknown, max = 400): string =>
@@ -314,7 +355,7 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
   const summary = text(answer.summary, 300);
 
   const refusal = text(answer.refusal, 300);
-  if (refusal) return { rule: null, warnings, refusal, summary };
+  if (refusal) return { rule: null, warnings, refusal, summary, templateDraft: null };
 
   /*
    * The trigger is the one thing with no sensible default: a rule pointed at an
@@ -329,6 +370,7 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
       warnings,
       refusal: `رویداد «${triggerType || "نامشخص"}» در این سیستم وجود ندارد. لطفاً خواسته‌تان را کمی دقیق‌تر بنویسید.`,
       summary,
+      templateDraft: null,
     };
   }
 
@@ -342,6 +384,7 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
         warnings,
         refusal: `تاریخی که قانون باید از آن بشمارد («${subject || "نامشخص"}») شناخته نشد.`,
         summary,
+        templateDraft: null,
       };
     }
     const direction = rawSchedule.direction === "before" ? "before" : "after";
@@ -408,6 +451,20 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
   const templateKeys = new Set(
     templateVariablesFor(triggerType, scheduleModel).map((v) => v.key),
   );
+
+  /*
+   * And what a **customer message** may name, which is a wider set and a
+   * separate one: `send_message` merges `messageVariables` under the payload
+   * before rendering, so {addressee} and {companyName} resolve there and print
+   * as nine literal characters on a task card. Kept apart for that reason.
+   */
+  const messageKeys = new Set([
+    ...templateKeys,
+    ...MESSAGE_VARIABLES.map((v) => v.key),
+  ]);
+
+  /** The one message wording this draft still needs a template for. */
+  let templateDraft: DraftTemplateProposal | null = null;
 
   /*
    * Whether this rule's payload names a quotation, which decides whether a
@@ -510,26 +567,55 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
     if (type === "send_message") {
       const config = (action.messageConfig ?? {}) as Record<string, unknown>;
       const templateId = text(config.templateId, 60);
+      const stored = ctx.templateIds.includes(templateId);
+
       /*
-       * No template, no action. The engine renders an empty body and skips the
-       * send without a word, and the save handler refuses it anyway — so
-       * dropping it here is what turns a silent nothing into a sentence.
+       * What the message should say, when no stored template says it.
+       *
+       * The model is told to answer `newTemplate` instead of inventing a
+       * `templateId`, because an id it makes up is one that does not exist and
+       * the action used to be dropped whole — taking the wording with it, which
+       * is the half of the sentence worth keeping. It is kept here as a
+       * *proposal* rather than being written into the rule: see
+       * `DraftTemplateProposal`.
        */
-      if (!ctx.templateIds.includes(templateId)) {
+      const draft = (config.newTemplate ?? {}) as Record<string, unknown>;
+      const body = text(draft.body, 1000);
+
+      if (!stored && !body) {
         warnings.push(
-          "اقدام ارسال پیام حذف شد: قالب پیام مشخص نشد. قالب‌ها در ماژول «ارسال پیام» ساخته می‌شوند.",
+          "اقدام ارسال پیام حذف شد: نه قالبی انتخاب شد و نه متنی برای پیام نوشته شد.",
         );
         continue;
       }
+
       const channel = (CHANNELS as readonly string[]).includes(String(config.channel))
         ? (config.channel as "SMS" | "BALE" | "EMAIL")
         : undefined;
+
+      /*
+       * A token nothing fills in reaches the customer verbatim — `{مشتری}` in
+       * an SMS, which is worse than the same mistake on a task card because it
+       * leaves the building. Checked against the *message* variables plus the
+       * rule's own payload keys, which is exactly the union `send_message`
+       * merges before rendering.
+       */
+      if (!stored) {
+        for (const token of unknownTokens(body, messageKeys)) {
+          warnings.push(
+            `متغیر «{${token}}» در متن پیام شناخته نشد و عیناً برای مشتری فرستاده می‌شود؛ آن را اصلاح کنید.`,
+          );
+        }
+      }
 
       actions.push({
         id,
         type: "send_message",
         messageConfig: {
-          templateId,
+          // Empty when the wording is still a proposal: the save handler
+          // refuses a message action with neither a template nor a body, so the
+          // person cannot accidentally ship a rule that says nothing.
+          ...(stored ? { templateId } : {}),
           ...(channel ? { channel } : {}),
           delayDays: wholeNumber(config.delayDays, 0),
           ...(/^\d{1,2}:\d{2}$/.test(String(config.sendAtTime ?? ""))
@@ -537,6 +623,28 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
             : {}),
         },
       });
+
+      if (!stored) {
+        const proposal = {
+          actionIndex: actions.length - 1,
+          name: text(draft.name, 120) || text(answer.name, 120) || ctx.fallbackName.slice(0, 120),
+          subject: channel === "EMAIL" ? text(draft.subject, 200) : "",
+          body,
+        };
+        if (templateDraft) {
+          // One form, one proposal. A second is named rather than silently
+          // losing its wording.
+          warnings.push(
+            `متن پیشنهادی «${proposal.name}» ثبت نشد: در هر قانون فقط یک قالب تازه می‌توان ساخت.`,
+          );
+        } else {
+          templateDraft = proposal;
+          warnings.push(
+            "برای این پیام قالبی موجود نبود؛ متن پیشنهادی در فرم «ساخت قالب جدید» آماده است — "
+            + "آن را بازبینی و ذخیره کنید تا قانون بتواند ذخیره شود.",
+          );
+        }
+      }
       continue;
     }
 
@@ -581,6 +689,7 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
       warnings,
       refusal: "هیچ اقدام قابل اجرایی از توضیح شما ساخته نشد. بنویسید پس از وقوع رویداد دقیقاً چه اتفاقی بیفتد.",
       summary,
+      templateDraft: null,
     };
   }
 
@@ -601,5 +710,6 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
     warnings,
     refusal: null,
     summary,
+    templateDraft,
   };
 }

@@ -93,6 +93,21 @@ export interface WorkflowDraftAnswer {
   refusal: string | null;
   /** The model's own one-line description of the rule it drafted. */
   summary: string;
+  /**
+   * The wording for a message action that matched no stored template.
+   *
+   * The rule arrives with an empty `templateId` in that case — which the save
+   * handler refuses — and this is what the screen drops into its «ساخت قالب
+   * جدید» form so the text the assistant wrote is not retyped by hand. Saving
+   * it still goes through `messagingApi.createTemplate`, which stays the one
+   * writer of a template.
+   */
+  templateDraft: {
+    actionIndex: number;
+    name: string;
+    subject: string;
+    body: string;
+  } | null;
 }
 
 export const assistantApi = {
