@@ -9,7 +9,7 @@ import {
   ALL_SMS_CONFIG_FIELDS, ALL_SMS_SECRET_FIELDS,
   CHANNELS, Channel, MAX_SEND_ATTEMPTS, MESSAGE_STATUS, MessageAudience, QuietHours,
   isChannel,
-  nextSendableTime, quietDaysApplyTo, renderTemplate, resolveRecipient, retryDelayMs,
+  isCustomerFacing, nextSendableTime, renderTemplate, resolveRecipient, retryDelayMs,
   shouldRetry,
 } from "../../../utils/messaging";
 import { BaleChatsResult, BaleConfig, baleRecentChats, sendThrough } from "./drivers";
@@ -355,11 +355,13 @@ export interface QueueMessageInput {
   createdByUserId?: string | null;
   createdByName?: string | null;
   /**
-   * Who this is addressed to — read by one rule, `quietDaysApplyTo`.
+   * Who this is addressed to — read by one rule, `isCustomerFacing`, which
+   * decides both company-wide holds below: the quiet days, and the dry run.
    *
    * Absent means the customer, which is what every caller written before this
    * meant and the safe direction for one that forgets: a message held back is
-   * late, and one sent on Ashura is the thing the quiet days exist to stop.
+   * late, while one sent on Ashura — or one reaching a real customer during a
+   * dry run — is the thing those switches exist to stop.
    */
   audience?: MessageAudience;
 }
@@ -390,7 +392,7 @@ export async function queueMessage(input: QueueMessageInput) {
   const scheduledAt = nextSendableTime(
     requested,
     settings.quietHours,
-    settings.quietDays && quietDaysApplyTo(input.audience)
+    settings.quietDays && isCustomerFacing(input.audience)
       ? (day) => isOfficialHoliday(toShamsiStr(day))
       : null,
   );
@@ -405,7 +407,18 @@ export async function queueMessage(input: QueueMessageInput) {
       status: MESSAGE_STATUS.QUEUED,
       scheduledAt,
       scheduledAtJalali: toShamsiStr(scheduledAt),
-      dryRun: settings.dryRun,
+      /*
+       * Stamped on the row rather than asked of the settings when it is sent, so
+       * the row itself says what will happen to it — exactly as `scheduledAt`
+       * does — and flipping the switch afterwards cannot change the answer for a
+       * message already queued.
+       *
+       * `isCustomerFacing` is what exempts a staff notification: a dry run is
+       * for trying a rule out without writing to a *customer*, and a handover
+       * notice that evaporates because somebody left the switch on is a week of
+       * colleagues never being told while the board reads perfectly correctly.
+       */
+      dryRun: settings.dryRun && isCustomerFacing(input.audience),
       customerId: input.customerId ?? null,
       projectId: input.projectId ?? null,
       templateId: input.templateId ?? null,
