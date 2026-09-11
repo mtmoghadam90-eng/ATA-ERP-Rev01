@@ -116,9 +116,11 @@ import {
   ALL_CHANNELS, CHANNEL_LABELS,
 } from "../src/utils/messaging";
 import {
+  WHATSAPP_FAILURE_ADVICE, WHATSAPP_FAILURE_KINDS, WHATSAPP_FAILURE_LABELS,
   WHATSAPP_GAP_MS, WHATSAPP_PER_PASS, WHATSAPP_STATES, WHATSAPP_STATE_ADVICE,
-  WHATSAPP_STATE_LABELS, WHATSAPP_USER_DOMAIN, isWhatsappAddressable, whatsappCanSend,
-  whatsappGapMs, whatsappJid, whatsappSendRefusal,
+  WHATSAPP_STATE_LABELS, WHATSAPP_USER_DOMAIN, isWhatsappAddressable, relayConfigFrom,
+  relayConfigRefusal, whatsappCanSend, whatsappFailureKind, whatsappGapMs, whatsappJid,
+  whatsappSendRefusal,
 } from "../src/utils/whatsapp";
 import { channelPassLimit } from "../src/server/services/messaging/messageService";
 import { normalizeMobile as smsNormalizeMobile } from "../src/server/services/messaging/drivers";
@@ -15031,6 +15033,7 @@ head("Competitors: who we lose to, and by how much");
       > clientCode.indexOf("if (!whatsappIsLinked())"));
 
   const routes = strip(readFileSync("src/server/routes/messaging.ts", "utf8"));
+  const transport = strip(readFileSync("src/server/services/messaging/whatsappTransport.ts", "utf8"));
   /*
    * The status endpoint is polled, so it must open no socket. A status that
    * connects as a side effect would raise a pairing code every few seconds for
@@ -15041,10 +15044,18 @@ head("Competitors: who we lose to, and by how much");
     routes.indexOf('"/api/messaging/whatsapp/link"'),
   );
   ok("the status block was found", statusBlock.length > 100);
-  ok("the status endpoint opens no socket", !statusBlock.includes("connectWhatsapp"));
+  /*
+   * The socket may be held here or on a relay, so the routes go through
+   * `whatsappTransport` and the two names to keep out of the status block are
+   * both of the ones that open one.
+   */
+  ok("the status endpoint opens no socket",
+    !statusBlock.includes("connectWhatsapp") && !statusBlock.includes("whatsappLink"));
   ok("...and draws the code server-side", statusBlock.includes("qrImage"));
   ok("the link endpoint is the only thing that connects",
-    /connectWhatsapp\(\{\s*force:\s*true\s*\}\)/.test(routes));
+    /whatsappLink\(\)/.test(routes) && !/connectWhatsapp/.test(routes));
+  ok("...and the transport is what forces the pairing",
+    /connectWhatsapp\(\{\s*force:\s*true\s*\}\)/.test(transport));
   /*
    * All three are administration: pressing «اتصال» repeatedly is itself traffic
    * counted against the number, and «قطع اتصال» stops every automated message
@@ -15090,6 +15101,201 @@ head("Competitors: who we lose to, and by how much");
     && panel.includes("WHATSAPP_POLL_MS.settled"));
   ok("...and stops polling when it is taken off the screen",
     /clearInterval/.test(panel));
+
+  /* ------------------------- the relay, and where it is ------------------- */
+
+  /*
+   * **A relay rather than a proxy**, which is the decision the rest follows
+   * from: a linked device holds one connection open for days, so proxying it
+   * means every minute of it crosses a filtered border and every severance is a
+   * fresh handshake — the machine-paced traffic this channel exists to avoid. A
+   * relay puts the socket entirely on the far side and the link from here
+   * carries only short requests the outbox already retries.
+   */
+  eq("nothing configured is not a refusal", relayConfigRefusal("", ""), null);
+  eq("https with a token is accepted",
+    relayConfigRefusal("https://wa.example.com", "s3cret"), null);
+  /*
+   * Plain HTTP would put the token on the wire in the clear, on every send,
+   * across exactly the network that is being worked around. Loopback is the one
+   * exception — nothing leaves the machine — which is what makes a relay
+   * testable on one box without weakening the rule for the real one.
+   */
+  ok("plain http is refused", !!relayConfigRefusal("http://wa.example.com", "s3cret"));
+  eq("...but loopback is allowed",
+    relayConfigRefusal("http://127.0.0.1:8080", "s3cret"), null);
+  eq("...localhost too", relayConfigRefusal("http://localhost:8080", "s3cret"), null);
+  /*
+   * An address with no token is a machine anybody can send as the company's line
+   * from, so it is refused — and refused *loudly*: a silent fall back to the
+   * local socket would send from the wrong place, or from nowhere behind a
+   * filter, with nothing on any screen naming which.
+   */
+  ok("an address with no token is refused",
+    !!relayConfigRefusal("https://wa.example.com", ""));
+  ok("...and the refusal says why", (relayConfigRefusal("https://wa.example.com", "") ?? "")
+    .includes("توکن"));
+  ok("an unparseable address is refused", !!relayConfigRefusal("not a url", "s3cret"));
+
+  eq("a pair with no token is no configuration",
+    relayConfigFrom("https://wa.example.com", ""), null);
+  eq("...and a trailing slash is trimmed once",
+    relayConfigFrom("https://wa.example.com/", "s3cret")?.url, "https://wa.example.com");
+
+  /*
+   * Which half a failure belongs to. The panel drew «قطع شده» for a filtered
+   * route, a device removed from the account and a half-written configuration
+   * alike, and those three are fixed by three different people.
+   */
+  eq("ECONNRESET is the route",
+    whatsappFailureKind("WebSocket Error (read ECONNRESET)"), "NETWORK");
+  eq("a timeout is the route",
+    whatsappFailureKind("The operation was aborted due to timeout"), "NETWORK");
+  eq("an unreachable relay is the route",
+    whatsappFailureKind("ارتباط با رله واتس‌اپ برقرار نشد: fetch failed"), "NETWORK");
+  eq("being logged out is the account",
+    whatsappFailureKind("Connection Failure (loggedOut)"), "ACCOUNT");
+  eq("a 401 is the account", whatsappFailureKind("رله واتس‌اپ پاسخ 401 داد."), "ACCOUNT");
+  eq("a missing token is this application's own fault",
+    whatsappFailureKind("توکن رله واتس‌اپ تنظیم نشده است."), "CONFIG");
+  /*
+   * **UNKNOWN is an honest answer and not a gap**: calling an unfamiliar message
+   * a network fault sends somebody to check a route that is fine, and calling it
+   * an account fault tells them to unlink a perfectly good device.
+   */
+  eq("something unfamiliar is admitted rather than guessed",
+    whatsappFailureKind("Msg 12345: something new"), "UNKNOWN");
+  eq("nothing at all is UNKNOWN", whatsappFailureKind(null), "UNKNOWN");
+  for (const kind of Object.values(WHATSAPP_FAILURE_KINDS)) {
+    ok(`«${kind}» has a label`, (WHATSAPP_FAILURE_LABELS[kind] ?? "").length > 3);
+    ok(`«${kind}» has advice`, (WHATSAPP_FAILURE_ADVICE[kind] ?? "").length > 10);
+  }
+
+  /* ---- the transport itself, over a stubbed fetch: what reaches the wire --- */
+
+  {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const realFetch = g.fetch;
+    const realUrl = process.env.WHATSAPP_RELAY_URL;
+    const realToken = process.env.WHATSAPP_RELAY_TOKEN;
+
+    const seen: { url: string; auth: unknown; body: string }[] = [];
+    let answer: { status: number; body: unknown } = { status: 200, body: { ok: true } };
+    g.fetch = async (url: unknown, init: { headers?: Record<string, string>; body?: string }) => {
+      seen.push({ url: String(url), auth: init?.headers?.Authorization, body: String(init?.body ?? "") });
+      const text = JSON.stringify(answer.body);
+      return {
+        ok: answer.status >= 200 && answer.status < 300,
+        status: answer.status,
+        text: async () => text,
+      } as unknown as Response;
+    };
+
+    process.env.WHATSAPP_RELAY_URL = "https://wa.example.com/";
+    process.env.WHATSAPP_RELAY_TOKEN = "s3cret";
+    const t = await import("../src/server/services/messaging/whatsappTransport");
+
+    ok("the relay is detected from the environment", t.whatsappUsesRelay());
+    eq("...with no refusal", t.whatsappRelayRefusal(), null);
+
+    answer = { status: 200, body: { ok: true, providerMessageId: "wamid.1" } };
+    const sent = await t.sendWhatsappMessage({ recipient: "09121234567", body: "سلام" });
+    eq("a send goes to /send on the configured host",
+      seen[0]?.url, "https://wa.example.com/send");
+    eq("...with the token as a bearer header and nowhere else",
+      seen[0]?.auth, "Bearer s3cret");
+    ok("...and the token is not in the URL", !String(seen[0]?.url).includes("s3cret"));
+    ok("...the number and the text are the body",
+      seen[0].body.includes("09121234567") && seen[0].body.includes("سلام"));
+    ok("the relay's own answer is taken as given",
+      sent.ok === true && sent.providerMessageId === "wamid.1");
+
+    /*
+     * The far side ran the JID rule, the connection check and the send, so its
+     * refusal is relayed in its own words rather than re-decided here.
+     */
+    answer = { status: 200, body: { ok: false, error: "این شماره حساب واتس‌اپ ندارد." } };
+    const refused = await t.sendWhatsappMessage({ recipient: "02188776655", body: "x" });
+    eq("a refusal keeps the relay's sentence", refused.error, "این شماره حساب واتس‌اپ ندارد.");
+
+    /* The queue marks a row SENT on `ok` alone, so neither of these may say ok. */
+    answer = { status: 502, body: { error: "upstream down" } };
+    const bad = await t.sendWhatsappMessage({ recipient: "09121234567", body: "x" });
+    ok("a non-2xx is a failure and not a send", bad.ok === false);
+    ok("...naming what the relay said", (bad.error ?? "").includes("upstream down"));
+
+    answer = { status: 200, body: { nonsense: true } };
+    const garbled = await t.sendWhatsappMessage({ recipient: "09121234567", body: "x" });
+    ok("a 200 carrying an unreadable body is a failure too", garbled.ok === false);
+
+    seen.length = 0;
+    answer = { status: 200, body: { state: "CONNECTED", linked: true, qr: null, linkedNumber: "989121234567", lastError: null, since: "x" } };
+    const st = await t.whatsappStatus();
+    eq("status asks /status", seen[0]?.url, "https://wa.example.com/status");
+    ok("...and reports the far side's line", st.linked === true && st.state === "CONNECTED");
+
+    seen.length = 0;
+    answer = { status: 200, body: { state: "AWAITING_SCAN", qr: "2@abc", linkedNumber: null, lastError: null, since: "x" } };
+    const linked = await t.whatsappLink();
+    eq("link asks /link", seen[0]?.url, "https://wa.example.com/link");
+    /*
+     * The **raw** code comes back and this side draws it, which is why the seam
+     * needed no change: `whatsappReport` always carried the string and the route
+     * always rendered it. Nobody has to reach the relay's own console to scan.
+     */
+    eq("...and the raw pairing code comes back for this side to draw", linked.qr, "2@abc");
+
+    seen.length = 0;
+    await t.whatsappUnlink();
+    eq("unlink asks /unlink", seen[0]?.url, "https://wa.example.com/unlink");
+
+    /*
+     * Half-configured: refuses, says why, and **reaches nothing** — the silent
+     * fallback is the fault this guards against, so the check is that no request
+     * was made at all rather than merely that the answer was a failure.
+     */
+    seen.length = 0;
+    process.env.WHATSAPP_RELAY_TOKEN = "";
+    const half = await t.sendWhatsappMessage({ recipient: "09121234567", body: "x" });
+    ok("a token-less relay refuses the send", half.ok === false);
+    eq("...as a configuration fault", whatsappFailureKind(half.error), "CONFIG");
+    eq("...and nothing was sent anywhere", seen.length, 0);
+
+    g.fetch = realFetch;
+    process.env.WHATSAPP_RELAY_URL = realUrl;
+    process.env.WHATSAPP_RELAY_TOKEN = realToken;
+  }
+
+  /* The relay path must not drag an ESM-only protocol client in with it. */
+  ok("the transport never imports baileys",
+    !/@whiskeysockets\/baileys/.test(transport));
+  /*
+   * A top-level `import type` is fine and is what carries `WhatsappReport`:
+   * types are erased, so it pulls no value graph and no library with it. What
+   * must not appear is a *value* import of the client, which would load baileys
+   * into a server that sends through a relay and has no socket of its own.
+   */
+  ok("...and reaches the local socket only through a call-time import",
+    !/^\s*import\s+(?!type\b)[^\n]*whatsappClient/m.test(transport)
+    && /import\("\.\/whatsappClient"\)/.test(transport));
+  /*
+   * A relay deployment restores nothing on boot: the socket is not this
+   * process's, and a second one on the same credentials is how a device gets
+   * itself logged out.
+   */
+  ok("boot restores nothing when a relay holds the line",
+    /whatsappUsesRelay\(\) \|\| whatsappRelayRefusal\(\)/.test(transport));
+  ok("...and server.ts goes through the transport rather than the client",
+    /ensureWhatsappRestored/.test(strip(readFileSync("server.ts", "utf8")))
+    && !/ensureWhatsappLinkRestored/.test(strip(readFileSync("server.ts", "utf8"))));
+
+  /* The panel says which machine holds the line, and never its address. */
+  ok("the panel marks a relayed line", panel.includes("از طریق رله"));
+  ok("...and names the half a failure belongs to",
+    panel.includes("WHATSAPP_FAILURE_LABELS") && panel.includes("WHATSAPP_FAILURE_ADVICE"));
+  ok("the status route reports the relay without its address",
+    /relay: whatsappUsesRelay\(\)/.test(routes)
+    && !/WHATSAPP_RELAY_URL/.test(routes));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

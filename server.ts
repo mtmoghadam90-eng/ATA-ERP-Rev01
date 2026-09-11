@@ -46,7 +46,7 @@ import { registerApiTokenRoutes } from "./src/server/routes/apiTokens";
 import { authenticateToken } from "./src/server/services/apiTokenService";
 import { parseBearer, pathClosedToTokens, scopeAllowsMethod } from "./src/utils/apiTokens";
 import { processQueue } from "./src/server/services/messaging/messageService";
-import { ensureWhatsappLinkRestored } from "./src/server/services/messaging/whatsappClient";
+import { ensureWhatsappRestored } from "./src/server/services/messaging/whatsappTransport";
 import { scrapeRates } from "./src/server/rateSource";
 import { ensureRatesFresh } from "./src/server/services/rateRefresh";
 import { refreshHolidayCache } from "./src/server/services/holidayService";
@@ -759,8 +759,12 @@ registerCampaignRoutes(app, routeDeps);
      * opens the settings screen. It opens **only when a device is already
      * linked**: raising a pairing code nobody is watching is itself traffic
      * WhatsApp counts against the number. Not awaited, and it cannot throw.
+     *
+     * A relay deployment does nothing here — the socket is not this process's to
+     * restore, and opening a second one on the same credentials is how a device
+     * gets itself logged out.
      */
-    ensureWhatsappLinkRestored();
+    ensureWhatsappRestored();
   });
 
   /*

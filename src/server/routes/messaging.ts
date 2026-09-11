@@ -3,6 +3,7 @@ import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
 import { hasPermission } from "../auth";
 import { isChannel } from "../../utils/messaging";
+import { whatsappFailureKind } from "../../utils/whatsapp";
 import {
   MESSAGE_FILTERABLE, MESSAGE_SORTABLE, ManualSendInput, TemplateInput,
   cancelMessage, createTemplate, deleteTemplate, listMessages, listProviders,
@@ -187,14 +188,26 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
     const user = await requireSettings(req, res);
     if (!user) return;
     try {
-      const { whatsappReport, whatsappIsLinked } = await import(
-        "../services/messaging/whatsappClient"
+      const { whatsappStatus, whatsappUsesRelay } = await import(
+        "../services/messaging/whatsappTransport"
       );
-      const report = whatsappReport();
+      const report = await whatsappStatus();
       res.json({
         success: true,
-        linked: whatsappIsLinked(),
         ...report,
+        /*
+         * Whether the socket is held here or on a relay, and **never the
+         * relay's address** — the browser has no use for it, while somebody
+         * debugging a silent channel does need to know which machine holds the
+         * line, or they look for the fault on the wrong one.
+         */
+        relay: whatsappUsesRelay(),
+        /*
+         * Which half a failure belongs to. The panel drew «قطع شده» for a
+         * filtered route, a removed device and a half-written configuration
+         * alike, and those three need three different people.
+         */
+        failureKind: report.lastError ? whatsappFailureKind(report.lastError) : null,
         /*
          * The code as an image, drawn here rather than in the browser.
          *
@@ -217,8 +230,8 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
     const user = await requireSettings(req, res);
     if (!user) return;
     try {
-      const { connectWhatsapp } = await import("../services/messaging/whatsappClient");
-      res.json({ success: true, ...(await connectWhatsapp({ force: true })) });
+      const { whatsappLink } = await import("../services/messaging/whatsappTransport");
+      res.json({ success: true, ...(await whatsappLink()) });
     } catch (err) {
       sendError(res, err, "POST /api/messaging/whatsapp/link");
     }
@@ -229,8 +242,8 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
     const user = await requireSettings(req, res);
     if (!user) return;
     try {
-      const { unlinkWhatsapp } = await import("../services/messaging/whatsappClient");
-      res.json({ success: true, ...(await unlinkWhatsapp()) });
+      const { whatsappUnlink } = await import("../services/messaging/whatsappTransport");
+      res.json({ success: true, ...(await whatsappUnlink()) });
     } catch (err) {
       sendError(res, err, "POST /api/messaging/whatsapp/unlink");
     }

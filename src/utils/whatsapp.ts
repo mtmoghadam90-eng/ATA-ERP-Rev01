@@ -200,3 +200,159 @@ export function whatsappSendRefusal(state: WhatsappState): string | null {
   }
   return "اتصال واتس‌اپ در دسترس نیست؛ پیام در صف می‌ماند.";
 }
+
+/* --------------------------- where it is sent from ------------------------ */
+
+/**
+ * Where the socket lives: in this process, or on a relay outside the country.
+ *
+ * Behind Iran's filtering the socket cannot complete its handshake at all, and a
+ * proxy is the wrong shape for it: a linked device holds one connection open for
+ * days, so every minute of that connection crosses the filtered border and every
+ * severance is a fresh handshake — which is the machine-paced traffic this whole
+ * channel is built to avoid. A **relay** puts the socket on the far side
+ * entirely, and the link from here carries only short requests that the outbox
+ * queue already retries. A failed POST is free; a severed WebSocket is not.
+ *
+ * Absent means the socket runs here, which is what every installation does until
+ * somebody configures otherwise — so no behaviour changes by default.
+ */
+export interface WhatsappRelayConfig {
+  /** The relay's base address, without a trailing slash. */
+  url: string;
+  /** The shared secret. Never logged, never sent to a browser. */
+  token: string;
+}
+
+/**
+ * Why this pair cannot be used, or null.
+ *
+ * **A relay with no token is a machine anybody can send as the company's line
+ * from**, so an address without one is refused rather than run open — and it is
+ * refused *loudly* rather than falling back to the local socket, because a
+ * silent fallback would send from the wrong place, or from nowhere, with nothing
+ * on any screen saying which.
+ *
+ * Plain HTTP is refused for the same reason in a quieter disguise: the token
+ * would cross the border in the clear on every send. Loopback is the one
+ * exception, since nothing leaves the machine — that is what makes a relay
+ * testable on one box without weakening the rule for the real one.
+ */
+export function relayConfigRefusal(
+  url: string | null | undefined,
+  token: string | null | undefined,
+): string | null {
+  const address = String(url ?? "").trim();
+  if (!address) return null; // Not configured at all: the local socket, as before.
+
+  let parsed: URL;
+  try {
+    parsed = new URL(address);
+  } catch {
+    return "آدرس رله واتس‌اپ معتبر نیست.";
+  }
+
+  const loopback = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1"
+    || parsed.hostname === "[::1]" || parsed.hostname === "::1";
+  if (parsed.protocol !== "https:" && !loopback) {
+    return "آدرس رله واتس‌اپ باید https باشد؛ توکن نباید روی اتصال رمزنشده برود.";
+  }
+  if (!String(token ?? "").trim()) {
+    return "توکن رله واتس‌اپ تنظیم نشده است. بدون توکن، هر کسی می‌تواند از خط شرکت پیام بفرستد.";
+  }
+  return null;
+}
+
+/** The pair as a usable configuration, or null when nothing is configured. */
+export function relayConfigFrom(
+  url: string | null | undefined,
+  token: string | null | undefined,
+): WhatsappRelayConfig | null {
+  const address = String(url ?? "").trim().replace(/\/+$/, "");
+  const secret = String(token ?? "").trim();
+  if (!address || !secret) return null;
+  return { url: address, token: secret };
+}
+
+/* ---------------------------- what went wrong ----------------------------- */
+
+/**
+ * Which half of the system a failure belongs to.
+ *
+ * The panel said «قطع شده» for every one of these and the three need three
+ * different people: a filtered or broken route is the network, a removed device
+ * is the WhatsApp account, and a missing token is this application's own
+ * configuration. Telling them apart is the whole reason the reason is stored.
+ */
+export const WHATSAPP_FAILURE_KINDS = {
+  /** The route out: filtering, a dead relay, DNS, a timeout. */
+  NETWORK: "NETWORK",
+  /** The WhatsApp account: the device was removed, or the credentials are dead. */
+  ACCOUNT: "ACCOUNT",
+  /** This application: the relay is half-configured. */
+  CONFIG: "CONFIG",
+  /** Something this build has not seen. */
+  UNKNOWN: "UNKNOWN",
+} as const;
+
+export type WhatsappFailureKind =
+  typeof WHATSAPP_FAILURE_KINDS[keyof typeof WHATSAPP_FAILURE_KINDS];
+
+export const WHATSAPP_FAILURE_LABELS: Record<WhatsappFailureKind, string> = {
+  NETWORK: "مشکل مسیر شبکه",
+  ACCOUNT: "مشکل حساب واتس‌اپ",
+  CONFIG: "مشکل تنظیمات",
+  UNKNOWN: "خطای نامشخص",
+};
+
+export const WHATSAPP_FAILURE_ADVICE: Record<WhatsappFailureKind, string> = {
+  NETWORK:
+    "اتصال به واتس‌اپ از این سرور برقرار نشد. اگر واتس‌اپ در دسترس نیست، ارسال باید از رله خارج از کشور انجام شود.",
+  ACCOUNT:
+    "دستگاه از حساب واتس‌اپ حذف شده یا اعتبارش باطل است. یک‌بار «قطع اتصال» و سپس اتصال دوباره با اسکن کد.",
+  CONFIG:
+    "تنظیمات رله کامل نیست. آدرس و توکن رله را در متغیرهای محیطی سرور بررسی کنید.",
+  UNKNOWN: "متن خطا را به پشتیبانی بدهید.",
+};
+
+/**
+ * The tokens each kind is recognised by.
+ *
+ * Written out rather than matched loosely because the strings come from three
+ * different places — Node's own socket errors, baileys, and the relay relaying
+ * one of those — and a rule broad enough to catch all of them by feel would
+ * classify the next unfamiliar message wrongly rather than admitting it.
+ */
+const NETWORK_TOKENS = [
+  "econnreset", "econnrefused", "etimedout", "enotfound", "eai_again", "ehostunreach",
+  "enetunreach", "epipe", "socket hang up", "network", "timeout", "aborted",
+  "fetch failed", "certificate", "tls",
+];
+
+const ACCOUNT_TOKENS = [
+  "loggedout", "logged out", "logged-out", "unauthorized", "unauthorised",
+  "401", "403", "device_removed", "device removed", "حذف شده", "باطل",
+];
+
+/**
+ * Which half a failure message belongs to.
+ *
+ * **UNKNOWN is an honest answer and not a gap.** Reading an unrecognised message
+ * as a network fault would tell somebody to go and check a route that is fine,
+ * and reading it as an account fault would tell them to unlink a perfectly good
+ * device — so a message this build cannot place is reported as itself, with the
+ * text beside it, which is the one thing that is always true.
+ */
+export function whatsappFailureKind(
+  message: string | null | undefined,
+): WhatsappFailureKind {
+  const text = String(message ?? "").toLowerCase();
+  if (!text.trim()) return WHATSAPP_FAILURE_KINDS.UNKNOWN;
+  // The account is checked first: «unauthorized» is also reachable through a
+  // proxy, but a device removed from the account is the sharper reading and the
+  // one that needs a person, while a network fault retries itself.
+  if (ACCOUNT_TOKENS.some((t) => text.includes(t))) return WHATSAPP_FAILURE_KINDS.ACCOUNT;
+  if (NETWORK_TOKENS.some((t) => text.includes(t))) return WHATSAPP_FAILURE_KINDS.NETWORK;
+  if (text.includes("رله") || text.includes("توکن")) return WHATSAPP_FAILURE_KINDS.CONFIG;
+  return WHATSAPP_FAILURE_KINDS.UNKNOWN;
+}
