@@ -65,6 +65,19 @@ export const PROFORMA_STORED_STATUSES = [
   "پیش‌نویس", "ارسال شده",
 ] as const satisfies readonly Proforma["status"][];
 
+/**
+ * The one of the two that means «this has gone to the customer».
+ *
+ * Named rather than read out of the list by index: the pair above is a list and
+ * a list may be reordered, at which point `[1]` quietly starts meaning the
+ * draft — and a clause asking «no quotation has been sent» would then answer
+ * «no quotation is a draft», which is very nearly the opposite. It is pinned
+ * into that list below, so the two spellings cannot part company.
+ */
+export const PROFORMA_SENT_STATUS = "ارسال شده" as const;
+const _sentIsAStoredStatus: (typeof PROFORMA_STORED_STATUSES)[number] = PROFORMA_SENT_STATUS;
+void _sentIsAStoredStatus;
+
 /* ---------------------------- purchase orders ---------------------------- */
 
 export const PURCHASE_ORDER_STATUSES = [

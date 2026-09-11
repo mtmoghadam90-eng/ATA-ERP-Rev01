@@ -5,7 +5,7 @@ import { formatMoney } from '../numUtils';
 import {
   Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, AlertTriangle, TrendingUp, X,
   CornerUpLeft, ListChecks, RefreshCcw, Inbox,
-  FileSpreadsheet, Clock, Sliders, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
+  FileSpreadsheet, FileText, Clock, Sliders, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
  CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
   ChevronRight, Loader2, Image as ImageIcon, Maximize2, Minimize2, ArrowLeftRight, Flag, Zap,
   ExternalLink, Award, Users
@@ -294,6 +294,19 @@ export default function ProjectsView({
    */
   const selectedStage = list.filters.stage;
   const setSelectedStage = (value: string) => list.setFilter('stage', value);
+  /*
+   * «هنوز پیش‌فاکتور صادر نشده» — a third axis, and deliberately not a value of
+   * either of the two above.
+   *
+   * The stage cannot answer it: `deriveProjectStage` reports the least-advanced
+   * *open* thing, so a job nobody has quoted but somebody has sent supplier
+   * inquiries for reads «در انتظار پاسخ تأمین‌کننده», not «تهیه پیش‌فاکتور» —
+   * which is precisely the job somebody is hunting for. Filtered on the server
+   * (`quotationWhere`); the page in hand is fifty rows and dropping the quoted
+   * ones out of it would print the unfiltered total beside them.
+   */
+  const selectedQuotation = list.filters.quotation;
+  const setSelectedQuotation = (value: string) => list.setFilter('quotation', value);
   const [groupToDelete, setGroupToDelete] = useState<any>(null);
   const [showModal, setShowModal] = useState(false);
   const [isProjectModalFullscreen, setIsProjectModalFullscreen] = useState(false);
@@ -3275,6 +3288,29 @@ export default function ProjectsView({
             {(settings.dropdownItems?.projectStatuses || ['جدید', 'در حال مذاکره', 'ارائه پیش‌فاکتور', 'برنده (موفق)', 'نیمه برنده', 'باخته', 'لغو شده']).map((st, idx) => (
               <option key={idx} value={st}>{st}</option>
             ))}
+          </select>
+        </div>
+
+        {/*
+          «کدام پروژه‌ها را هنوز قیمت نداده‌ایم».
+
+          Two values rather than one, because they are two different questions:
+          a job nobody has written a quotation for at all, and a job whose
+          quotation has not gone out. The second contains the first — a project
+          with no document has none that was sent — so the labels say which is
+          which rather than leaving the reader to work out why the counts differ.
+        */}
+        <div className="relative w-full md:w-60 flex items-center gap-2">
+          <FileText size={16} className="text-slate-400 flex-shrink-0" />
+          <select
+            value={selectedQuotation}
+            onChange={(e) => setSelectedQuotation(e.target.value)}
+            id="project-quotation-filter"
+            className="w-full border border-slate-200 rounded-lg text-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition appearance-none text-right bg-white"
+          >
+            <option value="all">وضعیت پیش‌فاکتور: همه</option>
+            <option value="none">بدون هیچ پیش‌فاکتوری</option>
+            <option value="unsent">پیش‌فاکتور ارسال‌نشده (شامل پیش‌نویس‌ها)</option>
           </select>
         </div>
       </div>

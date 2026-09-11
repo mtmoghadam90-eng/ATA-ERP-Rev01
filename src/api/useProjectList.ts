@@ -20,6 +20,15 @@ export interface ProjectListFilters {
   leadQuality: string;
   dateFrom: string;
   dateTo: string;
+  /**
+   * «هنوز پیش‌فاکتور صادر نشده» — "all", "none" or "unsent".
+   *
+   * A third axis beside the status and the stage, and not a second spelling of
+   * either: the stage reports the least-advanced *open* thing, so a job nobody
+   * has quoted but somebody has sent supplier inquiries for reads as an inquiry
+   * stage, which is exactly the job this answers.
+   */
+  quotation: string;
   customFields: Record<string, string>;
 }
 
@@ -32,6 +41,7 @@ const EMPTY_FILTERS: ProjectListFilters = {
   leadQuality: "all",
   dateFrom: "",
   dateTo: "",
+  quotation: "all",
   customFields: {},
 };
 
@@ -48,6 +58,10 @@ export function useProjectList(initialSearch = "") {
       leadQuality: filters.leadQuality,
       dateFrom: filters.dateFrom || undefined,
       dateTo: filters.dateTo || undefined,
+      // Omitted rather than sent as "all", because the server reads anything
+      // that is not one of its two values as «no clause» either way and an
+      // absent parameter says so at the one place a person can read it.
+      quotation: filters.quotation === "all" ? undefined : filters.quotation,
     };
 
     const custom = Object.entries(filters.customFields)
@@ -83,8 +97,12 @@ export function useProjectList(initialSearch = "") {
 
   const clearFilters = () => setFilters(EMPTY_FILTERS);
 
+  // Every filter this hook holds, so «پاک کردن فیلترها» is offered exactly when
+  // something is narrowing the list. The stage was missing from it, so a grid
+  // filtered to one stage read as unfiltered.
   const hasActiveFilters =
-    filters.status !== "all" || filters.customerId !== "all" || filters.ownerUserId !== "all"
+    filters.status !== "all" || filters.stage !== "all" || filters.quotation !== "all"
+    || filters.customerId !== "all" || filters.ownerUserId !== "all"
     || filters.marketingChannel !== "all" || filters.leadQuality !== "all"
     || !!filters.dateFrom || !!filters.dateTo
     || Object.values(filters.customFields).some(Boolean);

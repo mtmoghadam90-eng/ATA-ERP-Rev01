@@ -6,7 +6,7 @@ import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } fr
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { scrubProductRefs } from "../refIntegrity";
 import { deriveProjectStage, resolveStage } from "../../utils/projectStage";
-import { inquiryWorkflowStatus } from "../../utils/moduleStatuses";
+import { PROFORMA_SENT_STATUS, inquiryWorkflowStatus } from "../../utils/moduleStatuses";
 import { statusChangeColumns } from "../../utils/statusDwell";
 import { scheduleProjectStageTrigger } from "./projectStageEvents";
 import { isWonStatus } from "../proformaStatus";
@@ -41,6 +41,45 @@ export const PROJECT_FILTERABLE = [
   "stage",
 ] as const;
 
+/**
+ * «هنوز برایشان پیش‌فاکتور صادر نشده» — the two shapes of "not quoted yet".
+ *
+ * Reported as one filter, and it is two questions the sales desk really does
+ * ask separately: a job nobody has written a quotation for at all, and a job
+ * carrying a quotation that has not gone to the customer. The second contains
+ * the first — a project with no document has none that was sent — and they are
+ * labelled on the screen so that is plain.
+ *
+ * **It is not a second spelling of the stage.** `deriveProjectStage` answers
+ * «the least-advanced open thing», so a job with no quotation but with an
+ * unanswered supplier inquiry reads «در انتظار پاسخ تأمین‌کننده» rather than
+ * «جدید» — which is exactly the job this filter is for. Asking the stage for
+ * «تهیه پیش‌فاکتور» would miss it, silently.
+ */
+export const PROJECT_QUOTATION_FILTERS = ["none", "unsent"] as const;
+export type ProjectQuotationFilter = typeof PROJECT_QUOTATION_FILTERS[number];
+
+/**
+ * The clause, or null for anything that is not one of the two values — an
+ * unrecognised parameter must widen nothing rather than narrow the grid to a
+ * shape nobody asked for.
+ *
+ * «unsent» is written as **equality on «ارسال شده»** rather than as «every
+ * document is a draft», and the direction is the decision: a status this build
+ * does not know would read as «not sent» and leave the project in the list,
+ * which puts a job in front of somebody. The other spelling would read it as
+ * sent and hide the job, which is the failure that matters. Same rule as
+ * `countsTowardBalance` and `laneWhere`.
+ *
+ * Neither clause filters `proformas.status` against null — the column is NOT
+ * NULL and Prisma rejects that outright.
+ */
+export function quotationWhere(value: unknown): Record<string, unknown> | null {
+  if (value === "none") return { proformas: { none: {} } };
+  if (value === "unsent") return { proformas: { none: { status: PROFORMA_SENT_STATUS } } };
+  return null;
+}
+
 const SEARCH_FIELDS = [
   "code", "name", "description", "customerInquiryNumber", "referrerName",
 ] as const;
@@ -65,7 +104,9 @@ export function visibilityClause(user: AuthUser): Record<string, unknown> | unde
 export function buildProjectWhere(
   q: ListQuery,
   user: AuthUser,
-  extra: { dateFrom?: unknown; dateTo?: unknown; customField?: unknown } = {},
+  extra: {
+    dateFrom?: unknown; dateTo?: unknown; customField?: unknown; quotation?: unknown;
+  } = {},
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
 
@@ -100,6 +141,12 @@ export function buildProjectWhere(
       if (clause) and.push(clause);
     }
   }
+
+  // «هنوز پیش‌فاکتور صادر نشده», on the server like every other filter here:
+  // dropping the quoted rows out of the page in hand would answer for fifty
+  // projects and print the unfiltered total beside them.
+  const quotation = quotationWhere(extra.quotation);
+  if (quotation) and.push(quotation);
 
   // Date range comes from Shamsi inputs but filters the real DATE column, so a
   // range works correctly across month and year boundaries.
@@ -169,7 +216,10 @@ const LIST_SELECT = {
 export async function listProjects(
   q: ListQuery,
   user: AuthUser,
-  extra: { dateFrom?: unknown; dateTo?: unknown; withSummary?: boolean; customField?: unknown } = {},
+  extra: {
+    dateFrom?: unknown; dateTo?: unknown; withSummary?: boolean;
+    customField?: unknown; quotation?: unknown;
+  } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
   const where = buildProjectWhere(q, user, extra);

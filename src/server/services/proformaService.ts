@@ -8,6 +8,7 @@ import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../child
 import { scrubProductRefs } from "../refIntegrity";
 import { syncProjectStage } from "./projectService";
 import { statusChangeColumns } from "../../utils/statusDwell";
+import { PROFORMA_SENT_STATUS } from "../../utils/moduleStatuses";
 import { afterCommit } from "../afterCommit";
 import { closeFollowUpTasks } from "./followUpService";
 import { isTerminalOutcome, versionRefusalReason } from "../../utils/salesFollowUp";
@@ -52,7 +53,7 @@ const SEARCH_FIELDS = ["proformaNumber", "notes", "contactPrefix"] as const;
 export const PROFORMA_DATE_FIELDS = ["issueDate", "expiryDate", "deliveryDate", "sentDate"] as const;
 
 /** The stored status that means the document has gone to the customer. */
-const SENT_STATUS = "ارسال شده";
+const SENT_STATUS = PROFORMA_SENT_STATUS;
 
 /**
  * Stamps the day a proforma was sent, on the transition into «ارسال شده».
