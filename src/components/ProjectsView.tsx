@@ -3426,24 +3426,29 @@ export default function ProjectsView({
           </div>
         )}
         {/*
-          The grid is its own scroller, and that is what freezes the header.
+          One vertical scrollbar per screen, and that is the page's.
 
-          `position: sticky` sticks to the nearest *scrolling* ancestor, and
-          `overflow-x-auto` alone is one: Tailwind sets only `overflow-x`, and
-          CSS computes the other axis from `visible` to `auto`, so this box was
-          already a vertical scroll container — one whose content never
-          overflowed it. A sticky header inside therefore had nothing to stick
-          against and scrolled away with the page, silently. Verified in a real
-          browser both ways round: pinned here, inert with the page scrolling
-          instead.
+          «اسکرول عمودی داخلی صفحه پروژه‌ها رو بردار» — the rule this file
+          already follows for forms, asked for on the grid. A box with its own
+          vertical scrollbar inside a page that has one is two, and the inner one
+          is a window onto a list whose shape the reader cannot see.
 
-          So the box scrolls in both directions and is bounded. The cap is in
-          `vh` rather than a `calc` off the header and the toolbar, because
-          those move whenever anything above the grid changes and a stale
-          subtraction shows as a grid that will not reach the bottom of its own
-          card.
+          **It costs the frozen header, and that is not an oversight.**
+          `position: sticky` sticks to the nearest *scrolling* ancestor, so a
+          header can only freeze against a box that scrolls vertically — which
+          is exactly what was removed. Verified in a real browser both ways round
+          when the header was built: pinned inside a bounded box, inert with the
+          page scrolling instead. Re-adding `sticky` here would be dead CSS that
+          reads like a feature, so it went with the cap.
+
+          The **horizontal** axis is a different question and stays: the columns
+          are pixel widths a person drags, the card is `overflow-hidden`, and
+          without this box a squeezed layout would simply clip its last column
+          rather than offer a way to reach it. `tableMinWidthPx` is what makes
+          that scrollbar go away for anybody who drags the widths down to fit —
+          which is the answer to having it at the foot of a long grid.
         */}
-        <div className="overflow-auto max-h-[70vh]">
+        <div className="overflow-x-auto">
           {/*
             The widths are declared, not negotiated.
 
@@ -3476,19 +3481,17 @@ export default function ProjectsView({
               ))}
             </colgroup>
             {/*
-              Both rows, pinned together with no measurement.
+              Not sticky — see the wrapper above: there is no longer a box for it
+              to stick to, and `sticky` with nothing scrolling vertically is dead
+              CSS that reads like a frozen header.
 
-              `position: sticky` on the `<thead>` carries the labels and the
-              column filters as one block; sticking each `<th>` would need the
-              filter row's `top` to be the label row's rendered height, which
-              nothing here knows and which changes with the font.
-
-              The rule beneath it is a `box-shadow` and not the `border-b` it
-              replaced: a collapsed border belongs to the table's own border
-              grid and is not painted with a sticky element, so the header
-              floated over the rows with no line under it.
+              The rule beneath the block stays a `box-shadow` rather than going
+              back to a `border-b`. It draws the same hairline, it is one line
+              for both rows rather than one per row, and it is the spelling that
+              survives this header being pinned again if the grid ever gets its
+              own scroller back.
             */}
-            <thead className="sticky top-0 z-20 shadow-[inset_0_-1px_0_var(--color-hairline)]">
+            <thead className="shadow-[inset_0_-1px_0_var(--color-hairline)]">
               <tr className="bg-slate-50 text-slate-500 text-xs font-bold">
                 {/*
                   Each header carries the grip for its **own** left edge, which
@@ -3522,11 +3525,11 @@ export default function ProjectsView({
               {/*
                 Column Filters Row.
 
-                Opaque, not `bg-slate-50/50`: the header is sticky now, so it is
-                painted over the rows sliding beneath it and a half-transparent
-                fill shows them straight through the boxes somebody is typing
-                into. Its own `border-b` went the same way as the label row's —
-                a collapsed border is not painted with a sticky element — and
+                Opaque, not `bg-slate-50/50`. It was translucent while the page
+                showed through it; a half-transparent fill behind the boxes
+                somebody types into is the wrong ground whether anything slides
+                under it or not, and it is measured against the contrast layer's
+                floors as an opaque surface. Its own `border-b` is gone because
                 the `<thead>`'s shadow draws the one rule the block needs.
               */}
               <tr className="bg-slate-50">

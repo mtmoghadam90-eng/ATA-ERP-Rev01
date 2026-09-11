@@ -12312,32 +12312,63 @@ head("Stuck work: the dwell report");
     ok("the reset appears only when a width has been changed",
       /!columnsAreDefault\(columnWidths, PROJECT_COLUMN_WIDTHS\)/.test(view));
 
-    /* -- «تیتر ستون فریز بشه و با اسکرول بیاد پایین» -- */
+    /* -- «هر صفحه فقط ۱ اسکرول عمودی داشته باشه» -- */
     /*
-     * `position: sticky` sticks to the nearest *scrolling* ancestor, and
-     * `overflow-x-auto` alone is one — Tailwind sets only `overflow-x` and CSS
-     * computes the other axis from `visible` to `auto`, so the old wrapper was
-     * already a vertical scroll container whose content never overflowed it. A
-     * sticky header inside had nothing to stick against and scrolled away with
-     * the page, silently: no error, no warning, nothing to read in the source.
-     * So the grid is its own bounded scroller in both directions, and that is
-     * what the check holds — the `sticky` alone would pass while doing nothing.
+     * The rule this suite already holds for six forms, asked for on the grid.
+     *
+     * The grid had its own bounded scroller (`overflow-auto max-h-[70vh]`) so
+     * that `position: sticky` had something to stick to — a box with a vertical
+     * scrollbar inside a page that has one is two, and the inner one is a window
+     * onto a list whose shape the reader cannot see. Removing the cap removes
+     * the scrollbar and, by the same mechanism, the frozen header: sticky
+     * positions against the nearest *scrolling* ancestor, so `sticky` left
+     * behind would be dead CSS reading like a feature. Both halves are held,
+     * because either one alone is a half-done change that looks finished.
      */
-    ok("the grid scrolls in both directions, bounded, so a sticky header has something to stick to",
-      /<div className="overflow-auto max-h-\[\d+vh\]">/.test(view));
-    ok("...and the header block is pinned as one, rather than each row measured",
-      /<thead className="sticky top-0 z-\d+/.test(view));
     /*
-     * A collapsed border belongs to the table's own border grid and is not
-     * painted with a sticky element, so the rule under the header has to be a
-     * shadow; and a translucent fill lets the rows sliding underneath show
-     * straight through the boxes somebody is typing into.
+     * Read the **grid's own** region, not the file.
+     *
+     * `ProjectsView` carries four `overflow-x-auto` boxes (the project form's
+     * own tables among them), so a check reading the whole file passes on
+     * somebody else's div: removing the grid's wrapper entirely left the first
+     * version of this check green, which is what a negative check is for.
      */
-    ok("...with its rule drawn as a shadow, which a collapsed border cannot be",
-      /<thead className="sticky[^"]*shadow-\[inset_0_-1px_0_/.test(view));
+    const tableAt = view.indexOf(
+      'className="w-full text-right border-collapse table-fixed"',
+    );
+    ok("the projects grid is where it was", tableAt > 0);
+    /*
+     * The wrapper is the box immediately around the table — it is read from the
+     * few lines above the tag rather than from a landmark comment, because this
+     * source is comment-stripped before any of these checks read it.
+     */
+    const wrapper = view.slice(Math.max(0, tableAt - 300), tableAt);
+    const grid = view.slice(tableAt, view.indexOf("</table>", tableAt));
+
+    ok("the grid has no vertical scroller of its own",
+      /<div className="overflow-x-auto">/.test(wrapper)
+      && !/max-h-/.test(wrapper));
+    ok("...and no sticky header left with nothing to stick to",
+      !/sticky/.test(grid));
+    /*
+     * The **horizontal** axis is a different question and stays: the widths are
+     * pixels a person drags and the card is `overflow-hidden`, so without this
+     * box a squeezed layout would clip its last column rather than offer a way
+     * to reach it. `tableMinWidthPx` is what takes the scrollbar away again for
+     * anybody who drags the columns down to fit.
+     */
+    ok("...while the horizontal scroll, a different axis, is still offered",
+      /overflow-x-auto/.test(wrapper) && /tableMinWidthPx\(/.test(grid));
+    /*
+     * The hairline under the header block is still a shadow rather than a
+     * collapsed `border-b`: one line for both rows instead of one per row, and
+     * the spelling that survives the header being pinned again.
+     */
+    ok("...with its rule drawn as a shadow under the block, not per row",
+      /<thead className="shadow-\[inset_0_-1px_0_/.test(grid));
     ok("...and both header rows opaque, with no border-b left to not paint",
-      /<tr className="bg-slate-50 text-slate-500 text-xs font-bold">/.test(view)
-      && /<tr className="bg-slate-50">/.test(view));
+      /<tr className="bg-slate-50 text-slate-500 text-xs font-bold">/.test(grid)
+      && /<tr className="bg-slate-50">/.test(grid));
   }
 
   /* -- resizing changes the table's actual pixel width -- */
