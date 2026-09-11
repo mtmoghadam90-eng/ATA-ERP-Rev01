@@ -24,6 +24,7 @@ import {
 } from "../../utils/salesFollowUp";
 import { TASK_CANCELLED, TASK_TODO } from "../../utils/workBoard";
 import { resolveAssignee } from "./assigneeLookup";
+import { PROFORMA_TECHNICAL_TYPE } from "../../utils/moduleStatuses";
 
 /**
  * Chasing quotations: the server half.
@@ -84,7 +85,9 @@ export function chaseableWhere(): Prisma.ProformaWhereInput {
 }
 
 /** A technical quotation quotes no prices and is not a sales opportunity. */
-const NOT_TECHNICAL: Prisma.ProformaWhereInput = { proformaType: { not: "TECHNICAL" } };
+const NOT_TECHNICAL: Prisma.ProformaWhereInput = {
+  proformaType: { not: PROFORMA_TECHNICAL_TYPE },
+};
 
 /** The proforma's derived outcome, which decides whether the sale is over. */
 async function outcomeOf(

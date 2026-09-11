@@ -14704,91 +14704,98 @@ head("Competitors: who we lose to, and by how much");
 
 /* ---------------------- «در حال بررسی فنی» on a project ---------------------- */
 /*
- * A customer sends a datasheet, and before anybody asks a supplier for a price
- * or writes a commercial quotation somebody here has to decide *what* is being
- * quoted. That work already had an artefact — a **technical** proforma, which
- * states the specification and quotes nothing — and the stage derivation read it
- * as an ordinary quotation, so such a job reported «تهیه پیش‌فاکتور» or, once the
- * technical offer had gone out, «پیگیری پیش‌فاکتور»: both saying a price is with
- * the customer when no price had been written.
+ * «داریم بررسی فنی می‌کنیم تا آفر مناسب بدهیم» — and there is usually no
+ * document at all yet.
+ *
+ * This was first built to **derive** from a technical proforma, and that was
+ * wrong twice over: it claimed the review needs a document when the point is
+ * that it has none yet, and it would have said «بررسی فنی» about a
+ * specification already sent to the customer, which is the review finished
+ * rather than in progress. Nothing in this application records a review, so the
+ * stage is set by hand — the one in the list that is.
  */
 {
   ok("«در حال بررسی فنی» is a stage",
     (PROJECT_STAGES as readonly string[]).includes("در حال بررسی فنی"));
   /*
    * The order is the rule (`stageRank` is the index), and this sits before the
-   * supplier stages: asking a supplier is what happens *once* the specification
-   * is settled.
+   * supplier stages: asking a supplier for a price is what happens once the
+   * review has decided what to ask about.
    */
   ok("...before the supplier stages and after negotiation",
     stageRank("در حال مذاکره") < stageRank("در حال بررسی فنی")
       && stageRank("در حال بررسی فنی") < stageRank("در انتظار پاسخ تأمین‌کننده"));
 
-  const technical = { status: "پیش‌نویس", proformaType: "TECHNICAL" };
-  const financial = { status: "پیش‌نویس" };
-
-  eq("a job whose only document is technical is in technical review",
-    deriveProjectStage({ projectStatus: "جدید", proformas: [technical] }),
-    "در حال بررسی فنی");
   /*
-   * Including one that has gone out. «پیگیری پیش‌فاکتور» means a price is with
-   * the customer, and a technical offer carries none — which is exactly why the
-   * follow-up queue excludes it (`NOT_TECHNICAL`) and the cost check exempts it.
-   */
-  eq("...even once the technical offer has been sent",
-    deriveProjectStage({
-      projectStatus: "جدید",
-      proformas: [{ status: PROFORMA_SENT_STATUS, proformaType: "TECHNICAL" }],
-    }),
-    "در حال بررسی فنی");
-
-  /* And the financial half is untouched: absent type means financial. */
-  eq("a draft commercial quotation still reads «تهیه پیش‌فاکتور»",
-    deriveProjectStage({ projectStatus: "جدید", proformas: [financial] }), "تهیه پیش‌فاکتور");
-  eq("...and a sent one still reads «پیگیری پیش‌فاکتور»",
-    deriveProjectStage({
-      projectStatus: "جدید", proformas: [{ status: PROFORMA_SENT_STATUS }],
-    }),
-    "پیگیری پیش‌فاکتور");
-  eq("a commercial quotation beside a technical one decides it",
-    deriveProjectStage({ projectStatus: "جدید", proformas: [technical, financial] }),
-    "تهیه پیش‌فاکتور");
-
-  /*
-   * And an inquiry outranks it, which is the one ordering decision worth pinning:
-   * a supplier asked for a price is a supplier asked *after* the specification
-   * was settled, so the review has produced its answer and the job has moved on.
-   * Checking the technical document first would drag such a project backwards —
-   * the fault the «a sent quotation is the dividing line» rule exists for.
-   */
-  eq("an open inquiry beside a technical offer means the review is done",
-    deriveProjectStage({
-      projectStatus: "جدید",
-      proformas: [technical],
-      supplierInquiries: [{ status: INQUIRY_SENT }],
-    }),
-    "در انتظار پاسخ تأمین‌کننده");
-
-  /* A cancelled technical document is no document at all. */
-  eq("a cancelled technical offer leaves the job where it was",
-    deriveProjectStage({
-      projectStatus: "جدید",
-      proformas: [{ ...technical, isCancelled: true }],
-    }),
-    "جدید");
-
-  /*
-   * The derivation reads a *kind*, and the two services that feed it have to
-   * select that column — a repair or a save that read the status alone would
-   * leave this stage off exactly the rows it was written for, silently.
+   * **The derivation never answers it.** This is the check that holds the
+   * decision: swept over every shape the pre-won branch can take, including the
+   * documents the first version keyed on, no set of records produces it —
+   * because no record says «we are working out what to offer».
    */
   {
-    const service = readFileSync("src/server/services/projectService.ts", "utf8");
-    ok("the project write reads the document's kind",
-      /proformas: \{[\s\S]{0,200}?proformaType: true/.test(service)
-        || /status: true, isCancelled: true, proformaType: true/.test(service));
-    const backfill = readFileSync("scripts/backfillProjectStages.ts", "utf8");
-    ok("...and so does the backfill", backfill.includes("proformaType: true"));
+    const docs = [
+      [],
+      [{ status: "پیش‌نویس" }],
+      [{ status: PROFORMA_SENT_STATUS }],
+      [{ status: "پیش‌نویس", isCancelled: true }],
+      [{ status: PROFORMA_SENT_STATUS, isCancelled: true }],
+      [{ status: "پیش‌نویس" }, { status: PROFORMA_SENT_STATUS }],
+    ];
+    const inquiries = [
+      undefined,
+      [],
+      [{ status: INQUIRY_SENT }],
+      [{ status: INQUIRY_WINNER }],
+      [{ status: "بررسی پیشنهاد" }],
+    ];
+    const derived = new Set<string>();
+    for (const projectStatus of ["جدید", "در حال مذاکره", "ارائه پیش‌فاکتور"]) {
+      for (const proformas of docs) {
+        for (const supplierInquiries of inquiries) {
+          derived.add(deriveProjectStage({ projectStatus, proformas, supplierInquiries }));
+        }
+      }
+    }
+    ok("no set of records derives it — it is the one stage set by hand",
+      !derived.has("در حال بررسی فنی"), [...derived]);
+    // And the sweep is not vacuous: it really does reach the stages around it.
+    ok("...while the sweep does reach its neighbours",
+      derived.has("جدید") && derived.has("در انتظار پاسخ تأمین‌کننده")
+        && derived.has("تهیه پیش‌فاکتور"));
+  }
+
+  /*
+   * Being derived from nothing is only useful if it can be *set*, so the manual
+   * dropdown has to offer it — and `resolveStage` has to keep it. A stage that
+   * cannot be chosen is a value nothing can ever produce.
+   */
+  {
+    const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
+    ok("the project form's manual-stage control offers every stage",
+      /PROJECT_STAGES\.map/.test(view));
+    eq("a locked override is kept whatever the records say",
+      resolveStage("تهیه پیش‌فاکتور", {
+        manualStage: "در حال بررسی فنی",
+        manualStageLocked: true,
+      }, true).stage,
+      "در حال بررسی فنی");
+    /*
+     * And an unlocked one shows now and hands back at the next recalculation,
+     * which is what makes the stage self-clearing: the first inquiry or
+     * quotation takes the column over with nobody having to remember.
+     */
+    eq("...and an unlocked one is shown until a record moves",
+      resolveStage("جدید", {
+        manualStage: "در حال بررسی فنی",
+        manualStageLocked: false,
+      }, false).stage,
+      "در حال بررسی فنی");
+    eq("...then the records take it back",
+      resolveStage("در انتظار پاسخ تأمین‌کننده", {
+        manualStage: "در حال بررسی فنی",
+        manualStageLocked: false,
+      }, true).stage,
+      "در انتظار پاسخ تأمین‌کننده");
   }
 
   /* A stage nothing watches is a stall nothing reports. */

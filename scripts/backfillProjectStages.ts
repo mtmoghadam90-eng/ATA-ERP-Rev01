@@ -44,9 +44,7 @@ async function main(): Promise<void> {
     select: {
       id: true, code: true, status: true, stage: true,
       manualStage: true, manualStageLocked: true,
-      // The kind as well as the status: a repair that read them as one would
-      // leave «در حال بررسی فنی» off exactly the rows it was run for.
-      proformas: { select: { status: true, isCancelled: true, proformaType: true } },
+      proformas: { select: { status: true, isCancelled: true } },
       /*
        * The inquiries too, or the backfill quietly cannot produce the two
        * stages before a quotation exists — and a repair that leaves exactly
