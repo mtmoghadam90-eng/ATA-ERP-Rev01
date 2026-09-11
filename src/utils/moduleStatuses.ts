@@ -75,6 +75,23 @@ export const PROFORMA_STORED_STATUSES = [
  * into that list below, so the two spellings cannot part company.
  */
 export const PROFORMA_SENT_STATUS = "ارسال شده" as const;
+
+/**
+ * `proformaType` for a document that states the specification and no prices.
+ *
+ * It is a *kind* of document rather than a status, and the distinction decides
+ * real rules: the follow-up queue excludes it (there is no sale to chase), the
+ * cost check exempts it (there are no prices to cost), and the project stage
+ * reads it as «در حال بررسی فنی» rather than as a quotation in progress. The
+ * column's default is FINANCIAL, so **absent means financial** — which is what
+ * every row written before the type existed is.
+ */
+export const PROFORMA_TECHNICAL_TYPE = "TECHNICAL" as const;
+
+/** Whether a stored `proformaType` is the specification-only kind. */
+export function isTechnicalProforma(proformaType: string | null | undefined): boolean {
+  return String(proformaType ?? "") === PROFORMA_TECHNICAL_TYPE;
+}
 const _sentIsAStoredStatus: (typeof PROFORMA_STORED_STATUSES)[number] = PROFORMA_SENT_STATUS;
 void _sentIsAStoredStatus;
 

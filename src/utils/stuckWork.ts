@@ -105,6 +105,14 @@ export const DEFAULT_STUCK_THRESHOLDS: Record<StuckSection, Record<string, numbe
   projectStage: {
     "جدید": 5,
     "در حال مذاکره": 14,
+    /*
+     * The specification is being settled, and nothing else can report it: there
+     * is no inquiry yet and no commercial quotation, so this stage and the
+     * project's own clock are the only evidence the job is moving at all. Short,
+     * because a review that has taken a week has usually stopped rather than
+     * deepened.
+     */
+    "در حال بررسی فنی": 7,
     // The case this whole line of work started from: an inquiry sent to a
     // supplier who never answered, with nobody chasing it.
     "در انتظار پاسخ تأمین‌کننده": 7,

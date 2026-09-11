@@ -29,7 +29,10 @@
  * the customer rank override in `customerValue.ts`.
  */
 
-import { INQUIRY_SENT, INQUIRY_WINNER, PURCHASE_ORDER_STATUSES } from "./moduleStatuses";
+import {
+  INQUIRY_SENT, INQUIRY_WINNER, PROFORMA_SENT_STATUS, PURCHASE_ORDER_STATUSES,
+  isTechnicalProforma,
+} from "./moduleStatuses";
 
 /**
  * Every stage, **in order**. The order is the rule: `stageRank` is the index,
@@ -42,6 +45,22 @@ import { INQUIRY_SENT, INQUIRY_WINNER, PURCHASE_ORDER_STATUSES } from "./moduleS
 export const PROJECT_STAGES = [
   "جدید",
   "در حال مذاکره",
+  /*
+   * The specification is still being settled.
+   *
+   * A customer sends a datasheet and an enquiry, and before anybody asks a
+   * supplier for a price or writes a commercial quotation somebody here has to
+   * decide *what* is being quoted — which instrument, which range, which
+   * connection. That work has an artefact in this application already: a
+   * **technical** proforma, which states the specification and quotes nothing.
+   *
+   * Before this stage existed such a project read «تهیه پیش‌فاکتور» or, once the
+   * technical offer had gone out, «پیگیری پیش‌فاکتور» — both of which say a
+   * price is with the customer when no price has been written. It sits here,
+   * *before* the supplier stages, because asking a supplier is what happens once
+   * the specification is settled.
+   */
+  "در حال بررسی فنی",
   // The two stages before a quotation exists. Until they were added, a job with
   // three unanswered supplier inquiries sitting twenty days old read exactly
   // like one created this morning and touched by nobody — the derivation looked
@@ -104,7 +123,19 @@ export const STAGE_FOR_PO_STATUS = {
 export interface StageFacts {
   /** The project's own sales status — the outcome, not the stage. */
   projectStatus?: string | null;
-  proformas?: { status?: string | null; isCancelled?: boolean | null }[];
+  /**
+   * The project's quotations.
+   *
+   * `proformaType` is read because a **technical** document is not a quotation
+   * in progress — it carries no price — and reading the two kinds as one is
+   * what used to report «پیگیری پیش‌فاکتور» on a job whose only document states
+   * a specification. Absent means financial, the column's own default.
+   */
+  proformas?: {
+    status?: string | null;
+    isCancelled?: boolean | null;
+    proformaType?: string | null;
+  }[];
   /** True once the sales outcome is won or part-won. */
   isWon?: boolean;
   /** True when every quotation is lost. */
@@ -157,7 +188,18 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
      * پاسخ تأمین‌کننده» the moment somebody asked a supplier about extra scope.
      */
     const live = proformas.filter((pf) => !pf.isCancelled);
-    if (live.some((pf) => pf.status === "ارسال شده")) return "پیگیری پیش‌فاکتور";
+    /*
+     * A technical document and a commercial one are not two spellings of «a
+     * quotation exists». Only a **financial** one decides the quotation stages:
+     * «پیگیری پیش‌فاکتور» means a price is with the customer, and a technical
+     * offer carries none — which is exactly why the follow-up queue excludes it
+     * and the cost check exempts it. A job whose only document is technical is
+     * still settling what is being quoted, and falls through to
+     * «در حال بررسی فنی» below.
+     */
+    const financial = live.filter((pf) => !isTechnicalProforma(pf.proformaType));
+    const technical = live.filter((pf) => isTechnicalProforma(pf.proformaType));
+    if (financial.some((pf) => pf.status === PROFORMA_SENT_STATUS)) return "پیگیری پیش‌فاکتور";
 
     /*
      * Nothing has reached the customer yet, so the least-advanced open thing
@@ -174,7 +216,7 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
       return "در انتظار پاسخ تأمین‌کننده";
     }
 
-    if (live.length > 0) return "تهیه پیش‌فاکتور";
+    if (financial.length > 0) return "تهیه پیش‌فاکتور";
     if (undecided.length > 0) return "بررسی پیشنهاد تأمین‌کننده";
 
     /*
@@ -183,6 +225,18 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
      * «جدید», which would say no work had been done at all.
      */
     if (inquiries.length > 0) return "بررسی پیشنهاد تأمین‌کننده";
+
+    /*
+     * Only a technical document: the specification is what is being worked on.
+     *
+     * It is checked **after** the inquiries deliberately. The inquiry stages are
+     * further along the chain, and a supplier asked for a price is a supplier
+     * asked *once the specification was settled* — so an open inquiry beside a
+     * technical offer means the review produced its answer and the job has moved
+     * past it. Checking this first would drag such a project backwards, which is
+     * the fault the «sent quotation is the dividing line» rule above exists for.
+     */
+    if (technical.length > 0) return "در حال بررسی فنی";
 
     // Whatever the person put on the form, which is «جدید» or «در حال مذاکره».
     return facts.projectStatus === "در حال مذاکره" ? "در حال مذاکره" : "جدید";
