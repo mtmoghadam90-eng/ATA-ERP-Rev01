@@ -14993,7 +14993,48 @@ head("Competitors: who we lose to, and by how much");
   ok("baileys is never imported at the top level",
     !/^\s*import[^\n]*@whiskeysockets\/baileys/m.test(clientCode));
   ok("...it is loaded through a call-time dynamic import",
-    /await import\(\s*["']@whiskeysockets\/baileys["']\s*\)/.test(clientCode));
+    /=>\s*import\(\s*["']@whiskeysockets\/baileys["']\s*\)/.test(clientCode));
+  /*
+   * **And the call site asks the host, rather than writing the specifier.**
+   *
+   * Node resolves a bare specifier from the directory of the importing file, so
+   * one written in `src/server/...` looks for a `node_modules` at the
+   * repository root — right for the ERP and wrong for the relay, whose two
+   * declared packages install into `relay/node_modules`. Written here it simply
+   * rejected: the panel drew «در انتظار اسکن کد» for as long as anybody
+   * watched, and the session directory (two lines after the import) was never
+   * created, which is what finally named it. The count is the load-bearing
+   * half — a second specifier appearing in this file is the same fault back.
+   */
+  ok("...and the call site goes through the host's loader",
+    /await loadBaileys\(\)/.test(clientCode)
+    && (clientCode.match(/import\(\s*["']@whiskeysockets\/baileys["']\s*\)/g) ?? []).length === 1);
+
+  /*
+   * **A failed open is reported, never swallowed.**
+   *
+   * `openSocket` sets the state *before* it can throw, so a rejection dropped
+   * on the floor leaves «در انتظار اسکن کد» standing over a socket that does
+   * not exist — a pairing code promised for ever, with no reason anywhere. The
+   * handling mirrors the close handler: `UNLINKED` and no retry for an unpaired
+   * device (only a person scanning can help), `DISCONNECTED` and a backoff for
+   * a paired one, which is what that state's advice already promises.
+   */
+  {
+    const connectBody = clientCode.slice(
+      clientCode.indexOf("export async function connectWhatsapp"),
+      clientCode.indexOf("async function openSocket"),
+    );
+    ok("the connect body was found", connectBody.includes("openSocket()"));
+    const openTail = connectBody.slice(connectBody.indexOf("connecting = openSocket()"));
+    ok("a failed open is not swallowed",
+      !/await connecting\.catch\(\(\) => \{\}\)/.test(openTail));
+    ok("...it records the reason",
+      /lastError: reason/.test(openTail));
+    ok("...and answers the same two states the close handler answers",
+      /WHATSAPP_STATES\.UNLINKED/.test(openTail)
+      && /WHATSAPP_STATES\.DISCONNECTED/.test(openTail));
+  }
   /*
    * `loggedOut` is the one close that is never retried: the device was removed
    * from the account, so reconnecting on a loop would be a stream of rejected
@@ -15313,6 +15354,22 @@ head("Competitors: who we lose to, and by how much");
     ok("the relay imports the ERP's own socket",
       /from "\.\.\/src\/server\/services\/messaging\/whatsappClient"/.test(relaySrc));
     ok("...and does not reimplement it", !/makeWASocket/.test(relaySrc));
+    /*
+     * **But it does supply the library**, because it is the half that declares
+     * it: `relay/package.json` names baileys and `tsx` and nothing else, so a
+     * rented VPS carries two packages rather than Prisma and sharp — and the
+     * install therefore lands where the client cannot see it. The import is
+     * written here, beside that package.json, and handed over.
+     */
+    ok("the relay resolves baileys where it is declared",
+      /setBaileysLoader\(\(\) => import\("@whiskeysockets\/baileys"\)\)/.test(relaySrc));
+    /*
+     * «link requested» and then silence is what the log said for the whole of
+     * that fault. One line naming the state it reached would have ended it in
+     * seconds.
+     */
+    ok("...and says how a link attempt went, not only that it was asked for",
+      /log\(`link ->/.test(relaySrc));
 
     /*
      * **No token, no relay.** Starting open puts a machine on the internet that
