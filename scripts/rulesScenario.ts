@@ -260,7 +260,9 @@ import {
   SCHEDULE_MODEL_FIELDS, TRIGGER_ENTITY, WORKFLOW_ACTION_TYPES, WORKFLOW_OPERATORS,
   WORKFLOW_TRIGGERS, actionLabel, conditionFieldLabel, conditionValues, operatorLabel, triggerFields,
 } from "../src/utils/workflowTriggers";
-import { PROFORMA_STORED_STATUSES } from "../src/utils/moduleStatuses";
+import {
+  AFTER_SALES_CLOSED, AFTER_SALES_STATUSES, PROFORMA_STORED_STATUSES, afterSalesIsOpen,
+} from "../src/utils/moduleStatuses";
 import {
   buildWorkflowDraftPrompt, sanitizeDraftedRule, workflowCatalogue,
 } from "../src/utils/workflowDraft";
@@ -10634,6 +10636,45 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     ok("...with no shallow spread of a rule left on either",
       !/setEditingRule\(\{ \.\.\.rule \}\)/.test(settingsSrc)
       && !/\.\.\.rule,\s*\n\s*id: `wf-/.test(settingsSrc));
+  }
+
+  /*
+   * «یک ماه پس از تحویل کالا، بپرس نصب چطور پیش رفت» — and the one state that
+   * makes that note wrong.
+   *
+   * A friendly «اگر کمکی لازم دارید ما هستیم» is exactly the wrong thing to
+   * send to a customer whose warranty complaint has been open on our own desk
+   * for three weeks: it reads as not knowing. The packing list carries no such
+   * state and could carry none — the cases are another module's rows.
+   */
+  {
+    const fields = (SCHEDULE_MODEL_FIELDS.packagingDelivery ?? []).map((f) => f.value);
+    ok("a delivery rule can ask whether after-sales work is still open",
+      fields.includes("openAfterSalesCount"));
+
+    const sweep = readFileSync("src/server/services/workflowSweep.ts", "utf8");
+    ok("...counted for the project the consignment belongs to",
+      /by: \["projectId"\]/.test(sweep) && /afterSalesService\.groupBy/.test(sweep));
+    ok("...through the module's own open/closed rule",
+      /notIn: AFTER_SALES_CLOSED/.test(sweep));
+
+    /*
+     * The direction is the decision, and it is an **exclusion**: a status this
+     * build does not know counts as open, which withholds a friendly note
+     * rather than sending one into a complaint. Same rule as
+     * `countsTowardBalance` and `laneWhere`'s middle column.
+     */
+    ok("a finished case is closed",
+      !afterSalesIsOpen("تکمیل شده") && !afterSalesIsOpen("تحویل داده شده"));
+    ok("...and everything else is open",
+      afterSalesIsOpen("در حال بررسی") && afterSalesIsOpen("در حال تعمیر/خدمات"));
+    ok("...including a status nobody anticipated",
+      afterSalesIsOpen("وضعیتی که هنوز ساخته نشده") && afterSalesIsOpen(null));
+    // Not vacuous: the closed set is real and is drawn from the module's list.
+    ok("...and the closed set is part of the module's own list",
+      AFTER_SALES_CLOSED.every((v) => (AFTER_SALES_STATUSES as readonly string[]).includes(v))
+      && AFTER_SALES_CLOSED.length > 0
+      && AFTER_SALES_CLOSED.length < AFTER_SALES_STATUSES.length);
   }
 
   /*

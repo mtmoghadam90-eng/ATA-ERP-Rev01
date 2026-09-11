@@ -760,6 +760,14 @@ export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
    */
   packagingDelivery: [
     { value: "actualDeliveryDateJalali", label: "تاریخ تحویل قطعی به کارفرما" },
+    {
+      value: "openAfterSalesCount", label: "خدمات پس از فروش باز روی این پروژه",
+      derived: true,
+      hint: "چند پروندهٔ خدمات پس از فروشِ هنوز بازْ روی همین پروژه هست. پیام "
+        + "«امیدواریم نصب خوب پیش رفته باشد و اگر کمکی لازم دارید ما هستیم» باید "
+        + "شرط «برابر با ۰» داشته باشد — وگرنه برای مشتری‌ای هم می‌رود که شکایت "
+        + "گارانتی‌اش همین حالا روی میز ماست، و آن پیام یعنی «خبر نداریم».",
+    },
   ],
   afterSalesService: [
     { value: "status", label: "وضعیت خدمات پس از فروش", options: AFTER_SALES_STATUSES },
