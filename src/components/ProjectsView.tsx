@@ -671,6 +671,19 @@ export default function ProjectsView({
   const getActualDeliveryDate = (projectId: string): string | null =>
     summaryOf(projectId)?.actualDeliveryDate ?? null;
 
+  /**
+   * How many quotations this job has — counted from the proformas themselves.
+   *
+   * `summarizeProjects` reads them for the whole page in one query keyed on
+   * `projectId`, which is the same relation «وضعیت پیش‌فاکتور» filters on. It was
+   * already on every row and drawn nowhere, so the filter's answer could not be
+   * checked from the screen it was answered on: a reader had to open each job.
+   * `undefined` means the summary was not asked for (a picker), which is not the
+   * same as zero and draws nothing.
+   */
+  const getProformaCount = (projectId: string): number | undefined =>
+    summaryOf(projectId)?.counts?.proformas;
+
   const EMPTY_DELIVERY = {
     agreedItems: [] as ProjectSummary["agreedItems"],
     actualItems: [] as ProjectSummary["actualItems"],
@@ -3637,7 +3650,7 @@ export default function ProjectsView({
                     </div>
                     
                     {/* Compact Meta Row */}
-                    {(p.salesExpert || p.customerInquiryNumber || (p.itemsNeeded && p.itemsNeeded.length > 0) || (p.attachments && p.attachments.length > 0)) && (
+                    {(p.salesExpert || p.customerInquiryNumber || getProformaCount(p.id) !== undefined || (p.itemsNeeded && p.itemsNeeded.length > 0) || (p.attachments && p.attachments.length > 0)) && (
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 mt-1.5 text-[10px] text-slate-500 border-t border-slate-100 pt-1.5">
                         {p.salesExpert && (
                           <span>
@@ -3648,6 +3661,34 @@ export default function ProjectsView({
                           <span>
                             {p.salesExpert && ' | '}استعلام: <strong className="text-slate-800 font-mono">{p.customerInquiryNumber}</strong>
                           </span>
+                        )}
+                        {/*
+                          Whether this job has been quoted, read off the
+                          proformas rather than inferred from its status — which
+                          is what «وضعیت پیش‌فاکتور» filters on, so the filter's
+                          answer is visible on the row it was given for. Zero is
+                          drawn, and drawn differently: «بدون پیش‌فاکتور» is the
+                          fact somebody is looking for, and a missing chip would
+                          read as a chip that failed to load.
+                        */}
+                        {getProformaCount(p.id) !== undefined && (
+                          getProformaCount(p.id) === 0 ? (
+                            <span
+                              className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[9px] font-bold border border-amber-200"
+                              data-project-proformas={p.id}
+                              title="هیچ پیش‌فاکتوری برای این پروژه ثبت نشده است"
+                            >
+                              بدون پیش‌فاکتور
+                            </span>
+                          ) : (
+                            <span
+                              className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[9px] font-bold border border-indigo-100/80"
+                              data-project-proformas={p.id}
+                              title="تعداد پیش‌فاکتورهای ثبت‌شده برای این پروژه"
+                            >
+                              {getProformaCount(p.id)!.toLocaleString('fa-IR')} پیش‌فاکتور
+                            </span>
+                          )
                         )}
                         {p.itemsNeeded && p.itemsNeeded.length > 0 && (
                           <span className="bg-sky-50 text-sky-700 px-1.5 py-0.5 rounded text-[9px] font-bold border border-sky-100/80">

@@ -14702,6 +14702,113 @@ head("Competitors: who we lose to, and by how much");
   }
 }
 
+/* ---------------------- «در حال بررسی فنی» on a project ---------------------- */
+/*
+ * A customer sends a datasheet, and before anybody asks a supplier for a price
+ * or writes a commercial quotation somebody here has to decide *what* is being
+ * quoted. That work already had an artefact — a **technical** proforma, which
+ * states the specification and quotes nothing — and the stage derivation read it
+ * as an ordinary quotation, so such a job reported «تهیه پیش‌فاکتور» or, once the
+ * technical offer had gone out, «پیگیری پیش‌فاکتور»: both saying a price is with
+ * the customer when no price had been written.
+ */
+{
+  ok("«در حال بررسی فنی» is a stage",
+    (PROJECT_STAGES as readonly string[]).includes("در حال بررسی فنی"));
+  /*
+   * The order is the rule (`stageRank` is the index), and this sits before the
+   * supplier stages: asking a supplier is what happens *once* the specification
+   * is settled.
+   */
+  ok("...before the supplier stages and after negotiation",
+    stageRank("در حال مذاکره") < stageRank("در حال بررسی فنی")
+      && stageRank("در حال بررسی فنی") < stageRank("در انتظار پاسخ تأمین‌کننده"));
+
+  const technical = { status: "پیش‌نویس", proformaType: "TECHNICAL" };
+  const financial = { status: "پیش‌نویس" };
+
+  eq("a job whose only document is technical is in technical review",
+    deriveProjectStage({ projectStatus: "جدید", proformas: [technical] }),
+    "در حال بررسی فنی");
+  /*
+   * Including one that has gone out. «پیگیری پیش‌فاکتور» means a price is with
+   * the customer, and a technical offer carries none — which is exactly why the
+   * follow-up queue excludes it (`NOT_TECHNICAL`) and the cost check exempts it.
+   */
+  eq("...even once the technical offer has been sent",
+    deriveProjectStage({
+      projectStatus: "جدید",
+      proformas: [{ status: PROFORMA_SENT_STATUS, proformaType: "TECHNICAL" }],
+    }),
+    "در حال بررسی فنی");
+
+  /* And the financial half is untouched: absent type means financial. */
+  eq("a draft commercial quotation still reads «تهیه پیش‌فاکتور»",
+    deriveProjectStage({ projectStatus: "جدید", proformas: [financial] }), "تهیه پیش‌فاکتور");
+  eq("...and a sent one still reads «پیگیری پیش‌فاکتور»",
+    deriveProjectStage({
+      projectStatus: "جدید", proformas: [{ status: PROFORMA_SENT_STATUS }],
+    }),
+    "پیگیری پیش‌فاکتور");
+  eq("a commercial quotation beside a technical one decides it",
+    deriveProjectStage({ projectStatus: "جدید", proformas: [technical, financial] }),
+    "تهیه پیش‌فاکتور");
+
+  /*
+   * And an inquiry outranks it, which is the one ordering decision worth pinning:
+   * a supplier asked for a price is a supplier asked *after* the specification
+   * was settled, so the review has produced its answer and the job has moved on.
+   * Checking the technical document first would drag such a project backwards —
+   * the fault the «a sent quotation is the dividing line» rule exists for.
+   */
+  eq("an open inquiry beside a technical offer means the review is done",
+    deriveProjectStage({
+      projectStatus: "جدید",
+      proformas: [technical],
+      supplierInquiries: [{ status: INQUIRY_SENT }],
+    }),
+    "در انتظار پاسخ تأمین‌کننده");
+
+  /* A cancelled technical document is no document at all. */
+  eq("a cancelled technical offer leaves the job where it was",
+    deriveProjectStage({
+      projectStatus: "جدید",
+      proformas: [{ ...technical, isCancelled: true }],
+    }),
+    "جدید");
+
+  /*
+   * The derivation reads a *kind*, and the two services that feed it have to
+   * select that column — a repair or a save that read the status alone would
+   * leave this stage off exactly the rows it was written for, silently.
+   */
+  {
+    const service = readFileSync("src/server/services/projectService.ts", "utf8");
+    ok("the project write reads the document's kind",
+      /proformas: \{[\s\S]{0,200}?proformaType: true/.test(service)
+        || /status: true, isCancelled: true, proformaType: true/.test(service));
+    const backfill = readFileSync("scripts/backfillProjectStages.ts", "utf8");
+    ok("...and so does the backfill", backfill.includes("proformaType: true"));
+  }
+
+  /* A stage nothing watches is a stall nothing reports. */
+  ok("the stuck report knows how long the review may take",
+    (DEFAULT_STUCK_THRESHOLDS.projectStage?.["در حال بررسی فنی"] ?? 0) > 0);
+
+  /*
+   * And the quotation count is drawn on the row, which is what makes the
+   * «وضعیت پیش‌فاکتور» filter checkable from the screen it was answered on:
+   * `counts.proformas` arrived on every row already and was drawn nowhere.
+   */
+  {
+    const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
+    ok("the row says how many quotations the job has",
+      /counts\?\.proformas/.test(view) && /data-project-proformas/.test(view));
+    ok("...and says so when there are none",
+      view.includes("بدون پیش‌فاکتور"));
+  }
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
