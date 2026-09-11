@@ -10302,6 +10302,7 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    */
   for (const key of [
     "purchase_order_status_changed", "after_sales_status_changed", "project_stage_changed",
+    "project_status_changed",
   ]) {
     ok(`«${key}» is a schedule subject`, !!SCHEDULE_SUBJECTS[key]);
   }
@@ -10315,6 +10316,35 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    */
   eq("...and a project's from when its stage moved",
     SCHEDULE_SUBJECTS.project_stage_changed?.dateField, "stageChangedAtJalali");
+  /*
+   * And the sale's own clock beside it, which is a different column on purpose.
+   *
+   * Reported: «۳ روز بعد از ثبت باخت یک پروژه یک پیام برای مشتری برود». Every
+   * date the project carried answered something else — `creationDateJalali` is
+   * «how long since the job was opened», which gets worse the longer the job
+   * runs; `stageChangedAtJalali` is «since when has the *work* been here», and
+   * the stage deliberately does not move when the sale is lost; and
+   * `winningDateJalali` stamps won and only won. So the rule was inexpressible,
+   * and nothing said so: the subject list simply had no entry for it.
+   */
+  eq("...and the sale's own clock is its own column",
+    SCHEDULE_SUBJECTS.project_status_changed?.dateField, "statusChangedAtJalali");
+  ok("...which is not the stage's",
+    SCHEDULE_SUBJECTS.project_status_changed?.dateField
+      !== SCHEDULE_SUBJECTS.project_stage_changed?.dateField);
+  /*
+   * And the condition half of the reported rule: the subject says «since the
+   * status moved» and the rule's own condition says *which* status, exactly as
+   * a dwell rule on an order does. A subject with no askable status would be a
+   * rule that fires three days after every project moves, won and lost alike.
+   */
+  {
+    const projectStatusField = (SCHEDULE_MODEL_FIELDS.project ?? [])
+      .find((f) => f.value === "status");
+    ok("a scheduled project rule can ask about the sales status", !!projectStatusField);
+    ok("...and «باخته» is one of the values it can ask for",
+      (projectStatusField?.options ?? []).includes("باخته"));
+  }
 
   /*
    * The check that matters, and the one that caught a real omission while this
@@ -10348,6 +10378,25 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     }
     ok("every field a scheduled rule can ask about is one the sweep selects",
       missing.length === 0, missing);
+
+    /*
+     * And the half that makes «برای مشتری پیام برود» work rather than merely
+     * fire: a scheduled rule on a **project** has to be able to reach the
+     * customer. `queueForCustomer` is handed `enrichedPayload.customerId`, and
+     * the only place that key can come from for a project subject is the row the
+     * sweep read — `enrichPayload` resolves a customer *name* from an id and
+     * never an id from a project. Without it the rule fires, finds nobody, and
+     * notifies the module owner instead of the customer.
+     */
+    const projectBlock = sweepSrc.slice(
+      sweepSrc.indexOf("  project: {"),
+      sweepSrc.indexOf("},", sweepSrc.indexOf("  project: {")),
+    );
+    ok("a scheduled project rule can reach the customer",
+      projectBlock.includes("customerId: true"));
+    const engineSrc = readFileSync("src/server/services/workflowService.ts", "utf8");
+    ok("...and the message action is the one that reads it",
+      /queueForCustomer\(\{\s*customerId: enrichedPayload\.customerId/.test(engineSrc));
   }
 
   /* The clock itself: written only on a real move, or it means «last saved». */
@@ -10384,6 +10433,13 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     for (const file of [
       "src/server/services/purchaseOrderService.ts",
       "src/server/services/deliveryService.ts",
+      // The project has three writers of its status — the form's create, the
+      // form's update, and `syncProjectStatus` re-deriving it from the
+      // quotations — and every one of them has to stamp through the same rule
+      // or «۳ روز پس از ثبت باخت» counts from a different day depending on
+      // which door the loss came through.
+      "src/server/services/projectService.ts",
+      "src/server/services/proformaService.ts",
     ]) {
       const src = strip3(readFileSync(file, "utf8"));
       ok(`${file.split("/").pop()} stamps through the shared rule`,

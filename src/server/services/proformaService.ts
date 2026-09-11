@@ -7,6 +7,7 @@ import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } fr
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { scrubProductRefs } from "../refIntegrity";
 import { syncProjectStage } from "./projectService";
+import { statusChangeColumns } from "../../utils/statusDwell";
 import { afterCommit } from "../afterCommit";
 import { closeFollowUpTasks } from "./followUpService";
 import { isTerminalOutcome, versionRefusalReason } from "../../utils/salesFollowUp";
@@ -646,6 +647,16 @@ export async function syncProjectStatus(
   if (!nextStatus) return;
 
   const data: Record<string, unknown> = { status: nextStatus };
+
+  /*
+   * And since when it has carried it, if this is a real move.
+   *
+   * The same single writer the purchase order and the after-sales job use, so
+   * «۳ روز پس از ثبت باخت پروژه» counts from the day the loss was recorded
+   * rather than from whenever the project was last saved. Re-deriving the same
+   * status — which happens on every proforma write — stamps nothing.
+   */
+  Object.assign(data, statusChangeColumns(project.status, nextStatus, todayJalali) ?? {});
 
   /*
    * And its loss reason, from the same documents.
