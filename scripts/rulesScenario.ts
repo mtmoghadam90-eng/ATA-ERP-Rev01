@@ -83,7 +83,10 @@ import {
 } from "../src/utils/deliveryNotes";
 import { TASK_SORTABLE, laneTimestamps } from "../src/server/services/taskService";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
-import { lossReasonRefusal } from "../src/server/services/projectService";
+import {
+  PROJECT_QUOTATION_FILTERS, buildProjectWhere, lossReasonRefusal, quotationWhere,
+} from "../src/server/services/projectService";
+import { PROFORMA_SENT_STATUS } from "../src/utils/moduleStatuses";
 import type { ERPSettings } from "../src/types";
 import { SCREEN_PERMISSION_ALIAS } from "../src/types";
 import { buildTaskWhere } from "../src/server/services/taskService";
@@ -14602,6 +14605,101 @@ head("Competitors: who we lose to, and by how much");
     (usersView.match(/^\s+avatarUrl,$/gm) ?? []).length, 2);
   ok("the upload names a Latin folder, or the file lands in the uploads root",
     /uploadFile\(file, 'user-avatars'\)/.test(usersView));
+}
+
+/* ------------- «هنوز پیش‌فاکتور صادر نشده» on the projects grid ------------- */
+/*
+ * Reported: a filter for the jobs nobody has quoted yet.
+ *
+ * The first thing to settle is that it is not a value of a filter that already
+ * exists. `Project.status` is the sales outcome and says nothing about whether
+ * a document was written; `Project.stage` reports the **least-advanced open
+ * thing**, so a job with no quotation and one unanswered supplier inquiry reads
+ * «در انتظار پاسخ تأمین‌کننده» — asking the stage for «تهیه پیش‌فاکتور» would
+ * miss exactly the job being hunted for, and silently.
+ */
+{
+  const sectionTitle = "«هنوز پیش‌فاکتور صادر نشده»";
+  void sectionTitle;
+
+  // The half that makes the rest necessary: an unquoted job can sit at a stage
+  // that names an inquiry, so no stage filter can stand in for this one.
+  eq("an unquoted job with a live inquiry is not at a quotation stage",
+    deriveProjectStage({
+      projectStatus: "جدید",
+      proformas: [],
+      supplierInquiries: [{ status: INQUIRY_SENT }],
+    }),
+    "در انتظار پاسخ تأمین‌کننده");
+
+  eq("«بدون هیچ پیش‌فاکتوری» asks for no quotation row at all",
+    JSON.stringify(quotationWhere("none")),
+    JSON.stringify({ proformas: { none: {} } }));
+  eq("«ارسال‌نشده» asks for no quotation that has gone out",
+    JSON.stringify(quotationWhere("unsent")),
+    JSON.stringify({ proformas: { none: { status: PROFORMA_SENT_STATUS } } }));
+
+  /*
+   * The direction of that second clause is the decision. Written as equality on
+   * «ارسال شده», a stored status this build does not know reads as «not sent»
+   * and the project stays in the list — a job put in front of somebody. Written
+   * the other way («every document is a draft») it would read as sent and hide
+   * the job, which is the failure that matters. Same rule as `laneWhere`'s
+   * middle column and `countsTowardBalance`.
+   */
+  ok("...by naming the sent status rather than excluding the draft",
+    JSON.stringify(quotationWhere("unsent")).includes(PROFORMA_SENT_STATUS)
+      && !JSON.stringify(quotationWhere("unsent")).includes(PROFORMA_STORED_STATUSES[0]));
+  ok("...and the sent status is one the column really holds",
+    (PROFORMA_STORED_STATUSES as readonly string[]).includes(PROFORMA_SENT_STATUS));
+
+  // `proformas.status` is NOT NULL, so a clause comparing it against null is
+  // rejected outright by Prisma and renders the screen's error text instead of
+  // a list — the fault `openAt` carried.
+  for (const value of PROJECT_QUOTATION_FILTERS) {
+    ok(`«${value}» never filters a proforma status against null`,
+      !/"status":null/.test(JSON.stringify(quotationWhere(value))));
+  }
+
+  // Anything else widens nothing rather than narrowing the grid to a shape
+  // nobody asked for.
+  for (const value of ["all", "", undefined, null, "NONE", 1]) {
+    ok(`«${String(value)}» is not a filter`, quotationWhere(value) === null);
+  }
+
+  {
+    const user = { id: "u1", permissions: { projects: true } } as any;
+    const empty = { search: "", filters: {}, sort: "", order: "asc", page: 1, pageSize: 50 } as any;
+    const withFilter = JSON.stringify(buildProjectWhere(empty, user, { quotation: "none" }));
+    ok("the clause reaches the query the grid runs", withFilter.includes("proformas"));
+    ok("...and is absent when nobody asked for it",
+      !JSON.stringify(buildProjectWhere(empty, user, {})).includes("proformas"));
+  }
+
+  /*
+   * And the drift that makes a filter a control that does nothing: the screen
+   * holds a value, the hook sends a parameter, the route reads it. A break at
+   * any of the three reads as the grid ignoring the dropdown.
+   */
+  {
+    const hook = readFileSync("src/api/useProjectList.ts", "utf8");
+    ok("the list hook sends the parameter", /quotation: filters\.quotation/.test(hook));
+    ok("...and offers «پاک کردن فیلترها» when it is set",
+      /filters\.quotation !== "all"/.test(hook));
+    // The stage was missing from that same condition, so a grid narrowed to one
+    // stage read as unfiltered.
+    ok("...and for the stage beside it", /filters\.stage !== "all"/.test(hook));
+
+    const route = readFileSync("src/server/routes/projects.ts", "utf8");
+    eq("both project list endpoints read it",
+      (route.match(/quotation: req\.query\.quotation/g) ?? []).length, 2);
+
+    const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
+    ok("the grid draws the control", /id="project-quotation-filter"/.test(view));
+    for (const value of PROJECT_QUOTATION_FILTERS) {
+      ok(`...offering «${value}»`, view.includes(`<option value="${value}">`));
+    }
+  }
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

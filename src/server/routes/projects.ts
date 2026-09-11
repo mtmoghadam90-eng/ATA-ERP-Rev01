@@ -70,6 +70,9 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
         dateFrom: req.query.dateFrom,
         dateTo: req.query.dateTo,
         customField: req.query.customField,
+        // «هنوز پیش‌فاکتور صادر نشده» — see `quotationWhere`; an unrecognised
+        // value adds no clause rather than narrowing the grid.
+        quotation: req.query.quotation,
         // The derived figures are the grid's columns, but a picker listing
         // projects does not need them and they cost three extra queries.
         withSummary: req.query.withSummary !== "false",
@@ -96,6 +99,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
         dateFrom: req.query.dateFrom,
         dateTo: req.query.dateTo,
         customField: req.query.customField,
+        quotation: req.query.quotation,
         withSummary: false,
       });
 
