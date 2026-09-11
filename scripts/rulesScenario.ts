@@ -92,7 +92,7 @@ import { PROFORMA_SENT_STATUS } from "../src/utils/moduleStatuses";
 import type { ERPSettings, WorkflowRule } from "../src/types";
 import { cloneWorkflowRule } from "../src/utils/workflowRules";
 import { MESSAGE_ONCE_SCOPES, isMessageOnceScope, messageOnceKey } from "../src/utils/workflowTriggers";
-import { MAX_QUIET_DAY_SPAN, nextSendableTime, quietDaysApplyTo } from "../src/utils/messaging";
+import { MAX_QUIET_DAY_SPAN, isCustomerFacing, nextSendableTime } from "../src/utils/messaging";
 import { SCREEN_PERMISSION_ALIAS } from "../src/types";
 import { buildTaskWhere } from "../src/server/services/taskService";
 import type { AuthUser } from "../src/server/auth";
@@ -10622,7 +10622,7 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     ok("the queue composes the hours and the days",
       /nextSendableTime\(/.test(svc));
     ok("...reading the holiday calendar rather than naming weekdays",
-      /settings\.quietDays && quietDaysApplyTo\(input\.audience\)\s*\n?\s*\? \(day\) => isOfficialHoliday\(/
+      /settings\.quietDays && isCustomerFacing\(input\.audience\)\s*\n?\s*\? \(day\) => isOfficialHoliday\(/
         .test(svc));
     ok("...and absent means off", /stored\.quietDays === true/.test(svc));
 
@@ -10634,11 +10634,11 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
      * Friday they are working hears about it that morning — while the quiet
      * *hours* still hold for both, or the board would wake people at 03:00.
      */
-    eq("a staff notice is exempt from the quiet days",
-      quietDaysApplyTo("STAFF"), false);
-    eq("...a customer message is not", quietDaysApplyTo("CUSTOMER"), true);
+    eq("a staff notice is exempt from the company-wide holds",
+      isCustomerFacing("STAFF"), false);
+    eq("...a customer message is not", isCustomerFacing("CUSTOMER"), true);
     eq("...and an absent audience reads as the customer, which is the safe way",
-      quietDaysApplyTo(undefined), true);
+      isCustomerFacing(undefined), true);
 
     /*
      * The behaviour that exemption has to produce, over the very case the
@@ -10648,7 +10648,7 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
      * would have got wrong.
      */
     const forAudience = (audience: "CUSTOMER" | "STAFF") => show(nextSendableTime(
-      at(2026, 6, 25, 22), quiet, quietDaysApplyTo(audience) ? friday : null,
+      at(2026, 6, 25, 22), quiet, isCustomerFacing(audience) ? friday : null,
     ));
     eq("a customer message crosses the quiet day", forAudience("CUSTOMER"), "27 8:00");
     eq("...and a staff notice does not", forAudience("STAFF"), "26 8:00");
@@ -10673,6 +10673,21 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     ok("the staff notice names its audience where it is queued",
       /audience: "STAFF"/.test(queueCall.slice(0, queueCall.indexOf("});"))));
 
+    /*
+     * The second consequence of the same fact: «حالت آزمایشی» is for trying a
+     * rule out without writing to a *customer*, so a handover still goes out.
+     * A dry run that swallowed it would mean a week of colleagues never being
+     * told while the board read perfectly correctly — which is why this is held
+     * against the **stamp on the row** rather than against the worker: the row
+     * is what says whether it will really be sent, and asking the settings again
+     * at sending time would answer for whoever flipped the switch last.
+     */
+    ok("the dry run is stamped through the same rule",
+      /dryRun: settings\.dryRun && isCustomerFacing\(input\.audience\),/.test(svc));
+    ok("...and the worker still obeys the row rather than the setting",
+      /if \(message\.dryRun\) \{/.test(svc) && !/settings\.dryRun/.test(
+        svc.slice(svc.indexOf("if (message.dryRun) {"))));
+
     // The control exists, or the setting is one nobody can reach.
     const panel = readFileSync("src/components/MessagingView.tsx", "utf8");
     ok("the messaging screen draws the switch", panel.includes("data-quiet-days"));
@@ -10680,6 +10695,12 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     // promise the staff notices break.
     ok("the screen says the staff notices are exempt",
       panel.includes("اعلان ارجاع کار به همکاران از این قاعده مستثناست"));
+    // The dry-run switch has to say the same, because it costs a text: a rule
+    // tried out with it on really does reach the colleague.
+    ok("...and that the dry run does not hold them either",
+      panel.includes("اعلان ارجاع کار به همکاران مستثناست"));
+    ok("...so the switch no longer promises that nothing at all is sent",
+      !panel.includes("هیچ پیامی واقعاً ارسال نمی‌شود"));
 
     // And it reaches a live document, which a default in seedData never does.
     const patched = applySettingsPatches({ messaging: {} } as never);

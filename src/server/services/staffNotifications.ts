@@ -167,12 +167,16 @@ export async function notifyStaff(
     recipientName: assignee?.fullName ?? null,
     body,
     /*
-     * Exempt from the quiet **days**, and only from those — `quietDaysApplyTo`
-     * is the rule and says why: «جمعه و تعطیل رسمی نباید به مشتری پیام زد» is a
-     * courtesy to somebody outside the company, while a colleague handed a job
-     * on a Friday they are working needs to hear about it that morning rather
-     * than on Saturday. The quiet hours still hold, so a task assigned at 03:00
-     * still waits until the window opens.
+     * Exempt from the two company-wide holds — `isCustomerFacing` is the rule
+     * and says why. A **quiet day** («جمعه و تعطیل رسمی نباید به مشتری پیام
+     * زد») is a courtesy to somebody outside the company, while a colleague
+     * handed a job on a Friday they are working needs to hear that morning
+     * rather than on Saturday; and a **dry run** is for trying a rule out
+     * without writing to a customer, so a handover still arrives rather than
+     * evaporating for as long as somebody leaves the switch on.
+     *
+     * The quiet **hours** are not one of those holds and still apply, so a task
+     * assigned at 03:00 waits until the window opens.
      */
     audience: "STAFF",
     projectId: input.projectId ?? null,

@@ -745,21 +745,36 @@ function SendingBehaviour({
           disabled={!onUpdateSettings}
           onChange={(e) => patch(
             { dryRun: e.target.checked },
-            e.target.checked ? 'حالت آزمایشی روشن شد؛ هیچ پیامی واقعاً ارسال نمی‌شود.' : 'حالت آزمایشی خاموش شد؛ پیام‌ها واقعاً ارسال می‌شوند.',
+            e.target.checked
+              ? 'حالت آزمایشی روشن شد؛ هیچ پیامی به مشتری ارسال نمی‌شود.'
+              : 'حالت آزمایشی خاموش شد؛ پیام‌ها واقعاً ارسال می‌شوند.',
           )}
           className="accent-amber-500 mt-0.5"
         />
         <span className="text-[11px] leading-6">
-          <span className="font-bold text-slate-800">حالت آزمایشی (بدون ارسال واقعی)</span>
+          <span className="font-bold text-slate-800">حالت آزمایشی (بدون ارسال واقعی به مشتری)</span>
           <span className="block text-slate-500">
-            پیام‌ها مثل همیشه ساخته می‌شوند و در «صندوق خروجی» با برچسب «آزمایشی» و وضعیت
+            پیام‌های مشتری مثل همیشه ساخته می‌شوند و در «صندوق خروجی» با برچسب «آزمایشی» و وضعیت
             «ارسال شده» دیده می‌شوند، اما هیچ‌چیز به پنل پیامک، بله یا ایمیل فرستاده نمی‌شود و
             هزینه‌ای هم ندارد. برای امتحان کردن یک قانون خودکار تازه: روشنش کنید، کاری که قانون
             به آن حساس است را انجام دهید، متن ساخته‌شده را در صندوق خروجی ببینید و بعد خاموشش کنید.
           </span>
+          {/*
+            The one thing this switch does *not* hold back, said where the
+            decision is made: a rule that raises a task and notifies a colleague
+            will really reach that colleague, which costs a text. The alternative
+            — holding those too — means a week of handovers evaporating for
+            whoever forgets to switch it off, with the board reading correctly.
+          */}
+          <span className="block text-slate-500 mt-1">
+            <span className="font-bold">اعلان ارجاع کار به همکاران مستثناست</span> و در حالت
+            آزمایشی هم واقعاً فرستاده می‌شود (و هزینهٔ پیامکش را دارد) — چون این حالت برای این است
+            که به <span className="font-bold">مشتری</span> پیامی نرود، و اعلانی که بی‌صدا بخار شود
+            یعنی همکار هیچ‌وقت خبردار نمی‌شود در حالی که تختهٔ کار درست به نظر می‌رسد.
+          </span>
           {dryRun && (
             <span className="block mt-1 font-bold text-amber-800">
-              الان روشن است — تا خاموش نشود هیچ پیامی به دست مشتری نمی‌رسد.
+              الان روشن است — تا خاموش نشود هیچ پیامی به دست مشتری نمی‌رسد (اعلان همکاران می‌رود).
             </span>
           )}
         </span>

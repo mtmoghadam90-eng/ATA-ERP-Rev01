@@ -532,33 +532,44 @@ export function nextSendableTime(
  * Who a message is addressed to, for the one rule that reads it.
  *
  * Absent means the customer, because that is the reading a forgotten key must
- * fall to: a quotation follow-up slipping out on Ashura is the fault the quiet
- * days exist to prevent, while a handover notice held back is only late.
+ * fall to: a quotation follow-up slipping out on Ashura — or reaching nobody at
+ * all because a dry run was left on — is the fault those switches exist to
+ * prevent, while a handover notice held back is only late.
  */
 export const MESSAGE_AUDIENCES = ["CUSTOMER", "STAFF"] as const;
 export type MessageAudience = (typeof MESSAGE_AUDIENCES)[number];
 
 /**
- * Whether the quiet **days** apply to a message.
+ * Whether the company-wide sending holds apply to a message.
  *
- * «اعلان همکاران از این قاعده سکوت مستثنا باشد» — and the two halves of the
- * silence part company here, deliberately. A quiet day says «جمعه و تعطیل
- * رسمی نباید به مشتری پیام زد»: it is a courtesy to somebody outside the
- * company, and a colleague handed a job on a Friday they are working is not
- * the person it protects — holding that notice until Saturday morning is how a
- * request raised from a customer's site arrives after the visit it was about.
+ * **One fact, two consequences**, which is why this is named for the fact. The
+ * quiet **days** and the **dry-run** switch are both company-wide «do not send»
+ * rules written about the people outside the company, and a colleague being
+ * handed a job is not one of them:
  *
- * The quiet **hours** are untouched for either audience, which is not an
- * oversight: a task assigned at 03:00 reaching somebody's phone at 08:00 is
- * exactly what that window was written for, and nobody wants to be woken by
- * the board.
+ * - «جمعه و تعطیل رسمی نباید به مشتری پیام زد» is a courtesy, and holding a
+ *   handover until Saturday morning is how a request raised from a customer's
+ *   site arrives after the visit it was about.
+ * - «حالت آزمایشی» exists to try a rule out *without writing to a customer*, so
+ *   a notice telling a colleague their plate has changed should still arrive —
+ *   otherwise somebody who forgets to switch it off has a week of handovers
+ *   evaporating while the board looks perfectly correct, which is the «feature
+ *   that silently does nothing» fault in its most expensive form.
  *
- * It is a rule rather than a second switch on the settings document: a company
- * that wanted its colleagues silenced on a holiday would be asking for the
- * board to go quiet too, which no screen here offers, and a box beside the
- * existing one would be two answers to one question.
+ * Two predicates with one body would be the `digitsOf` fault in miniature: the
+ * next audience value, or a third hold, would be added to one and not the
+ * other. If the two ever genuinely need to disagree, that is the moment to
+ * split this — and the type-checker names both call sites when it happens.
+ *
+ * The quiet **hours** are deliberately *not* one of these holds and apply to
+ * both audiences: a task assigned at 03:00 reaching a phone at 08:00 is exactly
+ * what that window was written for, and nobody wants to be woken by the board.
+ *
+ * These are rules rather than two more switches on the settings document: a
+ * company that wanted its colleagues silenced on a holiday would be asking for
+ * the board to go quiet too, which no screen here offers.
  */
-export function quietDaysApplyTo(audience: MessageAudience | null | undefined): boolean {
+export function isCustomerFacing(audience: MessageAudience | null | undefined): boolean {
   return audience !== "STAFF";
 }
 
