@@ -3,12 +3,12 @@ import { getDb } from "../../db";
 import { AuthUser } from "../../auth";
 import { ListQuery, ListResult, buildResult, paginationArgs } from "../../listing";
 import { expandDateFields } from "../../dates";
-import { getTodayShamsi, toShamsiStr } from "../../../dateUtils";
+import { getTodayShamsi, isOfficialHoliday, toShamsiStr } from "../../../dateUtils";
 import { loadSettings } from "../../settings";
 import {
   ALL_SMS_CONFIG_FIELDS, ALL_SMS_SECRET_FIELDS,
   CHANNELS, Channel, MAX_SEND_ATTEMPTS, MESSAGE_STATUS, QuietHours, isChannel,
-  nextAllowedSendTime, renderTemplate, resolveRecipient, retryDelayMs, shouldRetry,
+  nextSendableTime, renderTemplate, resolveRecipient, retryDelayMs, shouldRetry,
 } from "../../../utils/messaging";
 import { BaleChatsResult, BaleConfig, baleRecentChats, sendThrough } from "./drivers";
 import { addresseeOf, namePrefixFor } from "../../../utils/honorific";
@@ -301,6 +301,8 @@ export async function deleteTemplate(id: string): Promise<void> {
 
 export interface MessagingSettings {
   quietHours: QuietHours;
+  /** No message on a Friday or an official holiday. Absent = off. */
+  quietDays: boolean;
   /** Write the queue rows but never call a provider. For trying rules out. */
   dryRun: boolean;
   maxAttempts: number;
@@ -314,6 +316,7 @@ export async function loadMessagingSettings(): Promise<MessagingSettings> {
       from: stored.quietHours?.from ?? null,
       to: stored.quietHours?.to ?? null,
     },
+    quietDays: stored.quietDays === true,
     dryRun: stored.dryRun === true,
     maxAttempts: Number(stored.maxAttempts) > 0 ? Number(stored.maxAttempts) : MAX_SEND_ATTEMPTS,
   };
@@ -362,7 +365,23 @@ export interface QueueMessageInput {
 export async function queueMessage(input: QueueMessageInput) {
   const settings = await loadMessagingSettings();
   const requested = input.scheduledAt ?? new Date();
-  const scheduledAt = nextAllowedSendTime(requested, settings.quietHours);
+  /*
+   * The hours and the days together — see `nextSendableTime`, which composes
+   * them because Thursday at 22:00 under a 21:00–08:00 window lands on Friday
+   * at 08:00, and Friday is a day nobody is written to.
+   *
+   * The predicate reads the process's holiday calendar through the same
+   * `isOfficialHoliday` every delivery date and task due date already goes
+   * through, so «این جمعه باز هستیم» is answered in one place. Until the
+   * calendar has loaded that function falls back to the fixed solar days, which
+   * is the safe direction here: a day wrongly thought to be working sends a
+   * message, and a day wrongly thought to be a holiday delays one.
+   */
+  const scheduledAt = nextSendableTime(
+    requested,
+    settings.quietHours,
+    settings.quietDays ? (day) => isOfficialHoliday(toShamsiStr(day)) : null,
+  );
 
   return getDb().message.create({
     data: {

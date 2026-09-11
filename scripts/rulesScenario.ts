@@ -91,6 +91,8 @@ import {
 import { PROFORMA_SENT_STATUS } from "../src/utils/moduleStatuses";
 import type { ERPSettings, WorkflowRule } from "../src/types";
 import { cloneWorkflowRule } from "../src/utils/workflowRules";
+import { MESSAGE_ONCE_SCOPES, isMessageOnceScope, messageOnceKey } from "../src/utils/workflowTriggers";
+import { MAX_QUIET_DAY_SPAN, nextSendableTime } from "../src/utils/messaging";
 import { SCREEN_PERMISSION_ALIAS } from "../src/types";
 import { buildTaskWhere } from "../src/server/services/taskService";
 import type { AuthUser } from "../src/server/auth";
@@ -10568,6 +10570,151 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     const engineSrc = readFileSync("src/server/services/workflowService.ts", "utf8");
     ok("...and the message action is the one that reads it",
       /queueForCustomer\(\{\s*customerId: enrichedPayload\.customerId/.test(engineSrc));
+  }
+
+  /*
+   * «جمعه و روزهای تعطیل رسمی نباید به مشتری پیام زد» — and a day is not a
+   * second kind of quiet hour.
+   *
+   * An hour moves a message by hours; a day moves it past a date; and the two
+   * **compose**. Thursday at 22:00 under a 21:00–08:00 window is pushed to
+   * Friday 08:00 by the hours, and Friday is a day nobody is written to, so it
+   * goes on to Saturday 08:00. Applying either rule alone gets that wrong,
+   * which is the whole reason this is a loop rather than two steps.
+   */
+  {
+    const quiet = { from: "21:00", to: "08:00" };
+    const at = (y: number, m: number, d: number, h: number, min = 0) =>
+      new Date(y, m - 1, d, h, min, 0, 0);
+    const show = (date: Date) =>
+      `${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
+
+    // 2026-06-25 is a Thursday, 26 a Friday, 27 a Saturday.
+    const friday = (d: Date) => d.getDay() === 5;
+
+    eq("no quiet day means the hours decide, exactly as before",
+      show(nextSendableTime(at(2026, 6, 25, 22), quiet, null)), "26 8:00");
+    eq("...and the two compose rather than either winning",
+      show(nextSendableTime(at(2026, 6, 25, 22), quiet, friday)), "27 8:00");
+    eq("a quiet day inside working hours still moves",
+      show(nextSendableTime(at(2026, 6, 26, 11), quiet, friday)), "27 8:00");
+    eq("an ordinary moment is untouched",
+      show(nextSendableTime(at(2026, 6, 25, 11), quiet, friday)), "25 11:00");
+    eq("...and with no quiet hours a quiet day opens at midnight",
+      show(nextSendableTime(at(2026, 6, 26, 11), null, friday)), "27 0:00");
+
+    /*
+     * Bounded. A holiday calendar imported wrong — or a company that has
+     * marked every day — must not spin the server's event loop for ever, which
+     * is `MAX_WORKING_DAY_SPAN`'s own rule.
+     */
+    let asked = 0;
+    const everyDay = () => { asked += 1; return true; };
+    const answer = nextSendableTime(at(2026, 6, 25, 11), quiet, everyDay);
+    ok("a calendar with no working day in it still answers", answer instanceof Date);
+    ok("...without asking for ever", asked <= MAX_QUIET_DAY_SPAN);
+    ok("...and the horizon reaches past Nowruz", MAX_QUIET_DAY_SPAN >= 20);
+
+    // The queue is where it is applied, and the predicate is the holiday
+    // calendar rather than a second list of weekday numbers — so «این جمعه باز
+    // هستیم» is answered in one place.
+    const svc = readFileSync("src/server/services/messaging/messageService.ts", "utf8");
+    ok("the queue composes the hours and the days",
+      /nextSendableTime\(/.test(svc));
+    ok("...reading the holiday calendar rather than naming weekdays",
+      /settings\.quietDays \? \(day\) => isOfficialHoliday\(/.test(svc));
+    ok("...and absent means off", /stored\.quietDays === true/.test(svc));
+
+    // The control exists, or the setting is one nobody can reach.
+    const panel = readFileSync("src/components/MessagingView.tsx", "utf8");
+    ok("the messaging screen draws the switch", panel.includes("data-quiet-days"));
+
+    // And it reaches a live document, which a default in seedData never does.
+    const patched = applySettingsPatches({ messaging: {} } as never);
+    eq("a live document gets quiet days switched on once",
+      (patched.next as { messaging?: { quietDays?: boolean } }).messaging?.quietDays, true);
+    const off = applySettingsPatches({
+      messaging: { quietDays: false },
+      appliedPatches: [],
+    } as never);
+    eq("...and somebody who switched it off is not re-decided",
+      (off.next as { messaging?: { quietDays?: boolean } }).messaging?.quietDays, false);
+  }
+
+  /*
+   * «فقط یک بار» — and *once per what* is the whole question.
+   *
+   * A rule fires on a record, and a customer-facing message is usually about
+   * something larger: a project carries several supplier inquiries (one per
+   * part of the scope) and can be delivered in several consignments, so «وقتی
+   * نتیجهٔ استعلام ثبت شد به مشتری خبر بده» sends three identical messages for
+   * one job. Each firing is a *different record*, so nothing scoped to the
+   * record could have stopped them — which is why there is no default and the
+   * option is the scope.
+   */
+  {
+    const payload = {
+      entityType: "supplierInquiry", entityId: "inq-2",
+      projectId: "prj-1", customerId: "cus-9",
+    };
+    eq("«once per record» keys on the record that fired",
+      messageOnceKey("RECORD", payload), "supplierInquiry:inq-2");
+    eq("...«once per project» on the job", messageOnceKey("PROJECT", payload), "prj-1");
+    eq("...and «once per customer» on the person",
+      messageOnceKey("CUSTOMER", payload), "cus-9");
+
+    // Three inquiries on one job: three records, one project.
+    const second = { ...payload, entityId: "inq-3" };
+    ok("two inquiries of one job are two records",
+      messageOnceKey("RECORD", payload) !== messageOnceKey("RECORD", second));
+    eq("...and one project", messageOnceKey("PROJECT", second), "prj-1");
+
+    /*
+     * Null is «cannot answer», and the engine refuses rather than sending: a
+     * rule whose author asked for one message per project, firing on a payload
+     * that names none, cannot keep that promise, and sending anyway is exactly
+     * the duplicate the switch was turned on to prevent.
+     */
+    eq("a project scope with no project cannot be answered",
+      messageOnceKey("PROJECT", { entityType: "customer", entityId: "c1" }), null);
+    eq("...nor a record scope with no record", messageOnceKey("RECORD", {}), null);
+    ok("an unknown scope is not a scope",
+      !isMessageOnceScope("PER_MONTH") && !isMessageOnceScope(undefined));
+    ok("...and every offered one is", MESSAGE_ONCE_SCOPES.every((x) => isMessageOnceScope(x.value)));
+    ok("every scope says what it is once per",
+      MESSAGE_ONCE_SCOPES.every((x) => x.hint.trim().length > 20));
+
+    const engine = readFileSync("src/server/services/workflowService.ts", "utf8");
+    /*
+     * Claimed **before** the message is queued, because the unique index is the
+     * mechanism and an index can only decide at the moment of insert — a row
+     * written first and checked afterwards leaves a window in which two firings
+     * both send. The campaign's own index is there for the same reason.
+     */
+    const claim = engine.indexOf("workflowMessageSend.create");
+    const send = engine.indexOf("queueForCustomer({");
+    ok("the once-guard is claimed before the message is queued",
+      claim > 0 && send > 0 && claim < send);
+    ok("...and an already-sent scope is silent rather than a fault",
+      /code !== "P2002"/.test(engine.slice(claim, send)));
+
+    /*
+     * Its own table. A scheduled rule writes `(ruleId, "project", projectId)`
+     * into `workflow_firings` **before** its actions run, so a guard sharing
+     * that key would collide with the firing trying to send it — and
+     * `resolveFinishedTasks` deletes firings by `(ruleId, entityId)` with no
+     * entityType, so closing a task would wipe a guard sharing an id.
+     */
+    ok("the guard is not a row in workflow_firings",
+      !/workflowFiring\.create[\s\S]{0,400}sendOnce/.test(engine));
+    const sweep = readFileSync("src/server/services/workflowSweep.ts", "utf8");
+    ok("...which is what the firing deleteMany would otherwise have wiped",
+      /workflowFiring\.deleteMany\(\{\s*where: \{ ruleId: rule\.id, entityId:/.test(sweep));
+
+    const settingsSrc = readFileSync("src/components/SettingsView.tsx", "utf8");
+    ok("the rule editor draws the scope control", settingsSrc.includes("data-send-once"));
+    ok("...from the catalogue rather than its own options",
+      /MESSAGE_ONCE_SCOPES\.map/.test(settingsSrc));
   }
 
   /*

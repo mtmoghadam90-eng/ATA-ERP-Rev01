@@ -6,6 +6,7 @@ import { getTodayShamsi, addDaysToShamsi } from "../../dateUtils";
 import { notifyModuleResponsible } from "./notificationService";
 import { expandDateFields } from "../dates";
 import { matchesConditions } from "../../utils/workflowConditions";
+import { isMessageOnceScope, messageOnceKey } from "../../utils/workflowTriggers";
 import { escalationFor } from "../../utils/workflowEscalation";
 import { isChannel, renderTemplate } from "../../utils/messaging";
 import { messageVariables, queueForCustomer } from "./messaging/messageService";
@@ -415,7 +416,49 @@ export async function executeRule(
           values,
         ).trim();
 
-        if (body) {
+        /*
+         * «فقط یک بار» — claimed before the message is queued, because the
+         * unique index is the mechanism and an index can only decide at the
+         * moment of insert. A row written first and checked afterwards leaves a
+         * window in which two firings both send.
+         *
+         * A scope that cannot be answered — «یک بار برای هر پروژه» on a payload
+         * naming no project — is **refused rather than sent**: sending anyway is
+         * exactly the duplicate the switch was turned on to prevent, and the
+         * module owner is told the way every other unreachable message is.
+         */
+        let onceRefusal: string | null = null;
+        if (body && isMessageOnceScope(config.sendOnce)) {
+          const key = messageOnceKey(config.sendOnce, enrichedPayload);
+          if (!key) {
+            onceRefusal = "این قانون «فقط یک بار» است ولی رویدادش "
+              + (config.sendOnce === "PROJECT" ? "پروژه‌ای" : "مشتری‌ای")
+              + " را نام نمی‌برد، پس پیام ارسال نشد.";
+          } else {
+            try {
+              await db.workflowMessageSend.create({
+                data: { ruleId: rule.id, scope: config.sendOnce, scopeId: key },
+              });
+            } catch (err) {
+              // P2002: already sent for this scope. Not a fault — the whole
+              // point — and deliberately silent, unlike the refusal above.
+              if ((err as { code?: string })?.code !== "P2002") throw err;
+              onceRefusal = "";
+            }
+          }
+        }
+
+        if (onceRefusal) {
+          await notifyModuleResponsible(
+            "پیام‌ها",
+            `پیام خودکار ارسال نشد: ${rule.name}`,
+            onceRefusal,
+            user,
+            enrichedPayload.projectId || null,
+          );
+        }
+
+        if (body && onceRefusal === null) {
           /*
            * When it should arrive.
            *

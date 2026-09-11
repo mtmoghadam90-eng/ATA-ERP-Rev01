@@ -813,6 +813,18 @@ export interface ERPSettings {
      */
     quietHours?: { from?: string | null; to?: string | null };
     /**
+     * Days no message is delivered on: Friday and the official holidays.
+     *
+     * Not a list of weekday numbers — it reads the **holiday calendar**, which
+     * is what makes «این جمعه باز هستیم» work without a second place to say it
+     * and keeps Nowruz and Ashura out with nobody maintaining a list here.
+     *
+     * Absent means off, so no installation changes until somebody switches it
+     * on; `settingsPatches` writes it in once, because a default in
+     * `seedData.ts` never reaches a live settings document.
+     */
+    quietDays?: boolean;
+    /**
      * Queue every message and show it in the outbox, but never call a
      * provider. For trying a new rule out without texting a customer.
      */
@@ -1499,6 +1511,14 @@ export interface WorkflowRule {
      * is a rule rather than any new code.
      */
     messageConfig?: {
+      /**
+       * Send this message at most once per RECORD, PROJECT or CUSTOMER.
+       *
+       * Absent is off, so no rule written before this changes behaviour — and
+       * there is deliberately no default, because «once» without a scope is a
+       * question rather than an answer. See `MESSAGE_ONCE_SCOPES`.
+       */
+      sendOnce?: 'RECORD' | 'PROJECT' | 'CUSTOMER';
       /** A saved template, or a body written into the rule itself. */
       templateId?: string;
       bodyTemplate?: string;

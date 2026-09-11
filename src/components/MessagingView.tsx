@@ -765,6 +765,37 @@ function SendingBehaviour({
         </span>
       </label>
 
+      {/*
+        A quiet **day**, beside the quiet hours and not inside them: an hour
+        moves a message by hours and a day moves it past a date, and the two
+        compose (Thursday 22:00 under a 21:00–08:00 window lands on Friday 08:00,
+        which is a day nobody is written to, so it goes on to Saturday).
+
+        It reads the holiday calendar rather than naming weekdays, which is what
+        makes «این جمعه باز هستیم» work without a second place to say it.
+      */}
+      <label className="flex items-start gap-2.5 text-xs text-slate-700 mb-3">
+        <input
+          type="checkbox"
+          data-quiet-days
+          checked={messaging.quietDays === true}
+          disabled={!onUpdateSettings}
+          onChange={(e) => patch(
+            { quietDays: e.target.checked },
+            e.target.checked ? 'روزهای سکوت فعال شد.' : 'روزهای سکوت غیرفعال شد.',
+          )}
+          className="mt-0.5 w-4 h-4 accent-sky-600"
+        />
+        <span>
+          <span className="font-bold">در روزهای تعطیل پیام فرستاده نشود</span>
+          <span className="block text-[10px] text-slate-500 mt-0.5">
+            جمعه‌ها و تعطیلات رسمی، بر اساس همان تقویمی که تاریخ تحویل و سررسید
+            وظیفه‌ها با آن شمرده می‌شود — پس اگر جمعه‌ای را باز اعلام کنید، پیام
+            همان روز می‌رود. پیام نگه داشته می‌شود تا اولین روز کاری، نه حذف.
+          </span>
+        </span>
+      </label>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="space-y-1">
           <label className="text-[11px] font-bold text-slate-600">شروع ساعات سکوت</label>

@@ -473,6 +473,61 @@ export function nextAllowedSendTime(when: Date, quiet: QuietHours | null | undef
   return opensAt;
 }
 
+/**
+ * How far ahead the search for a sendable day may go.
+ *
+ * `MAX_WORKING_DAY_SPAN`'s rule: a loop over «is this day quiet» has to stop.
+ * A holiday calendar imported wrong — or a company that has marked every day —
+ * would otherwise spin on the server's event loop for ever with no error. Two
+ * weeks is past Nowruz, which is the longest run of non-working days in the
+ * year, so no real answer reaches it.
+ */
+export const MAX_QUIET_DAY_SPAN = 30;
+
+/**
+ * The moment a message may actually be sent, given the quiet window **and the
+ * quiet days**.
+ *
+ * «جمعه و روزهای تعطیل رسمی نباید به مشتری پیام زد» — and a day is not a
+ * second kind of quiet hour: an hour moves a message by hours, a day moves it
+ * past a date, and the two compose. Thursday at 22:00 with quiet hours of
+ * 21:00–08:00 is first pushed to Friday at 08:00 by the hours, and Friday is a
+ * quiet day, so it goes on to Saturday at 08:00. Applying either rule alone
+ * gets that wrong, which is why this is a loop rather than two steps.
+ *
+ * `isQuietDay` is **injected** rather than read here: the holiday calendar
+ * lives in a process cache that this module deliberately knows nothing about,
+ * and a predicate is what lets `test:rules` hold the composition without one.
+ * Absent means no day is quiet, which is every installation until somebody
+ * switches it on.
+ *
+ * A quiet day is left at **midnight** before the hours are re-applied, so the
+ * message lands at the opening hour of the first day that allows it rather
+ * than at the hour it happened to be queued.
+ */
+export function nextSendableTime(
+  when: Date,
+  quiet: QuietHours | null | undefined,
+  isQuietDay?: ((day: Date) => boolean) | null,
+): Date {
+  let at = nextAllowedSendTime(when, quiet);
+  if (!isQuietDay) return at;
+
+  for (let guard = 0; guard < MAX_QUIET_DAY_SPAN; guard += 1) {
+    if (!isQuietDay(at)) return at;
+    const nextDay = new Date(at);
+    nextDay.setDate(nextDay.getDate() + 1);
+    nextDay.setHours(0, 0, 0, 0);
+    at = nextAllowedSendTime(nextDay, quiet);
+  }
+  /*
+   * Every day inside the horizon was quiet, which is a calendar somebody has
+   * to look at rather than a message to hold for ever. Answering with the last
+   * moment considered sends it, late, and leaves the row visible in the outbox.
+   */
+  return at;
+}
+
 /* -------------------------------- retries -------------------------------- */
 
 /** Attempts before a message is given up on and marked failed. */

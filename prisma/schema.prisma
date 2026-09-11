@@ -1864,6 +1864,29 @@ model AppSetting {
 /// day. A sweep runs every day and the records it looks at stay due for ever
 /// after their day arrives — without this, a rule that raises a follow-up task
 /// would raise it again every morning. See services/workflowSchedule.ts.
+/// One automated message per rule per thing, for a rule that asked for it.
+///
+/// Deliberately **not** a row in `workflow_firings`: a scheduled rule writes
+/// its own firing there before its actions run, so a message guard sharing that
+/// key would collide with the firing trying to send it — and
+/// `resolveFinishedTasks` deletes firings by `(ruleId, entityId)` with no
+/// entityType, so closing a task would wipe a guard that shared an id.
+model WorkflowMessageSend {
+  id     String @id @default(uuid()) @db.NVarChar(36)
+  ruleId String @db.NVarChar(60)
+
+  /// RECORD | PROJECT | CUSTOMER — what the rule asked to send once per.
+  /// Stored beside the id because changing a rule's scope asks a different
+  /// question, and the old rows should stop matching rather than answer it.
+  scope   String @db.NVarChar(20)
+  scopeId String @db.NVarChar(60)
+
+  sentAt DateTime @default(now())
+
+  @@unique([ruleId, scope, scopeId], map: "UQ_workflow_message_sends_rule_scope")
+  @@map("workflow_message_sends")
+}
+
 model WorkflowFiring {
   id         String   @id @default(uuid()) @db.NVarChar(36)
   ruleId     String   @db.NVarChar(64)

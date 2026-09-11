@@ -57,7 +57,8 @@ import { escalationIsConfigured } from '../utils/workflowEscalation';
 import { cloneWorkflowRule } from '../utils/workflowRules';
 import {
   RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS, WORKFLOW_ACTION_TYPES,
-  WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS, actionLabel, conditionFieldLabel, operatorLabel,
+  MESSAGE_ONCE_SCOPES, WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS,
+  actionLabel, conditionFieldLabel, isMessageOnceScope, operatorLabel,
   defaultConditionField, triggerFields, triggerGroups, triggerLabel,
 } from '../utils/workflowTriggers';
 import ConfirmModal from './ConfirmModal';
@@ -4507,6 +4508,40 @@ export default function SettingsView({
                                     }}
                                     className="w-full border border-slate-200 rounded-lg p-2.5 bg-white font-mono text-center"
                                   />
+                                </div>
+
+                                {/*
+                                  «فقط یک بار» — and the option *is* the scope,
+                                  because a rule fires on a record and a
+                                  customer-facing message is usually about
+                                  something larger: three inquiries or three
+                                  consignments on one job are three records and
+                                  one conversation.
+                                */}
+                                <div>
+                                  <label className="block text-slate-600 text-[11px] font-bold mb-1">
+                                    فقط یک بار ارسال شود
+                                  </label>
+                                  <select
+                                    data-send-once
+                                    value={act.messageConfig.sendOnce ?? ''}
+                                    onChange={(e) => {
+                                      const updatedActs = [...editingRule.actions];
+                                      updatedActs[actIdx].messageConfig!.sendOnce =
+                                        isMessageOnceScope(e.target.value) ? e.target.value : undefined;
+                                      setEditingRule({ ...editingRule, actions: updatedActs });
+                                    }}
+                                    className="w-full border border-slate-200 rounded-lg p-2.5 bg-white"
+                                  >
+                                    <option value="">هر بار که رویداد بیفتد</option>
+                                    {MESSAGE_ONCE_SCOPES.map((scope) => (
+                                      <option key={scope.value} value={scope.value}>{scope.label}</option>
+                                    ))}
+                                  </select>
+                                  <p className="text-[10px] text-slate-500 mt-1 leading-5">
+                                    {MESSAGE_ONCE_SCOPES.find((x) => x.value === act.messageConfig?.sendOnce)?.hint
+                                      ?? 'بدون محدودیت: هر بار که رویداد این قانون بیفتد، یک پیام می‌رود.'}
+                                  </p>
                                 </div>
 
                                 <div>
