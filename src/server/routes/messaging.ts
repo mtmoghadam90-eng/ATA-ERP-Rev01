@@ -51,7 +51,7 @@ const TEMPLATE_WRITABLE: (keyof TemplateInput)[] = [
 ];
 
 const SEND_WRITABLE: (keyof ManualSendInput)[] = [
-  "customerId", "projectId", "channel", "templateId",
+  "customerId", "projectId", "proformaId", "channel", "templateId",
   "subject", "body", "scheduledDate", "scheduledTime",
 ];
 
@@ -328,6 +328,7 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
       const values = await messageVariables(
         typeof req.query.customerId === "string" ? req.query.customerId : null,
         typeof req.query.projectId === "string" ? req.query.projectId : null,
+        typeof req.query.proformaId === "string" ? req.query.proformaId : null,
       );
       res.json({ success: true, variables: values });
     } catch (err) {

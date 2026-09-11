@@ -349,6 +349,21 @@ export const MESSAGE_VARIABLES: MessageVariable[] = [
   { key: "projectCode", label: "کد پروژه", sample: "PRJ-1405-018" },
   { key: "projectName", label: "نام پروژه", sample: "تامین شیرآلات واحد ۳" },
   { key: "projectStatus", label: "وضعیت پروژه", sample: "برنده" },
+  /*
+   * The quotation the message is about, and it is **named or absent** — never
+   * inferred from the project.
+   *
+   * A job here legitimately carries several live proformas at once (the
+   * temperature instruments, the pressure instruments, the flow meters) and
+   * several revisions of each, so «the project's proforma» is not a thing that
+   * exists: picking the latest would print one document's number in a message
+   * about another, to the customer, with nothing on any screen saying so. So
+   * `messageVariables` fills it in only when a proforma is actually named, and
+   * a template using it in a context with none prints the token as written —
+   * the same rule `projectCode` already follows for a message with no project,
+   * and the same reason `renderTemplate` leaves an absent key standing.
+   */
+  { key: "proformaNumber", label: "شماره پیش‌فاکتور", sample: "ATA-05-38-P1" },
   { key: "companyName", label: "نام شرکت ما", sample: "ابزار تامین آرشیا" },
   { key: "today", label: "تاریخ امروز", sample: "1405/06/01" },
 ];

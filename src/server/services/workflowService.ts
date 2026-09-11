@@ -384,6 +384,14 @@ export async function executeRule(
         const values: Record<string, unknown> = await messageVariables(
           enrichedPayload.customerId ?? null,
           enrichedPayload.projectId ?? null,
+          /*
+           * And the quotation, where the rule fired on one. `enrichPayload`
+           * already puts `proformaNumber` on the payload, which the spread
+           * below would supply anyway — naming it here is what makes the
+           * *preview* and the send agree, since the preview route has only
+           * these three ids and no payload to spread.
+           */
+          enrichedPayload.proformaId ?? null,
         );
         // Only what the payload actually has. A plain spread would let a key
         // present-but-empty on the payload blank out the resolved value, and
