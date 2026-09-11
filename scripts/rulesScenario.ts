@@ -2739,6 +2739,44 @@ head("Template variables: the palette and the values agree");
     MESSAGE_VARIABLES.every((v) => v.sample.trim() !== "" && v.label.trim() !== ""));
 
   /*
+   * «شماره پیش‌فاکتور» is a message variable, and the rule that keeps it honest
+   * is that it is **named, never inferred**.
+   *
+   * A project here legitimately carries several live quotations at once and
+   * several revisions of each, so «the project's proforma» is not a thing that
+   * exists: reading the latest one off the project would print one document's
+   * number in a message about another, to the customer, with nothing anywhere
+   * saying so. So the resolution is keyed on a `proformaId` the caller supplies,
+   * and a context with none leaves the key absent — which `renderTemplate`
+   * prints as written, exactly as `projectCode` behaves in a message with no
+   * project.
+   */
+  ok("the customer-message palette offers the proforma number",
+    offered.has("proformaNumber"));
+  {
+    const block = body.slice(body.indexOf("values.proformaNumber"));
+    ok("...resolved from a named proforma",
+      /if \(proformaId\)/.test(body) && /proforma\.findUnique/.test(body));
+    ok("...and never off the project", !/project[^\n]*proforma/i.test(block));
+    // A `select` on the project that reached into its proformas would be the
+    // same fault one step earlier, so read the project's own block too.
+    const projectBlock = body.slice(
+      body.indexOf("if (projectId)"), body.indexOf("if (customerId)"));
+    ok("...nor pulled in with the project", !/proforma/i.test(projectBlock));
+
+    // And the three callers that can name one really do, or the value is a
+    // palette entry the application never fills in.
+    const engine = readFileSync("src/server/services/workflowService.ts", "utf-8");
+    ok("a workflow rule hands its own proforma to the renderer",
+      /messageVariables\([^)]*enrichedPayload\.proformaId/s.test(engine));
+    const routes = readFileSync("src/server/routes/messaging.ts", "utf-8");
+    ok("...the preview route takes one",
+      /req\.query\.proformaId/.test(routes));
+    ok("...and the send endpoint accepts one",
+      /"proformaId"/.test(routes));
+  }
+
+  /*
    * A key that is present and empty is substituted; a key that is absent is
    * left standing. That distinction is what lets a company's blank honorific
    * render as nothing instead of putting «{namePrefix}» in front of a customer.

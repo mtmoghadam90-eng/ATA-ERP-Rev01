@@ -790,6 +790,13 @@ export async function retryMessage(id: string): Promise<boolean> {
 export interface ManualSendInput {
   customerId?: string | null;
   projectId?: string | null;
+  /**
+   * The quotation the message is about, so `{proformaNumber}` resolves.
+   *
+   * Optional and never inferred — n8n drives this endpoint and can name one;
+   * a message about no particular document simply does not.
+   */
+  proformaId?: string | null;
   channel?: string | null;
   templateId?: string | null;
   subject?: string | null;
@@ -820,7 +827,8 @@ export async function sendManual(
     ? input.channel
     : (template && isChannel(template.channel) ? template.channel : null);
 
-  const variables = await messageVariables(input.customerId, input.projectId);
+  const variables = await messageVariables(
+    input.customerId, input.projectId, input.proformaId);
   const body = renderTemplate(input.body || template?.body || "", variables).trim();
   if (!body) return { queued: false, reason: "متن پیام خالی است." };
 
@@ -876,6 +884,7 @@ export function parseSchedule(
 export async function messageVariables(
   customerId?: string | null,
   projectId?: string | null,
+  proformaId?: string | null,
 ): Promise<Record<string, unknown>> {
   const db = getDb();
   const values: Record<string, unknown> = {};
@@ -927,6 +936,26 @@ export async function messageVariables(
       values.customerName = customer.companyName || person;
       if (!addressee) addressee = customer;
     }
+  }
+
+  /*
+   * The quotation this message is about, and **only** when one is named.
+   *
+   * Deliberately not read off the project: a job here carries several live
+   * proformas at once and several revisions of each, so «the project's
+   * proforma» does not exist as a thing — taking the newest would print one
+   * document's number in a message about another, to a customer. A context with
+   * no proforma therefore leaves the key **absent**, and `renderTemplate` prints
+   * `{proformaNumber}` as written, which is the same answer `projectCode`
+   * already gives a message with no project: an obviously broken template
+   * rather than a plausible wrong number.
+   */
+  if (proformaId) {
+    const proforma = await db.proforma.findUnique({
+      where: { id: proformaId },
+      select: { proformaNumber: true },
+    });
+    if (proforma) values.proformaNumber = proforma.proformaNumber;
   }
 
   if (addressee) {
