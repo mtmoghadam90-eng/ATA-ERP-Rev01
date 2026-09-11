@@ -41,6 +41,7 @@ import {
   INQUIRY_WORKFLOW_STATUSES, PROFORMA_OUTCOMES, PROFORMA_STORED_STATUSES, PROJECT_STATUSES,
   PURCHASE_ORDER_STATUSES, TASK_PRIORITIES, TRANSACTION_TYPES,
 } from "./moduleStatuses";
+import { FOLLOW_UP_STATES } from "./salesFollowUp";
 import { REFERRAL_STATUSES, TASK_STATUSES } from "./workBoard";
 import { PROJECT_STAGES } from "./projectStage";
 
@@ -77,6 +78,17 @@ export interface TriggerField {
    * A stored column whose values speak for themselves needs none.
    */
   hint?: string;
+  /**
+   * Not a column: the scheduled sweep computes it and puts it on the payload.
+   *
+   * The distinction is load-bearing for `test:rules`, which holds every
+   * condition field against the sweep's own `PAYLOAD_SELECT` — a field the
+   * payload does not carry is a rule that saves, prints correctly and never
+   * matches. A derived field can never be in that select, so it is held against
+   * the sweep *assigning* it instead, which is the same guarantee from the
+   * other end and exactly how `ENRICHED_PAYLOAD_VARIABLES` is checked.
+   */
+  derived?: boolean;
 }
 
 export interface TriggerSpec {
@@ -629,11 +641,66 @@ export function isAssigneeToken(value: string): boolean {
 }
 
 export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
+  /*
+   * A scheduled rule's date says **when to look**; its condition says whether
+   * the situation is still the one the rule was written about. The sweep
+   * re-reads the record and `matchesConditions` runs at fire time, so that half
+   * always worked — what was missing was anything to ask.
+   *
+   * This list was `status`, `currency`, `finalAmount`, and `status` is the
+   * two-value *stored* column: a quotation that had been **won a week ago**
+   * still reads «ارسال شده». So «یک هفته پس از ارسال پیش‌فاکتور، نتیجهٔ بررسی را
+   * از مشتری بپرس» wrote to customers whose order the company had already won,
+   * lost, or cancelled, and to ones who had asked to be approached after
+   * Nowruz — every time, with nothing on any screen saying so. Reported from
+   * the other end («فیدبکش را داده و توپ در زمین ماست») and true of far more
+   * cases than the one reported.
+   *
+   * The four below are the states that answer «is this still the situation»,
+   * and each catches a different way it stops being true.
+   */
   proforma: [
     {
       value: "status", label: "وضعیت ارسال پیش‌فاکتور", options: PROFORMA_STORED_STATUSES,
-      hint: "فقط همین دو مقدار را دارد. «برنده»، «باخته» و «لغو شده» نتیجه نهایی‌اند، "
-        + "ستون دیگری هستند و اینجا هرگز ذخیره نمی‌شوند.",
+      hint: "فقط همین دو مقدار را دارد و می‌گوید سند ارسال شده یا نه — نه اینکه "
+        + "معامله چه شد. برای آن از outcome استفاده کن.",
+    },
+    {
+      value: "settled", label: "معامله تعیین تکلیف شده", options: ["true", "false"],
+      derived: true,
+      hint: "true یعنی این پیش‌فاکتور برنده، باخته، لغو یا نیمه‌برنده شده و دیگر "
+        + "چیزی برای پرسیدن از مشتری نمانده. **هر پیام خودکاری که از مشتری «نتیجه "
+        + "چه شد؟» می‌پرسد باید شرط «برابر با false» داشته باشد** — وگرنه برای "
+        + "مشتری‌ای هم می‌رود که هفتهٔ پیش سفارشش را قطعی کرده. یک شرط است به‌جای "
+        + "چهار شرط «مخالف با …» روی outcome.",
+    },
+    {
+      value: "outcome", label: "نتیجه نهایی پیش‌فاکتور", options: PROFORMA_OUTCOMES,
+      derived: true,
+      hint: "از وضعیت ردیف‌ها و لغو سند محاسبه می‌شود، نه از ستون status. برای "
+        + "«هنوز تصمیمی گرفته نشده» از settled استفاده کن؛ این فیلد وقتی به کار "
+        + "می‌آید که یک نتیجهٔ مشخص را نام ببری — مثلاً نظرسنجی فقط برای "
+        + "«تأیید شده (برنده)». توجه: سندی که ارسال شده و هنوز تصمیمی رویش گرفته "
+        + "نشده «ارسال شده» است، نه «جاری»؛ «جاری» برای سندی است که وضعیت "
+        + "ثبت‌شده‌اش هیچ‌کدام از آن دو نیست.",
+    },
+    {
+      value: "followUpState", label: "وضعیت پیگیری فروش", options: FOLLOW_UP_STATES,
+      hint: "OPEN یعنی پیگیری باز است؛ DEFERRED یعنی خودِ مشتری خواسته بعداً تماس "
+        + "بگیریم (تاریخش در همان سند است) و پیام خودکار در این حالت دقیقاً همان "
+        + "چیزی است که او خواسته نشود؛ NO_RESPONSE یعنی جواب نداده.",
+    },
+    {
+      value: "superseded", label: "نسخهٔ جدیدتری از آن صادر شده", options: ["true", "false"],
+      derived: true,
+      hint: "true یعنی کسی «نسخه جدید همین پیش‌فاکتور» زده — یعنی بازخورد مشتری "
+        + "اعمال شده و این سند دیگر آن چیزی نیست که روی میز اوست.",
+    },
+    {
+      value: "chaseCount", label: "تعداد پیگیری‌های ثبت‌شده", derived: true,
+      hint: "چند بار نتیجهٔ تماس روی این پیش‌فاکتور ثبت شده. «برابر با ۰» یعنی از "
+        + "زمان ارسال هیچ‌کس چیزی ثبت نکرده — که تنها حالتی است که پرسیدن «نتیجهٔ "
+        + "بررسی چه شد؟» از مشتری واقعاً بی‌خطر است.",
     },
     { value: "currency", label: "ارز سند" },
     { value: "finalAmount", label: "مبلغ نهایی" },

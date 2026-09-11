@@ -214,6 +214,7 @@ import {
   AUTO_CLOSE_NOTE, DEFAULT_FOLLOW_UP_RESULTS, FOLLOW_UP_DECISIONS, FOLLOW_UP_HEALTH,
   FOLLOW_UP_STATES, TASK_KINDS, completionRefusalReason, correctionRefusalReason,
   followUpActivityText, followUpHealthOf, healthRank, isOpenWithoutNextAction,
+  TERMINAL_OUTCOMES,
   isTaskFinished, isTerminalOutcome, isChaseableOutcome, normalizeFollowUpState,
   deferralAfterChaseMoved, normalizeTaskKind, recordedDecision, stateAfterDecision,
   versionRefusalReason, impliedSettlement,
@@ -10428,6 +10429,9 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
         missing.push(`${subject.model}.${subject.dateField}`);
       }
       for (const field of SCHEDULE_MODEL_FIELDS[subject.model] ?? []) {
+        // A derived field can never be in the select — it is not a column. It
+        // is held against the sweep *assigning* it instead, just below.
+        if (field.derived) continue;
         if (!block.includes(`${field.value}: true`)) {
           missing.push(`${subject.model}.${field.value}`);
         }
@@ -10435,6 +10439,113 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     }
     ok("every field a scheduled rule can ask about is one the sweep selects",
       missing.length === 0, missing);
+
+    /*
+     * And the other half, for the fields that are not columns.
+     *
+     * `outcome` is computed from the line statuses and `isCancelled`,
+     * `superseded` from a relation and `chaseCount` from another table — none
+     * can appear in a `select`, so the first check would pass them by silently,
+     * which is the exact shape of the fault they exist to fix: a condition that
+     * saves, prints correctly on the card and never matches.
+     */
+    const unassigned: string[] = [];
+    for (const [model, fields] of Object.entries(SCHEDULE_MODEL_FIELDS)) {
+      for (const field of fields) {
+        if (!field.derived) continue;
+        // `key:` or the shorthand `key,` — the trigger-payload check reads
+        // both for the same reason, and requiring a colon here failed against
+        // perfectly correct code the moment one was written the short way.
+        if (!new RegExp(`\\b${field.value}\\s*[:,]`).test(sweepSrc)) {
+          unassigned.push(`${model}.${field.value}`);
+        }
+      }
+    }
+    ok("every derived field a scheduled rule can ask about is one the sweep computes",
+      unassigned.length === 0, unassigned);
+    ok("...and there are derived fields to check",
+      Object.values(SCHEDULE_MODEL_FIELDS).flat().some((f) => f.derived));
+
+    /*
+     * The reported fault, and the worse one underneath it.
+     *
+     * «یک هفته پس از ارسال پیش‌فاکتور، نتیجهٔ بررسی را از مشتری بپرس» could name
+     * only `status`, and that column holds «پیش‌نویس» or «ارسال شده» and nothing
+     * else — so a quotation **won a week earlier** still read «ارسال شده» and
+     * the customer was asked what they thought of an offer they had already
+     * accepted. Reported from the milder end: the customer had sent feedback
+     * and the ball was in our court.
+     */
+    {
+      const proformaFields = (SCHEDULE_MODEL_FIELDS.proforma ?? []).map((f) => f.value);
+      for (const key of ["settled", "outcome", "followUpState", "superseded", "chaseCount"]) {
+        ok(`a scheduled quotation rule can ask about «${key}»`,
+          proformaFields.includes(key));
+      }
+      const outcome = (SCHEDULE_MODEL_FIELDS.proforma ?? []).find((f) => f.value === "outcome");
+      ok("...and the outcome offers the settled values a chase must exclude",
+        ["تأیید شده (برنده)", "باخته", "لغو شده", "نیمه برنده"]
+          .every((v) => (outcome?.options ?? []).includes(v)));
+      ok("...and «جاری», which is the one still worth asking about",
+        (outcome?.options ?? []).includes("جاری"));
+
+      /*
+       * `settled` goes through the application's own `isTerminalOutcome`
+       * rather than a list written out here — a second reading of «is this
+       * decided» is how a quotation comes to leave the follow-up queue and go
+       * on being written to by an automation.
+       */
+      ok("«settled» is the follow-up module's own rule, not a second copy",
+        /isTerminalOutcome\(outcome\)/.test(sweepSrc));
+      for (const decided of TERMINAL_OUTCOMES) {
+        ok(`«${decided}» counts as settled`, isTerminalOutcome(decided));
+      }
+      ok("...and a sent, undecided quotation does not",
+        !isTerminalOutcome("ارسال شده") && !isTerminalOutcome("جاری"));
+
+      // The sweep reads what the outcome is derived from, or it could not
+      // compute it: the lines and the cancellation, not the stored status.
+      const proformaBlock = sweepSrc.slice(
+        sweepSrc.indexOf("  proforma: {"),
+        sweepSrc.indexOf("},\n  project:", sweepSrc.indexOf("  proforma: {")),
+      );
+      ok("the sweep reads what the outcome is derived from",
+        proformaBlock.includes("isCancelled: true")
+        && /items:\s*\{\s*select:\s*\{\s*status: true/.test(proformaBlock));
+      ok("...and the revision relation behind «superseded»",
+        /nextVersions: true/.test(proformaBlock));
+      ok("...and the follow-up state, which is a plain column",
+        proformaBlock.includes("followUpState: true"));
+
+      /*
+       * A chase counts once its **result** is recorded: a cancelled reminder
+       * was never a conversation, and counting open tasks would answer «is
+       * somebody meant to call» rather than «has anybody spoken to them».
+       */
+      ok("a recorded chase is one that has a result",
+        /followUpResult:\s*\{\s*not: null/.test(sweepSrc));
+      ok("...counted on the Latin relatedToType the follow-up service writes",
+        /relatedToType:\s*"proforma"/.test(sweepSrc));
+      ok("...grouped once for the band rather than read per row",
+        /groupBy\(\{/.test(sweepSrc) && /relatedToId: \{ in: ids \}/.test(sweepSrc));
+
+      /*
+       * And the half that computing them does not imply: the values have to
+       * reach the payload the conditions are evaluated against.
+       *
+       * Read **inside the `enrichPayload` call**, not merely somewhere in the
+       * file — the fault this guards is a value selected and then dropped by
+       * the literal below it, which is how `/api/me` shipped without the avatar
+       * twice and which a presence check walks straight past.
+       */
+      const call = sweepSrc.slice(
+        sweepSrc.indexOf("await enrichPayload("),
+        sweepSrc.indexOf("subject.entityType,", sweepSrc.indexOf("await enrichPayload(")),
+      );
+      ok("the derived state reaches the payload the conditions read",
+        /\.\.\.\(?derived\.get\(/.test(call));
+      ok("...and the check is looking at the right call", call.includes("...row,"));
+    }
 
     /*
      * And the half that makes «برای مشتری پیام برود» work rather than merely
@@ -13696,6 +13807,18 @@ head("A workflow rule, drafted from a sentence");
     buildWorkflowDraftPrompt([]).includes("newTemplate"));
   ok("...and that a delayed message is delayDays, not the task's own offset",
     buildWorkflowDraftPrompt([]).includes("delayDays"));
+  /*
+   * And the rule a person's own sentence never contains: «یک هفته بعد از ارسال،
+   * نتیجه را بپرس» names the event and not the state, so a draft written
+   * straight from it messages customers whose order was won that same week.
+   */
+  {
+    const prompt = buildWorkflowDraftPrompt([]);
+    ok("the prompt requires a state condition on a question to a customer",
+      prompt.includes("settled=false"));
+    ok("...and says a delayed message re-checks nothing",
+      prompt.includes("time_elapsed را ترجیح بده نه delayDays"));
+  }
 
   eq("a nameless rule is named after what the person asked for",
     sanitizeDraftedRule({
