@@ -46,6 +46,10 @@ import { PROJECT_STAGES } from "./projectStage";
 
 export type WorkflowTriggerType = WorkflowRule["triggerType"];
 
+/** `true` only when every member of the union appears in the list. */
+type Covers<Union extends string, List extends readonly string[]> =
+  [Exclude<Union, List[number]>] extends [never] ? true : never;
+
 export interface TriggerField {
   /** The payload key. A field the payload never carries is a rule that never runs. */
   value: string;
@@ -464,6 +468,79 @@ export const TRIGGER_ENTITY: Record<
   follow_up_completed: { entityType: "task", idKey: "taskId" },
   time_elapsed: null,
 };
+
+/**
+ * The three things a rule can do, and the four ways a condition can compare.
+ *
+ * These are here for the reason everything else in this file is: they were
+ * written out at the call sites, and one of them drifted the moment a third
+ * action type arrived. The rule card summarised its actions as
+ * `act.type === "create_task" ? … : "ارسال اعلان به مسئول ماژول"` — a two-way
+ * ternary written when there were only two kinds — so **every `send_message`
+ * rule read on that screen as a notification to a module owner**. Nothing was
+ * wrong with the rule; the card was describing a different one, which is the
+ * silent-drift fault this catalogue exists to end, arriving through the one
+ * control whose whole job is to say what a rule does.
+ *
+ * The operator list had the same shape and the same fault: two of the four were
+ * rendered, so a `greater_than` condition printed «مخالف باشد با» — very nearly
+ * its opposite — on a rule that was perfectly correct.
+ */
+export const WORKFLOW_ACTION_TYPES = [
+  { value: "create_task", label: "ایجاد وظیفه" },
+  { value: "send_notification", label: "ارسال اعلان به مسئول ماژول" },
+  { value: "send_message", label: "ارسال پیام به مشتری (پیامک/بله/ایمیل)" },
+] as const satisfies readonly { value: WorkflowRule["actions"][number]["type"]; label: string }[];
+
+/** Fails `npm run lint` for an action type the settings screen cannot offer. */
+const _everyActionTypeIsOffered: Covers<
+  WorkflowRule["actions"][number]["type"],
+  readonly typeof WORKFLOW_ACTION_TYPES[number]["value"][]
+> = true;
+void _everyActionTypeIsOffered;
+
+export const WORKFLOW_OPERATORS = [
+  { value: "equals", label: "برابر باشد با" },
+  { value: "not_equals", label: "مخالف باشد با" },
+  { value: "greater_than", label: "بیشتر باشد از" },
+  { value: "less_than", label: "کمتر باشد از" },
+] as const satisfies readonly { value: WorkflowRule["conditions"][number]["operator"]; label: string }[];
+
+/** Fails `npm run lint` for an operator the rule card cannot name. */
+const _everyOperatorIsOffered: Covers<
+  WorkflowRule["conditions"][number]["operator"],
+  readonly typeof WORKFLOW_OPERATORS[number]["value"][]
+> = true;
+void _everyOperatorIsOffered;
+
+/** The Persian name of an action, or its raw id for one a stored rule invented. */
+export function actionLabel(type: string): string {
+  return WORKFLOW_ACTION_TYPES.find((a) => a.value === type)?.label ?? type;
+}
+
+/** The Persian name of an operator, or its raw id. */
+export function operatorLabel(operator: string): string {
+  return WORKFLOW_OPERATORS.find((o) => o.value === operator)?.label ?? operator;
+}
+
+/**
+ * What a condition's field is *called*, for a card that has only its key.
+ *
+ * Takes the **model** rather than the schedule subject, exactly as
+ * `templateVariablesFor` does and for the same reason: it keeps
+ * `workflowSchedule.ts` out of this file's imports, and the caller already
+ * knows which record its rule counts from.
+ */
+export function conditionFieldLabel(
+  triggerType: string,
+  model: string | null,
+  field: string,
+): string {
+  const fields = triggerType === "time_elapsed"
+    ? (model && SCHEDULE_MODEL_FIELDS[model]) || []
+    : triggerFields(triggerType);
+  return fields.find((f) => f.value === field)?.label ?? field;
+}
 
 export function triggerGroups(): { group: string; triggers: WorkflowTriggerType[] }[] {
   const out: { group: string; triggers: WorkflowTriggerType[] }[] = [];

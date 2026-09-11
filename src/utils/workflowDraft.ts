@@ -2,6 +2,7 @@ import type { WorkflowRule } from "../types";
 import { TASK_PRIORITIES } from "./moduleStatuses";
 import {
   ENRICHED_PAYLOAD_VARIABLES, RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS,
+  WORKFLOW_ACTION_TYPES,
   TRIGGER_ENTITY, TriggerField,
   WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS, isAssigneeToken, isResponsibleModule,
   templateVariablesFor, triggerFields,
@@ -249,7 +250,13 @@ export function buildWorkflowDraftPrompt(
 /* ------------------------------ the sanitiser ----------------------------- */
 
 const OPERATORS = ["equals", "not_equals", "greater_than", "less_than"] as const;
-const ACTION_TYPES = ["create_task", "send_message", "send_notification"] as const;
+/*
+ * The ids come from the catalogue, not from a fourth copy of the list: the
+ * settings screen's dropdown and its rule card each kept their own and one of
+ * them drifted the moment a third action type arrived, so every message rule
+ * read on the card as a notification to a module owner.
+ */
+const ACTION_TYPES = WORKFLOW_ACTION_TYPES.map((a) => a.value);
 const TASK_KINDS = ["GENERAL", "SALES_FOLLOW_UP"] as const;
 const CHANNELS = ["SMS", "BALE", "EMAIL"] as const;
 

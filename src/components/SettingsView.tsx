@@ -55,7 +55,8 @@ import { SCHEDULE_SUBJECTS, describeSchedule, scheduleRepeats } from '../utils/w
 import StuckThresholdsPanel from './StuckThresholdsPanel';
 import { escalationIsConfigured } from '../utils/workflowEscalation';
 import {
-  RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS, WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS,
+  RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS, WORKFLOW_ACTION_TYPES,
+  WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS, actionLabel, conditionFieldLabel, operatorLabel,
   defaultConditionField, triggerFields, triggerGroups, triggerLabel,
 } from '../utils/workflowTriggers';
 import ConfirmModal from './ConfirmModal';
@@ -3960,9 +3961,15 @@ export default function SettingsView({
                                   }}
                                   className="border border-slate-200 rounded-lg p-1.5 bg-white text-xs"
                                 >
-                                  <option value="create_task">ایجاد وظیفه جدید (تسک)</option>
-                                  <option value="send_notification">ارسال اعلان درون‌برنامه‌ای</option>
-                                  <option value="send_message">ارسال پیام به مشتری (پیامک/بله/ایمیل)</option>
+                                  {/*
+                                    From the catalogue, so the words here and
+                                    the words on the rule card below cannot say
+                                    two different things about one action —
+                                    which is exactly what they did.
+                                  */}
+                                  {WORKFLOW_ACTION_TYPES.map((a) => (
+                                    <option key={a.value} value={a.value}>{a.label}</option>
+                                  ))}
                                 </select>
                               </div>
 
@@ -4683,7 +4690,22 @@ export default function SettingsView({
                                   {' '}اگر{' '}
                                   {rule.conditions.map((c, i) => (
                                     <span key={i} className="text-slate-800 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200 mx-0.5 font-mono">
-                                      {c.field === 'newOutcome' ? 'وضعیت جدید' : c.field === 'newStatus' ? 'وضعیت جدید' : c.field} {c.operator === 'equals' ? 'برابر باشد با' : 'مخالف باشد با'} «{c.value}»
+                                      {/*
+                                        Both halves from the catalogue too. The
+                                        field knew two keys out of dozens and
+                                        printed the raw English id for the rest;
+                                        the operator knew two of the four, so a
+                                        «بیشتر از» condition printed «مخالف باشد
+                                        با» — very nearly its opposite — on a
+                                        rule that was perfectly correct.
+                                      */}
+                                      {conditionFieldLabel(
+                                        rule.triggerType,
+                                        rule.schedule?.subject
+                                          ? SCHEDULE_SUBJECTS[rule.schedule.subject]?.model ?? null
+                                          : null,
+                                        c.field,
+                                      )} {operatorLabel(c.operator)} «{c.value}»
                                     </span>
                                   ))}
                                   {' '}باشد، آنگاه:{' '}
@@ -4693,7 +4715,19 @@ export default function SettingsView({
                               )}
                               {rule.actions.map((act, i) => (
                                 <span key={i} className="text-emerald-700 font-bold bg-white px-1.5 py-0.5 rounded border border-slate-200 mx-0.5">
-                                  {act.type === 'create_task' ? `ایجاد تسک «${act.taskConfig?.titleTemplate}»` : `ارسال اعلان به مسئول ماژول`}
+                                  {/*
+                                    The catalogue names the action. This was a
+                                    two-way ternary written when there were only
+                                    two kinds, so every «ارسال پیام به مشتری»
+                                    rule read here as a notification to a module
+                                    owner — the card describing a different rule
+                                    from the one saved, reported from this card.
+                                    A task still names its title, which is the
+                                    one thing worth saying beyond the kind.
+                                  */}
+                                  {act.type === 'create_task'
+                                    ? `ایجاد تسک «${act.taskConfig?.titleTemplate ?? ''}»`
+                                    : actionLabel(act.type)}
                                 </span>
                               ))}
                             </div>
