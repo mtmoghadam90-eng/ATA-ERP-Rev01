@@ -255,7 +255,8 @@ import {
   MAX_PRODUCT_DOCUMENTS, documentsByKind, normalizeProductDocuments, parseProductDocuments,
 } from "../src/utils/productDocuments";
 import {
-  SCHEDULE_MODEL_FIELDS, TRIGGER_ENTITY, WORKFLOW_TRIGGERS, conditionValues, triggerFields,
+  SCHEDULE_MODEL_FIELDS, TRIGGER_ENTITY, WORKFLOW_ACTION_TYPES, WORKFLOW_OPERATORS,
+  WORKFLOW_TRIGGERS, actionLabel, conditionFieldLabel, conditionValues, operatorLabel, triggerFields,
 } from "../src/utils/workflowTriggers";
 import { PROFORMA_STORED_STATUSES } from "../src/utils/moduleStatuses";
 import {
@@ -10453,6 +10454,71 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     const engineSrc = readFileSync("src/server/services/workflowService.ts", "utf8");
     ok("...and the message action is the one that reads it",
       /queueForCustomer\(\{\s*customerId: enrichedPayload\.customerId/.test(engineSrc));
+  }
+
+  /*
+   * The rule card has to say what the rule does, and it said the opposite.
+   *
+   * Its action summary was `act.type === "create_task" ? … : "ارسال اعلان به
+   * مسئول ماژول"` — a two-way ternary written when there were only two kinds of
+   * action — so **every `send_message` rule read on that screen as a
+   * notification to a module owner**. Reported from that card, and nothing was
+   * wrong with the rule: the one control whose whole job is to explain a rule
+   * was describing a different one. The condition half carried the same shape
+   * twice over: the field knew two keys out of dozens and printed the raw
+   * English id for the rest, and the operator knew two of the four, so a
+   * `greater_than` printed «مخالف باشد با» — very nearly its opposite.
+   */
+  {
+    const settingsSrc = readFileSync("src/components/SettingsView.tsx", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/^\s*\/\/.*$/gm, " ");
+
+    ok("the rule card names its actions from the catalogue",
+      /actionLabel\(act\.type\)/.test(settingsSrc));
+    ok("...and no action label is written out on the card",
+      !/ارسال اعلان به مسئول ماژول/.test(settingsSrc));
+    ok("...the operator too", /operatorLabel\(c\.operator\)/.test(settingsSrc));
+    ok("...and the condition's field", /conditionFieldLabel\(/.test(settingsSrc));
+    ok("...with no hand-typed comparison words left",
+      !/'برابر باشد با'/.test(settingsSrc) && !/'مخالف باشد با'/.test(settingsSrc));
+    ok("the action dropdown reads the same list",
+      /WORKFLOW_ACTION_TYPES\.map/.test(settingsSrc));
+    ok("...rather than its own options",
+      !/<option value="send_message">/.test(settingsSrc));
+
+    // Every action type and operator the stored rule can hold is named, so the
+    // card can never fall back to printing a raw English id again.
+    eq("every action type is named", WORKFLOW_ACTION_TYPES.length, 3);
+    for (const a of WORKFLOW_ACTION_TYPES) {
+      ok(`«${a.value}» has a Persian name`, /[\u0600-\u06FF]/.test(a.label));
+      eq(`...and actionLabel answers it`, actionLabel(a.value), a.label);
+    }
+    eq("every operator is named", WORKFLOW_OPERATORS.length, 4);
+    ok("...including the two the card used to get wrong",
+      operatorLabel("greater_than") !== operatorLabel("not_equals")
+      && operatorLabel("less_than") !== operatorLabel("not_equals"));
+    // An id a stored rule invented prints as itself rather than as the wrong
+    // action — the raw value is the truthful answer when there is no name.
+    eq("an unknown action keeps its own id", actionLabel("send_pigeon"), "send_pigeon");
+
+    // The drafter's validator reads the same list rather than a fourth copy.
+    const draftSrc = readFileSync("src/utils/workflowDraft.ts", "utf8");
+    ok("the drafter validates against the catalogue's action ids",
+      /ACTION_TYPES = WORKFLOW_ACTION_TYPES\.map/.test(draftSrc));
+
+    /*
+     * And the field label answers for both kinds of rule, which is the half a
+     * single lookup would have got wrong: a scheduled rule's conditions are
+     * about the *record* its date belongs to, not about the trigger.
+     */
+    eq("an event rule's field is named from its trigger",
+      conditionFieldLabel("project_status_change", null, "newStatus"),
+      "وضعیت جدید پروژه");
+    eq("...and a scheduled rule's from its own record",
+      conditionFieldLabel("time_elapsed", "project", "stage"), "مرحله پروژه");
+    eq("...while a key nothing names prints as itself",
+      conditionFieldLabel("project_status_change", null, "nothing"), "nothing");
   }
 
   /*
