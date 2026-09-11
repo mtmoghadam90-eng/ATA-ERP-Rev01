@@ -20,7 +20,8 @@
 /** The same storyline, over the rules that decide the derived figures. */
 import {
   getProformaOutcome, getWonItems, deriveProjectStatus, statusWithoutProformas,
-  DERIVED_OUTCOMES, ITEM_CANCELLED, ITEM_LOST, ITEM_WON, matchesWhere, outcomeWhere,
+  DERIVED_OUTCOMES, ITEM_CANCELLED, ITEM_LOST, ITEM_WON, matchesWhere, notTechnical,
+  outcomeWhere,
 } from "../src/server/proformaStatus";
 import { getProformaOutcomeStatus } from "../src/useERPStore";
 import { computeInquiryTotals, inquiryTotalRiyal } from "../src/utils/inquirySteps";
@@ -6732,6 +6733,82 @@ head("Migrations: no sqlcmd batch separators");
   // failed half way through the file.
   ok("every step is guarded, so a partial apply can be re-run",
     (messenger.match(/IF (NOT )?EXISTS|IF COL_LENGTH/g) ?? []).length >= 5);
+}
+
+
+head("A technical specification is not a quotation, in every rule that reads one");
+{
+  /*
+   * `proformaType: TECHNICAL` is a document that states what will be supplied and
+   * quotes **no prices**, so it is not an offer the customer can accept and it
+   * decides nothing about the sale. Every rule that asks «what became of this
+   * opportunity» was counting it as one, and each miscounted differently:
+   *
+   * - `syncProjectStatus` takes the most recent document when none has won, so a
+   *   technical offer decided the project's *sales* status; and since «باخته»
+   *   needs **every** document lost, one left open kept a genuinely lost project
+   *   out of «باخته» for good — the loss never registering anywhere, which is the
+   *   quieter and worse half.
+   * - `syncProjectStage` checks a **sent** document first, deliberately, because a
+   *   quotation that has gone out means the job is waiting on the customer. A
+   *   sent *specification* means nothing of the kind, so it reported «پیگیری
+   *   پیش‌فاکتور» and dragged the project past «در انتظار پاسخ تأمین‌کننده»,
+   *   hiding the unanswered supplier inquiry that was the real answer.
+   * - the dashboard counts one opportunity per project and one document per
+   *   round-trip, so a price-less specification deflated «نرخ تبدیل» and inflated
+   *   «میانگین پیش‌فاکتور به ازای هر پروژه».
+   * - `quotationWhere` answers «which job has nobody quoted», and a technical
+   *   offer made that job look quoted — hidden in the direction that matters.
+   *
+   * One clause read by all of them, because four readings of «is this a sale» is
+   * how a project comes to be won on one screen and open on another. The
+   * follow-up queue had the only copy and now reads the same one.
+   */
+  eq("the clause names the type column", notTechnical().proformaType.not, "TECHNICAL");
+  /*
+   * A **function**, not a shared constant: a spread is one level deep, so five
+   * call sites spreading one constant would all carry the same nested `{ not: … }`
+   * object — the `next[i].field = x` trap in a clause rather than in a loop.
+   */
+  ok("...and every caller gets its own object",
+    notTechnical().proformaType !== notTechnical().proformaType);
+
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /*
+   * Each reader is checked where it reads, not merely for the word appearing in
+   * the file: a second proforma query added later without the clause is exactly
+   * the shape of this fault, and a file-wide search would pass it.
+   */
+  const pf = strip(readFileSync("src/server/services/proformaService.ts", "utf8"));
+  const syncAt = pf.indexOf("export async function syncProjectStatus");
+  ok("syncProjectStatus is found", syncAt > 0);
+  const statusQuery = pf.slice(syncAt, pf.indexOf("});", syncAt));
+  ok("...and its proforma query excludes the technical documents",
+    /notTechnical\(\)/.test(statusQuery));
+
+  const proj = strip(readFileSync("src/server/services/projectService.ts", "utf8"));
+  const stageAt = proj.indexOf("tx.proforma.findMany");
+  ok("the stage's proforma query is found", stageAt > 0);
+  ok("...and it excludes them too",
+    /notTechnical\(\)/.test(proj.slice(stageAt, proj.indexOf("}),", stageAt))));
+
+  const dash = strip(readFileSync("src/server/services/dashboardService.ts", "utf8"));
+  const whereAt = dash.indexOf("const proformaWhere");
+  ok("the dashboard's base clause is found", whereAt > 0);
+  ok("...and it excludes them, so both readers inherit it",
+    /notTechnical\(\)/.test(dash.slice(whereAt, dash.indexOf(";", dash.indexOf("}", whereAt)))));
+
+  /*
+   * And the follow-up queue's own copy is gone rather than standing beside it —
+   * two spellings of one rule is what this consolidation is for.
+   */
+  const follow = strip(readFileSync("src/server/services/followUpService.ts", "utf8"));
+  ok("the follow-up queue reads the shared clause", /notTechnical\(\)/.test(follow));
+  ok("...and keeps no copy of its own",
+    !/const NOT_TECHNICAL/.test(follow)
+    && !/proformaType:\s*\{\s*not:/.test(follow));
 }
 
 
@@ -15860,10 +15937,21 @@ head("Competitors: who we lose to, and by how much");
 
   eq("«بدون هیچ پیش‌فاکتوری» asks for no quotation row at all",
     JSON.stringify(quotationWhere("none")),
-    JSON.stringify({ proformas: { none: {} } }));
+    JSON.stringify({ proformas: { none: { ...notTechnical() } } }));
   eq("«ارسال‌نشده» asks for no quotation that has gone out",
     JSON.stringify(quotationWhere("unsent")),
-    JSON.stringify({ proformas: { none: { status: PROFORMA_SENT_STATUS } } }));
+    JSON.stringify({
+      proformas: { none: { ...notTechnical(), status: PROFORMA_SENT_STATUS } },
+    }));
+  /*
+   * And a technical specification is not a quotation, in either answer. It quotes
+   * no prices, so a job carrying one and nothing else has had no price written
+   * and no price sent — which is the job being hunted for — and counting it hid
+   * that project from both questions.
+   */
+  ok("...and neither counts a technical specification",
+    JSON.stringify(quotationWhere("none")).includes("proformaType")
+    && JSON.stringify(quotationWhere("unsent")).includes("proformaType"));
 
   /*
    * The direction of that second clause is the decision. Written as equality on

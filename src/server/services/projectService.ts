@@ -9,7 +9,7 @@ import { deriveProjectStage, resolveStage } from "../../utils/projectStage";
 import { PROFORMA_SENT_STATUS, inquiryWorkflowStatus } from "../../utils/moduleStatuses";
 import { statusChangeColumns } from "../../utils/statusDwell";
 import { scheduleProjectStageTrigger } from "./projectStageEvents";
-import { isWonStatus } from "../proformaStatus";
+import { isWonStatus, notTechnical } from "../proformaStatus";
 import { summarizeProject, summarizeProjects } from "./projectSummary";
 // The custom-field clause is identical for every module; defined once with customers.
 import { customFieldClause } from "./customerService";
@@ -73,10 +73,18 @@ export type ProjectQuotationFilter = typeof PROJECT_QUOTATION_FILTERS[number];
  *
  * Neither clause filters `proformas.status` against null — the column is NOT
  * NULL and Prisma rejects that outright.
+ *
+ * **And a technical specification is not a quotation** (`notTechnical`). It
+ * quotes no prices, so a job carrying one and nothing else has had no price
+ * written for it and no price sent — which is precisely the job being hunted
+ * for. Counting it dropped that job out of *both* answers, and in the direction
+ * that matters: it hid a project somebody still has to quote.
  */
 export function quotationWhere(value: unknown): Record<string, unknown> | null {
-  if (value === "none") return { proformas: { none: {} } };
-  if (value === "unsent") return { proformas: { none: { status: PROFORMA_SENT_STATUS } } };
+  if (value === "none") return { proformas: { none: { ...notTechnical() } } };
+  if (value === "unsent") {
+    return { proformas: { none: { ...notTechnical(), status: PROFORMA_SENT_STATUS } } };
+  }
   return null;
 }
 
@@ -416,8 +424,18 @@ export async function syncProjectStage(
   if (!project) return;
 
   const [proformas, inquiries, orders, deliveries, afterSales] = await Promise.all([
+    /*
+     * Quotations only — `notTechnical`.
+     *
+     * The rule below checks a **sent** document first, deliberately: once a
+     * quotation has gone out the job is waiting on the customer. A sent
+     * *specification* means nothing of the kind, since no price has left the
+     * building, so a technical offer reported «پیگیری پیش‌فاکتور» and dragged the
+     * project past «در انتظار پاسخ تأمین‌کننده» — hiding the unanswered supplier
+     * inquiry that was the real answer.
+     */
     tx.proforma.findMany({
-      where: { projectId },
+      where: { projectId, ...notTechnical() },
       select: { status: true, isCancelled: true },
     }),
     /*

@@ -16,7 +16,8 @@ import { deriveProjectCompetitor } from "../../utils/competitors";
 import { describeProformaChanges, proformaChangeSentence } from "./proformaChanges";
 import {
   ProformaOutcome, decidingProformas, deriveProjectLossReason, deriveProjectStatus,
-  getProformaOutcome, getWonItems, isWonStatus, outcomeWhere, statusWithoutProformas,
+  getProformaOutcome, getWonItems, isWonStatus, notTechnical, outcomeWhere,
+  statusWithoutProformas,
 } from "../proformaStatus";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
@@ -621,7 +622,12 @@ export async function syncProjectStatus(
   if (!projectId) return;
 
   const proformas = await tx.proforma.findMany({
-    where: { projectId },
+    // A technical specification quotes no prices, so it is not an offer the
+    // customer can accept and it decides nothing about the sale. Counted here it
+    // stood in for the quotation as «the most recent document», and — because
+    // «باخته» needs *every* document lost — one left open kept a genuinely lost
+    // project out of «باخته» for good. `notTechnical` is the single clause.
+    where: { projectId, ...notTechnical() },
     select: {
       id: true, status: true, isCancelled: true, createdAt: true,
       // The reasons, document-level and per line: the project's own loss reason

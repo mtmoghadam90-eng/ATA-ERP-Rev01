@@ -6,7 +6,7 @@ import { expandDateFields, jalaliToDate } from "../dates";
 import { addDaysToShamsi, getTodayShamsi, jalaliToGregorian } from "../../dateUtils";
 import { toNullableString } from "../childSync";
 import {
-  ITEM_CANCELLED, ITEM_LOST, ITEM_WON, getProformaOutcome, outcomeWhere,
+  ITEM_CANCELLED, ITEM_LOST, ITEM_WON, getProformaOutcome, notTechnical, outcomeWhere,
   type ProformaOutcome,
 } from "../proformaStatus";
 import { syncProjectStatus } from "./proformaService";
@@ -24,7 +24,6 @@ import {
 } from "../../utils/salesFollowUp";
 import { TASK_CANCELLED, TASK_TODO } from "../../utils/workBoard";
 import { resolveAssignee } from "./assigneeLookup";
-import { PROFORMA_TECHNICAL_TYPE } from "../../utils/moduleStatuses";
 
 /**
  * Chasing quotations: the server half.
@@ -83,11 +82,6 @@ export function chaseableWhere(): Prisma.ProformaWhereInput {
     ) as Prisma.ProformaWhereInput[],
   };
 }
-
-/** A technical quotation quotes no prices and is not a sales opportunity. */
-const NOT_TECHNICAL: Prisma.ProformaWhereInput = {
-  proformaType: { not: PROFORMA_TECHNICAL_TYPE },
-};
 
 /** The proforma's derived outcome, which decides whether the sale is over. */
 async function outcomeOf(
@@ -675,7 +669,7 @@ export interface FollowUpSummary {
  * is the set a sales desk actually works: sent, not cancelled, not finished.
  */
 function queueWhere(q: ListQuery): Prisma.ProformaWhereInput {
-  const and: Prisma.ProformaWhereInput[] = [chaseableWhere(), NOT_TECHNICAL];
+  const and: Prisma.ProformaWhereInput[] = [chaseableWhere(), notTechnical()];
 
   // The number, the customer and the job — which is how a salesperson refers to
   // a quotation. The document's own columns carry none of the last two.
@@ -1224,7 +1218,7 @@ export async function projectFollowUpReport(
   const todayJalali = getTodayShamsi();
 
   const rows = await db.proforma.findMany({
-    where: { AND: [{ projectId }, NOT_TECHNICAL] },
+    where: { AND: [{ projectId }, notTechnical()] },
     orderBy: { issueDate: "desc" },
     select: QUEUE_SELECT,
   });
@@ -1364,7 +1358,7 @@ export async function followUpSummary(
   // The same set the list shows, or the cards count quotations the table below
   // them does not contain — and «بدون اقدام بعدی» would report every settled
   // document in the database as neglected.
-  const active: Prisma.ProformaWhereInput = { AND: [chaseableWhere(), NOT_TECHNICAL] };
+  const active: Prisma.ProformaWhereInput = { AND: [chaseableWhere(), notTechnical()] };
 
   /*
    * The task side is asked of the task table, not through a relation.
