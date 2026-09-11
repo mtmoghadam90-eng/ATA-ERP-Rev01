@@ -607,3 +607,90 @@ export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
     { value: "status", label: "وضعیت خدمات پس از فروش", options: AFTER_SALES_STATUSES },
   ],
 };
+
+
+/* ------------------------ what a template may say ------------------------- */
+
+/**
+ * The variables `enrichPayload` puts on **every** payload before a rule's
+ * templates are rendered, whatever the trigger.
+ *
+ * `replaceTemplateVars` prints a token it has no value for **exactly as
+ * written**, so `{customerName}` in a title the payload cannot fill reaches a
+ * colleague's task card as the literal six characters plus braces — the
+ * `{dueDate}` fault the staff templates were corrected for, arriving on the one
+ * screen where nobody would think to look for it.
+ *
+ * This list is therefore the *guarantee*, not a suggestion, and `test:rules`
+ * holds every entry against an `enriched.<key> =` in `enrichPayload` — because
+ * a hand-typed list beside the thing it describes is how the assignee dropdown
+ * came to offer eleven options the responsibles table did not have.
+ *
+ * A trigger's **own** fields are variables too (they are the payload's own
+ * keys, which is the same fact that lets a condition name them), so the usable
+ * set is this list plus `triggerFields` — see `templateVariablesFor`.
+ */
+export interface TemplateVariable {
+  key: string;
+  label: string;
+}
+
+export const ENRICHED_PAYLOAD_VARIABLES: readonly TemplateVariable[] = [
+  { key: "projectName", label: "نام پروژه" },
+  { key: "projectCode", label: "کد پروژه" },
+  { key: "customerName", label: "نام مشتری" },
+  { key: "supplierName", label: "نام تأمین‌کننده" },
+  { key: "productName", label: "نام کالا" },
+  { key: "proformaNumber", label: "شماره پیش‌فاکتور" },
+  { key: "poNumber", label: "شماره سفارش خرید" },
+  /*
+   * Both spellings, because `enrichPayload` syncs them in both directions: a
+   * trigger that emits `status` gets `newStatus` and the other way round, so a
+   * template may use either and neither is the "wrong" one.
+   */
+  { key: "newStatus", label: "وضعیت جدید" },
+  { key: "status", label: "وضعیت" },
+  { key: "newOutcome", label: "نتیجه جدید" },
+  { key: "outcome", label: "نتیجه" },
+];
+
+/**
+ * Every variable a rule's title, description or notification may use.
+ *
+ * The trigger's own condition fields first — they are what makes «عنوان: تمدید
+ * {milestoneTitle}» possible at all, and a hand-typed list of six could never
+ * have named them — then the enrichment keys above.
+ *
+ * For a scheduled rule the fields come from the *record* its date belongs to,
+ * exactly as a condition's do — so this takes the **model** rather than the
+ * subject, which keeps the subject catalogue (`workflowSchedule.ts`) out of
+ * this file's imports and mirrors `fieldsFor` in the drafter, where the same
+ * resolution already happens.
+ */
+export function templateVariablesFor(
+  triggerType: string,
+  model?: string | null,
+): TemplateVariable[] {
+  const own = triggerType === "time_elapsed"
+    ? (model && SCHEDULE_MODEL_FIELDS[model]) || []
+    : triggerFields(triggerType);
+
+  const seen = new Set<string>();
+  const all: TemplateVariable[] = [];
+  for (const field of own) {
+    if (seen.has(field.value)) continue;
+    seen.add(field.value);
+    all.push({ key: field.value, label: field.label });
+  }
+  for (const variable of ENRICHED_PAYLOAD_VARIABLES) {
+    if (seen.has(variable.key)) continue;
+    seen.add(variable.key);
+    all.push(variable);
+  }
+  return all;
+}
+
+/** True when the id is a module that can carry a responsible. */
+export function isResponsibleModule(value: string): boolean {
+  return RESPONSIBLE_MODULES.some((m) => m.id === value);
+}

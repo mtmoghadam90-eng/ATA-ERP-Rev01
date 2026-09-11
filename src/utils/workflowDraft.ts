@@ -1,8 +1,10 @@
 import type { WorkflowRule } from "../types";
 import { TASK_PRIORITIES } from "./moduleStatuses";
 import {
-  SCHEDULE_MODEL_FIELDS, TriggerField, WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS,
-  isAssigneeToken, triggerFields,
+  ENRICHED_PAYLOAD_VARIABLES, RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS,
+  TRIGGER_ENTITY, TriggerField,
+  WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS, isAssigneeToken, isResponsibleModule,
+  templateVariablesFor, triggerFields,
 } from "./workflowTriggers";
 import { MESSAGE_VARIABLES } from "./messaging";
 import { SCHEDULE_SUBJECTS } from "./workflowSchedule";
@@ -87,8 +89,32 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     .map((t) => `  ${t.value} — ${t.label}`)
     .join("\n");
 
+  /*
+   * The variables a **customer message** may use. Deliberately kept apart from
+   * the ones a task title may use: `messageVariables` is merged into the
+   * payload only for `send_message`, so offering «{addressee}» for a task title
+   * would print those nine characters onto somebody's card.
+   */
   const variables = MESSAGE_VARIABLES
     .map((v) => `  {${v.key}} — ${v.label}`)
+    .join("\n");
+
+  /*
+   * And the ones every rule's own text may use, derived rather than typed.
+   *
+   * This was six names written into the prompt by hand — {proformaNumber},
+   * {projectName}, {projectCode}, {poNumber}, {newStatus}, {newOutcome} — which
+   * named none of the fields the newer triggers carry: a rule on a completed
+   * milestone could not put {milestoneTitle} in its title because nothing ever
+   * told the model the key existed. The trigger's own fields are listed under
+   * each trigger above, so this is the part that is true whatever was chosen.
+   */
+  const payloadVariables = ENRICHED_PAYLOAD_VARIABLES
+    .map((v) => `  {${v.key}} — ${v.label}`)
+    .join("\n");
+
+  const modules = RESPONSIBLE_MODULES
+    .map((m) => `  ${m.id} — ${m.name}`)
     .join("\n");
 
   const templateList = templates.length
@@ -122,8 +148,11 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     "    escalateAfterOccurrences, escalatePriority, escalateAssignedTo",
     "  send_message — ارسال پیام به مشتری. messageConfig: templateId (اجباری),",
     "    channel (SMS | BALE | EMAIL یا نیامده = ترجیح پروژه), delayDays, sendAtTime",
-    "  send_notification — اعلان داخلی. notificationConfig: titleTemplate,",
-    "    descTemplate, module",
+    "  send_notification — اعلان داخلی برای مسئول یک ماژول. notificationConfig:",
+    "    titleTemplate, descTemplate, module",
+    "",
+    "## مقادیر مجاز notificationConfig.module (شناسه ماژول، نه نام فارسی)",
+    modules,
     "",
     "## مقادیر مجاز taskConfig",
     `  priority: ${TASK_PRIORITIES.join(" | ")}`,
@@ -141,10 +170,16 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     "  assignedTo یکی از این نشانه‌ها یا نام کامل یک کاربر:",
     assignees,
     "",
-    "## متغیرهای قابل استفاده در متن‌ها",
+    "## متغیرهای متن وظیفه و اعلان (titleTemplate / descTemplate)",
+    "  این‌ها همیشه در دسترس‌اند:",
+    payloadVariables,
+    "  به‌علاوهٔ فیلدهای همان رویدادی که انتخاب کرده‌ای (فهرست‌شده در بالا) —",
+    "  مثلاً {milestoneTitle} برای project_milestone_completed.",
+    "  متغیری که در این دو فهرست نباشد، عیناً با همان آکولادها روی کارت وظیفه",
+    "  چاپ می‌شود؛ پس چیزی ننویس که مطمئن نیستی.",
+    "",
+    "## متغیرهای متن پیامِ مشتری (فقط برای send_message)",
     variables,
-    "  و بسته به رویداد: {proformaNumber} {projectName} {projectCode} {poNumber}",
-    "  {newStatus} {newOutcome}",
     "",
     "## قالب‌های پیام موجود (برای send_message)",
     templateList,
@@ -181,6 +216,12 @@ export function buildWorkflowDraftPrompt(
     "   مثال: «۳ روز از ایجاد پروژه گذشت و استعلام قیمتی ثبت نشد» یعنی",
     "   time_elapsed + subject=project_creation + days=3 + شرط stage برابر «جدید».",
     "   فقط وقتی refusal بده که حتی با این فیلدها هم نتوان خواسته را گفت.",
+    // The sanitiser downgrades one raised elsewhere, but a rule the model never
+    // writes is a warning the person never has to read.
+    "۳-ب) taskKind برابر SALES_FOLLOW_UP فقط وقتی مجاز است که خودِ رویداد یا",
+    "   subject زمان‌بندی، یک پیش‌فاکتور را نام ببرد (proforma_*). پیگیری فروشی",
+    "   که به پیش‌فاکتور وصل نباشد، ساخته می‌شود و از هیچ صفحه‌ای بسته نمی‌شود.",
+    "   برای بقیهٔ رویدادها taskKind را GENERAL بگذار.",
     "۴) برای «چند روز بعد از یک تاریخ» دو راه هست و هر دو درست‌اند: یا رویدادِ",
     "   همان لحظه با dueDaysOffset، یا time_elapsed. اگر رویدادی برای آن لحظه",
     "   وجود دارد آن را ترجیح بده، چون وظیفه از همان ابتدا روی تخته دیده می‌شود.",
@@ -228,6 +269,26 @@ const text = (value: unknown, max = 400): string =>
 function wholeNumber(value: unknown, fallback: number): number {
   const parsed = Math.floor(Number(value));
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+/**
+ * The `{tokens}` in a template that nothing will fill in.
+ *
+ * **The pattern is `replaceTemplateVars`'s own**, deliberately: that function
+ * matches one or two braces and prints anything it cannot resolve *exactly as
+ * written*, so a token this check reads differently from the renderer is a
+ * check that passes while `{مسئول}` reaches a colleague's task card verbatim.
+ * `test:rules` holds the two patterns against each other for that reason.
+ */
+const TEMPLATE_TOKEN = /\{{1,2}([^{}]+)\}{1,2}/g;
+
+function unknownTokens(template: string, allowed: ReadonlySet<string>): string[] {
+  const found: string[] = [];
+  for (const match of String(template ?? "").matchAll(TEMPLATE_TOKEN)) {
+    const key = match[1].trim();
+    if (key && !allowed.has(key) && !found.includes(key)) found.push(key);
+  }
+  return found;
 }
 
 /**
@@ -335,6 +396,32 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
 
   /* -------------------------------- actions ------------------------------- */
 
+  const scheduleModel = schedule?.subject
+    ? SCHEDULE_SUBJECTS[schedule.subject]?.model ?? null
+    : null;
+
+  /*
+   * What a title or description may name. The trigger's own fields plus the
+   * keys `enrichPayload` guarantees — anything else is printed verbatim by the
+   * renderer, which is a task card reading «تمدید {milestoneTitle}».
+   */
+  const templateKeys = new Set(
+    templateVariablesFor(triggerType, scheduleModel).map((v) => v.key),
+  );
+
+  /*
+   * Whether this rule's payload names a quotation, which decides whether a
+   * `SALES_FOLLOW_UP` is even possible.
+   *
+   * A chase raised against anything else is a genuine trap rather than an
+   * untidiness: `completeFollowUp` refuses a task whose `relatedToType` is not
+   * «proforma» and the ordinary tick refuses a follow-up, so such a task can be
+   * closed from **no screen in the application** — it sits on a board for ever.
+   */
+  const namesProforma = triggerType === "time_elapsed"
+    ? scheduleModel === "proforma"
+    : TRIGGER_ENTITY[triggerType as keyof typeof TRIGGER_ENTITY]?.entityType === "proforma";
+
   const actions: WorkflowRule["actions"] = [];
 
   for (const entry of (Array.isArray(answer.actions) ? answer.actions : []).slice(0, 5)) {
@@ -368,16 +455,36 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
         warnings.push(`مسئول وظیفه به‌صورت نام («${assignedTo}») تعیین شد؛ بررسی کنید چنین کاربری وجود دارد.`);
       }
 
-      const taskKind = (TASK_KINDS as readonly string[]).includes(String(config.taskKind))
+      let taskKind = (TASK_KINDS as readonly string[]).includes(String(config.taskKind))
         ? (config.taskKind as "GENERAL" | "SALES_FOLLOW_UP")
         : "GENERAL";
+      /*
+       * Downgraded rather than refused: the rest of the rule is usually right
+       * and «یک وظیفه بساز» is still what the person asked for. What must not
+       * happen is the chase itself, which nothing could ever close.
+       */
+      if (taskKind === "SALES_FOLLOW_UP" && !namesProforma) {
+        taskKind = "GENERAL";
+        warnings.push(
+          "نوع وظیفه به «عمومی» تغییر کرد: «پیگیری فروش» فقط روی رویدادی معنی دارد که "
+          + "خودش یک پیش‌فاکتور را نام می‌برد، وگرنه وظیفه ساخته می‌شود و از هیچ صفحه‌ای "
+          + "قابل بستن نیست.",
+        );
+      }
+
+      const descTemplate = text(config.descTemplate, 1000);
+      for (const token of unknownTokens(`${titleTemplate} ${descTemplate}`, templateKeys)) {
+        warnings.push(
+          `متغیر «{${token}}» در متن وظیفه شناخته نشد و عیناً روی کارت چاپ می‌شود؛ آن را اصلاح کنید.`,
+        );
+      }
 
       actions.push({
         id,
         type: "create_task",
         taskConfig: {
           titleTemplate,
-          descTemplate: text(config.descTemplate, 1000),
+          descTemplate,
           assignedTo,
           priority,
           dueDaysOffset: wholeNumber(config.dueDaysOffset, 0),
@@ -439,14 +546,32 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
       warnings.push("اقدام اعلان حذف شد: عنوان اعلان خالی بود.");
       continue;
     }
+    const descTemplate = text(config.descTemplate, 1000);
+    for (const token of unknownTokens(`${titleTemplate} ${descTemplate}`, templateKeys)) {
+      warnings.push(
+        `متغیر «{${token}}» در متن اعلان شناخته نشد و عیناً چاپ می‌شود؛ آن را اصلاح کنید.`,
+      );
+    }
+
+    /*
+     * The module is a **key into `settings.moduleResponsibles`**, not a label:
+     * one this application does not have finds no responsible and the notice
+     * falls back to the administrators — it arrives, on the wrong desk, with
+     * nothing saying why. Blanked rather than guessed, so the form's own select
+     * shows it needs answering.
+     */
+    const module = text(config.module, 60);
+    const keptModule = isResponsibleModule(module) ? module : "";
+    if (module && !keptModule) {
+      warnings.push(
+        `ماژول «${module}» شناخته نشد و خالی گذاشته شد؛ پیش از ذخیره، گیرندهٔ اعلان را انتخاب کنید.`,
+      );
+    }
+
     actions.push({
       id,
       type: "send_notification",
-      notificationConfig: {
-        titleTemplate,
-        descTemplate: text(config.descTemplate, 1000),
-        module: text(config.module, 60),
-      },
+      notificationConfig: { titleTemplate, descTemplate, module: keptModule },
     });
   }
 

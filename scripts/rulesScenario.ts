@@ -261,7 +261,10 @@ import { PROFORMA_STORED_STATUSES } from "../src/utils/moduleStatuses";
 import {
   buildWorkflowDraftPrompt, sanitizeDraftedRule, workflowCatalogue,
 } from "../src/utils/workflowDraft";
-import { WORKFLOW_ASSIGNEE_TOKENS, isAssigneeToken } from "../src/utils/workflowTriggers";
+import {
+  ENRICHED_PAYLOAD_VARIABLES, WORKFLOW_ASSIGNEE_TOKENS,
+  isAssigneeToken, templateVariablesFor,
+} from "../src/utils/workflowTriggers";
 import {
   competitorNameRefusal, competitorStandings, deriveProjectCompetitor, priceGapPercent,
 } from "../src/utils/competitors";
@@ -13481,6 +13484,134 @@ head("A workflow rule, drafted from a sentence");
     && !/MODULE_RESPONSIBLE_customers">/.test(view));
   ok("...and the responsibles table reads the module catalogue",
     /RESPONSIBLE_MODULES\.map/.test(view));
+
+  /* ------------- what a rule's own text may say, and who it reaches ------- */
+
+  /*
+   * **The notification's module is a key, not a label**, and that select was
+   * seven hand-typed options with two that are not module ids at all:
+   * «inventory» (the module is `products`) and «afterSales»
+   * (`afterSalesServices`). `notifyModuleResponsible` looks the value up in
+   * `settings.moduleResponsibles`, finds nothing, and falls back to the
+   * administrators — so «وقتی موجودی کم شد به انبار خبر بده» notified the
+   * admins instead, for ever, with nothing saying so. Six real modules were
+   * missing too, so those could not be chosen at all.
+   */
+  ok("the notification module select is drawn from the catalogue",
+    /RESPONSIBLE_MODULES\.map\(\(m\) => \(\s*<option key=\{m\.id\}/.test(view)
+    || /data-notify-module/.test(view));
+  ok("...and no longer offers ids this application does not have",
+    !/<option value="inventory">/.test(view) && !/<option value="afterSales">/.test(view));
+  /*
+   * A stored value the list does not have is drawn disabled rather than
+   * dropped: a `<select>` whose value matches no option renders the **first**
+   * one, so a rule saved against «inventory» would silently become «مشتریان»
+   * the next time somebody opened it and pressed save.
+   */
+  ok("...and a stored id it does not know is still shown",
+    /disabled>\s*\{act\.notificationConfig\.module/.test(view));
+
+  for (const id of ["products", "afterSalesServices", "transactions"]) {
+    ok(`the prompt offers the real module id «${id}»`, catalogue.includes(`  ${id} — `));
+  }
+  ok("...and neither of the two that were wrong",
+    !catalogue.includes("  inventory — ") && !catalogue.includes("  afterSales — "));
+
+  const badModule = sanitizeDraftedRule({
+    triggerType: "product_low_stock",
+    actions: [{ type: "send_notification", notificationConfig: { titleTemplate: "کم شد", module: "inventory" } }],
+  }, CTX);
+  eq("a module the app does not have is blanked rather than passed on",
+    badModule.rule?.actions[0]?.notificationConfig?.module, "");
+  ok("...and said out loud", badModule.warnings.some((w) => w.includes("inventory")));
+  eq("a real module is kept",
+    sanitizeDraftedRule({
+      triggerType: "product_low_stock",
+      actions: [{ type: "send_notification", notificationConfig: { titleTemplate: "کم شد", module: "products" } }],
+    }, CTX).rule?.actions[0]?.notificationConfig?.module, "products");
+
+  /*
+   * **The variables a rule's own text may use are derived, not typed.** This
+   * was six names written into the prompt by hand, which named none of the
+   * fields the newer triggers carry — so a rule on a completed milestone could
+   * not put `{milestoneTitle}` in its title, because nothing ever told the
+   * model the key existed.
+   */
+  ok("a trigger's own field is a variable of its templates",
+    templateVariablesFor("project_milestone_completed").some((v) => v.key === "milestoneTitle"));
+  ok("...and the enrichment keys are there whatever the trigger",
+    ENRICHED_PAYLOAD_VARIABLES.every((v) =>
+      templateVariablesFor("customer_created").some((t) => t.key === v.key)));
+  /*
+   * The list is a *guarantee*, so it is held against the function that makes
+   * it true. A key here that `enrichPayload` never assigns is a token printed
+   * verbatim on a task card — the very thing the check below catches at draft
+   * time, arriving instead through the list meant to prevent it.
+   */
+  const enrichSrc = strip(readFileSync("src/server/services/workflowService.ts", "utf8"));
+  for (const variable of ENRICHED_PAYLOAD_VARIABLES) {
+    ok(`enrichPayload really supplies {${variable.key}}`,
+      new RegExp(`enriched\\.${variable.key}\\s*=`).test(enrichSrc));
+  }
+  /*
+   * And the token pattern is the renderer's own. `replaceTemplateVars` matches
+   * one or two braces and prints anything it cannot resolve exactly as
+   * written, so a check reading tokens differently would pass while
+   * «{مسئول}» reached somebody's card verbatim.
+   */
+  const draftSrc = strip(readFileSync("src/utils/workflowDraft.ts", "utf8"));
+  const rendererPattern = /template\.replace\((\/[^/]+\/g)/.exec(enrichSrc)?.[1];
+  ok("the renderer's token pattern was found", !!rendererPattern, rendererPattern);
+  ok("...and the drafter checks tokens with the same one",
+    !!rendererPattern && draftSrc.includes(rendererPattern.slice(1, -2)));
+
+  const goodText = sanitizeDraftedRule({
+    triggerType: "project_milestone_completed",
+    actions: [{ type: "create_task", taskConfig: {
+      titleTemplate: "تمدید {milestoneTitle} در {projectName}", assignedTo: "SALES_EXPERT",
+    } }],
+  }, CTX);
+  eq("a real variable draws no complaint", goodText.warnings.length, 0);
+  const badText = sanitizeDraftedRule({
+    triggerType: "project_milestone_completed",
+    actions: [{ type: "create_task", taskConfig: {
+      titleTemplate: "سلام {مسئولِ خیالی}", assignedTo: "SALES_EXPERT",
+    } }],
+  }, CTX);
+  ok("...and an invented one is named", badText.warnings.some((w) => w.includes("خیالی")));
+
+  /*
+   * **A chase is only possible where the payload names a quotation.**
+   * `completeFollowUp` refuses a task whose `relatedToType` is not «proforma»
+   * and the ordinary tick refuses a follow-up, so a `SALES_FOLLOW_UP` raised
+   * against a project can be closed from **no screen in the application** — it
+   * sits on a board for ever. Downgraded rather than refused, because the rest
+   * of the rule is usually right.
+   */
+  const strayChase = sanitizeDraftedRule({
+    triggerType: "project_status_change",
+    actions: [{ type: "create_task", taskConfig: {
+      titleTemplate: "پیگیری", assignedTo: "SALES_EXPERT", taskKind: "SALES_FOLLOW_UP",
+    } }],
+  }, CTX);
+  eq("a chase off a quotation becomes an ordinary task",
+    strayChase.rule?.actions[0]?.taskConfig?.taskKind, "GENERAL");
+  ok("...and the reason is given", strayChase.warnings.some((w) => w.includes("پیگیری فروش")));
+  eq("a chase on a proforma event stands",
+    sanitizeDraftedRule({
+      triggerType: "proforma_status_change",
+      actions: [{ type: "create_task", taskConfig: {
+        titleTemplate: "پیگیری", assignedTo: "SALES_EXPERT", taskKind: "SALES_FOLLOW_UP",
+      } }],
+    }, CTX).rule?.actions[0]?.taskConfig?.taskKind, "SALES_FOLLOW_UP");
+  eq("...and so does one on a proforma's own schedule",
+    sanitizeDraftedRule({
+      triggerType: "time_elapsed",
+      schedule: { subject: "proforma_sent", days: 2 },
+      actions: [{ type: "create_task", taskConfig: {
+        titleTemplate: "پیگیری", assignedTo: "SALES_EXPERT", taskKind: "SALES_FOLLOW_UP",
+      } }],
+    }, CTX).rule?.actions[0]?.taskConfig?.taskKind, "SALES_FOLLOW_UP");
 }
 
 head("Competitors: who we lose to, and by how much");
