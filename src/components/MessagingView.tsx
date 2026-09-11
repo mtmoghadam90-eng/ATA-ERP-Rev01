@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  AlertCircle, CheckCircle2, Clock, Copy, Loader2, MessageSquare, Plus, RotateCcw,
-  Send, Settings as SettingsIcon, Trash2, Users, X, XCircle,
+  AlertCircle, CheckCircle2, Clock, Copy, Loader2, MessageSquare, Plus, QrCode, RotateCcw,
+  Send, Settings as SettingsIcon, Smartphone, Trash2, Unlink, Users, X, XCircle,
 } from 'lucide-react';
 import type { ERPSettings, User } from '../types';
 import {
@@ -11,7 +11,7 @@ import {
 import { ApiError } from '../api/client';
 import CampaignsTab from './CampaignsTab';
 import {
-  BaleChatRow, MessageRow, MessageTemplateRow, ProviderSummary, messagingApi,
+  BaleChatRow, MessageRow, MessageTemplateRow, ProviderSummary, WhatsappStatus, messagingApi,
 } from '../api/messaging';
 import {
   ALL_CHANNELS, ALL_SMS_PROVIDERS, CHANNELS, CHANNEL_LABELS, Channel, MESSAGE_STATUS,
@@ -19,6 +19,9 @@ import {
   STATUS_LABELS, isChannel, renderTemplate, smsLength, smsProviderOf, smsProviderSpec,
 } from '../utils/messaging';
 import { TemplatePreview, TemplateVariablePalette } from './MessageTemplateHelp';
+import {
+  WHATSAPP_STATES, WHATSAPP_STATE_ADVICE, WHATSAPP_STATE_LABELS, type WhatsappState,
+} from '../utils/whatsapp';
 
 
 /**
@@ -79,6 +82,14 @@ const PROVIDER_FIELDS: Record<Channel, ProviderField[]> = {
    */
   SMS: [],
   BALE: [],
+  /*
+   * WhatsApp has no credential to type, and that is the point of it rather than
+   * an omission: the authorisation *is* the linked device, granted once by
+   * scanning a code with the phone that owns the line. So the card draws the
+   * link panel below instead of a form — an empty field list here must not be
+   * read as a form that failed to render.
+   */
+  WHATSAPP: [],
   EMAIL: [
     { key: 'host', label: 'آدرس سرور SMTP' },
     { key: 'port', label: 'پورت', type: 'number' },
@@ -920,6 +931,209 @@ function StaffNotifications({
   );
 }
 
+/* -------------------------------- WhatsApp -------------------------------- */
+
+/**
+ * How often the panel re-asks, by what it is waiting for.
+ *
+ * The pairing code is not a fixed string: WhatsApp rotates it every few seconds
+ * and the one on the screen stops working, so while a code is up the panel has
+ * to follow or somebody scans a code that has already expired and concludes the
+ * feature is broken. Nothing changes on its own once the line is linked or
+ * unlinked, so the other interval is long — the status endpoint opens no socket,
+ * but a panel left open on a second monitor should still not ask every three
+ * seconds for ever.
+ */
+const WHATSAPP_POLL_MS = { waiting: 3_000, settled: 20_000 } as const;
+
+/** The label for a state, including one this build has never heard of. */
+const whatsappStateLabel = (raw: string): string =>
+  raw in WHATSAPP_STATE_LABELS ? WHATSAPP_STATE_LABELS[raw as WhatsappState] : raw;
+
+const whatsappStateAdvice = (raw: string): string =>
+  raw in WHATSAPP_STATE_ADVICE ? WHATSAPP_STATE_ADVICE[raw as WhatsappState] : '';
+
+const WHATSAPP_STATE_STYLE: Record<WhatsappState, string> = {
+  UNLINKED: 'bg-slate-100 text-slate-500 border-slate-200',
+  CONNECTING: 'bg-sky-50 text-sky-700 border-sky-200',
+  AWAITING_SCAN: 'bg-amber-50 text-amber-800 border-amber-200',
+  CONNECTED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  DISCONNECTED: 'bg-rose-50 text-rose-700 border-rose-200',
+};
+
+/** Whole minutes since an ISO instant, for «قطع شده از ۱۲ دقیقه پیش». */
+function minutesSince(iso: string): number | null {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return null;
+  return Math.max(0, Math.floor((Date.now() - then) / 60_000));
+}
+
+/**
+ * Linking the company's own WhatsApp line, and saying where that link stands.
+ *
+ * This is the whole of the WhatsApp channel's configuration, because there is no
+ * credential to type: the authorisation is a device on the account, granted once
+ * by scanning a code with the phone that owns the number.
+ *
+ * Two things it must say out loud, both on the screen rather than only in a
+ * commit message. **This is unofficial use of a personal line** — not the
+ * Business API — and WhatsApp blocks numbers that send machine-paced traffic,
+ * with the company's own number being the one at risk. And **the pacing is not a
+ * setting**: three messages a minute, fixed in code, because the cost of raising
+ * it is the line itself and a box on a screen is an invitation to raise it the
+ * first afternoon somebody is in a hurry.
+ */
+function WhatsappLinkPanel({ onNotice }: { onNotice: (t: string) => void }) {
+  const [status, setStatus] = useState<WhatsappStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  /**
+   * A poll that could not be read, said here rather than through `onError`.
+   *
+   * This asks every few seconds while a code is up, so a failure routed to the
+   * screen's notice bar would flash the same banner continuously — and the
+   * panel is precisely where somebody can act on it.
+   */
+  const [unreadable, setUnreadable] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await messagingApi.whatsappStatus());
+      setUnreadable(null);
+    } catch (err) {
+      setUnreadable(err instanceof Error ? err.message : 'وضعیت اتصال واتس‌اپ خوانده نشد.');
+    }
+  }, []);
+
+  const waiting = status?.state === WHATSAPP_STATES.CONNECTING
+    || status?.state === WHATSAPP_STATES.AWAITING_SCAN;
+
+  useEffect(() => {
+    void refresh();
+    const id = setInterval(() => { void refresh(); }, waiting
+      ? WHATSAPP_POLL_MS.waiting
+      : WHATSAPP_POLL_MS.settled);
+    return () => clearInterval(id);
+  }, [refresh, waiting]);
+
+  const act = async (
+    run: () => Promise<WhatsappStatus & { success: boolean }>,
+    notice: string,
+  ) => {
+    setBusy(true);
+    try {
+      setStatus(await run());
+      setUnreadable(null);
+      onNotice(notice);
+    } catch (err) {
+      setUnreadable(err instanceof Error ? err.message : 'عملیات ممکن نشد.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const state = status?.state ?? WHATSAPP_STATES.UNLINKED;
+  const style = state in WHATSAPP_STATE_STYLE
+    ? WHATSAPP_STATE_STYLE[state as WhatsappState]
+    : 'bg-slate-100 text-slate-500 border-slate-200';
+  const mins = status ? minutesSince(status.since) : null;
+
+  return (
+    <div className="space-y-3 rounded-xl bg-emerald-50/40 border border-emerald-100 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Smartphone size={14} className="text-emerald-700" />
+        <span className="text-[11px] font-bold text-slate-700">وضعیت خط:</span>
+        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${style}`}>
+          {whatsappStateLabel(state)}
+        </span>
+        {status?.linkedNumber && (
+          <code className="text-[11px] font-mono text-slate-500" dir="ltr">
+            {status.linkedNumber}
+          </code>
+        )}
+        {mins !== null && mins > 0 && (
+          <span className="text-[10px] text-slate-400">
+            از {mins.toLocaleString('fa-IR')} دقیقه پیش
+          </span>
+        )}
+      </div>
+
+      <p className="text-[11px] text-slate-600 leading-6">{whatsappStateAdvice(state)}</p>
+
+      {/*
+        The code, drawn by the server as a data URI. It is shown only while one
+        is genuinely waiting — a stale square on the screen after the phone has
+        scanned it is an invitation to scan it again.
+      */}
+      {status?.qrImage && (
+        <div className="flex flex-col items-center gap-1.5 py-1">
+          <img
+            src={status.qrImage}
+            alt="کد اتصال واتس‌اپ"
+            width={200}
+            height={200}
+            className="rounded-lg border border-emerald-200 bg-white p-1.5"
+          />
+          <p className="text-[10px] text-slate-400 flex items-center gap-1">
+            <QrCode size={11} />
+            کد هر چند ثانیه عوض می‌شود؛ همین تصویر خودش تازه می‌شود.
+          </p>
+        </div>
+      )}
+
+      {status?.lastError && state !== WHATSAPP_STATES.CONNECTED && (
+        <p className="text-[10px] text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-2 py-1.5" dir="ltr">
+          {status.lastError}
+        </p>
+      )}
+
+      {unreadable && (
+        <p className="text-[10px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5">
+          {unreadable}
+        </p>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={busy || waiting}
+          onClick={() => void act(messagingApi.whatsappLink, 'درخواست اتصال ارسال شد.')}
+          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold disabled:opacity-50 flex items-center gap-1.5"
+        >
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <Smartphone size={12} />}
+          {status?.linked ? 'اتصال مجدد' : 'اتصال دستگاه'}
+        </button>
+        {status?.linked && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void act(messagingApi.whatsappUnlink, 'اتصال واتس‌اپ قطع شد.')}
+            className="px-3 py-1.5 border border-rose-200 bg-white rounded-lg text-[11px] font-bold text-rose-700 hover:bg-rose-50 disabled:opacity-50 flex items-center gap-1.5"
+          >
+            <Unlink size={12} />
+            قطع اتصال
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          className="px-3 py-1.5 border border-slate-200 bg-white rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-1.5"
+        >
+          <RotateCcw size={12} />
+          بازخوانی وضعیت
+        </button>
+      </div>
+
+      <p className="text-[11px] text-amber-900 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-2 leading-6">
+        این ارسال از «خط خودتان» است و رسمی نیست؛ واتس‌اپ شماره‌هایی را که با آهنگ
+        ماشینی پیام می‌دهند مسدود می‌کند و شماره در خطر، شماره خود شرکت است. به همین
+        دلیل سرعت ارسال ثابت و قابل تغییر نیست: حداکثر ۳ پیام در هر دقیقه، با فاصله‌های
+        نامنظم بین آن‌ها. بقیه پیام‌ها در صف می‌مانند و نوبتی فرستاده می‌شوند؛
+        برای فهرست‌های بزرگ پیامک را انتخاب کنید.
+      </p>
+    </div>
+  );
+}
+
 /* -------------------------------- providers ------------------------------- */
 
 function Providers({
@@ -1155,6 +1369,10 @@ function Providers({
                   اگر حساب شما محدودیت IP دارد، آدرس IP این سرور را در پنل کاوه‌نگار مجاز کنید.
                 </p>
               </div>
+            )}
+
+            {row.channel === CHANNELS.WHATSAPP && (
+              <WhatsappLinkPanel onNotice={onNotice} />
             )}
 
             {row.channel === CHANNELS.BALE && (

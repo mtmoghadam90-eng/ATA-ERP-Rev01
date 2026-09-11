@@ -200,6 +200,125 @@ head("Messaging: a parent re-render does not refetch the screen");
   g2.fetch = realFetch;
 }
 
+head("WhatsApp: the link button is unreachable while a code is on the screen");
+
+/*
+ * Pressing «اتصال دستگاه» repeatedly is not a harmless retry: each press opens a
+ * socket and raises a fresh pairing code, and machine-paced handshakes are part
+ * of what gets a number blocked. The control that stops it is
+ * `disabled={busy || waiting}` — one word, which type-checks whether it is there
+ * or not and reads perfectly either way, so nothing but a render can say whether
+ * the button is really dead while a code is up.
+ *
+ * The second half is the code itself disappearing once the phone has scanned it:
+ * a square left on the screen after the link is made is an invitation to scan a
+ * code that no longer means anything.
+ */
+{
+  const g3 = globalThis as unknown as Record<string, unknown>;
+  const realFetch = g3.fetch;
+
+  /** What the status endpoint is currently answering. */
+  let waState = "AWAITING_SCAN";
+  let linkCalls = 0;
+
+  g3.fetch = async (url: unknown, init?: { method?: string }) => {
+    const path = String(url);
+    const body = (() => {
+      if (path.includes("/whatsapp/status")) {
+        return {
+          success: true,
+          linked: waState !== "UNLINKED",
+          state: waState,
+          qr: waState === "AWAITING_SCAN" ? "2@abc" : null,
+          qrImage: waState === "AWAITING_SCAN" ? "data:image/png;base64,AAA" : null,
+          linkedNumber: waState === "CONNECTED" ? "989121234567" : null,
+          lastError: null,
+          since: new Date().toISOString(),
+        };
+      }
+      if (path.includes("/whatsapp/link")) {
+        linkCalls++;
+        return { success: true, state: waState, linked: true, qr: null, qrImage: null, linkedNumber: null, lastError: null, since: new Date().toISOString() };
+      }
+      if (path.includes("/messaging/providers")) {
+        return {
+          success: true,
+          providers: [
+            { channel: "WHATSAPP", active: true, config: {}, secrets: {}, lastTestAt: null, lastTestOk: null, lastTestError: null },
+          ],
+        };
+      }
+      return {
+        success: true, rows: [], total: 0, page: 1, pageSize: 50, totalPages: 1,
+        summary: {}, templates: [], providers: [],
+      };
+    })();
+    void init;
+    return {
+      ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body),
+    } as unknown as Response;
+  };
+
+  const host3 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root3 = createRoot(host3);
+  const settle = async () => {
+    for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+  };
+  const buttonSaying = (text: string) =>
+    [...dom.window.document.querySelectorAll("button")]
+      .find((b) => (b.textContent ?? "").includes(text)) as HTMLButtonElement | undefined;
+
+  await act(async () => {
+    root3.render(React.createElement(MessagingView, {
+      settings: { customFields: [] } as never,
+      currentUser: { id: "u1", permissions: { settings: true, messaging: true } } as never,
+    }));
+  });
+  await settle();
+
+  // Onto the providers tab, which is where a line is linked.
+  const providersTab = buttonSaying("تنظیمات درگاه‌ها");
+  ok("the providers tab is offered", !!providersTab);
+  await act(async () => { providersTab?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settle();
+
+  ok("the WhatsApp card is drawn",
+    (host3.textContent ?? "").includes("واتس‌اپ"));
+  ok("the pairing code is on the screen",
+    !!host3.querySelector('img[alt="کد اتصال واتس‌اپ"]'));
+
+  const linkButton = buttonSaying("اتصال مجدد") ?? buttonSaying("اتصال دستگاه");
+  ok("the link button is drawn", !!linkButton);
+  ok("...and is dead while the code is waiting to be scanned",
+    linkButton?.disabled === true);
+  /*
+   * Pressing it anyway must reach nothing. A disabled button in jsdom still
+   * dispatches a click if one is dispatched at it by hand, so this asserts the
+   * request rather than the attribute — which is the thing that matters.
+   */
+  await act(async () => { linkButton?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settle();
+  ok("...so pressing it opens no socket", linkCalls === 0, linkCalls);
+
+  // The phone scans it. The code goes, the button comes back.
+  waState = "CONNECTED";
+  const refreshButton = buttonSaying("بازخوانی وضعیت");
+  await act(async () => { refreshButton?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settle();
+
+  ok("once connected the code is gone",
+    !host3.querySelector('img[alt="کد اتصال واتس‌اپ"]'));
+  ok("...the line says which number it is",
+    (host3.textContent ?? "").includes("989121234567"));
+  ok("...and «قطع اتصال» is offered", !!buttonSaying("قطع اتصال"));
+  const reconnect = buttonSaying("اتصال مجدد");
+  ok("...with the link button live again", reconnect?.disabled === false);
+
+  act(() => { root3.unmount(); });
+  g3.fetch = realFetch;
+}
+
 
 head("Product configurator: the catalogue's rules are enforced as you tick");
 

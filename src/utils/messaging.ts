@@ -14,6 +14,21 @@ export const CHANNELS = {
   SMS: "SMS",
   BALE: "BALE",
   EMAIL: "EMAIL",
+  /**
+   * The company's own WhatsApp line, as a linked device.
+   *
+   * A **channel** rather than a field of another one, which is the opposite of
+   * the decision taken for Kavenegar: which SMS panel carries a text is an
+   * implementation detail of «پیامک», so a second channel there would have
+   * meant rewriting every template and losing the outbox history the day the
+   * company changed panels. WhatsApp is a different medium — its own address,
+   * its own templates, its own history, and messages written for it read
+   * nothing like an SMS, which is charged by the character.
+   *
+   * See `src/utils/whatsapp.ts` for what it costs to use a personal line this
+   * way, and why its pacing is not a setting.
+   */
+  WHATSAPP: "WHATSAPP",
 } as const;
 
 export type Channel = typeof CHANNELS[keyof typeof CHANNELS];
@@ -22,10 +37,13 @@ export const CHANNEL_LABELS: Record<Channel, string> = {
   SMS: "پیامک",
   BALE: "بله",
   EMAIL: "ایمیل",
+  WHATSAPP: "واتس‌اپ",
 };
 
 /** Every channel, in the order the screens list them. */
-export const ALL_CHANNELS: Channel[] = [CHANNELS.SMS, CHANNELS.BALE, CHANNELS.EMAIL];
+export const ALL_CHANNELS: Channel[] = [
+  CHANNELS.SMS, CHANNELS.WHATSAPP, CHANNELS.BALE, CHANNELS.EMAIL,
+];
 
 export const isChannel = (value: unknown): value is Channel =>
   typeof value === "string" && (ALL_CHANNELS as string[]).includes(value);
@@ -512,7 +530,17 @@ export function addressFor(
   channel: Channel,
 ): string | null {
   if (!candidate) return null;
-  const value = channel === CHANNELS.SMS ? candidate.mobile
+  /*
+   * WhatsApp reads the **mobile number**, which is the whole practical
+   * difference between it and Bale: a Bale chat id has to be obtained from the
+   * bot's own updates and typed in per contact, so that channel reaches only
+   * the handful of people somebody has done that for. Every customer record
+   * here already carries a mobile, so WhatsApp can address the directory as it
+   * stands — and `whatsappJid` is what decides whether a particular one is
+   * really addressable, rather than this returning a number the socket cannot
+   * use.
+   */
+  const value = channel === CHANNELS.SMS || channel === CHANNELS.WHATSAPP ? candidate.mobile
     : channel === CHANNELS.EMAIL ? candidate.email
       : candidate.baleChatId;
   const text = String(value ?? "").trim();
@@ -543,6 +571,28 @@ export const isBaleChatId = (value: string | null | undefined): boolean => {
    */
   return /^-?[1-9]\d*$/.test(text) || /^@[A-Za-z0-9_]{3,}$/.test(text);
 };
+
+/**
+ * A typed number folded to Latin digits — Persian and Arabic included.
+ *
+ * **One fold for the whole module**, which is the only thing that keeps two
+ * channels agreeing about who is reachable. It was written twice — once inside
+ * the SMS driver's `normalizeMobile` and once for WhatsApp's JID rule — and two
+ * copies of this is how a customer comes to be reachable by text and not on
+ * WhatsApp, or the reverse: a number with Persian digits arrives at one channel
+ * as `09…` and at the other as nothing, and nobody goes looking because the
+ * other message arrived.
+ *
+ * Only digits survive, so a `+`, a space, a bracket or a dash is dropped rather
+ * than being rejected — the callers decide what the resulting digits mean, and
+ * `whatsappJid` reads the `+` off the *original* text for precisely that reason.
+ */
+export function digitsOf(raw: string | null | undefined): string {
+  return String(raw ?? "")
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/\D/g, "");
+}
 
 /** True for something typed in as an Iranian mobile number. */
 export const looksLikeMobile = (value: string | null | undefined): boolean =>

@@ -113,7 +113,15 @@ import {
   looksLikeMobile, nextAllowedSendTime, renderTemplate, resolveRecipient, retryDelayMs,
   normalizeSenderLine,
   shouldRetry, smsConfigRefusal, smsLength, smsProviderOf, templateVariables,
+  ALL_CHANNELS, CHANNEL_LABELS,
 } from "../src/utils/messaging";
+import {
+  WHATSAPP_GAP_MS, WHATSAPP_PER_PASS, WHATSAPP_STATES, WHATSAPP_STATE_ADVICE,
+  WHATSAPP_STATE_LABELS, WHATSAPP_USER_DOMAIN, isWhatsappAddressable, whatsappCanSend,
+  whatsappGapMs, whatsappJid, whatsappSendRefusal,
+} from "../src/utils/whatsapp";
+import { channelPassLimit } from "../src/server/services/messaging/messageService";
+import { normalizeMobile as smsNormalizeMobile } from "../src/server/services/messaging/drivers";
 import {
   ALL_DEMAND_SOURCES, DEMAND_SOURCE_SPECS, DemandLine, demandGroupingOf,
   demandOutcomeOf, demandRefusal, demandSourceOf, describeDemand, foldDemand,
@@ -14814,6 +14822,244 @@ head("Competitors: who we lose to, and by how much");
     ok("...and says so when there are none",
       view.includes("بدون پیش‌فاکتور"));
   }
+}
+
+/* ==========================================================================
+ *  WhatsApp: the company's own line, as a linked device
+ * ========================================================================== */
+{
+  console.log("\n— WhatsApp on the company's own line —");
+
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /*
+   * The address, in every writing a number arrives in.
+   *
+   * Null is the half worth testing: WhatsApp delivers a malformed JID to nobody
+   * and says nothing about it, so a number this cannot make sense of has to stop
+   * the message here rather than being padded into something address-shaped.
+   */
+  const JID = "98";
+  /* Every state, so none of the sweeps below can pass by covering four of five. */
+  const WHATSAPP_STATES_LIST = Object.values(WHATSAPP_STATES);
+  eq("there are five connection states", WHATSAPP_STATES_LIST.length, 5);
+  eq("a national mobile becomes a JID",
+    whatsappJid("09121234567"), `${JID}9121234567@${WHATSAPP_USER_DOMAIN}`);
+  eq("...without the trunk zero", whatsappJid("9121234567"), `${JID}9121234567@${WHATSAPP_USER_DOMAIN}`);
+  eq("...written with the country code",
+    whatsappJid("989121234567"), `${JID}9121234567@${WHATSAPP_USER_DOMAIN}`);
+  eq("...written the international way",
+    whatsappJid("00989121234567"), `${JID}9121234567@${WHATSAPP_USER_DOMAIN}`);
+  eq("...with spaces and a plus",
+    whatsappJid("+98 912 123 4567"), `${JID}9121234567@${WHATSAPP_USER_DOMAIN}`);
+  eq("...in Persian digits",
+    whatsappJid("۰۹۱۲۱۲۳۴۵۶۷"), `${JID}9121234567@${WHATSAPP_USER_DOMAIN}`);
+
+  /*
+   * The same number the **SMS driver** would dial, which is the one comparison
+   * worth making across the two: a customer reachable by text and not on
+   * WhatsApp because the two disagreed about `+98` or a Persian digit would be
+   * invisible — the text arrives, so nobody goes looking.
+   *
+   * `digitsOf` is now the single fold both read, so this holds the layer above
+   * it: that the prefix arithmetic lands on the same subscriber number.
+   */
+  for (const written of [
+    "09121234567", "9121234567", "989121234567", "00989121234567",
+    "+98 912 123 4567", "۰۹۱۲۱۲۳۴۵۶۷", "0912-123-4567", "0912 123 4567",
+  ]) {
+    eq(`WhatsApp and the SMS driver agree about «${written}»`,
+      whatsappJid(written),
+      `${JID}${smsNormalizeMobile(written).replace(/^0/, "")}@${WHATSAPP_USER_DOMAIN}`);
+  }
+  /*
+   * And the fold really is shared rather than two copies that happen to agree
+   * today: reading the driver's source for its own digit arithmetic is what
+   * catches it being written out again, which is how the two came apart in the
+   * first place.
+   */
+  {
+    const driverSrc = strip(readFileSync("src/server/services/messaging/drivers.ts", "utf8"));
+    ok("the SMS driver reads the shared digit fold", /digitsOf\(/.test(driverSrc));
+    ok("...and does not keep a copy of it",
+      !/\[۰-۹\]/.test(driverSrc) && !/\[٠-٩\]/.test(driverSrc));
+    const waSrc = strip(readFileSync("src/utils/whatsapp.ts", "utf8"));
+    ok("nor does the WhatsApp rule",
+      /digitsOf/.test(waSrc) && !/\[۰-۹\]/.test(waSrc));
+  }
+
+  eq("a landline is refused", whatsappJid("02188776655"), null);
+  eq("a fragment is refused", whatsappJid("0912"), null);
+  eq("nothing is refused", whatsappJid(""), null);
+  eq("null is refused", whatsappJid(null), null);
+  eq("a word is refused", whatsappJid("سلام"), null);
+  /*
+   * A foreign supplier's number is accepted when it is written as one. The
+   * company imports, so refusing it would mean the channel silently worked for
+   * half the directory — and `+` is what separates «this is an international
+   * number» from a local one typed badly.
+   */
+  eq("a foreign number written with a plus is accepted",
+    whatsappJid("+49 170 1234567"), `491701234567@${WHATSAPP_USER_DOMAIN}`);
+  eq("...but not one too long to be a number",
+    whatsappJid("+4917012345678901"), null);
+  eq("...nor one too short", whatsappJid("+4917"), null);
+  ok("the addressable check agrees with the JID rule",
+    isWhatsappAddressable("09121234567") && !isWhatsappAddressable("02188776655"));
+
+  /* Only a connected line sends, and each refusal says something different. */
+  ok("only the connected state sends",
+    WHATSAPP_STATES_LIST.filter((s) => whatsappCanSend(s)).join(",") === "CONNECTED");
+  for (const state of WHATSAPP_STATES_LIST) {
+    const refusal = whatsappSendRefusal(state);
+    if (state === WHATSAPP_STATES.CONNECTED) eq("a connected line refuses nothing", refusal, null);
+    else ok(`«${state}» refuses with a sentence`, !!refusal && refusal.length > 10);
+  }
+  /*
+   * Every state is labelled and advised. Three of the five need a *different*
+   * action from the person in front of them, and a panel that says «قطع شده» and
+   * nothing else invites the one thing that makes this worse — pressing link
+   * again and again, which is traffic WhatsApp counts against the number.
+   */
+  for (const state of WHATSAPP_STATES_LIST) {
+    ok(`«${state}» has a label`, (WHATSAPP_STATE_LABELS[state] ?? "").length > 2);
+    ok(`«${state}» has advice`, (WHATSAPP_STATE_ADVICE[state] ?? "").length > 10);
+  }
+  eq("the advice is five distinct sentences",
+    new Set(Object.values(WHATSAPP_STATE_ADVICE)).size, WHATSAPP_STATES_LIST.length);
+
+  /*
+   * The pacing, which is the safety feature rather than a tuning knob. Bounds
+   * rather than a value, because the jitter is the point: a fixed interval is
+   * itself a signature.
+   */
+  eq("the floor of the gap", whatsappGapMs(0), WHATSAPP_GAP_MS.min);
+  eq("the ceiling of the gap", whatsappGapMs(1), WHATSAPP_GAP_MS.max);
+  ok("the gap is in range for every draw",
+    Array.from({ length: 200 }, (_, i) => whatsappGapMs(i / 199))
+      .every((g) => g >= WHATSAPP_GAP_MS.min && g <= WHATSAPP_GAP_MS.max));
+  /* A caller handing it rubbish must not produce a burst. */
+  ok("out-of-range input is clamped rather than trusted",
+    whatsappGapMs(-5) === WHATSAPP_GAP_MS.min
+    && whatsappGapMs(99) === WHATSAPP_GAP_MS.max
+    && whatsappGapMs(NaN) === WHATSAPP_GAP_MS.min);
+  ok("the gap is seconds, not milliseconds-by-accident", WHATSAPP_GAP_MS.min >= 2_000);
+  ok("three a pass, far below the SMS batch", WHATSAPP_PER_PASS > 0 && WHATSAPP_PER_PASS <= 5);
+
+  /*
+   * And the cap reaches the worker. `channelPassLimit` is what the queue reads,
+   * so a rule that is right in `whatsapp.ts` and never consulted is the shape of
+   * fault this suite exists for.
+   */
+  eq("WhatsApp is capped per pass", channelPassLimit(CHANNELS.WHATSAPP), WHATSAPP_PER_PASS);
+  for (const channel of [CHANNELS.SMS, CHANNELS.BALE, CHANNELS.EMAIL]) {
+    ok(`${channel} keeps the ordinary batch`, channelPassLimit(channel) > WHATSAPP_PER_PASS);
+  }
+
+  /* WhatsApp is a channel, with its own address, templates and history. */
+  ok("WhatsApp is one of the channels", ALL_CHANNELS.includes(CHANNELS.WHATSAPP));
+  ok("...and is labelled in Persian", (CHANNEL_LABELS[CHANNELS.WHATSAPP] ?? "").length > 2);
+  /*
+   * It reads the **mobile**, which is the practical difference from Bale: a Bale
+   * chat id has to be obtained and typed in per contact, so that channel reaches
+   * almost nobody, while every customer record here already holds a number.
+   */
+  const waContact = { mobile: "09121234567", email: "a@b.c", baleChatId: "12345", doNotContact: false };
+  eq("WhatsApp addresses the stored mobile",
+    resolveRecipient([waContact], CHANNELS.WHATSAPP).recipient?.address, "09121234567");
+  eq("...and honours an opt-out like every other channel",
+    resolveRecipient([{ ...waContact, doNotContact: true }], CHANNELS.WHATSAPP).problem,
+    "OPTED_OUT");
+  /* A record with no mobile is a named problem, not a silent skip. */
+  eq("...and a contact with no number is named",
+    resolveRecipient([{ ...waContact, mobile: null }], CHANNELS.WHATSAPP).problem, "NO_ADDRESS");
+
+  /* -------- the two things about the implementation that are load-bearing ----- */
+
+  const client = readFileSync("src/server/services/messaging/whatsappClient.ts", "utf8");
+  const clientCode = strip(client);
+  /*
+   * The library is ESM-only and the deploy bundles to CJS, so a top-level
+   * `import` of it becomes a `require()` that throws `ERR_REQUIRE_ESM` on the
+   * server — at run time, on the production box, behind a green build. The
+   * comment explaining that is stripped first, or this check would be satisfied
+   * by the note saying it was fixed.
+   */
+  ok("the WhatsApp client source survived having its comments stripped",
+    clientCode.includes("export async function sendWhatsapp"));
+  ok("baileys is never imported at the top level",
+    !/^\s*import[^\n]*@whiskeysockets\/baileys/m.test(clientCode));
+  ok("...it is loaded through a call-time dynamic import",
+    /await import\(\s*["']@whiskeysockets\/baileys["']\s*\)/.test(clientCode));
+  /*
+   * `loggedOut` is the one close that is never retried: the device was removed
+   * from the account, so reconnecting on a loop would be a stream of rejected
+   * handshakes against a number already unhappy with us.
+   */
+  ok("being logged out wipes the session rather than retrying",
+    /loggedOut/.test(clientCode) && /wipeSession\(\)/.test(clientCode));
+
+  const routes = strip(readFileSync("src/server/routes/messaging.ts", "utf8"));
+  /*
+   * The status endpoint is polled, so it must open no socket. A status that
+   * connects as a side effect would raise a pairing code every few seconds for
+   * anybody who left the screen open.
+   */
+  const statusBlock = routes.slice(
+    routes.indexOf('"/api/messaging/whatsapp/status"'),
+    routes.indexOf('"/api/messaging/whatsapp/link"'),
+  );
+  ok("the status block was found", statusBlock.length > 100);
+  ok("the status endpoint opens no socket", !statusBlock.includes("connectWhatsapp"));
+  ok("...and draws the code server-side", statusBlock.includes("qrImage"));
+  ok("the link endpoint is the only thing that connects",
+    /connectWhatsapp\(\{\s*force:\s*true\s*\}\)/.test(routes));
+  /*
+   * All three are administration: pressing «اتصال» repeatedly is itself traffic
+   * counted against the number, and «قطع اتصال» stops every automated message
+   * the company sends on the channel.
+   */
+  for (const path of ["status", "link", "unlink"]) {
+    const at = routes.indexOf(`"/api/messaging/whatsapp/${path}"`);
+    ok(`the ${path} endpoint needs the settings permission`,
+      at > 0 && routes.slice(at, at + 400).includes("requireSettings"));
+  }
+
+  /* The session folder is never committed — it can send and read as the line. */
+  ok("the linked-device credentials are gitignored",
+    readFileSync(".gitignore", "utf8").includes("whatsapp-session/"));
+  /*
+   * And the library version is pinned exactly. It is a release candidate of an
+   * unofficial protocol client, where a patch release genuinely changes the
+   * handshake; `deploy.ps1` runs an unattended `npm install`, so a caret would
+   * let a deploy nobody is watching pull the next rc.
+   */
+  {
+    const pkg = JSON.parse(readFileSync("package.json", "utf8")) as
+      { dependencies: Record<string, string> };
+    const spec = pkg.dependencies["@whiskeysockets/baileys"] ?? "";
+    ok("baileys is pinned to an exact version", /^\d+\.\d+\.\d+/.test(spec), spec);
+  }
+
+  /* The screen says the two things that are not software decisions. */
+  const panel = strip(readFileSync("src/components/MessagingView.tsx", "utf8"));
+  ok("the panel is drawn for the WhatsApp channel",
+    /row\.channel === CHANNELS\.WHATSAPP/.test(panel) && panel.includes("WhatsappLinkPanel"));
+  ok("...and says the pacing is fixed rather than configurable",
+    /۳ پیام/.test(panel) && /قابل تغییر نیست/.test(panel));
+  ok("...and says the line itself is what is at risk", /مسدود/.test(panel));
+  /*
+   * The code rotates every few seconds, so the panel has to follow it or
+   * somebody scans one that has already expired and reads the feature as
+   * broken — which is why there are two poll intervals rather than one.
+   */
+  ok("the panel polls faster while a code is waiting",
+    /WHATSAPP_POLL_MS\s*=\s*\{\s*waiting:/.test(panel)
+    && panel.includes("WHATSAPP_POLL_MS.waiting")
+    && panel.includes("WHATSAPP_POLL_MS.settled"));
+  ok("...and stops polling when it is taken off the screen",
+    /clearInterval/.test(panel));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

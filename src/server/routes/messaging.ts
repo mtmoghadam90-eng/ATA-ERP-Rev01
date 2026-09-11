@@ -25,6 +25,26 @@ import {
 
 const KEY = "erp_messaging";
 
+/**
+ * A pairing code as a data URI, or null.
+ *
+ * `qrcode` is loaded at call time for the same reason `pdf-parse` is: it is
+ * needed by one endpoint that one screen calls, and paying for its import on
+ * every server start to draw a code somebody scans once is the wrong trade.
+ */
+async function qrDataUrl(text: string): Promise<string | null> {
+  try {
+    const qrcode = await import("qrcode");
+    const toDataURL = (qrcode as unknown as { default?: unknown; toDataURL?: unknown });
+    const fn = (toDataURL.toDataURL ?? (toDataURL.default as { toDataURL?: unknown })?.toDataURL) as
+      ((t: string, o?: unknown) => Promise<string>) | undefined;
+    if (!fn) return null;
+    return await fn(text, { margin: 1, width: 320 });
+  } catch {
+    return null;
+  }
+}
+
 const TEMPLATE_WRITABLE: (keyof TemplateInput)[] = [
   "name", "channel", "subject", "body", "active",
 ];
@@ -142,6 +162,77 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
       res.json({ success: true, ...(await providerChats(channel)) });
     } catch (err) {
       sendError(res, err, "GET /api/messaging/providers/:channel/chats");
+    }
+  });
+
+  /* ------------------------------- WhatsApp ------------------------------ */
+
+  /*
+   * Linking the company's own line is administration, so all three sit behind
+   * `settings` — the same flag that guards the other providers' credentials, and
+   * for a stronger reason: pressing «اتصال» repeatedly is itself traffic
+   * WhatsApp counts against the number, and pressing «قطع اتصال» stops every
+   * automated message the company sends on that channel.
+   */
+
+  /**
+   * Where the link stands, and the code to scan while it is waiting for one.
+   *
+   * The panel polls this, so it **never opens a socket**: a status endpoint that
+   * connects as a side effect would raise a pairing code every few seconds for
+   * anybody who happened to leave the screen open. Connecting is the button's
+   * job, below.
+   */
+  app.get("/api/messaging/whatsapp/status", async (req, res) => {
+    const user = await requireSettings(req, res);
+    if (!user) return;
+    try {
+      const { whatsappReport, whatsappIsLinked } = await import(
+        "../services/messaging/whatsappClient"
+      );
+      const report = whatsappReport();
+      res.json({
+        success: true,
+        linked: whatsappIsLinked(),
+        ...report,
+        /*
+         * The code as an image, drawn here rather than in the browser.
+         *
+         * A QR library in the client bundle would be carried by every page load
+         * for a panel somebody opens once when they set this up; the data URI is
+         * a couple of kilobytes on a request only that screen makes, and only
+         * while a code is actually waiting. A failure to draw it is not a
+         * failure of the status: the state and its advice still answer, which is
+         * most of what the panel says.
+         */
+        qrImage: report.qr ? await qrDataUrl(report.qr) : null,
+      });
+    } catch (err) {
+      sendError(res, err, "GET /api/messaging/whatsapp/status");
+    }
+  });
+
+  /** Opens the link, raising a pairing code when no device is linked yet. */
+  app.post("/api/messaging/whatsapp/link", async (req, res) => {
+    const user = await requireSettings(req, res);
+    if (!user) return;
+    try {
+      const { connectWhatsapp } = await import("../services/messaging/whatsappClient");
+      res.json({ success: true, ...(await connectWhatsapp({ force: true })) });
+    } catch (err) {
+      sendError(res, err, "POST /api/messaging/whatsapp/link");
+    }
+  });
+
+  /** Removes the device from the account and forgets its credentials. */
+  app.post("/api/messaging/whatsapp/unlink", async (req, res) => {
+    const user = await requireSettings(req, res);
+    if (!user) return;
+    try {
+      const { unlinkWhatsapp } = await import("../services/messaging/whatsappClient");
+      res.json({ success: true, ...(await unlinkWhatsapp()) });
+    } catch (err) {
+      sendError(res, err, "POST /api/messaging/whatsapp/unlink");
     }
   });
 

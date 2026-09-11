@@ -32,3 +32,8 @@ prisma/generated/
 
 # Server logs (see src/server/logFile.ts) — one file per day, local to each host.
 logs/
+
+# The WhatsApp linked-device credentials (src/server/services/messaging/whatsappClient.ts).
+# Whoever holds these files can send and read as the company's own line, so they
+# are per-host and never committed — re-link by scanning the code again.
+whatsapp-session/

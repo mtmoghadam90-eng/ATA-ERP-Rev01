@@ -12,6 +12,7 @@ import {
 } from "../../../utils/messaging";
 import { BaleChatsResult, BaleConfig, baleRecentChats, sendThrough } from "./drivers";
 import { addresseeOf, namePrefixFor } from "../../../utils/honorific";
+import { WHATSAPP_PER_PASS, whatsappGapMs } from "../../../utils/whatsapp";
 
 /**
  * Sending a customer a message: the queue, and everything around it.
@@ -48,6 +49,13 @@ const SECRET_FIELDS: Record<Channel, string[]> = {
   SMS: ALL_SMS_SECRET_FIELDS,
   BALE: ["botToken"],
   EMAIL: ["password"],
+  /*
+   * None. WhatsApp has no credential to type: the authorisation *is* the linked
+   * device, and its keys live on disk under `whatsapp-session/` where baileys
+   * rewrites them on almost every message. An empty list is the honest answer
+   * rather than an omission — there is nothing here a form could show or hide.
+   */
+  WHATSAPP: [],
 };
 
 /** Everything a channel's configuration may hold, secrets included. */
@@ -65,6 +73,9 @@ const CONFIG_FIELDS: Record<Channel, string[]> = {
     "host", "port", "secure", "user", "password",
     "fromAddress", "fromName", "allowSelfSigned",
   ],
+  // Nothing to configure; the provider row exists so the channel can be switched
+  // on and off like the others, and `active` is not part of `config`.
+  WHATSAPP: [],
 };
 
 const parseConfig = (raw: unknown): Record<string, unknown> => {
@@ -505,6 +516,27 @@ const BATCH_SIZE = 25;
 let running = false;
 
 /**
+ * How many of one channel a single pass may send.
+ *
+ * A ceiling *within* the batch, and it exists for WhatsApp: the 25 above is
+ * right for an SMS panel, which is a paid service that expects exactly this
+ * traffic, and wrong for a personal WhatsApp line, where the cost of looking
+ * like a broadcaster is the number being blocked rather than a bill. Three a
+ * minute is the rule, and it is in `src/utils/whatsapp.ts` beside the reasoning
+ * rather than here.
+ *
+ * Anything over its cap is **left QUEUED**, not failed: it is due, nothing is
+ * wrong with it, and the next tick takes it. Marking it failed would fill the
+ * outbox with red rows whose only fault was arriving fourth.
+ */
+export function channelPassLimit(channel: Channel): number {
+  return channel === CHANNELS.WHATSAPP ? WHATSAPP_PER_PASS : BATCH_SIZE;
+}
+
+/** Waits, so two WhatsApp messages are not sent in the same breath. */
+const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
  * Sends everything that is due.
  *
  * Guarded against overlapping with itself, the same way the rate refresh is: a
@@ -530,8 +562,20 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
     // The provider configurations, read once for the batch rather than per row.
     const configs = new Map<string, { active: boolean; config: Record<string, unknown> } | null>();
 
+    /*
+     * How many of each channel have gone this pass, against `channelPassLimit`.
+     * Counted here rather than asked of SQL because the cap is per channel and
+     * the query is one ordered read: narrowing it per channel would be four
+     * queries and would still let a burst through on the one that matters.
+     */
+    const donePerChannel = new Map<string, number>();
+
     for (const message of due) {
       const channel = message.channel as Channel;
+      const alreadySent = donePerChannel.get(channel) ?? 0;
+      // Over this channel's cap: leave it queued and let the next tick have it.
+      if (alreadySent >= channelPassLimit(channel)) continue;
+
       if (!configs.has(channel)) configs.set(channel, await providerConfig(channel));
       const provider = configs.get(channel) ?? null;
 
@@ -578,6 +622,28 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
         });
         failed++;
         continue;
+      }
+
+      /*
+       * A real send, and only here is it counted against the cap.
+       *
+       * The cap protects the line, so the two things that never reach it must
+       * not consume it: a dry run touches no number, and a switched-off channel
+       * fails without a request. Counted at the top instead, a pass of three dry
+       * runs would hold three genuine messages back until the next tick — and
+       * would make the worker sit through two four-to-ten second gaps for sends
+       * that are not happening.
+       *
+       * The gap itself is jittered, from the pure rule, because a fixed interval
+       * is a signature of its own; and it is taken *before* the send rather than
+       * after, so a pass that ends on its cap does not hold the worker for a
+       * delay nobody is waiting on. Three messages at 4–10s each stays well
+       * inside the one-minute tick, and `processQueue` refuses to overlap with
+       * itself in any case.
+       */
+      donePerChannel.set(channel, alreadySent + 1);
+      if (channel === CHANNELS.WHATSAPP && alreadySent > 0) {
+        await wait(whatsappGapMs(Math.random()));
       }
 
       const result = await sendThrough(channel, provider.config, {

@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import {
   CHANNELS, Channel, SMS_PROVIDERS, SMS_PROVIDER_SPECS, SmsProvider,
-  isBaleChatId, kavenegarSendUrl, looksLikeMobile, normalizeSenderLine,
+  digitsOf, isBaleChatId, kavenegarSendUrl, looksLikeMobile, normalizeSenderLine,
   smsConfigRefusal, smsProviderOf,
 } from "../../../utils/messaging";
 
@@ -107,10 +107,10 @@ const MELIPAYAMAK_URL = SMS_PROVIDER_SPECS.MELIPAYAMAK.defaultUrl;
  * generic failure code that says nothing about the number being the problem.
  */
 export function normalizeMobile(raw: string): string {
-  const latin = String(raw ?? "")
-    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
-    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
-    .replace(/\D/g, "");
+  // The digit fold is `digitsOf` in `src/utils/messaging.ts`, not a copy here:
+  // it is the same arithmetic WhatsApp's JID rule needs, and two copies of it is
+  // how one channel comes to accept a number the other cannot see.
+  const latin = digitsOf(raw);
 
   if (latin.startsWith("0098")) return `0${latin.slice(4)}`;
   if (latin.startsWith("98") && latin.length === 12) return `0${latin.slice(2)}`;
@@ -605,6 +605,18 @@ export async function sendEmail(config: EmailConfig, message: OutgoingMessage): 
   }
 }
 
+/* -------------------------------- WhatsApp -------------------------------- */
+
+/*
+ * The WhatsApp driver is not written out here, and that is the one asymmetry in
+ * this file worth explaining. The other three are stateless: a configuration and
+ * a message go in, an HTTP request goes out, and nothing survives the call.
+ * WhatsApp is a **held-open socket** with an identity, a pairing step and a
+ * connection state a screen has to report — so it lives in `whatsappClient.ts`
+ * and this module only names it, which keeps `sendThrough` the one list of
+ * channels without pretending the fourth is the same shape as the first three.
+ */
+
 /* -------------------------------- dispatch -------------------------------- */
 
 export async function sendThrough(
@@ -615,5 +627,18 @@ export async function sendThrough(
   if (channel === CHANNELS.SMS) return sendSms(config as SmsConfig, message);
   if (channel === CHANNELS.BALE) return sendBale(config as BaleConfig, message);
   if (channel === CHANNELS.EMAIL) return sendEmail(config as EmailConfig, message);
+  /*
+   * Imported at call time, not at the top of the file.
+   *
+   * `whatsappClient` imports this module for its `OutgoingMessage`/`SendResult`
+   * types, so a plain import here would be a cycle — and it is the client that
+   * must load the ESM-only library lazily anyway, for the reason written down
+   * there. Types are erased, so the cycle exists only in the value graph and
+   * only this direction of it has to be deferred.
+   */
+  if (channel === CHANNELS.WHATSAPP) {
+    const { sendWhatsapp } = await import("./whatsappClient");
+    return sendWhatsapp(message);
+  }
   return { ok: false, error: `روش ارسال «${channel}» پشتیبانی نمی‌شود.` };
 }
