@@ -28,6 +28,24 @@ export interface BaleChatRow {
   type: string;
 }
 
+/**
+ * Where the company's own WhatsApp line stands.
+ *
+ * `qrImage` is a data URI the **server** drew, not the raw code: a QR library in
+ * the client bundle would be carried by every page load for a panel somebody
+ * opens once. It is null whenever no code is waiting, which is most of the time.
+ */
+export interface WhatsappStatus {
+  state: string;
+  /** Whether credentials for a device are stored at all. */
+  linked: boolean;
+  qr: string | null;
+  qrImage: string | null;
+  linkedNumber: string | null;
+  lastError: string | null;
+  since: string;
+}
+
 export interface MessageTemplateRow {
   id: string;
   name: string;
@@ -104,6 +122,27 @@ export const messagingApi = {
     api.get<{ ok: boolean; chats: BaleChatRow[]; error?: string }>(
       `/api/messaging/providers/${channel}/chats`,
     ),
+
+  /* WhatsApp — the company's own line, as a linked device */
+
+  /**
+   * Polled by the panel while it is open, and **opens no socket**.
+   *
+   * That is the whole reason it is a separate call from `whatsappLink` below:
+   * connecting as a side effect of being looked at would raise a pairing code
+   * every few seconds for anybody who left the screen open, which is itself
+   * traffic WhatsApp counts against the number.
+   */
+  whatsappStatus: () =>
+    api.get<{ success: boolean } & WhatsappStatus>("/api/messaging/whatsapp/status"),
+
+  /** Opens the link, raising a code to scan when no device is linked yet. */
+  whatsappLink: () =>
+    api.post<{ success: boolean } & WhatsappStatus>("/api/messaging/whatsapp/link", {}),
+
+  /** Removes the device from the account and forgets its credentials. */
+  whatsappUnlink: () =>
+    api.post<{ success: boolean } & WhatsappStatus>("/api/messaging/whatsapp/unlink", {}),
 
   /* templates */
   templates: () =>
