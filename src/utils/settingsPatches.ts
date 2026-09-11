@@ -82,7 +82,7 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
       /*
        * Written in explicitly, and that is the whole point of doing it here.
        *
-       * `staffSmsEnabled` reads an absent key as **on**, because a live
+       * `staffNotifyEnabled` reads an absent key as **on**, because a live
        * database never sees a default added to `seedData` and this was asked
        * for. But «absent means on» would also mean somebody who switched it off
        * had their choice re-decided by any later reading of the code — so the

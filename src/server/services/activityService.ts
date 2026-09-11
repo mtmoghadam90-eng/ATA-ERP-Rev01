@@ -23,7 +23,7 @@ import { afterCommit } from "../afterCommit";
 import { capacityRefusalMessage } from "../../utils/workLimits";
 import { MoveOutcome } from "./taskService";
 import { capacityByUser } from "./workLoadService";
-import { notifyStaffBySms } from "./staffNotifications";
+import { notifyStaff } from "./staffNotifications";
 
 /**
  * Project category groups, activities, referrals and module notes.
@@ -672,10 +672,10 @@ export async function addActivity(
        *
        * The message *is* the request — there is no separate «what should they
        * do» box — so the text carries it and the project it was written under.
-       * `notifyStaffBySms` refuses to write to whoever raised it, to an account
+       * `notifyStaff` refuses to write to whoever raised it, to an account
        * that has since been deactivated, and to one with no number.
        */
-      await notifyStaffBySms({
+      await notifyStaff({
         kind: "REFERRAL_RAISED",
         assigneeUserId: referral.assignedToUserId,
         actorUserId: user.id,

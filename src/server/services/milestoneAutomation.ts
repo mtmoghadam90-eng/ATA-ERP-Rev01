@@ -8,7 +8,7 @@ import { sameCategory } from "../../utils/activityCategories";
 import { notifyModuleResponsible, notifyUser } from "./notificationService";
 import { TASK_TODO } from "../../utils/workBoard";
 import { resolveAssignee as sharedResolveAssignee } from "./assigneeLookup";
-import { notifyStaffBySms } from "./staffNotifications";
+import { notifyStaff } from "./staffNotifications";
 import { afterCommit } from "../afterCommit";
 import { processWorkflowRules } from "./workflowService";
 
@@ -197,7 +197,7 @@ export async function runMilestoneRules(
          * checkpoint fires because a milestone was ticked, so there is no
          * actor to name and the message says «سیستم».
          */
-        await notifyStaffBySms({
+        await notifyStaff({
           kind: "TASK_ASSIGNED",
           assigneeUserId: created.assignedToUserId,
           actorUserId: null,

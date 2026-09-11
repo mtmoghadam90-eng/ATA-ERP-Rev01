@@ -5,8 +5,10 @@ import {
 } from 'lucide-react';
 import type { ERPSettings, User } from '../types';
 import {
+  STAFF_CHANNELS, STAFF_CHANNEL_HINTS, STAFF_CHANNEL_LABELS,
   STAFF_NOTIFICATION_KINDS, STAFF_NOTIFICATION_LABELS, STAFF_SAMPLE_VALUES,
-  STAFF_VARIABLES, type StaffNotificationKind, staffTemplateFor,
+  STAFF_VARIABLES, type StaffNotificationKind, staffChannelChoice,
+  staffFallsBackToSms, staffTemplateFor,
 } from '../utils/staffNotifications';
 import { ApiError } from '../api/client';
 import CampaignsTab from './CampaignsTab';
@@ -852,10 +854,12 @@ function StaffNotifications({
   };
 
   const bodyFor = (kind: StaffNotificationKind) => staffTemplateFor(kind, staff);
+  const channel = staffChannelChoice(staff);
+  const fallback = staffFallsBackToSms(staff);
 
   return (
     <div className="border border-slate-150 rounded-2xl p-4 bg-white space-y-3">
-      <h3 className="font-bold text-sm text-slate-800">پیامک ارجاع کار به همکاران</h3>
+      <h3 className="font-bold text-sm text-slate-800">اعلان ارجاع کار به همکاران</h3>
 
       <label className="flex items-start gap-2.5 rounded-xl border border-slate-150 bg-slate-50/60 p-3 cursor-pointer">
         <input
@@ -864,22 +868,93 @@ function StaffNotifications({
           disabled={!onUpdateSettings}
           onChange={(e) => patch(
             { ...staff, enabled: e.target.checked },
-            e.target.checked ? 'پیامک ارجاع کار روشن شد.' : 'پیامک ارجاع کار خاموش شد.',
+            e.target.checked ? 'اعلان ارجاع کار روشن شد.' : 'اعلان ارجاع کار خاموش شد.',
           )}
           className="accent-sky-500 mt-0.5"
           id="staff-sms-enabled"
         />
         <span className="text-[11px] leading-6">
-          <span className="font-bold text-slate-800">ارسال پیامک به همکار در لحظه ارجاع</span>
+          <span className="font-bold text-slate-800">اطلاع به همکار در لحظه ارجاع</span>
           <span className="block text-slate-500">
             فقط دو رویداد: وظیفه‌ای که مستقیم به یک همکار ارجاع می‌شود، و ارجاع کاری که در فید
-            پروژه با نام بردن او ثبت می‌شود. <b>پیگیری فروش پیامک ندارد</b> — روز سررسیدش خودش
-            به ستون «در حال انجام» می‌آید — و اعلان‌های دسته فعالیت هم پیامک ندارند.
-            پیامک به شماره موبایل ثبت‌شده در «مدیریت کاربران» می‌رود؛ کاربر بدون شماره، پیامکی
-            دریافت نمی‌کند. ساعات سکوت و حالت آزمایشی بالا روی این پیامک‌ها هم اعمال می‌شود.
+            پروژه با نام بردن او ثبت می‌شود. <b>پیگیری فروش اعلان ندارد</b> — روز سررسیدش خودش
+            به ستون «در حال انجام» می‌آید — و اعلان‌های دسته فعالیت هم اعلان جداگانه ندارند.
+            هر دو روش به <b>شماره موبایل ثبت‌شده در «مدیریت کاربران»</b> می‌روند؛ کاربر بدون
+            شماره، هیچ اعلانی دریافت نمی‌کند. ساعات سکوت و حالت آزمایشی بالا روی این پیام‌ها
+            هم اعمال می‌شود.
           </span>
         </span>
       </label>
+
+      {/*
+        Which medium carries it.
+
+        One choice for both events rather than one each: how this company
+        reaches its own staff is a fact about the company, not about the kind of
+        work, and two controls to express one answer is two things to keep in
+        step. The hint under each is the trade being made — SMS costs money by
+        the character, WhatsApp is paced at three a minute to keep the company's
+        own line off WhatsApp's radar — because somebody choosing here cannot
+        weigh that from the labels alone.
+      */}
+      <div className="space-y-1.5">
+        <div className="text-[11px] font-bold text-slate-600">روش ارسال اعلان</div>
+        <div className="flex flex-wrap gap-2">
+          {STAFF_CHANNELS.map((option) => (
+            <button
+              key={option}
+              type="button"
+              data-staff-channel={option}
+              aria-pressed={channel === option}
+              disabled={!onUpdateSettings}
+              onClick={() => patch(
+                { ...staff, channel: option },
+                `اعلان ارجاع کار از این پس با ${STAFF_CHANNEL_LABELS[option]} می‌رود.`,
+              )}
+              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border transition ${
+                channel === option
+                  ? 'bg-sky-500 text-white border-sky-500'
+                  : 'bg-white text-slate-600 border-slate-200 hover:border-sky-300'
+              }`}
+            >
+              {STAFF_CHANNEL_LABELS[option]}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-slate-500 leading-5">{STAFF_CHANNEL_HINTS[channel]}</p>
+      </div>
+
+      {/*
+        Drawn only under WhatsApp, and that is not the `stuckStateOwner` case:
+        there a disowned row is still *counted somewhere* and hiding it would
+        leave somebody hunting. Here, under SMS, there is simply no question to
+        answer — a fallback from SMS to SMS is not a thing anybody can mean.
+      */}
+      {channel === 'WHATSAPP' && (
+        <label className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/60 p-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={fallback}
+            disabled={!onUpdateSettings}
+            id="staff-notify-fallback"
+            onChange={(e) => patch(
+              { ...staff, fallbackToSms: e.target.checked },
+              e.target.checked
+                ? 'اگر واتس‌اپ در دسترس نباشد، پیامک فرستاده می‌شود.'
+                : 'اگر واتس‌اپ در دسترس نباشد، هیچ اعلانی فرستاده نمی‌شود.',
+            )}
+            className="accent-amber-500 mt-0.5"
+          />
+          <span className="text-[11px] leading-6">
+            <span className="font-bold text-slate-800">اگر واتس‌اپ در دسترس نبود، با پیامک بفرست</span>
+            <span className="block text-slate-600">
+              وقتی کانال واتس‌اپ خاموش یا تنظیم‌نشده باشد، اعلان بی‌صدا از بین می‌رود و همه فکر
+              می‌کنند همکار خبردار شده — که از نبودن این قابلیت بدتر است. اگر این را خاموش کنید،
+              در آن حالت <b>هیچ اعلانی ارسال نمی‌شود</b> و دلیلش در صندوق خروجی ثبت می‌شود.
+            </span>
+          </span>
+        </label>
+      )}
 
       {STAFF_NOTIFICATION_KINDS.map((kind) => {
         const body = bodyFor(kind);
@@ -888,10 +963,18 @@ function StaffNotifications({
           <div key={kind} className="space-y-1">
             <div className="flex items-center justify-between gap-2">
               <label className="text-[11px] font-bold text-slate-600">
-                متن پیامک: {STAFF_NOTIFICATION_LABELS[kind]}
+                متن اعلان: {STAFF_NOTIFICATION_LABELS[kind]}
               </label>
+              {/*
+                The part count is money on SMS and nothing on WhatsApp, so it
+                says which it is about rather than reading as a limit on both.
+                The wording itself is shared: a staff notification is one
+                sentence saying who asked, for what and by when, and that is the
+                same sentence on either medium — four templates for two events
+                would be four things to keep in step to say one thing.
+              */}
               <span className="text-[10px] font-mono text-slate-500">
-                {parts.characters} کاراکتر · {parts.parts} بخش
+                {parts.characters} کاراکتر · {parts.parts} بخش پیامک
               </span>
             </div>
             <textarea
@@ -901,7 +984,7 @@ function StaffNotifications({
               id={`staff-sms-template-${kind}`}
               onChange={(e) => patch(
                 { ...staff, templates: { ...staff.templates, [kind]: e.target.value } },
-                'متن پیامک ذخیره شد.',
+                'متن اعلان ذخیره شد.',
               )}
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-right leading-6"
             />

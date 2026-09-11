@@ -71,8 +71,10 @@ import {
   normalizeLimit, remainingCapacity, topUpShortfall, workLimitRefusalReason,
 } from "../src/utils/workLimits";
 import {
-  DEFAULT_STAFF_TEMPLATES, STAFF_NOTIFICATION_KINDS, STAFF_SAMPLE_VALUES, STAFF_VARIABLES,
-  normalizeMobile, staffSmsEnabled, staffSmsRefusal, staffSmsSkipReason, staffTemplateFor,
+  DEFAULT_STAFF_TEMPLATES, STAFF_CHANNELS, STAFF_CHANNEL_HINTS, STAFF_CHANNEL_LABELS,
+  STAFF_NOTIFICATION_KINDS, STAFF_SAMPLE_VALUES, STAFF_SKIP_LABELS, STAFF_VARIABLES,
+  normalizeMobile, planStaffChannel, staffChannelChoice, staffFallsBackToSms,
+  staffNotifyEnabled, staffNotifyRefusal, staffNotifySkipReason, staffTemplateFor,
 } from "../src/utils/staffNotifications";
 import {
   MAX_UPLOAD_BYTES, MAX_UPLOAD_LABEL, oversizedUploadReason,
@@ -12420,7 +12422,7 @@ head("Staff SMS: only the work a person hands to another person");
 
   const ON = { enabled: true };
   const account = { isActive: true, mobile: "09121234567" };
-  const subject = (over: Partial<Parameters<typeof staffSmsRefusal>[0]> = {}) => ({
+  const subject = (over: Partial<Parameters<typeof staffNotifyRefusal>[0]> = {}) => ({
     kind: "TASK_ASSIGNED" as const,
     assigneeUserId: "u-2",
     actorUserId: "u-1",
@@ -12428,9 +12430,9 @@ head("Staff SMS: only the work a person hands to another person");
   });
 
   eq("a task handed to a colleague is texted",
-    staffSmsSkipReason(subject(), account, ON), null);
+    staffNotifySkipReason(subject(), account, ON), null);
   eq("...and so is a referral raised for them",
-    staffSmsSkipReason(subject({ kind: "REFERRAL_RAISED" }), account, ON), null);
+    staffNotifySkipReason(subject({ kind: "REFERRAL_RAISED" }), account, ON), null);
 
   /*
    * The one the user asked for by name. A chase is a call that person
@@ -12440,22 +12442,22 @@ head("Staff SMS: only the work a person hands to another person");
    * matter stop being read.
    */
   eq("a sales follow-up is never texted",
-    staffSmsSkipReason(subject({ taskKind: "SALES_FOLLOW_UP" }), account, ON), "FOLLOW_UP");
+    staffNotifySkipReason(subject({ taskKind: "SALES_FOLLOW_UP" }), account, ON), "FOLLOW_UP");
   eq("...and an ordinary task is not caught by that rule",
-    staffSmsSkipReason(subject({ taskKind: "GENERAL" }), account, ON), null);
+    staffNotifySkipReason(subject({ taskKind: "GENERAL" }), account, ON), null);
   /*
    * Refused **before** the account is read: `completeFollowUp` raises a chase
    * several times a day per salesperson, and each would otherwise cost a user
    * lookup for a message that is never sent.
    */
   eq("...refused without reading the recipient at all",
-    staffSmsRefusal(subject({ taskKind: "SALES_FOLLOW_UP" }), ON), "FOLLOW_UP");
+    staffNotifyRefusal(subject({ taskKind: "SALES_FOLLOW_UP" }), ON), "FOLLOW_UP");
 
   // Half the tasks here are things people log for themselves.
   eq("nobody is texted their own work",
-    staffSmsSkipReason(subject({ actorUserId: "u-2" }), account, ON), "SELF");
+    staffNotifySkipReason(subject({ actorUserId: "u-2" }), account, ON), "SELF");
   eq("a task belonging to nobody is nobody's to text",
-    staffSmsSkipReason(subject({ assigneeUserId: null }), account, ON), "NO_RECIPIENT");
+    staffNotifySkipReason(subject({ assigneeUserId: null }), account, ON), "NO_RECIPIENT");
 
   /*
    * A stored assignee is not rewritten when somebody leaves, so this is asked
@@ -12463,13 +12465,13 @@ head("Staff SMS: only the work a person hands to another person");
    * `activityRecipients` follows.
    */
   eq("a deactivated account is not texted",
-    staffSmsSkipReason(subject(), { isActive: false, mobile: "09121234567" }, ON), "INACTIVE");
+    staffNotifySkipReason(subject(), { isActive: false, mobile: "09121234567" }, ON), "INACTIVE");
   eq("an account with no number simply gets none",
-    staffSmsSkipReason(subject(), { isActive: true, mobile: null }, ON), "NO_MOBILE");
+    staffNotifySkipReason(subject(), { isActive: true, mobile: null }, ON), "NO_MOBILE");
   eq("...and a landline is named as such rather than dialled",
-    staffSmsSkipReason(subject(), { isActive: true, mobile: "02188776655" }, ON), "BAD_MOBILE");
+    staffNotifySkipReason(subject(), { isActive: true, mobile: "02188776655" }, ON), "BAD_MOBILE");
   eq("and the switch turns the whole thing off",
-    staffSmsSkipReason(subject(), account, { enabled: false }), "DISABLED");
+    staffNotifySkipReason(subject(), account, { enabled: false }), "DISABLED");
 
   /*
    * **Absent is on.** `settings` is one JSON row seeded once, so a default
@@ -12488,9 +12490,9 @@ head("Staff SMS: only the work a person hands to another person");
     REFERRAL_RAISED: "{actorName} در پروژه {projectCode} از شما درخواست کرد: {title}",
   } as const;
 
-  ok("an unconfigured settings document has it on", staffSmsEnabled(undefined));
+  ok("an unconfigured settings document has it on", staffNotifyEnabled(undefined));
   ok("...and only an explicit false turns it off",
-    staffSmsEnabled({}) && !staffSmsEnabled({ enabled: false }));
+    staffNotifyEnabled({}) && !staffNotifyEnabled({ enabled: false }));
 
   /*
    * And the patch writes the key in once, which is what makes a later,
@@ -12654,7 +12656,7 @@ head("Staff SMS: only the work a person hands to another person");
    */
   const taskSrc = strip(readFileSync("src/server/services/taskService.ts", "utf8"));
   ok("a new task texts its assignee, after the commit",
-    /afterCommit\("task assignment SMS"[\s\S]{0,400}notifyStaffBySms/.test(taskSrc));
+    /afterCommit\("task assignment SMS"[\s\S]{0,400}notifyStaff/.test(taskSrc));
   /*
    * Compared against what was **stored**, not against the field being present:
    * the form posts the whole record, so «assignedToUserId was sent» would text
@@ -12672,7 +12674,7 @@ head("Staff SMS: only the work a person hands to another person");
    * `activityRecipients` is a separate path — so it stays in the inbox.
    */
   ok("...while the category members are not texted at all",
-    !/activityRecipients[\s\S]{0,600}notifyStaffBySms/.test(activitySrc));
+    !/activityRecipients[\s\S]{0,600}notifyStaff/.test(activitySrc));
 
   // A rule-raised task is as much of somebody's afternoon as a typed one.
   for (const file of [
@@ -12680,7 +12682,7 @@ head("Staff SMS: only the work a person hands to another person");
     "src/server/services/milestoneAutomation.ts",
   ]) {
     ok(`an automation-raised task reaches its assignee too (${file.split("/").pop()})`,
-      /notifyStaffBySms/.test(strip(readFileSync(file, "utf8"))));
+      /notifyStaff/.test(strip(readFileSync(file, "utf8"))));
   }
 
   /*
@@ -12696,6 +12698,84 @@ head("Staff SMS: only the work a person hands to another person");
     /messaging: \{\s*\.\.\.messaging,/.test(messagingView));
   ok("and the wording is editable on that screen",
     /staff-sms-template-/.test(messagingView) && /staff-sms-enabled/.test(messagingView));
+
+  /* ------------------- which medium carries the notice ------------------- */
+
+  /*
+   * **Absent is SMS**, which is the whole reason no settings patch was needed:
+   * every document stored before this key existed already means «SMS», so the
+   * behaviour of a live database does not move until somebody chooses. A stored
+   * value this build does not know answers SMS as well — the safe direction,
+   * since it still reaches the colleague rather than silently reaching nobody.
+   */
+  eq("a settings document with no channel means SMS", staffChannelChoice(undefined), "SMS");
+  eq("...and so does a value this build does not know",
+    staffChannelChoice({ channel: "BALE" as never }), "SMS");
+  ok("the fallback to SMS is on unless somebody turns it off",
+    staffFallsBackToSms({}) && staffFallsBackToSms({ fallbackToSms: true })
+    && !staffFallsBackToSms({ fallbackToSms: false }));
+
+  /*
+   * The four shapes `planStaffChannel` can be in. The third is the one worth
+   * having: a WhatsApp notification that evaporates because nobody switched the
+   * channel on is worse than the feature not existing — the board still shows
+   * the task and everyone believes the colleague was told — so SMS carries it
+   * and says that it did.
+   */
+  eq("SMS chosen is SMS, whatever WhatsApp is doing",
+    JSON.stringify(planStaffChannel({ channel: "SMS" }, false)),
+    JSON.stringify({ channel: "SMS", fellBack: false, skipped: null }));
+  eq("WhatsApp chosen and switched on goes on WhatsApp",
+    JSON.stringify(planStaffChannel({ channel: "WHATSAPP" }, true)),
+    JSON.stringify({ channel: "WHATSAPP", fellBack: false, skipped: null }));
+  eq("...switched off, SMS carries it and the fallback is recorded",
+    JSON.stringify(planStaffChannel({ channel: "WHATSAPP" }, false)),
+    JSON.stringify({ channel: "SMS", fellBack: true, skipped: null }));
+  eq("...and with the fallback off, nothing is sent and the reason is named",
+    JSON.stringify(planStaffChannel({ channel: "WHATSAPP", fallbackToSms: false }, false)),
+    JSON.stringify({ channel: null, fellBack: false, skipped: "WHATSAPP_OFF" }));
+  ok("that refusal has a sentence of its own",
+    Boolean(STAFF_SKIP_LABELS.WHATSAPP_OFF));
+
+  /* Every channel offered is a channel the panel can describe and label. */
+  for (const option of STAFF_CHANNELS) {
+    ok(`«${option}» has a label and a hint`,
+      Boolean(STAFF_CHANNEL_LABELS[option]) && Boolean(STAFF_CHANNEL_HINTS[option]));
+  }
+
+  /*
+   * The queue row must carry the *planned* channel. Hardcoding `CHANNELS.SMS`
+   * here is exactly what this feature replaces, and it is a one-word edit that
+   * would leave the dropdown on the screen doing nothing at all.
+   */
+  const senderSrc = strip(sender);
+  ok("the outbox row is queued on the planned channel",
+    /channel: plan\.channel/.test(senderSrc)
+    && !/queueMessage\(\{[\s\S]{0,80}channel: CHANNELS\.SMS/.test(senderSrc));
+  /*
+   * And the provider row is read only when WhatsApp is the choice: this runs on
+   * every task anybody assigns, and a query whose answer cannot change the
+   * outcome is a read per save for nothing.
+   */
+  ok("...and the provider flag is asked for only when WhatsApp is chosen",
+    /choice === "WHATSAPP" \? await channelIsActive/.test(senderSrc));
+  /*
+   * One reading of «is this channel on»: the worker's own row, not a second
+   * copy of the question that could answer differently.
+   */
+  ok("that flag comes from the messaging module rather than a second reading",
+    /channelIsActive/.test(strip(readFileSync(
+      "src/server/services/messaging/messageService.ts", "utf8"))));
+
+  /*
+   * Drawn from the list rather than written out, so the screen cannot offer
+   * fewer channels than the rule knows about; `test:ui` renders it and presses
+   * one, which is the half a source scan cannot see.
+   */
+  ok("the panel draws its channel control from the list",
+    /STAFF_CHANNELS\.map/.test(messagingView) && /data-staff-channel=/.test(messagingView));
+  ok("...and the fallback switch is on that screen",
+    /staff-notify-fallback/.test(messagingView));
 
   // A colleague's phone number is not something every account may enumerate.
   const userService = strip(readFileSync("src/server/services/userService.ts", "utf8"));
