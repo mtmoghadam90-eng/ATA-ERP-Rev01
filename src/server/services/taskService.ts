@@ -20,7 +20,7 @@ import { toJsonColumn, toNullableString } from "../childSync";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
-import { notifyStaffBySms } from "./staffNotifications";
+import { notifyStaff } from "./staffNotifications";
 import { afterCommit } from "../afterCommit";
 
 /**
@@ -955,13 +955,13 @@ export async function createTask(input: TaskInput, user: AuthUser, todayJalali: 
    * And the person it was given to, on their phone.
    *
    * The board tells them the next time they open it, which is no use for
-   * something raised while they are at a customer site. `notifyStaffBySms`
+   * something raised while they are at a customer site. `notifyStaff`
    * decides the rest — never a sales follow-up, never to whoever raised it,
    * never to an account with no mobile — and `afterCommit` means a gateway
    * being down cannot fail a save that has already happened.
    */
   await afterCommit("task assignment SMS", async () => {
-    await notifyStaffBySms({
+    await notifyStaff({
       kind: "TASK_ASSIGNED",
       assigneeUserId: task.assignedToUserId,
       actorUserId: user.id,
@@ -1136,7 +1136,7 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
    */
   if (task.assignedToUserId && task.assignedToUserId !== before.assignedToUserId) {
     await afterCommit("task reassignment SMS", async () => {
-      await notifyStaffBySms({
+      await notifyStaff({
         kind: "TASK_ASSIGNED",
         assigneeUserId: task.assignedToUserId,
         actorUserId: user.id,

@@ -188,6 +188,23 @@ async function providerConfig(channel: Channel): Promise<{
 }
 
 /**
+ * Whether a channel is configured **and** switched on.
+ *
+ * The narrow half of `providerConfig`, exported because the staff notifier has
+ * to ask the same question before it queues on WhatsApp — and asking it of the
+ * same row the worker reads is what stops «is this channel on» having two
+ * answers. It deliberately never returns the config: a caller that only needs
+ * the flag has no business holding somebody's API key.
+ */
+export async function channelIsActive(channel: Channel): Promise<boolean> {
+  const row = await getDb().messageProvider.findUnique({
+    where: { channel },
+    select: { active: true },
+  });
+  return row?.active === true;
+}
+
+/**
  * Sends one message straight out, and records the outcome against the channel.
  *
  * The settings screen's "try it" button. Deliberately not queued: the person is

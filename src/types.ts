@@ -827,8 +827,20 @@ export interface ERPSettings {
      * means **on**: `settingsPatches` writes the key in once so a later,
      * deliberate `false` sticks. See `src/utils/staffNotifications.ts`.
      */
+    /*
+     * The key is still `staffSms` although the feature now also sends on
+     * WhatsApp. It is a key on disk in every live settings document: renaming
+     * it to read better would silence the feature on every one of them, so the
+     * *code* names track what they do (`StaffNotifySettings`, `notifyStaff`)
+     * and the stored key tracks what is stored — the same asymmetry
+     * `relatedToType` keeps for the same reason.
+     */
     staffSms?: {
       enabled?: boolean;
+      /** «SMS» | «WHATSAPP»; absent is SMS, which is what every stored document means. */
+      channel?: 'SMS' | 'WHATSAPP';
+      /** Absent is on: SMS carries it when the WhatsApp channel is switched off. */
+      fallbackToSms?: boolean;
       templates?: { TASK_ASSIGNED?: string; REFERRAL_RAISED?: string };
     };
   };

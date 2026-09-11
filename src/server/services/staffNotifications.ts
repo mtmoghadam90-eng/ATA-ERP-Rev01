@@ -3,10 +3,11 @@ import { loadSettings } from "../settings";
 import { CHANNELS, renderTemplate } from "../../utils/messaging";
 import { staffAddresseeOf, staffPrefixFor } from "../../utils/honorific";
 import {
-  StaffNotificationKind, StaffSkipReason, StaffSmsSettings,
-  normalizeMobile, staffRecipientRefusal, staffSmsRefusal, staffTemplateFor,
+  StaffChannel, StaffNotificationKind, StaffSkipReason, StaffNotifySettings,
+  normalizeMobile, planStaffChannel, staffChannelChoice, staffRecipientRefusal,
+  staffNotifyRefusal, staffTemplateFor,
 } from "../../utils/staffNotifications";
-import { queueMessage } from "./messaging/messageService";
+import { channelIsActive, queueMessage } from "./messaging/messageService";
 
 /**
  * Texting a colleague the work that has just been handed to them.
@@ -14,7 +15,7 @@ import { queueMessage } from "./messaging/messageService";
  * Two events, both of which mean «a person gave this to you by name»: a task
  * assigned to somebody, and a referral raised for them in a project's feed. A
  * sales follow-up is not one of them and neither are the category notices —
- * `staffSmsRefusal` is the rule and says why for each.
+ * `staffNotifyRefusal` is the rule and says why for each.
  *
  * Sent through `queueMessage`, which is the only way anything leaves this
  * application: the same outbox, the same quiet hours (a task assigned at
@@ -50,6 +51,10 @@ export interface StaffNotificationInput {
 export interface StaffNotificationOutcome {
   queued: boolean;
   skipped?: StaffSkipReason;
+  /** Which medium carried it, so a caller and the tests can see the fallback. */
+  channel?: StaffChannel;
+  /** True when WhatsApp was chosen and SMS carried it instead. */
+  fellBack?: boolean;
 }
 
 /**
@@ -59,12 +64,12 @@ export interface StaffNotificationOutcome {
  * account» is an ordinary answer and is fixed on the users screen, not a fault
  * in the save that triggered it.
  */
-export async function notifyStaffBySms(
+export async function notifyStaff(
   input: StaffNotificationInput,
 ): Promise<StaffNotificationOutcome> {
   const db = getDb();
   const settings = await loadSettings() as {
-    messaging?: { staffSms?: StaffSmsSettings };
+    messaging?: { staffSms?: StaffNotifySettings };
     companyInfo?: { name?: string };
   } | undefined;
   const staff = settings?.messaging?.staffSms;
@@ -76,7 +81,7 @@ export async function notifyStaffBySms(
    * several times a day per salesperson, and every one would otherwise cost a
    * user lookup for a message that is never sent.
    */
-  const refusal = staffSmsRefusal(
+  const refusal = staffNotifyRefusal(
     {
       kind: input.kind,
       assigneeUserId: input.assigneeUserId,
@@ -110,6 +115,22 @@ export async function notifyStaffBySms(
   if (!recipient) return { queued: false, skipped: "BAD_MOBILE" };
 
   /*
+   * Which medium, and whether anything at all.
+   *
+   * The provider row is read **only when WhatsApp is the choice**, because the
+   * default is SMS and this runs on every task anybody assigns; asking a
+   * question whose answer cannot change the outcome is a query per save for
+   * nothing. `channelIsActive` is the worker's own reading of that flag, so
+   * «is this channel on» has one answer rather than two.
+   */
+  const choice = staffChannelChoice(staff);
+  const plan = planStaffChannel(
+    staff,
+    choice === "WHATSAPP" ? await channelIsActive(CHANNELS.WHATSAPP) : false,
+  );
+  if (!plan.channel) return { queued: false, skipped: plan.skipped ?? "DISABLED" };
+
+  /*
    * Presence, not truthiness — `renderTemplate` leaves a placeholder it has no
    * key for exactly as written, so a typo in an edited template is obvious,
    * while a key that is there and empty is substituted. Every variable the
@@ -135,8 +156,13 @@ export async function notifyStaffBySms(
     companyName: settings?.companyInfo?.name ?? "",
   });
 
+  /*
+   * One address for both. `whatsappJid` folds «09121234567» exactly as the SMS
+   * gateway wants it, so the normalised number is what each of them is handed —
+   * there is no second address book and nothing per-channel to keep in step.
+   */
   await queueMessage({
-    channel: CHANNELS.SMS,
+    channel: plan.channel,
     recipient,
     recipientName: assignee?.fullName ?? null,
     body,
@@ -147,5 +173,5 @@ export async function notifyStaffBySms(
     createdByName: input.actorName ?? null,
   });
 
-  return { queued: true };
+  return { queued: true, channel: plan.channel, fellBack: plan.fellBack };
 }

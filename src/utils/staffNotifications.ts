@@ -1,15 +1,23 @@
 /**
- * Texting a colleague the work that has just been handed to them.
+ * Telling a colleague about the work that has just been handed to them.
  *
  * The board tells somebody what is on their plate the next time they open it,
  * and the inbox badge counts it — both of which require them to be looking. A
  * request raised at four in the afternoon for a colleague who is at a customer
  * site reaches them the next morning, which is exactly the case a notification
  * exists for. Web Push is not available here (the app is served over plain HTTP
- * on a LAN, and Push needs HTTPS), and the SMS channel is already built, paid
- * for and driving customer messages — so the notification is an SMS through the
- * same outbox, with the same quiet hours, the same dry-run switch and the same
- * retries.
+ * on a LAN, and Push needs HTTPS), so the notification goes out through the
+ * messaging module that already exists — the same outbox, the same quiet hours,
+ * the same dry-run switch and the same retries. There is one sending path and
+ * there must not be a second.
+ *
+ * **Which medium carries it is a choice, and the two are a real trade.** SMS is
+ * immediate, costs money by the character and does not care whether the reader
+ * has internet; WhatsApp costs nothing per message and travels on the company's
+ * own line, which is paced at three a minute on purpose — so a batch of
+ * handovers takes a few minutes to reach everybody. `planStaffChannel` is the
+ * rule, and the half worth reading is the fallback: a notification that
+ * silently evaporates is worse than one that cost a text.
  *
  * ## What is deliberately not sent
  *
@@ -29,7 +37,7 @@
  * been *given* something to do, by a person, by name.
  */
 
-import { looksLikeMobile } from "./messaging";
+import { type Channel, looksLikeMobile } from "./messaging";
 import { FOLLOW_UP_KIND } from "./salesFollowUp";
 
 /** The two events worth interrupting somebody's afternoon for. */
@@ -136,7 +144,7 @@ export const DEFAULT_STAFF_TEMPLATES: Record<StaffNotificationKind, string> = {
 
 /* -------------------------------- the rules ------------------------------- */
 
-export interface StaffSmsSettings {
+export interface StaffNotifySettings {
   /**
    * Absent is **on**.
    *
@@ -147,12 +155,145 @@ export interface StaffSmsSettings {
    * time it runs, which is what makes a later, deliberate `false` stick.
    */
   enabled?: boolean;
+  /**
+   * Which medium carries it. **Absent is `SMS`**, which is what every database
+   * written before this key existed was doing, so no patch is needed and
+   * nothing changes until somebody chooses.
+   */
+  channel?: StaffChannel;
+  /**
+   * Whether SMS carries it when WhatsApp cannot. **Absent is on** — see
+   * `planStaffChannel` for why that direction.
+   */
+  fallbackToSms?: boolean;
   templates?: Partial<Record<StaffNotificationKind, string>>;
+}
+
+/* ------------------------------- the channel ------------------------------ */
+
+/**
+ * The two media a staff notification may travel on.
+ *
+ * Not the four the customer messaging module has. Email is not a notification —
+ * nobody here watches an inbox for a task — and Bale addresses a person by a
+ * numeric chat id that has to be obtained from the bot's own updates and typed
+ * in per account, which reaches a handful of people. Both of these read the
+ * **mobile** that is already on the account, which is what makes offering the
+ * choice at all a question of one dropdown rather than a second address book.
+ */
+export const STAFF_CHANNELS = ["SMS", "WHATSAPP"] as const;
+export type StaffChannel = (typeof STAFF_CHANNELS)[number];
+
+export const STAFF_CHANNEL_LABELS: Record<StaffChannel, string> = {
+  SMS: "پیامک",
+  WHATSAPP: "واتس‌اپ",
+};
+
+/**
+ * What choosing each one costs, in the panel's own words.
+ *
+ * The WhatsApp line is paced at three messages a minute by `WHATSAPP_PER_PASS`
+ * and `whatsappGapMs`, and that is not a setting — it is what keeps the
+ * company's own number off WhatsApp's radar. For a *notification* that pacing
+ * is the trade being made, because the whole point of this feature is reaching
+ * somebody who is not looking at the board: hand out eight tasks in a batch and
+ * the last colleague hears about it two or three minutes later. Worth saying on
+ * the screen rather than leaving somebody to discover it.
+ */
+export const STAFF_CHANNEL_HINTS: Record<StaffChannel, string> = {
+  SMS: "فوری و مستقل از اینترنت گیرنده، ولی هر پیام هزینه دارد (فارسی: ۷۰ کاراکتر، بعد هر ۶۷ کاراکتر یک بخش).",
+  WHATSAPP: "بدون هزینه پیامک، ولی از خط خودمان و با سرعت عمدی حداکثر ۳ پیام در دقیقه — ارجاع دسته‌جمعی چند دقیقه طول می‌کشد.",
+};
+
+/*
+ * A staff channel is one of the messaging module's own, never a fifth name.
+ *
+ * `planStaffChannel`'s answer is handed straight to `queueMessage`, so a value
+ * this union carried and `CHANNELS` did not would be an outbox row the
+ * dispatcher answers «روش ارسال پشتیبانی نمی‌شود» to — the `PROFORMA_STORED_STATUSES`
+ * rule, pinned the same way: at compile time, in the direction that can drift.
+ */
+type _EveryStaffChannelIsAChannel =
+  Exclude<StaffChannel, Channel> extends never ? true
+    : ["staff channel the messaging module does not have", Exclude<StaffChannel, Channel>];
+const _staffChannelsAreChannels: _EveryStaffChannelIsAChannel = true;
+void _staffChannelsAreChannels;
+
+export function staffChannelChoice(
+  settings: StaffNotifySettings | null | undefined,
+): StaffChannel {
+  const stored = settings?.channel;
+  return (STAFF_CHANNELS as readonly string[]).includes(String(stored ?? ""))
+    ? (stored as StaffChannel)
+    : "SMS";
+}
+
+export function staffFallsBackToSms(
+  settings: StaffNotifySettings | null | undefined,
+): boolean {
+  return settings?.fallbackToSms !== false;
+}
+
+/**
+ * Which channel actually carries this one, and whether anything carries it.
+ *
+ * Written as one object with every key present rather than as a discriminated
+ * union, for the reason `RelayAnswer` is: `strictNullChecks` is off in this
+ * tsconfig, so TypeScript does not narrow a union by its literal discriminant
+ * and the obvious shape simply does not compile here.
+ */
+export interface StaffChannelPlan {
+  /** The channel to queue on, or null when nothing is being sent. */
+  channel: StaffChannel | null;
+  /** True when WhatsApp was asked for and SMS is carrying it instead. */
+  fellBack: boolean;
+  /** Why nothing is being sent, or null. */
+  skipped: StaffSkipReason | null;
+}
+
+/**
+ * The chosen channel, or what stands in for it.
+ *
+ * **The fallback is the half that matters.** This whole feature exists so that
+ * somebody at a customer site learns a job was handed to them — so a WhatsApp
+ * notification that silently evaporates because nobody ever switched that
+ * channel on, or because the line is unlinked, is worse than the feature not
+ * existing: the board still shows the task, and everyone involved believes the
+ * colleague was told. So `fallbackToSms` is **absent = on**: the cost of the
+ * fallback is one text message in the rare case the line is down, and the cost
+ * of not having it is a handover nobody knows about.
+ *
+ * It is a switch rather than a law, because a company that chose WhatsApp
+ * precisely to stop paying for texts is entitled to say «then send nothing» —
+ * and when they do, the refusal is **named** (`WHATSAPP_OFF`) rather than being
+ * a silent nothing, which is the same distinction every other skip reason here
+ * draws.
+ *
+ * `whatsappReady` is the provider row's own `active` flag and deliberately
+ * **not** the socket's liveness: asking whether a device is linked is an HTTP
+ * round trip to the relay for every task anybody assigns, inside `afterCommit`,
+ * and a line that is momentarily down is a transient the outbox already retries
+ * like any other failed send. What this catches is the configuration-shaped
+ * failure — the channel was never set up, or somebody switched it off — which
+ * is the one that lasts.
+ */
+export function planStaffChannel(
+  settings: StaffNotifySettings | null | undefined,
+  whatsappReady: boolean,
+): StaffChannelPlan {
+  if (staffChannelChoice(settings) === "SMS") {
+    return { channel: "SMS", fellBack: false, skipped: null };
+  }
+  if (whatsappReady) return { channel: "WHATSAPP", fellBack: false, skipped: null };
+  if (staffFallsBackToSms(settings)) {
+    return { channel: "SMS", fellBack: true, skipped: null };
+  }
+  return { channel: null, fellBack: false, skipped: "WHATSAPP_OFF" };
 }
 
 export function staffTemplateFor(
   kind: StaffNotificationKind,
-  settings: StaffSmsSettings | null | undefined,
+  settings: StaffNotifySettings | null | undefined,
 ): string {
   const stored = settings?.templates?.[kind];
   return typeof stored === "string" && stored.trim()
@@ -160,7 +301,7 @@ export function staffTemplateFor(
     : DEFAULT_STAFF_TEMPLATES[kind];
 }
 
-export function staffSmsEnabled(settings: StaffSmsSettings | null | undefined): boolean {
+export function staffNotifyEnabled(settings: StaffNotifySettings | null | undefined): boolean {
   return settings?.enabled !== false;
 }
 
@@ -179,19 +320,26 @@ export type StaffSkipReason =
   | "FOLLOW_UP"
   | "INACTIVE"
   | "NO_MOBILE"
-  | "BAD_MOBILE";
+  | "BAD_MOBILE"
+  | "WHATSAPP_OFF";
 
 export const STAFF_SKIP_LABELS: Record<StaffSkipReason, string> = {
-  DISABLED: "ارسال پیامک به همکاران خاموش است.",
+  DISABLED: "اعلان ارجاع کار به همکاران خاموش است.",
   NO_RECIPIENT: "این کار به حساب کاربری مشخصی ارجاع نشده است.",
-  SELF: "کاری که خود شخص برای خودش ثبت کرده پیامک ندارد.",
-  FOLLOW_UP: "پیگیری فروش پیامک ندارد؛ در روز سررسید روی تخته کار می‌آید.",
+  SELF: "کاری که خود شخص برای خودش ثبت کرده اعلان ندارد.",
+  FOLLOW_UP: "پیگیری فروش اعلان ندارد؛ در روز سررسید روی تخته کار می‌آید.",
   INACTIVE: "حساب کاربری گیرنده غیرفعال است.",
+  /*
+   * Both channels are addressed by the mobile on the account, which is why
+   * these two say «موبایل» and not «پیامک»: switching to WhatsApp does not
+   * make a missing number reachable, and the fix is the same users screen.
+   */
   NO_MOBILE: "شماره موبایلی برای این کاربر ثبت نشده است.",
   BAD_MOBILE: "شماره ثبت‌شده برای این کاربر یک موبایل معتبر نیست.",
+  WHATSAPP_OFF: "کانال واتس‌اپ فعال نیست و جایگزینی با پیامک خاموش است.",
 };
 
-export interface StaffSmsSubject {
+export interface StaffNotifySubject {
   kind: StaffNotificationKind;
   /** The account the work was given to. */
   assigneeUserId: string | null | undefined;
@@ -226,11 +374,11 @@ export interface StaffAddressee {
  * a chase several times a day per salesperson, and every one of them would
  * otherwise cost a user lookup for a message that is never sent.
  */
-export function staffSmsRefusal(
-  subject: StaffSmsSubject,
-  settings: StaffSmsSettings | null | undefined,
+export function staffNotifyRefusal(
+  subject: StaffNotifySubject,
+  settings: StaffNotifySettings | null | undefined,
 ): StaffSkipReason | null {
-  if (!staffSmsEnabled(settings)) return "DISABLED";
+  if (!staffNotifyEnabled(settings)) return "DISABLED";
 
   /*
    * A chase is not work somebody handed you. It is a call you agreed to make,
@@ -275,12 +423,12 @@ export function staffRecipientRefusal(
 }
 
 /** Both halves, for a caller that already holds the account — and for the tests. */
-export function staffSmsSkipReason(
-  subject: StaffSmsSubject,
+export function staffNotifySkipReason(
+  subject: StaffNotifySubject,
   account: StaffRecipient | null | undefined,
-  settings: StaffSmsSettings | null | undefined,
+  settings: StaffNotifySettings | null | undefined,
 ): StaffSkipReason | null {
-  return staffSmsRefusal(subject, settings) ?? staffRecipientRefusal(account);
+  return staffNotifyRefusal(subject, settings) ?? staffRecipientRefusal(account);
 }
 
 /**

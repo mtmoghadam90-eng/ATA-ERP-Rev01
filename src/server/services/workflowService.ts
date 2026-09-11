@@ -30,7 +30,7 @@ export type { WorkflowRule } from "../../types";
 import type { WorkflowRule } from "../../types";
 import { TASK_TODO } from "../../utils/workBoard";
 import { resolveAssignee as sharedResolveAssignee } from "./assigneeLookup";
-import { notifyStaffBySms } from "./staffNotifications";
+import { notifyStaff } from "./staffNotifications";
 
 
 /**
@@ -339,10 +339,10 @@ export async function executeRule(
          * no actor — a rule fires because a status moved or a date arrived — so
          * the message says «سیستم» rather than naming anybody.
          *
-         * `notifyStaffBySms` refuses a `SALES_FOLLOW_UP` on its own, which is
+         * `notifyStaff` refuses a `SALES_FOLLOW_UP` on its own, which is
          * what keeps the standard «پیگیری پیش‌فاکتور» rule silent.
          */
-        await notifyStaffBySms({
+        await notifyStaff({
           kind: "TASK_ASSIGNED",
           assigneeUserId: created.assignedToUserId,
           actorUserId: null,

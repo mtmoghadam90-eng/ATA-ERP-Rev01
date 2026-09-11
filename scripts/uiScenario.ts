@@ -315,6 +315,70 @@ head("WhatsApp: the link button is unreachable while a code is on the screen");
   const reconnect = buttonSaying("اتصال مجدد");
   ok("...with the link button live again", reconnect?.disabled === false);
 
+  /* ---------- the staff notification channel: a control that writes -------- */
+
+  /*
+   * Which medium tells a colleague they have been handed work is a `<select>`
+   * that the rule tests cannot see the other half of: a chip group that draws
+   * perfectly and calls nothing back is the exact «switch that does nothing»
+   * this codebase keeps repairing, and it type-checks. So this presses it and
+   * asserts what was written.
+   *
+   * The fallback switch is asserted by its *absence* under SMS. That is not the
+   * `stuckStateOwner` case — there a disowned row is still counted next door
+   * and hiding it strands the reader — because a fallback from SMS to SMS is
+   * not a question anybody can mean.
+   */
+  const host4 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root4 = createRoot(host4);
+  let staffSettings: Record<string, unknown> = { customFields: [], messaging: {} };
+  let lastSaved: Record<string, unknown> | null = null;
+
+  const renderStaff = async () => {
+    await act(async () => {
+      root4.render(React.createElement(MessagingView, {
+        settings: staffSettings as never,
+        currentUser: { id: "u1", permissions: { settings: true, messaging: true } } as never,
+        onUpdateSettings: ((next: Record<string, unknown>) => {
+          lastSaved = next;
+          staffSettings = next;
+        }) as never,
+      }));
+    });
+    await settle();
+    const tab = [...host4.querySelectorAll("button")]
+      .find((b) => (b.textContent ?? "").includes("تنظیمات درگاه‌ها")) as HTMLButtonElement | undefined;
+    await act(async () => { tab?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+    await settle();
+  };
+  const chip = (option: string) =>
+    host4.querySelector(`[data-staff-channel="${option}"]`) as HTMLButtonElement | null;
+
+  await renderStaff();
+  ok("both channels are offered for a staff notification",
+    !!chip("SMS") && !!chip("WHATSAPP"));
+  ok("...with SMS chosen on a settings document that has never said",
+    chip("SMS")?.getAttribute("aria-pressed") === "true");
+  ok("...and no fallback switch, because SMS has nothing to fall back to",
+    !host4.querySelector("#staff-notify-fallback"));
+
+  await act(async () => {
+    chip("WHATSAPP")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settle();
+  const savedChannel = ((lastSaved as never as {
+    messaging?: { staffSms?: { channel?: string } };
+  } | null)?.messaging?.staffSms?.channel) ?? null;
+  ok("pressing واتس‌اپ really writes the choice", savedChannel === "WHATSAPP", savedChannel);
+
+  await renderStaff();
+  const fallbackBox = host4.querySelector("#staff-notify-fallback") as HTMLInputElement | null;
+  ok("...and the fallback switch appears once WhatsApp is the channel", !!fallbackBox);
+  ok("...on by default, so a down line still reaches the colleague",
+    fallbackBox?.checked === true);
+
+  act(() => { root4.unmount(); });
+
   act(() => { root3.unmount(); });
   g3.fetch = realFetch;
 }
