@@ -92,7 +92,7 @@ import { PROFORMA_SENT_STATUS } from "../src/utils/moduleStatuses";
 import type { ERPSettings, WorkflowRule } from "../src/types";
 import { cloneWorkflowRule } from "../src/utils/workflowRules";
 import { MESSAGE_ONCE_SCOPES, isMessageOnceScope, messageOnceKey } from "../src/utils/workflowTriggers";
-import { MAX_QUIET_DAY_SPAN, nextSendableTime } from "../src/utils/messaging";
+import { MAX_QUIET_DAY_SPAN, nextSendableTime, quietDaysApplyTo } from "../src/utils/messaging";
 import { SCREEN_PERMISSION_ALIAS } from "../src/types";
 import { buildTaskWhere } from "../src/server/services/taskService";
 import type { AuthUser } from "../src/server/auth";
@@ -10622,12 +10622,64 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     ok("the queue composes the hours and the days",
       /nextSendableTime\(/.test(svc));
     ok("...reading the holiday calendar rather than naming weekdays",
-      /settings\.quietDays \? \(day\) => isOfficialHoliday\(/.test(svc));
+      /settings\.quietDays && quietDaysApplyTo\(input\.audience\)\s*\n?\s*\? \(day\) => isOfficialHoliday\(/
+        .test(svc));
     ok("...and absent means off", /stored\.quietDays === true/.test(svc));
+
+    /*
+     * «اعلان همکاران از این قاعده سکوت مستثنا باشد».
+     *
+     * The two halves of the silence part company, and only here: a quiet day
+     * protects somebody outside the company, so a colleague handed a job on a
+     * Friday they are working hears about it that morning — while the quiet
+     * *hours* still hold for both, or the board would wake people at 03:00.
+     */
+    eq("a staff notice is exempt from the quiet days",
+      quietDaysApplyTo("STAFF"), false);
+    eq("...a customer message is not", quietDaysApplyTo("CUSTOMER"), true);
+    eq("...and an absent audience reads as the customer, which is the safe way",
+      quietDaysApplyTo(undefined), true);
+
+    /*
+     * The behaviour that exemption has to produce, over the very case the
+     * composition above was written for: Thursday 22:00 under 21:00–08:00 with
+     * Friday quiet. A customer waits until Saturday; a colleague is told on
+     * Friday morning — **not** at 22:00, which is the half a blanket exemption
+     * would have got wrong.
+     */
+    const forAudience = (audience: "CUSTOMER" | "STAFF") => show(nextSendableTime(
+      at(2026, 6, 25, 22), quiet, quietDaysApplyTo(audience) ? friday : null,
+    ));
+    eq("a customer message crosses the quiet day", forAudience("CUSTOMER"), "27 8:00");
+    eq("...and a staff notice does not", forAudience("STAFF"), "26 8:00");
+    ok("...while the quiet hours still hold it back",
+      forAudience("STAFF") !== "25 22:00");
+    /*
+     * And that second half is a property of the *queue*, not of this sweep: the
+     * hours are handed over unconditionally, so widening the exemption to them
+     * — which would text a colleague at 03:00 — fails here rather than on
+     * somebody's phone.
+     */
+    ok("...because the queue hands the hours over whatever the audience is",
+      /nextSendableTime\(\s*\n\s*requested,\s*\n\s*settings\.quietHours,/.test(svc));
+
+    /*
+     * And the sender has to *say* so. A rule nothing passes is a rule that
+     * changes nothing, which is the `enrichPayload` fault — so this is read
+     * inside the `queueMessage(` call rather than anywhere in the file.
+     */
+    const staffSender = readFileSync("src/server/services/staffNotifications.ts", "utf8");
+    const queueCall = staffSender.slice(staffSender.indexOf("await queueMessage({"));
+    ok("the staff notice names its audience where it is queued",
+      /audience: "STAFF"/.test(queueCall.slice(0, queueCall.indexOf("});"))));
 
     // The control exists, or the setting is one nobody can reach.
     const panel = readFileSync("src/components/MessagingView.tsx", "utf8");
     ok("the messaging screen draws the switch", panel.includes("data-quiet-days"));
+    // And it says what the application will do, or the switch reads as a
+    // promise the staff notices break.
+    ok("the screen says the staff notices are exempt",
+      panel.includes("اعلان ارجاع کار به همکاران از این قاعده مستثناست"));
 
     // And it reaches a live document, which a default in seedData never does.
     const patched = applySettingsPatches({ messaging: {} } as never);

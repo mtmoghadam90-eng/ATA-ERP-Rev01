@@ -7,8 +7,10 @@ import { getTodayShamsi, isOfficialHoliday, toShamsiStr } from "../../../dateUti
 import { loadSettings } from "../../settings";
 import {
   ALL_SMS_CONFIG_FIELDS, ALL_SMS_SECRET_FIELDS,
-  CHANNELS, Channel, MAX_SEND_ATTEMPTS, MESSAGE_STATUS, QuietHours, isChannel,
-  nextSendableTime, renderTemplate, resolveRecipient, retryDelayMs, shouldRetry,
+  CHANNELS, Channel, MAX_SEND_ATTEMPTS, MESSAGE_STATUS, MessageAudience, QuietHours,
+  isChannel,
+  nextSendableTime, quietDaysApplyTo, renderTemplate, resolveRecipient, retryDelayMs,
+  shouldRetry,
 } from "../../../utils/messaging";
 import { BaleChatsResult, BaleConfig, baleRecentChats, sendThrough } from "./drivers";
 import { addresseeOf, namePrefixFor } from "../../../utils/honorific";
@@ -352,6 +354,14 @@ export interface QueueMessageInput {
   campaignId?: string | null;
   createdByUserId?: string | null;
   createdByName?: string | null;
+  /**
+   * Who this is addressed to — read by one rule, `quietDaysApplyTo`.
+   *
+   * Absent means the customer, which is what every caller written before this
+   * meant and the safe direction for one that forgets: a message held back is
+   * late, and one sent on Ashura is the thing the quiet days exist to stop.
+   */
+  audience?: MessageAudience;
 }
 
 /**
@@ -380,7 +390,9 @@ export async function queueMessage(input: QueueMessageInput) {
   const scheduledAt = nextSendableTime(
     requested,
     settings.quietHours,
-    settings.quietDays ? (day) => isOfficialHoliday(toShamsiStr(day)) : null,
+    settings.quietDays && quietDaysApplyTo(input.audience)
+      ? (day) => isOfficialHoliday(toShamsiStr(day))
+      : null,
   );
 
   return getDb().message.create({

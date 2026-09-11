@@ -166,6 +166,15 @@ export async function notifyStaff(
     recipient,
     recipientName: assignee?.fullName ?? null,
     body,
+    /*
+     * Exempt from the quiet **days**, and only from those — `quietDaysApplyTo`
+     * is the rule and says why: «جمعه و تعطیل رسمی نباید به مشتری پیام زد» is a
+     * courtesy to somebody outside the company, while a colleague handed a job
+     * on a Friday they are working needs to hear about it that morning rather
+     * than on Saturday. The quiet hours still hold, so a task assigned at 03:00
+     * still waits until the window opens.
+     */
+    audience: "STAFF",
     projectId: input.projectId ?? null,
     entityType: input.entityType,
     entityId: input.entityId,
