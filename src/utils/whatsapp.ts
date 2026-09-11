@@ -348,11 +348,18 @@ export function whatsappFailureKind(
 ): WhatsappFailureKind {
   const text = String(message ?? "").toLowerCase();
   if (!text.trim()) return WHATSAPP_FAILURE_KINDS.UNKNOWN;
-  // The account is checked first: «unauthorized» is also reachable through a
-  // proxy, but a device removed from the account is the sharper reading and the
+  /*
+   * The relay's own credential is asked about **first**, and the order is the
+   * decision: a refused token comes back carrying the word «توکن» beside an
+   * unauthorised status, and every other reading of that pair is wrong in a way
+   * that costs somebody an afternoon — «unauthorized» read as the account tells
+   * them to unlink a working device, when the fix is one line in an env file.
+   */
+  if (text.includes("توکن")) return WHATSAPP_FAILURE_KINDS.CONFIG;
+  // Then the account: a device removed from it is the sharper reading and the
   // one that needs a person, while a network fault retries itself.
   if (ACCOUNT_TOKENS.some((t) => text.includes(t))) return WHATSAPP_FAILURE_KINDS.ACCOUNT;
   if (NETWORK_TOKENS.some((t) => text.includes(t))) return WHATSAPP_FAILURE_KINDS.NETWORK;
-  if (text.includes("رله") || text.includes("توکن")) return WHATSAPP_FAILURE_KINDS.CONFIG;
+  if (text.includes("رله")) return WHATSAPP_FAILURE_KINDS.CONFIG;
   return WHATSAPP_FAILURE_KINDS.UNKNOWN;
 }

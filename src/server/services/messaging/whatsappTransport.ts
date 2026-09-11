@@ -119,6 +119,19 @@ async function call<T>(
     let parsed: unknown = null;
     try { parsed = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
 
+    /*
+     * A refused credential is **this side's** configuration, not WhatsApp's.
+     *
+     * The relay answers 401 with a bare «unauthorized», and relayed verbatim
+     * that reads as the WhatsApp account having rejected us — which would send
+     * somebody to unlink a perfectly good device when the fix is a token in an
+     * env file. So this one status gets its own sentence, naming the token, and
+     * `whatsappFailureKind` reads that as CONFIG.
+     */
+    if (response.status === 401 || response.status === 403) {
+      return { data: null, error: "توکن رله واتس‌اپ پذیرفته نشد؛ مقدار آن در دو طرف باید یکسان باشد." };
+    }
+
     if (!response.ok) {
       const said = (parsed as { error?: unknown } | null)?.error;
       return {
