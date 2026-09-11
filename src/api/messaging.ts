@@ -44,6 +44,10 @@ export interface WhatsappStatus {
   linkedNumber: string | null;
   lastError: string | null;
   since: string;
+  /** True when the socket is held on a relay. Never carries its address. */
+  relay?: boolean;
+  /** Which half a failure belongs to — the route, the account, or the config. */
+  failureKind?: string | null;
 }
 
 export interface MessageTemplateRow {

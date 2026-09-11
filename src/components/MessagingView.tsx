@@ -20,7 +20,9 @@ import {
 } from '../utils/messaging';
 import { TemplatePreview, TemplateVariablePalette } from './MessageTemplateHelp';
 import {
-  WHATSAPP_STATES, WHATSAPP_STATE_ADVICE, WHATSAPP_STATE_LABELS, type WhatsappState,
+  WHATSAPP_FAILURE_ADVICE, WHATSAPP_FAILURE_LABELS, WHATSAPP_STATES,
+  WHATSAPP_STATE_ADVICE, WHATSAPP_STATE_LABELS,
+  type WhatsappFailureKind, type WhatsappState,
 } from '../utils/whatsapp';
 
 
@@ -1050,6 +1052,16 @@ function WhatsappLinkPanel({ onNotice }: { onNotice: (t: string) => void }) {
             {status.linkedNumber}
           </code>
         )}
+        {/*
+          Which machine holds the socket, and never its address. Somebody
+          debugging a silent channel has to know whether to look at this server
+          or at the relay; the host itself is no business of a browser.
+        */}
+        {status?.relay && (
+          <span className="text-[10px] px-2 py-0.5 rounded-full border font-bold bg-sky-50 text-sky-700 border-sky-200">
+            از طریق رله
+          </span>
+        )}
         {mins !== null && mins > 0 && (
           <span className="text-[10px] text-slate-400">
             از {mins.toLocaleString('fa-IR')} دقیقه پیش
@@ -1080,10 +1092,28 @@ function WhatsappLinkPanel({ onNotice }: { onNotice: (t: string) => void }) {
         </div>
       )}
 
+      {/*
+        A failure says which half it belongs to before it says what it said.
+        The same «قطع شده» used to cover a filtered route, a device removed from
+        the account and a half-written relay configuration, and those three are
+        fixed by three different people in three different places — so the kind
+        and its advice are in Persian above, and the provider's own text stays
+        below in LTR because it is what gets pasted into a search or a ticket.
+      */}
       {status?.lastError && state !== WHATSAPP_STATES.CONNECTED && (
-        <p className="text-[10px] text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-2 py-1.5" dir="ltr">
-          {status.lastError}
-        </p>
+        <div className="space-y-1 bg-rose-50 border border-rose-100 rounded-lg px-2 py-1.5">
+          {status.failureKind && status.failureKind in WHATSAPP_FAILURE_LABELS && (
+            <>
+              <p className="text-[11px] font-bold text-rose-800">
+                {WHATSAPP_FAILURE_LABELS[status.failureKind as WhatsappFailureKind]}
+              </p>
+              <p className="text-[10px] text-rose-700 leading-5">
+                {WHATSAPP_FAILURE_ADVICE[status.failureKind as WhatsappFailureKind]}
+              </p>
+            </>
+          )}
+          <p className="text-[10px] text-rose-700 font-mono" dir="ltr">{status.lastError}</p>
+        </div>
       )}
 
       {unreadable && (

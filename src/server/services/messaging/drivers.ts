@@ -630,15 +630,19 @@ export async function sendThrough(
   /*
    * Imported at call time, not at the top of the file.
    *
-   * `whatsappClient` imports this module for its `OutgoingMessage`/`SendResult`
-   * types, so a plain import here would be a cycle — and it is the client that
-   * must load the ESM-only library lazily anyway, for the reason written down
-   * there. Types are erased, so the cycle exists only in the value graph and
-   * only this direction of it has to be deferred.
+   * `whatsappTransport` reaches `whatsappClient`, which imports this module for
+   * its `OutgoingMessage`/`SendResult` types — so a plain import here would be a
+   * cycle, and the client must load the ESM-only library lazily anyway for the
+   * reason written down there. Types are erased, so the cycle exists only in the
+   * value graph and only this direction of it has to be deferred.
+   *
+   * The transport rather than the client, because the socket may be held on a
+   * relay outside the country: one door, two deployments, and nothing else in
+   * this file cares which.
    */
   if (channel === CHANNELS.WHATSAPP) {
-    const { sendWhatsapp } = await import("./whatsappClient");
-    return sendWhatsapp(message);
+    const { sendWhatsappMessage } = await import("./whatsappTransport");
+    return sendWhatsappMessage(message);
   }
   return { ok: false, error: `روش ارسال «${channel}» پشتیبانی نمی‌شود.` };
 }
