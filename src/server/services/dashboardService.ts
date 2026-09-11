@@ -3,6 +3,7 @@ import { getDb } from "../db";
 import { AuthUser, hasPermission } from "../auth";
 import {
   ITEM_CANCELLED, ITEM_LOST, ITEM_WON, decidingProformas, getProformaOutcome,
+  notTechnical,
 } from "../proformaStatus";
 import {
   averageProformasPerProject, opportunityGroups, opportunityOutcome, wonValueRial,
@@ -124,7 +125,20 @@ export async function dashboardSummary(user: AuthUser): Promise<DashboardSummary
   // visibility; the front page respects it rather than reporting totals that
   // include records the user cannot open.
   const canSeeAll = hasPermission(user, "proformas");
-  const proformaWhere: Prisma.ProformaWhereInput = canSeeAll ? {} : { creatorUserId: user.id };
+  /*
+   * And a technical specification is not a quotation — `notTechnical`.
+   *
+   * It quotes no prices, so it is not an offer anybody can accept. The
+   * conversion figures count one opportunity per project and one document per
+   * round-trip, so a price-less specification deflated «نرخ تبدیل» (a project
+   * whose only document was technical counted as an opportunity nobody won) and
+   * inflated «میانگین پیش‌فاکتور به ازای هر پروژه». On the base clause rather
+   * than on one of the two readers, since both ask about money.
+   */
+  const proformaWhere: Prisma.ProformaWhereInput = {
+    ...notTechnical(),
+    ...(canSeeAll ? {} : { creatorUserId: user.id }),
+  };
 
   const [
     customers, products, lowStock, activePurchaseOrders,

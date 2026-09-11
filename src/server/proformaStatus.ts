@@ -12,6 +12,48 @@
  * until it is migrated.
  */
 
+import { PROFORMA_TECHNICAL_TYPE } from "../utils/moduleStatuses";
+
+/**
+ * The clause that keeps a technical specification out of the sales figures.
+ *
+ * `proformaType: TECHNICAL` is a document that states what will be supplied and
+ * quotes **no prices**. It is not a quotation, it is not an offer the customer
+ * can accept, and every rule that reads «what became of this opportunity» was
+ * reading it as one:
+ *
+ * - `deriveProjectStatus` takes the most recent document when none has won, so a
+ *   technical offer sent after a quotation decided the project's *sales* status;
+ *   and because «باخته» requires **every** document to be lost, one technical
+ *   offer sitting open kept a genuinely lost project out of «باخته» for good —
+ *   the loss never registering anywhere, which is the quieter and worse half.
+ * - `deriveProjectStage` checks a **sent** document first, deliberately, because
+ *   a quotation that has gone out means the job is waiting on the customer. A
+ *   sent *specification* means nothing of the kind — no price has left the
+ *   building — so it reported «پیگیری پیش‌فاکتور» and dragged the project past
+ *   «در انتظار پاسخ تأمین‌کننده», hiding the unanswered supplier inquiry that was
+ *   the actual answer.
+ * - the dashboard counts one opportunity per project and a document per
+ *   round-trip, so a price-less specification deflated «نرخ تبدیل» and inflated
+ *   «میانگین پیش‌فاکتور به ازای هر پروژه».
+ *
+ * One clause rather than three, because three readings of «is this a sale» is
+ * how a project comes to be won on one screen and open on another. It is safe as
+ * a plain `not`: the column is **NOT NULL with a default of FINANCIAL**, so
+ * there is no null branch to remember — every row written before the type
+ * existed reads as financial, which is what it is.
+ *
+ * A plain object rather than a `Prisma.ProformaWhereInput` so this module stays
+ * free of the client, as the rest of it is — and a **function** rather than a
+ * shared constant, because a spread is one level deep: five call sites spreading
+ * one constant would all carry the *same* nested `{ not: … }` object, which is
+ * the `next[i].field = x` trap in a clause instead of a loop. Nothing writes
+ * into a `where` today; a fresh object means nothing can.
+ */
+export function notTechnical(): { proformaType: { not: string } } {
+  return { proformaType: { not: PROFORMA_TECHNICAL_TYPE } };
+}
+
 export const ITEM_WON = "برنده";
 export const ITEM_LOST = "بازنده";
 export const ITEM_CANCELLED = "لغو شده";
