@@ -6,7 +6,7 @@ import { expandDateFields } from "../../dates";
 import { getTodayShamsi, isOfficialHoliday, toShamsiStr } from "../../../dateUtils";
 import { loadSettings } from "../../settings";
 import {
-  ALL_SMS_CONFIG_FIELDS, ALL_SMS_SECRET_FIELDS,
+  ALL_CHANNELS, ALL_SMS_CONFIG_FIELDS, ALL_SMS_SECRET_FIELDS,
   CHANNELS, Channel, MAX_SEND_ATTEMPTS, MESSAGE_STATUS, MessageAudience, QuietHours,
   isChannel,
   isCustomerFacing, nextSendableTime, renderTemplate, resolveRecipient, retryDelayMs,
@@ -642,11 +642,38 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
   let failed = 0;
 
   try {
-    const due = await db.message.findMany({
-      where: { status: MESSAGE_STATUS.QUEUED, scheduledAt: { lte: now } },
+    /*
+     * Read **per channel**, each with its own limit.
+     *
+     * One `take: BATCH_SIZE` over every channel at once starved the others, and
+     * badly: a campaign of two hundred WhatsApp messages fills the oldest 25 due
+     * rows, three go out, twenty-two are left queued — and the next tick reads
+     * the *same* twenty-five. An SMS queued a minute later therefore waited
+     * behind a WhatsApp queue that drains at three a minute, which for that
+     * campaign is over an hour. The messages that suffer most are exactly the
+     * ones that matter: a handover notice to a colleague at a customer's site,
+     * an invoice text, a staff notification that fell back to SMS.
+     *
+     * So the cap becomes a property of the *query* as well as of the loop. Four
+     * small indexed reads a minute is nothing, and it was rejected once on the
+     * reasoning that it «would still let a burst through on the one that
+     * matters» — which is not so: a `take` of three cannot burst. The counter
+     * below stays because it is where the rule is *stated*, and because the gap
+     * needs to know how many have already gone.
+     *
+     * **The paced channel is read last**, derived from its own limit rather than
+     * named: its gaps are deliberate seconds of waiting, and a channel that has
+     * none must not sit behind them.
+     */
+    const byPace = [...ALL_CHANNELS].sort(
+      (a, b) => channelPassLimit(b) - channelPassLimit(a),
+    );
+    const perChannel = await Promise.all(byPace.map((channel) => db.message.findMany({
+      where: { status: MESSAGE_STATUS.QUEUED, scheduledAt: { lte: now }, channel },
       orderBy: { scheduledAt: "asc" },
-      take: BATCH_SIZE,
-    });
+      take: channelPassLimit(channel),
+    })));
+    const due = perChannel.flat();
 
     // The provider configurations, read once for the batch rather than per row.
     const configs = new Map<string, { active: boolean; config: Record<string, unknown> } | null>();
