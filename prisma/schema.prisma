@@ -1897,7 +1897,14 @@ model WorkflowFiring {
   ruleId     String   @db.NVarChar(64)
   entityType String   @db.NVarChar(40)
   entityId   String   @db.NVarChar(36)
-  /// The day the rule was due for this record, kept for the audit trail.
+  /// The day the rule was due for this record.
+  ///
+  /// **In the unique key**, and that is what makes a restarted clock a second
+  /// stall. It is derived from the base date, so for a dwell subject
+  /// (`statusChangedAt`) it moves precisely when the record moves and comes back,
+  /// while for a fixed date (`sentDate`) it never moves and the rule still fires
+  /// once. Without it a project lost, reopened and lost again hit the row from
+  /// the first loss and the rule never fired a second time — for ever, silently.
   dueDay     String?  @db.NVarChar(10)
   /// Which firing this is, 1-based — see `occurrenceDue` in workflowSchedule.ts.
   ///
@@ -1909,7 +1916,7 @@ model WorkflowFiring {
   occurrence Int      @default(1)
   firedAt    DateTime @default(now())
 
-  @@unique([ruleId, entityId, occurrence], map: "workflow_firings_rule_entity_occurrence_uq")
+  @@unique([ruleId, entityId, occurrence, dueDay], map: "workflow_firings_rule_entity_occurrence_due_uq")
   @@index([entityType, entityId])
   @@map("workflow_firings")
 }
