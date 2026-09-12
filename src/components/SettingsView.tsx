@@ -40,7 +40,7 @@ import { MODULE_ICONS } from './moduleIcons';
 import AssistantSettingsPanel from './AssistantSettingsPanel';
 import ApiTokensPanel from './ApiTokensPanel';
 import { MessageTemplateRow, messagingApi } from '../api/messaging';
-import { CHANNEL_LABELS, Channel } from '../utils/messaging';
+import { ALL_CHANNELS, CHANNEL_LABELS, Channel, isChannel } from '../utils/messaging';
 import { formatERPNumber } from '../numUtils';
 import { ApiError, api } from '../api/client';
 import { assistantApi } from '../api/assistant';
@@ -4479,17 +4479,30 @@ export default function SettingsView({
                                     value={act.messageConfig.channel ?? ''}
                                     onChange={(e) => {
                                       const updatedActs = [...editingRule.actions];
+                                      const picked = e.target.value;
                                       updatedActs[actIdx].messageConfig!.channel =
-                                        (e.target.value || undefined) as 'SMS' | 'BALE' | 'EMAIL' | undefined;
+                                        isChannel(picked) ? picked : undefined;
                                       setEditingRule({ ...editingRule, actions: updatedActs });
                                     }}
                                     className="w-full border border-slate-200 rounded-lg p-2.5 bg-white"
                                   >
                                     {/* The project's own preference, which is what most rules want. */}
                                     <option value="">روش ترجیحی پروژه</option>
-                                    <option value="SMS">پیامک</option>
-                                    <option value="BALE">بله</option>
-                                    <option value="EMAIL">ایمیل</option>
+                                    {/*
+                                      * Read from `ALL_CHANNELS`, never written out.
+                                      *
+                                      * These were three hand-typed options and
+                                      * stayed three when WhatsApp was added — so a
+                                      * WhatsApp template, pickable in the list
+                                      * directly above this control, could only be
+                                      * sent as an SMS charged by the character.
+                                      * `isChannel` guards the write for the same
+                                      * reason, in place of a union cast that would
+                                      * drift again.
+                                      */}
+                                    {ALL_CHANNELS.map((ch) => (
+                                      <option key={ch} value={ch}>{CHANNEL_LABELS[ch]}</option>
+                                    ))}
                                   </select>
                                 </div>
 

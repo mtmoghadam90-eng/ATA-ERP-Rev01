@@ -13,6 +13,7 @@ import type { CostSource } from './utils/costOfGoods';
 // A product's catalogue and datasheet files, with the rules that read them.
 export type { ProductDocument, ProductDocumentKind } from './utils/productDocuments';
 import type { ProductDocument } from './utils/productDocuments';
+import type { Channel } from './utils/messaging';
 
 export interface ModuleNote {
   id: string;
@@ -1526,8 +1527,16 @@ export interface WorkflowRule {
       /**
        * Absent means "whatever the project prefers" — which is the setting on
        * the project form, and the answer most rules want.
+       *
+       * **`Channel`, never a union written out here.** It was
+       * `'SMS' | 'BALE' | 'EMAIL'` and stayed that way when WhatsApp was added,
+       * so the type itself was the root of three faults one layer up: the rule
+       * editor's `<select>` offered three options faithfully reflecting it, the
+       * drafter's prompt listed the same three, and a message written for
+       * WhatsApp — pickable in the template list right above that control —
+       * could only go out as an SMS charged by the character.
        */
-      channel?: 'SMS' | 'BALE' | 'EMAIL';
+      channel?: Channel;
       /** Days to wait before it goes out. Negative is not meaningful here. */
       delayDays?: number;
       /** "HH:MM" — the hour it should arrive at, on whichever day it lands. */
