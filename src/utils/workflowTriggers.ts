@@ -860,6 +860,37 @@ export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
         + "نمی‌گذاری؛ همین که روی payload هست باعث می‌شود «{proformaNumber}» در "
         + "متن کار کند و پیام به مشتریِ همان سند برسد.",
     },
+    /*
+     * And what became of the quotation, which is the half this subject could not
+     * ask. «۲ روز پس از ثبت نتیجهٔ پیگیری، لینک نظرسنجی بفرست» is the rule it
+     * exists for, and with only the result and the priority to condition on the
+     * survey went to a customer who had cancelled the next morning — the same
+     * fault the `proforma` subject's `status` field once had, arriving here
+     * instead. These are the *quotation's* state and share the proforma
+     * subject's own names, so one condition is written whichever subject the
+     * rule counts from.
+     */
+    {
+      value: "settled", label: "معامله تمام شده", options: ["true", "false"],
+      derived: true,
+      hint: "true یعنی همین سند برنده/باخته/لغو شده یا نیمه‌برنده است — یعنی تمام "
+        + "شده و دیگر در صف پیگیری نیست. هر پیامی که فرض می‌گیرد «هنوز در جریان "
+        + "است» (نظرسنجی، یادآوری، پرسیدن نتیجهٔ بررسی) باید شرط «برابر با false» "
+        + "داشته باشد؛ وگرنه دو روز بعد از تماس برای مشتری‌ای می‌رود که همان فردا "
+        + "خریدش را لغو کرده.",
+    },
+    {
+      value: "outcome", label: "نتیجهٔ پیش‌فاکتور", options: PROFORMA_OUTCOMES,
+      derived: true,
+      hint: "وضعیت محاسبه‌شدهٔ همان پیش‌فاکتور از ردیف‌هایش. اگر فقط می‌خواهی «تمام "
+        + "نشده باشد» را بگویی، شرط روی settled کوتاه‌تر و مطمئن‌تر است.",
+    },
+    {
+      value: "superseded", label: "نسخهٔ جدیدتری از آن صادر شده",
+      options: ["true", "false"], derived: true,
+      hint: "true یعنی «نسخه جدید همین پیش‌فاکتور» صادر شده؛ سندی که این پیگیری "
+        + "روی آن ثبت شده دیگر آن چیزی نیست که روی میز مشتری است.",
+    },
   ],
 };
 

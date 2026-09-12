@@ -11309,12 +11309,60 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
      * through `relatedToId`, and nothing downstream reads that key.
      */
     ok("a chase's quotation is put under the key the engine reads",
-      /proformaId: String\(row\.relatedToId\)/.test(sweep));
+      /proformaOf\.set\(String\(row\.id\), String\(row\.relatedToId\)\)/.test(sweep));
     ok("...only when the relation really is a quotation",
       /row\.relatedToType === "proforma"/.test(sweep));
     const taskFields = (SCHEDULE_MODEL_FIELDS.task ?? []).map((f) => f.value);
     ok("...and the rule can condition on what the customer said",
       taskFields.includes("followUpResult"));
+
+    /*
+     * And on whether the sale is still the one the rule was written about, which
+     * is what this subject could not ask at all.
+     *
+     * «۲ روز پس از ثبت نتیجهٔ پیگیری، لینک نظرسنجی بفرست» is the rule it exists
+     * for, and with only the result and the priority to condition on the survey
+     * went to a customer who cancelled the next morning — the same fault the
+     * `proforma` subject's two-value `status` once had, arriving through the
+     * other door. The names are that subject's own, so one condition is written
+     * whichever subject a rule counts from.
+     */
+    for (const key of ["settled", "outcome", "superseded"]) {
+      ok(`...and whether the quotation is ${key}`, taskFields.includes(key));
+    }
+    /*
+     * Derived, so the existing PAYLOAD_SELECT check can never see them — they are
+     * held against the sweep *assigning* them, and against one reading rather
+     * than a second derivation of the outcome: `derivedProformaValues` already is
+     * that reading.
+     */
+    /*
+     * Read **this function's own region**, not the file: the proforma subject's
+     * own `PAYLOAD_SELECT` carries the identical `items` and `_count` keys, so a
+     * file-wide check is answered by that and passed with the projection here
+     * emptied — which is exactly what the negative check caught.
+     */
+    const taskDerive = sweep.slice(
+      sweep.indexOf("async function derivedTaskValues"),
+      sweep.indexOf("async function derivedValuesFor"),
+    );
+    ok("the chase's derivation is found", taskDerive.length > 0);
+    ok("...computed through the one reading of a quotation's outcome",
+      /await derivedProformaValues\(await getDb\(\)\.proforma\.findMany\(/.test(taskDerive));
+    ok("...over the whole band in one read, never one query per chase",
+      /where: \{ id: \{ in: ids \} \}/.test(taskDerive));
+    ok("...with the lines, since the outcome is derived from them",
+      /items: \{ select: \{ status: true \} \}/.test(taskDerive));
+    ok("...and the version count, since «superseded» is",
+      /_count: \{ select: \{ nextVersions: true \} \}/.test(taskDerive));
+    /*
+     * `chaseCount` comes back from that function and is deliberately **not**
+     * offered here: it counts the recorded chases on the quotation, and a rule
+     * fired *by* one of them would be asking about itself — never below 1, so a
+     * condition on it could only mislead.
+     */
+    ok("...and chaseCount is not offered on a subject fired by a chase",
+      !taskFields.includes("chaseCount"));
   }
 
   /*

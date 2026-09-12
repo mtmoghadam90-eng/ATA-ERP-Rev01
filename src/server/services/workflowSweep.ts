@@ -214,7 +214,7 @@ async function derivedDeliveryValues(
 }
 
 /**
- * The quotation a recorded chase belongs to, under the key the engine reads.
+ * The quotation a recorded chase belongs to — its id, and what became of it.
  *
  * A follow-up task names its document through the polymorphic
  * `relatedToType`/`relatedToId` pair, and **nothing downstream reads those**:
@@ -224,15 +224,66 @@ async function derivedDeliveryValues(
  *
  * The Latin `"proforma"` is what `followUpService` writes; the Persian
  * spellings belong to tasks a person typed, and a chase is never one of those.
+ *
+ * **And the quotation's own state had to come with it.** «۲ روز پس از ثبت نتیجهٔ
+ * پیگیری، لینک نظرسنجی بفرست» is the rule this subject exists for, and the
+ * subject offered `followUpResult`, `priority` and the id — nothing that could
+ * ask whether the sale was *still* the one the rule was written about. So the
+ * survey went to a customer who cancelled the next morning, exactly as the
+ * `proforma` subject's own `status` field once wrote to customers whose order
+ * had already been won or lost. Identical fault, through the other door: a date
+ * says when to look and a condition says whether it is still true, and there was
+ * nothing to ask.
+ *
+ * It reuses `derivedProformaValues` rather than deriving the outcome a second
+ * time — that function already is the one reading, and the key names are the
+ * same ones so a person writing «اگر معامله تمام نشده» writes one condition
+ * whichever subject they chose.
  */
-function derivedTaskValues(
+async function derivedTaskValues(
   rows: Record<string, unknown>[],
-): Map<string, Record<string, unknown>> {
+): Promise<Map<string, Record<string, unknown>>> {
   const out = new Map<string, Record<string, unknown>>();
+  if (rows.length === 0) return out;
+
+  const proformaOf = new Map<string, string>();
   for (const row of rows) {
-    out.set(String(row.id), row.relatedToType === "proforma" && row.relatedToId
-      ? { proformaId: String(row.relatedToId) }
-      : {});
+    if (row.relatedToType === "proforma" && row.relatedToId) {
+      proformaOf.set(String(row.id), String(row.relatedToId));
+    }
+  }
+
+  /*
+   * One read for the whole band, in exactly the shape `derivedProformaValues`
+   * takes — the lines because the outcome is derived from them, the version
+   * count because `superseded` is.
+   */
+  const ids = [...new Set(proformaOf.values())];
+  const derived = ids.length === 0
+    ? new Map<string, Record<string, unknown>>()
+    : await derivedProformaValues(await getDb().proforma.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true, status: true, isCancelled: true,
+        items: { select: { status: true } },
+        _count: { select: { nextVersions: true } },
+      },
+    }) as unknown as Record<string, unknown>[]);
+
+  for (const row of rows) {
+    const id = String(row.id);
+    const proformaId = proformaOf.get(id);
+    if (!proformaId) {
+      out.set(id, {});
+      continue;
+    }
+    /*
+     * `chaseCount` is computed by that function and deliberately **not offered**
+     * on this subject: it counts the recorded chases on the quotation, and a rule
+     * fired *by* one of them would be asking about itself — never below 1, so a
+     * condition on it could only ever mislead.
+     */
+    out.set(id, { proformaId, ...(derived.get(proformaId) ?? {}) });
   }
   return out;
 }
