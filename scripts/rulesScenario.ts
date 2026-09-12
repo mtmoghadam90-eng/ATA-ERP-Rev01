@@ -16431,11 +16431,61 @@ head("Competitors: who we lose to, and by how much");
    * advice promises an automatic retry that cannot help, and only a person
    * pressing the button can get anywhere — somebody has to scan the code.
    */
+  /*
+   * Read the **close handler** rather than the file: `connectWhatsapp`'s own
+   * rejection handler carries the same shape a few lines above, legitimately —
+   * it is outside `openSocket`, where the live credentials are not in scope, and
+   * a throw from there is a local failure before any socket exists, so the disk
+   * is the right answer. A file-wide ordering check was answered by *that* site
+   * and would have passed with the close handler's own retry gone.
+   */
+  const closeHandler = clientCode.slice(clientCode.indexOf('if (connection === "close")'));
+  ok("the close handler is found", closeHandler.length > 0);
   ok("an unpaired close stops instead of retrying",
-    /if \(!whatsappIsLinked\(\)\) \{[\s\S]{0,260}WHATSAPP_STATES\.UNLINKED/.test(clientCode));
+    /if \(!paired\(\)\) \{[\s\S]{0,260}WHATSAPP_STATES\.UNLINKED/.test(closeHandler));
   ok("...and the retry is left for a device that really is paired",
-    clientCode.indexOf("retryDelayMs(failures)")
-      > clientCode.indexOf("if (!whatsappIsLinked())"));
+    closeHandler.indexOf("retryDelayMs(failures)") > closeHandler.indexOf("if (!paired())"));
+
+  /*
+   * And the close handler asks the **live** credentials, not the disk.
+   *
+   * baileys sets `creds.registered` and emits `creds.update`, and `saveCreds`
+   * writes the file *asynchronously* — WhatsApp's own `restartRequired` close can
+   * arrive first. The handler then read a file still saying `registered: false`
+   * about a scan that had just succeeded, reported UNLINKED and cleared the
+   * retry, so the link never completed and the person was told to scan again.
+   * `auth.creds` is the object baileys mutates in place, so it answers as of
+   * this instant; the disk stays the fallback and stays the answer everywhere
+   * there is no socket.
+   */
+  ok("the close handler reads the live credentials", /auth as \{ creds\?/.test(clientCode));
+  ok("...with the disk as the fallback rather than the authority",
+    /live === true \|\| \(live === undefined && whatsappIsLinked\(\)\)/.test(clientCode));
+
+  /*
+   * «باید دوباره وصل شوی» is the second half of a scan, not a failure.
+   *
+   * WhatsApp closes with `restartRequired` (515) immediately after a successful
+   * pairing and the reconnect is what completes the link. Falling through got it
+   * wrong in both directions: with the credentials written it waited out the
+   * ordinary backoff while the panel said «قطع شده» after a scan that had worked,
+   * and with the write not yet on disk it answered UNLINKED and cleared the
+   * retry. Checked **before** the unpaired branch, which is the whole of it.
+   */
+  ok("a restart WhatsApp asked for is reconnected promptly",
+    /restartRequired[\s\S]{0,400}RESTART_DELAY_MS/.test(closeHandler));
+  ok("...before the unpaired branch can call it an unlinked device",
+    closeHandler.indexOf("const restartRequired") > 0
+    && closeHandler.indexOf("const restartRequired") < closeHandler.indexOf("if (!paired())"));
+  /*
+   * Bounded, because a 515 that repeated would be a one-second reconnect loop —
+   * the machine-paced traffic this channel exists to avoid — and a successful
+   * open is what says the restart worked, so that is what clears the count.
+   */
+  ok("...and a repeating restart is bounded rather than a tight loop",
+    /restarts < MAX_PROMPT_RESTARTS/.test(clientCode));
+  ok("...with an open connection clearing the count",
+    /connection === "open"\) \{[\s\S]{0,80}restarts = 0/.test(clientCode));
 
   const routes = strip(readFileSync("src/server/routes/messaging.ts", "utf8"));
   const transport = strip(readFileSync("src/server/services/messaging/whatsappTransport.ts", "utf8"));
