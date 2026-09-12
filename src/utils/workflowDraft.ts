@@ -7,7 +7,7 @@ import {
   WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS, isAssigneeToken, isResponsibleModule,
   templateVariablesFor, triggerFields,
 } from "./workflowTriggers";
-import { MESSAGE_VARIABLES } from "./messaging";
+import { ALL_CHANNELS, MESSAGE_VARIABLES, isChannel } from "./messaging";
 import { SCHEDULE_SUBJECTS } from "./workflowSchedule";
 
 /**
@@ -153,7 +153,7 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     "    newTemplate — اگر هیچ‌کدام مناسب نیست، به‌جای templateId این را بنویس:",
     "      {\"name\":\"یک نام کوتاه فارسی\",\"body\":\"متن پیام\"} و متن را از",
     "      همان جمله‌ای بساز که کاربر خواسته. هر دو را با هم نفرست.",
-    "    channel (SMS | BALE | EMAIL یا نیامده = ترجیح پروژه), delayDays, sendAtTime",
+    `    channel (${ALL_CHANNELS.join(" | ")} یا نیامده = ترجیح پروژه), delayDays, sendAtTime`,
     "    delayDays: عدد صحیح نامنفی — «۲ روز بعد» برای یک پیام یعنی همین، نه dueDaysOffset",
     "      (آن مال وظیفه است).",
     "  send_notification — اعلان داخلی برای مسئول یک ماژول. notificationConfig:",
@@ -272,7 +272,6 @@ const OPERATORS = ["equals", "not_equals", "greater_than", "less_than"] as const
  */
 const ACTION_TYPES = WORKFLOW_ACTION_TYPES.map((a) => a.value);
 const TASK_KINDS = ["GENERAL", "SALES_FOLLOW_UP"] as const;
-const CHANNELS = ["SMS", "BALE", "EMAIL"] as const;
 
 export interface DraftContext {
   /** Template ids that actually exist — a `send_message` needs one of them. */
@@ -610,9 +609,18 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
         continue;
       }
 
-      const channel = (CHANNELS as readonly string[]).includes(String(config.channel))
-        ? (config.channel as "SMS" | "BALE" | "EMAIL")
-        : undefined;
+      /*
+       * `isChannel`, never a list written out here.
+       *
+       * This was a local `["SMS", "BALE", "EMAIL"]` — the fourth hand-typed copy
+       * of the channel list, and the one that decided what the assistant was
+       * *allowed* to propose. With WhatsApp absent from it, a drafted rule naming
+       * that channel had it silently dropped and the message went out as an SMS:
+       * wording written for a free line, charged by the character. `ALL_CHANNELS`
+       * is the list and `isChannel` the predicate over it, so the catalogue
+       * decides here exactly as it does everywhere else.
+       */
+      const channel = isChannel(config.channel) ? config.channel : undefined;
 
       /*
        * A token nothing fills in reaches the customer verbatim — `{مشتری}` in

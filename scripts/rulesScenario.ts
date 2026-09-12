@@ -16417,6 +16417,48 @@ head("Competitors: who we lose to, and by how much");
   /* WhatsApp is a channel, with its own address, templates and history. */
   ok("WhatsApp is one of the channels", ALL_CHANNELS.includes(CHANNELS.WHATSAPP));
   ok("...and is labelled in Persian", (CHANNEL_LABELS[CHANNELS.WHATSAPP] ?? "").length > 2);
+
+  /*
+   * And **a rule may choose it**, which for a long time no rule could.
+   *
+   * The channel list was written out by hand in four places and every one of them
+   * stopped at three when WhatsApp was added: the type itself
+   * (`'SMS' | 'BALE' | 'EMAIL'` on the action's `messageConfig`), the rule
+   * editor's `<select>` faithfully reflecting it, the drafter's prompt, and the
+   * drafter's own accepted list. A WhatsApp template is pickable in the list
+   * directly above that control, so the wording went out **as an SMS charged by
+   * the character** — a rule that looked perfectly correct on its card.
+   *
+   * The type is the root and is `Channel` now, so `tsc` names anything that
+   * narrows it again; the three readers read the catalogue.
+   */
+  const typesSrc = strip(readFileSync("src/types.ts", "utf8"));
+  ok("the action's channel is typed as the catalogue's own union",
+    /channel\?: Channel;/.test(typesSrc)
+    && !/channel\?: 'SMS' \| 'BALE' \| 'EMAIL'/.test(typesSrc));
+
+  const settingsSrc = strip(readFileSync("src/components/SettingsView.tsx", "utf8"));
+  const chanAt = settingsSrc.indexOf("messageConfig!.channel =");
+  ok("the rule editor's channel control is found", chanAt > 0);
+  const chanBlock = settingsSrc.slice(chanAt - 400, settingsSrc.indexOf("</select>", chanAt));
+  ok("...and draws its options from ALL_CHANNELS",
+    /ALL_CHANNELS\.map\(/.test(chanBlock) && /CHANNEL_LABELS\[ch\]/.test(chanBlock));
+  ok("...with no channel written out beside them",
+    !/<option value="SMS"/.test(chanBlock) && !/<option value="BALE"/.test(chanBlock)
+    && !/<option value="EMAIL"/.test(chanBlock));
+  /*
+   * And the write is guarded by the predicate rather than a union cast, which is
+   * the thing that drifted: a cast compiles whatever the list says.
+   */
+  ok("...and the picked value goes through isChannel", /isChannel\(picked\)/.test(chanBlock));
+
+  const draftSrc = strip(readFileSync("src/utils/workflowDraft.ts", "utf8"));
+  ok("the drafter accepts whatever the catalogue names",
+    /isChannel\(config\.channel\)/.test(draftSrc));
+  ok("...and keeps no list of its own",
+    !/const CHANNELS = \[/.test(draftSrc));
+  ok("...and its prompt offers the same list",
+    /ALL_CHANNELS\.join\(/.test(draftSrc));
   /*
    * It reads the **mobile**, which is the practical difference from Bale: a Bale
    * chat id has to be obtained and typed in per contact, so that channel reaches
