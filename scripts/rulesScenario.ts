@@ -280,7 +280,7 @@ import {
   DELIVERY_DELIVERED, DELIVERY_PREPARING, DELIVERY_WORKFLOW_STATUSES,
   INQUIRY_FINAL_OFFER, INQUIRY_INITIAL_OFFER, INQUIRY_SENT, INQUIRY_WINNER,
   INQUIRY_WORKFLOW_STATUSES, PROJECT_STATUSES, PURCHASE_ORDER_STATUSES, TASK_PRIORITIES,
-  deliveryWorkflowStatus, inquiryWorkflowStatus,
+  consignmentDeliveredOn, deliveryWorkflowStatus, inquiryWorkflowStatus,
 } from "../src/utils/moduleStatuses";
 import {
   PROJECT_STAGES, STAGE_FOR_PO_STATUS, deriveProjectStage, resolveStage, stageRank,
@@ -10243,6 +10243,87 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   eq("...produced by the same rule the service uses",
     deliveryWorkflowStatus({ actualDeliveryDate: new Date() }), DELIVERY_DELIVERED);
   eq("...and the other side of it", deliveryWorkflowStatus({}), DELIVERY_PREPARING);
+
+  /*
+   * And a consignment delivered **line by line** had no header date at all.
+   *
+   * `PackingItem.actualDeliveryDate` exists because a shipment genuinely arrives
+   * in pieces — two boxes on Tuesday and the instrument the following week — and
+   * everything that asks «has this been delivered» reads the *header*:
+   * `deliveryWorkflowStatus` above, the project stage, and the `delivery_actual`
+   * schedule subject, which counts from a stored column and can count from
+   * nothing else. So «یک ماه پس از تحویل کالا، بپرس نصب چطور پیش رفت» silently
+   * never fired for such a consignment, and the grid reported «در حال آماده‌سازی»
+   * about goods the customer had had for a month.
+   */
+  eq("a consignment is delivered on the day its last line arrived",
+    consignmentDeliveredOn(null, [
+      { actualDeliveryDateJalali: "1405/07/02" },
+      { actualDeliveryDateJalali: "1405/07/15" },
+    ]), "1405/07/15");
+  eq("...whatever order the lines are in",
+    consignmentDeliveredOn(null, [
+      { actualDeliveryDateJalali: "1405/07/15" },
+      { actualDeliveryDateJalali: "1405/07/02" },
+    ]), "1405/07/15");
+  eq("...and across a month boundary, since the text order is the calendar order",
+    consignmentDeliveredOn(null, [
+      { actualDeliveryDateJalali: "1405/07/30" },
+      { actualDeliveryDateJalali: "1405/08/01" },
+    ]), "1405/08/01");
+  /*
+   * The last line and not the first: the customer has the consignment only once
+   * the final piece arrives, so a part-delivered one is not delivered and the
+   * month must not start from the first box.
+   */
+  eq("a line still out means it is not delivered",
+    consignmentDeliveredOn(null, [{ actualDeliveryDateJalali: "1405/07/02" }, {}]), null);
+  eq("...and a list with no lines says nothing", consignmentDeliveredOn(null, []), null);
+  /*
+   * A date somebody typed on the header always wins: it may be the official
+   * handover date while the lines record when each box turned up, and overwriting
+   * it would change a date the company has told the customer. The lines only ever
+   * fill in an empty header — which is the case that was broken.
+   */
+  eq("a header somebody typed is never corrected by the lines",
+    consignmentDeliveredOn({ actualDeliveryDateJalali: "1405/07/10" },
+      [{ actualDeliveryDateJalali: "1405/07/15" }]), null);
+  eq("...but a blank one is not an answer",
+    consignmentDeliveredOn({ actualDeliveryDateJalali: "  " },
+      [{ actualDeliveryDateJalali: "1405/07/15" }]), "1405/07/15");
+
+  /*
+   * And both write paths fill it in, inside the transaction and **before** the
+   * stage is derived — or the stage would be computed from the date as it stood a
+   * moment ago rather than the one just stamped.
+   */
+  {
+    const svc = strip(readFileSync("src/server/services/deliveryService.ts", "utf8"));
+    eq("both write paths fill the header in from the lines",
+      (svc.match(/fillDeliveryDateFromItems\(tx,/g) ?? []).length, 2);
+    ok("...and it reads the shared rule rather than its own",
+      /consignmentDeliveredOn\(row, row\.items\)/.test(svc));
+    /*
+     * Bounded to each write's own body. A forward search to the end of the file
+     * was answered by the *delete* path's `syncProjectStage`, so moving the fill
+     * after the stage on the update path passed — which is what the negative
+     * check caught, and the reason an ordering assertion must name its region.
+     */
+    for (const [label, fn] of [
+      ["create", "export async function createDelivery"],
+      ["update", "export async function updateDelivery"],
+    ] as [string, string][]) {
+      const at = svc.indexOf(fn);
+      ok(`${label} is found`, at > 0);
+      const body = svc.slice(at, svc.indexOf("export async function", at + fn.length));
+      const fillAt = body.indexOf("fillDeliveryDateFromItems(tx,");
+      const stageAt = body.indexOf("syncProjectStage(tx,");
+      ok(`...filled in before the stage is derived on ${label}`,
+        fillAt > 0 && stageAt > 0 && fillAt < stageAt);
+    }
+    ok("...writing both halves of the date pair together",
+      /expandDateFields\(\{ actualDeliveryDate: derived \}/.test(svc));
+  }
   eq("the inquiry offers only what it can emit",
     conditionValues("supplier_inquiry_status_change", "newStatus").join("|"),
     INQUIRY_WORKFLOW_STATUSES.join("|"));
