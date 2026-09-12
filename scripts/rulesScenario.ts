@@ -10490,9 +10490,52 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
       && /IF NOT EXISTS \(SELECT 1 FROM sys\.indexes/.test(migBody));
     ok("...and it backfills nothing, so nothing reads a column this batch adds",
       !/\bUPDATE\b/i.test(migBody));
+    const schema = readFileSync("prisma/schema.prisma", "utf8");
     ok("the schema agrees with it",
-      /@@unique\(\[ruleId, entityId, occurrence\]/.test(
-        readFileSync("prisma/schema.prisma", "utf8")));
+      /@@unique\(\[ruleId, entityId, occurrence, dueDay\]/.test(schema));
+
+    /*
+     * And a record that moved on and then got stuck again is a **second** stall,
+     * which the three-column key could not express.
+     *
+     * For a fixed date the key was right: `sentDate` never moves, so the reminder
+     * is owed once. For the three dwell subjects the base date is a clock that
+     * *restarts* — a project recorded as «باخته», reopened, worked and lost again
+     * two months later has a new `statusChangedAt`, `occurrenceDue` still answers
+     * 1 because nothing repeats, and the insert hit the row from the first loss.
+     * The rule then never fired again for that project, for ever, with nothing on
+     * any screen saying so. The same holds for an order rejected at customs and
+     * sent back into transit.
+     *
+     * `resolveFinishedTasks` covered exactly one case — a rule with
+     * `closeWhenResolved` on that had raised a task whose record left the band —
+     * and a `send_message` rule has no task to retire, so it was never covered.
+     *
+     * `dueDay` is the honest fourth column because it *is* «which stall this
+     * answered»: derived from the base date, so it moves precisely when the clock
+     * restarts and stays put when the date is fixed. The earlier firing is kept
+     * rather than deleted, which is what the column was being stored for.
+     */
+    const dueMig = readFileSync(
+      "prisma/migrations/20260927000000_workflow_firing_due_day/migration.sql", "utf8")
+      .replace(/^\s*--.*$/gm, " ");
+    ok("the firing key names the due day", /\[occurrence\], \[dueDay\]\)/.test(dueMig));
+    ok("...and drops the three-column key first, or it keeps refusing the second stall",
+      /DROP INDEX \[workflow_firings_rule_entity_occurrence_uq\]/.test(dueMig)
+      && dueMig.indexOf("DROP INDEX") < dueMig.indexOf("CREATE UNIQUE INDEX"));
+    ok("...each step guarded, since a half-applied migration has to be retried",
+      /IF EXISTS \(SELECT 1 FROM sys\.indexes/.test(dueMig)
+      && /IF NOT EXISTS \(SELECT 1 FROM sys\.indexes/.test(dueMig));
+    ok("...and it writes no row, so nothing reads what this batch changes",
+      !/\bUPDATE\b/i.test(dueMig) && !/\bINSERT\b/i.test(dueMig));
+    /*
+     * And the sweep has to go on *writing* it, or the widest key in the world
+     * decides nothing: a create that stopped naming `dueDay` would put NULL in
+     * the key, and SQL Server treats NULLs as equal, so every later stall would
+     * collide exactly as before.
+     */
+    ok("the sweep still records the due day with the firing",
+      /workflowFiring\.create\(\{[\s\S]{0,320}dueDay: dueDay\(/.test(sweepSrc3));
 
     /*
      * Escalation. A card ignored twice is not made likelier to be picked up by
