@@ -212,6 +212,20 @@ let connecting: Promise<void> | null = null;
 let retryTimer: NodeJS.Timeout | null = null;
 /** How many times in a row the socket has closed without opening. */
 let failures = 0;
+/**
+ * How many times in a row WhatsApp has asked for a restart without opening.
+ *
+ * `restartRequired` is an *expected* close — WhatsApp sends it once, straight
+ * after a successful pairing, and the reconnect is what completes the link — so
+ * it is not a failure and must not back off like one. It is still counted,
+ * because a 515 that repeated forever would be a prompt reconnect loop, which is
+ * precisely the machine-paced traffic this channel exists to avoid; past the cap
+ * it falls through to the ordinary backoff.
+ */
+let restarts = 0;
+const MAX_PROMPT_RESTARTS = 3;
+/** How long to wait before the restart WhatsApp just asked for. */
+const RESTART_DELAY_MS = 1_000;
 
 /** Backoff between reconnects: a minute at the outside, never a tight loop. */
 const retryDelayMs = (n: number): number => Math.min(60_000, 2_000 * 2 ** Math.min(n, 5));
@@ -332,6 +346,25 @@ async function openSocket(): Promise<void> {
 
   socket.ev.on("creds.update", saveCreds);
 
+  /*
+   * Whether a device is paired, read from the **live** credentials.
+   *
+   * `whatsappIsLinked()` reads `creds.json` off the disk, which is right
+   * everywhere there is no socket — and wrong here. baileys sets
+   * `creds.registered` and emits `creds.update`, and `saveCreds` writes the file
+   * *asynchronously*; WhatsApp's own `restartRequired` close can arrive first.
+   * The handler then read a file still saying `registered: false` about a scan
+   * that had just succeeded, reported `UNLINKED`, and cleared the retry.
+   *
+   * `auth.creds` is the object baileys mutates in place, so it is the answer as
+   * of this instant. The disk is kept as the fallback for a shape where the
+   * library did not populate it.
+   */
+  const paired = (): boolean => {
+    const live = (auth as { creds?: { registered?: unknown } } | null)?.creds?.registered;
+    return live === true || (live === undefined && whatsappIsLinked());
+  };
+
   socket.ev.on("connection.update", (update: Record<string, any>) => {
     const { connection, lastDisconnect, qr } = update;
 
@@ -339,6 +372,7 @@ async function openSocket(): Promise<void> {
 
     if (connection === "open") {
       failures = 0;
+      restarts = 0;
       setState(WHATSAPP_STATES.CONNECTED, {
         qr: null,
         lastError: null,
@@ -374,6 +408,35 @@ async function openSocket(): Promise<void> {
       const reason = describe(lastDisconnect?.error ?? "اتصال بسته شد.");
 
       /*
+       * «باید دوباره وصل شوی» is not a failure — it is the second half of the
+       * scan.
+       *
+       * WhatsApp closes the socket with `restartRequired` (515) immediately
+       * after a successful pairing, and the reconnect is what finishes the
+       * link. Falling into the branches below got that wrong in both
+       * directions: with the credentials already written it waited out the
+       * ordinary backoff and the panel sat on «قطع شده» for seconds after a
+       * scan that had worked, and with the write not yet on disk it answered
+       * `UNLINKED` and **cleared the retry** — so the link never completed at
+       * all and the person was told to scan again, which is the loop.
+       *
+       * Bounded rather than unconditional: a 515 that repeated would otherwise
+       * be a one-second reconnect loop, the machine-paced traffic this channel
+       * exists to avoid. Past the cap it is treated as any other close.
+       */
+      const restartRequired = code === Number(DisconnectReason?.restartRequired ?? 515);
+      if (restartRequired && restarts < MAX_PROMPT_RESTARTS) {
+        restarts += 1;
+        setState(WHATSAPP_STATES.CONNECTING, { qr: null, lastError: null });
+        clearRetry();
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          void connectWhatsapp({ force: true });
+        }, RESTART_DELAY_MS);
+        return;
+      }
+
+      /*
        * A pairing that never completed is not a dropped connection.
        *
        * With nothing registered there is no session to restore, so retrying is
@@ -387,7 +450,7 @@ async function openSocket(): Promise<void> {
        * the next attempt is a person pressing the button — which is the only
        * thing that can succeed anyway, since somebody has to scan the code.
        */
-      if (!whatsappIsLinked()) {
+      if (!paired()) {
         failures = 0;
         clearRetry();
         setState(WHATSAPP_STATES.UNLINKED, { qr: null, linkedNumber: null, lastError: reason });
@@ -426,6 +489,7 @@ function wipeSession(): void {
 export async function unlinkWhatsapp(): Promise<WhatsappReport> {
   clearRetry();
   failures = 0;
+  restarts = 0;
   const open = sock;
   sock = null;
   try {
