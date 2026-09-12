@@ -16414,6 +16414,44 @@ head("Competitors: who we lose to, and by how much");
     ok(`${channel} keeps the ordinary batch`, channelPassLimit(channel) > WHATSAPP_PER_PASS);
   }
 
+  /*
+   * And the cap must narrow the **query**, or it starves every other channel.
+   *
+   * One `take: BATCH_SIZE` over all channels at once meant a campaign of two
+   * hundred WhatsApp messages filled the oldest 25 due rows: three went,
+   * twenty-two were left queued, and the next tick read the *same* twenty-five.
+   * An SMS queued a minute later waited behind a queue draining at three a
+   * minute — over an hour for that campaign — and the messages that suffer are
+   * the ones that matter: a handover notice to a colleague at a customer's site,
+   * an invoice text, a staff notification that fell back to SMS.
+   */
+  {
+    const svc = strip(
+      readFileSync("src/server/services/messaging/messageService.ts", "utf8"));
+    const queueAt = svc.indexOf("export async function processQueue");
+    ok("the queue worker is found", queueAt > 0);
+    const queueBody = svc.slice(queueAt, svc.indexOf("const configs = new Map", queueAt));
+    ok("the due rows are read per channel, each with its own limit",
+      /channel,?\s*\}/.test(queueBody) && /take: channelPassLimit\(channel\)/.test(queueBody));
+    ok("...and never as one undifferentiated page",
+      !/take: BATCH_SIZE/.test(queueBody));
+    /*
+     * And the paced channel is read **last**, derived from its own limit rather
+     * than named: its gaps are deliberate seconds of waiting, and a channel that
+     * has none must not sit behind them.
+     */
+    ok("...with the paced channel last, so nothing waits behind its gaps",
+      /channelPassLimit\(b\) - channelPassLimit\(a\)/.test(queueBody));
+    const byPace = [...ALL_CHANNELS].sort((a, b) => channelPassLimit(b) - channelPassLimit(a));
+    eq("...which puts WhatsApp at the end", byPace[byPace.length - 1], CHANNELS.WHATSAPP);
+    /*
+     * The counter stays: it is where the rule is *stated*, and the gap needs to
+     * know how many have already gone this pass.
+     */
+    ok("...and the per-pass counter still guards the send",
+      /alreadySent >= channelPassLimit\(channel\)/.test(svc));
+  }
+
   /* WhatsApp is a channel, with its own address, templates and history. */
   ok("WhatsApp is one of the channels", ALL_CHANNELS.includes(CHANNELS.WHATSAPP));
   ok("...and is labelled in Persian", (CHANNEL_LABELS[CHANNELS.WHATSAPP] ?? "").length > 2);
