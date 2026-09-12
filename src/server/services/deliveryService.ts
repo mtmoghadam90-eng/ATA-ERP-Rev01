@@ -14,7 +14,7 @@ import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
 import { syncProjectStage } from "./projectService";
 import { statusChangeColumns } from "../../utils/statusDwell";
-import { deliveryWorkflowStatus } from "../../utils/moduleStatuses";
+import { consignmentDeliveredOn, deliveryWorkflowStatus } from "../../utils/moduleStatuses";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 
 /**
@@ -223,6 +223,45 @@ const positionKey = (productId: string, variantId: string | null | undefined) =>
   `${productId}|${variantId ?? ""}`;
 
 /**
+ * Fills the header's delivery date in from the lines, when they can answer.
+ *
+ * `consignmentDeliveredOn` is the rule and the reason is written there: a
+ * shipment delivered line by line left the header empty, and the header is what
+ * every reader asks — `deliveryWorkflowStatus`, the project stage, and the
+ * `delivery_actual` schedule subject, which counts from a stored column and can
+ * count from nothing else. So «یک ماه پس از تحویل کالا» never fired for such a
+ * consignment.
+ *
+ * Run **inside** the writing transaction and **after** `syncChildren`, because
+ * the lines it reads are the ones that were just written; and **before**
+ * `syncProjectStage`, so the stage is derived from the date this may have just
+ * stamped rather than from the one a moment ago. Both dates are written together
+ * through `expandDateFields`' own pair, so the DATE column and the Shamsi string
+ * cannot be stored out of step.
+ */
+async function fillDeliveryDateFromItems(
+  tx: Prisma.TransactionClient,
+  deliveryId: string,
+): Promise<void> {
+  const row = await tx.packagingDelivery.findUnique({
+    where: { id: deliveryId },
+    select: {
+      actualDeliveryDateJalali: true,
+      items: { select: { actualDeliveryDateJalali: true } },
+    },
+  });
+  if (!row) return;
+
+  const derived = consignmentDeliveredOn(row, row.items);
+  if (!derived) return;
+
+  await tx.packagingDelivery.update({
+    where: { id: deliveryId },
+    data: expandDateFields({ actualDeliveryDate: derived }, ["actualDeliveryDate"]),
+  });
+}
+
+/**
  * Takes what this packing list ships out of the stock ledger.
  *
  * Written the same way a purchase order's receipt is: not by reverting and
@@ -306,8 +345,12 @@ export async function createDelivery(input: DeliveryInput, user: AuthUser, today
     });
     // Issuing the list is what takes the goods out of the warehouse.
     await reconcileDeliveryStock(tx, delivery.id, todayJalali);
+    // A consignment delivered line by line has no header date, and the header is
+    // what every reader asks — see `fillDeliveryDateFromItems`.
+    await fillDeliveryDateFromItems(tx, delivery.id);
     // A packing list is «بسته‌بندی و تحویل» on the project's stage, and its
-    // actual delivery date is what turns that into «تحویل شده».
+    // actual delivery date is what turns that into «تحویل شده» — so the stage is
+    // derived after the line above may have stamped it.
     await syncProjectStage(tx, delivery.projectId, todayJalali, user);
     return tx.packagingDelivery.findUnique({
       where: { id: delivery.id },
@@ -407,6 +450,8 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
     // Only the difference between what this list has already issued and what it
     // now says, so an edit corrects the ledger rather than doubling it.
     await reconcileDeliveryStock(tx, id, todayJalali);
+
+    await fillDeliveryDateFromItems(tx, id);
 
     const row = await tx.packagingDelivery.findUnique({
       where: { id }, select: { projectId: true },

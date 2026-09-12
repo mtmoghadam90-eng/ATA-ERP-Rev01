@@ -175,6 +175,58 @@ export function deliveryWorkflowStatus(
 }
 
 /**
+ * The day a consignment was delivered, when its lines were delivered one by one.
+ *
+ * `PackingItem.actualDeliveryDate` exists because a shipment genuinely arrives in
+ * pieces — two boxes on Tuesday and the instrument the following week — and the
+ * *header* date was then left empty. Everything that asks «has this been
+ * delivered» reads the header: `deliveryWorkflowStatus`, the project stage, and
+ * the `delivery_actual` schedule subject, which can only count from a stored
+ * column. So «یک ماه پس از تحویل کالا، بپرس نصب چطور پیش رفت» **silently never
+ * fired** for such a consignment, and the grid reported «در حال آماده‌سازی»
+ * about goods the customer had had for a month.
+ *
+ * Two decisions, and both are about which record is the more trustworthy.
+ *
+ * **The last line, not the first.** The customer has the consignment only once
+ * the final piece arrives, and asking about installation before that is asking
+ * about something they cannot have done — so this answers the *latest* date, and
+ * only when **every** line carries one. A part-delivered consignment is not
+ * delivered, and reading «any line has a date» would start the month from the
+ * first box.
+ *
+ * **A date somebody typed on the header always wins.** It may be the official
+ * handover date while the lines record when each box physically turned up, and
+ * overwriting that would change a date the company has told the customer. So the
+ * lines only ever *fill in* an empty header — which is precisely the case that
+ * was broken — and never correct or clear one. A line's date removed afterwards
+ * therefore leaves the header as it was: the consignment *was* delivered, and
+ * somebody editing that history is not a reason to report it as undelivered.
+ *
+ * Answers null when there is nothing to say, which the caller reads as «leave the
+ * column alone».
+ */
+export function consignmentDeliveredOn(
+  header: { actualDeliveryDateJalali?: unknown } | null | undefined,
+  items: readonly { actualDeliveryDateJalali?: unknown }[] | null | undefined,
+): string | null {
+  const typed = String(header?.actualDeliveryDateJalali ?? "").trim();
+  if (typed) return null; // Already answered, and by a person.
+
+  const lines = items ?? [];
+  if (lines.length === 0) return null;
+
+  const dates = lines.map((i) => String(i.actualDeliveryDateJalali ?? "").trim());
+  if (dates.some((d) => !d)) return null; // Not every line has arrived.
+
+  /*
+   * Compared as text, which is the calendar order: both sides are `YYYY/MM/DD`
+   * with the parts zero-padded, exactly as `isDue` compares a due day.
+   */
+  return dates.reduce((latest, d) => (d > latest ? d : latest), dates[0]);
+}
+
+/**
  * A supplier inquiry has no status column either — its state is where the offer
  * has got to. Four values, derived in one place so the editor offers those and
  * not the seven invented ones it used to.
