@@ -629,7 +629,7 @@ export async function syncProjectStatus(
     // project out of «باخته» for good. `notTechnical` is the single clause.
     where: { projectId, ...notTechnical() },
     select: {
-      id: true, status: true, isCancelled: true, createdAt: true,
+      id: true, proformaType: true, status: true, isCancelled: true, createdAt: true,
       // The reasons, document-level and per line: the project's own loss reason
       // is derived from these rather than typed a second time on its form.
       lossReason: true,

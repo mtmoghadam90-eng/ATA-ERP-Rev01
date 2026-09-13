@@ -202,6 +202,7 @@ import {
 import { calculateSellingPrice } from "../src/utils/priceCalculator";
 import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
 import { nextSequence, renderAround } from "../src/server/documentNumbers";
+import { proformaNumberFormat } from "../src/server/documentNumberSpecs";
 import { describeProformaChanges, proformaChangeSentence } from "../src/server/services/proformaChanges";
 import {
   REPEAT_SWEEP_WINDOW_DAYS, SCHEDULE_SUBJECTS, SWEEP_WINDOW_DAYS, TIME_TRIGGER,
@@ -369,6 +370,14 @@ const lost = pf("l", ["بازنده"], "ارسال شده", "2026-03-01");
 eq("project, winners in one order", deriveProjectStatus([won, half]), "نیمه برنده");
 eq("project, winners in the other order", deriveProjectStatus([half, won]), "نیمه برنده");
 eq("a rejected alternative quote does not drag the project down", deriveProjectStatus([won, lost]), "برنده (موفق)");
+const sentTechnical = { ...pf("tech", ["برنده"]), proformaType: "TECHNICAL" };
+eq("a sent technical quotation means an offer was presented, not that the sale was won",
+  deriveProjectStatus([sentTechnical]), "ارائه پیش‌فاکتور");
+eq("a technical draft does not move the project before it is issued",
+  deriveProjectStatus([{ ...sentTechnical, status: "پیش‌نویس" }]), null);
+eq("a sent after-sales quotation follows the same non-commercial rule",
+  deriveProjectStatus([{ ...sentTechnical, id: "service", proformaType: "AFTER_SALES" }]),
+  "ارائه پیش‌فاکتور");
 eq("removing the last proforma walks the project back", statusWithoutProformas("برنده (موفق)"), "در حال مذاکره");
 eq("but a stage a person set is left alone", statusWithoutProformas("در حال مذاکره"), null);
 
@@ -4196,6 +4205,22 @@ head("Assistant actions: prepared, never written");
     ok(`${route} does not keep its own numbering rule`,
       !read(route).includes("nextDocumentNumber("));
   }
+}
+
+head("Proforma numbering: each document kind uses its configured template");
+{
+  eq("financial quotations use the financial format key",
+    proformaNumberFormat("FINANCIAL").formatKey, "proformaFormat");
+  eq("technical quotations use their own format key",
+    proformaNumberFormat("TECHNICAL").formatKey, "proformaTechnicalFormat");
+  eq("after-sales quotations use their own format key",
+    proformaNumberFormat("AFTER_SALES").formatKey, "proformaAfterSalesFormat");
+  const route = readFileSync("src/server/routes/proformas.ts", "utf8");
+  ok("the route passes the selected kind into automatic numbering",
+    /nextProformaNumber\(\{[\s\S]{0,180}proformaType: input\.proformaType/.test(route));
+  const assistant = readFileSync("src/server/services/assistant/actions.ts", "utf8");
+  ok("assistant-issued quotations use the same type-specific numbering",
+    /nextProformaNumber\(\{[\s\S]{0,180}proformaType: input\.proformaType/.test(assistant));
 }
 
 head("Typing a number: half of one is not a decision");
