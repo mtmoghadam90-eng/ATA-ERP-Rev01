@@ -427,9 +427,7 @@ const proposeProforma: AssistantActionImpl = {
     const input = payload as ProformaInput;
     // Numbered here, at the moment it becomes a document.
     const proformaNumber = await nextProformaNumber({
-      projectId: input.projectId,
-      customerId: input.customerId,
-      proformaType: input.proformaType,
+      projectId: input.projectId, customerId: input.customerId,
     });
     const proforma = await createProforma(
       { ...input, proformaNumber }, ctx.user, ctx.todayJalali,

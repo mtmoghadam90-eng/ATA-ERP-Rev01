@@ -15,7 +15,6 @@ import { nextDocumentNumber } from "./documentNumbers";
 export async function nextProformaNumber(input: {
   projectId?: string | null;
   customerId?: string | null;
-  proformaType?: string | null;
 }): Promise<string> {
   const db = getDb();
   const [project, customer] = await Promise.all([
@@ -27,10 +26,9 @@ export async function nextProformaNumber(input: {
       : Promise.resolve(null),
   ]);
 
-  const numbering = proformaNumberFormat(input.proformaType);
   return nextDocumentNumber({
-    formatKey: numbering.formatKey, startSeqKey: "proformaStartSeq",
-    fallbackFormat: numbering.fallbackFormat,
+    formatKey: "proformaFormat", startSeqKey: "proformaStartSeq",
+    fallbackFormat: "QT-{PROJECT}-{SEQ:2}",
     existing: async (prefix) => (await db.proforma.findMany({
       where: { proformaNumber: { startsWith: prefix } },
       select: { proformaNumber: true },
@@ -40,20 +38,6 @@ export async function nextProformaNumber(input: {
     })),
     context: { projectCode: project?.code, customerName: customer?.companyName },
   });
-}
-
-/** The settings template belonging to each kind of quotation. */
-export function proformaNumberFormat(proformaType?: string | null): {
-  formatKey: string;
-  fallbackFormat: string;
-} {
-  if (proformaType === "TECHNICAL") {
-    return { formatKey: "proformaTechnicalFormat", fallbackFormat: "QT-TECH-{PROJECT}-{SEQ:2}" };
-  }
-  if (proformaType === "AFTER_SALES") {
-    return { formatKey: "proformaAfterSalesFormat", fallbackFormat: "QT-SERV-{PROJECT}-{SEQ:2}" };
-  }
-  return { formatKey: "proformaFormat", fallbackFormat: "QT-{PROJECT}-{SEQ:2}" };
 }
 
 export async function nextPackingListNumber(projectId: string): Promise<string> {
