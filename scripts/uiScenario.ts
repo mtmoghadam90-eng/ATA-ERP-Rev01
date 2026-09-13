@@ -1378,7 +1378,7 @@ head("Stuck thresholds: a leg is asked about once");
 head("Column widths: the grip is on the left and pulling it left widens");
 
 {
-  const widths = [8, 25, 11, 8, 14, 9, 12, 13];
+  const widths = [102, 250, 141, 102, 179, 115, 154, 166];
   const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
   const root = createRoot(host);
   let seen: number[] | null = null;
@@ -1398,9 +1398,8 @@ head("Column widths: the grip is on the left and pulling it left widens");
             "th",
             null,
             React.createElement(ColumnResizeHandle, {
-              onResize: (widthPx: number, tableWidthPx: number) => {
-                const target = (widthPx / tableWidthPx) * 100;
-                seen = resizeColumns(widths, 1, target - widths[1]);
+              onResize: (widthPx: number) => {
+                seen = resizeColumns(widths, 1, widthPx);
               },
               onDone: () => { done += 1; },
             }),
@@ -1441,21 +1440,21 @@ head("Column widths: the grip is on the left and pulling it left widens");
   ok("pulling the grip leftwards widens this column",
     !!seen && (seen as never as number[])[1] > widths[1], seen);
   ok("...by exactly what the pointer says",
-    Math.round((seen as never as number[])[1]) === 30, seen);
-  ok("...and the neighbour gives up exactly that much",
-    Math.round((seen as never as number[])[2]) === 6, seen);
-  ok("...leaving the table whole",
-    Math.abs((seen as never as number[]).reduce((a, b) => a + b, 0) - 100) < 0.001);
+    Math.round((seen as never as number[])[1]) === 300, seen);
+  ok("...without moving its neighbour",
+    Math.round((seen as never as number[])[2]) === widths[2], seen);
+  ok("...so widening increases the table width",
+    (seen as never as number[]).reduce((a, b) => a + b, 0) > widths.reduce((a, b) => a + b, 0));
   /*
    * Pulled further than the neighbour can afford, it stops against the
    * neighbour's minimum rather than pushing it to nothing — which would leave a
    * column whose own grip could never be grabbed again.
    */
   send("pointermove", 500, dom.window);
-  ok("a drag past the neighbour's floor stops at it",
-    Math.round((seen as never as number[])[2]) === 4, seen);
-  ok("...and still leaves the table whole",
-    Math.abs((seen as never as number[]).reduce((a, b) => a + b, 0) - 100) < 0.001);
+  ok("a wide drag follows the pointer",
+    Math.round((seen as never as number[])[1]) === 450, seen);
+  ok("...and still leaves the neighbour alone",
+    Math.round((seen as never as number[])[2]) === widths[2], seen);
   /*
    * And every move is measured from where the drag *started*, never from the
    * value it last wrote — so coming back lands on the figure it began with

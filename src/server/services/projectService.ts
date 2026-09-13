@@ -367,7 +367,7 @@ export async function syncProjectStage(
   const [proformas, inquiries, orders, deliveries, afterSales] = await Promise.all([
     tx.proforma.findMany({
       where: { projectId },
-      select: { status: true, isCancelled: true },
+      select: { proformaType: true, status: true, isCancelled: true },
     }),
     /*
      * Enough of each inquiry for `inquiryWorkflowStatus` and nothing more.
