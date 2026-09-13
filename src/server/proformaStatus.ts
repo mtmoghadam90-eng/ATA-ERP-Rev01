@@ -32,6 +32,7 @@ export interface OutcomeItem {
 }
 
 export interface OutcomeProforma {
+  proformaType?: string | null;
   status?: string | null;
   isCancelled?: boolean | null;
   items?: OutcomeItem[] | null;
@@ -150,7 +151,17 @@ export function decidingProformas<T extends StatusProforma>(proformas: T[]): T[]
 export function deriveProjectStatus(proformas: StatusProforma[]): ProjectStatus | null {
   if (!proformas || proformas.length === 0) return null;
 
-  const outcomes = proformas.map((pf) => getProformaOutcome(pf));
+  /* Technical/service offers move the project when sent, but do not decide a sale. */
+  const commercial = proformas.filter(
+    (pf) => !pf.proformaType || pf.proformaType === "FINANCIAL",
+  );
+  if (commercial.length === 0) {
+    return proformas.some((pf) => !pf.isCancelled && pf.status === "ارسال شده")
+      ? "ارائه پیش‌فاکتور"
+      : null;
+  }
+
+  const outcomes = commercial.map((pf) => getProformaOutcome(pf));
   if (outcomes.every((o) => o === "لغو شده")) return "لغو شده";
   if (outcomes.every((o) => o === "باخته")) return "باخته";
 
@@ -164,7 +175,7 @@ export function deriveProjectStatus(proformas: StatusProforma[]): ProjectStatus 
    * reported برنده (موفق), and the same pair in the other order reported
    * نیمه برنده. The lines of all of them decide together.
    */
-  const items: OutcomeItem[] = decidingProformas(proformas).flatMap((pf) => pf.items ?? []);
+  const items: OutcomeItem[] = decidingProformas(commercial).flatMap((pf) => pf.items ?? []);
 
   if (items.length === 0) return "ارائه پیش‌فاکتور";
 
