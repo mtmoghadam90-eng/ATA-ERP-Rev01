@@ -25,7 +25,7 @@ export default function ColumnResizeHandle({
   title,
 }: {
   /** The column's new width in pixels, as the pointer moves. */
-  onResize: (widthPx: number) => void;
+  onResize: (widthPx: number, tableWidthPx: number) => void;
   /** The drag ended; the screen stores what it has. */
   onDone: () => void;
   title?: string;
@@ -34,7 +34,8 @@ export default function ColumnResizeHandle({
 
   const start = (e: React.PointerEvent<HTMLDivElement>) => {
     const cell = e.currentTarget.closest('th') as HTMLElement | null;
-    if (!cell) return;
+    const table = e.currentTarget.closest('table') as HTMLElement | null;
+    if (!cell || !table) return;
 
     /*
       The edge the drag does not move. In RTL that is the right one, and
@@ -42,6 +43,8 @@ export default function ColumnResizeHandle({
       pointer went.
     */
     const anchorRight = cell.getBoundingClientRect().right;
+    const tableWidth = table.getBoundingClientRect().width;
+
     dragging.current = true;
     e.currentTarget.setPointerCapture(e.pointerId);
     // Or the browser selects the header text across the whole row instead.
@@ -49,7 +52,7 @@ export default function ColumnResizeHandle({
 
     const move = (ev: PointerEvent) => {
       if (!dragging.current) return;
-      onResize(anchorRight - ev.clientX);
+      onResize(anchorRight - ev.clientX, tableWidth);
     };
     const end = () => {
       if (!dragging.current) return;
