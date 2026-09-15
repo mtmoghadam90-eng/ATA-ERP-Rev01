@@ -19,7 +19,7 @@
  */
 
 import { PURCHASE_ORDER_STATUSES, AFTER_SALES_STATUSES } from "./moduleStatuses";
-import { PROJECT_STAGES, STAGE_FOR_PO_STATUS } from "./projectStage";
+import { PROJECT_STAGES, STAGE_FOR_PO_STATUS, STAGE_OFFER_REVIEW } from "./projectStage";
 import { getShamsiDaysDifference } from "../dateUtils";
 import { normalizeJalali } from "../server/dates";
 
@@ -113,6 +113,17 @@ export const DEFAULT_STUCK_THRESHOLDS: Record<StuckSection, Record<string, numbe
      * deepened.
      */
     "در حال بررسی فنی": 7,
+    /*
+     * The technical offer has gone to the customer and no answer has come back.
+     *
+     * Long-ish, because the customer is genuinely reading a specification and
+     * that takes more than a few days — but far shorter than «پیگیری
+     * پیش‌فاکتور», which the sales follow-up queue already chases document by
+     * document with its own health badge. A technical offer has **no** such
+     * queue behind it (it carries no follow-up task, because there is no sale to
+     * chase yet), so this column is the only thing watching it.
+     */
+    "بررسی پیشنهاد فنی توسط مشتری": 14,
     // The case this whole line of work started from: an inquiry sent to a
     // supplier who never answered, with nobody chasing it.
     "در انتظار پاسخ تأمین‌کننده": 7,
@@ -125,7 +136,7 @@ export const DEFAULT_STUCK_THRESHOLDS: Record<StuckSection, Record<string, numbe
      * Thirty days is far past any chase interval, so what surfaces is a job the
      * queue has genuinely lost rather than one being worked.
      */
-    "پیگیری پیش‌فاکتور": 30,
+    [STAGE_OFFER_REVIEW]: 30,
     "باخته": 0,
     "لغو شده": 0,
     /*

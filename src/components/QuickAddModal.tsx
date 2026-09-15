@@ -13,6 +13,7 @@ import { SearchableSelect } from './SearchableSelect';
 import { customersApi } from '../api/customers';
 import { detailToCustomer, findServerDuplicates } from '../api/customerAdapter';
 import { getTodayShamsi } from '../dateUtils';
+import { PROJECT_STATUSES } from "../utils/moduleStatuses";
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -1135,7 +1136,7 @@ export default function QuickAddModal({
                       onChange={(e) => handleProjStatusChange(e.target.value as Project['status'])}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                     >
-                      {(settings.dropdownItems?.projectStatuses || ['جدید', 'در حال مذاکره', 'ارائه پیش‌فاکتور', 'برنده (موفق)', 'نیمه برنده', 'باخته', 'لغو شده']).map((st, idx) => (
+                      {(settings.dropdownItems?.projectStatuses || PROJECT_STATUSES).map((st, idx) => (
                         <option key={idx} value={st}>{st}</option>
                       ))}
                     </select>

@@ -30,7 +30,8 @@
  */
 
 import {
-  INQUIRY_SENT, INQUIRY_WINNER, PROFORMA_SENT_STATUS, PURCHASE_ORDER_STATUSES,
+  INQUIRY_SENT, INQUIRY_WINNER, PROFORMA_SENT_STATUS, PROFORMA_TECHNICAL_TYPE,
+  PURCHASE_ORDER_STATUSES,
 } from "./moduleStatuses";
 
 /**
@@ -41,6 +42,26 @@ import {
  * second set of words — see `STAGE_FOR_PO_STATUS` below, which the type-checker
  * holds against `PURCHASE_ORDER_STATUSES`.
  */
+/**
+ * «آفر با مشتری است و منتظر پاسخ او هستیم.»
+ *
+ * It was «پیگیری پیش‌فاکتور» — «chasing the quotation» — which names what the
+ * sales desk is doing rather than where the *job* has got to, and the latter is
+ * the one thing this column is for. The chasing already has a screen of its own
+ * (the follow-up queue, with a health badge per document); the stage answers
+ * «الان این پروژه در چه مرحله‌ای است؟».
+ *
+ * Both spellings are named because the *old* one is still a key in
+ * `settings.stuckThresholds.projectStage` on every database that has one, and
+ * `pruneStuckThresholds` drops a key no state answers to — so a company that had
+ * changed «۳۰ روز» would lose the number silently on its next settings save.
+ * `settingsPatches` carries it across, once, and reads both names from here.
+ */
+export const STAGE_OFFER_REVIEW = "بررسی آفر توسط مشتری" as const;
+
+/** What `STAGE_OFFER_REVIEW` used to be called. Read only by the patch above. */
+export const STAGE_OFFER_REVIEW_WAS = "پیگیری پیش‌فاکتور" as const;
+
 export const PROJECT_STAGES = [
   "جدید",
   "در حال مذاکره",
@@ -69,6 +90,28 @@ export const PROJECT_STAGES = [
    * own. Locked pins it, exactly as for «توقف پروژه توسط کارفرما».
    */
   "در حال بررسی فنی",
+  /*
+   * The technical offer has gone out and the customer is reading it.
+   *
+   * A specification quotes **no prices**, so it can never be «پیگیری
+   * پیش‌فاکتور» — that stage means a priced offer is with the customer, and
+   * reading a specification as one dragged the project past the unanswered
+   * supplier inquiry that was the real answer. But leaving it out of the chain
+   * entirely was worse in the ordinary case: a job whose technical offer had
+   * been with the customer for three weeks reported «جدید», exactly like one
+   * nobody had touched, because the derivation was handed no such document at
+   * all.
+   *
+   * It sits **here**, between the review that produced it and the supplier
+   * stages, because asking a supplier for a price is what happens once the
+   * customer has agreed what is being offered. The order is the rule, so that
+   * placement is also what decides the contest: the least-advanced open thing
+   * wins, so a project with a technical offer out *and* an unanswered inquiry
+   * reports this rather than the inquiry — holding the project earlier in the
+   * chain, never later, which is the safe direction for a column somebody reads
+   * to decide what to chase.
+   */
+  "بررسی پیشنهاد فنی توسط مشتری",
   // The two stages before a quotation exists. Until they were added, a job with
   // three unanswered supplier inquiries sitting twenty days old read exactly
   // like one created this morning and touched by nobody — the derivation looked
@@ -76,7 +119,8 @@ export const PROJECT_STAGES = [
   "در انتظار پاسخ تأمین‌کننده",
   "بررسی پیشنهاد تأمین‌کننده",
   "تهیه پیش‌فاکتور",
-  "پیگیری پیش‌فاکتور",
+  // The priced offer is with the customer; see the constant's own note.
+  STAGE_OFFER_REVIEW,
   "باخته",
   "لغو شده",
   "برنده — در انتظار تأمین",
@@ -131,7 +175,19 @@ export const STAGE_FOR_PO_STATUS = {
 export interface StageFacts {
   /** The project's own sales status — the outcome, not the stage. */
   projectStatus?: string | null;
-  proformas?: { status?: string | null; isCancelled?: boolean | null }[];
+  /**
+   * Every document on the project, its kind included.
+   *
+   * The kind matters because a technical offer and a priced quotation reaching
+   * the customer are two different stages — see «بررسی پیشنهاد فنی توسط مشتری»
+   * in `PROJECT_STAGES`. Absent reads as financial, as the NOT NULL column's own
+   * default does.
+   */
+  proformas?: {
+    proformaType?: string | null;
+    status?: string | null;
+    isCancelled?: boolean | null;
+  }[];
   /** True once the sales outcome is won or part-won. */
   isWon?: boolean;
   /** True when every quotation is lost. */
@@ -184,7 +240,34 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
      * پاسخ تأمین‌کننده» the moment somebody asked a supplier about extra scope.
      */
     const live = proformas.filter((pf) => !pf.isCancelled);
-    if (live.some((pf) => pf.status === PROFORMA_SENT_STATUS)) return "پیگیری پیش‌فاکتور";
+    const priced = live.filter((pf) => pf.proformaType !== PROFORMA_TECHNICAL_TYPE);
+    if (priced.some((pf) => pf.status === PROFORMA_SENT_STATUS)) return STAGE_OFFER_REVIEW;
+
+    /*
+     * A technical offer with the customer, checked next — and its place in the
+     * chain is the whole of the rule.
+     *
+     * Below the priced document, because a price that has gone out is further
+     * along than a specification that has: checking it first would report «the
+     * customer is reading our spec» about a job already quoted.
+     *
+     * Above the supplier inquiries, because it sits **before** them in
+     * `PROJECT_STAGES` and the least-advanced open thing wins: asking a
+     * supplier for a price is what happens once the customer has agreed what is
+     * being offered, so the approval is the deeper block and the price does not
+     * matter until it comes.
+     *
+     * That placement is also what keeps the fault this used to have from coming
+     * back. It was a specification reported as «بررسی آفر توسط مشتری» — *past* the
+     * supplier stages, hiding the unanswered inquiry that was the real answer.
+     * The fix is where the stage sits, not whether it exists: this holds the
+     * project earlier in the chain and never later.
+     */
+    const technicalSent = live.some(
+      (pf) => pf.proformaType === PROFORMA_TECHNICAL_TYPE
+        && pf.status === PROFORMA_SENT_STATUS,
+    );
+    if (technicalSent) return "بررسی پیشنهاد فنی توسط مشتری";
 
     /*
      * Nothing has reached the customer yet, so the least-advanced open thing
@@ -201,7 +284,10 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
       return "در انتظار پاسخ تأمین‌کننده";
     }
 
-    if (live.length > 0) return "تهیه پیش‌فاکتور";
+    // A *priced* draft is what «تهیه پیش‌فاکتور» names. An unsent technical
+    // specification says nothing about a quotation being written, so it falls
+    // through to whatever the inquiries and the form say, exactly as before.
+    if (priced.length > 0) return "تهیه پیش‌فاکتور";
     if (undecided.length > 0) return "بررسی پیشنهاد تأمین‌کننده";
 
     /*

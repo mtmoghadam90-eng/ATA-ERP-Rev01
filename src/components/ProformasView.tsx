@@ -106,6 +106,7 @@ import { ensureVariantForAttributes, updateProductById as applyProductChange } f
 import { priceInWarehouseCurrency } from "../utils/finance";
 import { computeProformaTotals } from "../utils/proformaTotals";
 import type { useCategoryCompletion } from "../api/useCategoryCompletion";
+import { PROJECT_STATUSES } from "../utils/moduleStatuses";
 
 // Helper functions for dynamic delivery time notes generation
 /**
@@ -2581,6 +2582,10 @@ export default function ProformasView({
         return "bg-amber-50 text-amber-700 border-amber-200";
       case "ارائه پیش‌فاکتور":
         return "bg-indigo-50 text-indigo-700 border-indigo-200";
+      // A technical offer is presented and priced by nothing — its own colour,
+      // because reusing the quotation's would say a price had gone out.
+      case "ارائه پیش‌فاکتور فنی":
+        return "bg-violet-50 text-violet-700 border-violet-200";
       case "برنده (موفق)":
         return "bg-emerald-50 text-emerald-700 border-emerald-200";
       case "باخته":
@@ -6458,15 +6463,7 @@ export default function ProformasView({
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-right bg-white focus:outline-none focus:ring-1 focus:ring-sky-500"
                   >
                     {(
-                      settings.dropdownItems?.projectStatuses || [
-                        "جدید",
-                        "در حال مذاکره",
-                        "ارائه پیش‌فاکتور",
-                        "برنده (موفق)",
-                        "نیمه برنده",
-                        "باخته",
-                        "لغو شده",
-                      ]
+                      settings.dropdownItems?.projectStatuses || PROJECT_STATUSES
                     ).map((stg, idx) => (
                       <option key={idx} value={stg}>
                         {stg}

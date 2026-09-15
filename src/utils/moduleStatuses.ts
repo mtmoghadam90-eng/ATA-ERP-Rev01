@@ -25,8 +25,30 @@ type Covers<Union extends string, List extends readonly string[]> =
 
 /* ------------------------------- projects -------------------------------- */
 
+/**
+ * «یک پیشنهاد فنی برایش فرستاده‌ایم و هنوز قیمتی نداده‌ایم.»
+ *
+ * The status column is the *commercial* outcome, and a technical specification
+ * quotes no prices — so it can never be «ارائه پیش‌فاکتور», which means a priced
+ * offer the customer can accept and which every report keying on «did we quote»
+ * would count as one. But the other answer, «leave the column alone», was just
+ * as wrong: a job with a technical offer sitting with the customer for three
+ * weeks read «در حال مذاکره», exactly like one nobody had written anything for,
+ * which is how a customer comes to be left waiting with nobody noticing.
+ *
+ * So it is a value of its own rather than a reuse of either — not won, not lost
+ * and not quoted, but one state a project genuinely is in. It lives here rather
+ * than beside the rule that writes it because the *list* is what must contain
+ * it: the project form's status control is a `<select>` over
+ * `settings.dropdownItems.projectStatuses`, and a `<select>` whose value matches
+ * no option renders the first one. `settingsPatches` appends it to a live
+ * document for exactly that reason.
+ */
+export const PROJECT_TECHNICAL_OFFERED = "ارائه پیش‌فاکتور فنی" as const;
+
 export const PROJECT_STATUSES = [
   "جدید", "در حال مذاکره", "ارائه پیش‌فاکتور",
+  PROJECT_TECHNICAL_OFFERED,
   "برنده (موفق)", "باخته", "لغو شده", "نیمه برنده",
 ] as const satisfies readonly Project["status"][];
 const _projectStatusesCover: Covers<Project["status"], typeof PROJECT_STATUSES> = true;

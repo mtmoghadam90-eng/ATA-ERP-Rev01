@@ -9,7 +9,7 @@ import { deriveProjectStage, resolveStage } from "../../utils/projectStage";
 import { PROFORMA_SENT_STATUS, inquiryWorkflowStatus } from "../../utils/moduleStatuses";
 import { statusChangeColumns } from "../../utils/statusDwell";
 import { scheduleProjectStageTrigger } from "./projectStageEvents";
-import { isWonStatus, notTechnical } from "../proformaStatus";
+import { isWonStatus } from "../proformaStatus";
 import { summarizeProject, summarizeProjects } from "./projectSummary";
 // The custom-field clause is identical for every module; defined once with customers.
 import { customFieldClause } from "./customerService";
@@ -74,16 +74,27 @@ export type ProjectQuotationFilter = typeof PROJECT_QUOTATION_FILTERS[number];
  * Neither clause filters `proformas.status` against null — the column is NOT
  * NULL and Prisma rejects that outright.
  *
- * **And a technical specification is not a quotation** (`notTechnical`). It
- * quotes no prices, so a job carrying one and nothing else has had no price
- * written for it and no price sent — which is precisely the job being hunted
- * for. Counting it dropped that job out of *both* answers, and in the direction
- * that matters: it hid a project somebody still has to quote.
+ * **Every kind of document counts here, technical offers included**, and that is
+ * a different question from the sales figures next door. This one asks «has
+ * anything been written for this job, and has it gone out» — so a specification
+ * the customer is reading right now is plainly an answer to it. Excluding those
+ * (as this briefly did, on the reasoning that a specification quotes no prices
+ * and so leaves the job still to be quoted) put a job with a technical offer
+ * under «بدون هیچ پیش‌فاکتوری», while the count chip on the same row — which is
+ * `_count.proformas`, every document — said it had one. Two readings of «does
+ * this project have a quotation», disagreeing on one screen, which is how it was
+ * reported. The label is what settles it: «بدون هیچ پیش‌فاکتوری» means no
+ * document, and a technical offer is a document.
+ *
+ * The money question is a separate one and keeps its own clause: `notTechnical`
+ * still narrows the dashboard's conversion figures and `deriveProjectStatus`,
+ * because a specification is not an offer anybody can accept. Two questions,
+ * two clauses, and neither borrowed for the other.
  */
 export function quotationWhere(value: unknown): Record<string, unknown> | null {
-  if (value === "none") return { proformas: { none: { ...notTechnical() } } };
+  if (value === "none") return { proformas: { none: {} } };
   if (value === "unsent") {
-    return { proformas: { none: { ...notTechnical(), status: PROFORMA_SENT_STATUS } } };
+    return { proformas: { none: { status: PROFORMA_SENT_STATUS } } };
   }
   return null;
 }
@@ -425,18 +436,20 @@ export async function syncProjectStage(
 
   const [proformas, inquiries, orders, deliveries, afterSales] = await Promise.all([
     /*
-     * Quotations only — `notTechnical`.
+     * Every document, and the kind comes with it.
      *
-     * The rule below checks a **sent** document first, deliberately: once a
-     * quotation has gone out the job is waiting on the customer. A sent
-     * *specification* means nothing of the kind, since no price has left the
-     * building, so a technical offer reported «پیگیری پیش‌فاکتور» and dragged the
-     * project past «در انتظار پاسخ تأمین‌کننده» — hiding the unanswered supplier
-     * inquiry that was the real answer.
+     * The rule below checks a **sent** one first, deliberately: once something
+     * has gone out, what the job is waiting on is the customer. That is as true
+     * of a technical offer as of a priced one — it is sitting on the customer's
+     * desk either way, which is exactly what the stage column is for — and
+     * dropping those rows here meant a project with a specification three weeks
+     * out with the customer reported «جدید», indistinguishable from one nobody
+     * had touched. `deriveProjectStage` reads the type, so the two sent states
+     * are named apart rather than folded together.
      */
     tx.proforma.findMany({
-      where: { projectId, ...notTechnical() },
-      select: { status: true, isCancelled: true },
+      where: { projectId },
+      select: { proformaType: true, status: true, isCancelled: true },
     }),
     /*
      * Enough of each inquiry for `inquiryWorkflowStatus` and nothing more.
