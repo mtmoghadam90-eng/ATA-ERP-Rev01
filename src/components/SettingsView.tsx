@@ -59,7 +59,7 @@ import {
   RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS, WORKFLOW_ACTION_TYPES,
   MESSAGE_ONCE_SCOPES, WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS,
   actionLabel, conditionFieldLabel, isMessageOnceScope, operatorLabel,
-  defaultConditionField, triggerFields, triggerGroups, triggerLabel,
+  defaultConditionField, staleConditionField, triggerFields, triggerGroups, triggerLabel,
 } from '../utils/workflowTriggers';
 import ConfirmModal from './ConfirmModal';
 import { uploadFile } from '../imageUtils';
@@ -791,6 +791,36 @@ export default function SettingsView({
       && !a.messageConfig?.bodyTemplate?.trim());
     if (speechless) {
       alert('برای اقدام «ارسال پیام» باید یک قالب انتخاب کنید. قالب‌ها در ماژول ارسال پیام ساخته می‌شوند.');
+      return;
+    }
+
+    /*
+     * A condition on a field this rule's own record does not carry never fires.
+     *
+     * A scheduled rule's conditions are about the record its *date* belongs to,
+     * and the subject control changes that record while leaving the conditions
+     * where they were — so a rule written on «تاریخ ارسال پیش‌فاکتور» with a
+     * condition on `settled`, re-pointed at a purchase order, stored `settled`
+     * against a payload that never carries it. It saved, printed the condition on
+     * its card, and never fired. The form could not show it either: a `<select>`
+     * whose value matches no option renders the **first** one, so the screen read
+     * «وضعیت سفارش خرید» while the rule held `settled`.
+     *
+     * Refusing the save is where it can be noticed, exactly as with a message
+     * action that has nothing to say — and the field is named, because «یک شرط
+     * نامعتبر» sends somebody hunting through six rows.
+     */
+    const staleField = staleConditionField(
+      editingRule,
+      editingRule.triggerType === 'time_elapsed'
+        ? SCHEDULE_SUBJECTS[editingRule.schedule?.subject || 'proforma_sent']?.model ?? null
+        : null,
+    );
+    if (staleField) {
+      alert(
+        `شرط «${staleField}» با «کدام تاریخ» انتخاب‌شده نمی‌خواند و این قانون هیچ‌وقت اجرا نمی‌شود. `
+        + 'آن شرط را حذف کنید یا روی یکی از فیلدهای همین رکورد بگذارید.',
+      );
       return;
     }
     
