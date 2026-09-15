@@ -89,6 +89,52 @@ export const PROFORMA_SENT_STATUS = "ارسال شده" as const;
  * review happening *before* any document exists, and is set by hand.
  */
 export const PROFORMA_TECHNICAL_TYPE = "TECHNICAL" as const;
+
+/** `proformaType` for a service quotation raised against an after-sales job. */
+export const PROFORMA_AFTER_SALES_TYPE = "AFTER_SALES" as const;
+
+/**
+ * Which numbering template a kind of quotation is numbered from.
+ *
+ * The settings screen offers **three** — «پیش‌فاکتورهای مالی», «پیش‌فاکتورهای
+ * فنی» and «پیش‌فاکتورهای خدمات پس از فروش» — and `nextProformaNumber` read
+ * `proformaFormat` for all three, so two of those boxes were configured,
+ * previewed on that very screen, and used by nothing: a technical offer came out
+ * numbered as a financial one. A switch that does nothing, which is the fault
+ * this codebase keeps repairing, and here it is on a number printed on a
+ * document that goes to a customer.
+ *
+ * **Absent falls to the financial template**, which is what every row written
+ * before the column existed is, and what the column's own default says.
+ *
+ * The three deliberately share **one** start sequence (`proformaStartSeq`): that
+ * setting is a *floor* under the counter, and the series are already independent
+ * because `nextSequence` counts the numbers issued under the same rendered
+ * prefix — «QT-ATA-05-38-» and «QT-TECH-ATA-05-38-» are two prefixes. A second
+ * floor would be a second thing to keep in step to say the same thing.
+ */
+export const PROFORMA_FORMAT_KEYS = {
+  FINANCIAL: "proformaFormat",
+  TECHNICAL: "proformaTechnicalFormat",
+  AFTER_SALES: "proformaAfterSalesFormat",
+} as const;
+
+/** The default each of those templates falls back to when none is configured. */
+export const PROFORMA_FORMAT_FALLBACKS = {
+  FINANCIAL: "QT-{PROJECT}-{SEQ:2}",
+  TECHNICAL: "QT-TECH-{PROJECT}-{SEQ:2}",
+  AFTER_SALES: "QT-SERV-{PROJECT}-{SEQ:2}",
+} as const;
+
+export type ProformaKind = keyof typeof PROFORMA_FORMAT_KEYS;
+
+/** The kind a stored `proformaType` names; anything unknown is financial. */
+export function proformaKindOf(type: unknown): ProformaKind {
+  const value = String(type ?? "").trim();
+  if (value === PROFORMA_TECHNICAL_TYPE) return "TECHNICAL";
+  if (value === PROFORMA_AFTER_SALES_TYPE) return "AFTER_SALES";
+  return "FINANCIAL";
+}
 const _sentIsAStoredStatus: (typeof PROFORMA_STORED_STATUSES)[number] = PROFORMA_SENT_STATUS;
 void _sentIsAStoredStatus;
 

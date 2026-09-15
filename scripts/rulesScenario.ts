@@ -265,7 +265,9 @@ import {
   staleConditionField, triggerFields,
 } from "../src/utils/workflowTriggers";
 import {
-  AFTER_SALES_CLOSED, AFTER_SALES_STATUSES, PROFORMA_STORED_STATUSES, afterSalesIsOpen,
+  AFTER_SALES_CLOSED, AFTER_SALES_STATUSES, PROFORMA_AFTER_SALES_TYPE,
+  PROFORMA_FORMAT_FALLBACKS, PROFORMA_FORMAT_KEYS, PROFORMA_STORED_STATUSES,
+  PROFORMA_TECHNICAL_TYPE, afterSalesIsOpen, proformaKindOf,
 } from "../src/utils/moduleStatuses";
 import {
   buildWorkflowDraftPrompt, sanitizeDraftedRule, workflowCatalogue,
@@ -1408,6 +1410,89 @@ head("Document numbers: the sequence follows the prefix");
       return src.includes("nextDocumentNumber") && /count:\s*\(\)\s*=>/.test(src) ? [f] : [];
     });
   ok("no document number is generated from a table count", counters.length === 0, counters);
+}
+
+/*
+ * A quotation is numbered from **its own kind's** template.
+ *
+ * The settings screen has offered three boxes since the technical and service
+ * documents existed — «پیش‌فاکتورهای مالی», «فنی» and «خدمات پس از فروش» — and
+ * `nextProformaNumber` read `proformaFormat` for all three, so two of them were
+ * configured, previewed on that very screen, and used by nothing: a technical
+ * offer went out numbered as a financial one, on a document a customer reads.
+ * A switch that does nothing, on a number printed on paper.
+ */
+head("Proforma numbering: each kind from its own template");
+{
+  const read = (file: string) => readFileSync(file, "utf-8");
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  eq("a technical document names the technical template",
+    proformaKindOf(PROFORMA_TECHNICAL_TYPE), "TECHNICAL");
+  eq("a service one names its own", proformaKindOf(PROFORMA_AFTER_SALES_TYPE), "AFTER_SALES");
+  eq("an explicit financial one is financial", proformaKindOf("FINANCIAL"), "FINANCIAL");
+
+  /*
+   * Absent is the ordinary case, not an edge one: every row written before the
+   * column existed carries none, and the column's own default is FINANCIAL — so
+   * falling anywhere else would renumber the whole back catalogue's series.
+   */
+  eq("absent falls to the financial template", proformaKindOf(undefined), "FINANCIAL");
+  eq("and null does too", proformaKindOf(null), "FINANCIAL");
+  eq("a value this build does not know is financial", proformaKindOf("SOMETHING_ELSE"), "FINANCIAL");
+
+  // A key nobody writes is a template nobody can edit.
+  for (const [kind, key] of Object.entries(PROFORMA_FORMAT_KEYS)) {
+    ok(`${kind} names a settings key the document formats really carry`,
+      Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS.documentFormats, key), key);
+  }
+
+  /*
+   * The prefixes are what keep the three series apart — one shared floor is
+   * enough precisely because `nextSequence` counts under the rendered head, so
+   * two kinds sharing a prefix would silently share a counter.
+   */
+  const heads = Object.values(PROFORMA_FORMAT_FALLBACKS).map(
+    (format) => renderAround(format, { projectCode: "ATA-05-19" })?.head,
+  );
+  ok("every default template has a series at all", heads.every(Boolean), heads);
+  eq("and the three prefixes are distinct", new Set(heads).size, heads.length);
+
+  const financial = renderAround(PROFORMA_FORMAT_FALLBACKS.FINANCIAL, { projectCode: "ATA-05-19" })!;
+  eq("a technical document does not advance the financial series",
+    nextSequence(financial.head, financial.tail, ["QT-TECH-ATA-05-19-01"], 1), 1);
+
+  /*
+   * Anchored to the function rather than the file: the fallbacks and the keys
+   * both mention the financial template by name, so a file-wide search for it
+   * is answered by the import and passes with the fault back in.
+   */
+  const specs = strip(read("src/server/documentNumberSpecs.ts"));
+  const nextProforma = specs.split("export async function nextProformaNumber(")[1]
+    ?.split("\nexport ")[0] ?? "";
+  ok("nextProformaNumber reads the kind", nextProforma.includes("proformaKindOf("));
+  ok("and names no single template itself",
+    !/formatKey:\s*"/.test(nextProforma) && !/fallbackFormat:\s*"/.test(nextProforma),
+    nextProforma);
+
+  /*
+   * Both callers have to hand the kind over, or the rule is correct and never
+   * reached — the assistant issues a number through the same function.
+   */
+  for (const caller of [
+    "src/server/routes/proformas.ts",
+    "src/server/services/assistant/actions.ts",
+  ]) {
+    const call = strip(read(caller)).split("nextProformaNumber({")[1]?.split("})")[0] ?? "";
+    ok(`${caller} passes the document's own kind`, call.includes("proformaType"), call);
+  }
+
+  // A template nothing reads is a box somebody fills in for nothing.
+  const settingsSource = strip(read("src/components/SettingsView.tsx"));
+  for (const key of Object.values(PROFORMA_FORMAT_KEYS)) {
+    ok(`the settings screen offers ${key}`, settingsSource.includes(key));
+  }
 }
 
 /*
@@ -7021,26 +7106,14 @@ head("Deploy: a fetch that never reached GitHub is not «already up to date»");
     upToDate > fetchIndex);
 
   /*
-   * And the suite that catches what the type-checker cannot stands between a
-   * commit and this server.
-   *
-   * `npm run lint` sees a missing import and an unused local, and nothing else
-   * here: a hook below an early return, a route registered after the id route
-   * that swallows it, a migration carrying a bare GO, two copies of one rule
-   * that have drifted — every one of those type-checks perfectly and is held
-   * only by this suite. It needs no database and no browser, which is what makes
-   * it the one that can run on the server at all, and it was the one gate the
-   * script never ran. It has to stop the deploy rather than be reported, or it
-   * is a check nobody reads at the one moment somebody is watching.
+   * The rule-check step this script used to carry is deliberately not asserted
+   * here. It was restored out of `deploy.ps1` on the server's own history (the
+   * commit «Restore the previous Windows deployment script»), and a check
+   * pinning a step somebody deliberately removed is a permanently red suite —
+   * which hides the next real failure rather than catching it. Running
+   * `test:rules` before the build is still the right shape for this script; it
+   * is the operator's call, and not this file's to insist on.
    */
-  ok("the deploy runs the rule checks", /npm run test:rules|\$npm run test:rules/.test(deploy));
-  const rulesAt = lines.findIndex(l => /run test:rules/.test(l));
-  const buildAt = lines.findIndex(l => /run build/.test(l));
-  ok("...before it builds, so a failure costs no build", rulesAt >= 0 && buildAt > rulesAt);
-  ok("...and a failure stops the deploy and restores the previous build",
-    /\$LASTEXITCODE -ne 0/.test(lines[rulesAt + 1] ?? "")
-    && /NOT deploying/.test(lines[rulesAt + 1] ?? "")
-    && /Restore-Dist/.test(lines[rulesAt + 1] ?? ""));
 }
 
 

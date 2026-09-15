@@ -106,7 +106,11 @@ export function registerProformaRoutes(app: express.Express, deps: RouteDeps): v
       // Blank means "make one up" — see documentNumbers.ts.
       if (!input.proformaNumber || !String(input.proformaNumber).trim()) {
         input.proformaNumber = await nextProformaNumber({
-          projectId: input.projectId, customerId: input.customerId,
+          projectId: input.projectId,
+          customerId: input.customerId,
+          // Its own kind's template — a technical offer is not numbered as a
+          // financial one, which is what the settings screen has always said.
+          proformaType: input.proformaType,
         });
       }
 

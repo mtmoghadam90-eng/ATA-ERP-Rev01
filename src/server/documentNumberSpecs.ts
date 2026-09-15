@@ -1,5 +1,8 @@
 import { getDb } from "./db";
 import { nextDocumentNumber } from "./documentNumbers";
+import {
+  PROFORMA_FORMAT_FALLBACKS, PROFORMA_FORMAT_KEYS, proformaKindOf,
+} from "../utils/moduleStatuses";
 
 /**
  * The document-number specifications, in one place per document.
@@ -12,11 +15,28 @@ import { nextDocumentNumber } from "./documentNumbers";
  * meanings. `test:rules` fails if a route grows its own copy again.
  */
 
+/**
+ * The next number for a quotation, off **its own kind's** template.
+ *
+ * The settings screen offers three — «پیش‌فاکتورهای مالی», «پیش‌فاکتورهای فنی»
+ * and «پیش‌فاکتورهای خدمات پس از فروش» — and this read `proformaFormat` for all
+ * three, so two of those boxes were configured, previewed on that very screen,
+ * and used by nothing: a technical offer went out numbered as a financial one,
+ * on a document a customer reads. `proformaKindOf` is the single rule and
+ * `PROFORMA_FORMAT_KEYS` the single naming of the three settings keys.
+ *
+ * The **prefix** is what keeps the three series apart: `existing` counts the
+ * numbers already issued under the rendered head, so «QT-ATA-05-38-» and
+ * «QT-TECH-ATA-05-38-» step independently with one shared floor, and a document
+ * on one kind does not advance another's next number.
+ */
 export async function nextProformaNumber(input: {
   projectId?: string | null;
   customerId?: string | null;
+  proformaType?: string | null;
 }): Promise<string> {
   const db = getDb();
+  const kind = proformaKindOf(input.proformaType);
   const [project, customer] = await Promise.all([
     input.projectId
       ? db.project.findUnique({ where: { id: input.projectId }, select: { code: true } })
@@ -27,8 +47,8 @@ export async function nextProformaNumber(input: {
   ]);
 
   return nextDocumentNumber({
-    formatKey: "proformaFormat", startSeqKey: "proformaStartSeq",
-    fallbackFormat: "QT-{PROJECT}-{SEQ:2}",
+    formatKey: PROFORMA_FORMAT_KEYS[kind], startSeqKey: "proformaStartSeq",
+    fallbackFormat: PROFORMA_FORMAT_FALLBACKS[kind],
     existing: async (prefix) => (await db.proforma.findMany({
       where: { proformaNumber: { startsWith: prefix } },
       select: { proformaNumber: true },
