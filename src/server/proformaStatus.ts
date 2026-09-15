@@ -12,7 +12,9 @@
  * until it is migrated.
  */
 
-import { PROFORMA_TECHNICAL_TYPE } from "../utils/moduleStatuses";
+import {
+  PROFORMA_SENT_STATUS, PROFORMA_TECHNICAL_TYPE, PROJECT_TECHNICAL_OFFERED,
+} from "../utils/moduleStatuses";
 
 /**
  * The clause that keeps a technical specification out of the sales figures.
@@ -30,7 +32,7 @@ import { PROFORMA_TECHNICAL_TYPE } from "../utils/moduleStatuses";
  * - `deriveProjectStage` checks a **sent** document first, deliberately, because
  *   a quotation that has gone out means the job is waiting on the customer. A
  *   sent *specification* means nothing of the kind — no price has left the
- *   building — so it reported «پیگیری پیش‌فاکتور» and dragged the project past
+ *   building — so it reported «بررسی آفر توسط مشتری» and dragged the project past
  *   «در انتظار پاسخ تأمین‌کننده», hiding the unanswered supplier inquiry that was
  *   the actual answer.
  * - the dashboard counts one opportunity per project and a document per
@@ -54,6 +56,33 @@ export function notTechnical(): { proformaType: { not: string } } {
   return { proformaType: { not: PROFORMA_TECHNICAL_TYPE } };
 }
 
+/**
+ * The same selection in memory: everything that is not a technical offer.
+ *
+ * `notTechnical` narrows a query and this narrows a list already read, which is
+ * what `deriveProjectStatus` needs — it is handed **every** document, because a
+ * project whose only document is a technical offer has a state of its own to
+ * report (`PROJECT_TECHNICAL_OFFERED`) and a query that had already dropped
+ * those rows could not tell that project from one with no documents at all.
+ *
+ * Absent is financial, matching the column's NOT NULL default and the row of
+ * every document written before the type existed.
+ */
+export function commercialProformas<T extends { proformaType?: string | null }>(
+  proformas: T[],
+): T[] {
+  return proformas.filter((pf) => pf.proformaType !== PROFORMA_TECHNICAL_TYPE);
+}
+
+/** Whether a technical offer has actually reached the customer. */
+function technicalOfferSent(proformas: OutcomeProforma[]): boolean {
+  return proformas.some(
+    (pf) => pf.proformaType === PROFORMA_TECHNICAL_TYPE
+      && !pf.isCancelled
+      && pf.status === PROFORMA_SENT_STATUS,
+  );
+}
+
 export const ITEM_WON = "برنده";
 export const ITEM_LOST = "بازنده";
 export const ITEM_CANCELLED = "لغو شده";
@@ -64,6 +93,7 @@ export type ProformaOutcome =
 
 export type ProjectStatus =
   | "جدید" | "در حال مذاکره" | "ارائه پیش‌فاکتور"
+  | typeof PROJECT_TECHNICAL_OFFERED
   | "برنده (موفق)" | "باخته" | "لغو شده" | "نیمه برنده";
 
 export interface OutcomeItem {
@@ -74,6 +104,11 @@ export interface OutcomeItem {
 }
 
 export interface OutcomeProforma {
+  /**
+   * Which kind of document this is. Absent reads as financial, exactly as the
+   * NOT NULL column's own default does — see `notTechnical`.
+   */
+  proformaType?: string | null;
   status?: string | null;
   isCancelled?: boolean | null;
   items?: OutcomeItem[] | null;
@@ -192,7 +227,33 @@ export function decidingProformas<T extends StatusProforma>(proformas: T[]): T[]
 export function deriveProjectStatus(proformas: StatusProforma[]): ProjectStatus | null {
   if (!proformas || proformas.length === 0) return null;
 
-  const outcomes = proformas.map((pf) => getProformaOutcome(pf));
+  /*
+   * The sale is decided by the priced documents, and by nothing else.
+   *
+   * A technical specification quotes no prices, so it is not an offer anybody
+   * can accept: counted among these it stood in for the quotation as «the most
+   * recent document», and — because «باخته» needs *every* document lost — one
+   * left open kept a genuinely lost project out of «باخته» for good.
+   *
+   * But «leave the column alone» was the wrong answer for a project whose only
+   * document *is* a technical offer, which is the ordinary way a job here
+   * starts: it read «در حال مذاکره», identical to one nobody had written
+   * anything for, while a specification sat with the customer for three weeks.
+   * So the offer gets a state of its own rather than the sales words or
+   * silence, and this is handed every document so it can tell the two apart —
+   * a query that had dropped the technical rows could not.
+   */
+  const commercial = commercialProformas(proformas);
+  if (commercial.length === 0) {
+    /*
+     * A **sent** one only. A specification still being written says no more
+     * about the project than an unopened folder does, and stamping the column
+     * for it would report an offer the customer has never seen.
+     */
+    return technicalOfferSent(proformas) ? PROJECT_TECHNICAL_OFFERED : null;
+  }
+
+  const outcomes = commercial.map((pf) => getProformaOutcome(pf));
   if (outcomes.every((o) => o === "لغو شده")) return "لغو شده";
   if (outcomes.every((o) => o === "باخته")) return "باخته";
 
@@ -206,7 +267,7 @@ export function deriveProjectStatus(proformas: StatusProforma[]): ProjectStatus 
    * reported برنده (موفق), and the same pair in the other order reported
    * نیمه برنده. The lines of all of them decide together.
    */
-  const items: OutcomeItem[] = decidingProformas(proformas).flatMap((pf) => pf.items ?? []);
+  const items: OutcomeItem[] = decidingProformas(commercial).flatMap((pf) => pf.items ?? []);
 
   if (items.length === 0) return "ارائه پیش‌فاکتور";
 
@@ -262,9 +323,11 @@ export function deriveProjectLossReason(
     tally.set(reason, (tally.get(reason) ?? 0) + 1);
   };
 
-  // The same documents the status is derived from. A superseded revision must
-  // not contribute a reason the live quotation disagrees with.
-  for (const pf of decidingProformas(proformas)) {
+  // The same documents the *sale* is derived from. A superseded revision must
+  // not contribute a reason the live quotation disagrees with, and a technical
+  // specification is not lost or won at all — this is handed every document
+  // because `deriveProjectStatus` needs them, so the narrowing happens here.
+  for (const pf of decidingProformas(commercialProformas(proformas))) {
     const lost = (pf.items ?? []).filter((i) => i.status === ITEM_LOST);
     lostLines += lost.length;
     for (const line of lost) count(line.lossReason);
@@ -322,7 +385,11 @@ export function isWonStatus(status: string | null | undefined): boolean {
  * project with nothing lost goes on reporting باخته.
  */
 const PROFORMA_DERIVED_STATUSES = new Set<string>([
-  "ارائه پیش‌فاکتور", "برنده (موفق)", "باخته", "نیمه برنده", "لغو شده",
+  // Every one of these was written by the rule above and by nothing else, the
+  // technical-offer state included: deleting the specification has to take it
+  // with it, or the project goes on reporting an offer it no longer holds.
+  "ارائه پیش‌فاکتور", PROJECT_TECHNICAL_OFFERED,
+  "برنده (موفق)", "باخته", "نیمه برنده", "لغو شده",
 ]);
 
 /**

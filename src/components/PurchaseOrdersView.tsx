@@ -66,6 +66,7 @@ import { useProjectJump } from "../api/useProjectJump";
 import { useNextAction } from '../utils/useNextAction';
 import SaveWithNextActionButton from './SaveWithNextActionButton';
 import { NextActionPrompt } from './NextActionModal';
+import { PROJECT_STATUSES } from "../utils/moduleStatuses";
 
 /**
  * Purchase orders screen.
@@ -2577,7 +2578,7 @@ export default function PurchaseOrdersView({
                     onChange={(e) => setQuickProjStage(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-right bg-white focus:outline-none focus:ring-1 focus:ring-sky-500"
                   >
-                    {(settings.dropdownItems?.projectStatuses || ['جدید', 'در حال مذاکره', 'ارائه پیش‌فاکتور', 'برنده (موفق)', 'نیمه برنده', 'باخته', 'لغو شده']).map((stg, idx) => (
+                    {(settings.dropdownItems?.projectStatuses || PROJECT_STATUSES).map((stg, idx) => (
                       <option key={idx} value={stg}>{stg}</option>
                     ))}
                   </select>

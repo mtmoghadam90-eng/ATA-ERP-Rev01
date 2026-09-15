@@ -477,7 +477,7 @@ export interface Project {
   expectedCloseDate?: string; // Expected closing date (optional)
   estimatedValueRIYAL?: number; // Optional/legacy
   probabilityPercent?: number; // Optional/legacy
-  status: 'جدید' | 'در حال مذاکره' | 'ارائه پیش‌فاکتور' | 'برنده (موفق)' | 'باخته' | 'لغو شده' | 'نیمه برنده';
+  status: 'جدید' | 'در حال مذاکره' | 'ارائه پیش‌فاکتور' | 'ارائه پیش‌فاکتور فنی' | 'برنده (موفق)' | 'باخته' | 'لغو شده' | 'نیمه برنده';
   /**
    * «مرحله‌ی جاری» — where the *work* has got to, as opposed to how the sale
    * went.

@@ -72,6 +72,7 @@ import ColumnResizeHandle from './ColumnResizeHandle';
 import { useNextAction } from '../utils/useNextAction';
 import SaveWithNextActionButton from './SaveWithNextActionButton';
 import { NextActionPrompt } from './NextActionModal';
+import { PROJECT_STATUSES } from "../utils/moduleStatuses";
 
 /**
  * What the sidebar calls each module, so a link reads as the place it goes.
@@ -3217,6 +3218,7 @@ export default function ProjectsView({
       case 'جدید': return 'bg-slate-100 text-slate-700 border-slate-200';
       case 'در حال مذاکره': return 'bg-blue-50 text-blue-700 border-blue-200';
       case 'ارائه پیش‌فاکتور': return 'bg-sky-50 text-sky-700 border-sky-200';
+      case 'ارائه پیش‌فاکتور فنی': return 'bg-violet-50 text-violet-700 border-violet-200';
       case 'برنده (موفق)': return 'bg-emerald-50 text-emerald-700 border-emerald-200';
       case 'باخته': return 'bg-red-50 text-red-700 border-red-200';
       case 'لغو شده': return 'bg-amber-50 text-amber-700 border-amber-200';
@@ -3298,7 +3300,7 @@ export default function ProjectsView({
             className="w-full border border-slate-200 rounded-lg text-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition appearance-none text-right bg-white"
           >
             <option value="all">همه مراحل خط فروش</option>
-            {(settings.dropdownItems?.projectStatuses || ['جدید', 'در حال مذاکره', 'ارائه پیش‌فاکتور', 'برنده (موفق)', 'نیمه برنده', 'باخته', 'لغو شده']).map((st, idx) => (
+            {(settings.dropdownItems?.projectStatuses || PROJECT_STATUSES).map((st, idx) => (
               <option key={idx} value={st}>{st}</option>
             ))}
           </select>
@@ -4403,7 +4405,7 @@ export default function ProjectsView({
                       onChange={(e) => handleStatusChange(e.target.value as Project['status'])}
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                     >
-                      {(settings.dropdownItems?.projectStatuses || ['جدید', 'در حال مذاکره', 'ارائه پیش‌فاکتور', 'برنده (موفق)', 'نیمه برنده', 'باخته', 'لغو شده']).map((st, idx) => (
+                      {(settings.dropdownItems?.projectStatuses || PROJECT_STATUSES).map((st, idx) => (
                         <option key={idx} value={st}>{st}</option>
                       ))}
                     </select>

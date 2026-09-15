@@ -36,6 +36,8 @@
 
 import type { ERPSettings } from "../types";
 import { DEFAULT_NEXT_ACTION_KINDS } from "./nextAction";
+import { PROJECT_TECHNICAL_OFFERED } from "./moduleStatuses";
+import { STAGE_OFFER_REVIEW, STAGE_OFFER_REVIEW_WAS } from "./projectStage";
 import {
   RESULT_LOST_TO_COMPETITOR, RESULT_PURCHASE_CANCELLED, RESULT_PURCHASE_CONFIRMED,
 } from "./salesFollowUp";
@@ -196,6 +198,63 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
       return {
         ...settings,
         dropdownItems: { ...settings.dropdownItems, nextActionKinds: next },
+      };
+    },
+  },
+  {
+    id: "project-stage-offer-review-rename-1",
+    describe: "انتقال آستانه توقف «پیگیری پیش‌فاکتور» به نام جدید مرحله، «بررسی آفر توسط مشتری»",
+    apply: (settings) => {
+      /*
+       * The stage was renamed by **this application**, not by the company — the
+       * old word named what the sales desk was doing rather than where the job
+       * had got to. `settings.stuckThresholds.projectStage` is keyed by that
+       * name, and `pruneStuckThresholds` drops a key no state answers to on the
+       * next settings save, so a company that had deliberately changed «۳۰ روز»
+       * would have lost the number silently.
+       *
+       * This is a **move, not a rename of somebody's content**: the key belongs
+       * to the application and only its own value travels with it. It never
+       * touches a value already stored under the new name, and it does nothing
+       * at all when the old key is absent — which is every fresh installation.
+       */
+      const stages = settings.stuckThresholds?.projectStage;
+      const carried = stages?.[STAGE_OFFER_REVIEW_WAS];
+      if (carried === undefined) return null;
+      const { [STAGE_OFFER_REVIEW_WAS]: _dropped, ...rest } = stages ?? {};
+      void _dropped;
+      return {
+        ...settings,
+        stuckThresholds: {
+          ...settings.stuckThresholds,
+          projectStage: {
+            // Anything already answering to the new name is the newer decision.
+            [STAGE_OFFER_REVIEW]: carried, ...rest,
+          },
+        },
+      };
+    },
+  },
+  {
+    id: "project-technical-offer-status-1",
+    describe: "وضعیت «ارائه پیش‌فاکتور فنی» برای پروژه‌هایی که پیشنهاد فنی برایشان ارسال شده",
+    apply: (settings) => {
+      /*
+       * `syncProjectStatus` writes this value the moment a technical offer is
+       * sent, and the project form's status control is a `<select>` over this
+       * very list. A `<select>` whose value matches no option renders the
+       * **first** one — so without this entry somebody opening such a project
+       * would see «جدید», change nothing, press save, and silently rewrite the
+       * column. The list is the company's, so the entry is appended and never
+       * reordered.
+       */
+      const next = appendMissing(settings.dropdownItems?.projectStatuses, [
+        PROJECT_TECHNICAL_OFFERED,
+      ]);
+      if (!next) return null;
+      return {
+        ...settings,
+        dropdownItems: { ...settings.dropdownItems, projectStatuses: next },
       };
     },
   },

@@ -59,6 +59,7 @@ import { projectToWriteInput, detailToProject } from '../api/projectAdapter';
 import { detailToProforma, proformaToWriteInput } from '../api/proformaAdapter';
 import NumberField from './NumberField';
 import { useProjectJump } from "../api/useProjectJump";
+import { PROJECT_STATUSES } from "../utils/moduleStatuses";
 
 /**
  * Transactions ledger and the per-project financial position.
@@ -1346,6 +1347,7 @@ export default function TransactionsView({
                 <option value="نیمه برنده">نیمه برنده</option>
                 <option value="در حال مذاکره">در حال مذاکره</option>
                 <option value="ارائه پیش‌فاکتور">ارائه پیش‌فاکتور</option>
+                <option value="ارائه پیش‌فاکتور فنی">ارائه پیش‌فاکتور فنی</option>
                 <option value="جدید">جدید</option>
               </select>
             </div>
@@ -1374,6 +1376,7 @@ export default function TransactionsView({
                     else if (p.status === 'نیمه برنده') statusColor = 'bg-teal-50 text-teal-600 border border-teal-200/50';
                     else if (p.status === 'در حال مذاکره') statusColor = 'bg-amber-50 text-amber-600 border border-amber-200/50';
                     else if (p.status === 'ارائه پیش‌فاکتور') statusColor = 'bg-blue-50 text-blue-600 border border-blue-200/50';
+                    else if (p.status === 'ارائه پیش‌فاکتور فنی') statusColor = 'bg-violet-50 text-violet-600 border border-violet-200/50';
                     else if (p.status === 'باخته') statusColor = 'bg-red-50 text-red-600 border border-red-200/50';
 
                     const isExpanded = expandedProjectId === p.id;
@@ -2744,7 +2747,7 @@ export default function TransactionsView({
                     onChange={(e) => setQuickProjStage(e.target.value)}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs text-right bg-white focus:outline-none focus:ring-1 focus:ring-sky-500"
                   >
-                    {(settings.dropdownItems?.projectStatuses || ['جدید', 'در حال مذاکره', 'ارائه پیش‌فاکتور', 'برنده (موفق)', 'نیمه برنده', 'باخته', 'لغو شده']).map((stg, idx) => (
+                    {(settings.dropdownItems?.projectStatuses || PROJECT_STATUSES).map((stg, idx) => (
                       <option key={idx} value={stg}>{stg}</option>
                     ))}
                   </select>

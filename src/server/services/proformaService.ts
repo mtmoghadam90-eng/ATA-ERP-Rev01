@@ -15,8 +15,8 @@ import { isTerminalOutcome, versionRefusalReason } from "../../utils/salesFollow
 import { deriveProjectCompetitor } from "../../utils/competitors";
 import { describeProformaChanges, proformaChangeSentence } from "./proformaChanges";
 import {
-  ProformaOutcome, decidingProformas, deriveProjectLossReason, deriveProjectStatus,
-  getProformaOutcome, getWonItems, isWonStatus, notTechnical, outcomeWhere,
+  ProformaOutcome, commercialProformas, decidingProformas, deriveProjectLossReason,
+  deriveProjectStatus, getProformaOutcome, getWonItems, isWonStatus, outcomeWhere,
   statusWithoutProformas,
 } from "../proformaStatus";
 import { logAction } from "./auditService";
@@ -622,14 +622,22 @@ export async function syncProjectStatus(
   if (!projectId) return;
 
   const proformas = await tx.proforma.findMany({
-    // A technical specification quotes no prices, so it is not an offer the
-    // customer can accept and it decides nothing about the sale. Counted here it
-    // stood in for the quotation as «the most recent document», and — because
-    // «باخته» needs *every* document lost — one left open kept a genuinely lost
-    // project out of «باخته» for good. `notTechnical` is the single clause.
-    where: { projectId, ...notTechnical() },
+    /*
+     * **Every** document, technical offers included — the narrowing happens in
+     * the rules below, not here.
+     *
+     * A technical specification quotes no prices and decides nothing about the
+     * sale, which is why `commercialProformas` drops it inside
+     * `deriveProjectStatus` and `deriveProjectLossReason`. But it is not
+     * nothing: a project whose only document is a technical offer sitting with
+     * the customer has a state of its own to report, and filtering those rows
+     * out *here* made that project indistinguishable from one with no documents
+     * at all — the column then said «در حال مذاکره» for as long as the customer
+     * took, which is how a job comes to be left waiting with nobody noticing.
+     */
+    where: { projectId },
     select: {
-      id: true, status: true, isCancelled: true, createdAt: true,
+      id: true, proformaType: true, status: true, isCancelled: true, createdAt: true,
       // The reasons, document-level and per line: the project's own loss reason
       // is derived from these rather than typed a second time on its form.
       lossReason: true,
@@ -686,7 +694,11 @@ export async function syncProjectStatus(
    * them names a competitor» is simply null, and a competitor left over from a
    * quotation since revised goes with it.
    */
-  data.competitorId = deriveProjectCompetitor(decidingProformas(proformas));
+  data.competitorId = deriveProjectCompetitor(
+    // The priced documents only: a specification names no rival because it
+    // states no price for one to have beaten.
+    decidingProformas(commercialProformas(proformas)),
+  );
 
   if (isWonStatus(nextStatus)) {
     if (!project.winningDate) {

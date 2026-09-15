@@ -25,8 +25,30 @@ type Covers<Union extends string, List extends readonly string[]> =
 
 /* ------------------------------- projects -------------------------------- */
 
+/**
+ * «یک پیشنهاد فنی برایش فرستاده‌ایم و هنوز قیمتی نداده‌ایم.»
+ *
+ * The status column is the *commercial* outcome, and a technical specification
+ * quotes no prices — so it can never be «ارائه پیش‌فاکتور», which means a priced
+ * offer the customer can accept and which every report keying on «did we quote»
+ * would count as one. But the other answer, «leave the column alone», was just
+ * as wrong: a job with a technical offer sitting with the customer for three
+ * weeks read «در حال مذاکره», exactly like one nobody had written anything for,
+ * which is how a customer comes to be left waiting with nobody noticing.
+ *
+ * So it is a value of its own rather than a reuse of either — not won, not lost
+ * and not quoted, but one state a project genuinely is in. It lives here rather
+ * than beside the rule that writes it because the *list* is what must contain
+ * it: the project form's status control is a `<select>` over
+ * `settings.dropdownItems.projectStatuses`, and a `<select>` whose value matches
+ * no option renders the first one. `settingsPatches` appends it to a live
+ * document for exactly that reason.
+ */
+export const PROJECT_TECHNICAL_OFFERED = "ارائه پیش‌فاکتور فنی" as const;
+
 export const PROJECT_STATUSES = [
   "جدید", "در حال مذاکره", "ارائه پیش‌فاکتور",
+  PROJECT_TECHNICAL_OFFERED,
   "برنده (موفق)", "باخته", "لغو شده", "نیمه برنده",
 ] as const satisfies readonly Project["status"][];
 const _projectStatusesCover: Covers<Project["status"], typeof PROJECT_STATUSES> = true;
@@ -89,6 +111,52 @@ export const PROFORMA_SENT_STATUS = "ارسال شده" as const;
  * review happening *before* any document exists, and is set by hand.
  */
 export const PROFORMA_TECHNICAL_TYPE = "TECHNICAL" as const;
+
+/** `proformaType` for a service quotation raised against an after-sales job. */
+export const PROFORMA_AFTER_SALES_TYPE = "AFTER_SALES" as const;
+
+/**
+ * Which numbering template a kind of quotation is numbered from.
+ *
+ * The settings screen offers **three** — «پیش‌فاکتورهای مالی», «پیش‌فاکتورهای
+ * فنی» and «پیش‌فاکتورهای خدمات پس از فروش» — and `nextProformaNumber` read
+ * `proformaFormat` for all three, so two of those boxes were configured,
+ * previewed on that very screen, and used by nothing: a technical offer came out
+ * numbered as a financial one. A switch that does nothing, which is the fault
+ * this codebase keeps repairing, and here it is on a number printed on a
+ * document that goes to a customer.
+ *
+ * **Absent falls to the financial template**, which is what every row written
+ * before the column existed is, and what the column's own default says.
+ *
+ * The three deliberately share **one** start sequence (`proformaStartSeq`): that
+ * setting is a *floor* under the counter, and the series are already independent
+ * because `nextSequence` counts the numbers issued under the same rendered
+ * prefix — «QT-ATA-05-38-» and «QT-TECH-ATA-05-38-» are two prefixes. A second
+ * floor would be a second thing to keep in step to say the same thing.
+ */
+export const PROFORMA_FORMAT_KEYS = {
+  FINANCIAL: "proformaFormat",
+  TECHNICAL: "proformaTechnicalFormat",
+  AFTER_SALES: "proformaAfterSalesFormat",
+} as const;
+
+/** The default each of those templates falls back to when none is configured. */
+export const PROFORMA_FORMAT_FALLBACKS = {
+  FINANCIAL: "QT-{PROJECT}-{SEQ:2}",
+  TECHNICAL: "QT-TECH-{PROJECT}-{SEQ:2}",
+  AFTER_SALES: "QT-SERV-{PROJECT}-{SEQ:2}",
+} as const;
+
+export type ProformaKind = keyof typeof PROFORMA_FORMAT_KEYS;
+
+/** The kind a stored `proformaType` names; anything unknown is financial. */
+export function proformaKindOf(type: unknown): ProformaKind {
+  const value = String(type ?? "").trim();
+  if (value === PROFORMA_TECHNICAL_TYPE) return "TECHNICAL";
+  if (value === PROFORMA_AFTER_SALES_TYPE) return "AFTER_SALES";
+  return "FINANCIAL";
+}
 const _sentIsAStoredStatus: (typeof PROFORMA_STORED_STATUSES)[number] = PROFORMA_SENT_STATUS;
 void _sentIsAStoredStatus;
 

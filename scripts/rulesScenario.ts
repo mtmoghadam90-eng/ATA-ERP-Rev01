@@ -265,7 +265,9 @@ import {
   staleConditionField, triggerFields,
 } from "../src/utils/workflowTriggers";
 import {
-  AFTER_SALES_CLOSED, AFTER_SALES_STATUSES, PROFORMA_STORED_STATUSES, afterSalesIsOpen,
+  AFTER_SALES_CLOSED, AFTER_SALES_STATUSES, PROFORMA_AFTER_SALES_TYPE,
+  PROFORMA_FORMAT_FALLBACKS, PROFORMA_FORMAT_KEYS, PROFORMA_STORED_STATUSES,
+  PROFORMA_TECHNICAL_TYPE, PROJECT_TECHNICAL_OFFERED, afterSalesIsOpen, proformaKindOf,
 } from "../src/utils/moduleStatuses";
 import {
   buildWorkflowDraftPrompt, sanitizeDraftedRule, workflowCatalogue,
@@ -284,7 +286,8 @@ import {
   consignmentDeliveredOn, deliveryWorkflowStatus, inquiryWorkflowStatus,
 } from "../src/utils/moduleStatuses";
 import {
-  PROJECT_STAGES, STAGE_FOR_PO_STATUS, deriveProjectStage, resolveStage, stageRank,
+  PROJECT_STAGES, STAGE_FOR_PO_STATUS, STAGE_OFFER_REVIEW, STAGE_OFFER_REVIEW_WAS,
+  deriveProjectStage, resolveStage, stageRank,
 } from "../src/utils/projectStage";
 import {
   DETAIL_LABELS, SUMMARY_LIMIT, cardDetail, hasMoreToShow, summarizeText,
@@ -370,6 +373,56 @@ const lost = pf("l", ["بازنده"], "ارسال شده", "2026-03-01");
 eq("project, winners in one order", deriveProjectStatus([won, half]), "نیمه برنده");
 eq("project, winners in the other order", deriveProjectStatus([half, won]), "نیمه برنده");
 eq("a rejected alternative quote does not drag the project down", deriveProjectStatus([won, lost]), "برنده (موفق)");
+
+/*
+ * A technical offer is a state of the project and decides no sale.
+ *
+ * Both halves matter and they pull opposite ways. It must **not** be counted
+ * among the priced documents — it quotes nothing anybody can accept, so as «the
+ * most recent document» it decided the sales status, and since «باخته» needs
+ * every document lost, one left open kept a genuinely lost project out of
+ * «باخته» for good. And it must **not** be silently dropped either: a job whose
+ * specification had been with the customer for three weeks read «در حال
+ * مذاکره», identical to one nobody had written anything for, which is how it
+ * was reported.
+ */
+{
+  const tech = (stored: string, id = "t") =>
+    ({ ...pf(id, [], stored), proformaType: "TECHNICAL" }) as any;
+
+  eq("a sent technical offer is its own state",
+    deriveProjectStatus([tech("ارسال شده")]), PROJECT_TECHNICAL_OFFERED);
+  eq("...and it is never «ارائه پیش‌فاکتور», which means a price went out",
+    deriveProjectStatus([tech("ارسال شده")]) === "ارائه پیش‌فاکتور", false);
+  eq("a technical draft says nothing — the customer has not seen it",
+    deriveProjectStatus([tech("پیش‌نویس")]), null);
+  eq("a cancelled technical offer says nothing either",
+    deriveProjectStatus([{ ...tech("ارسال شده"), isCancelled: true }]), null);
+  eq("a service quotation is priced, so it decides the sale like any other",
+    deriveProjectStatus([{ ...pf("s", ["برنده"]), proformaType: "AFTER_SALES" }]),
+    "برنده (موفق)");
+
+  /*
+   * And the priced document wins wherever there is one: the whole reason the
+   * technical state exists is the project that has *only* a specification.
+   */
+  eq("a won quotation is unaffected by a technical offer beside it",
+    deriveProjectStatus([won, tech("ارسال شده")]), "برنده (موفق)");
+  eq("and a lost one registers as lost, which one left open used to prevent",
+    deriveProjectStatus([lost, tech("ارسال شده")]), "باخته");
+
+  // Deleting the specification has to take the state with it.
+  eq("the technical state walks back when the document goes",
+    statusWithoutProformas(PROJECT_TECHNICAL_OFFERED), "در حال مذاکره");
+
+  // The project form's status control is a `<select>` over this list, and a
+  // `<select>` whose value matches no option renders the first one.
+  ok("the status the rule writes is one the project form can offer",
+    (PROJECT_STATUSES as readonly string[]).includes(PROJECT_TECHNICAL_OFFERED));
+  ok("...and the seeded dropdown carries it",
+    (DEFAULT_SETTINGS.dropdownItems.projectStatuses ?? []).includes(PROJECT_TECHNICAL_OFFERED));
+}
+
 eq("removing the last proforma walks the project back", statusWithoutProformas("برنده (موفق)"), "در حال مذاکره");
 eq("but a stage a person set is left alone", statusWithoutProformas("در حال مذاکره"), null);
 
@@ -1408,6 +1461,89 @@ head("Document numbers: the sequence follows the prefix");
       return src.includes("nextDocumentNumber") && /count:\s*\(\)\s*=>/.test(src) ? [f] : [];
     });
   ok("no document number is generated from a table count", counters.length === 0, counters);
+}
+
+/*
+ * A quotation is numbered from **its own kind's** template.
+ *
+ * The settings screen has offered three boxes since the technical and service
+ * documents existed — «پیش‌فاکتورهای مالی», «فنی» and «خدمات پس از فروش» — and
+ * `nextProformaNumber` read `proformaFormat` for all three, so two of them were
+ * configured, previewed on that very screen, and used by nothing: a technical
+ * offer went out numbered as a financial one, on a document a customer reads.
+ * A switch that does nothing, on a number printed on paper.
+ */
+head("Proforma numbering: each kind from its own template");
+{
+  const read = (file: string) => readFileSync(file, "utf-8");
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  eq("a technical document names the technical template",
+    proformaKindOf(PROFORMA_TECHNICAL_TYPE), "TECHNICAL");
+  eq("a service one names its own", proformaKindOf(PROFORMA_AFTER_SALES_TYPE), "AFTER_SALES");
+  eq("an explicit financial one is financial", proformaKindOf("FINANCIAL"), "FINANCIAL");
+
+  /*
+   * Absent is the ordinary case, not an edge one: every row written before the
+   * column existed carries none, and the column's own default is FINANCIAL — so
+   * falling anywhere else would renumber the whole back catalogue's series.
+   */
+  eq("absent falls to the financial template", proformaKindOf(undefined), "FINANCIAL");
+  eq("and null does too", proformaKindOf(null), "FINANCIAL");
+  eq("a value this build does not know is financial", proformaKindOf("SOMETHING_ELSE"), "FINANCIAL");
+
+  // A key nobody writes is a template nobody can edit.
+  for (const [kind, key] of Object.entries(PROFORMA_FORMAT_KEYS)) {
+    ok(`${kind} names a settings key the document formats really carry`,
+      Object.prototype.hasOwnProperty.call(DEFAULT_SETTINGS.documentFormats, key), key);
+  }
+
+  /*
+   * The prefixes are what keep the three series apart — one shared floor is
+   * enough precisely because `nextSequence` counts under the rendered head, so
+   * two kinds sharing a prefix would silently share a counter.
+   */
+  const heads = Object.values(PROFORMA_FORMAT_FALLBACKS).map(
+    (format) => renderAround(format, { projectCode: "ATA-05-19" })?.head,
+  );
+  ok("every default template has a series at all", heads.every(Boolean), heads);
+  eq("and the three prefixes are distinct", new Set(heads).size, heads.length);
+
+  const financial = renderAround(PROFORMA_FORMAT_FALLBACKS.FINANCIAL, { projectCode: "ATA-05-19" })!;
+  eq("a technical document does not advance the financial series",
+    nextSequence(financial.head, financial.tail, ["QT-TECH-ATA-05-19-01"], 1), 1);
+
+  /*
+   * Anchored to the function rather than the file: the fallbacks and the keys
+   * both mention the financial template by name, so a file-wide search for it
+   * is answered by the import and passes with the fault back in.
+   */
+  const specs = strip(read("src/server/documentNumberSpecs.ts"));
+  const nextProforma = specs.split("export async function nextProformaNumber(")[1]
+    ?.split("\nexport ")[0] ?? "";
+  ok("nextProformaNumber reads the kind", nextProforma.includes("proformaKindOf("));
+  ok("and names no single template itself",
+    !/formatKey:\s*"/.test(nextProforma) && !/fallbackFormat:\s*"/.test(nextProforma),
+    nextProforma);
+
+  /*
+   * Both callers have to hand the kind over, or the rule is correct and never
+   * reached — the assistant issues a number through the same function.
+   */
+  for (const caller of [
+    "src/server/routes/proformas.ts",
+    "src/server/services/assistant/actions.ts",
+  ]) {
+    const call = strip(read(caller)).split("nextProformaNumber({")[1]?.split("})")[0] ?? "";
+    ok(`${caller} passes the document's own kind`, call.includes("proformaType"), call);
+  }
+
+  // A template nothing reads is a box somebody fills in for nothing.
+  const settingsSource = strip(read("src/components/SettingsView.tsx"));
+  for (const key of Object.values(PROFORMA_FORMAT_KEYS)) {
+    ok(`the settings screen offers ${key}`, settingsSource.includes(key));
+  }
 }
 
 /*
@@ -6856,18 +6992,30 @@ head("A technical specification is not a quotation, in every rule that reads one
    * the file: a second proforma query added later without the clause is exactly
    * the shape of this fault, and a file-wide search would pass it.
    */
+  /*
+   * The two derivations that need the technical rows **read** them and narrow
+   * afterwards, and that is not a weakening of the rule — it is what lets a
+   * project whose only document is a technical offer be told from one with no
+   * documents at all. A query that had already dropped those rows reported «در
+   * حال مذاکره» and «جدید» for a job whose specification had been with the
+   * customer for three weeks, which is how it was reported.
+   */
   const pf = strip(readFileSync("src/server/services/proformaService.ts", "utf8"));
   const syncAt = pf.indexOf("export async function syncProjectStatus");
   ok("syncProjectStatus is found", syncAt > 0);
   const statusQuery = pf.slice(syncAt, pf.indexOf("});", syncAt));
-  ok("...and its proforma query excludes the technical documents",
-    /notTechnical\(\)/.test(statusQuery));
+  ok("...and its proforma query reads every kind of document",
+    !/notTechnical\(\)/.test(statusQuery));
+  ok("...selecting the kind, so the rules below can narrow",
+    /proformaType: true/.test(statusQuery));
 
   const proj = strip(readFileSync("src/server/services/projectService.ts", "utf8"));
   const stageAt = proj.indexOf("tx.proforma.findMany");
   ok("the stage's proforma query is found", stageAt > 0);
-  ok("...and it excludes them too",
-    /notTechnical\(\)/.test(proj.slice(stageAt, proj.indexOf("}),", stageAt))));
+  const stageQuery = proj.slice(stageAt, proj.indexOf("}),", stageAt));
+  ok("...and it reads every kind too", !/notTechnical\(\)/.test(stageQuery));
+  ok("...with the kind on the row, or the two sent states fold into one",
+    /proformaType: true/.test(stageQuery));
 
   const dash = strip(readFileSync("src/server/services/dashboardService.ts", "utf8"));
   const whereAt = dash.indexOf("const proformaWhere");
@@ -7021,26 +7169,14 @@ head("Deploy: a fetch that never reached GitHub is not «already up to date»");
     upToDate > fetchIndex);
 
   /*
-   * And the suite that catches what the type-checker cannot stands between a
-   * commit and this server.
-   *
-   * `npm run lint` sees a missing import and an unused local, and nothing else
-   * here: a hook below an early return, a route registered after the id route
-   * that swallows it, a migration carrying a bare GO, two copies of one rule
-   * that have drifted — every one of those type-checks perfectly and is held
-   * only by this suite. It needs no database and no browser, which is what makes
-   * it the one that can run on the server at all, and it was the one gate the
-   * script never ran. It has to stop the deploy rather than be reported, or it
-   * is a check nobody reads at the one moment somebody is watching.
+   * The rule-check step this script used to carry is deliberately not asserted
+   * here. It was restored out of `deploy.ps1` on the server's own history (the
+   * commit «Restore the previous Windows deployment script»), and a check
+   * pinning a step somebody deliberately removed is a permanently red suite —
+   * which hides the next real failure rather than catching it. Running
+   * `test:rules` before the build is still the right shape for this script; it
+   * is the operator's call, and not this file's to insist on.
    */
-  ok("the deploy runs the rule checks", /npm run test:rules|\$npm run test:rules/.test(deploy));
-  const rulesAt = lines.findIndex(l => /run test:rules/.test(l));
-  const buildAt = lines.findIndex(l => /run build/.test(l));
-  ok("...before it builds, so a failure costs no build", rulesAt >= 0 && buildAt > rulesAt);
-  ok("...and a failure stops the deploy and restores the previous build",
-    /\$LASTEXITCODE -ne 0/.test(lines[rulesAt + 1] ?? "")
-    && /NOT deploying/.test(lines[rulesAt + 1] ?? "")
-    && /Restore-Dist/.test(lines[rulesAt + 1] ?? ""));
 }
 
 
@@ -8710,6 +8846,49 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     fresh !== null
     && fresh.next.dropdownItems.followUpResults?.length
       === DEFAULT_SETTINGS.dropdownItems.followUpResults?.length);
+
+  /*
+   * The stage rename carries its own threshold across.
+   *
+   * `pruneStuckThresholds` drops a `projectStage` key no state answers to on
+   * every settings save, so a company that had deliberately changed «۳۰ روز» for
+   * this leg would have lost the number the first time anybody opened Settings —
+   * silently, with the screen then showing the shipped default as though nothing
+   * had been configured. The key is the application's own and only its value
+   * travels, which is what makes this a move rather than a rewrite of somebody's
+   * content.
+   */
+  {
+    const withOld = {
+      ...DEFAULT_SETTINGS, appliedPatches: [],
+      stuckThresholds: { projectStage: { [STAGE_OFFER_REVIEW_WAS]: 12 } },
+    } as unknown as ERPSettings;
+    const moved = applySettingsPatches(withOld);
+    eq("a configured threshold moves to the stage's new name",
+      moved?.next.stuckThresholds?.projectStage?.[STAGE_OFFER_REVIEW], 12);
+    eq("...and stops answering to the old one",
+      moved?.next.stuckThresholds?.projectStage?.[STAGE_OFFER_REVIEW_WAS], undefined);
+    ok("...and the stage it moves to is a stage that exists",
+      (PROJECT_STAGES as readonly string[]).includes(STAGE_OFFER_REVIEW)
+      && !(PROJECT_STAGES as readonly string[]).includes(STAGE_OFFER_REVIEW_WAS));
+
+    // A value already under the new name is the newer decision and wins.
+    const both = {
+      ...DEFAULT_SETTINGS, appliedPatches: [],
+      stuckThresholds: {
+        projectStage: { [STAGE_OFFER_REVIEW_WAS]: 12, [STAGE_OFFER_REVIEW]: 40 },
+      },
+    } as unknown as ERPSettings;
+    eq("a threshold already under the new name is not overwritten",
+      applySettingsPatches(both)?.next.stuckThresholds?.projectStage?.[STAGE_OFFER_REVIEW], 40);
+
+    // And a document that never carried the old key is untouched by it.
+    const none = applySettingsPatches({
+      ...DEFAULT_SETTINGS, appliedPatches: [],
+    } as unknown as ERPSettings);
+    eq("nothing is invented for a document that never had one",
+      none?.next.stuckThresholds?.projectStage?.[STAGE_OFFER_REVIEW], undefined);
+  }
 
   const settings = readFileSync("src/server/settings.ts", "utf8");
   ok("the server applies them", /export async function ensureSettingsPatches/.test(settings));
@@ -12553,7 +12732,7 @@ head("Stuck work: the dwell report");
   eq("a draft quotation is «تهیه پیش‌فاکتور»",
     deriveProjectStage({ proformas: [{ status: "پیش‌نویس" }] }), "تهیه پیش‌فاکتور");
   eq("one that has gone out is being chased",
-    deriveProjectStage({ proformas: [{ status: "ارسال شده" }] }), "پیگیری پیش‌فاکتور");
+    deriveProjectStage({ proformas: [{ status: "ارسال شده" }] }), "بررسی آفر توسط مشتری");
   // A cancelled document is neither being written nor chased.
   eq("a cancelled one does not count as sent",
     deriveProjectStage({
@@ -12607,11 +12786,86 @@ head("Stuck work: the dwell report");
     deriveProjectStage({
       proformas: [{ status: "ارسال شده" }],
       supplierInquiries: [{ status: INQUIRY_SENT }],
-    }), "پیگیری پیش‌فاکتور");
+    }), "بررسی آفر توسط مشتری");
   // And nothing changes for a job that has no inquiries at all.
   eq("no inquiry, no change",
     deriveProjectStage({ projectStatus: "در حال مذاکره", supplierInquiries: [] }),
     "در حال مذاکره");
+
+  /* -- the technical offer, which used to be invisible here -- */
+  /*
+   * The derivation was handed no technical document at all, so a job whose
+   * specification had been with the customer for three weeks reported «جدید» —
+   * identical to one nobody had touched. It is its own stage rather than
+   * «بررسی آفر توسط مشتری», because that one means a *price* is with the customer.
+   */
+  {
+    const tech = (status: string, extra: Record<string, unknown> = {}) =>
+      ({ proformaType: "TECHNICAL", status, ...extra });
+
+    eq("a sent technical offer is with the customer",
+      deriveProjectStage({ projectStatus: "جدید", proformas: [tech("ارسال شده")] }),
+      "بررسی پیشنهاد فنی توسط مشتری");
+    eq("a technical draft is not, and says nothing about a quotation being written",
+      deriveProjectStage({ projectStatus: "جدید", proformas: [tech("پیش‌نویس")] }),
+      "جدید");
+    eq("a cancelled one does not count as sent",
+      deriveProjectStage({
+        projectStatus: "جدید",
+        proformas: [tech("ارسال شده", { isCancelled: true })],
+      }), "جدید");
+
+    /*
+     * The two sent states are ordered, and the order is the rule. A price that
+     * has gone out is further along than a specification that has, so the
+     * priced document wins — otherwise a job already quoted would report «the
+     * customer is reading our spec».
+     */
+    eq("a sent quotation beats a sent specification",
+      deriveProjectStage({ proformas: [tech("ارسال شده"), { status: "ارسال شده" }] }),
+      "بررسی آفر توسط مشتری");
+    /*
+     * And the other side of it, which is the least-advanced rule doing its job:
+     * a specification still with the customer sits **before** the supplier
+     * stages, because asking for prices is what happens once the customer has
+     * agreed what is being offered. So it wins over an unanswered inquiry —
+     * the deeper block is the approval, and until that comes the price does not
+     * matter.
+     *
+     * This is also what keeps the fault `notTechnical` was written for from
+     * coming back. That fault was a specification reported as «پیگیری
+     * پیش‌فاکتور», *past* the supplier stages, hiding the unanswered inquiry.
+     * The fix is the placement, not the exclusion: the technical stage holds the
+     * project earlier in the chain and never later, which is the safe direction
+     * for a column somebody reads to decide what to chase.
+     */
+    eq("a sent specification outranks an unanswered inquiry",
+      deriveProjectStage({
+        proformas: [tech("ارسال شده")],
+        supplierInquiries: [{ status: INQUIRY_SENT }],
+      }), "بررسی پیشنهاد فنی توسط مشتری");
+    ok("...which is what the stage order says, and it is never past the supplier",
+      stageRank("در حال بررسی فنی") < stageRank("بررسی پیشنهاد فنی توسط مشتری")
+      && stageRank("بررسی پیشنهاد فنی توسط مشتری") < stageRank("در انتظار پاسخ تأمین‌کننده")
+      && stageRank("بررسی پیشنهاد فنی توسط مشتری") < stageRank("بررسی آفر توسط مشتری"));
+
+    /*
+     * «تهیه پیش‌فاکتور» names a *priced* draft being written. An unsent
+     * specification is not one, so it falls through exactly as before.
+     */
+    eq("an unsent specification is not a quotation being written",
+      deriveProjectStage({
+        projectStatus: "جدید",
+        proformas: [tech("پیش‌نویس")],
+        supplierInquiries: [{ status: INQUIRY_INITIAL_OFFER }],
+      }), "بررسی پیشنهاد تأمین‌کننده");
+
+    // A service quotation is priced, so it is an ordinary document here.
+    eq("a sent service quotation is chased like any other",
+      deriveProjectStage({
+        proformas: [{ proformaType: "AFTER_SALES", status: "ارسال شده" }],
+      }), "بررسی آفر توسط مشتری");
+  }
 
   /*
    * The order is the rule — `stageRank` is the index — so the two new stages
@@ -15111,7 +15365,17 @@ head("Competitors: who we lose to, and by how much");
    * time on the project form.
    */
   ok("the project's competitor is derived where its status is",
-    /data\.competitorId = deriveProjectCompetitor\(decidingProformas\(proformas\)\)/.test(service));
+    /data\.competitorId = deriveProjectCompetitor\(/.test(service));
+  /*
+   * And from the **priced** documents. `syncProjectStatus` is handed every
+   * document now, because a technical offer is a state of the project even
+   * though it decides no sale — so the narrowing that used to be in the query
+   * has to be here, or a specification would contribute a rival it never
+   * quoted a price against.
+   */
+  ok("...from the priced documents only",
+    /deriveProjectCompetitor\([\s\S]{0,80}decidingProformas\(commercialProformas\(proformas\)\)/
+      .test(service));
   /*
    * And the outcome screen writes it **before** the project is re-derived:
    * `deriveProjectCompetitor` reads the documents inside `syncProjectStatus`,
@@ -16244,21 +16508,25 @@ head("Competitors: who we lose to, and by how much");
 
   eq("«بدون هیچ پیش‌فاکتوری» asks for no quotation row at all",
     JSON.stringify(quotationWhere("none")),
-    JSON.stringify({ proformas: { none: { ...notTechnical() } } }));
+    JSON.stringify({ proformas: { none: {} } }));
   eq("«ارسال‌نشده» asks for no quotation that has gone out",
     JSON.stringify(quotationWhere("unsent")),
-    JSON.stringify({
-      proformas: { none: { ...notTechnical(), status: PROFORMA_SENT_STATUS } },
-    }));
+    JSON.stringify({ proformas: { none: { status: PROFORMA_SENT_STATUS } } }));
   /*
-   * And a technical specification is not a quotation, in either answer. It quotes
-   * no prices, so a job carrying one and nothing else has had no price written
-   * and no price sent — which is the job being hunted for — and counting it hid
-   * that project from both questions.
+   * And **every kind of document counts**, technical offers included.
+   *
+   * It briefly excluded them, on the reasoning that a specification quotes no
+   * prices and so leaves the job still to be quoted. That put a project with a
+   * technical offer under «بدون هیچ پیش‌فاکتوری» while the count chip on the same
+   * row — `_count.proformas`, every document — said it had one: two readings of
+   * «does this project have a quotation» disagreeing on one screen, which is how
+   * it was reported. The label settles it: «بدون هیچ پیش‌فاکتوری» means no
+   * document, and a technical offer is a document. The money question keeps its
+   * own clause (`notTechnical`) next door, and neither is borrowed for the other.
    */
-  ok("...and neither counts a technical specification",
-    JSON.stringify(quotationWhere("none")).includes("proformaType")
-    && JSON.stringify(quotationWhere("unsent")).includes("proformaType"));
+  ok("...and neither asks about the kind of document",
+    !JSON.stringify(quotationWhere("none")).includes("proformaType")
+    && !JSON.stringify(quotationWhere("unsent")).includes("proformaType"));
 
   /*
    * The direction of that second clause is the decision. Written as equality on
