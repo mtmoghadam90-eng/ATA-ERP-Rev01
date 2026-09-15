@@ -261,7 +261,8 @@ import {
 } from "../src/utils/productDocuments";
 import {
   SCHEDULE_MODEL_FIELDS, TRIGGER_ENTITY, WORKFLOW_ACTION_TYPES, WORKFLOW_OPERATORS,
-  WORKFLOW_TRIGGERS, actionLabel, conditionFieldLabel, conditionValues, operatorLabel, triggerFields,
+  WORKFLOW_TRIGGERS, actionLabel, conditionFieldLabel, conditionValues, operatorLabel,
+  staleConditionField, triggerFields,
 } from "../src/utils/workflowTriggers";
 import {
   AFTER_SALES_CLOSED, AFTER_SALES_STATUSES, PROFORMA_STORED_STATUSES, afterSalesIsOpen,
@@ -6733,6 +6734,80 @@ head("Migrations: no sqlcmd batch separators");
   // failed half way through the file.
   ok("every step is guarded, so a partial apply can be re-run",
     (messenger.match(/IF (NOT )?EXISTS|IF COL_LENGTH/g) ?? []).length >= 5);
+}
+
+
+head("A condition its own record cannot carry never fires, and the save says so");
+{
+  /*
+   * A scheduled rule's conditions are about the record its **date** belongs to,
+   * so changing the schedule's subject changes which fields exist — and the
+   * subject `<select>` changed it while leaving the conditions exactly as they
+   * were. A rule written on «تاریخ ارسال پیش‌فاکتور» with a condition on `settled`,
+   * re-pointed at «آخرین تغییر وضعیت سفارش خرید», then stored `settled` against a
+   * payload that never carries it: it saved cleanly, printed the condition on its
+   * card, and never fired.
+   *
+   * And the form could not show it: a `<select>` whose value matches no option
+   * renders the **first** one, so the screen read «وضعیت سفارش خرید» while the
+   * rule held `settled` — two different things, one of them invisible. Refusing
+   * the save is where it can be noticed, the answer a speechless `send_message`
+   * already gets.
+   */
+  const modelOf = (subject: string) => SCHEDULE_SUBJECTS[subject]?.model ?? null;
+
+  eq("a condition carried onto a subject that cannot offer it is named",
+    staleConditionField({
+      triggerType: "time_elapsed",
+      schedule: { subject: "purchase_order_status_changed" },
+      conditions: [{ field: "settled" }],
+    }, modelOf("purchase_order_status_changed")), "settled");
+  eq("...and the same condition on the subject it was written for is fine",
+    staleConditionField({
+      triggerType: "time_elapsed",
+      schedule: { subject: "proforma_sent" },
+      conditions: [{ field: "settled" }],
+    }, modelOf("proforma_sent")), null);
+  eq("...as is a field that record really has",
+    staleConditionField({
+      triggerType: "time_elapsed",
+      schedule: { subject: "purchase_order_status_changed" },
+      conditions: [{ field: "status" }],
+    }, modelOf("purchase_order_status_changed")), null);
+  eq("...and a rule with no conditions says nothing",
+    staleConditionField({
+      triggerType: "time_elapsed",
+      schedule: { subject: "proforma_sent" }, conditions: [],
+    }, modelOf("proforma_sent")), null);
+  /*
+   * It answers for an **event** rule too, against that trigger's own fields —
+   * the same drift arrives by changing the trigger rather than the subject.
+   */
+  eq("an event rule's own field is fine",
+    staleConditionField({
+      triggerType: "proforma_outcome_change", conditions: [{ field: "newOutcome" }],
+    }), null);
+  eq("...and one carrying a schedule-only field is named",
+    staleConditionField({
+      triggerType: "proforma_outcome_change", conditions: [{ field: "settled" }],
+    }), "settled");
+  /* A blank row is a condition nobody has filled in, not a broken one. */
+  eq("a blank field is not a stale condition",
+    staleConditionField({
+      triggerType: "time_elapsed",
+      schedule: { subject: "proforma_sent" }, conditions: [{ field: "  " }],
+    }, modelOf("proforma_sent")), null);
+
+  /* And the save really refuses, naming the field rather than counting them. */
+  const view = readFileSync("src/components/SettingsView.tsx", "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const saveAt = view.indexOf("const handleSaveWorkflowRule");
+  ok("the rule save handler is found", saveAt > 0);
+  const saveBody = view.slice(saveAt, view.indexOf("updateSettings(", saveAt));
+  ok("...and it refuses a stale condition", /staleConditionField\(/.test(saveBody));
+  ok("...before it writes anything",
+    saveBody.indexOf("staleConditionField(") < saveBody.length);
+  ok("...naming the field in the message", /\$\{staleField\}/.test(saveBody));
 }
 
 

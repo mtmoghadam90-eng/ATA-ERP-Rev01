@@ -651,6 +651,44 @@ export function defaultConditionField(triggerType: string): string {
   return triggerFields(triggerType)[0]?.value ?? "status";
 }
 
+/**
+ * A condition naming a field its own rule cannot offer, or null.
+ *
+ * A scheduled rule's conditions are about the **record its date belongs to**, so
+ * changing the schedule's subject changes which fields exist — and the subject
+ * `<select>` changed it while leaving the conditions exactly as they were. A rule
+ * written on «تاریخ ارسال پیش‌فاکتور» with a condition on `settled`, re-pointed at
+ * «آخرین تغییر وضعیت سفارش خرید», then stored `settled` against a payload that
+ * never carries it: the rule saved cleanly, printed a condition on its card, and
+ * **never fired**.
+ *
+ * And the form could not show it either: a `<select>` whose value matches no
+ * option renders the **first** one, so the screen read «وضعیت سفارش خرید» while
+ * the rule held `settled` — two different things, one of them invisible.
+ *
+ * Refusing the save is where this can be noticed, which is the same answer the
+ * speechless `send_message` gets. It names the field rather than counting them,
+ * because «یک شرط نامعتبر» sends somebody looking through a list of six.
+ */
+export function staleConditionField(
+  rule: {
+    triggerType?: string;
+    schedule?: { subject?: string } | null;
+    conditions?: readonly { field?: string }[] | null;
+  },
+  model?: string | null,
+): string | null {
+  const offered = rule.triggerType === "time_elapsed"
+    ? (model ? SCHEDULE_MODEL_FIELDS[model] ?? [] : [])
+    : triggerFields(String(rule.triggerType ?? ""));
+  const names = offered.map((f) => f.value);
+  for (const cond of rule.conditions ?? []) {
+    const field = String(cond?.field ?? "").trim();
+    if (field && !names.includes(field)) return field;
+  }
+  return null;
+}
+
 /** What that field may hold, when it is a closed list. */
 export function conditionValues(triggerType: string, field: string): readonly string[] {
   return triggerFields(triggerType).find((f) => f.value === field)?.options ?? [];
