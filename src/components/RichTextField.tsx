@@ -1,5 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { Bold, Highlighter, Italic, Underline } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Bold, ChevronDown, ChevronLeft, Highlighter, Italic, Underline } from 'lucide-react';
 import { RICH_MARKS, renderRichText, toggleMark } from '../utils/richText';
 
 /**
@@ -47,13 +47,40 @@ interface Props {
    * component is exactly how that quietly stops happening.
    */
   required?: boolean;
+  /**
+   * Whether the print preview folds, and starts folded.
+   *
+   * Off by default, which is a line's specification: two or three rows, where
+   * the preview sits under the box and is read at a glance. The proforma's own
+   * «شرایط و توضیحات» is the opposite — twelve rows of validity, delivery,
+   * payment and guarantee — so the preview repeated the whole block and
+   * doubled the height of the one control people scroll past most, which is
+   * how it was reported.
+   *
+   * It starts **folded** rather than open, because the box above it is already
+   * showing the same words: the preview answers «what will the markers look
+   * like when this prints», which is a question somebody asks once after
+   * formatting something, not on every edit.
+   */
+  collapsiblePreview?: boolean;
 }
 
 export default function RichTextField({
   value, onChange, rows = 2, maxRows = 40, placeholder, className = '',
-  dir = 'ltr', required = false,
+  dir = 'ltr', required = false, collapsiblePreview = false,
 }: Props) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
+  /*
+   * Null until somebody presses it, so the *prop* decides until then.
+   *
+   * `useState(!collapsiblePreview)` reads its argument on the first render
+   * only, so a field that became collapsible afterwards would keep whatever it
+   * was mounted as — which is the «seeded from a prop» trap wearing the other
+   * hat. Holding the press itself and falling back to the prop means the
+   * default follows the field and a press always wins.
+   */
+  const [previewToggled, setPreviewToggled] = useState<boolean | null>(null);
+  const previewOpen = previewToggled ?? !collapsiblePreview;
 
   /*
    * The box is as tall as what is in it.
@@ -166,12 +193,35 @@ export default function RichTextField({
           would double the height of the grid for nothing. */}
       {formatted && (
         <div className="rounded-lg border border-slate-150 bg-slate-50/70 px-3 py-1.5">
-          <div className="text-[9px] font-bold text-slate-400 mb-0.5">پیش‌نمایش چاپ</div>
-          <div
-            className="text-xs text-slate-700 leading-relaxed"
-            style={{ whiteSpace: 'pre-line', direction: dir, textAlign: dir === 'ltr' ? 'left' : 'right' }}
-            dangerouslySetInnerHTML={{ __html: preview }}
-          />
+          {collapsiblePreview ? (
+            /*
+              The heading *is* the control, rather than a chevron beside it: a
+              strip that says «پیش‌نمایش چاپ» and does nothing when pressed is
+              the commonest way a disclosure goes unnoticed. `type="button"`
+              because this sits inside the proforma form and a bare <button>
+              submits it.
+            */
+            <button
+              type="button"
+              onClick={() => setPreviewToggled(!previewOpen)}
+              id="rich-preview-toggle"
+              aria-expanded={previewOpen}
+              className="w-full flex items-center gap-1 text-[9px] font-bold text-slate-400 hover:text-sky-600 transition"
+            >
+              {previewOpen ? <ChevronDown size={11} /> : <ChevronLeft size={11} />}
+              پیش‌نمایش چاپ
+            </button>
+          ) : (
+            <div className="text-[9px] font-bold text-slate-400 mb-0.5">پیش‌نمایش چاپ</div>
+          )}
+          {previewOpen && (
+            <div
+              className="text-xs text-slate-700 leading-relaxed"
+              data-rich-preview
+              style={{ whiteSpace: 'pre-line', direction: dir, textAlign: dir === 'ltr' ? 'left' : 'right' }}
+              dangerouslySetInnerHTML={{ __html: preview }}
+            />
+          )}
         </div>
       )}
     </div>

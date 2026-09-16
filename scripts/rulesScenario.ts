@@ -1536,6 +1536,74 @@ head("Deleting a project: every blocker is named or released");
       .test(deleting));
 }
 
+/*
+ * The goods grid: a numbered row, a «+» on it, and a calculator a manual line
+ * can reach.
+ *
+ * Each of these is the shape of fault this file keeps recording — a control in
+ * the wrong place, a control that is not there at all, and a guard narrower
+ * than the thing it guards — and none of them is visible to the type-checker.
+ */
+head("Proforma form: the goods grid's own controls");
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const view = strip(readFileSync("src/components/ProformasView.tsx", "utf8"));
+
+  /* -- the row says which row it is -- */
+  ok("every goods line prints its own number", /data-item-row-number=\{idx \+ 1\}/.test(view));
+
+  /* -- adding a line is done on the row, not above the grid -- */
+  ok("the «+» is on the row", /onClick=\{\(\) => handleInsertItemLine\(idx\)\}/.test(view));
+  ok("...and inserts below that row rather than at the end",
+    /\.\.\.items\.slice\(0, index \+ 1\),\s*blank,\s*\.\.\.items\.slice\(index \+ 1\)/.test(view));
+  /*
+   * One seeding, two placements. The uniform delivery and payment terms are
+   * carried by `newItemLine`, so an insert cannot quietly skip what an append
+   * does — which is what two copies of that block would come to.
+   */
+  ok("both placements seed through one function",
+    /const newItemLine = \(\)/.test(view)
+    // Its two callers: the insert on a row, and the first row of an empty
+    // document. A third copy of the seeding is what this counts against.
+    && (view.match(/= newItemLine\(\);/g) ?? []).length === 2);
+  /*
+   * And the one case a row cannot answer. A document with no rows has no «+»
+   * to press, so removing the toolbar button outright would make the form a
+   * dead end on every new quotation — a worse fault than the one it fixes.
+   */
+  ok("an empty document still offers a first row",
+    /\{items\.length === 0 && \([\s\S]{0,400}onClick=\{handleAddItemLine\}/.test(view));
+
+  /* -- the calculator is gated on costs, not on the catalogue -- */
+  /*
+   * A free-text line is exactly the one with no price to inherit — goods
+   * quoted all-in or bought locally — so the person was working the margin out
+   * on paper and typing the answer. The modal opens empty for those and its
+   * MANUAL mode is that case.
+   */
+  ok("the calculator button asks only whether costs may be seen",
+    /\{showCosts && \([\s\S]{0,300}setCalcModalItemIdx\(idx\)/.test(view));
+  ok("...and the modal does not refuse a line with no product",
+    /if \(item\.productId && !prod\) return null;/.test(view));
+  ok("...while a manual line writes its own row and stops there",
+    /if \(!prod\) \{\s*setCalcModalItemIdx\(null\);\s*return;\s*\}/.test(view));
+
+  /* -- the notes preview folds, and the line specification's does not -- */
+  const field = strip(readFileSync("src/components/RichTextField.tsx", "utf8"));
+  ok("the field can be asked to fold its preview", /collapsiblePreview/.test(field));
+  ok("...and the proforma's notes ask for it",
+    /collapsiblePreview[\s\S]{0,200}isFieldRequired\(settings, 'proformas', 'notes'\)/.test(view));
+  /*
+   * The prop decides until somebody presses the control. `useState(!prop)`
+   * reads its argument on the first render only, so a field that became
+   * collapsible afterwards would keep whatever it mounted as — the «seeded
+   * from a prop» trap wearing the other hat.
+   */
+  ok("the default follows the prop rather than the first render",
+    /previewToggled \?\? !collapsiblePreview/.test(field));
+}
+
 head("Proforma numbering: each kind from its own template");
 {
   const read = (file: string) => readFileSync(file, "utf-8");

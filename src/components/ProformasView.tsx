@@ -1587,9 +1587,20 @@ export default function ProformasView({
     ]);
   };
 
-  const handleAddItemLine = () => {
+  /**
+   * A fresh goods line, seeded but not yet placed.
+   *
+   * Extracted when the «+» moved onto the row: appending to the end and
+   * inserting after a row are two different placements of **one** seeded line,
+   * and two copies of that seeding is how the uniform delivery terms come to
+   * be carried by one path and not the other.
+   *
+   * Answers null when the catalogue is empty, which is the one case with
+   * nothing to seed from; every caller simply does nothing.
+   */
+  const newItemLine = (): Omit<ProformaItem, "id" | "totalPriceRIYAL"> | null => {
     const firstProd = products[0];
-    if (!firstProd) return;
+    if (!firstProd) return null;
     // See `handleItemProductChange`: the line is seeded from this product, so
     // it must stay resolvable once the picker's matches move on.
     rememberProduct(firstProd);
@@ -1622,9 +1633,7 @@ export default function ProformasView({
         ? firstItem.deliveryPostfix
         : "پس از تایید پیش فاکتور و دریافت پیش پرداخت";
 
-    const newItems = [
-      ...items,
-      {
+    return {
         productId: firstProd.id,
         productName: firstProd.displayName,
         productCode: firstProd.code,
@@ -1647,8 +1656,21 @@ export default function ProformasView({
         deliveryType: dtype,
         deliveryPostfix: postfix,
         paymentTerm: payment,
-      },
-    ];
+    } as Omit<ProformaItem, "id" | "totalPriceRIYAL">;
+  };
+
+  /**
+   * The first line of an empty document.
+   *
+   * The per-row «+» is the ordinary way to add one, and a document with no
+   * rows has no row to press it on — so this is drawn **only** while the list
+   * is empty. Without it the form would be a dead end on every new quotation,
+   * which is a worse fault than the toolbar button it replaced.
+   */
+  const handleAddItemLine = () => {
+    const blank = newItemLine();
+    if (!blank) return;
+    const newItems = [...items, blank];
     setItems(newItems);
     setNotes((prevNotes) =>
       updateNotesForItems(prevNotes, newItems, isEqualDelivery),
@@ -1674,6 +1696,36 @@ export default function ProformasView({
     const newItems = [
       ...items.slice(0, index + 1),
       { ...copy } as typeof source,
+      ...items.slice(index + 1),
+    ];
+    setItems(newItems);
+    setNotes((prevNotes) =>
+      updateNotesForItems(prevNotes, newItems, isEqualDelivery),
+    );
+    setDeliveryDate(getDeliverySummary(newItems));
+  };
+
+  /**
+   * A blank line, immediately below the one the button sits on.
+   *
+   * «افزودن ردیف کالا» used to be one button in the toolbar above the whole
+   * grid, which always appended to the **end** — so building a quotation in
+   * the order a customer asked for it meant adding a line at the bottom and
+   * then having no way to move it. The control is on the row now, which is
+   * also where the copy and the delete already are, so the three things a
+   * person does to a line are in one place.
+   *
+   * It is a *new* line and not a copy: the copy button is beside it and says
+   * so. Everything `handleAddItemLine` seeded stays seeded — the default
+   * product, the uniform delivery and payment terms — because a line added in
+   * the middle of a document is no different from one added at the end.
+   */
+  const handleInsertItemLine = (index: number) => {
+    const blank = newItemLine();
+    if (!blank) return;
+    const newItems = [
+      ...items.slice(0, index + 1),
+      blank,
       ...items.slice(index + 1),
     ];
     setItems(newItems);
@@ -4534,14 +4586,28 @@ export default function ProformasView({
                       <Bot size={14} />
                       راهنمای هوش مصنوعی
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleAddItemLine}
-                      className="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-600 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
-                    >
-                      <PlusCircle size={14} />
-                      افزودن ردیف کالا
-                    </button>
+                    {/*
+                      «افزودن ردیف کالا» used to live here and always appended
+                      to the **end**, so a line wanted in the middle of a
+                      document could only be added at the bottom with no way to
+                      move it. The «+» is on each row now, beside the copy and
+                      the delete — the three things a person does to a line, in
+                      one place. This stays for the one case a row cannot
+                      answer: a document with no rows has no «+» to press, and
+                      a form that is a dead end on every new quotation is a
+                      worse fault than the button it replaced.
+                    */}
+                    {items.length === 0 && (
+                      <button
+                        type="button"
+                        onClick={handleAddItemLine}
+                        id="proforma-item-add-first"
+                        className="px-3 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-600 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+                      >
+                        <PlusCircle size={14} />
+                        افزودن اولین ردیف
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -4745,6 +4811,27 @@ export default function ProformasView({
                       key={idx}
                       className="bg-slate-50 p-3 rounded-xl border border-slate-150 space-y-3"
                     >
+                      {/*
+                        Which row this is, in the document's own terms.
+
+                        The printed page numbers every line and the outcome
+                        modal, the purchase order and the delivery note all
+                        refer to «ردیف ۳» — the form was the one screen where
+                        the goods were an unnumbered stack, so checking a line
+                        against the document a customer is holding meant
+                        counting cards. Persian digits because this is a count
+                        in prose and not an amount somebody copies out
+                        (`formatMoney`'s rule, from the other side).
+                      */}
+                      <div className="flex items-center gap-2">
+                        <span
+                          data-item-row-number={idx + 1}
+                          className="inline-flex items-center justify-center min-w-[1.5rem] h-6 px-1.5 rounded-lg bg-white border border-slate-200 text-[11px] font-bold text-slate-500"
+                        >
+                          {(idx + 1).toLocaleString("fa-IR")}
+                        </span>
+                        <span className="text-[10px] font-semibold text-slate-400">ردیف</span>
+                      </div>
                       {/*
                         The goods first, across the whole row.
 
@@ -5134,12 +5221,18 @@ export default function ProformasView({
                                   className="w-full min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-left bg-white"
                                 />
                                 {/*
+                                  Gated on `costs` alone, not on the catalogue.
                                   The calculator is a breakdown of what the item
-                                  cost, and the product it seeds from arrives
-                                  blanked for this user anyway — so it would open
-                                  on a row of zeros.
+                                  cost, so for a user who may not see costs it
+                                  would open on a row of zeros — but a **manual**
+                                  line needs it most: goods quoted all-in or
+                                  bought locally have no catalogue record to
+                                  inherit a price from, so the person was left
+                                  working the margin out on paper and typing the
+                                  answer. It opens empty for those and its
+                                  MANUAL mode is exactly that case.
                                 */}
-                                {item.productId && showCosts && (
+                                {showCosts && (
                                   <button
                                     type="button"
                                     onClick={() => setCalcModalItemIdx(idx)}
@@ -5193,6 +5286,22 @@ export default function ProformasView({
                           <label className="text-[10px] font-bold text-slate-400 md:hidden block select-none">
                             &nbsp;
                           </label>
+                          {/*
+                            A *new* line below this one — not a copy, which is
+                            the button beside it and says so. Round, because it
+                            is the one control on the row that adds rather than
+                            acting on what is already there.
+                          */}
+                          <button
+                            type="button"
+                            onClick={() => handleInsertItemLine(idx)}
+                            title="افزودن ردیف جدید زیر این ردیف"
+                            id={`proforma-item-insert-${idx}`}
+                            className="w-full md:w-auto py-1.5 md:py-1 px-3 md:px-1 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 md:hover:bg-white rounded-lg md:rounded-full border border-slate-200 md:border-0 flex items-center justify-center gap-1 transition text-xs font-semibold"
+                          >
+                            <PlusCircle size={16} />
+                            <span className="md:hidden">ردیف جدید</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleDuplicateItemLine(idx)}
@@ -5606,6 +5715,15 @@ export default function ProformasView({
                       */
                       rows={12}
                       dir="rtl"
+                      /*
+                        Twelve rows of box with the same twelve repeated under
+                        it doubled the height of the one control people scroll
+                        past most. The preview folds here and starts folded —
+                        the words are already on the screen above it, and what
+                        it answers («how will the markers print») is asked once
+                        after formatting something rather than on every edit.
+                      */
+                      collapsiblePreview
                       required={isFieldRequired(settings, 'proformas', 'notes')}
                       value={notes}
                       onChange={setNotes}
@@ -5886,22 +6004,37 @@ export default function ProformasView({
       {calcModalItemIdx !== null && !calcLoading && (() => {
         const item = items[calcModalItemIdx];
         if (!item) return null;
-        // The loaded record, never the picker row it came from.
+        /*
+         * The loaded record, never the picker row it came from — and **null
+         * for a manual line**, which is not a failure to load.
+         *
+         * A free-text line has no catalogue item behind it, so there is
+         * nothing to seed the figures from and nothing to write the result
+         * back to. That is the whole case: goods quoted all-in or bought
+         * locally, where somebody knows what they paid and wants the margin
+         * worked out. The modal opens empty and its MANUAL mode is exactly
+         * that. `productId` is what tells the two apart — the effect above
+         * fetches nothing without one, so a null here on a *catalogue* line
+         * really is a record that would not load, and that path already
+         * reported itself and closed the modal.
+         */
         const prod = calcProduct;
-        if (!prod) return null;
-        const variant = item.variantId ? prod.variants?.find(v => v.id === item.variantId) : undefined;
+        if (item.productId && !prod) return null;
+        const variant = item.variantId && prod
+          ? prod.variants?.find(v => v.id === item.variantId)
+          : undefined;
 
         // Determine the initial foreign price
         // The product's currency leads — every SKU under it follows, so the
         // calculator opens in the currency the figures will be stored in.
-        const modalCurrency: string = prod.currencyForeign || variant?.currencyForeign
+        const modalCurrency: string = prod?.currencyForeign || variant?.currencyForeign
           || (currency && currency !== "ریال" ? currency : "یورو");
         let initialForeign = 0;
         if (variant?.priceForeign !== undefined) {
           initialForeign = variant.priceForeign;
-        } else if (variant?.attributes && prod.features) {
+        } else if (variant?.attributes && prod?.features) {
           initialForeign = getCombinedFeaturePrice(prod.features, variant.attributes);
-        } else if (prod.priceForeign !== undefined) {
+        } else if (prod?.priceForeign !== undefined) {
           initialForeign = prod.priceForeign;
         }
 
@@ -5909,11 +6042,15 @@ export default function ProformasView({
         // fields, and a field added to one and not the other simply never
         // reached the modal. One list now, the same one that decides what gets
         // saved.
-        const initialValues: Partial<ProductVariant> = calcSeedOf(variant ?? prod);
+        // A manual line has no stored calculator, so it opens on empty boxes —
+        // which is the honest starting point rather than another item's figures.
+        const calcSource = variant ?? prod;
+        const initialValues: Partial<ProductVariant> =
+          calcSource ? calcSeedOf(calcSource) : {};
 
         const subtitle = variant
           ? `SKU: ${variant.sku} — ${Object.entries(variant.attributes).map(([k, v]) => `${k}: ${v}`).join(" ، ")}`
-          : prod.displayName;
+          : (prod?.displayName || item.productName || "ردیف دستی");
 
         return (
           <PriceCalculatorModal
@@ -5982,6 +6119,19 @@ export default function ProformasView({
                 const eng = mapPersianCurrencyToEnglish(persian);
                 return (eng ? exchangeRates?.find(r => r.currency === eng)?.rateToRIYAL : 0) || 0;
               };
+
+              /*
+               * A manual line writes the row and stops.
+               *
+               * There is no catalogue record behind it, so the whole write-back
+               * below — the SKU's price, the product's reference currency —
+               * has no subject. The line's own price and cost are already set
+               * above, which is everything this calculator was opened for.
+               */
+              if (!prod) {
+                setCalcModalItemIdx(null);
+                return;
+              }
 
               // The product's currency leads: it is what every SKU follows.
               const warehouseCurrency =

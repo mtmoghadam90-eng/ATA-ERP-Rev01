@@ -2044,6 +2044,63 @@ head("Calendar: the close control is above the month, not below it");
  * something other than what is in the box. The whole feature is one string
  * reaching one write.
  */
+/*
+ * The print preview folds, and starts folded where it was asked to.
+ *
+ * A disclosure is two things that both type-check while doing nothing: a
+ * heading that is not a button, and a button whose state never reaches the
+ * block it is meant to hide. Both read perfectly in the source.
+ */
+head("Rich text: the print preview folds where it is asked to");
+{
+  const rHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rRoot = createRoot(rHost);
+  // Formatted, or the preview is not drawn at all — which is its own rule.
+  const body = "شرایط: **۱۰ روز** اعتبار";
+
+  const draw = (collapsible: boolean) => act(() => {
+    rRoot.render(React.createElement(RichTextField, {
+      value: body, onChange: () => {}, dir: "rtl" as const,
+      ...(collapsible ? { collapsiblePreview: true } : {}),
+    }));
+  });
+
+  // 1. The line specification: unchanged, open, no control.
+  draw(false);
+  ok("an ordinary field still draws the preview",
+    !!rHost.querySelector("[data-rich-preview]"));
+  ok("...with nothing to press", !rHost.querySelector("#rich-preview-toggle"));
+
+  // 2. The proforma's notes: folded, and the heading is the control.
+  draw(true);
+  const toggle = rHost.querySelector("#rich-preview-toggle") as HTMLElement | null;
+  ok("a collapsible field draws the control", !!toggle);
+  ok("...and starts folded, so twelve rows are not repeated under twelve rows",
+    !rHost.querySelector("[data-rich-preview]"));
+  ok("...saying so to a reader who cannot see it",
+    toggle?.getAttribute("aria-expanded") === "false");
+
+  act(() => { toggle!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("pressing it shows the preview", !!rHost.querySelector("[data-rich-preview]"));
+  ok("...and the rendered markers are really in it",
+    /<strong>/.test(rHost.querySelector("[data-rich-preview]")?.innerHTML ?? ""));
+  const reopened = rHost.querySelector("#rich-preview-toggle") as HTMLElement | null;
+  act(() => { reopened!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("...and pressing it again folds it back",
+    !rHost.querySelector("[data-rich-preview]"));
+
+  /*
+   * It sits inside the proforma form, so a bare <button> would submit it —
+   * which is a save nobody asked for, from a control that looks like a
+   * heading.
+   */
+  ok("the control never submits the form it sits in",
+    (rHost.querySelector("#rich-preview-toggle") as HTMLButtonElement | null)?.type === "button");
+
+  act(() => { rRoot.unmount(); });
+  rHost.remove();
+}
+
 head("Completing a task: the note reaches the caller");
 {
   const nHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
