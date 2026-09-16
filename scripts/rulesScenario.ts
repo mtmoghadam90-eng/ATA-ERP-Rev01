@@ -7498,14 +7498,33 @@ head("Deploy: a fetch that never reached GitHub is not «already up to date»");
     upToDate > fetchIndex);
 
   /*
-   * The rule-check step this script used to carry is deliberately not asserted
-   * here. It was restored out of `deploy.ps1` on the server's own history (the
-   * commit «Restore the previous Windows deployment script»), and a check
-   * pinning a step somebody deliberately removed is a permanently red suite —
-   * which hides the next real failure rather than catching it. Running
-   * `test:rules` before the build is still the right shape for this script; it
-   * is the operator's call, and not this file's to insist on.
+   * And the suite that catches what the type-checker cannot stands between a
+   * commit and this server.
+   *
+   * `npm run lint` sees a missing import and an unused local, and nothing else
+   * here: a hook below an early return, a route registered after the id route
+   * that swallows it, a migration carrying a bare GO, two copies of one rule
+   * that have drifted — every one of those type-checks perfectly and is held
+   * only by this suite. It needs no database and no browser, which is what makes
+   * it the one that can run on the server at all, and it was the one gate the
+   * script never ran. It has to stop the deploy rather than be reported, or it
+   * is a check nobody reads at the one moment somebody is watching.
+   *
+   * The step was reverted out of the script once, in «Restore the previous
+   * Windows deployment script», and these three went with it so the suite would
+   * not stand permanently red over a step that was no longer there. Both halves
+   * are back together, which is the only state either of them is worth anything
+   * in: the step without the check drifts out again unnoticed, and the check
+   * without the step is a failure nobody can act on.
    */
+  ok("the deploy runs the rule checks", /npm run test:rules|\$npm run test:rules/.test(deploy));
+  const rulesAt = lines.findIndex(l => /run test:rules/.test(l));
+  const buildAt = lines.findIndex(l => /run build/.test(l));
+  ok("...before it builds, so a failure costs no build", rulesAt >= 0 && buildAt > rulesAt);
+  ok("...and a failure stops the deploy and restores the previous build",
+    /\$LASTEXITCODE -ne 0/.test(lines[rulesAt + 1] ?? "")
+    && /NOT deploying/.test(lines[rulesAt + 1] ?? "")
+    && /Restore-Dist/.test(lines[rulesAt + 1] ?? ""));
 }
 
 
