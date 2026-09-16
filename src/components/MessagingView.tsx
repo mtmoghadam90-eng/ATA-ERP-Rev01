@@ -99,11 +99,21 @@ const PROVIDER_FIELDS: Record<Channel, ProviderField[]> = {
    */
   WHATSAPP: [],
   /*
-   * Nothing to type here either, and for a sharper reason: Telegram's
-   * `api_id`/`api_hash` are credentials and live in the server's environment,
-   * never in a document a browser loads. The card draws the link panel instead.
+   * The pair from my.telegram.org — the only channel here whose *application*
+   * has to be registered, because Telegram's protocol carries an `api_id` on
+   * every connection made by an account (a bot needs none, and a bot cannot
+   * write to anybody who has not written to it first, which is why this is not
+   * one). The hash is a secret and is drawn from `row.secrets` below like every
+   * other; the id is a number and is shown back, which is what lets somebody
+   * check they typed the right one.
    */
-  TELEGRAM: [],
+  TELEGRAM: [
+    {
+      key: 'apiId',
+      label: 'API ID',
+      hint: 'از my.telegram.org با همان شمارهٔ خط شرکت وارد شوید، «API development tools» را باز کنید و یک اپلیکیشن بسازید. این دو مقدار یک‌بار گرفته می‌شوند و همیشه همان می‌مانند.',
+    },
+  ],
   EMAIL: [
     { key: 'host', label: 'آدرس سرور SMTP' },
     { key: 'port', label: 'پورت', type: 'number' },
@@ -128,6 +138,7 @@ const PROVIDER_FIELDS: Record<Channel, ProviderField[]> = {
 const SECRET_LABELS: Record<string, string> = {
   password: 'رمز عبور',
   botToken: 'توکن ربات',
+  apiHash: 'API Hash',
 };
 
 /**
@@ -1136,8 +1147,24 @@ interface MessengerPanelSpec {
   failureLabels: Record<string, string>;
   failureAdvice: Record<string, string>;
   status: () => Promise<MessengerStatus & { success: boolean }>;
-  link: () => Promise<MessengerStatus & { success: boolean }>;
+  /**
+   * `secret` is whatever this channel needs *at the moment of signing in* and
+   * never afterwards — Telegram's two-step password, and nothing on WhatsApp.
+   */
+  link: (secret?: string) => Promise<MessengerStatus & { success: boolean }>;
   unlink: () => Promise<MessengerStatus & { success: boolean }>;
+  /**
+   * A one-time secret to ask for beside the link button, when the channel has
+   * one. Absent draws no box at all — a field that is never needed teaches the
+   * reader to skip the row it is in.
+   *
+   * What is typed here is sent with the link request and **kept by nothing**:
+   * the box is cleared as the request goes, no provider row holds it, and it
+   * reaches the library for the seconds of one sign-in. That is the whole reason
+   * it is here rather than among the fields on the provider card above, which
+   * are stored by design.
+   */
+  linkSecret?: { label: string; hint: string };
 }
 
 /**
@@ -1214,9 +1241,13 @@ const TELEGRAM_PANEL: MessengerPanelSpec = {
     const r = await messagingApi.telegramStatus();
     return { ...r, account: r.linkedAccount };
   },
-  link: async () => {
-    const r = await messagingApi.telegramLink();
+  link: async (secret?: string) => {
+    const r = await messagingApi.telegramLink(secret);
     return { ...r, account: r.linkedAccount };
+  },
+  linkSecret: {
+    label: 'رمز دومرحله‌ای (اگر حساب دارد)',
+    hint: 'فقط اگر روی حساب «تأیید دو مرحله‌ای» فعال است. همین یک بار برای ورود استفاده می‌شود و هیچ‌جا ذخیره نمی‌شود؛ اگر حساب چنین رمزی ندارد خالی بگذارید.',
   },
   unlink: async () => {
     const r = await messagingApi.telegramUnlink();
@@ -1252,6 +1283,15 @@ function MessengerLinkPanel(
    * panel is precisely where somebody can act on it.
    */
   const [unreadable, setUnreadable] = useState<string | null>(null);
+  /**
+   * The one-time secret, when this channel asks for one.
+   *
+   * Held in the component and nowhere else, and cleared the moment the request
+   * carrying it is sent — including when the request fails, because a second
+   * attempt is a second sign-in and the person can see whether the box is empty.
+   * Nothing here writes it to storage, and no provider row has a field for it.
+   */
+  const [secret, setSecret] = useState('');
 
   const refresh = useCallback(async () => {
     try {
@@ -1280,6 +1320,7 @@ function MessengerLinkPanel(
     setBusy(true);
     try {
       setStatus(await run());
+      setSecret('');
       setUnreadable(null);
       onNotice(notice);
     } catch (err) {
@@ -1400,11 +1441,35 @@ function MessengerLinkPanel(
         </p>
       )}
 
+      {/*
+        The secret this channel needs *while signing in*, drawn only for a
+        channel that has one and kept by nothing — see `linkSecret`. It sits
+        above the button rather than on the provider card, because that card's
+        fields are stored by design and this one must not be.
+      */}
+      {spec.linkSecret && !status?.linked && (
+        <div className="space-y-1">
+          <label className="text-[11px] font-bold text-slate-600">
+            {spec.linkSecret.label}
+          </label>
+          <input
+            type="password"
+            data-messenger-link-secret
+            autoComplete="off"
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+            className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-[11px] bg-white"
+            dir="ltr"
+          />
+          <p className="text-[10px] text-slate-400 leading-5">{spec.linkSecret.hint}</p>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
           disabled={busy || waiting}
-          onClick={() => void act(spec.link, 'درخواست اتصال ارسال شد.')}
+          onClick={() => void act(() => spec.link(secret || undefined), 'درخواست اتصال ارسال شد.')}
           className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold disabled:opacity-50 flex items-center gap-1.5"
         >
           {busy ? <Loader2 size={12} className="animate-spin" /> : <Icon size={12} />}

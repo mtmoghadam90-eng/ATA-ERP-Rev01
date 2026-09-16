@@ -75,9 +75,9 @@ export interface TelegramStatus {
   /**
    * Why the channel is not configured at all, or null.
    *
-   * Its own field rather than a `lastError`, because «TELEGRAM_API_ID تنظیم
-   * نشده» is not a failure of a connection that was tried — nothing was tried —
-   * and reporting it as one sends somebody to check a network that is fine.
+   * Its own field rather than a `lastError`, because «API ID ثبت نشده» is not a
+   * failure of a connection that was tried — nothing was tried — and reporting
+   * it as one sends somebody to check a network that is fine.
    */
   configProblem?: string | null;
 }
@@ -183,8 +183,17 @@ export const messagingApi = {
   /** The Telegram session's three doors, the same shape as WhatsApp's. */
   telegramStatus: () =>
     api.get<{ success: boolean } & TelegramStatus>("/api/messaging/telegram/status"),
-  telegramLink: () =>
-    api.post<{ success: boolean } & TelegramStatus>("/api/messaging/telegram/link", {}),
+  /**
+   * `password` is the account's two-step secret, when it has one.
+   *
+   * Sent for this one sign-in and **held by nothing** — not by this module, not
+   * in the provider row, not in `settings`. The box on the panel is cleared as
+   * soon as the request is sent, which is what makes «typed once» true rather
+   * than a description of intent.
+   */
+  telegramLink: (password?: string) =>
+    api.post<{ success: boolean } & TelegramStatus>(
+      "/api/messaging/telegram/link", password ? { password } : {}),
   telegramUnlink: () =>
     api.post<{ success: boolean } & TelegramStatus>("/api/messaging/telegram/unlink", {}),
 

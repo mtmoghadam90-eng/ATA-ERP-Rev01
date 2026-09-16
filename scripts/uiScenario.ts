@@ -436,15 +436,24 @@ head("Messenger panels: one component, and each asks about its own channel");
   const realFetch5 = g5.fetch;
 
   const asked: string[] = [];
-  g5.fetch = (async (url: string) => {
+  const posted: { path: string; body: string }[] = [];
+  g5.fetch = (async (url: string, init?: { method?: string; body?: unknown }) => {
     const path = String(url);
     asked.push(path);
-    const body = /\/(whatsapp|telegram)\/status/.test(path)
+    if ((init?.method ?? "GET") !== "GET") {
+      posted.push({ path, body: String(init?.body ?? "") });
+    }
+    const body = /\/(whatsapp|telegram)\/(status|link)/.test(path)
       ? {
         success: true,
-        state: "AWAITING_SCAN",
+        /*
+         * Nothing linked and no code up, which is the state the link button is
+         * live in — `disabled={busy || waiting}` makes it dead while a code is
+         * waiting, which is its own render test above.
+         */
+        state: "UNLINKED",
         linked: false,
-        qr: "tg://login?token=x",
+        qr: null,
         qrImage: null,
         linkedAccount: null,
         linkedNumber: null,
@@ -502,6 +511,46 @@ head("Messenger panels: one component, and each asks about its own channel");
     asked.some((u) => u.includes("/api/messaging/whatsapp/status")));
   ok("...and the Telegram panel asks the Telegram one",
     asked.some((u) => u.includes("/api/messaging/telegram/status")));
+
+  /*
+   * **The two-step password is typed, not stored**, and this is where that claim
+   * is either true or a comment. The box belongs to the channel that needs one:
+   * WhatsApp has no such secret, and a field drawn on both cards teaches the
+   * reader to skip the row it is in.
+   */
+  const secretBoxIn = (id: string) => (host5.querySelector(
+    `[data-messenger-panel="${id}"] [data-messenger-link-secret]`) as HTMLInputElement | null);
+  ok("the Telegram card asks for the two-step password", secretBoxIn("telegram") !== null);
+  ok("...and the WhatsApp card does not", secretBoxIn("whatsapp") === null);
+
+  /*
+   * And what is typed **reaches the request**. `onClick={() => act(spec.link, …)}`
+   * — the shape this replaced — type-checks perfectly, renders perfectly, and
+   * drops the password on the floor: the sign-in then fails for an account with
+   * two-step verification on, saying nothing about the box that was filled in.
+   */
+  const box5 = secretBoxIn("telegram")!;
+  await act(async () => {
+    handlers(box5).onChange?.({ target: { value: "hunter2" } });
+  });
+  const linkButton5 = [...host5.querySelectorAll('[data-messenger-panel="telegram"] button')]
+    .find((b) => (b.textContent ?? "").includes("اتصال حساب")) as HTMLButtonElement | undefined;
+  ok("the Telegram card has a link button", !!linkButton5);
+  await act(async () => {
+    linkButton5?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settle5();
+
+  const link5 = posted.find((r) => r.path.includes("/api/messaging/telegram/link"));
+  ok("pressing اتصال حساب posts to the Telegram link endpoint", !!link5);
+  ok("...carrying exactly what was typed", (link5?.body ?? "").includes("hunter2"), link5?.body);
+  /*
+   * Cleared as the request goes, which is what makes «typed once» a fact rather
+   * than a description: a box still holding the password is a password sitting
+   * on a screen in an open office.
+   */
+  ok("...and the box is cleared afterwards",
+    (secretBoxIn("telegram")?.value ?? "") === "", secretBoxIn("telegram")?.value);
 
   act(() => { root5.unmount(); });
   g5.fetch = realFetch5;
