@@ -1,6 +1,6 @@
 import { getDb } from "../db";
 import { loadSettings } from "../settings";
-import { CHANNELS, renderTemplate } from "../../utils/messaging";
+import { renderTemplate } from "../../utils/messaging";
 import { staffAddresseeOf, staffPrefixFor } from "../../utils/honorific";
 import {
   StaffChannel, StaffNotificationKind, StaffSkipReason, StaffNotifySettings,
@@ -117,16 +117,22 @@ export async function notifyStaff(
   /*
    * Which medium, and whether anything at all.
    *
-   * The provider row is read **only when WhatsApp is the choice**, because the
-   * default is SMS and this runs on every task anybody assigns; asking a
+   * The provider row is read **only when the choice is not SMS**, because that
+   * is the default and this runs on every task anybody assigns; asking a
    * question whose answer cannot change the outcome is a query per save for
    * nothing. `channelIsActive` is the worker's own reading of that flag, so
    * «is this channel on» has one answer rather than two.
+   *
+   * And it is asked of **the chosen channel** rather than of WhatsApp by name:
+   * written the other way, a company that picked Telegram would have had its
+   * handover notices decided by whether a WhatsApp line it does not use
+   * happened to be switched on — silently, and in the direction that sends
+   * nothing.
    */
   const choice = staffChannelChoice(staff);
   const plan = planStaffChannel(
     staff,
-    choice === "WHATSAPP" ? await channelIsActive(CHANNELS.WHATSAPP) : false,
+    choice === "SMS" ? false : await channelIsActive(choice),
   );
   if (!plan.channel) return { queued: false, skipped: plan.skipped ?? "DISABLED" };
 

@@ -31,6 +31,20 @@ export interface SendResult {
   /** The provider's own id for the message, when it gives one. */
   providerMessageId?: string | null;
   error?: string;
+  /**
+   * How long the provider asked us to wait, when it says so.
+   *
+   * **A failure the provider put a clock on is not the same as a failure the
+   * queue should retry on its own schedule**, and Telegram is the channel that
+   * makes the difference expensive: it answers `FLOOD_WAIT_86400` — a day — and
+   * the ordinary backoff would spend every attempt inside the first two minutes,
+   * mark a perfectly good message FAILED, and make the restriction worse on the
+   * way. Present, the row is left QUEUED with its attempts unspent and its
+   * `scheduledAt` moved to when the provider said.
+   *
+   * Optional, so every driver written before it behaves exactly as it did.
+   */
+  retryAfterMs?: number;
 }
 
 /** How long any one provider gets before we call it a failure and retry. */
@@ -643,6 +657,16 @@ export async function sendThrough(
   if (channel === CHANNELS.WHATSAPP) {
     const { sendWhatsappMessage } = await import("./whatsappTransport");
     return sendWhatsappMessage(message);
+  }
+  /*
+   * The same shape as WhatsApp's and for the same three reasons: the session is
+   * a connection rather than a request, it may be held on a relay outside the
+   * network, and the library is loaded at call time so a server that never uses
+   * the channel never pays for it.
+   */
+  if (channel === CHANNELS.TELEGRAM) {
+    const { sendTelegramMessage } = await import("./telegramTransport");
+    return sendTelegramMessage(message);
   }
   return { ok: false, error: `روش ارسال «${channel}» پشتیبانی نمی‌شود.` };
 }

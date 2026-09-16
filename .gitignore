@@ -37,3 +37,6 @@ logs/
 # Whoever holds these files can send and read as the company's own line, so they
 # are per-host and never committed — re-link by scanning the code again.
 whatsapp-session/
+# The Telegram session string, for the same reason: whoever holds it can read
+# and send as the company's own account. This installation's state, not code.
+telegram-session/

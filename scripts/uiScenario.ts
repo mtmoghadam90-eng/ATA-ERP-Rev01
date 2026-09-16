@@ -365,6 +365,14 @@ head("WhatsApp: the link button is unreachable while a code is on the screen");
   await renderStaff();
   ok("both channels are offered for a staff notification",
     !!chip("SMS") && !!chip("WHATSAPP"));
+  /*
+   * And the third, which is the half of «هم برای مشتری هم برای ارجاع همکاران»
+   * that lives on this screen. Held here rather than only in the rule checks
+   * because `STAFF_CHANNELS` gaining an entry and the chip group drawing it are
+   * two different things: the group is a `.map`, so a channel the *type* offers
+   * and the screen filters out would type-check perfectly.
+   */
+  ok("...including Telegram", !!chip("TELEGRAM"));
   ok("...with SMS chosen on a settings document that has never said",
     chip("SMS")?.getAttribute("aria-pressed") === "true");
   ok("...and no fallback switch, because SMS has nothing to fall back to",
@@ -385,10 +393,118 @@ head("WhatsApp: the link button is unreachable while a code is on the screen");
   ok("...on by default, so a down line still reaches the colleague",
     fallbackBox?.checked === true);
 
+  /*
+   * Telegram writes its own choice, not WhatsApp's.
+   *
+   * The chip group is one `.map` over `STAFF_CHANNELS` and each button closes
+   * over its own `option`, so this looks impossible — which is exactly why it is
+   * worth one check: a group that wrote the *first* channel whatever was pressed
+   * would draw perfectly, pass every rule check, and silently send every
+   * handover notice on the wrong medium.
+   */
+  await act(async () => {
+    chip("TELEGRAM")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settle();
+  const tgChannel = ((lastSaved as never as {
+    messaging?: { staffSms?: { channel?: string } };
+  } | null)?.messaging?.staffSms?.channel) ?? null;
+  ok("pressing تلگرام writes Telegram, not the first chip", tgChannel === "TELEGRAM", tgChannel);
+
   act(() => { root4.unmount(); });
 
   act(() => { root3.unmount(); });
   g3.fetch = realFetch;
+}
+
+
+head("Messenger panels: one component, and each asks about its own channel");
+
+/*
+ * `MessengerLinkPanel` draws WhatsApp's link card and Telegram's, from one spec
+ * each. A second near-copy was the alternative and is how the two come to
+ * disagree about what «قطع شده» looks like — but sharing one component has a
+ * failure of its own that no type-check can see: a spec whose `status` closure
+ * points at the *other* channel's endpoint. The panel would render perfectly,
+ * poll happily, and report the WhatsApp line's state under the Telegram card.
+ *
+ * So this renders the Telegram card over a stubbed fetch and asserts which URL
+ * it actually asked for.
+ */
+{
+  const g5 = globalThis as unknown as Record<string, unknown>;
+  const realFetch5 = g5.fetch;
+
+  const asked: string[] = [];
+  g5.fetch = (async (url: string) => {
+    const path = String(url);
+    asked.push(path);
+    const body = /\/(whatsapp|telegram)\/status/.test(path)
+      ? {
+        success: true,
+        state: "AWAITING_SCAN",
+        linked: false,
+        qr: "tg://login?token=x",
+        qrImage: null,
+        linkedAccount: null,
+        linkedNumber: null,
+        lastError: null,
+        since: new Date().toISOString(),
+      }
+      : path.includes("/messaging/providers")
+        ? {
+          success: true,
+          providers: [
+            { channel: "WHATSAPP", active: true, config: {}, secrets: {}, lastTestAt: null, lastTestOk: null, lastTestError: null },
+            { channel: "TELEGRAM", active: true, config: {}, secrets: {}, lastTestAt: null, lastTestOk: null, lastTestError: null },
+          ],
+        }
+        : {
+          success: true, rows: [], total: 0, page: 1, pageSize: 50, totalPages: 1,
+          summary: {}, templates: [], providers: [],
+        };
+    return {
+      ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body),
+    };
+  }) as never;
+
+  const host5 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root5 = createRoot(host5);
+  const settle5 = async () => {
+    for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  await act(async () => {
+    root5.render(React.createElement(MessagingView, {
+      settings: { customFields: [], messaging: {} } as never,
+      currentUser: { id: "u1", permissions: { settings: true, messaging: true } } as never,
+    }));
+  });
+  await settle5();
+  const providersTab5 = [...host5.querySelectorAll("button")]
+    .find((b) => (b.textContent ?? "").includes("تنظیمات درگاه‌ها")) as HTMLButtonElement | undefined;
+  await act(async () => {
+    providersTab5?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settle5();
+
+  const panels = [...host5.querySelectorAll("[data-messenger-panel]")]
+    .map((el) => el.getAttribute("data-messenger-panel"));
+  ok("both messenger panels are drawn, by one component",
+    panels.includes("whatsapp") && panels.includes("telegram"), panels);
+
+  /*
+   * The half that matters: each one polled **its own** endpoint. Written with
+   * the wrong closure the Telegram card would show the WhatsApp line's state and
+   * nothing anywhere would say so.
+   */
+  ok("the WhatsApp panel asks the WhatsApp endpoint",
+    asked.some((u) => u.includes("/api/messaging/whatsapp/status")));
+  ok("...and the Telegram panel asks the Telegram one",
+    asked.some((u) => u.includes("/api/messaging/telegram/status")));
+
+  act(() => { root5.unmount(); });
+  g5.fetch = realFetch5;
 }
 
 

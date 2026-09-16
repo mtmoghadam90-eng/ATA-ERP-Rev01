@@ -50,6 +50,38 @@ export interface WhatsappStatus {
   failureKind?: string | null;
 }
 
+/**
+ * The Telegram session's status.
+ *
+ * Deliberately the **same shape**, because the panel that draws it is one
+ * component with two call sites: a second, nearly-identical panel is how the two
+ * come to disagree about what «قطع شده» looks like, which is a screen somebody
+ * has to learn twice. `linkedAccount` is the one field that differs in name,
+ * since what Telegram reports is a `@username` rather than a phone line.
+ */
+export interface TelegramStatus {
+  state: string;
+  /** Whether a signed-in session is stored at all. */
+  linked: boolean;
+  qr: string | null;
+  qrImage: string | null;
+  linkedAccount: string | null;
+  lastError: string | null;
+  since: string;
+  /** True when the session is held on a relay. Never carries its address. */
+  relay?: boolean;
+  /** Which half a failure belongs to — route, account, config, flood, recipient. */
+  failureKind?: string | null;
+  /**
+   * Why the channel is not configured at all, or null.
+   *
+   * Its own field rather than a `lastError`, because «TELEGRAM_API_ID تنظیم
+   * نشده» is not a failure of a connection that was tried — nothing was tried —
+   * and reporting it as one sends somebody to check a network that is fine.
+   */
+  configProblem?: string | null;
+}
+
 export interface MessageTemplateRow {
   id: string;
   name: string;
@@ -147,6 +179,14 @@ export const messagingApi = {
   /** Removes the device from the account and forgets its credentials. */
   whatsappUnlink: () =>
     api.post<{ success: boolean } & WhatsappStatus>("/api/messaging/whatsapp/unlink", {}),
+
+  /** The Telegram session's three doors, the same shape as WhatsApp's. */
+  telegramStatus: () =>
+    api.get<{ success: boolean } & TelegramStatus>("/api/messaging/telegram/status"),
+  telegramLink: () =>
+    api.post<{ success: boolean } & TelegramStatus>("/api/messaging/telegram/link", {}),
+  telegramUnlink: () =>
+    api.post<{ success: boolean } & TelegramStatus>("/api/messaging/telegram/unlink", {}),
 
   /* templates */
   templates: () =>

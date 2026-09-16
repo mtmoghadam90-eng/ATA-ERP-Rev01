@@ -4,6 +4,7 @@ import { RouteDeps, sendError } from "./types";
 import { hasPermission } from "../auth";
 import { CHANNELS, isChannel } from "../../utils/messaging";
 import { whatsappFailureKind } from "../../utils/whatsapp";
+import { telegramFailureKind } from "../../utils/telegram";
 import {
   MESSAGE_FILTERABLE, MESSAGE_SORTABLE, ManualSendInput, TemplateInput,
   cancelMessage, createTemplate, deactivateChannel, deleteTemplate, listMessages,
@@ -265,6 +266,94 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
       res.json({ success: true, ...report });
     } catch (err) {
       sendError(res, err, "POST /api/messaging/whatsapp/unlink");
+    }
+  });
+
+  /* ------------------------------ telegram ------------------------------- */
+
+  /**
+   * The Telegram session's three doors, behind **`settings`** exactly as
+   * WhatsApp's are — and for a stronger reason here, since the api credentials
+   * this channel runs on are environment secrets and «خروج از حساب» stops every
+   * automated message on it.
+   *
+   * `GET …/status` is **polled and opens nothing**: a status that signed in as a
+   * side effect would raise a fresh login code every few seconds for anybody who
+   * left the screen open, which is itself traffic counted against the account.
+   */
+  app.get("/api/messaging/telegram/status", async (req, res) => {
+    const user = await requireSettings(req, res);
+    if (!user) return;
+    try {
+      const { telegramStatus, telegramUsesRelay } = await import(
+        "../services/messaging/telegramTransport"
+      );
+      const report = await telegramStatus();
+      /*
+       * Whether the credentials are configured at all, asked of the **local**
+       * module, and the distinction is the point: a relay deployment runs the
+       * session on the far side, so this server having no `TELEGRAM_API_ID` is
+       * not a fault — while for a local one it is the whole reason nothing
+       * happens. Reported as «پیکربندی نشده» rather than as «قطع شده», which are
+       * two different problems for two different people.
+       */
+      const relayed = telegramUsesRelay();
+      let configProblem: string | null = null;
+      if (!relayed) {
+        const { telegramApiProblem } = await import("../services/messaging/telegramClient");
+        configProblem = telegramApiProblem();
+      }
+      res.json({
+        success: true,
+        ...report,
+        relay: relayed,
+        configProblem,
+        failureKind: report.lastError ? telegramFailureKind(report.lastError) : null,
+        /*
+         * The code as an image, drawn here rather than in the browser — the
+         * WhatsApp panel's rule: a QR library in the client bundle would be
+         * carried by every page load for a panel somebody opens once.
+         */
+        qrImage: report.qr ? await qrDataUrl(report.qr) : null,
+      });
+    } catch (err) {
+      sendError(res, err, "GET /api/messaging/telegram/status");
+    }
+  });
+
+  /** Opens the session, raising a login code when no account is signed in. */
+  app.post("/api/messaging/telegram/link", async (req, res) => {
+    const user = await requireSettings(req, res);
+    if (!user) return;
+    try {
+      const { telegramLink } = await import("../services/messaging/telegramTransport");
+      res.json({ success: true, ...(await telegramLink()) });
+    } catch (err) {
+      sendError(res, err, "POST /api/messaging/telegram/link");
+    }
+  });
+
+  /**
+   * Signs the account out — **and switches the channel off with it**, which is
+   * the half the WhatsApp unlink was corrected for: `channelIsActive` reads the
+   * provider row's own flag rather than the session's liveness, so without this
+   * the staff plan goes on choosing Telegram, the fallback never fires because
+   * nothing refused, and every handover notice fails quietly into the outbox
+   * while the board reads perfectly correctly.
+   *
+   * Only when the sign-out really happened: a relay that could not be reached
+   * has said nothing about the session.
+   */
+  app.post("/api/messaging/telegram/unlink", async (req, res) => {
+    const user = await requireSettings(req, res);
+    if (!user) return;
+    try {
+      const { telegramUnlink } = await import("../services/messaging/telegramTransport");
+      const report = await telegramUnlink();
+      if (report.unlinked) await deactivateChannel(CHANNELS.TELEGRAM);
+      res.json({ success: true, ...report });
+    } catch (err) {
+      sendError(res, err, "POST /api/messaging/telegram/unlink");
     }
   });
 

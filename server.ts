@@ -47,6 +47,7 @@ import { authenticateToken } from "./src/server/services/apiTokenService";
 import { parseBearer, pathClosedToTokens, scopeAllowsMethod } from "./src/utils/apiTokens";
 import { processQueue } from "./src/server/services/messaging/messageService";
 import { ensureWhatsappRestored } from "./src/server/services/messaging/whatsappTransport";
+import { ensureTelegramSessionRestored } from "./src/server/services/messaging/telegramTransport";
 import { scrapeRates } from "./src/server/rateSource";
 import { ensureRatesFresh } from "./src/server/services/rateRefresh";
 import { refreshHolidayCache } from "./src/server/services/holidayService";
@@ -765,6 +766,13 @@ registerCampaignRoutes(app, routeDeps);
      * gets itself logged out.
      */
     ensureWhatsappRestored();
+    /*
+     * And the Telegram session, on exactly the same terms: it opens only when an
+     * account is already signed in, does nothing at all under a relay, is not
+     * awaited and cannot throw. Without it the channel comes back «قطع شده»
+     * after every deploy.
+     */
+    ensureTelegramSessionRestored();
   });
 
   /*

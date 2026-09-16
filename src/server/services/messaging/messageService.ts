@@ -15,6 +15,7 @@ import {
 import { BaleChatsResult, BaleConfig, baleRecentChats, sendThrough } from "./drivers";
 import { addresseeOf, namePrefixFor } from "../../../utils/honorific";
 import { WHATSAPP_PER_PASS, whatsappGapMs } from "../../../utils/whatsapp";
+import { TELEGRAM_PER_PASS, telegramGapMs } from "../../../utils/telegram";
 
 /**
  * Sending a customer a message: the queue, and everything around it.
@@ -58,6 +59,13 @@ const SECRET_FIELDS: Record<Channel, string[]> = {
    * rather than an omission — there is nothing here a form could show or hide.
    */
   WHATSAPP: [],
+  /*
+   * None either, and for a sharper version of the same reason: Telegram's
+   * `api_id`/`api_hash` and the two-step password are **credentials in the
+   * environment**, never in this document. `settings` and the provider rows are
+   * read by screens, and a secret that reaches a browser is a secret.
+   */
+  TELEGRAM: [],
 };
 
 /** Everything a channel's configuration may hold, secrets included. */
@@ -78,6 +86,7 @@ const CONFIG_FIELDS: Record<Channel, string[]> = {
   // Nothing to configure; the provider row exists so the channel can be switched
   // on and off like the others, and `active` is not part of `config`.
   WHATSAPP: [],
+  TELEGRAM: [],
 };
 
 const parseConfig = (raw: unknown): Record<string, unknown> => {
@@ -602,6 +611,17 @@ export async function queueForCustomer(
  */
 const BATCH_SIZE = 25;
 
+/**
+ * The longest a provider may park a message for.
+ *
+ * A day, which is the largest `FLOOD_WAIT` anybody here is likely to meet and
+ * still a figure somebody would think to look for. The cap exists because the
+ * number arrives from outside: a malformed answer of a million seconds would
+ * otherwise schedule a message eleven days out, where it reads as lost rather
+ * than as waiting.
+ */
+const MAX_PROVIDER_WAIT_MS = 24 * 60 * 60 * 1000;
+
 let running = false;
 
 /**
@@ -619,8 +639,21 @@ let running = false;
  * outbox with red rows whose only fault was arriving fourth.
  */
 export function channelPassLimit(channel: Channel): number {
-  return channel === CHANNELS.WHATSAPP ? WHATSAPP_PER_PASS : BATCH_SIZE;
+  if (channel === CHANNELS.WHATSAPP) return WHATSAPP_PER_PASS;
+  if (channel === CHANNELS.TELEGRAM) return TELEGRAM_PER_PASS;
+  return BATCH_SIZE;
 }
+
+/**
+ * Whether this channel's sends are deliberately spaced out.
+ *
+ * Derived from the cap rather than from a list of channel names, which is what
+ * keeps the loop's gap and the query's ordering agreeing with the caps
+ * themselves: a fifth paced channel added to `channelPassLimit` alone would
+ * otherwise be read last (correctly) and then sent as a burst (not).
+ */
+export const channelIsPaced = (channel: Channel): boolean =>
+  channelPassLimit(channel) < BATCH_SIZE;
 
 /** Waits, so two WhatsApp messages are not sent in the same breath. */
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -758,8 +791,10 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
        * itself in any case.
        */
       donePerChannel.set(channel, alreadySent + 1);
-      if (channel === CHANNELS.WHATSAPP && alreadySent > 0) {
-        await wait(whatsappGapMs(Math.random()));
+      if (channelIsPaced(channel) && alreadySent > 0) {
+        await wait(channel === CHANNELS.TELEGRAM
+          ? telegramGapMs(Math.random())
+          : whatsappGapMs(Math.random()));
       }
 
       const result = await sendThrough(channel, provider.config, {
@@ -800,6 +835,47 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
        * at insert precisely so the row answers for itself), and a staff notice
        * is exempt from the days exactly as it was when it was queued.
        */
+      /*
+       * **The provider named a time, so the row waits rather than failing.**
+       *
+       * Telegram answers a rate limit with the seconds it wants — `FLOOD_WAIT`,
+       * and it is routinely minutes and occasionally a day. Taken as an ordinary
+       * failure, the backoff spends all three attempts inside the first two
+       * minutes of it and marks a message FAILED that nothing is wrong with; the
+       * next message then does the same, and each attempt makes the restriction
+       * on the account worse. So the attempt is **not counted**, the row stays
+       * QUEUED, and `scheduledAt` moves to when the provider said it would
+       * listen again.
+       *
+       * It still goes through `nextSendableTime`, because a wait that ends at
+       * 02:00 must no more wake somebody than a first attempt would — the quiet
+       * hours and the quiet days are properties of the message, not of the
+       * attempt number.
+       *
+       * Bounded, because the value comes from a provider: a malformed or absurd
+       * answer must not park a message past the point anybody would look for it.
+       */
+      const askedToWait = Number(result.retryAfterMs);
+      if (Number.isFinite(askedToWait) && askedToWait > 0) {
+        const waitMs = Math.min(askedToWait, MAX_PROVIDER_WAIT_MS);
+        const waitUntil = nextSendableTime(
+          new Date(now.getTime() + waitMs),
+          settings.quietHours,
+          settings.quietDays && isCustomerFacing(messageAudience(message.audience))
+            ? (day) => isOfficialHoliday(toShamsiStr(day))
+            : null,
+        );
+        await db.message.update({
+          where: { id: message.id },
+          data: {
+            lastError: result.error ?? null,
+            scheduledAt: waitUntil,
+            scheduledAtJalali: toShamsiStr(waitUntil),
+          },
+        });
+        continue;
+      }
+
       if (shouldRetry(attempts, settings.maxAttempts)) {
         const retryAt = nextSendableTime(
           new Date(now.getTime() + retryDelayMs(attempts)),

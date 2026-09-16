@@ -1,14 +1,19 @@
 import http from "http";
 import { timingSafeEqual } from "crypto";
 import { WHATSAPP_GAP_MS } from "../src/utils/whatsapp";
+import { TELEGRAM_GAP_MS } from "../src/utils/telegram";
 import {
   connectWhatsapp, ensureWhatsappLinkRestored, sendWhatsapp, setBaileysLoader, unlinkWhatsapp,
   whatsappIsLinked, whatsappReport,
 } from "../src/server/services/messaging/whatsappClient";
+import {
+  connectTelegram, ensureTelegramRestored, sendTelegram, setTelegramLoader, telegramIsLinked,
+  telegramReport, unlinkTelegram,
+} from "../src/server/services/messaging/telegramClient";
 
 /**
- * The WhatsApp relay: the linked-device socket, on a machine that can reach
- * WhatsApp, with four endpoints in front of it.
+ * The messaging relay: the company's WhatsApp **and** Telegram sessions, on a
+ * machine that can reach them, with a few endpoints in front of each.
  *
  * This exists because of one fact and one consequence. Where WhatsApp is
  * unreachable from the ERP's own server the socket is reset before its handshake
@@ -34,9 +39,17 @@ import {
  * both deployments. That is why the relay lives in this repository rather than
  * in one of its own.
  *
- * No framework: four endpoints over `node:http`. A relay's whole value is being
- * small and boring on a machine that holds the company's WhatsApp credentials,
- * and every dependency here is one more thing to keep patched on it.
+ * **Two channels, one relay, one token.** They are the same idea — a personal
+ * account this application borrows — they are unreachable from the same server
+ * for the same reason, and they are held by one process so that there is one
+ * machine to secure, one certificate to renew and one secret to rotate. What is
+ * *not* shared is the pacing clock: two accounts are two accounts, and a
+ * WhatsApp send has nothing to say about when Telegram may send next.
+ *
+ * No framework: a handful of endpoints over `node:http`. A relay's whole value
+ * is being small and boring on a machine that holds the company's own messenger
+ * credentials, and every dependency here is one more thing to keep patched on
+ * it.
  */
 
 /*
@@ -55,6 +68,16 @@ import {
  */
 setBaileysLoader(() => import("@whiskeysockets/baileys"));
 
+/**
+ * The same seam, for the same reason, for the MTProto library.
+ *
+ * `relay/package.json` declares `telegram` too, so it also installs into
+ * `relay/node_modules` — and `telegramClient.ts` also sits two directories above
+ * this file, where there is no `node_modules` at all. One line here is what
+ * makes one socket implementation resolve in both deployments.
+ */
+setTelegramLoader(() => import("telegram"));
+
 /* -------------------------------- settings -------------------------------- */
 
 const PORT = Number(process.env.RELAY_PORT ?? 8787);
@@ -62,7 +85,7 @@ const PORT = Number(process.env.RELAY_PORT ?? 8787);
 /**
  * Loopback by default, which is a real safety property rather than a default
  * nobody thought about: TLS is terminated by a reverse proxy in front (see
- * `docs/whatsapp-relay.md`), so the relay itself is unreachable from the
+ * `docs/messaging-relay.md`), so the relay itself is unreachable from the
  * internet. Set `RELAY_HOST=0.0.0.0` only if something else is doing that job.
  */
 const HOST = process.env.RELAY_HOST ?? "127.0.0.1";
@@ -81,8 +104,30 @@ const MAX_BODY_BYTES = 64 * 1024;
  * can make this line send faster than a person types. It reads the same
  * `WHATSAPP_GAP_MS.min` the ERP paces by, so there is still one number.
  */
-const SEND_FLOOR_MS = WHATSAPP_GAP_MS.min;
-let lastSendAt = 0;
+const SEND_FLOOR_MS = {
+  whatsapp: WHATSAPP_GAP_MS.min,
+  telegram: TELEGRAM_GAP_MS.min,
+} as const;
+
+/**
+ * Per channel, because the two accounts are two accounts.
+ *
+ * One shared clock would make a WhatsApp send delay the next Telegram one for no
+ * reason at all — they are different lines with different limits, and nothing
+ * about sending on one says anything about the other. The floor is still per
+ * *line*, which is what the interlock is for.
+ */
+const lastSendAt: Record<keyof typeof SEND_FLOOR_MS, number> = { whatsapp: 0, telegram: 0 };
+
+/** Waits out the floor for one line. Waited, never refused: the message is due. */
+async function paceLine(line: keyof typeof SEND_FLOOR_MS): Promise<void> {
+  const floor = SEND_FLOOR_MS[line];
+  const since = Date.now() - lastSendAt[line];
+  if (lastSendAt[line] && since < floor) {
+    await new Promise((r) => setTimeout(r, floor - since));
+  }
+  lastSendAt[line] = Date.now();
+}
 
 /* --------------------------------- helpers -------------------------------- */
 
@@ -201,13 +246,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
       return;
     }
 
-    // The interlock. Waited out rather than refused: the caller's message is
-    // due and nothing is wrong with it — it simply may not go any sooner.
-    const since = Date.now() - lastSendAt;
-    if (lastSendAt && since < SEND_FLOOR_MS) {
-      await new Promise((r) => setTimeout(r, SEND_FLOOR_MS - since));
-    }
-    lastSendAt = Date.now();
+    await paceLine("whatsapp");
 
     const result = await sendWhatsapp({ recipient, body: text });
     log("send", mask(recipient), result.ok ? "ok" : `failed: ${result.error ?? ""}`);
@@ -216,6 +255,55 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
      * number, an unlinked line. The ERP reads `ok` and stores the sentence; a
      * 5xx here would make it read as a transport fault and be retried against a
      * number that will refuse it again.
+     */
+    json(res, 200, result);
+    return;
+  }
+
+  /* ------------------------------ telegram ------------------------------- */
+
+  if (path === "/tg/status" && req.method === "GET") {
+    json(res, 200, { ...telegramReport(), linked: telegramIsLinked() });
+    return;
+  }
+
+  if (path === "/tg/link" && req.method === "POST") {
+    log("telegram link requested");
+    const report = await connectTelegram({ force: true });
+    // How it went, not only that it was asked for — the line that would have
+    // ended the WhatsApp hunt in seconds. The login code is never logged.
+    log(`telegram link -> ${report.state}${report.lastError ? ` - ${report.lastError}` : ""}`);
+    json(res, 200, report);
+    return;
+  }
+
+  if (path === "/tg/unlink" && req.method === "POST") {
+    log("telegram unlink requested");
+    json(res, 200, await unlinkTelegram());
+    return;
+  }
+
+  if (path === "/tg/send" && req.method === "POST") {
+    const body = await readJson(req);
+    if (!body) { json(res, 400, { ok: false, error: "بدنه درخواست خوانده نشد." }); return; }
+
+    const recipient = String(body.recipient ?? "").trim();
+    const text = String(body.body ?? "");
+    if (!recipient || !text.trim()) {
+      json(res, 400, { ok: false, error: "گیرنده یا متن پیام خالی است." });
+      return;
+    }
+
+    await paceLine("telegram");
+
+    const result = await sendTelegram({ recipient, body: text });
+    log("telegram send", mask(recipient), result.ok ? "ok" : `failed: ${result.error ?? ""}`);
+    /*
+     * 200 with `ok: false` for a refusal the session itself made, exactly as the
+     * WhatsApp send does — and `retryAfterMs` travels with it, because a flood
+     * wait met here is the same flood wait the ERP's queue has to honour. A 5xx
+     * would make the ERP read either as a transport fault and retry it into the
+     * very restriction Telegram just asked it to stop walking into.
      */
     json(res, 200, result);
     return;
@@ -257,13 +345,20 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, HOST, () => {
   log(`listening on ${HOST}:${PORT}`);
-  log(`session ${whatsappIsLinked() ? "found — reconnecting" : "not linked — waiting for /link"}`);
+  log(`whatsapp session ${whatsappIsLinked() ? "found — reconnecting" : "not linked — waiting for /link"}`);
+  log(`telegram session ${telegramIsLinked() ? "found — reconnecting" : "not linked — waiting for /tg/link"}`);
   /*
    * This *is* the process that holds the socket, so restoring it here is right —
    * and it still opens only when a device is genuinely paired, because a pairing
    * code nobody is watching is itself traffic WhatsApp counts against the number.
    */
   ensureWhatsappLinkRestored();
+  /*
+   * And the Telegram session, on the same terms: only when an account is already
+   * signed in, because a login code nobody is watching is itself traffic counted
+   * against the account.
+   */
+  ensureTelegramRestored();
 });
 
 /** Closes the socket on the way out, so systemd's restart is not a second one. */

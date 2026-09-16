@@ -181,12 +181,13 @@ export interface StaffNotifySettings {
  * **mobile** that is already on the account, which is what makes offering the
  * choice at all a question of one dropdown rather than a second address book.
  */
-export const STAFF_CHANNELS = ["SMS", "WHATSAPP"] as const;
+export const STAFF_CHANNELS = ["SMS", "WHATSAPP", "TELEGRAM"] as const;
 export type StaffChannel = (typeof STAFF_CHANNELS)[number];
 
 export const STAFF_CHANNEL_LABELS: Record<StaffChannel, string> = {
   SMS: "پیامک",
   WHATSAPP: "واتس‌اپ",
+  TELEGRAM: "تلگرام",
 };
 
 /**
@@ -203,6 +204,14 @@ export const STAFF_CHANNEL_LABELS: Record<StaffChannel, string> = {
 export const STAFF_CHANNEL_HINTS: Record<StaffChannel, string> = {
   SMS: "فوری و مستقل از اینترنت گیرنده، ولی هر پیام هزینه دارد (فارسی: ۷۰ کاراکتر، بعد هر ۶۷ کاراکتر یک بخش).",
   WHATSAPP: "بدون هزینه پیامک، ولی از خط خودمان و با سرعت عمدی حداکثر ۳ پیام در دقیقه — ارجاع دسته‌جمعی چند دقیقه طول می‌کشد.",
+  /*
+   * The same pacing, and one refusal WhatsApp does not have: a colleague whose
+   * Telegram account has «پیدا شدن با شماره» closed cannot be reached by their
+   * number at all. Said here because the remedy is a person's — their
+   * `@username` in the same field — and a hint that hides it would leave
+   * somebody looking for a fault in the channel.
+   */
+  TELEGRAM: "بدون هزینه پیامک، از حساب خودمان و با همان سقف ۳ پیام در دقیقه — و همکاری که «پیدا شدن با شماره» را در تلگرام بسته باشد با شماره پیدا نمی‌شود.",
 };
 
 /*
@@ -269,7 +278,11 @@ export interface StaffChannelPlan {
  * a silent nothing, which is the same distinction every other skip reason here
  * draws.
  *
- * `whatsappReady` is the provider row's own `active` flag and deliberately
+ * `chosenReady` is the provider row's own `active` flag **for the channel that
+ * was chosen** — asked of that channel rather than of WhatsApp by name, or a
+ * company that picked Telegram would have had its notifications decided by
+ * whether a WhatsApp line it does not use happened to be switched on. It is
+ * deliberately
  * **not** the socket's liveness: asking whether a device is linked is an HTTP
  * round trip to the relay for every task anybody assigns, inside `afterCommit`,
  * and a line that is momentarily down is a transient the outbox already retries
@@ -279,16 +292,27 @@ export interface StaffChannelPlan {
  */
 export function planStaffChannel(
   settings: StaffNotifySettings | null | undefined,
-  whatsappReady: boolean,
+  chosenReady: boolean,
 ): StaffChannelPlan {
-  if (staffChannelChoice(settings) === "SMS") {
+  const chosen = staffChannelChoice(settings);
+  if (chosen === "SMS") {
     return { channel: "SMS", fellBack: false, skipped: null };
   }
-  if (whatsappReady) return { channel: "WHATSAPP", fellBack: false, skipped: null };
+  if (chosenReady) return { channel: chosen, fellBack: false, skipped: null };
   if (staffFallsBackToSms(settings)) {
     return { channel: "SMS", fellBack: true, skipped: null };
   }
-  return { channel: null, fellBack: false, skipped: "WHATSAPP_OFF" };
+  /*
+   * Named per channel rather than folded into one «the messenger is off».
+   * «کانال واتس‌اپ فعال نیست» and «کانال تلگرام فعال نیست» send somebody to two
+   * different panels, and a reason that cannot say which is a reason nobody can
+   * act on — the distinction every other entry in `STAFF_SKIP_LABELS` draws.
+   */
+  return {
+    channel: null,
+    fellBack: false,
+    skipped: chosen === "TELEGRAM" ? "TELEGRAM_OFF" : "WHATSAPP_OFF",
+  };
 }
 
 export function staffTemplateFor(
@@ -321,7 +345,8 @@ export type StaffSkipReason =
   | "INACTIVE"
   | "NO_MOBILE"
   | "BAD_MOBILE"
-  | "WHATSAPP_OFF";
+  | "WHATSAPP_OFF"
+  | "TELEGRAM_OFF";
 
 export const STAFF_SKIP_LABELS: Record<StaffSkipReason, string> = {
   DISABLED: "اعلان ارجاع کار به همکاران خاموش است.",
@@ -337,6 +362,7 @@ export const STAFF_SKIP_LABELS: Record<StaffSkipReason, string> = {
   NO_MOBILE: "شماره موبایلی برای این کاربر ثبت نشده است.",
   BAD_MOBILE: "شماره ثبت‌شده برای این کاربر یک موبایل معتبر نیست.",
   WHATSAPP_OFF: "کانال واتس‌اپ فعال نیست و جایگزینی با پیامک خاموش است.",
+  TELEGRAM_OFF: "کانال تلگرام فعال نیست و جایگزینی با پیامک خاموش است.",
 };
 
 export interface StaffNotifySubject {

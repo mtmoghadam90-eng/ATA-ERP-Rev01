@@ -119,7 +119,7 @@ import {
   looksLikeMobile, nextAllowedSendTime, renderTemplate, resolveRecipient, retryDelayMs,
   normalizeSenderLine,
   shouldRetry, smsConfigRefusal, smsLength, smsProviderOf, templateVariables,
-  ALL_CHANNELS, CHANNEL_LABELS,
+  ALL_CHANNELS, CHANNEL_LABELS, addressFor,
 } from "../src/utils/messaging";
 import {
   WHATSAPP_FAILURE_ADVICE, WHATSAPP_FAILURE_KINDS, WHATSAPP_FAILURE_LABELS,
@@ -128,7 +128,11 @@ import {
   relayConfigRefusal, whatsappCanSend, whatsappFailureKind, whatsappGapMs, whatsappJid,
   whatsappSendRefusal,
 } from "../src/utils/whatsapp";
-import { channelPassLimit } from "../src/server/services/messaging/messageService";
+import { channelIsPaced, channelPassLimit } from "../src/server/services/messaging/messageService";
+import {
+  TELEGRAM_GAP_MS, TELEGRAM_PER_PASS, floodWaitSeconds, isTelegramAddressable,
+  telegramApiFrom, telegramApiRefusal, telegramFailureKind, telegramGapMs, telegramPeer,
+} from "../src/utils/telegram";
 import { normalizeMobile as smsNormalizeMobile } from "../src/server/services/messaging/drivers";
 import {
   ALL_DEMAND_SOURCES, DEMAND_SOURCE_SPECS, DemandLine, demandGroupingOf,
@@ -7442,7 +7446,12 @@ head("Unlinking WhatsApp switches the channel off with it");
    */
   const panel = strip(readFileSync("src/components/MessagingView.tsx", "utf8"));
   ok("the button says the channel goes off too",
-    /whatsappUnlink,[\s\S]{0,200}غیرفعال/.test(panel));
+    /unlinkNotice:[\s\S]{0,200}کانال واتس‌اپ غیرفعال شد/.test(panel));
+  // And Telegram's, because the same half was missing there: unlinking switches
+  // that channel off too, and a notice that silently stops arriving reads as the
+  // feature breaking rather than as a decision somebody made.
+  ok("...and so does Telegram's",
+    /unlinkNotice:[\s\S]{0,200}کانال تلگرام غیرفعال شد/.test(panel));
 }
 
 
@@ -14753,12 +14762,20 @@ head("Staff SMS: only the work a person hands to another person");
     /channel: plan\.channel/.test(senderSrc)
     && !/queueMessage\(\{[\s\S]{0,80}channel: CHANNELS\.SMS/.test(senderSrc));
   /*
-   * And the provider row is read only when WhatsApp is the choice: this runs on
+   * And the provider row is read only when the choice is not SMS: this runs on
    * every task anybody assigns, and a query whose answer cannot change the
    * outcome is a read per save for nothing.
+   *
+   * **Asked of the chosen channel, never of WhatsApp by name.** Written the
+   * other way — which it was, while WhatsApp was the only messenger — a company
+   * that picked Telegram would have had its handover notices decided by whether
+   * a WhatsApp line it does not use happened to be switched on: silently, and in
+   * the direction that sends nothing.
    */
-  ok("...and the provider flag is asked for only when WhatsApp is chosen",
-    /choice === "WHATSAPP" \? await channelIsActive/.test(senderSrc));
+  ok("...and the provider flag is asked for only when the choice is not SMS",
+    /choice === "SMS" \? false : await channelIsActive\(choice\)/.test(senderSrc));
+  ok("...of the chosen channel rather than of WhatsApp by name",
+    !/channelIsActive\(CHANNELS\.WHATSAPP\)/.test(senderSrc));
   /*
    * One reading of «is this channel on»: the worker's own row, not a second
    * copy of the question that could answer differently.
@@ -17237,9 +17254,25 @@ head("Competitors: who we lose to, and by how much");
     ok("the SMS driver reads the shared digit fold", /digitsOf\(/.test(driverSrc));
     ok("...and does not keep a copy of it",
       !/\[۰-۹\]/.test(driverSrc) && !/\[٠-٩\]/.test(driverSrc));
-    const waSrc = strip(readFileSync("src/utils/whatsapp.ts", "utf8"));
-    ok("nor does the WhatsApp rule",
-      /digitsOf/.test(waSrc) && !/\[۰-۹\]/.test(waSrc));
+    /*
+     * And the *prefix* arithmetic above the fold is shared too, which is the
+     * half that mattered once a second messenger addressed a person by the same
+     * phone number. `internationalDigits` is the one reading of «which numbers
+     * this application can write to»; a copy of it inside either channel would
+     * be the `digitsOf` fault one level up — the two answering differently for
+     * `0098912…`, so a customer is reachable on one messenger and not the other
+     * with nobody going looking, because the other message arrived.
+     */
+    for (const [what, file] of [
+      ["the WhatsApp rule", "src/utils/whatsapp.ts"],
+      ["the Telegram rule", "src/utils/telegram.ts"],
+    ] as const) {
+      const src = strip(readFileSync(file, "utf8"));
+      ok(`${what} reads the shared number rule`, /internationalDigits\(/.test(src));
+      ok(`...and keeps no copy of the digit fold`, !/\[۰-۹\]/.test(src) && !/\[٠-٩\]/.test(src));
+      ok(`...nor of the prefix arithmetic`,
+        !/startsWith\(`?"?00/.test(src) && !/\^9\\d\{9\}/.test(src));
+    }
   }
 
   eq("a landline is refused", whatsappJid("02188776655"), null);
@@ -17339,7 +17372,17 @@ head("Competitors: who we lose to, and by how much");
     ok("...with the paced channel last, so nothing waits behind its gaps",
       /channelPassLimit\(b\) - channelPassLimit\(a\)/.test(queueBody));
     const byPace = [...ALL_CHANNELS].sort((a, b) => channelPassLimit(b) - channelPassLimit(a));
-    eq("...which puts WhatsApp at the end", byPace[byPace.length - 1], CHANNELS.WHATSAPP);
+    /*
+     * Both paced channels end up behind every unpaced one — held as a property
+     * rather than as «WhatsApp is last», which stopped being true the moment a
+     * second personal account was added and would have gone on passing while the
+     * *other* one sat in front of the SMS queue.
+     */
+    const paced = ALL_CHANNELS.filter((c) => channelPassLimit(c) < 25);
+    ok("...which puts every paced channel at the end",
+      paced.length >= 2
+      && byPace.slice(-paced.length).every((c) => channelPassLimit(c) < 25),
+      byPace);
     /*
      * The counter stays: it is where the rule is *stated*, and the gap needs to
      * know how many have already gone this pass.
@@ -17607,8 +17650,19 @@ head("Competitors: who we lose to, and by how much");
 
   /* The screen says the two things that are not software decisions. */
   const panel = strip(readFileSync("src/components/MessagingView.tsx", "utf8"));
+  /*
+   * **One panel, two channels.** A second near-copy of a hundred and eighty
+   * lines is how the two come to disagree about what «قطع شده» looks like, so
+   * the check is that both cards draw the *same* component with their own spec —
+   * and that the old single-channel one has not come back beside it.
+   */
   ok("the panel is drawn for the WhatsApp channel",
-    /row\.channel === CHANNELS\.WHATSAPP/.test(panel) && panel.includes("WhatsappLinkPanel"));
+    /row\.channel === CHANNELS\.WHATSAPP/.test(panel)
+    && /spec=\{WHATSAPP_PANEL\}/.test(panel));
+  ok("...and for the Telegram channel, by the same component",
+    /row\.channel === CHANNELS\.TELEGRAM/.test(panel)
+    && /spec=\{TELEGRAM_PANEL\}/.test(panel));
+  ok("...with no second copy of it", !panel.includes("WhatsappLinkPanel"));
   ok("...and says the pacing is fixed rather than configurable",
     /۳ پیام/.test(panel) && /قابل تغییر نیست/.test(panel));
   ok("...and says the line itself is what is at risk", /مسدود/.test(panel));
@@ -17936,9 +17990,17 @@ head("Competitors: who we lose to, and by how much");
      * same constant the ERP paces by, so there is still one number.
      */
     ok("the send floor reads the shared constant",
-      /SEND_FLOOR_MS = WHATSAPP_GAP_MS\.min/.test(relaySrc));
+      /whatsapp: WHATSAPP_GAP_MS\.min/.test(relaySrc)
+      && /telegram: TELEGRAM_GAP_MS\.min/.test(relaySrc));
     ok("...and waits it out rather than refusing",
-      /setTimeout\(r, SEND_FLOOR_MS - since\)/.test(relaySrc));
+      /setTimeout\(r, floor - since\)/.test(relaySrc));
+    /*
+     * And the clock is **per line**: one shared timer would make a WhatsApp send
+     * delay the next Telegram one for no reason at all — two accounts with two
+     * limits, and nothing about sending on one says anything about the other.
+     */
+    ok("...on its own clock per line",
+      /lastSendAt\[line\]/.test(relaySrc) && !/^\s*let lastSendAt = 0;/m.test(relaySrc));
 
     /*
      * A refusal the socket itself made is a 200 with `ok: false`. A 5xx would
@@ -17988,6 +18050,383 @@ head("Competitors: who we lose to, and by how much");
   }
 
 }
+
+head("Telegram: the company's own account, as a fifth channel");
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  /*
+   * The ask was «مثل واتساپ»: log in to the account the sales desk already
+   * uses — not a bot, which cannot write to anybody who has not written to it
+   * first, and which is every customer in the directory.
+   *
+   * Everything below is the pure half. The three things it has to get right are
+   * who a message can be addressed to, what happens when Telegram says stop, and
+   * the difference between «not configured» and «disconnected» — which are two
+   * problems for two different people and were one sentence on the WhatsApp
+   * panel until it was corrected.
+   */
+
+  /* ------------------------------ addressing ----------------------------- */
+
+  const peer = (raw: string | null | undefined) => JSON.stringify(telegramPeer(raw));
+  const phone = (digits: string) => JSON.stringify({ kind: "phone", value: `+${digits}` });
+
+  for (const written of [
+    "09121234567", "9121234567", "989121234567", "00989121234567",
+    "+98 912 123 4567", "۰۹۱۲۱۲۳۴۵۶۷", "0912-123-4567",
+  ]) {
+    eq(`«${written}» is the same account however it is written`,
+      peer(written), phone("989121234567"));
+  }
+
+  /*
+   * The same subscriber number WhatsApp would address, which is the comparison
+   * worth making across the two: a customer reachable on one messenger and not
+   * the other because the two disagreed about `+98` or a Persian digit would be
+   * invisible — the other message arrives, so nobody goes looking.
+   */
+  for (const written of ["09121234567", "۰۹۱۲۱۲۳۴۵۶۷", "+98 912 123 4567"]) {
+    const tg = telegramPeer(written);
+    eq(`Telegram and WhatsApp agree about «${written}»`,
+      tg && tg.kind === "phone" ? tg.value.replace(/^\+/, "") : null,
+      String(whatsappJid(written)).split("@")[0]);
+  }
+
+  eq("a username is an address too", peer("@ata_sales"),
+    JSON.stringify({ kind: "username", value: "ata_sales" }));
+  eq("...written without the @ as well", peer("ata_sales"),
+    JSON.stringify({ kind: "username", value: "ata_sales" }));
+
+  /*
+   * The username rule must never swallow a phone number typed without its `+`,
+   * which is how most of them are typed: it requires a leading **letter**, so an
+   * all-digit string can only ever be read as a number.
+   */
+  eq("a bare international number is a phone, not a username",
+    peer("+442071234567"), phone("442071234567"));
+
+  eq("a landline is refused", peer("02188776655"), "null");
+  eq("a fragment is refused", peer("0912"), "null");
+  eq("a name too short to be a username is refused", peer("@abc"), "null");
+  eq("nothing is refused", peer(""), "null");
+  eq("null is refused", peer(null), "null");
+
+  ok("`isTelegramAddressable` agrees with it",
+    isTelegramAddressable("09121234567") && isTelegramAddressable("@ata_sales")
+    && !isTelegramAddressable("02188776655"));
+
+  /*
+   * And the channel reads the **mobile** every customer record already carries,
+   * which is what makes this the directory's channel rather than a second
+   * address book — the Bale lesson, where a chat id has to be obtained from the
+   * bot's own updates and typed in per contact.
+   */
+  eq("the channel addresses a contact by their mobile",
+    addressFor({ mobile: "09121234567", baleChatId: "12345" }, CHANNELS.TELEGRAM),
+    "09121234567");
+
+  /* ---------------------------- configuration ---------------------------- */
+
+  /*
+   * Nothing configured is **not a fault**: it is what every installation looks
+   * like until somebody wants the channel, and reporting it as a refusal would
+   * put a red box on a screen for a feature nobody has asked for.
+   */
+  eq("nothing configured is not a refusal", telegramApiRefusal("", ""), null);
+  ok("an id with no hash is", telegramApiRefusal("12345", "") !== null);
+  ok("a hash with no id is", telegramApiRefusal("", "abc") !== null);
+  ok("an id that is not a number is", telegramApiRefusal("not-a-number", "abc") !== null);
+  eq("a complete pair is not", telegramApiRefusal("12345", "abcdef"), null);
+  eq("...and is read back as itself",
+    JSON.stringify(telegramApiFrom("12345", "abcdef")),
+    JSON.stringify({ apiId: 12345, apiHash: "abcdef" }));
+  eq("a refused pair is never usable", telegramApiFrom("12345", ""), null);
+
+  /*
+   * **The credentials live in the environment, never in `settings`** — that
+   * document is loaded whole by every browser. Held against the two lists the
+   * settings screen writes through, because a key there is a key a form shows.
+   */
+  {
+    const svc = strip(readFileSync("src/server/services/messaging/messageService.ts", "utf8"));
+    ok("no Telegram credential is a settings field",
+      /TELEGRAM: \[\],/.test(svc) && !/TELEGRAM: \[["']api/.test(svc));
+    const client = strip(readFileSync(
+      "src/server/services/messaging/telegramClient.ts", "utf8"));
+    ok("the client reads them from the environment",
+      /process\.env\.TELEGRAM_API_ID/.test(client)
+      && /process\.env\.TELEGRAM_API_HASH/.test(client));
+    /*
+     * And the two-step password is read for one sign-in and written nowhere:
+     * a screen that offered a box for it would be a screen that stores it.
+     */
+    ok("...and the two-step password is never stored",
+      /process\.env\.TELEGRAM_2FA_PASSWORD/.test(client)
+      && !/writeSession\([^)]*PASSWORD/.test(client));
+
+    /*
+     * **The session is written only after the sign-in resolved.** The library
+     * answers a perfectly well-formed session string as soon as it has connected
+     * to a data centre, signed in or not — which is exactly the trap the
+     * WhatsApp client was corrected for, where the existence of a credentials
+     * file was read as «a device is linked» and both guards inverted. Here there
+     * is no flag to read wrongly, because a session that was never authorised is
+     * never on disk; the check is that the only writes are inside a branch that
+     * has already established authorisation.
+     */
+    const writes = client.split("writeSession(").length - 1;
+    eq("the session is written in exactly two places", writes - 1, 2);
+    ok("...both of them past a successful sign-in",
+      /checkAuthorization\(\)[\s\S]{0,600}writeSession\(/.test(client)
+      && /signIn[\s\S]{0,200}\.then\([\s\S]{0,400}writeSession\(/.test(client));
+  }
+
+  /* ------------------------------- the flood ----------------------------- */
+
+  /*
+   * **The one thing Telegram tells you that no other channel here does.**
+   * `FLOOD_WAIT_86400` is a day; taken as an ordinary failure the queue's
+   * backoff spends every attempt inside the first two minutes of it, marks a
+   * perfectly good message FAILED, and makes the restriction worse on the way.
+   */
+  eq("the wire spelling is read", floodWaitSeconds("FLOOD_WAIT_42"), 42);
+  eq("...and the library's prose", floodWaitSeconds(
+    "A wait of 300 seconds is required (caused by messages.SendMessage)"), 300);
+  eq("an ordinary error carries no wait", floodWaitSeconds("PEER_ID_INVALID"), null);
+  eq("nothing carries none", floodWaitSeconds(null), null);
+
+  /*
+   * It is asked about **first**, and the order is the decision: read as the
+   * network it invites a retry, read as the account it invites a re-login, and
+   * both are more traffic from an account Telegram has just asked to stop.
+   */
+  eq("a flood wait is its own kind",
+    telegramFailureKind("A wait of 42 seconds is required"), "FLOOD");
+  eq("...and so is PEER_FLOOD", telegramFailureKind("PEER_FLOOD"), "FLOOD");
+  eq("a refused relay token is configuration, never the account",
+    telegramFailureKind("توکن رله پذیرفته نشد؛ unauthorized"), "CONFIG");
+  eq("missing api credentials are configuration",
+    telegramFailureKind("TELEGRAM_API_ID تنظیم نشده است"), "CONFIG");
+  eq("nobody at that address is the recipient",
+    telegramFailureKind("PHONE_NOT_OCCUPIED"), "RECIPIENT");
+  eq("a revoked session is the account",
+    telegramFailureKind("AUTH_KEY_UNREGISTERED"), "ACCOUNT");
+  eq("a reset socket is the network",
+    telegramFailureKind("read ECONNRESET"), "NETWORK");
+  /*
+   * UNKNOWN is an honest answer and not a gap: calling an unfamiliar message a
+   * network fault sends somebody to check a route that is fine, and calling it
+   * an account fault sends them to sign out of a working session.
+   */
+  eq("and something this build has not seen is named as that",
+    telegramFailureKind("something nobody has seen"), "UNKNOWN");
+  eq("nothing at all is too", telegramFailureKind(""), "UNKNOWN");
+
+  /* -------------------------------- pacing ------------------------------- */
+
+  eq("the pass cap is the same three WhatsApp is paced at", TELEGRAM_PER_PASS, 3);
+  eq("the gap is never below its floor", telegramGapMs(0), TELEGRAM_GAP_MS.min);
+  eq("...nor above its ceiling", telegramGapMs(1), TELEGRAM_GAP_MS.max);
+  ok("...and is jittered between them",
+    telegramGapMs(0.5) > TELEGRAM_GAP_MS.min && telegramGapMs(0.5) < TELEGRAM_GAP_MS.max);
+  // Out of range is clamped rather than trusted: a caller handing this a number
+  // outside 0..1 would otherwise produce a negative delay and send the batch as
+  // a burst — which is the one thing the gap exists to prevent.
+  eq("nonsense is clamped, never negative", telegramGapMs(-5), TELEGRAM_GAP_MS.min);
+  eq("...at both ends", telegramGapMs(9), TELEGRAM_GAP_MS.max);
+
+  eq("the queue caps the channel at that", channelPassLimit(CHANNELS.TELEGRAM), 3);
+  ok("...and reads it as paced", channelIsPaced(CHANNELS.TELEGRAM));
+  ok("...while SMS is not", !channelIsPaced(CHANNELS.SMS));
+
+  /*
+   * The gap is taken from the channel's own rule rather than from WhatsApp's for
+   * every paced channel, and the predicate is derived from the cap: a fifth
+   * paced channel added to `channelPassLimit` alone would otherwise be read last
+   * (correctly) and then sent as a burst (not).
+   */
+  {
+    const svc = strip(readFileSync("src/server/services/messaging/messageService.ts", "utf8"));
+    ok("the pass paces by the channel's own rule",
+      /channelIsPaced\(channel\) && alreadySent > 0/.test(svc)
+      && /telegramGapMs\(Math\.random\(\)\)/.test(svc));
+    ok("...and no longer names WhatsApp to decide it",
+      !/channel === CHANNELS\.WHATSAPP && alreadySent > 0/.test(svc));
+
+    /*
+     * **A failure the provider put a clock on is not one the queue may retry on
+     * its own schedule.** The attempt is not counted and the row stays QUEUED,
+     * or three attempts are spent inside the first two minutes of a wait that
+     * may be a day.
+     */
+    const held = svc.slice(svc.indexOf("const askedToWait"));
+    ok("a provider's own wait is honoured", held.length > 0);
+    ok("...without spending an attempt",
+      /scheduledAt: waitUntil/.test(held.slice(0, 900))
+      && !/attempts,/.test(held.slice(0, held.indexOf("continue;"))));
+    ok("...and still through the quiet-time rule",
+      /nextSendableTime\(/.test(held.slice(0, 900)));
+    ok("...bounded, because the number comes from outside",
+      /Math\.min\(askedToWait, MAX_PROVIDER_WAIT_MS\)/.test(held.slice(0, 900)));
+  }
+
+  /* ------------------------------- the wiring ---------------------------- */
+
+  {
+    const drivers = strip(readFileSync("src/server/services/messaging/drivers.ts", "utf8"));
+    ok("the dispatcher reaches the transport, not the client",
+      /CHANNELS\.TELEGRAM[\s\S]{0,200}sendTelegramMessage/.test(drivers)
+      && /import\("\.\/telegramTransport"\)/.test(drivers));
+    ok("...and carries a provider's wait back to the queue",
+      /retryAfterMs\?: number/.test(drivers));
+
+    /*
+     * Nothing in the transport touches the database, which is what lets these
+     * checks drive the whole relay path without one — and is why switching the
+     * channel off after an unlink is the *route's* half.
+     */
+    const transport = strip(readFileSync(
+      "src/server/services/messaging/telegramTransport.ts", "utf8"));
+    ok("the transport touches no database",
+      !/getDb|prisma|deactivateChannel/.test(transport));
+    ok("...and refuses a half-configured relay rather than falling back",
+      /telegramRelayRefusal\(\)/.test(transport)
+      && (transport.match(/if \(refusal\)/g) ?? []).length >= 4);
+    ok("...reading the relay's address rules rather than copying them",
+      /relayConfigRefusal|relayConfigFrom/.test(transport));
+
+    const routes = strip(readFileSync("src/server/routes/messaging.ts", "utf8"));
+    for (const door of ["status", "link", "unlink"]) {
+      ok(`the ${door} route exists and needs the settings permission`,
+        new RegExp(`/api/messaging/telegram/${door}"[\\s\\S]{0,200}requireSettings`).test(routes));
+    }
+    /*
+     * The unlink switches the channel off with it — the half the WhatsApp one
+     * was corrected for: `channelIsActive` reads the provider row rather than
+     * the session, so without this every handover notice fails quietly into the
+     * outbox while the board reads perfectly correctly.
+     */
+    ok("...and signing out switches the channel off",
+      /telegramUnlink\(\)[\s\S]{0,200}deactivateChannel\(CHANNELS\.TELEGRAM\)/.test(routes));
+    // Only when it really happened: a relay that could not be reached has said
+    // nothing about the session.
+    ok("...only when it really happened",
+      /if \(report\.unlinked\) await deactivateChannel\(CHANNELS\.TELEGRAM\)/.test(routes));
+  }
+
+  /* -------------------------------- the relay ---------------------------- */
+
+  {
+    const relay = strip(readFileSync("relay/server.ts", "utf8"));
+    for (const door of ["/tg/status", "/tg/link", "/tg/unlink", "/tg/send"]) {
+      ok(`${door} is served`, relay.includes(`path === "${door}"`));
+    }
+    /*
+     * Every one of them is behind the token: the single `authorised` gate sits
+     * above the routing and only `/health` is reached before it, so a new
+     * endpoint is protected by where it is written rather than by being
+     * remembered.
+     */
+    const gate = relay.indexOf("if (!authorised(req))");
+    ok("the token gate precedes every Telegram door",
+      gate > 0 && relay.indexOf('path === "/tg/send"') > gate
+      && relay.indexOf('path === "/tg/status"') > gate);
+    ok("the relay never logs a Telegram message body",
+      /log\("telegram send", mask\(recipient\)/.test(relay));
+    ok("...and restores the session only when one is signed in",
+      /ensureTelegramRestored\(\)/.test(relay));
+
+    /*
+     * **The two pins must be the same string.** Two hosts running two versions
+     * of an unofficial protocol client against one account is a fault nobody
+     * would go looking for — the rule the baileys pins already follow.
+     */
+    const root = JSON.parse(readFileSync("package.json", "utf8")) as
+      { dependencies: Record<string, string> };
+    const relayPkg = JSON.parse(readFileSync("relay/package.json", "utf8")) as
+      { dependencies: Record<string, string> };
+    eq("the ERP and the relay pin one Telegram library",
+      root.dependencies.telegram, relayPkg.dependencies.telegram);
+    ok("...to an exact version, with no caret",
+      /^\d+\.\d+\.\d+$/.test(String(root.dependencies.telegram)),
+      root.dependencies.telegram);
+
+    /*
+     * And the library is resolved where it is *declared*: `relay/package.json`
+     * names it, so the install lands in `relay/node_modules`, two directories
+     * below the client that imports it. Written there the import rejects on the
+     * relay and resolves for the ERP — the fault that cost a day on baileys.
+     */
+    ok("the relay hands the client its own loader",
+      /setTelegramLoader\(\(\) => import\("telegram"\)\)/.test(relay));
+  }
+
+  /* --------------------------- the staff channel ------------------------- */
+
+  /*
+   * The second half of what was asked for: «هم برای مشتری هم برای ارجاع
+   * همکاران». A colleague's Telegram is reached by the **mobile already on the
+   * account**, which is what makes this one dropdown rather than a second
+   * address book.
+   */
+  ok("Telegram is offered as a staff channel",
+    (STAFF_CHANNELS as readonly string[]).includes("TELEGRAM"));
+  ok("...with a label and a hint", Boolean(STAFF_CHANNEL_LABELS.TELEGRAM)
+    && Boolean(STAFF_CHANNEL_HINTS.TELEGRAM));
+  /*
+   * The hint says the one refusal WhatsApp does not have, because the remedy is
+   * a person's: a colleague who has closed «who can find me by my number»
+   * cannot be reached by it, and their `@username` goes in the same field.
+   */
+  ok("...and the hint says what the number cannot always do",
+    /شماره/.test(STAFF_CHANNEL_HINTS.TELEGRAM));
+
+  const plan = (channel: string | undefined, ready: boolean, fallback?: boolean) =>
+    JSON.stringify(planStaffChannel(
+      { channel: channel as never, fallbackToSms: fallback }, ready));
+
+  eq("SMS is carried by SMS", plan("SMS", false),
+    JSON.stringify({ channel: "SMS", fellBack: false, skipped: null }));
+  eq("a live Telegram channel carries its own", plan("TELEGRAM", true),
+    JSON.stringify({ channel: "TELEGRAM", fellBack: false, skipped: null }));
+  /*
+   * **The fallback is the half that matters.** A notification that evaporates
+   * because nobody switched the channel on is worse than the feature not
+   * existing: the board still shows the task and everyone believes the colleague
+   * was told.
+   */
+  eq("...and SMS carries it when it is off", plan("TELEGRAM", false),
+    JSON.stringify({ channel: "SMS", fellBack: true, skipped: null }));
+  eq("...unless the company said not to", plan("TELEGRAM", false, false),
+    JSON.stringify({ channel: null, fellBack: false, skipped: "TELEGRAM_OFF" }));
+  /*
+   * Named per channel rather than folded into one «the messenger is off»:
+   * «کانال واتس‌اپ فعال نیست» and «کانال تلگرام فعال نیست» send somebody to two
+   * different panels, and a reason that cannot say which is one nobody can act
+   * on.
+   */
+  eq("...and WhatsApp still says WhatsApp", plan("WHATSAPP", false, false),
+    JSON.stringify({ channel: null, fellBack: false, skipped: "WHATSAPP_OFF" }));
+  ok("both refusals have their own sentence",
+    Boolean(STAFF_SKIP_LABELS.TELEGRAM_OFF) && Boolean(STAFF_SKIP_LABELS.WHATSAPP_OFF)
+    && STAFF_SKIP_LABELS.TELEGRAM_OFF !== STAFF_SKIP_LABELS.WHATSAPP_OFF);
+
+  /*
+   * And the settings document's own type reads that union rather than keeping a
+   * second copy of it: written out as `'SMS' | 'WHATSAPP'` beside the real one,
+   * the two drifted the moment a third channel arrived and the control that
+   * saves the choice would not compile.
+   */
+  {
+    const types = strip(readFileSync("src/types.ts", "utf8"));
+    ok("the settings type reads the staff-channel union",
+      /channel\?: StaffChannel;/.test(types));
+    ok("...rather than writing the list out again",
+      !/channel\?: 'SMS' \| 'WHATSAPP'/.test(types));
+  }
+}
+
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {

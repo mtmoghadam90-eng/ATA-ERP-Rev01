@@ -3,6 +3,7 @@ import {
 } from "../../../utils/whatsapp";
 import type { WhatsappReport } from "./whatsappClient";
 import type { OutgoingMessage, SendResult } from "./drivers";
+import { relayEnv } from "./relayConfig";
 
 /**
  * The one door onto the WhatsApp line, wherever that line's socket is held.
@@ -48,9 +49,17 @@ const RELAY_TIMEOUT_MS = {
   link: 30_000,
 } as const;
 
-/** The configuration in force, read from the environment on every call. */
+/**
+ * The configuration in force, read from the environment on every call.
+ *
+ * Through `relayEnv`, which is the **one** reading of where the relay is: the
+ * same host holds the Telegram session, and a second pair of variables for the
+ * second channel would be two things to keep in step in order to name one
+ * machine.
+ */
 export function whatsappRelay(): WhatsappRelayConfig | null {
-  return relayConfigFrom(process.env.WHATSAPP_RELAY_URL, process.env.WHATSAPP_RELAY_TOKEN);
+  const { url, token } = relayEnv();
+  return relayConfigFrom(url, token);
 }
 
 /**
@@ -62,7 +71,8 @@ export function whatsappRelay(): WhatsappRelayConfig | null {
  * which is the shape of fault this module exists to stop.
  */
 export function whatsappRelayRefusal(): string | null {
-  return relayConfigRefusal(process.env.WHATSAPP_RELAY_URL, process.env.WHATSAPP_RELAY_TOKEN);
+  const { url, token } = relayEnv();
+  return relayConfigRefusal(url, token);
 }
 
 /** Whether sending goes through a relay at all. Never exposes the address. */
