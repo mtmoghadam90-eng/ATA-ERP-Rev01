@@ -40,6 +40,7 @@ import PriceCalculatorModal from "../src/components/PriceCalculatorModal";
 import MessagingView from "../src/components/MessagingView";
 import ProductConfiguratorModal from "../src/components/ProductConfiguratorModal";
 import RichTextField from "../src/components/RichTextField";
+import { RICH_COLOURS, RICH_MARKS, TABLE_SKELETON } from "../src/utils/richText";
 import AssistantPanel from "../src/components/AssistantPanel";
 import NumberField from "../src/components/NumberField";
 import InquiryPriceHistoryTab from "../src/components/InquiryPriceHistoryTab";
@@ -69,9 +70,15 @@ const ok = (what: string, cond: boolean, got?: unknown) => {
 const head = (s: string) => console.log(`\n── ${s}`);
 
 /** The React props object React attaches to a DOM node. */
-function handlers(el: Element): { onChange?: (e: unknown) => void } {
+function handlers(el: Element): {
+  onChange?: (e: unknown) => void;
+  onPaste?: (e: unknown) => void;
+} {
   const entry = Object.entries(el).find(([key]) => key.startsWith("__reactProps"));
-  return (entry?.[1] ?? {}) as { onChange?: (e: unknown) => void };
+  return (entry?.[1] ?? {}) as {
+    onChange?: (e: unknown) => void;
+    onPaste?: (e: unknown) => void;
+  };
 }
 
 const RATES = [
@@ -487,8 +494,12 @@ head("Rich text field: the toolbar formats what is selected");
 
   const area = document.querySelector("textarea") as HTMLTextAreaElement;
   ok("the field renders a plain textarea", !!area);
-  ok("with a button per mark",
-    document.querySelectorAll("button").length === 4,
+  /*
+   * Four symmetric marks, plus the colour opener and the table — the colour
+   * swatches are behind the opener and are not counted until it is pressed.
+   */
+  ok("a button per mark, and one each for the colour and the table",
+    document.querySelectorAll("button").length === RICH_MARKS.length + 2,
     document.querySelectorAll("button").length);
 
   // Select "size" the way a user would, then press the first button (bold).
@@ -2051,6 +2062,94 @@ head("Calendar: the close control is above the month, not below it");
  * heading that is not a button, and a button whose state never reaches the
  * block it is meant to hide. Both read perfectly in the source.
  */
+/*
+ * A colour, a table, and a table pasted out of a spreadsheet.
+ *
+ * The pure rules are held by `test:rules`; what only a rendered field can say
+ * is whether the controls reach them — a swatch that draws the right colour and
+ * writes nothing, and a paste handler that never sees the clipboard, both
+ * type-check and read perfectly.
+ */
+head("Rich text: colour, table, and a table pasted in");
+{
+  const tHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const tRoot = createRoot(tHost);
+  let text = "جنس بدنه: استیل";
+  const Screen = () => {
+    const [value, setValue] = React.useState(text);
+    text = value;
+    return React.createElement(RichTextField, { value, onChange: setValue });
+  };
+  act(() => { tRoot.render(React.createElement(Screen)); });
+  const area = tHost.querySelector("textarea") as HTMLTextAreaElement;
+
+  /* -- the colour is behind one opener, and the swatches are the allowlist -- */
+  ok("the swatches are not drawn until the opener is pressed",
+    tHost.querySelectorAll("[data-rich-colour]").length === 0);
+  const opener = tHost.querySelector("#rich-colour-open") as HTMLElement | null;
+  ok("the opener is drawn", !!opener);
+  act(() => { opener!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  const swatches = Array.from(tHost.querySelectorAll("[data-rich-colour]"));
+  ok("one swatch per allowed colour, and no more",
+    swatches.length === Object.keys(RICH_COLOURS).length, swatches.length);
+  /*
+   * A swatch offering a colour `renderRichText` does not know would write
+   * brackets that print as brackets — a control that draws text nobody meant.
+   */
+  ok("...and every one of them is a colour the renderer answers",
+    swatches.every((b) => !!RICH_COLOURS[b.getAttribute("data-rich-colour") ?? ""]));
+
+  // Selected text is wrapped, which is what the four marks beside it do.
+  const word = "استیل";
+  const at = text.indexOf(word);
+  act(() => { area.setSelectionRange(at, at + word.length); });
+  const red = tHost.querySelector('[data-rich-colour="قرمز"]') as HTMLElement | null;
+  act(() => { red!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("a swatch wraps the selection in its own colour",
+    text === "جنس بدنه: {{قرمز:استیل}}", text);
+  ok("...and the palette closes behind it",
+    tHost.querySelectorAll("[data-rich-colour]").length === 0);
+
+  /* -- the table skeleton lands on lines of its own -- */
+  act(() => { area.setSelectionRange(text.length, text.length); });
+  const tableBtn = tHost.querySelector("#rich-table") as HTMLElement | null;
+  act(() => { tableBtn!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("the table button writes a skeleton", text.includes(TABLE_SKELETON), text);
+  ok("...starting a line, or the renderer cannot see it as a table",
+    text.includes(`\n${TABLE_SKELETON.split("\n")[0]}`), text);
+
+  /*
+   * And the paste. The clipboard's `text/plain` from a spreadsheet is
+   * tab-separated and would land as one run-on line.
+   */
+  act(() => { tRoot.render(React.createElement(Screen)); });
+  const fresh = tHost.querySelector("textarea") as HTMLTextAreaElement;
+  text = "";
+  act(() => { tRoot.render(React.createElement(Screen)); });
+  let defaultPrevented = 0;
+  const paste = (clip: string) => act(() => {
+    handlers(fresh).onPaste?.({
+      clipboardData: { getData: () => clip },
+      preventDefault: () => { defaultPrevented += 1; },
+    });
+  });
+
+  paste("شرح\tتعداد\nفلومتر\t۲");
+  ok("a tab-separated paste becomes pipe rows",
+    text.includes("شرح | تعداد") && text.includes("فلومتر | ۲"), text);
+  ok("...and the browser's own paste is stopped exactly once",
+    defaultPrevented === 1, defaultPrevented);
+
+  // Anything that is not a table is left to the browser, untouched.
+  const before = text;
+  paste("یک خط ساده");
+  ok("ordinary text is not intercepted", defaultPrevented === 1, defaultPrevented);
+  ok("...and nothing was written over it", text === before, text);
+
+  act(() => { tRoot.unmount(); });
+  tHost.remove();
+}
+
 head("Rich text: the print preview folds where it is asked to");
 {
   const rHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));

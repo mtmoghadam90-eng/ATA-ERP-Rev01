@@ -140,7 +140,10 @@ import {
   attributesFromSelections, mergeSpecText, selectionsFromAttributes,
   selectionsFromSpecText, specLinesFrom,
 } from "../src/utils/productConfig";
-import { renderRichText, stripRichMarks, toggleMark } from "../src/utils/richText";
+import {
+  RICH_COLOURS, TABLE_SKELETON, insertBlock, renderRichText, stripRichMarks,
+  tableCells, tableFromPastedText, toggleMark,
+} from "../src/utils/richText";
 import {
   MAX_ACTIVITY_ATTACHMENTS, attachmentColumns, normalizeAttachments, parseAttachments,
 } from "../src/utils/attachments";
@@ -4739,6 +4742,126 @@ head("Rich text: markers in, safe HTML out");
   eq("and it is read back past the markers",
     JSON.stringify(selectionsFromSpecText(features, "جنس بدنه: **استیل 316**")),
     JSON.stringify({ f1: ["استیل 316"] }));
+
+  /* ------------------------------- colour -------------------------------- */
+  /*
+   * A colour needs a parameter, which no symmetric token can carry, so it is
+   * the one mark written as a form: `{{قرمز:متن}}`.
+   */
+  ok("a colour writes its own hex and nothing else",
+    renderRichText("{{قرمز:مهم}}") === `<span style="color: ${RICH_COLOURS["قرمز"]};">مهم</span>`,
+    renderRichText("{{قرمز:مهم}}"));
+  /*
+   * An **allowlist**, for the reason the reactions are one: the value lands in
+   * a `style` attribute on a page that is printed and emailed, so an arbitrary
+   * string there is a CSS injection through a box a salesperson types into.
+   */
+  eq("a colour this build does not know prints exactly as typed",
+    renderRichText("{{بنفش:متن}}"), "{{بنفش:متن}}");
+  /*
+   * The point is not that the words vanish — they are printed exactly as typed,
+   * which is the rule above — but that **no `style` reaches the page**. An
+   * assertion on the words alone passes by matching the input itself.
+   */
+  ok("...and a name carrying CSS produces no style attribute at all",
+    !renderRichText("{{red;background:url(x):متن}}").includes("style="),
+    renderRichText("{{red;background:url(x):متن}}"));
+  ok("...nor does one long enough to hide a declaration in",
+    !renderRichText(`{{${"x".repeat(40)}:متن}}`).includes("style="));
+  // Parentheses are the whole reason this is braces: specs are full of them.
+  ok("a specification's own parentheses survive inside a colour",
+    renderRichText('{{قرمز:2.5Mpa (ANSI300#)}}')
+      === `<span style="color: ${RICH_COLOURS["قرمز"]};">2.5Mpa (ANSI300#)</span>`,
+    renderRichText('{{قرمز:2.5Mpa (ANSI300#)}}'));
+  ok("the escape still happens first inside a coloured run",
+    renderRichText("{{قرمز:<b>x</b>}}").includes("&lt;b&gt;"),
+    renderRichText("{{قرمز:<b>x</b>}}"));
+  ok("a bolded run inside a colour keeps both",
+    /<span style="color[^"]*"><strong>مهم<\/strong><\/span>/.test(renderRichText("{{آبی:**مهم**}}")),
+    renderRichText("{{آبی:**مهم**}}"));
+  // Never across a newline, exactly like every other mark.
+  eq("an unclosed colour formats nothing rather than swallowing the rest",
+    renderRichText("{{قرمز:باز\nبعدی"), "{{قرمز:باز\nبعدی");
+  eq("a plain-text reader gets the words without the brackets",
+    stripRichMarks("a {{قرمز:ب}} c"), "a ب c");
+  eq("...and an unknown colour keeps what was typed there too",
+    stripRichMarks("a {{بنفش:ب}} c"), "a {{بنفش:ب}} c");
+
+  /* -------------------------------- tables -------------------------------- */
+  /*
+   * A table is a **block**, not a mark inside a line — the configurator reads
+   * this field line by line, so anything spanning lines has to be recognisable
+   * as whole lines or it would cut one of its own rows in half.
+   */
+  const grid = "شرح | تعداد\nفلومتر | ۲";
+  ok("two pipe rows become a table", renderRichText(grid).includes("<table"), renderRichText(grid));
+  ok("...with the first row as the header",
+    /<thead><tr><th[^>]*>شرح<\/th>/.test(renderRichText(grid)), renderRichText(grid));
+  /*
+   * **Two rows, not one.** A lone line with a pipe in it is far likelier to be
+   * a range, a tolerance or an «or» than a table somebody meant, and turning it
+   * into a one-column table is formatting nobody asked for.
+   */
+  eq("a single line with a pipe is left alone",
+    renderRichText("دما: ۰ | ۱۰۰"), "دما: ۰ | ۱۰۰");
+  ok("a Markdown rule row is dropped rather than drawn",
+    !renderRichText("a | b\n---|---\nc | d").includes("---"),
+    renderRichText("a | b\n---|---\nc | d"));
+  ok("the Markdown frame is a frame, not two empty cells",
+    JSON.stringify(tableCells("| a | b |")) === JSON.stringify(["a", "b"]),
+    tableCells("| a | b |"));
+  eq("a line with one cell is not a table row", tableCells("a|"), null);
+  /*
+   * The pipes **stay** in the plain-text reading: a pipe-separated table is
+   * still a table to somebody reading the reporting export, and stripping the
+   * separators would run every row of it into one line.
+   */
+  ok("stripping the markers leaves the table readable",
+    stripRichMarks(grid) === grid, stripRichMarks(grid));
+  /*
+   * A `<table>` is a block and every container this renders into sets
+   * `white-space: pre-line`, so a newline beside it would draw a blank line.
+   */
+  ok("no stray newline is left beside the table",
+    !/\n<table/.test(renderRichText("قبل\n" + grid))
+    && !/<\/table>\n/.test(renderRichText(grid + "\nبعد")),
+    renderRichText("قبل\n" + grid + "\nبعد"));
+  ok("a cell's own bold still renders",
+    renderRichText("**شرح** | تعداد\nفلومتر | ۲").includes("<strong>شرح</strong>"));
+
+  /* ------------------------- a table off the clipboard --------------------- */
+  /*
+   * Typing pipes by hand is a table nobody builds; pasting one out of the
+   * datasheet the customer sent is how a specification table actually comes
+   * into existence here, and that arrives **tab-separated**.
+   */
+  eq("a tab-separated paste becomes pipe rows",
+    tableFromPastedText("a\tb\nc\td"), "a | b\nc | d");
+  eq("...and Windows line endings do not defeat it",
+    tableFromPastedText("a\tb\r\nc\td"), "a | b\nc | d");
+  /*
+   * Null is «leave it to the browser», which is what makes this safe to run on
+   * every paste rather than behind a button nobody would find.
+   */
+  eq("one line is not a table", tableFromPastedText("a\tb"), null);
+  eq("prose with no tabs is not a table", tableFromPastedText("یک\nدو"), null);
+  eq("...nor prose where only one line happens to carry a tab",
+    tableFromPastedText("یک\tدو\nسه"), null);
+  eq("nothing pasted is nothing", tableFromPastedText(""), null);
+  // The skeleton the button drops in has to be one the renderer answers.
+  ok("the toolbar's skeleton really renders as a table",
+    renderRichText(TABLE_SKELETON).includes("<table"), TABLE_SKELETON);
+  /*
+   * And it lands on lines of its own: a table in the middle of «جنس بدنه:
+   * استیل» is neither, since the run has to start a line to be seen at all.
+   */
+  const placed = insertBlock("جنس بدنه: استیل", 15, 15, TABLE_SKELETON);
+  ok("a block inserted at the end of a line starts a new one",
+    placed.text === `جنس بدنه: استیل\n${TABLE_SKELETON}`, placed.text);
+  const onBlank = insertBlock("", 0, 0, TABLE_SKELETON);
+  eq("...and an empty field needs no leading newline", onBlank.text, TABLE_SKELETON);
+  ok("...with the skeleton selected, so it can be typed over",
+    placed.text.slice(placed.selectionStart, placed.selectionEnd) === TABLE_SKELETON);
 }
 
 head("Delivery section inside a formattable notes block");

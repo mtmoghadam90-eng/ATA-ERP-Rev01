@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bold, ChevronDown, ChevronLeft, Highlighter, Italic, Underline } from 'lucide-react';
-import { RICH_MARKS, renderRichText, toggleMark } from '../utils/richText';
+import {
+  Bold, ChevronDown, ChevronLeft, Highlighter, Italic, Palette, Table, Underline,
+} from 'lucide-react';
+import {
+  RICH_COLOURS, RICH_MARKS, TABLE_SKELETON, insertBlock, renderRichText,
+  tableFromPastedText, toggleMark,
+} from '../utils/richText';
 
 /**
  * A plain textarea with a small formatting toolbar and a live preview.
@@ -80,6 +85,7 @@ export default function RichTextField({
    * default follows the field and a press always wins.
    */
   const [previewToggled, setPreviewToggled] = useState<boolean | null>(null);
+  const [colourOpen, setColourOpen] = useState(false);
   const previewOpen = previewToggled ?? !collapsiblePreview;
 
   /*
@@ -133,28 +139,87 @@ export default function RichTextField({
     el.style.overflowY = wanted > cap ? 'auto' : 'hidden';
   }, [value, maxRows, rows]);
 
-  const apply = (token: string) => {
-    const el = ref.current;
-    if (!el) return;
-    const next = toggleMark(value ?? '', el.selectionStart, el.selectionEnd, token);
-    onChange(next.text);
-    // After React has written the new value, or the browser puts the caret at
-    // the end and the next click formats the wrong words.
-    //
-    // `requestAnimationFrame` is not a global everywhere this renders — the
-    // jsdom harness has it on `window` and not on `globalThis` — and a toolbar
-    // that throws is worse than one that restores the caret a tick later.
+  /*
+   * After React has written the new value, or the browser puts the caret at the
+   * end. Shared by every control that writes into the box.
+   *
+   * `requestAnimationFrame` is not a global everywhere this renders — the jsdom
+   * harness has it on `window` and not on `globalThis` — and a toolbar that
+   * throws is worse than one that restores the caret a tick later.
+   */
+  const restoreCaret = (el: HTMLTextAreaElement, from: number, to: number) => {
     const afterPaint = typeof requestAnimationFrame === "function"
       ? requestAnimationFrame
       : (fn: () => void) => setTimeout(fn, 0);
     afterPaint(() => {
       el.focus();
-      el.setSelectionRange(next.selectionStart, next.selectionEnd);
+      el.setSelectionRange(from, to);
     });
   };
 
+  /**
+   * A colour is a form, not a pair, so it cannot go through `toggleMark`.
+   *
+   * With nothing selected it writes the brackets and puts the caret inside
+   * them — the same thing the symmetric marks do, so the control behaves the
+   * way the four beside it already taught somebody it would.
+   */
+  const applyColour = (name: string) => {
+    const el = ref.current;
+    if (!el) return;
+    const text = value ?? '';
+    const { selectionStart: start, selectionEnd: end } = el;
+    const selected = text.slice(start, end);
+    const open = `{{${name}:`;
+    const next = `${text.slice(0, start)}${open}${selected}}}${text.slice(end)}`;
+    onChange(next);
+    setColourOpen(false);
+    restoreCaret(el, start + open.length, start + open.length + selected.length);
+  };
+
+  /** The skeleton, on lines of its own — see `insertBlock`. */
+  const applyTable = () => {
+    const el = ref.current;
+    if (!el) return;
+    const next = insertBlock(value ?? '', el.selectionStart, el.selectionEnd, TABLE_SKELETON);
+    onChange(next.text);
+    restoreCaret(el, next.selectionStart, next.selectionEnd);
+  };
+
+  /**
+   * A table copied out of Excel, Word or a datasheet.
+   *
+   * The clipboard's `text/plain` is tab-separated, which renders here as one
+   * run-on line — so the paste is intercepted **only when the text really is a
+   * table** (`tableFromPastedText` answers null otherwise) and rewritten as the
+   * pipe rows this field understands. Every other paste is left to the browser
+   * untouched, which is what makes this safe to have on every paste rather than
+   * behind a second button nobody would find.
+   */
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const el = ref.current;
+    if (!el) return;
+    const asTable = tableFromPastedText(e.clipboardData?.getData('text/plain'));
+    if (!asTable) return;
+    e.preventDefault();
+    const next = insertBlock(value ?? '', el.selectionStart, el.selectionEnd, asTable);
+    onChange(next.text);
+    restoreCaret(el, next.selectionEnd, next.selectionEnd);
+  };
+
+  const apply = (token: string) => {
+    const el = ref.current;
+    if (!el) return;
+    const next = toggleMark(value ?? '', el.selectionStart, el.selectionEnd, token);
+    onChange(next.text);
+    restoreCaret(el, next.selectionStart, next.selectionEnd);
+  };
+
   const preview = renderRichText(value);
-  const formatted = preview !== renderRichText('') && /<(strong|em|span)/.test(preview);
+  // `table` belongs here: a specification that is *only* a pasted table
+  // would otherwise draw no preview at all, which reads as the paste having
+  // done nothing.
+  const formatted = preview !== renderRichText('') && /<(strong|em|span|table)/.test(preview);
 
   return (
     <div className="space-y-1">
@@ -174,8 +239,54 @@ export default function RichTextField({
             </button>
           );
         })}
+        {/*
+          A colour is a form and not a pair, so it is one button that opens the
+          five it may write rather than five buttons in a row that is already
+          four long. The swatches are the allowlist itself — a colour that is
+          not in `RICH_COLOURS` prints as the brackets somebody typed, so
+          offering one the renderer does not know would be a control that draws
+          text nobody meant.
+        */}
+        <div className="relative">
+          <button
+            type="button"
+            title="رنگ متن"
+            id="rich-colour-open"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setColourOpen((open) => !open)}
+            className="p-1 rounded border border-slate-200 bg-white text-slate-500 hover:text-sky-600 hover:border-sky-300 transition"
+          >
+            <Palette size={12} />
+          </button>
+          {colourOpen && (
+            <div className="absolute z-20 top-full mt-1 right-0 flex gap-1 bg-white border border-slate-200 rounded-lg p-1 shadow-sm">
+              {Object.entries(RICH_COLOURS).map(([name, hex]) => (
+                <button
+                  key={name}
+                  type="button"
+                  title={name}
+                  data-rich-colour={name}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => applyColour(name)}
+                  className="w-5 h-5 rounded border border-slate-200"
+                  style={{ backgroundColor: hex }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          title="جدول"
+          id="rich-table"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={applyTable}
+          className="p-1 rounded border border-slate-200 bg-white text-slate-500 hover:text-sky-600 hover:border-sky-300 transition"
+        >
+          <Table size={12} />
+        </button>
         <span className="text-[9px] text-slate-400 mr-1">
-          متن را انتخاب کنید و دکمه بزنید
+          جدول را می‌توانید از اکسل کپی و اینجا پیست کنید
         </span>
       </div>
 
@@ -184,6 +295,7 @@ export default function RichTextField({
         rows={rows}
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value)}
+        onPaste={handlePaste}
         placeholder={placeholder}
         required={required}
         className={className}
