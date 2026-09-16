@@ -1474,6 +1474,68 @@ head("Document numbers: the sequence follows the prefix");
  * offer went out numbered as a financial one, on a document a customer reads.
  * A switch that does nothing, on a number printed on paper.
  */
+/*
+ * Deleting a project refuses for a reason it can name, or it does not refuse.
+ *
+ * `messages.projectId` is a NoAction foreign key that `countProjectReferences`
+ * never counted, so a project somebody had written to died at `project.delete`
+ * with P2003 and came back as the generic «این رکورد به رکوردهای دیگری وابسته
+ * است», naming nothing — and there is no screen for deleting one outbox row, so
+ * it was a refusal nobody could act on. Reported against a test project a
+ * workflow rule had queued a single message for.
+ *
+ * Every model whose link to a project does **not** cascade has to be answered
+ * one way or the other: counted, so the refusal names it, or detached, because
+ * it loses nothing by outliving the project. A third one added later and
+ * answered neither way is exactly this fault returning, which is why the check
+ * reads the schema rather than a list written out beside it.
+ */
+head("Deleting a project: every blocker is named or released");
+{
+  const schema = readFileSync("prisma/schema.prisma", "utf-8");
+  const service = readFileSync("src/server/services/projectService.ts", "utf-8");
+
+  const lines = schema.split("\n");
+  let model = "";
+  const blocking: string[] = [];
+  for (const line of lines) {
+    const named = /^model\s+(\w+)/.exec(line);
+    if (named) model = named[1];
+    // The project side of the relation, and only where a delete is refused.
+    if (!/@relation\(fields: \[projectId\]/.test(line)) continue;
+    if (/onDelete:\s*Cascade/.test(line)) continue;
+    blocking.push(model);
+  }
+  ok("the schema's project links were found", blocking.length >= 4, blocking);
+
+  // The camelCase Prisma accessor for each, which is how the service names it.
+  const accessor = (m: string) => m.charAt(0).toLowerCase() + m.slice(1);
+  const counted = service.slice(
+    service.indexOf("export async function countProjectReferences"),
+    service.indexOf("export async function deleteProject"),
+  );
+  const deleting = service.slice(service.indexOf("export async function deleteProject"));
+  ok("both halves of the service were found", counted.length > 200 && deleting.length > 200);
+
+  for (const m of blocking) {
+    const a = accessor(m);
+    const isCounted = counted.includes(`db.${a}.count(`);
+    const isReleased = new RegExp(`tx\\.${a}\\.updateMany\\(`).test(deleting);
+    ok(`${m} is either counted or released`, isCounted || isReleased, { isCounted, isReleased });
+  }
+
+  /*
+   * And the message is the one that is *released*, not counted — the whole
+   * point. Counting it would name the blocker honestly and still leave the
+   * person with no way to clear it.
+   */
+  ok("an outbox row does not block a delete",
+    !counted.includes("db.message.count("));
+  ok("...it is detached instead, inside the delete's own transaction",
+    /\$transaction\([\s\S]{0,400}tx\.message\.updateMany\(\{ where: \{ projectId: id \}, data: \{ projectId: null \} \}\)[\s\S]{0,200}tx\.project\.delete\(/
+      .test(deleting));
+}
+
 head("Proforma numbering: each kind from its own template");
 {
   const read = (file: string) => readFileSync(file, "utf-8");
