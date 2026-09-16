@@ -559,6 +559,18 @@ export interface TaskInput {
   reminderRepeat?: string | null;
   reminderAnchor?: string | null;
   reminderRepeatUntilJalali?: string | null;
+  /**
+   * What was actually done, written when the task is ticked off.
+   *
+   * The same column a sales chase records the call in, and **refused for one**
+   * (`completionNoteRefusal`): there `completeFollowUp` is the only writer, so a
+   * generic save that could set it would let a chase be answered without moving
+   * the quotation's follow-up state or raising the replacement.
+   *
+   * `followUpResult` beside it stays out of every generic path: that is what the
+   * *customer* said, and only the follow-up flow learns it.
+   */
+  completionNote?: string | null;
   customValues?: unknown;
 }
 
@@ -589,6 +601,7 @@ function scalarData(input: TaskInput): Record<string, unknown> {
   if ("reminderRepeatUntilJalali" in input) {
     set("reminderRepeatUntilJalali", toNullableString(input.reminderRepeatUntilJalali, 10));
   }
+  if ("completionNote" in input) set("completionNote", toNullableString(input.completionNote));
   if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
 
   return { ...out, ...expandDateFields(input as Record<string, unknown>, TASK_DATE_FIELDS) };
@@ -841,6 +854,22 @@ export async function moveTasksToLane(
  * refusing an unfamiliar value would break an integration to guard against
  * nothing: the board files any kind it does not recognise as an ordinary task.
  */
+/**
+ * Why a completion note may not be written from the generic path, or null.
+ *
+ * A sales chase's note is the record of a call, and `completeFollowUp` writes it
+ * in the same transaction as the quotation's follow-up state and the
+ * replacement task — so a generic save that could set it would leave a
+ * quotation answered on one screen and still being chased on another. It is the
+ * `taskKind` rule in the other direction: writable, and refused for the one kind
+ * that owns its own flow.
+ */
+export function completionNoteRefusal(kind: unknown): string | null {
+  return String(kind ?? "").trim() === FOLLOW_UP_KIND
+    ? "شرح اقدام پیگیری فروش با «ثبت نتیجه پیگیری» نوشته می‌شود، نه از این مسیر."
+    : null;
+}
+
 export function creatableKindRefusal(kind: unknown): string | null {
   return String(kind ?? "").trim() === FOLLOW_UP_KIND
     ? "پیگیری فروش از این مسیر ساخته نمی‌شود؛ از «فعال‌سازی مجدد پیگیری» روی همان پیش‌فاکتور استفاده کنید."
@@ -1063,6 +1092,11 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
     throw new Error(
       "پیگیری فروش با «ثبت نتیجه پیگیری» بسته می‌شود، نه با تیک ساده؛ روی همین کارت آن را باز کنید.",
     );
+  }
+
+  if ("completionNote" in input) {
+    const noteRefusal = completionNoteRefusal(before.taskKind);
+    if (noteRefusal) throw new Error(noteRefusal);
   }
 
   const data = scalarData(input);

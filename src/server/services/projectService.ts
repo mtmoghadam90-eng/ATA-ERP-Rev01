@@ -1026,6 +1026,24 @@ export async function countProjectReferences(id: string) {
  * anything else (proformas, orders, transactions) does not, and blocks the
  * delete instead — losing a proforma because its project was removed would be
  * silent data loss.
+ *
+ * **A queued or sent message is not one of those, and it used to block anyway.**
+ * `messages.projectId` is a NoAction foreign key that `countProjectReferences`
+ * never counted, so a project somebody had written to — or, in the reported
+ * case, a test project a workflow rule had queued one message for — failed at
+ * `project.delete` with P2003 and came back as «این پروژه به رکوردهای دیگری
+ * وابسته است», naming nothing. There is no screen for deleting one outbox row,
+ * so that is a refusal nobody could act on: the person is told the project is
+ * in use and given no way to find out by what.
+ *
+ * A message is a **notification, not a document**. The refusal exists to stop a
+ * quotation or an order disappearing with its project, and an outbox row loses
+ * nothing by outliving one: it keeps its recipient, its wording, its channel,
+ * its status and its date, and only the pointer at a project that no longer
+ * exists goes. So the messages are **detached** rather than counted or deleted,
+ * inside the delete's own transaction — the column is nullable already, and
+ * `projectId` being absent is exactly what «this message is about no project»
+ * means everywhere else that reads it.
  */
 export async function deleteProject(id: string, user: AuthUser, todayJalali: string): Promise<"ok" | "forbidden" | "in-use"> {
   const db = getDb();
@@ -1044,7 +1062,11 @@ export async function deleteProject(id: string, user: AuthUser, todayJalali: str
   const project = await db.project.findUnique({ where: { id } });
   if (!project) return "ok";
 
-  await db.project.delete({ where: { id } });
+  await db.$transaction(async (tx) => {
+    // The outbox rows survive the project; see the note above.
+    await tx.message.updateMany({ where: { projectId: id }, data: { projectId: null } });
+    await tx.project.delete({ where: { id } });
+  });
 
   // Audit log
   await logAction(

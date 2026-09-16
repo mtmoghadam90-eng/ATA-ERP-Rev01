@@ -61,6 +61,8 @@ export interface ProformaRow {
   customer: { id: string; companyName: string; customerType: string } | null;
   project: {
     id: string; code: string; name: string; status: string;
+    /** «شماره درخواست» on the printed quotation — the customer's own reference. */
+    customerInquiryNumber?: string | null;
     customer: { id: string; companyName: string } | null;
   } | null;
   creator: { id: string; fullName: string } | null;

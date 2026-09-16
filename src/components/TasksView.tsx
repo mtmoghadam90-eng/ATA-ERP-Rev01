@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import TaskCompletionModal from './TaskCompletionModal';
 import { 
   Plus, 
   Search, 
@@ -309,6 +310,15 @@ export default function TasksView({
     const { sort, order } = serverOrderFor(by);
     list.setSortOrder(sort, order);
   };
+  /*
+   * The task being ticked off, while «شرح اقدام» is being answered.
+   *
+   * Only an *open, ordinary* task gets here: a sales chase is closed by
+   * recording what the customer said (the server refuses the bare tick), and
+   * reopening a finished one says the work is not done, which is not something
+   * to describe.
+   */
+  const [completingTask, setCompletingTask] = useState<Task | null>(null);
   const [selectedCards, setSelectedCards] = useState<Set<string>>(new Set());
   const [movingCards, setMovingCards] = useState(false);
 
@@ -697,10 +707,42 @@ export default function TasksView({
       void openFollowUp(task.id);
       return;
     }
-    updateTask({
-      ...task,
-      status: task.status === 'انجام شده' ? 'در حال انجام' : 'انجام شده'
-    });
+    /*
+     * Reopening asks nothing: moving a card back says the work is *not* done,
+     * and the note already on it is left alone — it is still a record of what
+     * was done, and re-completing seeds the box with it so it can be added to.
+     */
+    if (task.status === 'انجام شده') {
+      updateTask({ ...task, status: 'در حال انجام' });
+      return;
+    }
+    setCompletingTask(task);
+  };
+
+  /*
+   * The tick's own write: the status and the note, and nothing else.
+   *
+   * A partial write rather than `taskToWriteInput`, deliberately — posting the
+   * whole record here would write back whatever the list last held over
+   * anything changed since, and `completionNote` is not in that adapter for the
+   * same reason it is refused for a chase: only this gesture and
+   * `completeFollowUp` ever write it.
+   */
+  const confirmCompletion = async (note: string) => {
+    const task = completingTask;
+    if (!task) return;
+    setCompletingTask(null);
+    try {
+      await tasksApi.update(task.id, {
+        status: 'انجام شده',
+        // Blank is «nothing to add», which is an answer — never «unchanged».
+        completionNote: note.trim() || null,
+      });
+      void topUpBoard();
+      list.refresh();
+    } catch (err) {
+      reportError(err, 'ثبت انجام کار با خطا مواجه شد.');
+    }
   };
 
   const getPriorityClass = (pr: Task['priority']) => {
@@ -1626,6 +1668,16 @@ export default function TasksView({
         so the three questions it asks, the refusals it enforces and the outcome
         it can settle are one implementation, not two.
       */}
+      {/*
+        «شرح اقدام» as the task is ticked off — see TaskCompletionModal for why
+        it is asked on the tick and on nothing else.
+      */}
+      <TaskCompletionModal
+        task={completingTask}
+        onCancel={() => setCompletingTask(null)}
+        onConfirm={(note) => { void confirmCompletion(note); }}
+      />
+
       {followUpRow && (
         <FollowUpCompletionModal
           row={followUpRow.row}

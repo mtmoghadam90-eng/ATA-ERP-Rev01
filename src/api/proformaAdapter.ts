@@ -40,6 +40,7 @@ export function rowToProforma(row: ProformaRow): Proforma {
     customerName: row.customer?.companyName ?? "",
     projectId: row.projectId ?? undefined,
     projectName: row.project?.name ?? undefined,
+    projectInquiryNumber: row.project?.customerInquiryNumber ?? undefined,
     issueDate: row.issueDateJalali ?? "",
     expiryDate: row.expiryDateJalali ?? "",
     /*

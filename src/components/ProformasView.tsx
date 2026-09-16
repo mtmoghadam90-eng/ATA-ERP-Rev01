@@ -2629,7 +2629,6 @@ export default function ProformasView({
     website: "www.abzartamin.com",
     address: "تهران، خیابان ولیعصر، برج سپهر، طبقه ۸، واحد ۸۰۴",
     titleColor: "#0ea5e9",
-    documentTitle: "پیش‌فاکتور رسمی",
     headerText:
       "مفتخریم پیشنهاد قیمت تجهیزات ابزار دقیق مورد نیاز آن مجموعه محترم را به شرح زیر تقدیم داریم.",
     termsAndConditions:

@@ -115,6 +115,14 @@ export interface TaskWriteInput {
   reminderRepeat?: string | null;
   reminderAnchor?: string | null;
   reminderRepeatUntilJalali?: string | null;
+  /**
+   * «شرح اقدام» — what was actually done, written when the task is ticked off.
+   *
+   * Deliberately **not** in `taskToWriteInput`: that adapter posts a whole
+   * record, and this is written by one gesture. The server refuses it for a
+   * `SALES_FOLLOW_UP`, where `completeFollowUp` is the only writer.
+   */
+  completionNote?: string | null;
   customValues?: unknown;
 }
 

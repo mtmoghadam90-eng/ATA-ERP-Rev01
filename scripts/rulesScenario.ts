@@ -95,7 +95,7 @@ import { cloneWorkflowRule } from "../src/utils/workflowRules";
 import { MESSAGE_ONCE_SCOPES, isMessageOnceScope, messageOnceKey } from "../src/utils/workflowTriggers";
 import { MAX_QUIET_DAY_SPAN, isCustomerFacing, nextSendableTime } from "../src/utils/messaging";
 import { SCREEN_PERMISSION_ALIAS } from "../src/types";
-import { buildTaskWhere } from "../src/server/services/taskService";
+import { buildTaskWhere, completionNoteRefusal } from "../src/server/services/taskService";
 import type { AuthUser } from "../src/server/auth";
 import type { ListQuery } from "../src/server/listing";
 import { buildReportingTables } from "../src/reporting/flatten";
@@ -268,6 +268,7 @@ import {
   AFTER_SALES_CLOSED, AFTER_SALES_STATUSES, PROFORMA_AFTER_SALES_TYPE,
   PROFORMA_FORMAT_FALLBACKS, PROFORMA_FORMAT_KEYS, PROFORMA_STORED_STATUSES,
   PROFORMA_TECHNICAL_TYPE, PROJECT_TECHNICAL_OFFERED, afterSalesIsOpen, proformaKindOf,
+  proformaDocumentTitle,
 } from "../src/utils/moduleStatuses";
 import {
   buildWorkflowDraftPrompt, sanitizeDraftedRule, workflowCatalogue,
@@ -1473,6 +1474,68 @@ head("Document numbers: the sequence follows the prefix");
  * offer went out numbered as a financial one, on a document a customer reads.
  * A switch that does nothing, on a number printed on paper.
  */
+/*
+ * Deleting a project refuses for a reason it can name, or it does not refuse.
+ *
+ * `messages.projectId` is a NoAction foreign key that `countProjectReferences`
+ * never counted, so a project somebody had written to died at `project.delete`
+ * with P2003 and came back as the generic «این رکورد به رکوردهای دیگری وابسته
+ * است», naming nothing — and there is no screen for deleting one outbox row, so
+ * it was a refusal nobody could act on. Reported against a test project a
+ * workflow rule had queued a single message for.
+ *
+ * Every model whose link to a project does **not** cascade has to be answered
+ * one way or the other: counted, so the refusal names it, or detached, because
+ * it loses nothing by outliving the project. A third one added later and
+ * answered neither way is exactly this fault returning, which is why the check
+ * reads the schema rather than a list written out beside it.
+ */
+head("Deleting a project: every blocker is named or released");
+{
+  const schema = readFileSync("prisma/schema.prisma", "utf-8");
+  const service = readFileSync("src/server/services/projectService.ts", "utf-8");
+
+  const lines = schema.split("\n");
+  let model = "";
+  const blocking: string[] = [];
+  for (const line of lines) {
+    const named = /^model\s+(\w+)/.exec(line);
+    if (named) model = named[1];
+    // The project side of the relation, and only where a delete is refused.
+    if (!/@relation\(fields: \[projectId\]/.test(line)) continue;
+    if (/onDelete:\s*Cascade/.test(line)) continue;
+    blocking.push(model);
+  }
+  ok("the schema's project links were found", blocking.length >= 4, blocking);
+
+  // The camelCase Prisma accessor for each, which is how the service names it.
+  const accessor = (m: string) => m.charAt(0).toLowerCase() + m.slice(1);
+  const counted = service.slice(
+    service.indexOf("export async function countProjectReferences"),
+    service.indexOf("export async function deleteProject"),
+  );
+  const deleting = service.slice(service.indexOf("export async function deleteProject"));
+  ok("both halves of the service were found", counted.length > 200 && deleting.length > 200);
+
+  for (const m of blocking) {
+    const a = accessor(m);
+    const isCounted = counted.includes(`db.${a}.count(`);
+    const isReleased = new RegExp(`tx\\.${a}\\.updateMany\\(`).test(deleting);
+    ok(`${m} is either counted or released`, isCounted || isReleased, { isCounted, isReleased });
+  }
+
+  /*
+   * And the message is the one that is *released*, not counted — the whole
+   * point. Counting it would name the blocker honestly and still leave the
+   * person with no way to clear it.
+   */
+  ok("an outbox row does not block a delete",
+    !counted.includes("db.message.count("));
+  ok("...it is detached instead, inside the delete's own transaction",
+    /\$transaction\([\s\S]{0,400}tx\.message\.updateMany\(\{ where: \{ projectId: id \}, data: \{ projectId: null \} \}\)[\s\S]{0,200}tx\.project\.delete\(/
+      .test(deleting));
+}
+
 head("Proforma numbering: each kind from its own template");
 {
   const read = (file: string) => readFileSync(file, "utf-8");
@@ -5056,7 +5119,7 @@ head("Printed proforma: the multi-page rules");
   const template = {
     name: "t", companyName: "ابزار تامین ارشیا", registrationNumber: "1",
     nationalCode: "1", economicCode: "1", phone: "021", email: "a@b.c",
-    website: "w", address: "تهران", titleColor: "#0ea5e9", documentTitle: "پیش‌فاکتور",
+    website: "w", address: "تهران", titleColor: "#0ea5e9",
     headerText: "", termsAndConditions: "", footerText: "",
     signatureLabel1: "s1", signatureLabel2: "s2",
     showLogo: true, showTerms: true, showSignatures: true, showTotals: true,
@@ -5144,11 +5207,86 @@ head("Printed proforma: the multi-page rules");
   const flat = nameCell.replace(/\s+/g, " ");
   ok("the brand still follows the name on the same line",
     /INSTRUMENT 1 ?<span[^>]*>\(Krohne\)<\/span>/.test(flat), flat.slice(0, 120));
+  /*
+   * And the label is **Latin**. A tag number is what the customer's own P&ID,
+   * datasheet and loop drawing call that instrument, written «FT-1101» in every
+   * one of them, so «تگ» beside it was the one word on the row that did not
+   * match the document the reader is holding. It carries its own `direction`
+   * for the reason the address bar does: Latin inside an RTL block has its
+   * trailing punctuation reordered, and a tag number is read character by
+   * character against another document.
+   */
   ok("...and the tag is in a block of its own beneath it",
-    /<div[^>]*><span[^>]*>تگ: FT-1101<\/span><\/div>/.test(flat));
+    /<div[^>]*><span[^>]*>Tag: FT-1101<\/span><\/div>/.test(flat));
+  ok("...with the label in Latin, as the customer's own drawings write it",
+    !/تگ/.test(flat), flat.slice(0, 200));
+  ok("...and its own direction, or the colon is reordered",
+    /<span[^>]*direction: ltr[^>]*>Tag: FT-1101</.test(flat));
   // Which is the whole point: it must not be a sibling of the name on one line.
   ok("...so nothing prints the tag as a continuation of the title",
-    !/INSTRUMENT 1 ?(<span[^>]*>\(Krohne\)<\/span> ?)?<span[^>]*>تگ:/.test(flat));
+    !/INSTRUMENT 1 ?(<span[^>]*>\(Krohne\)<\/span> ?)?<span[^>]*>Tag:/.test(flat));
+
+  /*
+   * What the page calls itself, from the kind and not from the template.
+   *
+   * A technical specification quotes no prices, so it is a «پیشنهاد فنی» and
+   * nothing more; a priced one carries the specification *and* the money. One
+   * title cannot be right for both, and the template's `documentTitle` — the
+   * earlier answer — had no form field anywhere in the application, so it could
+   * only ever be the seeded string with «رسمی» stripped back off it.
+   */
+  eq("a priced quotation is a technical and financial offer",
+    proformaDocumentTitle("FINANCIAL"), "پیشنهاد فنی و مالی");
+  eq("...and so is a service one, which is also priced",
+    proformaDocumentTitle("AFTER_SALES"), "پیشنهاد فنی و مالی");
+  eq("a specification is a technical offer and nothing more",
+    proformaDocumentTitle("TECHNICAL"), "پیشنهاد فنی");
+  eq("an absent kind reads as financial here too",
+    proformaDocumentTitle(undefined), "پیشنهاد فنی و مالی");
+  ok("the document prints it", doc.includes("پیشنهاد فنی و مالی"));
+  const technicalDoc = renderProformaDocument({
+    proforma: { ...proforma, proformaType: "TECHNICAL" } as never,
+    template: template as never,
+    customer: { id: "c-1", customerType: "حقوقی" } as never,
+    creator: { fullName: "م", signatureImage: null }, products: [], showBrand: true,
+  });
+  ok("...and a specification prints the other one",
+    technicalDoc.includes("پیشنهاد فنی") && !technicalDoc.includes("پیشنهاد فنی و مالی"));
+  ok("no template field decides it any more", !doc.includes("documentTitle"));
+
+  /*
+   * The job, under the buyer panel.
+   *
+   * Both halves belong to the **project** — «نام پروژه» is what the company
+   * calls the job and «شماره درخواست» is the customer's own reference for the
+   * enquiry it answers, which is what they file this against. A document naming
+   * no project prints neither, rather than two empty labels: a heading with
+   * nothing under it reads as something that failed to load, and a quotation
+   * raised straight against a customer is ordinary here.
+   */
+  ok("a document with no project prints no project block",
+    !doc.includes("نام پروژه") && !doc.includes("شماره درخواست"));
+  const withProject = renderProformaDocument({
+    proforma: {
+      ...proforma, projectName: "ابزار دقیق فاز ۳", projectInquiryNumber: "REQ-4417",
+    } as never,
+    template: template as never,
+    customer: { id: "c-1", customerType: "حقوقی" } as never,
+    creator: { fullName: "م", signatureImage: null }, products: [], showBrand: true,
+  });
+  ok("...and one that names a job prints both halves",
+    withProject.includes("ابزار دقیق فاز ۳") && withProject.includes("REQ-4417"));
+  ok("...above the goods, where somebody reads the document from the top",
+    withProject.indexOf("ابزار دقیق فاز ۳") < withProject.indexOf("INSTRUMENT 1"));
+  // Each half drops on its own: a job with no enquiry number is as ordinary.
+  const halfProject = renderProformaDocument({
+    proforma: { ...proforma, projectName: "ابزار دقیق فاز ۳" } as never,
+    template: template as never,
+    customer: { id: "c-1", customerType: "حقوقی" } as never,
+    creator: { fullName: "م", signatureImage: null }, products: [], showBrand: true,
+  });
+  ok("a job with no enquiry number prints the name and no empty label",
+    halfProject.includes("نام پروژه") && !halfProject.includes("شماره درخواست"));
   /*
    * And it is inside the title block rather than down among the specification:
    * the rule under the name separates what the item is from what it is made
@@ -9656,13 +9794,46 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   ok("...and the server actually selects them",
     /followUpResult: true/.test(taskService) && /completionNote: true/.test(taskService));
   /*
-   * Neither is writable by the ordinary task editor: `completeFollowUp` is the
-   * only thing that may say what a customer said, and the generic update
-   * refuses to tick a follow-up at all.
+   * `followUpResult` is what the **customer** said, and nothing but the
+   * follow-up flow ever learns it — so it is writable from nowhere else.
+   *
+   * `completionNote` is not the same field wearing a second hat: «شرح اقدام» on
+   * an ordinary task is what *we* did, asked once as the task is ticked off,
+   * and the column was already there with no box to type into. It is writable
+   * now and **refused for a chase in the service**, which is stricter than a
+   * missing key in the allowlist because it also holds against n8n — the
+   * `taskKind` rule in the other direction.
    */
   const taskRoute = strip(readFileSync("src/server/routes/tasks.ts", "utf8"));
-  ok("...but neither is writable from the task form",
-    !/"completionNote"/.test(taskRoute) && !/"followUpResult"/.test(taskRoute));
+  ok("what the customer said is writable from nowhere but the chase's own flow",
+    !/"followUpResult"/.test(taskRoute));
+  ok("...while «شرح اقدام» is writable, so the tick can record it",
+    /"completionNote"/.test(taskRoute));
+  eq("...and refused for a chase, by the service and not by an absent key",
+    completionNoteRefusal("SALES_FOLLOW_UP") !== null, true);
+  eq("...an ordinary task is not refused", completionNoteRefusal("GENERAL"), null);
+  eq("...nor a next action", completionNoteRefusal("NEXT_ACTION"), null);
+  ok("the refusal is checked where the note is written",
+    /if \("completionNote" in input\) \{[\s\S]{0,160}completionNoteRefusal\(before\.taskKind\)/
+      .test(taskService));
+
+  /*
+   * And the tick writes the two keys and no more. Posting a whole record here
+   * would write back whatever the list last held over anything changed since,
+   * which is why `taskToWriteInput` deliberately does not carry the note.
+   */
+  const tasksView = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
+  ok("the tick's write names the status and the note only",
+    /tasksApi\.update\(task\.id, \{\s*status: 'انجام شده',\s*completionNote: note\.trim\(\) \|\| null,\s*\}\)/
+      .test(tasksView));
+  ok("...and the whole-record adapter still leaves the note alone",
+    !/completionNote/.test(
+      api.slice(api.indexOf("export function taskToWriteInput")),
+    ));
+  // Reopening says the work is not done, which is not something to describe.
+  ok("reopening a finished task asks nothing",
+    /if \(task\.status === 'انجام شده'\) \{\s*updateTask\(\{ \.\.\.task, status: 'در حال انجام' \}\);\s*return;/
+      .test(tasksView));
 
   /* -- the card prints both, full width -- */
   const view = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
