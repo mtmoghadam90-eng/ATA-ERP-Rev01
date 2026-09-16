@@ -21,8 +21,13 @@ import type { Channel } from './utils/messaging';
 export interface ModuleNote {
   id: string;
   text: string;
+  /** The stored instant, as it came off the wire. Folded to Shamsi where drawn. */
   createdAt: string;
   author: string;
+  /** `[{name,size,url}]` — the evidence of what was agreed. */
+  attachments?: ActivityAttachment[];
+  /** Whether this reader may remove it; the server answers, the card obeys. */
+  canDelete?: boolean;
 }
 
 export interface InventoryTransaction {

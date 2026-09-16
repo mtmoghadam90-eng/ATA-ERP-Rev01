@@ -1,7 +1,8 @@
 import express from "express";
 import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
-import { hasPermission } from "../auth";
+import { AuthUser, hasPermission } from "../auth";
+import { canDeleteNote } from "../../utils/moduleNotes";
 import { getDb } from "../db";
 import {
   ACTIVITY_SORTABLE, REFERRAL_FILTERABLE, REFERRAL_SORTABLE, categoryUsage, renameCategory,
@@ -486,11 +487,42 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
 
   /* ---------------------------- module notes ----------------------------- */
 
+  /**
+   * The reader's own name, and only when the rule could need it.
+   *
+   * `canDeleteNote` answers from the id alone for anything written since that
+   * column existed, and always for an administrator — so this is one directory
+   * read per *request* rather than per note, and skipped entirely on the two
+   * paths that cannot reach the name branch.
+   */
+  const moduleNoteReaderName = async (u: AuthUser): Promise<string | null> => {
+    if (u.isSystemAdmin) return null;
+    const me = await getDb().user.findUnique({
+      where: { id: u.id }, select: { fullName: true },
+    });
+    return me?.fullName ?? null;
+  };
+
+  /**
+   * One document's notes, each saying whether *this* reader may remove it.
+   *
+   * `canDelete` is computed here rather than left to the screen, because the
+   * rule reads an account's own name for the rows written before `authorUserId`
+   * existed and a browser does not have the directory. A screen guessing it
+   * would draw a button the server refuses, which reads as the feature being
+   * broken rather than as a permission — the same fault as a switch that
+   * silently does nothing, wearing the other hat.
+   */
   app.get("/api/notes/:entityType/:entityId", async (req, res) => {
     const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
-      res.json({ success: true, notes: await listModuleNotes(req.params.entityType, req.params.entityId) });
+      const notes = await listModuleNotes(req.params.entityType, req.params.entityId);
+      const me = await moduleNoteReaderName(user);
+      res.json({
+        success: true,
+        notes: notes.map((n) => ({ ...n, canDelete: canDeleteNote(n, { ...user, fullName: me }) })),
+      });
     } catch (err) {
       sendError(res, err, "GET /api/notes/:entityType/:entityId");
     }
@@ -500,15 +532,21 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
     const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
-      const text = (req.body as { text?: unknown })?.text;
+      const body = (req.body ?? {}) as { text?: unknown; attachments?: unknown };
       const outcome = await addModuleNote(
         req.params.entityType, req.params.entityId,
-        typeof text === "string" ? text : "", user);
+        typeof body.text === "string" ? body.text : "", user, body.attachments);
       if (outcome === "invalid") {
-        res.status(400).json({ success: false, error: "متن یادداشت الزامی است." });
+        // Both halves named, because a file on its own is a note: a refusal
+        // saying only «متن الزامی است» to somebody who attached exactly what
+        // they meant to record is a refusal about the wrong thing.
+        res.status(400).json({
+          success: false, error: "یادداشت باید متن یا حداقل یک فایل پیوست داشته باشد.",
+        });
         return;
       }
-      res.status(201).json({ success: true, note: outcome.note });
+      // Freshly written, so this reader is its author and may always remove it.
+      res.status(201).json({ success: true, note: { ...(outcome.note as object), canDelete: true } });
     } catch (err) {
       sendError(res, err, "POST /api/notes/:entityType/:entityId");
     }

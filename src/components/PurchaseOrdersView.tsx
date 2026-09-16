@@ -1565,7 +1565,6 @@ export default function PurchaseOrdersView({
                 <div className="pt-4 border-t border-slate-100">
                   <ModuleNotesSection
                     notes={poNotes.notes}
-                    currentUser={currentUser}
                     title="توافقات و یادداشت‌های سفارش خارجی"
                     placeholder="توافق ارزی خاص، جزییات حمل یا کامنت جدید درباره تامین کالا..."
                     onAddNote={poNotes.addNote}

@@ -116,7 +116,26 @@ function isRuleRow(cells: string[]): boolean {
   return cells.every((c) => /^:?-{2,}:?$/.test(c));
 }
 
-const CELL_STYLE = "border: 1px solid #cbd5e1; padding: 3px 6px; text-align: right;";
+/**
+ * A table here reads **left to right**, and that is about its content.
+ *
+ * The tables that reach this field are specification tables — a range, a
+ * connection, a body material, a model code — pasted out of the datasheet the
+ * customer or the manufacturer sent, and every one of them is in Latin. Drawn
+ * `direction: rtl` the *columns* run the other way, so a header row typed
+ * «Tag | Model | Range» prints Range first and the document contradicts the
+ * sheet it was copied from.
+ *
+ * The consequence to know: a table somebody types in Persian will also read
+ * left to right, which for its column order is wrong. That is the trade being
+ * taken deliberately — the common case here is the pasted English table, and
+ * the words inside each cell still lay themselves out by the Unicode bidi rule
+ * whichever way the columns run, so a Persian cell is legible either way while
+ * a Latin column order is not.
+ */
+const CELL_STYLE =
+  "border: 1px solid #cbd5e1; padding: 3px 6px; text-align: left;"
+  + " direction: ltr; unicode-bidi: plaintext;";
 const HEAD_STYLE = `${CELL_STYLE} background-color: #f1f5f9; font-weight: bold;`;
 
 /**
@@ -152,7 +171,7 @@ function applyTables(html: string): string {
         .join("");
       out.push(
         '<table style="border-collapse: collapse; width: 100%; margin: 4px 0;'
-        + ' font-size: inherit; direction: rtl;">'
+        + ' font-size: inherit; direction: ltr; text-align: left;">'
         + `<thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table>`,
       );
       i = j;

@@ -55,6 +55,7 @@ import SaveWithNextActionButton from "../src/components/SaveWithNextActionButton
 import LoginView from "../src/components/LoginView";
 import Avatar from "../src/components/Avatar";
 import TaskCompletionModal from "../src/components/TaskCompletionModal";
+import ModuleNotesSection from "../src/components/ModuleNotesSection";
 import TaskCalendarModal from "../src/components/TaskCalendarModal";
 import type { NextActionDraft } from "../src/utils/nextAction";
 import { resizeColumns } from "../src/utils/columnWidths";
@@ -2428,7 +2429,115 @@ head("Completing a task: the note reaches the caller");
   nHost.remove();
 }
 
+head("A document's notes: a file is content, and the delete is only where it is allowed");
+
+/*
+ * `ModuleNotesSection` is one component on four screens, and three of the
+ * things asked of it here are invisible to a source scan: whether the submit
+ * really carries the files it drew, whether a note with *only* a file can be
+ * sent at all, and whether the delete is absent rather than merely styled away
+ * on a note this reader may not remove.
+ */
+{
+  const mHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const mRoot = createRoot(mHost);
+
+  let added: { text: string; files: unknown[] | undefined } | null = null;
+  let deleted: string | null = null;
+
+  const file = { name: "confirm.pdf", size: "342 KB", url: "/uploads/note-files/a.pdf" };
+  const notes = [
+    {
+      id: "n-1", text: "قیمت نهایی تأیید شد", author: "محمد مقدم",
+      createdAt: new Date(Date.UTC(2026, 8, 16, 7, 5, 0)).toISOString(),
+      attachments: [file], canDelete: true,
+    },
+    {
+      id: "n-2", text: "یادداشت همکار", author: "رضا رضایی",
+      createdAt: new Date(Date.UTC(2026, 8, 15, 7, 5, 0)).toISOString(),
+      attachments: [], canDelete: false,
+    },
+  ];
+
+  act(() => {
+    mRoot.render(React.createElement(ModuleNotesSection, {
+      notes: notes as never,
+      // The argument is recorded **as given**, not defaulted: `files ?? []`
+      // here would make the assertion below pass on a component that never
+      // sends them, which is the check asserting nothing.
+      onAddNote: (text: string, files?: unknown[]) => { added = { text, files }; },
+      onDeleteNote: (id: string) => { deleted = id; },
+    }));
+  });
+
+  /*
+   * **The delete is absent, not hidden.** `opacity-0` plus a hover rule is how
+   * this card already reveals the button, so a check that only asked whether it
+   * was styled away would pass whatever the permission says.
+   */
+  const bins = [...mHost.querySelectorAll('button[title="حذف یادداشت"]')];
+  ok("one delete for two notes", bins.length === 1, bins.length);
+  act(() => { bins[0].dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("...and it is the one this reader wrote", deleted === "n-1", deleted);
+
+  /* The stored files are drawn as links to where the bytes are. */
+  const links = [...mHost.querySelectorAll("[data-note-files] a")] as HTMLAnchorElement[];
+  ok("the note's file is drawn", links.length === 1, links.length);
+  ok("...pointing at the uploaded path",
+    links[0]?.getAttribute("href") === file.url, links[0]?.getAttribute("href"));
+  ok("...named, so it can be recognised",
+    mHost.textContent?.includes("confirm.pdf") === true);
+
+  /*
+   * **No Gregorian instant reaches the screen.** The card printed `createdAt`
+   * exactly as it came off the wire, so a Persian screen carried
+   * «2026-09-16T07:05:00.000Z».
+   */
+  const text = mHost.textContent ?? "";
+  ok("no ISO timestamp is printed", !/\d{4}-\d{2}-\d{2}T/.test(text), text.slice(0, 200));
+  ok("...a Shamsi date is", /1[34]\d{2}\/\d{2}\/\d{2}/.test(text), text.slice(0, 200));
+  ok("...with the hour beside it", /ساعت \d{2}:\d{2}/.test(text), text.slice(0, 200));
+
+  /*
+   * **A file on its own is a note.** The submit is disabled with an empty box
+   * and nothing attached, and has to come alive on the file alone — written the
+   * other way it type-checks, renders perfectly, and refuses exactly the note
+   * somebody meant to record.
+   */
+  const submit = [...mHost.querySelectorAll("button")]
+    .find((b) => (b.textContent ?? "").includes("ثبت یادداشت")) as HTMLButtonElement;
+  ok("the submit is drawn", !!submit);
+  ok("...dead with nothing written and nothing attached", submit.disabled === true);
+
+  const draft = mHost.querySelector("textarea") as HTMLTextAreaElement;
+  act(() => {
+    draft.value = "تأیید تلفنی مشتری";
+    handlers(draft).onChange?.({ target: draft });
+  });
+  ok("...and alive once something is typed", submit.disabled === false);
+  act(() => { submit.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("pressing it hands the words over",
+    (added as { text: string } | null)?.text === "تأیید تلفنی مشتری",
+    (added as { text: string } | null)?.text);
+  /*
+   * And an empty list rather than nothing, so the caller never has to tell
+   * «no files» from «this build does not send files».
+   */
+  ok("...with a list of files beside them",
+    Array.isArray((added as { files: unknown[] | undefined } | null)?.files),
+    JSON.stringify(added));
+
+  /* The picker is a real input the button reaches, not a decorative icon. */
+  const picker = mHost.querySelector("[data-note-file-input]") as HTMLInputElement | null;
+  ok("there is a file input to pick with", !!picker);
+  ok("...taking more than one file", picker?.hasAttribute("multiple") === true);
+
+  act(() => { mRoot.unmount(); });
+  mHost.remove();
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
+
 if (fails.length) {
   console.log("Failures:");
   fails.forEach((f) => console.log("  • " + f));

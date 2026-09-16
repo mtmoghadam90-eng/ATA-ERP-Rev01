@@ -1039,7 +1039,6 @@ export default function AfterSalesServicesView({
                 <div className="pt-4 text-right">
                   <ModuleNotesSection
                     notes={serviceNotes.notes}
-                    currentUser={currentUser}
                     title="توافقات و یادداشت‌های پرونده خدمات پس از فروش"
                     placeholder="مثال: توافق با مشتری درباره نحوه عودت، هزینه تعمیرات، یا کامنت تیکت پشتیبانی..."
                     onAddNote={serviceNotes.addNote}

@@ -8,7 +8,10 @@ import {
 import {
   activityRecipients, noticeExcerpt, parseMemberIds, serializeMemberIds,
 } from "../../utils/activityMembers";
-import { ActivityAttachment, attachmentColumns, normalizeAttachments } from "../../utils/attachments";
+import {
+  ActivityAttachment, attachmentColumns, attachmentListColumn, normalizeAttachments,
+  parseAttachmentList,
+} from "../../utils/attachments";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
@@ -21,6 +24,7 @@ import { notifyUser } from "./notificationService";
 import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
 import { afterCommit } from "../afterCommit";
 import { capacityRefusalMessage } from "../../utils/workLimits";
+import { canDeleteNote, noteHasContent, noteSummary } from "../../utils/moduleNotes";
 import { MoveOutcome } from "./taskService";
 import { capacityByUser } from "./workLoadService";
 import { notifyStaff } from "./staffNotifications";
@@ -1609,12 +1613,47 @@ export async function addReferralMessage(
 
 /* ============================== module notes ============================= */
 
-/** Free-form notes attached to any record type, by a discriminator pair. */
+/**
+ * How many notes one document may hold before the screen stops asking for more.
+ *
+ * Not a limit on writing: a document nobody deletes notes from would otherwise
+ * grow an unbounded read, and this list is drawn in full on four screens with
+ * no paging control of its own. A hundred is far past what any of them carries.
+ */
+const NOTE_SCAN_LIMIT = 100;
+
+/**
+ * Free-form notes attached to any record type, by a discriminator pair.
+ *
+ * `attachments` is parsed here rather than by the route, so the four screens
+ * that draw a note all read the same list — it is the shape the record has, and
+ * a caller handed the raw column would be the second reader of that JSON.
+ */
 export async function listModuleNotes(entityType: string, entityId: string) {
-  return getDb().moduleNote.findMany({
+  const rows = await getDb().moduleNote.findMany({
     where: { entityType, entityId },
     orderBy: { createdAt: "desc" },
+    take: NOTE_SCAN_LIMIT,
   });
+  return rows.map(noteRow);
+}
+
+/** One stored note, as every reader of it sees it. */
+function noteRow(row: {
+  id: string; entityType: string; entityId: string; text: string;
+  authorName: string | null; authorUserId: string | null; attachments: string | null;
+  createdAt: Date;
+}) {
+  return {
+    id: row.id,
+    entityType: row.entityType,
+    entityId: row.entityId,
+    text: row.text,
+    authorName: row.authorName,
+    authorUserId: row.authorUserId,
+    attachments: parseAttachmentList(row.attachments),
+    createdAt: row.createdAt,
+  };
 }
 
 export async function addModuleNote(
@@ -1622,9 +1661,11 @@ export async function addModuleNote(
   entityId: string,
   text: string,
   user: AuthUser,
+  attachments?: unknown,
 ): Promise<"invalid" | { note: unknown }> {
   const trimmed = toNullableString(text);
-  if (!entityType || !entityId || !trimmed) return "invalid";
+  const files = normalizeAttachments(attachments);
+  if (!entityType || !entityId || !noteHasContent(trimmed, files)) return "invalid";
 
   const db = getDb();
   const author = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
@@ -1633,8 +1674,15 @@ export async function addModuleNote(
     data: {
       entityType: toNullableString(entityType, 40)!,
       entityId: toNullableString(entityId, 36)!,
-      text: trimmed,
+      text: trimmed ?? "",
       authorName: author?.fullName ?? null,
+      /*
+       * From the session, never from the body — the same rule `createdByUserId`
+       * on a task follows, and for the same reason: a client that could name
+       * the author could name somebody else.
+       */
+      authorUserId: user.id,
+      attachments: attachmentListColumn(files),
     },
   });
 
@@ -1643,9 +1691,9 @@ export async function addModuleNote(
   // thing somebody reading the project's history needs, and it was visible
   // only to whoever opened that one document.
   await afterCommit("module note timeline entry", () =>
-    logNoteOnTimeline(entityType, entityId, trimmed, user));
+    logNoteOnTimeline(entityType, entityId, noteSummary(trimmed, files), user));
 
-  return { note };
+  return { note: noteRow(note) };
 }
 
 /** Which document a note is on, and where its project's timeline is. */
@@ -1714,15 +1762,19 @@ export async function deleteModuleNote(
   user: AuthUser,
 ): Promise<"ok" | "not-found" | "forbidden"> {
   const db = getDb();
-  const note = await db.moduleNote.findUnique({ where: { id }, select: { id: true, authorName: true } });
+  const note = await db.moduleNote.findUnique({
+    where: { id }, select: { id: true, authorName: true, authorUserId: true },
+  });
   if (!note) return "not-found";
 
-  // Notes carry a name rather than a user id, so authorship is matched by name;
-  // an administrator can always remove one.
-  if (!user.isSystemAdmin) {
-    const me = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
-    if (!me || note.authorName !== me.fullName) return "forbidden";
-  }
+  // `canDeleteNote` is the one rule, shared with what the screen draws — so the
+  // button appears on exactly the notes this accepts. An administrator answers
+  // true before anything is read, which is why the directory lookup is behind
+  // the same check rather than in front of it.
+  const me = user.isSystemAdmin || note.authorUserId
+    ? null
+    : await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
+  if (!canDeleteNote(note, { ...user, fullName: me?.fullName })) return "forbidden";
 
   await db.moduleNote.delete({ where: { id } });
   return "ok";
