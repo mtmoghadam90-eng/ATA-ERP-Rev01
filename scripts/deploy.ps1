@@ -3,9 +3,10 @@
     Deploys the latest committed version of ATA-ERP onto this server.
 
 .DESCRIPTION
-    Pulls from git, installs dependencies, type-checks, builds, and only then
-    restarts the app. If any stage fails the running application is left alone
-    and the previous build is restored, so a bad commit cannot take the app down.
+    Pulls from git, installs dependencies, type-checks, runs the rule checks,
+    builds, and only then restarts the app. If any stage fails the running
+    application is left alone and the previous build is restored, so a bad
+    commit cannot take the app down.
 
     Configuration (.env), the session secret and uploads are never touched.
     Business data lives in SQL Server and is NOT backed up by this script —
@@ -170,15 +171,26 @@ Step 6 "Type-checking"
 if ($LASTEXITCODE -ne 0) { Fail "type-check failed - NOT deploying"; Restore-Dist; exit 6 }
 Ok "no type errors"
 
-# ------------------------------------------------------------------ 7. build
-Step 7 "Building production bundle"
+# ------------------------------------------------------------- 7. rule checks
+#   The type-checker cannot see any of what this suite holds: a hook below an
+#   early return, a route registered after the id route that swallows it, a
+#   migration carrying a bare GO, two copies of one rule that have drifted. It
+#   needs no database and no browser, so it is the one suite that can stand
+#   between a commit and this server.
+Step 7 "Running the rule checks"
+& $npm run test:rules
+if ($LASTEXITCODE -ne 0) { Fail "rule checks failed - NOT deploying"; Restore-Dist; exit 10 }
+Ok "rule checks passed"
+
+# ------------------------------------------------------------------ 8. build
+Step 8 "Building production bundle"
 & $npm run build
 if ($LASTEXITCODE -ne 0) { Fail "build failed - NOT deploying"; Restore-Dist; exit 7 }
 if (-not (Test-Path "dist\server.cjs")) { Fail "dist\server.cjs missing"; Restore-Dist; exit 7 }
 Ok "build produced dist\server.cjs"
 
-# ---------------------------------------------------------------- 8. restart
-Step 8 "Restarting the application"
+# ---------------------------------------------------------------- 9. restart
+Step 9 "Restarting the application"
 # The task is registered with -MultipleInstances IgnoreNew: if the old process is
 # still alive, Start-ScheduledTask is silently ignored and the deploy has NO
 # effect while appearing to succeed. So confirm the port is actually free before
@@ -228,8 +240,8 @@ try {
     exit 8
 }
 
-# ------------------------------------------------------------ 9. health check
-Step 9 "Health check"
+# ----------------------------------------------------------- 10. health check
+Step 10 "Health check"
 $healthy = $false
 foreach ($i in 1..20) {
     Start-Sleep -Seconds 2
