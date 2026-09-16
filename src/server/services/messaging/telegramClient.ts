@@ -82,18 +82,105 @@ function wipeSession(): void {
 
 /* ------------------------------- credentials ------------------------------ */
 
-/** The api credentials, from the environment. Never from `settings`. */
-export const telegramApi = () =>
-  telegramApiFrom(process.env.TELEGRAM_API_ID, process.env.TELEGRAM_API_HASH);
+/** The pair, and why it cannot be used, as one answer. */
+export interface TelegramCredentials {
+  api: { apiId: number; apiHash: string } | null;
+  problem: string | null;
+  /**
+   * The standing two-step password, when one is configured on this host.
+   *
+   * **From the environment only, and never from any stored row.** A cloud
+   * password is full control of the account rather than the identity of an
+   * application, so the pair above may live in a database the settings screen
+   * writes to and this may not. The ordinary path does not use it at all: the
+   * person pressing «اتصال حساب» types it into a box that keeps it for the
+   * length of one sign-in, and this exists for the one case that has nobody
+   * standing there — the relay reopening its own session after a reboot.
+   */
+  password: string;
+}
+
+/** Where the credentials come from when nothing has said otherwise. */
+export function envTelegramCredentials(): TelegramCredentials {
+  return telegramCredentialsFrom(
+    process.env.TELEGRAM_API_ID,
+    process.env.TELEGRAM_API_HASH,
+    process.env.TELEGRAM_2FA_PASSWORD,
+  );
+}
+
+/**
+ * The pure fold from two raw values to an answer, shared by every source.
+ *
+ * Both are `unknown` because that is what they honestly are: one home is
+ * `process.env` and the other a JSON column, and neither promises a string. The
+ * two pure rules below already read through `String(v ?? "")`, so the narrowing
+ * happens once, here, rather than at each source guessing its own cast.
+ */
+export function telegramCredentialsFrom(
+  apiId: unknown,
+  apiHash: unknown,
+  password?: string | null,
+): TelegramCredentials {
+  const id = String(apiId ?? "");
+  const hash = String(apiHash ?? "");
+  const api = telegramApiFrom(id, hash);
+  const refusal = telegramApiRefusal(id, hash);
+  return {
+    api,
+    problem: refusal
+      ?? (api ? null : "API ID و API Hash تلگرام ثبت نشده‌اند؛ کانال تلگرام پیکربندی نشده است."),
+    password: String(password ?? ""),
+  };
+}
+
+/**
+ * Where the credentials are read from.
+ *
+ * A **seam**, exactly as `setTelegramLoader` is, and for the same fact about
+ * this file: it is the one socket implementation and it runs in two places. On
+ * the ERP the pair is a row on the messaging provider — a form somebody fills
+ * in on the settings screen, which is where every other channel's credentials
+ * are typed — and on the relay there is no database at all, so the environment
+ * is the only answer there is. Injecting it is what lets both be true without
+ * this module importing Prisma, which the relay would then have to install.
+ *
+ * It is a module-level setter rather than an argument on `connectTelegram`
+ * because the retry timer and `ensureTelegramRestored` open the session too, and
+ * a value threaded through three call sites is one that will be missing from
+ * one of them.
+ */
+export type TelegramCredentialSource = () => Promise<TelegramCredentials> | TelegramCredentials;
+
+let credentialSource: TelegramCredentialSource = envTelegramCredentials;
+
+export function setTelegramCredentialSource(source: TelegramCredentialSource): void {
+  credentialSource = source;
+}
+
+/**
+ * The credentials in force.
+ *
+ * A source that throws — a database that is down — is reported as a
+ * configuration problem rather than propagated: the panel then says the channel
+ * could not be configured, which is true, instead of the whole status endpoint
+ * answering 500 for a screen whose other half is about WhatsApp.
+ */
+export async function telegramCredentials(): Promise<TelegramCredentials> {
+  try {
+    return await credentialSource();
+  } catch (err) {
+    return {
+      api: null,
+      problem: `خواندن تنظیمات تلگرام ممکن نشد: ${describe(err)}`,
+      password: "",
+    };
+  }
+}
 
 /** Why the credentials cannot be used, or null. */
-export const telegramApiProblem = (): string | null => {
-  const refusal = telegramApiRefusal(process.env.TELEGRAM_API_ID, process.env.TELEGRAM_API_HASH);
-  if (refusal) return refusal;
-  return telegramApi()
-    ? null
-    : "TELEGRAM_API_ID و TELEGRAM_API_HASH تنظیم نشده‌اند؛ کانال تلگرام پیکربندی نشده است.";
-};
+export const telegramApiProblem = async (): Promise<string | null> =>
+  (await telegramCredentials()).problem;
 
 /* -------------------------------- reporting ------------------------------- */
 
@@ -220,10 +307,15 @@ function clearRetry(): void {
  * and a code nobody is looking at — re-requested every minute by a worker — is
  * exactly the machine-paced traffic that gets an account restricted.
  */
-export async function connectTelegram(opts: { force?: boolean } = {}): Promise<TelegramReport> {
-  const problem = telegramApiProblem();
-  if (problem) {
-    setState(TELEGRAM_STATES.UNLINKED, { qr: null, lastError: problem });
+export async function connectTelegram(
+  opts: { force?: boolean; password?: string } = {},
+): Promise<TelegramReport> {
+  const credentials = await telegramCredentials();
+  if (!credentials.api) {
+    setState(TELEGRAM_STATES.UNLINKED, {
+      qr: null,
+      lastError: credentials.problem ?? "کانال تلگرام پیکربندی نشده است.",
+    });
     return telegramReport();
   }
 
@@ -237,7 +329,14 @@ export async function connectTelegram(opts: { force?: boolean } = {}): Promise<T
     return telegramReport();
   }
 
-  connecting = openSession().finally(() => { connecting = null; });
+  /*
+   * The two-step password travels **down** rather than being read again inside
+   * the sign-in: it is typed into a box on the panel and kept for the length of
+   * one attempt, so there is nothing to read back later. `openSession` holds it
+   * for as long as the library may ask for it and nothing writes it anywhere.
+   */
+  connecting = openSession(credentials, opts.password)
+    .finally(() => { connecting = null; });
   await connecting.catch((err: unknown) => {
     /*
      * **A failed open is reported**, the lesson `connectWhatsapp` was corrected
@@ -277,10 +376,13 @@ export async function connectTelegram(opts: { force?: boolean } = {}): Promise<T
  * answers at the first of two moments: a code is on the screen, or the sign-in
  * completed (which is the case where a stored session simply reconnected).
  */
-async function openSession(): Promise<void> {
+async function openSession(
+  credentials: TelegramCredentials,
+  oneTimePassword?: string,
+): Promise<void> {
   clearRetry();
-  const credentials = telegramApi();
-  if (!credentials) throw new Error(telegramApiProblem() ?? "TELEGRAM_API_ID/HASH");
+  const api = credentials.api;
+  if (!api) throw new Error(credentials.problem ?? "API ID/API Hash تلگرام");
 
   const stored = readSession();
   setState(stored ? TELEGRAM_STATES.CONNECTING : TELEGRAM_STATES.AWAITING_SCAN);
@@ -289,7 +391,7 @@ async function openSession(): Promise<void> {
   const { TelegramClient, sessions } = gram;
   const session = new sessions.StringSession(stored ?? "");
 
-  const created = new TelegramClient(session, credentials.apiId, credentials.apiHash, {
+  const created = new TelegramClient(session, api.apiId, api.apiHash, {
     /*
      * The library retries a dropped connection itself. Bounded rather than
      * infinite, so a filtered route surfaces as a reported failure instead of a
@@ -329,7 +431,7 @@ async function openSession(): Promise<void> {
   const firstCode = new Promise<void>((resolve) => { announced = resolve; });
 
   const signIn = created.signInUserWithQrCode(
-    { apiId: credentials.apiId, apiHash: credentials.apiHash },
+    { apiId: api.apiId, apiHash: api.apiHash },
     {
       qrCode: async (code: { token: Buffer }) => {
         setState(TELEGRAM_STATES.AWAITING_SCAN, {
@@ -341,17 +443,24 @@ async function openSession(): Promise<void> {
       /**
        * The cloud password, when the account has two-step verification on.
        *
-       * From the environment and **never stored**: it is held for the length of
-       * one sign-in and written nowhere, which is why there is no box for it on
-       * any screen. An account that asks for one this cannot supply fails with a
-       * sentence naming the variable, rather than hanging on a prompt nobody
-       * will ever answer.
+       * **Never stored, anywhere.** It is full control of the account rather
+       * than the identity of an application, so unlike the api pair it does not
+       * go in the provider row the settings screen writes — it is typed into a
+       * box on the link panel, held in memory for the length of this one attempt
+       * and then gone. The environment is the fallback and exists for the one
+       * sign-in nobody is standing in front of: the relay reopening its own
+       * session after a reboot.
+       *
+       * An account that asks for one neither can supply fails with a sentence
+       * saying where to type it, rather than hanging on a prompt nobody will
+       * ever answer.
        */
       password: async () => {
-        const secret = String(process.env.TELEGRAM_2FA_PASSWORD ?? "");
+        const secret = String(oneTimePassword ?? "") || credentials.password;
         if (!secret) {
           throw new Error(
-            "این حساب رمز دومرحله‌ای دارد؛ TELEGRAM_2FA_PASSWORD را روی سرور تنظیم کنید.",
+            "این حساب رمز دومرحله‌ای دارد؛ رمز را در کادر «رمز دومرحله‌ای» وارد کنید"
+            + " و دوباره «اتصال حساب» را بزنید.",
           );
         }
         return secret;

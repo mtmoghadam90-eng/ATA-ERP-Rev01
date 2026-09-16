@@ -199,11 +199,22 @@ than a person types.
 
 - **Node 20 or newer** (`@whiskeysockets/baileys` requires it).
 - Telegram's `api_id`/`api_hash`, from <https://my.telegram.org> → API development
-  tools, in the relay's env as `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`. They
-  identify the *application* rather than the account, but they are still secrets
-  and they live in the environment — never in `settings`, which every browser
-  loads whole. If the account has two-step verification, `TELEGRAM_2FA_PASSWORD`
-  too; it is read for one sign-in and stored nowhere.
+  tools, in the relay's env as `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
+
+  **On the relay they are env variables and nowhere else**, because this process
+  has no database: it reopens its own session at its own boot, long before any
+  request could hand it anything. On the ERP the same pair is typed into
+  «پیام‌رسان → تنظیمات درگاه‌ها → تلگرام» and stored on the provider row like
+  every other channel's credentials, with the environment kept as a fallback so
+  an installation already configured that way goes on working. The two hosts
+  read them independently; setting them on the ERP does not configure the relay.
+
+  If the account has two-step verification, the password is typed into the box
+  on the link panel when you press «اتصال حساب» — it travels inside the same
+  https request the bearer token authenticates, is used for that one sign-in and
+  is stored on neither machine. `TELEGRAM_2FA_PASSWORD` in the relay's env is the
+  fallback for the one sign-in nobody is standing in front of: the relay
+  reconnecting after a reboot.
 - A persistent process (systemd), restarted on failure.
 - A directory for the session, outside any path the web server serves.
 - TLS: a domain and a certificate. If you would rather it were not publicly

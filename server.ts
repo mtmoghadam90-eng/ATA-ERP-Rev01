@@ -48,6 +48,7 @@ import { parseBearer, pathClosedToTokens, scopeAllowsMethod } from "./src/utils/
 import { processQueue } from "./src/server/services/messaging/messageService";
 import { ensureWhatsappRestored } from "./src/server/services/messaging/whatsappTransport";
 import { ensureTelegramSessionRestored } from "./src/server/services/messaging/telegramTransport";
+import { installTelegramCredentials } from "./src/server/services/messaging/telegramCredentials";
 import { scrapeRates } from "./src/server/rateSource";
 import { ensureRatesFresh } from "./src/server/services/rateRefresh";
 import { refreshHolidayCache } from "./src/server/services/holidayService";
@@ -767,10 +768,21 @@ registerCampaignRoutes(app, routeDeps);
      */
     ensureWhatsappRestored();
     /*
-     * And the Telegram session, on exactly the same terms: it opens only when an
-     * account is already signed in, does nothing at all under a relay, is not
-     * awaited and cannot throw. Without it the channel comes back «قطع شده»
-     * after every deploy.
+     * Where Telegram's `api_id`/`api_hash` are read from — **before** anything
+     * can open a session, which is the whole of the ordering rule here. The
+     * socket module defaults to the environment because it is the same file the
+     * relay runs and the relay has no database; this points it at the messaging
+     * provider row instead, so the pair is typed into the settings screen like
+     * every other channel's credentials. Left uninstalled, nothing fails: the
+     * channel quietly goes on reading an env file nobody has filled in, which is
+     * a form that does nothing.
+     */
+    installTelegramCredentials();
+    /*
+     * And the Telegram session, on exactly the same terms as WhatsApp's: it
+     * opens only when an account is already signed in, does nothing at all under
+     * a relay, is not awaited and cannot throw. Without it the channel comes
+     * back «قطع شده» after every deploy.
      */
     ensureTelegramSessionRestored();
   });

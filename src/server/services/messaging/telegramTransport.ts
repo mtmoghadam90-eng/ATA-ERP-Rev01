@@ -180,20 +180,31 @@ export async function telegramStatus(): Promise<TelegramReport & { linked: boole
   return { ...telegramReport(), linked: telegramIsLinked() };
 }
 
-/** Opens the session, raising a login code when no account is signed in yet. */
-export async function telegramLink(): Promise<TelegramReport> {
+/**
+ * Opens the session, raising a login code when no account is signed in yet.
+ *
+ * `password` is the account's two-step secret when it has one. It travels from
+ * the box on the panel to whichever machine holds the session and is **stored
+ * on neither** — the relay hands it to the library and drops it with the
+ * request, exactly as this process does. It crosses the wire inside the same
+ * https body the bearer token authenticates, which is the one place it was ever
+ * going to have to go: the sign-in happens where the session is.
+ */
+export async function telegramLink(password?: string): Promise<TelegramReport> {
   const refusal = telegramRelayRefusal();
   if (refusal) return refusedReport(refusal);
 
   if (telegramUsesRelay()) {
     const answer = await call<TelegramReport>("/tg/link", {
-      method: "POST", body: {}, timeoutMs: RELAY_TIMEOUT_MS.link,
+      method: "POST",
+      body: password ? { password } : {},
+      timeoutMs: RELAY_TIMEOUT_MS.link,
     });
     return answer.data ?? refusedReport(answer.error ?? "پاسخ رله خالی بود.");
   }
 
   const { connectTelegram } = await import("./telegramClient");
-  return connectTelegram({ force: true });
+  return connectTelegram({ force: true, password });
 }
 
 /**

@@ -269,7 +269,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
 
   if (path === "/tg/link" && req.method === "POST") {
     log("telegram link requested");
-    const report = await connectTelegram({ force: true });
+    /*
+     * The account's two-step secret, when it has one. It is used for this one
+     * sign-in and **written nowhere** — not to disk, not to the log below, which
+     * prints the state and never the body. The ERP sends it because the sign-in
+     * happens where the session is, and it arrives inside the same https request
+     * the bearer token already authenticates.
+     */
+    const linkBody = await readJson(req);
+    const password = String((linkBody ?? {}).password ?? "") || undefined;
+    const report = await connectTelegram({ force: true, password });
     // How it went, not only that it was asked for — the line that would have
     // ended the WhatsApp hunt in seconds. The login code is never logged.
     log(`telegram link -> ${report.state}${report.lastError ? ` - ${report.lastError}` : ""}`);

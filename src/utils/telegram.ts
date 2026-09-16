@@ -112,6 +112,13 @@ export const isTelegramAddressable = (raw: string | null | undefined): boolean =
  * Both blank is «this company has not set Telegram up», which is not a fault and
  * is not a refusal — it is what every installation looks like until somebody
  * wants the channel.
+ *
+ * **The sentence names the field and both of its homes, never one of them.** The
+ * pair is read from the messaging provider row first and from the environment
+ * second, and the same refusal is printed on the settings screen and in a relay
+ * log — so «TELEGRAM_API_ID تنظیم نشده است» in front of somebody looking at the
+ * box they are meant to type it into is an instruction to go and edit a file on
+ * a Windows server for a value the screen would have taken.
  */
 export function telegramApiRefusal(
   apiId: string | number | null | undefined,
@@ -122,13 +129,13 @@ export function telegramApiRefusal(
   if (!id && !hash) return null;
 
   if (!id) {
-    return "TELEGRAM_API_ID تنظیم نشده است؛ بدون آن نشست تلگرام باز نمی‌شود.";
+    return "API ID تلگرام ثبت نشده است؛ آن را در تنظیمات پیام‌رسان وارد کنید (یا TELEGRAM_API_ID را روی سرور تنظیم کنید).";
   }
   if (!/^\d+$/.test(id)) {
-    return "TELEGRAM_API_ID باید عدد باشد؛ مقدار فعلی عدد نیست.";
+    return "API ID تلگرام باید عدد باشد؛ مقدار ثبت‌شده عدد نیست.";
   }
   if (!hash) {
-    return "TELEGRAM_API_HASH تنظیم نشده است؛ بدون آن نشست تلگرام باز نمی‌شود.";
+    return "API Hash تلگرام ثبت نشده است؛ آن را در تنظیمات پیام‌رسان وارد کنید (یا TELEGRAM_API_HASH را روی سرور تنظیم کنید).";
   }
   return null;
 }
@@ -353,6 +360,19 @@ const ACCOUNT_TOKENS = [
   "auth_key_duplicated", "unauthorized", "unauthorised", "401", "403", "باطل",
 ];
 
+/**
+ * The api credentials, however the fault is spelled.
+ *
+ * Three spellings for one thing because the pair has two homes and Telegram has
+ * a word of its own for it: the provider row's «API ID»/«API Hash», the
+ * environment's `TELEGRAM_API_*`, and `API_ID_INVALID` from the server when the
+ * values are present and wrong. The underscore forms are matched as written, so
+ * `api_id_invalid` is caught without the spaced form having to see it.
+ */
+const API_CREDENTIAL_TOKENS = [
+  "telegram_api_id", "telegram_api_hash", "api_id", "api_hash", "api id", "api hash",
+];
+
 /** Telegram's own words for «there is nobody at that address». */
 const RECIPIENT_TOKENS = [
   "phone_not_occupied", "username_not_occupied", "username_invalid",
@@ -389,7 +409,15 @@ export function telegramFailureKind(
   // it early: «unauthorized» read as the account sends somebody to sign out of
   // a working session when the fix is one line in an env file.
   if (text.includes("توکن")) return TELEGRAM_FAILURE_KINDS.CONFIG;
-  if (text.includes("telegram_api_id") || text.includes("telegram_api_hash")) {
+  /*
+   * Both spellings of the same fault, because the pair has two homes: the
+   * provider row names them «API ID»/«API Hash» and the environment names them
+   * `TELEGRAM_API_*`, while Telegram's own `API_ID_INVALID` is the third way the
+   * same missing-or-wrong credential arrives. All three are configuration: read
+   * as the account they would send somebody to sign out of a session that was
+   * never opened.
+   */
+  if (API_CREDENTIAL_TOKENS.some((t) => text.includes(t))) {
     return TELEGRAM_FAILURE_KINDS.CONFIG;
   }
 

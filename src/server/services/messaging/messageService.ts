@@ -60,12 +60,20 @@ const SECRET_FIELDS: Record<Channel, string[]> = {
    */
   WHATSAPP: [],
   /*
-   * None either, and for a sharper version of the same reason: Telegram's
-   * `api_id`/`api_hash` and the two-step password are **credentials in the
-   * environment**, never in this document. `settings` and the provider rows are
-   * read by screens, and a secret that reaches a browser is a secret.
+   * The `api_hash`, which identifies the *application* registered at
+   * my.telegram.org rather than the account — a secret, and one that belongs
+   * here for the reason Kavenegar's API key does: a provider row's secrets never
+   * leave the server (a masked hint goes out, and a blank box on save means
+   * «unchanged»), which is a stronger guarantee than the env file it used to
+   * live in and one a person can act on without a shell on a Windows server.
+   *
+   * The **two-step password is deliberately not here**. It is full control of
+   * the account rather than the identity of an application, it is needed only
+   * for the seconds of one sign-in, and it is typed into a box on the link panel
+   * that keeps it for that one request — so a stored copy would buy nothing and
+   * sit in a database for the life of the installation.
    */
-  TELEGRAM: [],
+  TELEGRAM: ["apiHash"],
 };
 
 /** Everything a channel's configuration may hold, secrets included. */
@@ -86,7 +94,13 @@ const CONFIG_FIELDS: Record<Channel, string[]> = {
   // Nothing to configure; the provider row exists so the channel can be switched
   // on and off like the others, and `active` is not part of `config`.
   WHATSAPP: [],
-  TELEGRAM: [],
+  /*
+   * The pair from my.telegram.org. The id is not secret — it is a number that
+   * names the registered application and the screen shows it back, which is what
+   * lets somebody check they typed the right one — while the hash is, and is in
+   * `SECRET_FIELDS` above.
+   */
+  TELEGRAM: ["apiId", "apiHash"],
 };
 
 const parseConfig = (raw: unknown): Record<string, unknown> => {
@@ -228,6 +242,26 @@ export async function deactivateChannel(channel: Channel): Promise<void> {
     where: { channel, active: true },
     data: { active: false },
   });
+}
+
+/**
+ * The Telegram api credentials as stored, secrets included. Server-side only.
+ *
+ * **Narrow and named on purpose.** `providerConfig` above answers with a whole
+ * channel's configuration and stays private for the reason `channelIsActive`
+ * exists: a caller that needs one fact has no business holding somebody's API
+ * key. This is the one exception and it is spelled out as two keys of one
+ * channel, so it cannot quietly become a general tap on the provider secrets.
+ *
+ * The values are returned **as stored** — unparsed, unchecked — because the
+ * fold from two raw values to «usable, or why not» is `telegramCredentialsFrom`
+ * and the environment goes through the same one. Two readings of «is this pair
+ * usable» is how the screen comes to say it is configured while the session
+ * refuses to open.
+ */
+export async function storedTelegramApi(): Promise<{ apiId: unknown; apiHash: unknown }> {
+  const provider = await providerConfig(CHANNELS.TELEGRAM);
+  return { apiId: provider?.config.apiId, apiHash: provider?.config.apiHash };
 }
 
 export async function channelIsActive(channel: Channel): Promise<boolean> {

@@ -292,16 +292,16 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
       /*
        * Whether the credentials are configured at all, asked of the **local**
        * module, and the distinction is the point: a relay deployment runs the
-       * session on the far side, so this server having no `TELEGRAM_API_ID` is
-       * not a fault — while for a local one it is the whole reason nothing
-       * happens. Reported as «پیکربندی نشده» rather than as «قطع شده», which are
-       * two different problems for two different people.
+       * session on the far side, so this server having no api credentials is not
+       * a fault — while for a local one it is the whole reason nothing happens.
+       * Reported as «پیکربندی نشده» rather than as «قطع شده», which are two
+       * different problems for two different people.
        */
       const relayed = telegramUsesRelay();
       let configProblem: string | null = null;
       if (!relayed) {
         const { telegramApiProblem } = await import("../services/messaging/telegramClient");
-        configProblem = telegramApiProblem();
+        configProblem = await telegramApiProblem();
       }
       res.json({
         success: true,
@@ -321,13 +321,24 @@ export function registerMessagingRoutes(app: express.Express, deps: RouteDeps): 
     }
   });
 
-  /** Opens the session, raising a login code when no account is signed in. */
+  /**
+   * Opens the session, raising a login code when no account is signed in.
+   *
+   * The optional `password` is the account's two-step secret, and it is
+   * **handed straight down and stored nowhere** — not in the provider row, not
+   * in `settings`, not in the audit log. It is needed for the seconds between
+   * the phone scanning the code and Telegram accepting the sign-in, which is
+   * exactly as long as this request lives, so a box on the panel is the right
+   * home for it and a stored field would be a copy of full account control
+   * sitting in a database for the rest of the installation's life.
+   */
   app.post("/api/messaging/telegram/link", async (req, res) => {
     const user = await requireSettings(req, res);
     if (!user) return;
     try {
       const { telegramLink } = await import("../services/messaging/telegramTransport");
-      res.json({ success: true, ...(await telegramLink()) });
+      const password = String((req.body ?? {}).password ?? "");
+      res.json({ success: true, ...(await telegramLink(password || undefined)) });
     } catch (err) {
       sendError(res, err, "POST /api/messaging/telegram/link");
     }

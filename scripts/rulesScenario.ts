@@ -129,6 +129,8 @@ import {
   whatsappSendRefusal,
 } from "../src/utils/whatsapp";
 import { channelIsPaced, channelPassLimit } from "../src/server/services/messaging/messageService";
+import { telegramCredentialsFrom } from "../src/server/services/messaging/telegramClient";
+import { pickTelegramCredentials } from "../src/server/services/messaging/telegramCredentials";
 import {
   TELEGRAM_GAP_MS, TELEGRAM_PER_PASS, floodWaitSeconds, isTelegramAddressable,
   telegramApiFrom, telegramApiRefusal, telegramFailureKind, telegramGapMs, telegramPeer,
@@ -18144,26 +18146,117 @@ head("Telegram: the company's own account, as a fifth channel");
   eq("a refused pair is never usable", telegramApiFrom("12345", ""), null);
 
   /*
-   * **The credentials live in the environment, never in `settings`** — that
-   * document is loaded whole by every browser. Held against the two lists the
-   * settings screen writes through, because a key there is a key a form shows.
+   * **The api pair is typed on the settings screen; the two-step password is
+   * typed nowhere.** Those are two different secrets and the difference is what
+   * decides where each lives: `api_id`/`api_hash` identify the registered
+   * *application*, which is what Kavenegar's API key and the SMTP password are
+   * too — so they belong in a provider row, whose secrets never leave the server
+   * (a masked hint goes out, and a blank box on save means «unchanged»). The
+   * cloud password is full control of the *account* and is needed for the
+   * seconds of one sign-in, so it is held for that one request and dropped.
    */
   {
     const svc = strip(readFileSync("src/server/services/messaging/messageService.ts", "utf8"));
-    ok("no Telegram credential is a settings field",
-      /TELEGRAM: \[\],/.test(svc) && !/TELEGRAM: \[["']api/.test(svc));
+    const telegramList = (label: string) =>
+      new RegExp(`const ${label}[\\s\\S]*?\\n  TELEGRAM: (\\[[^\\]]*\\])`).exec(svc)?.[1] ?? "";
+    const secrets = telegramList("SECRET_FIELDS");
+    const config = telegramList("CONFIG_FIELDS");
+    ok("the api hash is a provider secret", /apiHash/.test(secrets));
+    ok("...and the api id is a plain field", /apiId/.test(config) && !/apiId/.test(secrets));
+    /*
+     * A secret must be in **both** lists or the guarantee is half there: absent
+     * from `CONFIG_FIELDS` it is dropped on save (a form that does not remember
+     * what was typed into it), and absent from `SECRET_FIELDS` it is returned to
+     * the browser in full.
+     */
+    ok("...and every Telegram secret is also a config field",
+      /apiHash/.test(config));
+    /*
+     * The two-step password in either list would be a stored copy of full
+     * account control, and it buys nothing: it is needed only while signing in.
+     */
+    ok("the two-step password is not a provider field",
+      !/password/i.test(secrets) && !/password/i.test(config));
+
     const client = strip(readFileSync(
       "src/server/services/messaging/telegramClient.ts", "utf8"));
-    ok("the client reads them from the environment",
-      /process\.env\.TELEGRAM_API_ID/.test(client)
-      && /process\.env\.TELEGRAM_API_HASH/.test(client));
     /*
-     * And the two-step password is read for one sign-in and written nowhere:
-     * a screen that offered a box for it would be a screen that stores it.
+     * **The environment is read in one place**, which is what makes the seam a
+     * seam: a second `process.env.TELEGRAM_API_*` anywhere in this file would be
+     * a reading the injected source cannot override, so the settings screen
+     * would silently decide nothing on whichever path took it.
      */
+    eq("the environment is read in exactly one function",
+      client.split("process.env.TELEGRAM_API_ID").length - 1, 1);
+    ok("...and it is the default source",
+      /function envTelegramCredentials\(\)[\s\S]{0,400}process\.env\.TELEGRAM_API_ID/.test(client)
+      && /let credentialSource: TelegramCredentialSource = envTelegramCredentials/.test(client));
+    ok("...which a host may replace", /export function setTelegramCredentialSource/.test(client));
+    /*
+     * And the session opens through the source rather than through the
+     * environment: `connectTelegram` reading `process.env` would be the ERP's
+     * whole provider row bypassed on the one path that matters.
+     */
+    ok("the session opens through the source",
+      /async function connectTelegram\([\s\S]{0,400}await telegramCredentials\(\)/.test(client));
+
+    /*
+     * The two-step password reaches the library from the *request* first, and
+     * the environment only as the fallback for a sign-in nobody is watching (the
+     * relay after a reboot). Neither is ever written.
+     */
+    ok("the one-time password is preferred over the environment",
+      /oneTimePassword \?\? ""\) \|\| credentials\.password/.test(client));
     ok("...and the two-step password is never stored",
-      /process\.env\.TELEGRAM_2FA_PASSWORD/.test(client)
-      && !/writeSession\([^)]*PASSWORD/.test(client));
+      !/writeSession\([^)]*[Pp]assword/.test(client));
+
+    /*
+     * The ERP points the socket at its own reading, and **before** anything can
+     * open a session. Uninstalled, nothing fails loudly — the channel goes on
+     * reading an env file nobody filled in, which is the «form that does
+     * nothing» shape this file keeps repairing.
+     */
+    const boot = strip(readFileSync("server.ts", "utf8"));
+    ok("the ERP installs its own credential source",
+      /installTelegramCredentials\(\)/.test(boot));
+    ok("...before the session is restored",
+      boot.indexOf("installTelegramCredentials()")
+      < boot.indexOf("ensureTelegramSessionRestored()"));
+
+    /*
+     * **A typed row wins, refusal included.** Read the other way, an id mistyped
+     * on the settings screen falls through to a working env pair: the box says
+     * one thing, the session uses another, and the typo is invisible for as long
+     * as the environment keeps rescuing it.
+     */
+    const env = telegramCredentialsFrom("111", "envhash", "envpass");
+    eq("an empty row falls back to the environment",
+      pickTelegramCredentials({ apiId: null, apiHash: "" }, env).api?.apiHash, "envhash");
+    eq("...and a blank string is empty too",
+      pickTelegramCredentials({ apiId: "   ", apiHash: null }, env).api?.apiHash, "envhash");
+    eq("a complete row wins",
+      pickTelegramCredentials({ apiId: "222", apiHash: "rowhash" }, env).api?.apiHash, "rowhash");
+    eq("...and so does a half-typed one, as a refusal",
+      pickTelegramCredentials({ apiId: "222", apiHash: "" }, env).api, null);
+    ok("...which says which field is missing",
+      /API Hash/.test(pickTelegramCredentials({ apiId: "222", apiHash: "" }, env).problem ?? ""));
+    /*
+     * The password is never on the row, so it comes from the environment
+     * whichever pair won — the fallback is per-pair and the password is not part
+     * of the pair.
+     */
+    eq("the password always comes from the environment",
+      pickTelegramCredentials({ apiId: "222", apiHash: "rowhash" }, env).password, "envpass");
+    /*
+     * And the refusal names the **field**, never one of its two homes: the same
+     * sentence is printed on the settings screen and in a relay log, and
+     * «TELEGRAM_API_ID را تنظیم کنید» in front of the box that would have taken
+     * it is an instruction to go and edit a file instead.
+     */
+    ok("the refusal names the field, not only the variable",
+      /API ID/.test(telegramApiRefusal("", "abc") ?? ""));
+    eq("a wrong api id is configuration, not the account",
+      telegramFailureKind("API_ID_INVALID"), "CONFIG");
 
     /*
      * **The session is written only after the sign-in resolved.** The library
