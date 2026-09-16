@@ -355,6 +355,14 @@ export interface Proforma {
   contactPrefix?: string; // پیشوند مخاطب یا مشتری حقیقی
   projectId?: string;
   projectName?: string;
+  /**
+   * The customer's own reference for the enquiry this quotation answers, read
+   * from the project and printed as «شماره درخواست».
+   *
+   * A copy carried for the document, never written: it belongs to the project,
+   * so a second editable copy here is how the two come to disagree.
+   */
+  projectInquiryNumber?: string;
   issueDate: string;
   expiryDate: string;
   deliveryDate?: string; // تاریخ تحویل پیش‌فاکتور تایید شده
@@ -762,7 +770,6 @@ export interface ProformaTemplate {
   logoUrl?: string;
   companySealUrl?: string;
   titleColor: string;
-  documentTitle: string;
   headerText: string;
   termsAndConditions: string;
   footerText: string;

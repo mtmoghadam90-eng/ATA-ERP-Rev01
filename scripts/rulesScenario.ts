@@ -268,6 +268,7 @@ import {
   AFTER_SALES_CLOSED, AFTER_SALES_STATUSES, PROFORMA_AFTER_SALES_TYPE,
   PROFORMA_FORMAT_FALLBACKS, PROFORMA_FORMAT_KEYS, PROFORMA_STORED_STATUSES,
   PROFORMA_TECHNICAL_TYPE, PROJECT_TECHNICAL_OFFERED, afterSalesIsOpen, proformaKindOf,
+  proformaDocumentTitle,
 } from "../src/utils/moduleStatuses";
 import {
   buildWorkflowDraftPrompt, sanitizeDraftedRule, workflowCatalogue,
@@ -5056,7 +5057,7 @@ head("Printed proforma: the multi-page rules");
   const template = {
     name: "t", companyName: "ابزار تامین ارشیا", registrationNumber: "1",
     nationalCode: "1", economicCode: "1", phone: "021", email: "a@b.c",
-    website: "w", address: "تهران", titleColor: "#0ea5e9", documentTitle: "پیش‌فاکتور",
+    website: "w", address: "تهران", titleColor: "#0ea5e9",
     headerText: "", termsAndConditions: "", footerText: "",
     signatureLabel1: "s1", signatureLabel2: "s2",
     showLogo: true, showTerms: true, showSignatures: true, showTotals: true,
@@ -5144,11 +5145,86 @@ head("Printed proforma: the multi-page rules");
   const flat = nameCell.replace(/\s+/g, " ");
   ok("the brand still follows the name on the same line",
     /INSTRUMENT 1 ?<span[^>]*>\(Krohne\)<\/span>/.test(flat), flat.slice(0, 120));
+  /*
+   * And the label is **Latin**. A tag number is what the customer's own P&ID,
+   * datasheet and loop drawing call that instrument, written «FT-1101» in every
+   * one of them, so «تگ» beside it was the one word on the row that did not
+   * match the document the reader is holding. It carries its own `direction`
+   * for the reason the address bar does: Latin inside an RTL block has its
+   * trailing punctuation reordered, and a tag number is read character by
+   * character against another document.
+   */
   ok("...and the tag is in a block of its own beneath it",
-    /<div[^>]*><span[^>]*>تگ: FT-1101<\/span><\/div>/.test(flat));
+    /<div[^>]*><span[^>]*>Tag: FT-1101<\/span><\/div>/.test(flat));
+  ok("...with the label in Latin, as the customer's own drawings write it",
+    !/تگ/.test(flat), flat.slice(0, 200));
+  ok("...and its own direction, or the colon is reordered",
+    /<span[^>]*direction: ltr[^>]*>Tag: FT-1101</.test(flat));
   // Which is the whole point: it must not be a sibling of the name on one line.
   ok("...so nothing prints the tag as a continuation of the title",
-    !/INSTRUMENT 1 ?(<span[^>]*>\(Krohne\)<\/span> ?)?<span[^>]*>تگ:/.test(flat));
+    !/INSTRUMENT 1 ?(<span[^>]*>\(Krohne\)<\/span> ?)?<span[^>]*>Tag:/.test(flat));
+
+  /*
+   * What the page calls itself, from the kind and not from the template.
+   *
+   * A technical specification quotes no prices, so it is a «پیشنهاد فنی» and
+   * nothing more; a priced one carries the specification *and* the money. One
+   * title cannot be right for both, and the template's `documentTitle` — the
+   * earlier answer — had no form field anywhere in the application, so it could
+   * only ever be the seeded string with «رسمی» stripped back off it.
+   */
+  eq("a priced quotation is a technical and financial offer",
+    proformaDocumentTitle("FINANCIAL"), "پیشنهاد فنی و مالی");
+  eq("...and so is a service one, which is also priced",
+    proformaDocumentTitle("AFTER_SALES"), "پیشنهاد فنی و مالی");
+  eq("a specification is a technical offer and nothing more",
+    proformaDocumentTitle("TECHNICAL"), "پیشنهاد فنی");
+  eq("an absent kind reads as financial here too",
+    proformaDocumentTitle(undefined), "پیشنهاد فنی و مالی");
+  ok("the document prints it", doc.includes("پیشنهاد فنی و مالی"));
+  const technicalDoc = renderProformaDocument({
+    proforma: { ...proforma, proformaType: "TECHNICAL" } as never,
+    template: template as never,
+    customer: { id: "c-1", customerType: "حقوقی" } as never,
+    creator: { fullName: "م", signatureImage: null }, products: [], showBrand: true,
+  });
+  ok("...and a specification prints the other one",
+    technicalDoc.includes("پیشنهاد فنی") && !technicalDoc.includes("پیشنهاد فنی و مالی"));
+  ok("no template field decides it any more", !doc.includes("documentTitle"));
+
+  /*
+   * The job, under the buyer panel.
+   *
+   * Both halves belong to the **project** — «نام پروژه» is what the company
+   * calls the job and «شماره درخواست» is the customer's own reference for the
+   * enquiry it answers, which is what they file this against. A document naming
+   * no project prints neither, rather than two empty labels: a heading with
+   * nothing under it reads as something that failed to load, and a quotation
+   * raised straight against a customer is ordinary here.
+   */
+  ok("a document with no project prints no project block",
+    !doc.includes("نام پروژه") && !doc.includes("شماره درخواست"));
+  const withProject = renderProformaDocument({
+    proforma: {
+      ...proforma, projectName: "ابزار دقیق فاز ۳", projectInquiryNumber: "REQ-4417",
+    } as never,
+    template: template as never,
+    customer: { id: "c-1", customerType: "حقوقی" } as never,
+    creator: { fullName: "م", signatureImage: null }, products: [], showBrand: true,
+  });
+  ok("...and one that names a job prints both halves",
+    withProject.includes("ابزار دقیق فاز ۳") && withProject.includes("REQ-4417"));
+  ok("...above the goods, where somebody reads the document from the top",
+    withProject.indexOf("ابزار دقیق فاز ۳") < withProject.indexOf("INSTRUMENT 1"));
+  // Each half drops on its own: a job with no enquiry number is as ordinary.
+  const halfProject = renderProformaDocument({
+    proforma: { ...proforma, projectName: "ابزار دقیق فاز ۳" } as never,
+    template: template as never,
+    customer: { id: "c-1", customerType: "حقوقی" } as never,
+    creator: { fullName: "م", signatureImage: null }, products: [], showBrand: true,
+  });
+  ok("a job with no enquiry number prints the name and no empty label",
+    halfProject.includes("نام پروژه") && !halfProject.includes("شماره درخواست"));
   /*
    * And it is inside the title block rather than down among the specification:
    * the rule under the name separates what the item is from what it is made

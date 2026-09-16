@@ -2,6 +2,7 @@ import type { Customer, Product, Proforma, ProformaTemplate } from "../types";
 import { formatMoney } from "../numUtils";
 import { escapeHtml, renderRichText } from "./richText";
 import { familyNameOnly } from "./customerLabel";
+import { proformaDocumentTitle } from "./moduleStatuses";
 
 /**
  * The proforma, as a standalone A4 document.
@@ -114,6 +115,32 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
     Math.max(96, Math.round(amountChars * priceFontPx * 0.6) + 18),
   );
 
+  /*
+   * The job this quotation belongs to, under the buyer panel.
+   *
+   * Both halves are the **project's** and neither is typed on the document:
+   * «نام پروژه» is what the company calls the job, and «شماره درخواست» is the
+   * customer's own reference for the enquiry it answers — the number they will
+   * file this against. A copy on the proforma would be a second place to edit
+   * one value, so the renderer reads what the project holds.
+   *
+   * The whole block is **left out when the document names no project**, rather
+   * than printing two empty labels: a proforma raised straight against a
+   * customer is ordinary here, and a heading with nothing under it reads as
+   * something that failed to load. Each half is likewise dropped on its own,
+   * since a job with no enquiry number is just as ordinary.
+   */
+  const projectFacts = [
+    ["نام پروژه", pf.projectName],
+    ["شماره درخواست", pf.projectInquiryNumber],
+  ].filter(([, value]) => String(value ?? "").trim() !== "");
+  const projectRow = projectFacts.length === 0 ? "" : `
+                  <div class="buyer-horizontal-row" style="margin-top: 6px;">
+                      ${projectFacts.map(([label, value]) => `
+                      <div><span style="color: #64748b;">${escapeHtml(String(label))}:</span> ${escapeHtml(String(value))}</div>
+                      `).join("")}
+                  </div>`;
+
   const itemsRows = pf.items
     .map((item, index) => {
       const prod = products.find((p) => p.id === item.productId);
@@ -164,7 +191,7 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
             bold: a chip already carrying a border and a fill does not also
             need weight, and bold monospace at 10px on paper closes up.
           -->${item.tagNumber ? `
-          <div style="margin-top: 5px; font-weight: normal;"><span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 1px 5px; border-radius: 4px;">تگ: ${escapeHtml(item.tagNumber)}</span></div>` : ""}
+          <div style="margin-top: 5px; font-weight: normal;"><span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 1px 5px; border-radius: 4px; direction: ltr; unicode-bidi: isolate;">Tag: ${escapeHtml(item.tagNumber)}</span></div>` : ""}
         </div>
         <!-- On one line on purpose: 'white-space: pre-line' keeps newlines, so
              a line break between the tag and the value printed a blank line
@@ -815,7 +842,7 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
                       }
                   </div>
                   <div class="title-box">
-                      <h1 class="title">${(template.documentTitle || "").replace("رسمی", "").trim()}</h1>
+                      <h1 class="title">${escapeHtml(proformaDocumentTitle(pf.proformaType))}</h1>
                   </div>
                   <div class="doc-specs">
                       <div class="specs-item"><span class="specs-label">شماره پیش‌فاکتور:</span> ${pf.proformaNumber}</div>
@@ -841,6 +868,7 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
                       <div><span style="color: #64748b;">نام خریدار / شرکت:</span> <strong>${customerObj?.customerType === "حقیقی" && pf.contactPrefix ? pf.contactPrefix + " " : ""}${pf.customerName}</strong></div>
                       <div><span style="color: #64748b;">مخاطب:</span> ${customerObj?.customerType === "حقوقی" && pf.contactPrefix ? pf.contactPrefix + " " : ""}${contactFamilyName || "نماینده خریدار"}</div>
                   </div>
+                  ${projectRow}
               </div>
               <!-- Items Table -->
               <div class="table-container">

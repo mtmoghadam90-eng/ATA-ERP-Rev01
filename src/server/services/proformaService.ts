@@ -175,7 +175,7 @@ const LIST_SELECT = {
   // project's customer comes down with the row rather than being looked up.
   project: {
     select: {
-      id: true, code: true, name: true, status: true,
+      id: true, code: true, name: true, status: true, customerInquiryNumber: true,
       customer: { select: { id: true, companyName: true } },
     },
   },
@@ -252,7 +252,18 @@ export async function getProforma(id: string, user: AuthUser) {
     include: {
       customer: { select: { id: true, companyName: true, customerType: true, economicCode: true, address: true, phone: true } },
       contact: { select: { id: true, companyName: true } },
-      project: { select: { id: true, code: true, name: true, status: true } },
+      /*
+       * `customerInquiryNumber` is «شماره درخواست» on the printed document —
+       * the customer's own reference for the enquiry this quotation answers, so
+       * they can file it against what they sent us. It lives on the project and
+       * nowhere else, which is why the join carries it rather than the proforma
+       * holding a copy.
+       */
+      project: {
+        select: {
+          id: true, code: true, name: true, status: true, customerInquiryNumber: true,
+        },
+      },
       creator: { select: { id: true, fullName: true, signatureImage: true } },
       items: { orderBy: { lineNo: "asc" } },
     },

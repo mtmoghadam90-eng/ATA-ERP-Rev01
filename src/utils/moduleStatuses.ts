@@ -150,6 +150,33 @@ export const PROFORMA_FORMAT_FALLBACKS = {
 
 export type ProformaKind = keyof typeof PROFORMA_FORMAT_KEYS;
 
+/**
+ * What the printed document calls itself.
+ *
+ * A **technical** specification quotes no prices, so the page it produces is a
+ * «پیشنهاد فنی» and nothing more. The other two carry prices as well as the
+ * specification, so they are a «پیشنهاد فنی و مالی» — which is what the company
+ * has always called the document out loud, and what a customer looking at it
+ * would say it is.
+ *
+ * It is derived from the **kind** rather than read from the template, because
+ * the two documents genuinely say different things and one title cannot be
+ * right for both. The template's own `documentTitle` was the earlier answer and
+ * had no form field anywhere in the application — it could only ever be the
+ * seeded string, with «رسمی» stripped back off it by the renderer, so nothing
+ * configurable is lost here.
+ */
+export const PROFORMA_DOCUMENT_TITLES = {
+  FINANCIAL: "پیشنهاد فنی و مالی",
+  TECHNICAL: "پیشنهاد فنی",
+  AFTER_SALES: "پیشنهاد فنی و مالی",
+} as const satisfies Record<keyof typeof PROFORMA_FORMAT_KEYS, string>;
+
+/** The printed title for a stored `proformaType`. */
+export function proformaDocumentTitle(type: unknown): string {
+  return PROFORMA_DOCUMENT_TITLES[proformaKindOf(type)];
+}
+
 /** The kind a stored `proformaType` names; anything unknown is financial. */
 export function proformaKindOf(type: unknown): ProformaKind {
   const value = String(type ?? "").trim();
