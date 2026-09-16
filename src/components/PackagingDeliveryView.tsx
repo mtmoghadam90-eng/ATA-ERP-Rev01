@@ -2403,7 +2403,6 @@ ${sheets}
               <div className="no-print pt-6 border-t border-slate-200 mt-6 text-right">
                 <ModuleNotesSection
                   notes={deliveryNotes.notes}
-                  currentUser={currentUser}
                   title="نکات، کامنت‌ها و توافقات مرحله بسته‌بندی/ارسال"
                   placeholder="مثال: کامنت مشتری در مرحله بسته‌بندی یا شرایط لجستیک خاص این ارسال..."
                   onAddNote={deliveryNotes.addNote}

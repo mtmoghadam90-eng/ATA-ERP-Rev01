@@ -2820,7 +2820,6 @@ export default function ProformasView({
             <div className="print:hidden mt-8 text-right border-t border-slate-200 pt-8">
               <ModuleNotesSection
                 notes={proformaNotes.notes}
-                currentUser={currentUser}
                 title="توافقات خاص و کامنت‌های این پیش‌فاکتور"
                 placeholder="یادداشت یا کامنت جدید درباره شرایط پرداخت، تخفیفات، یا توافقات خاص مشتری بنویسید..."
                 onAddNote={proformaNotes.addNote}

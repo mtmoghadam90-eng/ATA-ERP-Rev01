@@ -1715,6 +1715,11 @@ model ModuleNote {
   entityId   String   @db.NVarChar(36)
   text       String   @db.NVarChar(Max)
   authorName String?  @db.NVarChar(200)
+  /// The account that wrote it. Null on every row written before the column,
+  /// which is why the name comparison survives as the fallback.
+  authorUserId String? @db.NVarChar(36)
+  /// `[{name,size,url}]`, read and written only through `src/utils/attachments.ts`.
+  attachments String?  @db.NVarChar(Max)
   createdAt  DateTime @default(now())
 
   @@index([entityType, entityId])

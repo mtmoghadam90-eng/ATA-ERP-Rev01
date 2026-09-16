@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "./client";
 import type { ModuleNote } from "../types";
+import type { ActivityAttachment } from "../utils/attachments";
 
 /**
  * Notes attached to a document.
@@ -17,7 +18,20 @@ export interface ModuleNoteRow {
   entityId: string;
   text: string;
   authorName: string | null;
+  /** Null on every row written before the column existed. */
+  authorUserId: string | null;
+  attachments: ActivityAttachment[];
   createdAt: string;
+  /**
+   * Whether **this** reader may remove it.
+   *
+   * Answered by the server, because the rule falls back to comparing the
+   * author's name for rows written before `authorUserId` and a browser does not
+   * have the directory. Absent — an older server — reads as *true*, which keeps
+   * the button where it has always been and lets the refusal explain itself,
+   * rather than hiding a control somebody used yesterday.
+   */
+  canDelete?: boolean;
 }
 
 export const moduleNotesApi = {
@@ -25,9 +39,10 @@ export const moduleNotesApi = {
     api.get<{ notes: ModuleNoteRow[] }>(`/api/notes/${entityType}/${entityId}`, undefined, signal)
       .then((r) => r.notes),
 
-  add: (entityType: string, entityId: string, text: string) =>
-    api.post<{ note: ModuleNoteRow }>(`/api/notes/${entityType}/${entityId}`, { text })
-      .then((r) => r.note),
+  add: (entityType: string, entityId: string, text: string, attachments?: ActivityAttachment[]) =>
+    api.post<{ note: ModuleNoteRow }>(`/api/notes/${entityType}/${entityId}`, {
+      text, attachments: attachments ?? [],
+    }).then((r) => r.note),
 
   /** Refused for a note written by someone else, unless you administer the system. */
   remove: (id: string) => api.delete<Record<string, never>>(`/api/notes/${id}`),
@@ -39,14 +54,25 @@ export function rowToModuleNote(row: ModuleNoteRow): ModuleNote {
     id: row.id,
     text: row.text,
     author: row.authorName ?? "",
-    // The component shows this as written; the column is a real timestamp.
+    /*
+     * **A real instant, formatted where it is drawn.** The column is a
+     * `DateTime`, so it arrives as an ISO string — and the card printed it
+     * exactly as it came, which is how «2026-09-16T10:23:45.000Z» came to be
+     * the timestamp on a Persian screen. It is folded to Shamsi in the
+     * component with `formatDateTimeToShamsi`, which reads the *local* clock:
+     * both this server and the people reading it are on Tehran time, and
+     * `toShamsiStr` on the raw string would take the date out of the UTC
+     * prefix and put a note written after 20:30 on the previous day.
+     */
     createdAt: row.createdAt,
+    attachments: row.attachments ?? [],
+    canDelete: row.canDelete !== false,
   } as ModuleNote;
 }
 
 export interface UseModuleNotesResult {
   notes: ModuleNote[];
-  addNote: (text: string) => Promise<void>;
+  addNote: (text: string, attachments?: ActivityAttachment[]) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
 }
 
@@ -88,10 +114,10 @@ export function useModuleNotes(
   const report = (err: unknown, fallback: string) =>
     onError?.(err instanceof ApiError ? err.message : fallback);
 
-  const addNote = useCallback(async (text: string) => {
+  const addNote = useCallback(async (text: string, attachments?: ActivityAttachment[]) => {
     if (!entityId) return;
     try {
-      await moduleNotesApi.add(entityType, entityId, text);
+      await moduleNotesApi.add(entityType, entityId, text, attachments);
       await load();
     } catch (err) {
       report(err, "ثبت یادداشت با خطا مواجه شد.");

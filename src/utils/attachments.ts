@@ -105,6 +105,56 @@ export function attachmentColumns(list: ActivityAttachment[]): {
   };
 }
 
+/* ------------------- the same shape, with no legacy column ---------------- */
+
+/**
+ * A list stored in one JSON column and nowhere else.
+ *
+ * `parseAttachments` above has to reconcile the JSON against three older
+ * columns, because an activity carried one file before it carried a list. A
+ * record whose attachments were a list from the first day has no such second
+ * source, so it needs the parse and not the precedence — written out at the
+ * call site that would be a bare `try`/`catch` per reader, and the one nobody
+ * wrapped is the one that makes a whole screen unreadable on a malformed value.
+ */
+export function parseAttachmentList(json: string | null | undefined): ActivityAttachment[] {
+  if (!json) return [];
+  try {
+    return normalizeAttachments(JSON.parse(json));
+  } catch {
+    // A broken value is no attachments rather than a thrown request: the note's
+    // own words are the part somebody is reading.
+    return [];
+  }
+}
+
+/** The single column such a list is written to. */
+export const attachmentListColumn = (list: ActivityAttachment[]): string | null => {
+  const clean = normalizeAttachments(list);
+  return clean.length > 0 ? JSON.stringify(clean) : null;
+};
+
+/**
+ * How large a file is, in the words `ActivityAttachment.size` holds.
+ *
+ * The figure is *stored* on the row rather than computed when it is drawn,
+ * because the bytes live under `/uploads` and asking their size back would be a
+ * request per attachment per render. That makes this a one-line expression at
+ * the moment of upload — and it was written out eight times across the screens
+ * that upload, each rounding differently, so the same file reads «۳۴۰.۳ KB» on
+ * one screen and «۳۴۰ KB» on the next. One rule, in the module that owns the
+ * shape; the eight older copies are left where they are rather than swept in
+ * with an unrelated change.
+ */
+export function formatFileSize(bytes: number): string {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  // Never «0.4 KB» for a small file: a rounded-down zero reads as a failed
+  // upload, so anything short of a kilobyte is reported as one.
+  return `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
 /* ---------------------- the same shape, for an offer --------------------- */
 
 /**

@@ -131,6 +131,11 @@ import {
 import { channelIsPaced, channelPassLimit } from "../src/server/services/messaging/messageService";
 import { telegramCredentialsFrom } from "../src/server/services/messaging/telegramClient";
 import { pickTelegramCredentials } from "../src/server/services/messaging/telegramCredentials";
+import { canDeleteNote, noteHasContent, noteSummary } from "../src/utils/moduleNotes";
+import {
+  attachmentListColumn, formatFileSize, parseAttachmentList,
+} from "../src/utils/attachments";
+import { formatDateTimeToShamsi } from "../src/dateUtils";
 import {
   TELEGRAM_GAP_MS, TELEGRAM_PER_PASS, floodWaitSeconds, isTelegramAddressable,
   telegramApiFrom, telegramApiRefusal, telegramFailureKind, telegramGapMs, telegramPeer,
@@ -4856,6 +4861,26 @@ head("Rich text: markers in, safe HTML out");
     renderRichText("قبل\n" + grid + "\nبعد"));
   ok("a cell's own bold still renders",
     renderRichText("**شرح** | تعداد\nفلومتر | ۲").includes("<strong>شرح</strong>"));
+  /*
+   * **The table reads left to right**, and that is a fact about what goes in
+   * it rather than about the page around it: these are specification tables
+   * pasted out of a datasheet and every one of them is in Latin. Drawn `rtl`
+   * the *columns* run the other way, so «Tag | Model | Range» prints Range
+   * first and the document contradicts the sheet it was copied from — on a
+   * page a customer reads. Held on the element **and** on the cells, because
+   * the element decides the column order and the cell decides where the words
+   * sit in it, and either one left behind is half the fault still standing.
+   */
+  {
+    const html = renderRichText("Tag | Model\nFT-101 | ABC");
+    ok("the table itself runs left to right",
+      /<table style="[^"]*direction: ltr/.test(html), html);
+    ok("...and no rtl is left on it", !/direction: rtl/.test(html), html);
+    ok("...and a cell's words sit at its left edge",
+      /<td style="[^"]*text-align: left/.test(html)
+      && /<th style="[^"]*text-align: left/.test(html), html);
+    ok("...with no right alignment left behind", !/text-align: right/.test(html), html);
+  }
 
   /* ------------------------- a table off the clipboard --------------------- */
   /*
@@ -10355,6 +10380,229 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   ok("...and the list is saved with the product",
     /documents,/.test(view));
 
+head("A document's notes: files, a Shamsi clock, and a delete that is offered honestly");
+
+/*
+ * «توافقات خاص و کامنت‌های این پیش‌فاکتور» is where a salesperson records what
+ * was agreed, and the three faults reported against it were all of one kind —
+ * something the record already knew that the screen either could not carry or
+ * printed as it stood.
+ */
+{
+  const nowIso = new Date(Date.UTC(2026, 8, 16, 22, 30, 0)).toISOString();
+
+  /* ----------------------- who may remove a note ------------------------ */
+  /*
+   * **The id decides; the name is the fallback for rows that have no id.** The
+   * whole rule used to be `note.authorName !== me.fullName`, and a name is not
+   * an identity here: the collation reads ی/ي apart, two colleagues share a
+   * name, and renaming an account took away the right to delete one's own
+   * notes. `resolveAssignee`'s lesson, arriving on a delete button.
+   */
+  const reader = { id: "u1", fullName: "محمد مقدم" };
+  ok("the author may remove their own note",
+    canDeleteNote({ authorUserId: "u1", authorName: "هر چیزی" }, reader));
+  ok("...and somebody else may not",
+    !canDeleteNote({ authorUserId: "u2", authorName: "محمد مقدم" }, reader));
+  /*
+   * That second one is the whole point of the column: the names match exactly
+   * and the answer is still no, because the ids say they are two people.
+   */
+  ok("an administrator may remove any note",
+    canDeleteNote({ authorUserId: "u2", authorName: "somebody" },
+      { id: "u9", isSystemAdmin: true }));
+
+  // A row written before the column falls back to the name, folded.
+  ok("a note with no id falls back to the name",
+    canDeleteNote({ authorUserId: null, authorName: "محمد مقدم" }, reader));
+  ok("...folded, so ی and ي are one person",
+    canDeleteNote({ authorUserId: null, authorName: "محمد مقدم".replace("ی", "ي") }, reader));
+  ok("...and a different name is still refused",
+    !canDeleteNote({ authorUserId: null, authorName: "رضا رضایی" }, reader));
+  /*
+   * **A note with no author at all is nobody's.** Reading a blank against a
+   * blank as a match would hand every anonymous note in the company to whoever
+   * happens to have no name on their account.
+   */
+  ok("an authorless note is not everybody's",
+    !canDeleteNote({ authorUserId: null, authorName: null }, { id: "u1", fullName: "" }));
+  ok("...nor is it matched by an authorless reader",
+    !canDeleteNote({ authorUserId: null, authorName: "" }, { id: "u1", fullName: null }));
+
+  /* -------------------------- a file is a note -------------------------- */
+  /*
+   * The evidence of an agreement is the customer's confirming email or a signed
+   * page, so refusing a note because no sentence was typed beside the file is a
+   * refusal about the wrong thing.
+   */
+  const file = { name: "confirm.pdf", size: "342 KB", url: "/uploads/note-files/a.pdf" };
+  ok("words alone are a note", noteHasContent("قیمت تأیید شد", []));
+  ok("a file alone is a note", noteHasContent("", [file]));
+  ok("...and whitespace alone is not", !noteHasContent("   \n ", []));
+  ok("nothing at all is not a note", !noteHasContent(null, []));
+
+  /* ------------------- what the project's timeline says ----------------- */
+  eq("words are quoted as written", noteSummary("قیمت تأیید شد", []), "قیمت تأیید شد");
+  ok("...and say how many files came with them",
+    noteSummary("قیمت تأیید شد", [file, file]).includes("۲"),
+    noteSummary("قیمت تأیید شد", [file, file]));
+  /*
+   * A file-only note has no words to quote, and «یادداشت … : «»» around a blank
+   * reads as a history entry that failed to load rather than one that happened.
+   */
+  ok("a file-only note names the file",
+    noteSummary("", [file]).includes("confirm.pdf"), noteSummary("", [file]));
+  ok("...and several are counted", noteSummary("", [file, file, file]).includes("۳"));
+
+  /* ------------------------ the attachment column ----------------------- */
+  const col = attachmentListColumn([file]);
+  eq("a list round-trips through its own column",
+    JSON.stringify(parseAttachmentList(col)), JSON.stringify([file]));
+  eq("an empty list stores nothing", attachmentListColumn([]), null);
+  eq("...and nothing reads back as an empty list",
+    JSON.stringify(parseAttachmentList(null)), "[]");
+  /*
+   * A malformed value is no attachments rather than a thrown request: the
+   * note's own words are the part somebody is reading.
+   */
+  eq("a broken value does not take the note with it",
+    JSON.stringify(parseAttachmentList("{not json")), "[]");
+  eq("an entry with no url is dropped",
+    JSON.stringify(parseAttachmentList('[{"name":"x"}]')), "[]");
+
+  /* ---------------------------- the file size --------------------------- */
+  /*
+   * One rule, in the module that owns the shape. Eight hand-written copies of
+   * this expression are spread across the screens that upload and each rounds
+   * differently, so the same file reads «۳۴۰.۳ KB» on one and «۳۴۰ KB» on the
+   * next; the eight are left where they are and the new path reads this.
+   */
+  eq("a third of a megabyte", formatFileSize(350_000), "342 KB");
+  eq("megabytes above a megabyte", formatFileSize(3_500_000), "3.3 MB");
+  /*
+   * Never «0.4 KB»: a rounded-down zero beside a file that uploaded perfectly
+   * well reads as a failure.
+   */
+  eq("a tiny file is one kilobyte, never zero", formatFileSize(400), "1 KB");
+  eq("nothing measurable says nothing", formatFileSize(0), "");
+
+  /* ------------------------ the clock on the card ----------------------- */
+  /*
+   * `createdAt` is a real `DateTime`, so it arrives as an ISO instant — and the
+   * card printed it exactly as it came, which is how «2026-09-16T22:30:00.000Z»
+   * came to be the timestamp on a Persian screen.
+   *
+   * **And the fold has to read the local clock.** `toShamsiStr` on the raw
+   * string takes the date out of the UTC prefix, so a note written at 02:00 in
+   * Tehran is dated the previous day — which is this codebase's own
+   * UTC+03:30 trap arriving through a timestamp instead of a date column.
+   */
+  const shown = formatDateTimeToShamsi(nowIso);
+  ok("the card prints a Shamsi date", /^1[34]\d{2}\//.test(shown), shown);
+  ok("...and the hour beside it", /ساعت \d{2}:\d{2}/.test(shown), shown);
+  /*
+   * The two halves of the trap, each stated in a way that is true in any
+   * timezone — a check that only fails in Tehran is a check that passes on
+   * every machine it runs on.
+   *
+   * `toShamsiStr` takes a **string** through a regex and answers the date in
+   * its UTC prefix, whatever clock the reader is on. `formatDateTimeToShamsi`
+   * makes a `Date` first and reads the **local** calendar fields. In Tehran
+   * (UTC+03:30) those two differ for every instant after 20:30, which is the
+   * hour a note written at 02:00 was dated to the previous day.
+   */
+  eq("a raw ISO string is read as its UTC prefix",
+    toShamsiStr(nowIso), toShamsiStr(new Date(Date.UTC(2026, 8, 16))));
+  eq("...while the card reads the local clock",
+    shown.slice(0, 10), toShamsiStr(new Date(nowIso)));
+  const local = new Date(nowIso);
+  eq("...and prints that local hour",
+    shown.slice(-8, -3), `${String(local.getHours()).padStart(2, "0")}`
+      + `:${String(local.getMinutes()).padStart(2, "0")}`);
+
+  /* ------------------------ and the screen agrees ----------------------- */
+  const card = strip(readFileSync("src/components/ModuleNotesSection.tsx", "utf8"));
+  /*
+   * **And the screen asks the same function the server asks.** Written twice
+   * these drift the moment either is corrected, and the shape that drift takes
+   * is the worst one available: the submit stays dead while the endpoint behind
+   * it would have taken the note, with nothing on the screen saying why.
+   */
+  ok("the card reads the shared content rule",
+    /noteHasContent\(newNoteText, files\)/.test(card), card.slice(0, 0));
+  ok("...rather than a second reading of it",
+    !/newNoteText\.trim\(\)\.length > 0 \|\|/.test(card), card.slice(0, 0));
+  ok("the card folds the instant rather than printing it",
+    /formatDateTimeToShamsi\(note\.createdAt\)/.test(card)
+    && !/\{note\.createdAt\}/.test(card));
+  /*
+   * The delete is drawn only where the server will accept it. Offered to
+   * everybody and answered 403, it is a refusal nobody can act on — the same
+   * fault as a switch that silently does nothing, wearing the other hat.
+   */
+  ok("the delete is gated on the server's own answer",
+    /note\.canDelete !== false && \(/.test(card), card.slice(0, 0));
+  /*
+   * The shared disc, so one colleague is one colour everywhere and «محمد مقدم»
+   * reads «مم». This card drew its own monogram from the first two *characters*
+   * of the whole name, which for that name is «مح» — the fourth copy of a fault
+   * already corrected on the sidebar and the users grid.
+   */
+  ok("the author's disc is the shared one", /<Avatar name=\{authorName\}/.test(card));
+  ok("...with no monogram of its own left behind",
+    !/substring\(0, 2\)/.test(card) && !/getInitials/.test(card), card.slice(0, 0));
+
+  /* ------------------------- and so does the server --------------------- */
+  const svc = strip(readFileSync("src/server/services/activityService.ts", "utf8"));
+  const addAt = svc.indexOf("export async function addModuleNote");
+  const addBody = svc.slice(addAt, svc.indexOf("\nexport ", addAt + 10));
+  ok("addModuleNote was found at all", addAt > -1 && addBody.includes("moduleNote.create"));
+  /*
+   * From the session, never from the body — the rule `createdByUserId` on a
+   * task follows, and for the same reason: a client that could name the author
+   * could name somebody else.
+   */
+  ok("the author id is stamped from the session",
+    /authorUserId: user\.id/.test(addBody), addBody.slice(0, 0));
+  ok("...and never read off the request", !/authorUserId: (body|input|req)/.test(addBody));
+  ok("the attachments go through the shared column writer",
+    /attachmentListColumn\(files\)/.test(addBody));
+  ok("...and the content rule is the shared one, not a second reading",
+    /noteHasContent\(/.test(addBody) && !/files\.length === 0/.test(addBody), addBody.slice(0, 0));
+  /*
+   * The read is bounded. This list is drawn in full on four screens with no
+   * paging control of its own, so a document nobody prunes would otherwise grow
+   * an unbounded query.
+   */
+  ok("the list is bounded", /take: NOTE_SCAN_LIMIT/.test(svc));
+
+  const route = strip(readFileSync("src/server/routes/activities.ts", "utf8"));
+  ok("the route answers whether each note may be removed",
+    /canDelete: canDeleteNote\(/.test(route));
+  ok("...and accepts the files on the way in",
+    /body\.attachments/.test(route));
+  /*
+   * The refusal names both halves, because a file on its own is a note: telling
+   * somebody who attached exactly what they meant to record that «متن الزامی
+   * است» is a refusal about the wrong thing.
+   */
+  ok("the refusal names the file as well as the text",
+    /یادداشت باید متن یا حداقل یک فایل/.test(route));
+
+  /* ------------------------------ on disk ------------------------------- */
+  const mig = readFileSync(
+    "prisma/migrations/20260928000000_module_note_attachments/migration.sql", "utf8");
+  ok("both columns are added", /ADD \[attachments\]/.test(mig) && /ADD \[authorUserId\]/.test(mig));
+  /*
+   * Nullable and backfilled with nothing. A note already on disk has no files,
+   * which is true, and no author id — so the name comparison stays as the
+   * fallback for exactly those rows and nobody loses a button they had
+   * yesterday.
+   */
+  ok("...both nullable", (mig.match(/NULL;/g) ?? []).length === 2, mig);
+  ok("...and nothing is backfilled", !/UPDATE /i.test(mig));
+}
+
   /* -- one scrollbar -- */
   /*
    * A form that scrolls inside a modal that scrolls is two scrollbars, and the
@@ -10370,6 +10618,14 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     ["src/components/UsersView.tsx", null],
     ["src/components/QuickAddModal.tsx", null],
     ["src/components/ProjectsView.tsx", /p-6 space-y-6 overflow-y-auto/],
+    /*
+     * The block, not only the screens. `ModuleNotesSection` is dropped inside
+     * the after-sales form — which is itself `overflow-y-auto` — and capped its
+     * own list at `max-h-[300px]`, so the very rule this loop enforces on that
+     * screen was broken by a component the loop never read. It has no body of
+     * its own to scroll, hence the null.
+     */
+    ["src/components/ModuleNotesSection.tsx", null],
   ] as const) {
     const src = strip(readFileSync(file, "utf8"));
     const name = file.split("/").pop();
