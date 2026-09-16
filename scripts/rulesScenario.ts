@@ -95,7 +95,7 @@ import { cloneWorkflowRule } from "../src/utils/workflowRules";
 import { MESSAGE_ONCE_SCOPES, isMessageOnceScope, messageOnceKey } from "../src/utils/workflowTriggers";
 import { MAX_QUIET_DAY_SPAN, isCustomerFacing, nextSendableTime } from "../src/utils/messaging";
 import { SCREEN_PERMISSION_ALIAS } from "../src/types";
-import { buildTaskWhere } from "../src/server/services/taskService";
+import { buildTaskWhere, completionNoteRefusal } from "../src/server/services/taskService";
 import type { AuthUser } from "../src/server/auth";
 import type { ListQuery } from "../src/server/listing";
 import { buildReportingTables } from "../src/reporting/flatten";
@@ -9794,13 +9794,46 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   ok("...and the server actually selects them",
     /followUpResult: true/.test(taskService) && /completionNote: true/.test(taskService));
   /*
-   * Neither is writable by the ordinary task editor: `completeFollowUp` is the
-   * only thing that may say what a customer said, and the generic update
-   * refuses to tick a follow-up at all.
+   * `followUpResult` is what the **customer** said, and nothing but the
+   * follow-up flow ever learns it — so it is writable from nowhere else.
+   *
+   * `completionNote` is not the same field wearing a second hat: «شرح اقدام» on
+   * an ordinary task is what *we* did, asked once as the task is ticked off,
+   * and the column was already there with no box to type into. It is writable
+   * now and **refused for a chase in the service**, which is stricter than a
+   * missing key in the allowlist because it also holds against n8n — the
+   * `taskKind` rule in the other direction.
    */
   const taskRoute = strip(readFileSync("src/server/routes/tasks.ts", "utf8"));
-  ok("...but neither is writable from the task form",
-    !/"completionNote"/.test(taskRoute) && !/"followUpResult"/.test(taskRoute));
+  ok("what the customer said is writable from nowhere but the chase's own flow",
+    !/"followUpResult"/.test(taskRoute));
+  ok("...while «شرح اقدام» is writable, so the tick can record it",
+    /"completionNote"/.test(taskRoute));
+  eq("...and refused for a chase, by the service and not by an absent key",
+    completionNoteRefusal("SALES_FOLLOW_UP") !== null, true);
+  eq("...an ordinary task is not refused", completionNoteRefusal("GENERAL"), null);
+  eq("...nor a next action", completionNoteRefusal("NEXT_ACTION"), null);
+  ok("the refusal is checked where the note is written",
+    /if \("completionNote" in input\) \{[\s\S]{0,160}completionNoteRefusal\(before\.taskKind\)/
+      .test(taskService));
+
+  /*
+   * And the tick writes the two keys and no more. Posting a whole record here
+   * would write back whatever the list last held over anything changed since,
+   * which is why `taskToWriteInput` deliberately does not carry the note.
+   */
+  const tasksView = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
+  ok("the tick's write names the status and the note only",
+    /tasksApi\.update\(task\.id, \{\s*status: 'انجام شده',\s*completionNote: note\.trim\(\) \|\| null,\s*\}\)/
+      .test(tasksView));
+  ok("...and the whole-record adapter still leaves the note alone",
+    !/completionNote/.test(
+      api.slice(api.indexOf("export function taskToWriteInput")),
+    ));
+  // Reopening says the work is not done, which is not something to describe.
+  ok("reopening a finished task asks nothing",
+    /if \(task\.status === 'انجام شده'\) \{\s*updateTask\(\{ \.\.\.task, status: 'در حال انجام' \}\);\s*return;/
+      .test(tasksView));
 
   /* -- the card prints both, full width -- */
   const view = strip(readFileSync("src/components/TasksView.tsx", "utf8"));

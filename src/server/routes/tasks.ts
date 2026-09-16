@@ -20,6 +20,15 @@ const WRITABLE: (keyof TaskInput)[] = [
   // silence the very occurrence it was opened to answer.
   "reminderRepeat", "reminderAnchor", "reminderRepeatUntilJalali", "customValues",
   /*
+   * «شرح اقدام» — what was actually done, written when the task is ticked off.
+   *
+   * It is refused for a `SALES_FOLLOW_UP` in the service
+   * (`completionNoteRefusal`), where `completeFollowUp` is the only writer.
+   * `followUpResult` stays out of this list entirely: that is what the customer
+   * said, and nothing but the follow-up flow ever learns it.
+   */
+  "completionNote",
+  /*
    * `taskKind` is writable, and **`SALES_FOLLOW_UP` is refused in the service**.
    *
    * It was left out entirely at first, for a reason that still holds: a

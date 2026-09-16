@@ -53,6 +53,7 @@ import NextActionModal from "../src/components/NextActionModal";
 import SaveWithNextActionButton from "../src/components/SaveWithNextActionButton";
 import LoginView from "../src/components/LoginView";
 import Avatar from "../src/components/Avatar";
+import TaskCompletionModal from "../src/components/TaskCompletionModal";
 import TaskCalendarModal from "../src/components/TaskCalendarModal";
 import type { NextActionDraft } from "../src/utils/nextAction";
 import { resizeColumns } from "../src/utils/columnWidths";
@@ -2032,6 +2033,78 @@ head("Calendar: the close control is above the month, not below it");
   act(() => { cRoot.unmount(); });
   cHost.remove();
   gc.fetch = realFetch;
+}
+
+/*
+ * «شرح اقدام» as the task is ticked off.
+ *
+ * Two things a rule check cannot see and that both type-check perfectly while
+ * doing nothing: a box whose `onChange` is never wired, so the note is always
+ * blank whatever was typed; and a confirm button that draws and calls back with
+ * something other than what is in the box. The whole feature is one string
+ * reaching one write.
+ */
+head("Completing a task: the note reaches the caller");
+{
+  const nHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const nRoot = createRoot(nHost);
+  const task = {
+    id: "t-1", title: "تماس با پتروشیمی", status: "برای انجام",
+    taskKind: "GENERAL", priority: "متوسط",
+  };
+  let confirmed: string | null = null;
+  let cancelled = 0;
+
+  const draw = (t: unknown) => act(() => {
+    nRoot.render(React.createElement(TaskCompletionModal, {
+      task: t as never,
+      onCancel: () => { cancelled += 1; },
+      onConfirm: (note: string) => { confirmed = note; },
+    }));
+  });
+
+  // Nothing is drawn until a task is being ticked.
+  draw(null);
+  ok("no task, no dialog", nHost.innerHTML === "", nHost.innerHTML.slice(0, 80));
+
+  draw(task);
+  const box = nHost.querySelector("#task-completion-note") as HTMLTextAreaElement | null;
+  ok("the box is drawn", !!box);
+  ok("...empty for a task nobody has answered yet", box?.value === "", box?.value);
+  ok("...and the task being ticked is named on it",
+    nHost.textContent?.includes("تماس با پتروشیمی") === true);
+
+  // Through the control's own handler, which is the wiring under test.
+  act(() => {
+    box!.value = "قیمت رقیب گرفته شد و ۵٪ تخفیف پیشنهاد شد";
+    handlers(box!).onChange?.({ target: box });
+  });
+  ok("typing reaches the control", box?.value === "قیمت رقیب گرفته شد و ۵٪ تخفیف پیشنهاد شد",
+    box?.value);
+
+  const confirm = nHost.querySelector("#task-completion-confirm") as HTMLElement | null;
+  ok("the confirm button is drawn", !!confirm);
+  ok("...and drawing it has written nothing", confirmed === null);
+  act(() => { confirm!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("...pressing it hands over exactly what was typed",
+    confirmed === "قیمت رقیب گرفته شد و ۵٪ تخفیف پیشنهاد شد", confirmed);
+
+  /*
+   * A note already on the task seeds the box: re-completing a card that was
+   * reopened should let somebody add to what they wrote rather than retype it.
+   */
+  draw({ ...task, id: "t-2", completionNote: "نصب انجام شد" });
+  const seeded = nHost.querySelector("#task-completion-note") as HTMLTextAreaElement | null;
+  ok("an existing note is seeded, not lost", seeded?.value === "نصب انجام شد", seeded?.value);
+
+  // And the way out writes nothing at all.
+  const cancel = nHost.querySelector("#task-completion-cancel") as HTMLElement | null;
+  act(() => { cancel!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("cancelling asks the caller to close and writes nothing",
+    cancelled === 1 && confirmed === "قیمت رقیب گرفته شد و ۵٪ تخفیف پیشنهاد شد", cancelled);
+
+  act(() => { nRoot.unmount(); });
+  nHost.remove();
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
