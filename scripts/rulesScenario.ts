@@ -302,9 +302,31 @@ import {
   namePrefixFor, staffAddresseeOf, staffPrefixFor,
 } from "../src/utils/honorific";
 import { AVATAR_SIZES, avatarColors, avatarHue, initialsOf } from "../src/utils/avatar";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync as readFileBytes, statSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
+
+/**
+ * Every check that reads a source file reads it through here, and the reason is
+ * the server rather than tidiness.
+ *
+ * There is no `.gitattributes` in this repository and Git for Windows checks
+ * out CRLF by default, so `deploy.ps1`'s `git reset --hard origin/main`
+ * re-materialises the whole tree with `\r\n` on every deploy. Five checks —
+ * the ones whose pattern spans a line break, which is most of the interesting
+ * ones — then fail against a tree that is character-for-character the commit
+ * that passed here. Measured, not guessed: converting this tree to CRLF and
+ * running the suite failed exactly those five.
+ *
+ * Since this suite is a deploy gate, that is a server that cannot deploy for a
+ * reason nothing on its screen names — and the step was once reverted out of
+ * the script rather than debugged, which is what that costs. A rule has one
+ * reading whatever wrote the file, so the line ending is folded once, here,
+ * instead of `\r?` being remembered in three hundred and fifty patterns, where
+ * the one nobody remembers is the check that goes quiet.
+ */
+const readFileSync = (path: string, encoding: "utf8" | "utf-8"): string =>
+  readFileBytes(path, encoding).replace(/\r\n/g, "\n");
 
 let pass = 0; const fails: string[] = [];
 const ok = (what: string, cond: boolean, got?: unknown) => {
@@ -7525,6 +7547,75 @@ head("Deploy: a fetch that never reached GitHub is not «already up to date»");
     /\$LASTEXITCODE -ne 0/.test(lines[rulesAt + 1] ?? "")
     && /NOT deploying/.test(lines[rulesAt + 1] ?? "")
     && /Restore-Dist/.test(lines[rulesAt + 1] ?? ""));
+
+  /*
+   * And this file reads every source file through one reader, which is what
+   * makes the step above safe to gate on.
+   *
+   * There is no `.gitattributes` here and Git for Windows checks out CRLF, so
+   * the tree this suite reads *on the server* is not byte-for-byte the tree it
+   * passed against on a developer's machine — and five checks, the ones whose
+   * pattern spans a line break, failed there for that reason alone. A gate that
+   * fails on a correct commit is worse than no gate: the step was reverted out
+   * of the script rather than debugged, and everything it would have caught
+   * since went uncaught.
+   *
+   * So the fold happens once, where the file is read. The risk now is the
+   * obvious one — a later check reaching for `node:fs` itself and reading a
+   * file raw — which reads perfectly, passes here, and fails only on the
+   * server. There is exactly one call to the raw reader: the wrapper's own.
+   */
+  const stripTs = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const self = stripTs(readFileSync("scripts/rulesScenario.ts", "utf8"));
+  ok("every source file is read through the line-ending fold",
+    (self.match(/readFileBytes\(/g) ?? []).length === 1,
+    (self.match(/readFileBytes\(/g) ?? []).length);
+  ok("...which is what the fold does", /readFileBytes\(path, encoding\)\s*\.replace\(\/\\r\\n\/g, "\\n"\)/.test(self));
+  ok("...and nothing imports the raw reader under its own name",
+    !/\breadFileSync\s*,/.test(self.split("\n").find(l => /from "node:fs"/.test(l)) ?? ""));
+
+  /*
+   * The exit code is the step number that stopped the deploy. Two of them used
+   * to collide — the build and «the port is held by something that is not
+   * ours» both exited 7 — which are the two failures wanting the most different
+   * response, and two steps both printed «[5]», so the log read as though it
+   * had repeated itself. Neither is a fault in what the script *does*, and both
+   * are read at the one moment somebody is standing over a server deciding what
+   * went wrong.
+   *
+   * Step 1 is deliberately printed twice: backup, or backup skipped. They are
+   * the two branches of one step and only one of them ever runs.
+   */
+  const stepNumbers = lines
+    .map(l => /^\s*Step (\d+) "/.exec(l.replace(/#.*$/, "")))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map(m => Number(m[1]));
+  ok("the deploy prints a step number for every step", stepNumbers.length >= 10);
+  const repeated = stepNumbers.filter((n, i) => stepNumbers.indexOf(n) !== i && n !== 1);
+  ok("...and no two different steps share one", repeated.length === 0, repeated);
+  ok("...numbered from 1 with no gaps",
+    [...new Set(stepNumbers)].sort((a, b) => a - b).every((n, i) => n === i + 1));
+
+  /*
+   * Read from the code rather than from the labels: a `Step N` line followed by
+   * an `exit M` with M !== N is the collision above, wearing whichever number
+   * somebody last edited.
+   */
+  let current = 0;
+  const mismatched: string[] = [];
+  for (const raw of lines) {
+    const line = raw.replace(/#.*$/, "");
+    const step = /^\s*Step (\d+) "/.exec(line);
+    if (step) { current = Number(step[1]); continue; }
+    if (current === 0) continue;
+    for (const m of line.matchAll(/\bexit (\d+)\b/g)) {
+      const code = Number(m[1]);
+      if (code !== 0 && code !== current) mismatched.push(`step ${current} exits ${code}`);
+    }
+  }
+  ok("every failure exits with the number of the step it stopped",
+    mismatched.length === 0, mismatched);
 }
 
 

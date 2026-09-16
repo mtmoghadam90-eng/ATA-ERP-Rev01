@@ -37,6 +37,13 @@ $node = Join-Path $NodeDir "node.exe"
 # adapter it depends on. Silenced for this process only.
 $env:PRISMA_HIDE_UPDATE_MESSAGE = "1"
 
+# The exit code IS the step number that stopped the deploy, with no exceptions:
+# step 8 exits 8. Two of them used to collide — the build and "the port is held
+# by something that is not ours" both exited 7 — and those are the two failures
+# needing the most different response, one a commit to fix and the other a
+# process to go and find on a server shared with IIS, SQL Server and Report
+# Server. Whoever reads ERRORLEVEL learns which step, and the message beside it
+# says which failure within that step. 0 is a deploy that finished healthy.
 function Step($n, $msg) { Write-Host "`n[$n] $msg" -ForegroundColor Cyan }
 function Ok($msg)       { Write-Host "    OK - $msg" -ForegroundColor Green }
 function Fail($msg)     { Write-Host "    FAILED - $msg" -ForegroundColor Red }
@@ -90,7 +97,7 @@ function Restore-Dist {
 Step 3 "Fetching the latest code"
 if (-not (Test-Path ".git")) {
     Fail "This folder is not a git clone. Run the one-time setup first (see docs/deployment.md)."
-    exit 2
+    exit 3
 }
 #
 # `$ErrorActionPreference = "Stop"` does NOT apply to a native command like
@@ -156,41 +163,49 @@ Ok "database schema is up to date"
 # that exist in the database but not yet in the types. npm cannot be relied on
 # to do it: Prisma regenerates from an install script, and install scripts are
 # blocked here.
-Step 5 "Regenerating the database client"
+Step 6 "Regenerating the database client"
 & $npx prisma generate
 if ($LASTEXITCODE -ne 0) {
     Fail "prisma generate failed - NOT deploying"
     Restore-Dist
-    exit 5
+    exit 6
 }
 Ok "database client matches the schema"
 
-# ------------------------------------------------------------- 6. type-check
-Step 6 "Type-checking"
+# ------------------------------------------------------------- 7. type-check
+Step 7 "Type-checking"
 & $npm run lint
-if ($LASTEXITCODE -ne 0) { Fail "type-check failed - NOT deploying"; Restore-Dist; exit 6 }
+if ($LASTEXITCODE -ne 0) { Fail "type-check failed - NOT deploying"; Restore-Dist; exit 7 }
 Ok "no type errors"
 
-# ------------------------------------------------------------- 7. rule checks
+# ------------------------------------------------------------- 8. rule checks
 #   The type-checker cannot see any of what this suite holds: a hook below an
 #   early return, a route registered after the id route that swallows it, a
 #   migration carrying a bare GO, two copies of one rule that have drifted. It
 #   needs no database and no browser, so it is the one suite that can stand
-#   between a commit and this server.
-Step 7 "Running the rule checks"
+#   between a commit and this server. About two seconds.
+#
+#   It was reverted out of this script once, and the reason was never the idea:
+#   there is no .gitattributes in the repository and Git for Windows checks out
+#   CRLF, so five of the checks - the ones whose pattern spans a line break -
+#   failed here on a tree that was character-for-character the commit that had
+#   passed on the developer's machine. The suite folds the line ending where it
+#   reads a file now, so this server and that one answer the same. If this step
+#   ever fails again, it is naming a real fault: read what it printed.
+Step 8 "Running the rule checks"
 & $npm run test:rules
-if ($LASTEXITCODE -ne 0) { Fail "rule checks failed - NOT deploying"; Restore-Dist; exit 10 }
+if ($LASTEXITCODE -ne 0) { Fail "rule checks failed - NOT deploying"; Restore-Dist; exit 8 }
 Ok "rule checks passed"
 
-# ------------------------------------------------------------------ 8. build
-Step 8 "Building production bundle"
+# ------------------------------------------------------------------ 9. build
+Step 9 "Building production bundle"
 & $npm run build
-if ($LASTEXITCODE -ne 0) { Fail "build failed - NOT deploying"; Restore-Dist; exit 7 }
-if (-not (Test-Path "dist\server.cjs")) { Fail "dist\server.cjs missing"; Restore-Dist; exit 7 }
+if ($LASTEXITCODE -ne 0) { Fail "build failed - NOT deploying"; Restore-Dist; exit 9 }
+if (-not (Test-Path "dist\server.cjs")) { Fail "dist\server.cjs missing"; Restore-Dist; exit 9 }
 Ok "build produced dist\server.cjs"
 
-# ---------------------------------------------------------------- 9. restart
-Step 9 "Restarting the application"
+# --------------------------------------------------------------- 10. restart
+Step 10 "Restarting the application"
 # The task is registered with -MultipleInstances IgnoreNew: if the old process is
 # still alive, Start-ScheduledTask is silently ignored and the deploy has NO
 # effect while appearing to succeed. So confirm the port is actually free before
@@ -223,25 +238,25 @@ try {
                 Start-Sleep -Seconds 3
             } else {
                 Fail "port $Port is held by '$($proc.ProcessName)' (PID $owner), which is not ours - not touching it"
-                exit 7
+                exit 10
             }
         }
     }
 
     if (Get-PortOwner -P $Port) {
         Fail "port $Port is still in use; refusing to start a second instance"
-        exit 7
+        exit 10
     }
 
     Start-ScheduledTask -TaskName $TaskName
     Ok "task '$TaskName' restarted on a free port"
 } catch {
     Fail "could not restart task: $($_.Exception.Message)"
-    exit 8
+    exit 10
 }
 
-# ----------------------------------------------------------- 10. health check
-Step 10 "Health check"
+# ----------------------------------------------------------- 11. health check
+Step 11 "Health check"
 $healthy = $false
 foreach ($i in 1..20) {
     Start-Sleep -Seconds 2
@@ -295,5 +310,5 @@ if ($healthy) {
     Fail "application did not respond on port $Port after 40s"
     Write-Host "Check the task history in Task Scheduler, then run:" -ForegroundColor Yellow
     Write-Host "  cd $AppDir; `$env:NODE_ENV='production'; & '$node' dist\server.cjs" -ForegroundColor Yellow
-    exit 9
+    exit 11
 }
