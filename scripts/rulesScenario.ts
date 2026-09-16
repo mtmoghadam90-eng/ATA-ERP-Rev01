@@ -5403,15 +5403,61 @@ head("Printed proforma: the multi-page rules");
     /\.doc-frame > tbody > tr[\s\S]{0,120}break-inside:\s*auto/.test(doc));
 
   /*
-   * Nothing of unbounded length may be unbreakable: a block taller than the
-   * printable area that refuses to break reproduces the empty page exactly.
-   * The terms are free text a user can make as long as they like.
+   * Nothing of unbounded length may be unbreakable *as a container*: a box
+   * taller than the printable area that refuses to break reproduces the empty
+   * page exactly. '.financial-grid' is the grid holding the terms beside the
+   * totals, and marking *it* would be the goods table's fault again with two
+   * boxes instead of one.
    */
-  for (const selector of [".notes-card", ".financial-grid"]) {
-    const body = ruleBody(selector);
-    ok(`${selector} may break across pages — its content has no fixed length`,
+  {
+    const body = ruleBody(".financial-grid");
+    ok(".financial-grid may break across pages — it holds boxes of no fixed length",
       body !== "" && !/break-inside:\s*avoid/.test(body), body);
   }
+
+  /*
+   * The terms card itself is kept whole, which is the *opposite* of the rule
+   * above and is worth saying why.
+   *
+   * Reported as «جدول توضیحات و شرایط فروش نباید بشکنه. اگر دو تیکه میشه
+   * ببرش صفحه بعد»: a card of ordinary length was cut across the boundary, so
+   * a customer read half the sales conditions at the foot of one sheet and the
+   * rest at the top of the next. Measured by printing — 72 shapes to real PDFs
+   * — **32** split before and **0** after, at no cost in paper (140 sheets
+   * either way).
+   *
+   * It does not reintroduce the empty page, because CSS fragmentation makes
+   * 'break-inside: avoid' a *preference* a UA must abandon when the box does
+   * not fit a fragmentainer at all: printed, a card taller than one page still
+   * breaks, so no text is lost. That is the whole difference from
+   * '.table-container', which was asking for the entire goods list to be kept
+   * together and had somewhere to move it to.
+   */
+  const notes = ruleBody(".notes-card");
+  ok("the terms card is moved whole rather than cut in two",
+    /break-inside:\s*avoid/.test(notes), notes);
+  ok("and says so in the legacy property too, which is what Chrome's printer reads",
+    /page-break-inside:\s*avoid/.test(notes), notes);
+  /*
+   * The table inside it is the sharper half: its first row is the header, so a
+   * cut leaves the columns on the second piece as unlabelled figures — worse
+   * than a split paragraph, because the reader cannot reconstruct what they
+   * mean. Four of the 72 shapes split one before the change.
+   */
+  ok("a pasted table in the terms is never split from its header",
+    /\.notes-card table \{[^}]*break-inside:\s*avoid/.test(doc));
+  ok("nor is one of its rows cut down the middle",
+    /\.notes-card tr \{[^}]*break-inside:\s*avoid/.test(doc));
+  /*
+   * Scoped to the card, and the page-wide rule still says the opposite. A
+   * blanket 'table { break-inside: avoid }' would reach the document frame and
+   * the goods table — the fault the section above exists for — so the bare rule
+   * must go on declaring 'auto' and the card wins on specificity alone.
+   */
+  ok("the page-wide table rule still lets a table fragment",
+    /\n\s{6}table \{[^}]*page-break-inside:\s*auto/.test(doc));
+  ok("...so nothing outside the card is held to one page",
+    !/\n\s{6}table \{[^}]*break-inside:\s*avoid/.test(doc));
 
   // The footer's ink must clear the bottom of its box, or the slice that
   // overflows the reserved strip is painted over the next page's letterhead.

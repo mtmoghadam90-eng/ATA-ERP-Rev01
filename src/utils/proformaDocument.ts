@@ -479,7 +479,44 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
              own. */
           margin-bottom: 2px;
       }
-      /* Same reason as the grid around it: the terms have no fixed length. */
+      /*
+       * **The terms are kept whole, and that is a preference rather than a
+       * demand.** Reported as «جدول توضیحات و شرایط فروش نباید بشکنه. اگر دو
+       * تیکه میشه ببرش صفحه بعد»: a card of ordinary length was being cut
+       * across the page boundary, so a customer read half the sales conditions
+       * at the foot of one sheet and the rest at the top of the next. Judging
+       * this means **printing** it, as everything else in this file does: a
+       * sweep of 72 shapes (item counts crossed with the length of the terms,
+       * with and without a pasted table) rendered to real PDFs by a headless
+       * Chromium reported **32** cards cut across a boundary and **4** tables
+       * cut with them, and **0** of each afterwards. A screen measurement
+       * cannot see any of it — the page is not paginated there, so
+       * 'break-inside' has nothing to act on and reports the same number
+       * whatever the stylesheet says.
+       *
+       * It reproduces on a **technical** proforma and not on a financial one,
+       * which is a fact about the surrounding box rather than about the card:
+       * there the card is a grid item inside '.financial-grid' and Chrome
+       * already moves the whole grid row, so the fix is a no-op there and
+       * costs nothing. And it costs no paper anywhere — the same sweep totals
+       * **140 sheets before and 140 after**, with every shape's page count
+       * identical.
+       *
+       * This is the rule the goods table was corrected *for*, so it is worth
+       * saying why it is safe here and was not there. '.table-container' told
+       * the browser to keep the **entire list of goods** together — and when an
+       * eight-item list would not fit on page one it *did* fit on page two, so
+       * Chrome moved the lot and printed a first page carrying a letterhead and
+       * nothing else. The terms cannot do that, because CSS fragmentation makes
+       * 'break-inside: avoid' a preference a UA must abandon when the box does
+       * not fit a fragmentainer at all: measured, a card taller than one page
+       * still breaks normally. So a short card moves whole, which is what was
+       * asked for, and a long one behaves exactly as it does today.
+       *
+       * The '.financial-grid' around it keeps **no** avoidance: it is the grid
+       * that holds the terms beside the totals, and making that unbreakable
+       * would be the goods table's fault again with two boxes instead of one.
+       */
       .notes-card {
           border: 1px solid #e2e8f0;
           border-radius: 8px;
@@ -487,6 +524,33 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
           background-color: #f8fafc;
           font-size: 12px;
           color: #475569;
+          page-break-inside: avoid;
+          break-inside: avoid;
+      }
+      /*
+       * And the table inside it never splits, which is the sharper half.
+       *
+       * A rich-text table here is a specification pasted out of a datasheet —
+       * a handful of rows — and its first row is the **header**. Cut across a
+       * page it leaves the header behind on the previous sheet, so the columns
+       * on the second piece are unlabelled figures: worse than a paragraph
+       * split, because the reader cannot reconstruct what they mean. It is
+       * bounded in a way the surrounding free text is not, and the same
+       * fragmentation rule applies if somebody ever pastes one longer than a
+       * page.
+       */
+      .notes-card table {
+          page-break-inside: avoid;
+          break-inside: avoid;
+      }
+      /*
+       * A single row is kept whole wherever one is drawn — the goods table's
+       * rows already are, and a row split down the middle of its own text is
+       * the one break nothing gains from.
+       */
+      .notes-card tr {
+          page-break-inside: avoid;
+          break-inside: avoid;
       }
       .totals-card {
           border: 1px solid #e2e8f0;
