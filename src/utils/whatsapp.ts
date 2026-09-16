@@ -23,15 +23,12 @@
  * fails is silently, with the line unlinked and the outbox filling up.
  */
 
-import { digitsOf } from "./messaging";
+import { internationalDigits } from "./messaging";
 
 /* ------------------------------- addressing ------------------------------- */
 
 /** The server WhatsApp addresses an ordinary person's account on. */
 export const WHATSAPP_USER_DOMAIN = "s.whatsapp.net";
-
-/** Iran, for a number typed the way people here type one. */
-const IRAN_CODE = "98";
 
 /**
  * The account a message is addressed to, or **null**.
@@ -43,40 +40,17 @@ const IRAN_CODE = "98";
  * `98@s.whatsapp.net` is a perfectly well-formed JID for an account that does
  * not exist.
  *
- * Three shapes are accepted and the third is deliberate:
- *
- *  - an Iranian mobile however it is written — `0912…`, `912…`, `98912…`,
- *    `0098912…`, `+98 912 345 6789`, with Persian digits — which is what every
- *    customer record here holds;
- *  - an **international** number written with a leading `+`, because this company
- *    imports and a foreign supplier's number is a real case, and refusing it
- *    would mean the channel silently only worked for half the directory;
- *  - nothing else. A landline, a fragment, a number with too many digits: the
- *    caller is told, because the alternative is a message nobody receives.
+ * **Which numbers are addressable is `internationalDigits`**, in `messaging.ts`,
+ * and not a rule of this file's own: Telegram addresses a person by the same
+ * phone number, and two copies of that fold is how a customer comes to be
+ * reachable on one messenger and not the other — a number written `0098912…`
+ * arriving at one as digits and at the other as nothing, with nobody going
+ * looking because the other message arrived. This adds the domain, which is the
+ * only part that is WhatsApp's.
  */
 export function whatsappJid(raw: string | null | undefined): string | null {
-  const text = String(raw ?? "").trim();
-  const digits = digitsOf(text);
-  if (!digits) return null;
-
-  // Written as an international number: trusted as given, within reason. The
-  // ITU caps a subscriber number at 15 digits, and fewer than 8 is not a number
-  // anybody can be reached on.
-  if (text.startsWith("+")) {
-    return digits.length >= 8 && digits.length <= 15
-      ? `${digits}@${WHATSAPP_USER_DOMAIN}`
-      : null;
-  }
-
-  // Iranian mobile, in the four ways it arrives. Every one of them is the same
-  // ten digits starting with 9, with a different prefix in front.
-  const national = digits.startsWith(`00${IRAN_CODE}`) ? digits.slice(4)
-    : digits.startsWith(IRAN_CODE) && digits.length === 12 ? digits.slice(2)
-      : digits.startsWith("0") ? digits.slice(1)
-        : digits;
-
-  if (!/^9\d{9}$/.test(national)) return null;
-  return `${IRAN_CODE}${national}@${WHATSAPP_USER_DOMAIN}`;
+  const digits = internationalDigits(raw);
+  return digits ? `${digits}@${WHATSAPP_USER_DOMAIN}` : null;
 }
 
 /** Whether a stored contact detail can be addressed on WhatsApp at all. */

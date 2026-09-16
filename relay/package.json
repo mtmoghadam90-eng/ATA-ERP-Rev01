@@ -1,14 +1,15 @@
 {
-  "name": "ata-whatsapp-relay",
+  "name": "ata-messaging-relay",
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "Holds the company's WhatsApp linked-device socket on a reachable host. See docs/whatsapp-relay.md.",
+  "description": "Holds the company's WhatsApp and Telegram sessions on a reachable host. See docs/whatsapp-relay.md.",
   "scripts": {
     "start": "tsx server.ts"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc14",
+    "telegram": "2.26.22",
     "tsx": "^4.21.0"
   }
 }

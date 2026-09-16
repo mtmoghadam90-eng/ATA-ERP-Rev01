@@ -29,6 +29,21 @@ export const CHANNELS = {
    * way, and why its pacing is not a setting.
    */
   WHATSAPP: "WHATSAPP",
+  /**
+   * The company's own Telegram account, as a logged-in session.
+   *
+   * The same decision as WhatsApp's and for the same reason — a medium with its
+   * own address, its own history and its own register, not a field of another
+   * channel — and, like it, deliberately **not** the bot API: a bot cannot write
+   * to somebody who has not written to it first, which is every customer, and a
+   * message from `@ata_bot` is not a message from the company. So this is the
+   * account the sales desk already uses, logged in the way Telegram Desktop logs
+   * in, and the socket is held on the same relay WhatsApp's is.
+   *
+   * See `src/utils/telegram.ts` for what that costs and why its pacing is not a
+   * setting either.
+   */
+  TELEGRAM: "TELEGRAM",
 } as const;
 
 export type Channel = typeof CHANNELS[keyof typeof CHANNELS];
@@ -38,11 +53,12 @@ export const CHANNEL_LABELS: Record<Channel, string> = {
   BALE: "بله",
   EMAIL: "ایمیل",
   WHATSAPP: "واتس‌اپ",
+  TELEGRAM: "تلگرام",
 };
 
 /** Every channel, in the order the screens list them. */
 export const ALL_CHANNELS: Channel[] = [
-  CHANNELS.SMS, CHANNELS.WHATSAPP, CHANNELS.BALE, CHANNELS.EMAIL,
+  CHANNELS.SMS, CHANNELS.WHATSAPP, CHANNELS.TELEGRAM, CHANNELS.BALE, CHANNELS.EMAIL,
 ];
 
 export const isChannel = (value: unknown): value is Channel =>
@@ -655,7 +671,8 @@ export function addressFor(
    * really addressable, rather than this returning a number the socket cannot
    * use.
    */
-  const value = channel === CHANNELS.SMS || channel === CHANNELS.WHATSAPP ? candidate.mobile
+  const value = channel === CHANNELS.SMS || channel === CHANNELS.WHATSAPP
+    || channel === CHANNELS.TELEGRAM ? candidate.mobile
     : channel === CHANNELS.EMAIL ? candidate.email
       : candidate.baleChatId;
   const text = String(value ?? "").trim();
@@ -702,11 +719,62 @@ export const isBaleChatId = (value: string | null | undefined): boolean => {
  * than being rejected — the callers decide what the resulting digits mean, and
  * `whatsappJid` reads the `+` off the *original* text for precisely that reason.
  */
+/** Iran, for a number typed the way people here type one. */
+export const IRAN_DIALLING_CODE = "98";
+
 export function digitsOf(raw: string | null | undefined): string {
   return String(raw ?? "")
     .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
     .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
     .replace(/\D/g, "");
+}
+
+/**
+ * A typed number as the digits a messenger addresses an account by, or null.
+ *
+ * **One reading of «which numbers this application can write to», for every
+ * channel that addresses a person by their phone.** It was `whatsappJid`'s
+ * alone, and a second copy inside the Telegram rule would be the `digitsOf`
+ * fault one level up: the two would answer differently for a number written
+ * `0098912…` or with Persian digits, and a customer would be reachable on one
+ * messenger and not the other with nobody going looking, because the other
+ * message arrived.
+ *
+ * Three shapes are accepted and the third is deliberate:
+ *
+ *  - an Iranian mobile however it is written — `0912…`, `912…`, `98912…`,
+ *    `0098912…`, `+98 912 345 6789`, with Persian digits — which is what every
+ *    customer record here holds;
+ *  - an **international** number written with a leading `+`, because this company
+ *    imports and a foreign supplier's number is a real case, and refusing it
+ *    would mean a channel silently only worked for half the directory;
+ *  - nothing else. A landline, a fragment, a number with too many digits: the
+ *    caller is told, because the alternative is a message nobody receives.
+ *
+ * The answer carries no `+` and no domain — it is the digits, and what to wrap
+ * them in is the channel's own question.
+ */
+export function internationalDigits(raw: string | null | undefined): string | null {
+  const text = String(raw ?? "").trim();
+  const digits = digitsOf(text);
+  if (!digits) return null;
+
+  // Written as an international number: trusted as given, within reason. The
+  // ITU caps a subscriber number at 15 digits, and fewer than 8 is not a number
+  // anybody can be reached on.
+  if (text.startsWith("+")) {
+    return digits.length >= 8 && digits.length <= 15 ? digits : null;
+  }
+
+  // Iranian mobile, in the four ways it arrives. Every one of them is the same
+  // ten digits starting with 9, with a different prefix in front.
+  const national = digits.startsWith(`00${IRAN_DIALLING_CODE}`) ? digits.slice(4)
+    : digits.startsWith(IRAN_DIALLING_CODE) && digits.length === 12 ? digits.slice(2)
+      : digits.startsWith("0") ? digits.slice(1)
+        : digits;
+
+  if (!/^9\d{9}$/.test(national)) return null;
+  return `${IRAN_DIALLING_CODE}${national}`;
 }
 
 /** True for something typed in as an Iranian mobile number. */

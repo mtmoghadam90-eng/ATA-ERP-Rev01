@@ -1,9 +1,16 @@
-# Sending WhatsApp through a relay
+# Sending WhatsApp and Telegram through a relay
 
-The WhatsApp channel sends from the company's **own line**, as a linked device.
-By default the socket that holds that device runs inside the ERP process and no
-configuration is needed. This document is about the other deployment: the socket
-held on a machine outside the network, with the ERP talking to it over HTTPS.
+Both channels send from the company's **own account** — WhatsApp as a linked
+device, Telegram as a logged-in session. By default the socket that holds each
+one runs inside the ERP process and no configuration is needed. This document is
+about the other deployment: the sockets held on a machine outside the network,
+with the ERP talking to it over HTTPS.
+
+**One relay holds both.** They are the same idea, they are unreachable from the
+same server for the same reason, and one process means one machine to secure,
+one certificate to renew and one secret to rotate. What is *not* shared is the
+pacing clock: two accounts are two accounts, and a WhatsApp send has nothing to
+say about when Telegram may send next.
 
 ## When this is needed
 
@@ -40,22 +47,42 @@ the socket, two places it can be deployed.
 | `GET /status` | — | `WhatsappReport` + `linked: boolean` |
 | `POST /link` | `{}` | `WhatsappReport` |
 | `POST /unlink` | `{}` | `WhatsappReport` |
+| `POST /tg/send` | `{ recipient, body }` | `{ ok, providerMessageId?, error?, retryAfterMs? }` |
+| `GET /tg/status` | — | `TelegramReport` + `linked: boolean` |
+| `POST /tg/link` | `{}` | `TelegramReport` |
+| `POST /tg/unlink` | `{}` | `TelegramReport` |
 
 `WhatsappReport` is `{ state, qr, linkedNumber, lastError, since }`. Note `qr` is
 the **raw string**, not an image: the ERP renders it, which is why the pairing
 code is still scanned from the ERP's own settings screen and nobody has to reach
 the relay's console.
 
-Every request carries `Authorization: Bearer <WHATSAPP_RELAY_TOKEN>`. The relay
+`TelegramReport` is the same shape with `linkedAccount` in place of
+`linkedNumber`, and `qr` is the `tg://login?token=…` string — again raw, so the
+login code is scanned from the ERP's own settings screen.
+
+`retryAfterMs` on a Telegram send is the one field WhatsApp has no use for.
+Telegram answers a rate limit with the number of seconds it wants
+(`FLOOD_WAIT_…`, routinely minutes and occasionally a day), and the ERP's queue
+honours it: the row stays QUEUED, its attempts are **not** spent, and it goes
+when the wait is over. Dropped, the ordinary backoff would spend every attempt
+inside the first two minutes, mark a perfectly good message FAILED, and make the
+restriction worse each time.
+
+Every request carries `Authorization: Bearer <MESSAGING_RELAY_TOKEN>`. The relay
 must refuse anything else — an open `/send` on a public address is a machine
-anybody can send as the company's line from.
+anybody can send as the company's own account from.
 
 ## Configuring the ERP
 
 ```
-WHATSAPP_RELAY_URL=https://wa-relay.example.com
-WHATSAPP_RELAY_TOKEN=<a long random string>
+MESSAGING_RELAY_URL=https://relay.example.com
+MESSAGING_RELAY_TOKEN=<a long random string>
 ```
+
+`WHATSAPP_RELAY_URL`/`WHATSAPP_RELAY_TOKEN` are still read, so a server
+configured before Telegram existed keeps working untouched; the new names win
+where both are set, because those are the ones somebody typed on purpose.
 
 Both, or neither. Rules the ERP enforces (`relayConfigRefusal`):
 
@@ -75,12 +102,13 @@ The relay is `relay/server.ts` **in this repository**, and it imports the ERP's
 own `whatsappClient.ts` rather than copying it — the pairing, the reconnect
 policy, the `loggedOut` rule and the session handling are one piece of code in
 both deployments. That is why it lives here and not in a repository of its own,
-and why the two `@whiskeysockets/baileys` pins must stay identical (`test:rules`
-holds them against each other: two hosts on two versions of an unofficial
-protocol client, against one account, is a fault nobody would go looking for).
+and why the two `@whiskeysockets/baileys` pins — and the two `telegram` pins —
+must stay identical (`test:rules` holds each pair against the other: two hosts on
+two versions of an unofficial protocol client, against one account, is a fault
+nobody would go looking for). The same is true of `telegramClient.ts`.
 
-`relay/package.json` declares only baileys and `tsx`, so installing inside
-`relay/` does not pull Prisma, sharp or anything else the ERP needs.
+`relay/package.json` declares only baileys, `telegram` and `tsx`, so installing
+inside `relay/` does not pull Prisma, sharp or anything else the ERP needs.
 
 That has one consequence worth knowing, because it shipped wrong. Node resolves
 a bare specifier from the directory of the **importing** file, walking upwards —
@@ -90,7 +118,8 @@ rejected on the relay host: the rejection was swallowed, the panel drew
 «در انتظار اسکن کد» for as long as anybody watched, and the session directory —
 two lines after the import — was never created, which is what finally named it.
 So the client does not write the specifier; the relay does, next to the
-`package.json` that declares it, and hands it over through `setBaileysLoader`.
+`package.json` that declares it, and hands it over through `setBaileysLoader` —
+and through `setTelegramLoader`, which exists for exactly the same reason.
 **Nothing needs installing at the repository root on the relay host, and no
 symlink is needed.**
 
@@ -158,14 +187,23 @@ What it refuses to do:
 - **log a message body** — those are a customer's words on a rented machine, and
   a log is the one place they would accumulate. The recipient is masked.
 
-It also holds a floor between sends (`WHATSAPP_GAP_MS.min`, the same constant the
-ERP paces by). That is an **interlock and not a second copy of the policy**: the
-ERP decides when and how many, this only guarantees that nothing — a retry storm,
-anybody holding the token — can make the line send faster than a person types.
+It also holds a floor between sends (`WHATSAPP_GAP_MS.min` and
+`TELEGRAM_GAP_MS.min`, the same constants the ERP paces by), **on its own clock
+per line** — one shared timer would make a WhatsApp send delay the next Telegram
+one for no reason at all. That is an **interlock and not a second copy of the
+policy**: the ERP decides when and how many, this only guarantees that nothing —
+a retry storm, anybody holding the token — can make either account send faster
+than a person types.
 
 ## The relay host
 
 - **Node 20 or newer** (`@whiskeysockets/baileys` requires it).
+- Telegram's `api_id`/`api_hash`, from <https://my.telegram.org> → API development
+  tools, in the relay's env as `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`. They
+  identify the *application* rather than the account, but they are still secrets
+  and they live in the environment — never in `settings`, which every browser
+  loads whole. If the account has two-step verification, `TELEGRAM_2FA_PASSWORD`
+  too; it is read for one sign-in and stored nowhere.
 - A persistent process (systemd), restarted on failure.
 - A directory for the session, outside any path the web server serves.
 - TLS: a domain and a certificate. If you would rather it were not publicly
@@ -177,13 +215,29 @@ anybody holding the token — can make the line send faster than a person types.
 
 ## Two things to decide deliberately
 
-**The session credentials move to a rented machine.** The files under the
-relay's session directory can send *and read* as the company's line. That is a
-change in where the company's credentials sit, not a detail.
+**The session credentials move to a rented machine.** The files under
+`whatsapp-session/` and `telegram-session/` can send *and read* as the company's
+own accounts. That is a change in where the company's credentials sit, not a
+detail. Both directories are gitignored for the same reason.
 
 **A datacenter IP is not a residential one.** WhatsApp is more sensitive to some
 datacenter ranges. Not a blocker — most linked-device setups on a VPS work — but
 if the number is ever challenged, this is part of why.
 
-Neither of these makes the number un-bannable, and the pacing stays what it is:
-three messages a minute, fixed in code.
+Neither of these makes the account un-bannable, and the pacing stays what it is:
+three messages a minute per channel, fixed in code.
+
+## One honest limit on Telegram
+
+**Not everyone with a phone number is reachable.** They may have no Telegram
+account at all, and one who does can close «who can find me by my phone number»
+— Telegram's default is open, so this is the minority, but it is a real refusal
+and it is named rather than being a message that vanishes
+(`RECIPIENT` / «گیرنده در تلگرام پیدا نشد»). The remedy is a person's: write that
+contact's `@username` into the same field the mobile is in, which
+`telegramPeer` accepts as an address in its own right.
+
+This is also why there is no separate «Telegram username» column. A second
+address book is the Bale lesson — a channel that reaches only the handful of
+people somebody has filled a box in for — and the mobile every customer record
+already carries is what makes this the directory's channel.

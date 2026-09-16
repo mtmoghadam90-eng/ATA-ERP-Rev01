@@ -6,6 +6,9 @@
 // weights and the formula cannot drift apart.
 export type { CustomerValueSettings, CustomerRank } from './utils/customerValue';
 import type { CustomerValueSettings } from './utils/customerValue';
+// Likewise the staff-notification channel: the settings document stores it, and
+// the rule that reads it is the one place its list may be written.
+import type { StaffChannel } from './utils/staffNotifications';
 import type { CustomerValueMetricsRow } from './api/customers';
 // Where a line's cost came from — the rules live with the arithmetic that reads
 // them, so a source cannot be spelled one way here and another there.
@@ -857,9 +860,20 @@ export interface ERPSettings {
      */
     staffSms?: {
       enabled?: boolean;
-      /** «SMS» | «WHATSAPP»; absent is SMS, which is what every stored document means. */
-      channel?: 'SMS' | 'WHATSAPP';
-      /** Absent is on: SMS carries it when the WhatsApp channel is switched off. */
+      /**
+       * Which medium carries it; absent is SMS, which is what every stored
+       * document written before the key means.
+       *
+       * **`StaffChannel`, never a second typing of the same list.** It was
+       * written out here as `'SMS' | 'WHATSAPP'` beside the real union in
+       * `staffNotifications.ts`, and the two drifted the moment a third channel
+       * arrived: the rule offered Telegram, the screen's chip group offered
+       * Telegram, and this — the type the *settings document* is written
+       * through — refused it, so the one control that saves the choice would not
+       * compile. A list that exists twice is a list that disagrees.
+       */
+      channel?: StaffChannel;
+      /** Absent is on: SMS carries it when the chosen channel is switched off. */
       fallbackToSms?: boolean;
       templates?: { TASK_ASSIGNED?: string; REFERRAL_RAISED?: string };
     };
