@@ -350,6 +350,7 @@ import type { CustomerRow } from "../src/api/customers";
 import {
   failedMessageBody, failedMessageTitle, noticeSubject,
 } from "../src/utils/workflowNotice";
+import { deriveServiceHeader } from "../src/server/afterSalesStatus";
 
 /**
  * Every check that reads a source file reads it through here, and the reason is
@@ -20074,6 +20075,68 @@ head("After-sales records what the customer said, and the card shows it");
       new RegExp(`COL_LENGTH\\(N'\\[dbo\\]\\.\\[after_sales_services\\]', N'${col}'\\) IS NULL`).test(mig));
   }
   ok("...and backfills nothing", !/UPDATE \[dbo\]\.\[after_sales_services\]/.test(mig));
+
+  /*
+   * **The roll-up must be able to store what the rows are allowed to say.**
+   *
+   * A line's «تاریخ دریافت کالا» is optional — the complaint is recorded when
+   * the customer rings, the equipment arrives days later, and sometimes it is
+   * diagnosed on site and never arrives — and `deriveServiceHeader` answers
+   * the earliest date any line carries, so with none it answers null. The
+   * header's column was NOT NULL, so `applyServiceHeader` wrote a null Prisma
+   * refused: every save of such a case died with «Argument `startDate` must
+   * not be null», from the create and the update alike, which means the record
+   * could not be written from any screen in the application. Reported exactly
+   * that way, from «ثبت خدمات پس از فروش جدید».
+   *
+   * Held as the general rule rather than the one column, because the same
+   * asymmetry on `endDate` or `returnDate` would be the identical fault: the
+   * roll-up writes a null into each of them the moment the rows stop agreeing.
+   */
+  const headerNoDates = deriveServiceHeader([
+    { productName: "فلومتر", status: "در حال بررسی" },
+  ]);
+  ok("a case whose goods have not arrived is still a case",
+    headerNoDates !== null);
+  eq("...and its receipt date is the absence of one",
+    headerNoDates?.startDate ?? "absent", "absent");
+  eq("...while a line that does carry one still decides it",
+    deriveServiceHeader([
+      { productName: "فلومتر", startDateJalali: "1405/06/20" },
+      { productName: "ترانسمیتر", startDateJalali: "1405/06/12" },
+    ])?.startDate, "1405/06/12");
+
+  const model = (() => {
+    const schema = readFileSync("prisma/schema.prisma", "utf-8");
+    return schema.slice(
+      schema.indexOf("model AfterSalesService {"),
+      schema.indexOf("model AfterSalesServiceItem {"));
+  })();
+  for (const field of ["startDate", "endDate", "returnDate"]) {
+    ok(`the header's ${field} can hold the null the roll-up writes`,
+      new RegExp(`\\n  ${field}\\s+DateTime\\?`).test(model));
+  }
+
+  /*
+   * And the create no longer seeds one. `itemName` and `status` are still
+   * placeholders — those columns really are NOT NULL and the row has to exist
+   * before its rows do — but a seeded date would survive on a record with no
+   * rows at all, where the roll-up returns early, and print a receipt date for
+   * goods nobody has received.
+   */
+  const createAt = svc.indexOf("export async function createService");
+  const create = svc.slice(createAt, svc.indexOf("await syncChildren", createAt));
+  ok("the create seeds no receipt date", !/startDate: getTodayShamsi\(\)/.test(create));
+  ok("...and still seeds the two columns that are genuinely NOT NULL",
+    create.includes('itemName: "—"') && create.includes('status: "در حال بررسی"'));
+
+  const startMig = readFileSync(
+    "prisma/migrations/20260930000200_after_sales_start_date_optional/migration.sql", "utf-8");
+  ok("the migration relaxes the column rather than filling it in",
+    /ALTER COLUMN \[startDate\] DATE NULL/.test(startMig)
+    && !/UPDATE \[dbo\]\.\[after_sales_services\]/.test(startMig));
+  ok("...guarded on what it is changing, so re-running it is safe",
+    /\[is_nullable\] = 0/.test(startMig));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

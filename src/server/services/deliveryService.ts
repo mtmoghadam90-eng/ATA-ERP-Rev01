@@ -8,7 +8,6 @@ import { scrubProductRefs } from "../refIntegrity";
 import { applyStockDelta } from "./productService";
 import { getWonItems } from "../proformaStatus";
 import { deriveServiceHeader } from "../afterSalesStatus";
-import { getTodayShamsi } from "../../dateUtils";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
@@ -944,11 +943,16 @@ export async function createService(input: ServiceInput, user: AuthUser, todayJa
   const service = await db.$transaction(async (tx) => {
     const service = await tx.afterSalesService.create({
       data: {
-        // Placeholders for the NOT NULL columns. Every one of them is rolled up
-        // from the rows a moment later, but the row has to exist first.
+        // Placeholders for the NOT NULL columns. Both are rolled up from the
+        // rows a moment later, but the row has to exist first.
+        //
+        // `startDate` is deliberately not among them any more. It is the day
+        // the goods arrived, no line is obliged to carry one, and the column
+        // now says so — seeding today here would put a receipt date on
+        // equipment nobody has received, and on a record with no rows at all
+        // the roll-up returns early and that invented date would stand.
         itemName: "—",
         status: "در حال بررسی",
-        ...expandDateFields({ startDate: getTodayShamsi() }, ["startDate"]),
         ...serviceScalarData(input),
       } as Prisma.AfterSalesServiceUncheckedCreateInput,
     });
