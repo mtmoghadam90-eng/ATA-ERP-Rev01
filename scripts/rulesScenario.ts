@@ -54,6 +54,11 @@ import {
 } from "../src/utils/customerValue";
 import { hasEverPurchased, saleDateOf } from "../src/server/services/customerValueService";
 import { taskRelationKind } from "../src/utils/taskRelations";
+import {
+  FIRST_SYNC_LIMIT, SYNC_BACKTRACK, SYNC_PAGE_LIMIT,
+  customerFor, feedConfigRefusal, feedRequestUrl, inquiryKeyFor, parseFeed, parseFeedRow,
+  projectDescriptionFor, projectItemFor, projectNameFor, splitFullName, syncWindow,
+} from "../src/utils/webRfq";
 import { applySettingsPatches } from "../src/utils/settingsPatches";
 import { ACTIVITY_REACTIONS, isAllowedReaction, summarizeReactions } from "../src/utils/reactions";
 import { readViewPreferences, writeViewPreferences } from "../src/utils/viewPreferences";
@@ -19184,6 +19189,188 @@ head("A condition can name more than one value");
   } as never, DRAFT_CTX);
   eq("an `in` with no real value at all is dropped",
     allBad.rule?.conditions?.length ?? 0, 0);
+}
+
+/* ---------------------------- website price requests ---------------------- */
+head("Web RFQ: the site's price requests, as customers and projects");
+{
+  const rfq = {
+    id: 12, fullName: "سید محمد حسین رضایی", company: "پتروشیمی نمونه",
+    mobile: "+989121234567", email: "a@b.com", notes: "فوری است",
+    productId: 55, productName: "فلومتر التراسونیک", productUrl: "https://x/p/55",
+    specs: "سایز خط: DN50\nخروجی: 4–20 mA", panelUrl: "https://x/wp-admin",
+    submittedAt: "2026-09-20 10:00:00",
+  };
+
+  /* --- what arrives is data from a machine on the internet --- */
+  eq("a feed row with no number is dropped",
+    parseFeedRow({ ...rfq, id: 0 }), null);
+  eq("a row naming nobody at all is dropped",
+    parseFeedRow({ ...rfq, full_name: "", company: "" }), null);
+  eq("a company with no person still names somebody",
+    parseFeedRow({ ...rfq, full_name: "", company: "شرکت" })?.company, "شرکت");
+  eq("snake_case is what the site sends",
+    parseFeedRow({ id: 3, full_name: "علی", product_name: "پ" })?.productName, "پ");
+  eq("a feed with no items array reads as empty", parseFeed({ ok: true }).length, 0);
+  eq("unusable rows are skipped rather than failing the whole feed",
+    parseFeed({ items: [{ id: 0 }, { id: 4, full_name: "الف" }] }).length, 1);
+
+  /* --- the token crosses on every poll, so the address rule is the relay's --- */
+  ok("nothing configured is not a refusal", feedConfigRefusal("", "") === null);
+  ok("a token with no address is refused loudly",
+    (feedConfigRefusal("", "abc") ?? "").includes("آدرس"));
+  ok("plain http is refused — the token would cross in the clear",
+    (feedConfigRefusal("http://site.ir/feed", "abc") ?? "").includes("https"));
+  ok("loopback is the one exception, so it is testable on one box",
+    feedConfigRefusal("http://localhost:8080/feed", "abc") === null);
+  ok("an address with no token is refused",
+    (feedConfigRefusal("https://site.ir/feed", "") ?? "").includes("توکن"));
+  ok("a good pair passes", feedConfigRefusal("https://site.ir/feed", "abcdefgh") === null);
+  /*
+   * The same rule `relayConfigRefusal` states for the messaging relay, in its
+   * own words. Two hosts, two screens, one policy — held against each other
+   * here so the pair cannot drift into one refusing what the other allows.
+   */
+  const bothRefuse = (u: string, t: string) =>
+    (feedConfigRefusal(u, t) === null) === (relayConfigRefusal(u, t) === null);
+  ok("feed and relay agree about http", bothRefuse("http://site.ir/x", "abc"));
+  ok("feed and relay agree about loopback", bothRefuse("http://127.0.0.1:1/x", "abc"));
+  ok("feed and relay agree about a missing token", bothRefuse("https://site.ir/x", ""));
+  ok("feed and relay agree about an address-less token", bothRefuse("", "abc"));
+
+  /* --- the window --- */
+  eq("the first sync takes the newest few, not the site's whole history",
+    syncWindow(0).limit, FIRST_SYNC_LIMIT);
+  eq("...and asks from the beginning, since the site answers newest-first",
+    syncWindow(0).sinceId, 0);
+  eq("later polls overlap, because submitted order is not creation order",
+    syncWindow(100).sinceId, 100 - SYNC_BACKTRACK);
+  ok("the overlap never goes below zero", syncWindow(3).sinceId === 0);
+  ok("the token is never in the URL",
+    !feedRequestUrl("https://s/f", 10, 20).includes("token"));
+  ok("the window travels as query parameters",
+    feedRequestUrl("https://s/f", 10, 20).includes("since_id=10")
+    && feedRequestUrl("https://s/f", 10, 20).includes("limit=20"));
+  ok("a caller cannot ask for more than the page limit",
+    feedRequestUrl("https://s/f", 0, 5000).includes(`limit=${SYNC_PAGE_LIMIT}`));
+
+  /* --- the mapping --- */
+  eq("the request's own number is what the project is filed under",
+    inquiryKeyFor(rfq), "WEB-RFQ-12");
+  eq("a company makes the record «حقوقی»", customerFor(rfq).customerType, "حقوقی");
+  eq("...and the person who wrote in is kept as the key person",
+    customerFor(rfq).keyPerson, "سید محمد حسین رضایی");
+  eq("no company makes it «حقیقی»",
+    customerFor({ ...rfq, company: "" }).customerType, "حقیقی");
+  eq("...with the person's own name where a dropdown can find it",
+    customerFor({ ...rfq, company: "" }).companyName, "سید محمد حسین رضایی");
+  /*
+   * The site asks for one name box, so the split is a guess — made in the
+   * direction that keeps every word: the last is the family name and the rest
+   * is the given name. Read the other way, «سید محمد حسین رضایی» loses two.
+   */
+  eq("the whole name survives the split",
+    splitFullName("سید محمد حسین رضایی").firstName, "سید محمد حسین");
+  eq("...and the family name is the last word",
+    splitFullName("سید محمد حسین رضایی").lastName, "رضایی");
+  eq("one word is a given name and never an invented surname",
+    splitFullName("رضا").lastName, "");
+  eq("a blank name splits into two blanks", splitFullName("   ").firstName, "");
+
+  eq("the project is named for the equipment", projectNameFor(rfq), "فلومتر التراسونیک");
+  ok("a request naming no equipment still gets a name",
+    projectNameFor({ ...rfq, productName: "" }).includes("WEB-RFQ-12"));
+
+  const desc = projectDescriptionFor(rfq);
+  ok("the confirmed specification is the point of the description",
+    desc.includes("DN50") && desc.includes("4–20 mA"));
+  ok("the customer's own note keeps its own heading",
+    desc.includes("توضیحات تکمیلی مشتری"));
+  ok("both links travel", desc.includes("https://x/p/55") && desc.includes("https://x/wp-admin"));
+  /*
+   * A heading with nothing under it reads as something that failed to load, so
+   * each block is written only when it has something in it.
+   */
+  const bare = projectDescriptionFor({
+    ...rfq, specs: "", notes: "", productUrl: "", panelUrl: "", productName: "",
+  });
+  ok("an empty specification draws no heading", !bare.includes("مشخصات تأییدشده"));
+  ok("an empty note draws no heading", !bare.includes("توضیحات تکمیلی"));
+  ok("...and the request is still identifiable", bare.includes("12"));
+
+  /*
+   * The line names the equipment and carries **no** productId: that column is
+   * a real foreign key into this database and the site's is a WordPress post
+   * id, so writing it would point at nothing.
+   */
+  const line = projectItemFor(rfq);
+  ok("the required-items line names the equipment", line?.name === "فلومتر التراسونیک");
+  ok("...and carries no product id", !("productId" in (line ?? {})));
+  eq("no equipment means no line", projectItemFor({ ...rfq, productName: "" }), null);
+}
+
+head("Web RFQ: the service and the site's endpoint");
+{
+  const svc = readFileSync("src/server/services/webRfqService.ts", "utf-8");
+  /*
+   * The poll is the *only* direction available — the site is public and this
+   * server is on a private LAN — so an endpoint that accepted a push would be
+   * a hole in exactly the wall this design is shaped by.
+   */
+  ok("the token is a header and never a query string",
+    /headers:\s*\{[^}]*X-ATA-Token/.test(svc));
+  /*
+   * Read the pass's own region rather than the file: `importOne` is called
+   * from a helper defined above `runSync`, so a file-wide ordering check is
+   * answered by the wrong pair of offsets and passes whatever the claim does.
+   */
+  const pass1 = svc.slice(svc.indexOf("async function runSync"));
+  ok("the once-only guarantee is the unique index, claimed before the write",
+    pass1.includes("webRfqImport.create")
+    && pass1.indexOf("webRfqImport.create") < pass1.indexOf("await attempt(rowId, rfq, user)"));
+  ok("a failed import is retried from the stored payload, not re-fetched",
+    svc.includes("parseFeedRow(safeJson(row.payload))"));
+  ok("a project with no owner is refused rather than written to nobody",
+    svc.includes("config.ownerUserId") && svc.includes("مسئول پروژه"));
+  /*
+   * The channel is a `<select>` over the company's own list, and a `<select>`
+   * whose value matches no option renders the first — so a list that does not
+   * name this channel gets nothing rather than a value that would be silently
+   * rewritten the first time somebody opened the project and pressed save.
+   */
+  ok("the marketing channel is written only when the company's list offers it",
+    /includes\(WEB_RFQ_MARKETING_CHANNEL\)/.test(svc) && svc.includes("return undefined"));
+  ok("the numbering rule is not copied back into the service",
+    svc.includes("nextProjectCode") && !svc.includes("projectFormat"));
+
+  const routes = readFileSync("src/server/routes/webRfq.ts", "utf-8");
+  ok("every web-rfq route is gated on its own key",
+    routes.split("app.").length - 1 === (routes.match(/requireKeyAccess\(req, res, KEY/g) ?? []).length);
+  ok("the token never leaves the server through the route",
+    !routes.includes("tokenHint:") && !/res\.json\([^)]*token:/.test(routes));
+
+  const php = readFileSync("website/ata-advisor-erp-feed.php", "utf-8");
+  ok("the site's endpoint refuses to answer without a configured token",
+    php.includes("erp_feed_off") && php.includes("ATA_ERP_FEED_MIN_TOKEN"));
+  ok("...and compares it in constant time", php.includes("hash_equals"));
+  ok("only submitted requests are offered — a pending one has no contact details",
+    php.includes("status IN ('submitted','emailed')"));
+  ok("the feed answers newest-first, so the first sync takes what is live",
+    /ORDER BY id DESC/.test(php));
+  ok("the feed writes nothing: it is a read with no state of its own",
+    !/\b(UPDATE|INSERT|DELETE)\b/.test(php));
+  ok("the whole conversation is not shipped on every poll",
+    !php.includes("ata_rfq_all_messages"));
+
+  /*
+   * The timer must be well inside nothing in particular here — but it has to
+   * exist, and it has to be the one the service names, or the feature is a
+   * panel that fills in and never runs.
+   */
+  const srv = readFileSync("server.ts", "utf-8");
+  ok("the sync runs on a timer in the server process",
+    srv.includes("setInterval(() => { void tickWebRfqs(); }, WEB_RFQ_TICK_MS)"));
+  ok("...and is cleared on shutdown", srv.includes("clearInterval(webRfqTimer)"));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

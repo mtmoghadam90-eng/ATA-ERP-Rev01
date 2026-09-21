@@ -19,8 +19,14 @@
  * covers them.
  */
 
-/** The stored spelling of a natural person. `PROFORMA_*` naming is deliberate. */
-export const INDIVIDUAL_CUSTOMER_TYPE = "حقیقی";
+import { CUSTOMER_TYPE_INDIVIDUAL } from "./moduleStatuses";
+
+/**
+ * The stored spelling of a natural person, read from the module's own list
+ * rather than typed here: two spellings of one stored value is how two screens
+ * come to disagree about who a document was addressed to.
+ */
+export const INDIVIDUAL_CUSTOMER_TYPE = CUSTOMER_TYPE_INDIVIDUAL;
 
 /** As much of a customer as any of these rules reads. */
 export interface RecipientCustomer {

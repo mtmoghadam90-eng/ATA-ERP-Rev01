@@ -144,6 +144,13 @@ export const KEY_PERMISSION: Record<string, string | null> = {
   // gated separately by USERS_WRITE_PERMISSION.
   erp_users: null,
   erp_audit_logs: "settings",
+  /*
+   * The website's price-request feed — its address, its token and the log of
+   * what has been imported. Gated on `settings` in **both** directions, like
+   * the audit log above: the panel lives on the settings screen, the token is
+   * a credential, and the log names customers and the enquiries they raised.
+   */
+  erp_web_rfq: "settings",
   // Reference data every authenticated user must be able to read.
   erp_settings: null,
   erp_exchange_rates: null,

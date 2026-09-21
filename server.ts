@@ -26,6 +26,8 @@ import { registerProjectRoutes } from "./src/server/routes/projects";
 import { registerProformaRoutes } from "./src/server/routes/proformas";
 import { registerCompetitorRoutes } from "./src/server/routes/competitors";
 import { registerStuckWorkRoutes } from "./src/server/routes/stuckWork";
+import { registerWebRfqRoutes } from "./src/server/routes/webRfq";
+import { WEB_RFQ_TICK_MS, tickWebRfqs } from "./src/server/services/webRfqService";
 import { registerFollowUpRoutes } from "./src/server/routes/followUp";
 import { registerProductRoutes } from "./src/server/routes/products";
 import { registerSupplierRoutes } from "./src/server/routes/suppliers";
@@ -417,6 +419,7 @@ async function startServer() {
   registerProformaRoutes(app, routeDeps);
   registerCompetitorRoutes(app, routeDeps);
   registerStuckWorkRoutes(app, routeDeps);
+  registerWebRfqRoutes(app, routeDeps);
   registerFollowUpRoutes(app, routeDeps);
   registerProductRoutes(app, routeDeps);
   registerSupplierRoutes(app, routeDeps);
@@ -827,6 +830,18 @@ registerCampaignRoutes(app, routeDeps);
   const messageTimer = setInterval(() => { void processQueue(); }, MESSAGE_TICK_MS);
   messageTimer.unref?.();
 
+  /*
+   * The website's price requests, every five minutes.
+   *
+   * The site is public and this server is on a private LAN, so nothing there
+   * can push an enquiry here — the direction is a fact about the network, not
+   * a preference, and this is the only shape available. `tickWebRfqs` reads the
+   * configuration first and does nothing at all while the feature is off, which
+   * is every installation until somebody fills the panel in.
+   */
+  const webRfqTimer = setInterval(() => { void tickWebRfqs(); }, WEB_RFQ_TICK_MS);
+  webRfqTimer.unref?.();
+
   const VALUE_TICK_MS = 24 * 60 * 60 * 1000;
   const valueTimer = setInterval(
     () => { void recalculateCustomerValueNow(); },
@@ -845,6 +860,7 @@ registerCampaignRoutes(app, routeDeps);
     clearInterval(rateTimer);
     clearInterval(valueTimer);
     clearInterval(messageTimer);
+    clearInterval(webRfqTimer);
     server.close(() => {
       disconnectDb().finally(() => process.exit(0));
     });
