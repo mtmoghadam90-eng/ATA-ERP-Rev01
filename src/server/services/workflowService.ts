@@ -4,6 +4,7 @@ import { AuthUser } from "../auth";
 import { loadSettings } from "../settings";
 import { getTodayShamsi, addDaysToShamsi } from "../../dateUtils";
 import { notifyModuleResponsible } from "./notificationService";
+import { failedMessageBody, failedMessageTitle } from "../../utils/workflowNotice";
 import { expandDateFields } from "../dates";
 import { matchesConditions } from "../../utils/workflowConditions";
 import { isMessageOnceScope, messageOnceKey } from "../../utils/workflowTriggers";
@@ -513,10 +514,19 @@ export async function executeRule(
         };
 
         if (onceRefusal) {
+          /*
+           * The record, not only the rule.
+           *
+           * `enrichPayload` has already resolved the project, the customer and
+           * the document from their ids, and this notice used to throw every
+           * one of them away — so «پیام خودکار ارسال نشد» named the automation
+           * and left the reader to guess which of the day's events it was
+           * about. A notice nobody can act on is worse than none.
+           */
           await notifyModuleResponsible(
             "پیام‌ها",
-            `پیام خودکار ارسال نشد: ${rule.name}`,
-            onceRefusal,
+            failedMessageTitle(rule.name, enrichedPayload),
+            failedMessageBody(onceRefusal, enrichedPayload),
             user,
             enrichedPayload.projectId || null,
           );
@@ -574,10 +584,13 @@ export async function executeRule(
           if (!outcome.queued) await releaseClaim();
 
           if (!outcome.queued && outcome.reason && !outcome.suppressed) {
+            // Named the same way, and this is the half that matters most:
+            // «این مشتری شماره موبایل ندارد» is a fact about one customer's
+            // record, and without their name there is no screen to go to.
             await notifyModuleResponsible(
               "پیام‌ها",
-              `پیام خودکار ارسال نشد: ${rule.name}`,
-              outcome.reason,
+              failedMessageTitle(rule.name, enrichedPayload),
+              failedMessageBody(outcome.reason, enrichedPayload),
               user,
               enrichedPayload.projectId || null,
             );

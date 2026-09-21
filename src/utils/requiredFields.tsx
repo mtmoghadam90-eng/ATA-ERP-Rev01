@@ -147,7 +147,9 @@ export const REQUIRED_FIELDS_METADATA: ModuleConfig[] = [
       { key: 'itemName', label: 'نام تجهیز' },
       { key: 'issueDescription', label: 'شرح مشکل' },
       { key: 'actionsTaken', label: 'اقدامات انجام شده' },
+      { key: 'customerRequest', label: 'شرح درخواست مشتری' },
       { key: 'startDate', label: 'تاریخ شروع' },
+      { key: 'requestDate', label: 'تاریخ دریافت درخواست' },
     ]
   },
   {

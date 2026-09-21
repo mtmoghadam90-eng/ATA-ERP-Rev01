@@ -1,6 +1,5 @@
 import { Paperclip, Calendar, Download } from 'lucide-react';
 import { CustomField } from '../types';
-import { downloadFileFromServer } from '../imageUtils';
 import { formatMoney } from '../numUtils';
 
 interface CustomFieldsDetailViewProps {
@@ -97,7 +96,19 @@ export default function CustomFieldsDetailView({
                     {value.dataUrl ? (
                       <button
                         type="button"
-                        onClick={() => downloadFileFromServer(value.dataUrl, value.name)}
+                        onClick={() => {
+                          /*
+                           * Required at call time, the rule `CustomFieldsForm`
+                           * and `ModuleNotesSection` already follow here:
+                           * `imageUtils` pulls in `file-saver`, which is CJS
+                           * with no ESM named export, so a module-scope import
+                           * makes every component above this one unmountable
+                           * outside a bundler — and therefore untestable.
+                           */
+                          void import('../imageUtils')
+                            .then(({ downloadFileFromServer }) =>
+                              downloadFileFromServer(value.dataUrl, value.name));
+                        }}
                         className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-2 py-1 rounded font-bold text-[10px] transition cursor-pointer"
                         title="دانلود فایل پیوست"
                       >

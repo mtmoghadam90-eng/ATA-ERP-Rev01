@@ -1333,6 +1333,16 @@ export interface AfterSalesService {
   itemName: string;
   issueDescription: string;
   actionsTaken: string;
+  /**
+   * What the customer said, in their own words — never derived.
+   *
+   * `issueDescription` beside it is the company's own «علت برگشت», chosen from
+   * a list and rolled up from the rows, so the two are different answers to
+   * different questions and neither stands in for the other.
+   */
+  customerRequest?: string;
+  /** The day the request arrived. `startDate` is the day the goods did. */
+  requestDate?: string;
   startDate: string;
   endDate?: string;
   returnDate?: string;
@@ -1340,6 +1350,16 @@ export interface AfterSalesService {
   createdAt: string;
   createdBy: string;
   items?: AfterSalesServiceItem[];
+  /**
+   * How many rows the record holds, on a list row that does not carry them.
+   *
+   * `items` is the rows themselves and a list row has none — the server sends
+   * `_count` instead, because a page of fifty records each with their lines is
+   * the largest thing this endpoint could answer with. So the summary line
+   * reads this and the opened row reads `items`, and neither stands in for the
+   * other: `items?.length` on a list row is 0 and would read as «no goods».
+   */
+  itemCount?: number;
   notes?: string; // توضیحات کلی خدمت (در گزارش چاپی نمایش داده می‌شود)
   /** User-defined fields, keyed by field id — see `settings.customFields`. */
   customValues?: Record<string, any>;

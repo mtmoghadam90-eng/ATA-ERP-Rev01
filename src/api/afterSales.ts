@@ -31,6 +31,15 @@ export interface ServiceRow {
   status: string;
   proformaNumber: string | null;
   proformaItemName: string | null;
+  /*
+   * On the row, because the card draws them. They were selected by neither the
+   * server nor this adapter, so «دلیل برگشت» was blank on every card in the
+   * module — the `rowToTask`/`completionNote` fault, one module along.
+   */
+  issueDescription: string | null;
+  actionsTaken: string | null;
+  customerRequest: string | null;
+  requestDateJalali: string | null;
   startDateJalali: string | null;
   endDateJalali: string | null;
   returnDateJalali: string | null;
@@ -43,8 +52,6 @@ export interface ServiceRow {
 }
 
 export interface ServiceDetail extends Omit<ServiceRow, "_count"> {
-  issueDescription: string | null;
-  actionsTaken: string | null;
   items: ServiceItemRow[];
 }
 
@@ -52,6 +59,9 @@ export interface ServiceWriteInput {
   projectId?: string;
   proformaNumber?: string | null;
   proformaItemName?: string | null;
+  /** Neither is rolled up from the rows, so both are sent. */
+  customerRequest?: string | null;
+  requestDate?: string | null;
   createdBy?: string | null;
   customValues?: unknown;
   items?: Record<string, unknown>[];
@@ -126,8 +136,12 @@ export function rowToService(row: ServiceRow): AfterSalesService {
     proformaNumber: row.proformaNumber ?? undefined,
     proformaItemName: row.proformaItemName ?? undefined,
     itemName: row.itemName,
-    issueDescription: "",
-    actionsTaken: "",
+    // Read from the row rather than blanked. Written as `""` here, the card
+    // drew an empty «دلیل برگشت» on every record and nothing said why.
+    issueDescription: row.issueDescription ?? "",
+    actionsTaken: row.actionsTaken ?? "",
+    customerRequest: row.customerRequest ?? undefined,
+    requestDate: row.requestDateJalali ?? undefined,
     startDate: row.startDateJalali ?? "",
     endDate: row.endDateJalali ?? undefined,
     returnDate: row.returnDateJalali ?? undefined,
@@ -135,15 +149,19 @@ export function rowToService(row: ServiceRow): AfterSalesService {
     createdAt: row.createdAt,
     createdBy: row.createdBy ?? "",
     customValues: parseJson<Record<string, any>>(row.customValues, {}),
+    // The rows are not on a list row; their number is, and the summary line
+    // draws it. Reading `items.length` there would answer 0 for every record.
+    itemCount: row._count?.items ?? 0,
     items: [],
   };
 }
 
 export function detailToService(detail: ServiceDetail): AfterSalesService {
   return {
+    // The header fields come down through `rowToService` now — the detail
+    // carries exactly the same columns, and restating them here is how the two
+    // adapters come to disagree about which of them is authoritative.
     ...rowToService({ ...detail, _count: { items: (detail.items ?? []).length } }),
-    issueDescription: detail.issueDescription ?? "",
-    actionsTaken: detail.actionsTaken ?? "",
     items: (detail.items ?? []).map((item): AfterSalesServiceItem => ({
       id: item.id,
       productId: item.productId ?? undefined,
@@ -169,6 +187,8 @@ export function serviceToWriteInput(service: Partial<AfterSalesService>): Servic
     projectId: service.projectId,
     proformaNumber: service.proformaNumber || null,
     proformaItemName: service.proformaItemName || null,
+    customerRequest: service.customerRequest || null,
+    requestDate: service.requestDate || null,
     createdBy: service.createdBy || null,
     customValues: service.customValues,
     items: (service.items ?? []).map((item) => ({

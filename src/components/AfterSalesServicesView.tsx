@@ -17,11 +17,13 @@ import {
   Maximize2,
   Minimize2,
   Printer,
+  ChevronDown,
+  ChevronLeft,
 } from 'lucide-react';
 import ConfirmModal from './ConfirmModal';
 import DeleteActivitiesOption from './DeleteActivitiesOption';
 import { SearchableSelect } from './SearchableSelect';
-import { getTodayShamsi } from '../dateUtils';
+import { getTodayShamsi, formatDateTimeToShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import ModuleNotesSection from './ModuleNotesSection';
@@ -99,6 +101,16 @@ export default function AfterSalesServicesView({
 
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [selectedProformaNumber, setSelectedProformaNumber] = useState('');
+  /*
+   * The two header fields nothing rolls up.
+   *
+   * Every other field on this record is derived from the rows, which is why
+   * the form does not hold them — but what the customer *said* and the day
+   * their request arrived are facts about the case rather than about any one
+   * item, so they are typed once and stored once.
+   */
+  const [customerRequest, setCustomerRequest] = useState('');
+  const [requestDate, setRequestDate] = useState('');
   /** User-defined fields for this module, keyed by field id. */
   const [customValues, setCustomValues] = useState<Record<string, any>>({});
   
@@ -117,6 +129,24 @@ export default function AfterSalesServicesView({
   
   // Track currently edited row ID in the table
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
+
+  /*
+   * Which rows are open, and **closed is the default**.
+   *
+   * A list that opened everything would be the wall of cards this replaced;
+   * the point of the row is that a dozen cases fit on one screen and only the
+   * one somebody stops at costs any height.
+   */
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const toggleExpanded = (id: string) => {
+    setExpandedIds(prev => {
+      // A fresh Set rather than a mutation: React compares by identity, so
+      // `prev.add(id)` returns the same object and nothing re-renders.
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [serviceToDelete, setServiceToDelete] = useState<string | null>(null);
@@ -224,6 +254,10 @@ export default function AfterSalesServicesView({
     setEditingService(null);
     setSelectedProjectId('');
     setSelectedProformaNumber('');
+    setCustomerRequest('');
+    // A request being recorded today is the ordinary case; somebody entering
+    // one from last week changes it, which is what makes this a default.
+    setRequestDate(getTodayShamsi());
     setServiceItems([]);
     setCustomValues({});
     resetItemForm();
@@ -248,6 +282,10 @@ export default function AfterSalesServicesView({
       setEditingService(service);
       setSelectedProjectId(service.projectId);
       setSelectedProformaNumber(service.proformaNumber || '');
+      setCustomerRequest(service.customerRequest || '');
+      // Blank rather than today's date: a record written before this column
+      // existed has no answer, and seeding one would claim somebody gave it.
+      setRequestDate(service.requestDate || '');
       setCustomValues(service.customValues || {});
 
       // Load items or fall back to legacy top-level fields
@@ -413,6 +451,8 @@ export default function AfterSalesServicesView({
     const payload = serviceToWriteInput({
       projectId: selectedProjectId,
       proformaNumber: selectedProformaNumber || undefined,
+      customerRequest: customerRequest.trim() || undefined,
+      requestDate: requestDate || undefined,
       items: serviceItems,
       createdBy: currentUser?.fullName || 'سیستم',
       customValues,
@@ -549,79 +589,153 @@ export default function AfterSalesServicesView({
         </div>
       )}
 
-      {/* List */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredServices.map(service => (
-          <div key={service.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow flex flex-col">
-            <div className="p-5 flex-1 font-sans">
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <span className={`inline-flex px-2.5 py-1 rounded-lg text-xs font-bold border ${getStatusColor(service.status)} mb-2`}>
-                    {service.status}
+      {/*
+        * A row that opens, not a wall of cards.
+        *
+        * Three columns of tall cards meant a dozen open cases filled two
+        * screens and could not be compared: what somebody scanning this list
+        * wants is «which case, whose, how long open, what state» on one line,
+        * and the whole story only for the one they stop at. So each record is
+        * a row whose heading **is** the control, and everything below it is
+        * behind one press — the disclosure the board cards already use, and in
+        * place rather than in a modal, because the row above and below is the
+        * reason somebody is looking at a list at all.
+        */}
+      <div className="space-y-2" data-after-sales-list>
+        {filteredServices.map(service => {
+          const open = expandedIds.has(service.id);
+          return (
+          <div
+            key={service.id}
+            className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden hover:shadow-md transition-shadow"
+          >
+            {/* The summary line. Always one row, always the same shape. */}
+            <div className="flex items-center gap-3 p-3 sm:p-4">
+              <button
+                type="button"
+                onClick={() => toggleExpanded(service.id)}
+                aria-expanded={open}
+                data-after-sales-toggle={service.id}
+                className="flex-1 min-w-0 flex items-center gap-3 text-right"
+              >
+                <span className="shrink-0 text-slate-400">
+                  {open ? <ChevronDown size={16} /> : <ChevronLeft size={16} />}
+                </span>
+                <span className={`shrink-0 inline-flex px-2.5 py-1 rounded-lg text-[11px] font-bold border ${getStatusColor(service.status)}`}>
+                  {service.status}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-bold text-slate-800 text-sm truncate">{service.itemName}</span>
+                  <span className="block text-[11px] text-secondary truncate">
+                    {service.projectName}
+                    {service.proformaNumber ? ` — ${service.proformaNumber}` : ''}
                   </span>
-                  <h3 className="font-bold text-slate-800 text-lg leading-tight">{service.itemName}</h3>
-                </div>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => handleOpenModal(service)}
-                    className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                    title="ویرایش"
-                  >
-                    <Edit size={18} />
-                  </button>
-                  <button
-                    onClick={() => {
-                      setServiceToDelete(service.id);
-                      setIsDeleteModalOpen(true);
-                    }}
-                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    title="حذف"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </div>
+                </span>
+                {/*
+                  * The request date leads, because «چند وقته اینجاست» is the
+                  * question a service list is read to answer; the delivery
+                  * date replaces it once the case is closed. Both fall back to
+                  * the goods' own date for a record written before the request
+                  * date existed, rather than drawing a blank.
+                  */}
+                <span className="hidden sm:block shrink-0 text-[11px] text-secondary font-mono">
+                  {service.returnDate
+                    ? `تحویل ${service.returnDate}`
+                    : `دریافت ${service.requestDate || service.startDate || '—'}`}
+                </span>
+                <span className="shrink-0 text-[11px] text-secondary">
+                  {(service.items?.length || service.itemCount || 0) > 0
+                    ? `${(service.items?.length || service.itemCount || 0).toLocaleString('fa-IR')} قلم`
+                    : ''}
+                </span>
+              </button>
+              <div className="shrink-0 flex gap-1">
+                <button
+                  onClick={() => handleOpenModal(service)}
+                  className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                  title="ویرایش"
+                >
+                  <Edit size={16} />
+                </button>
+                <button
+                  onClick={() => {
+                    setServiceToDelete(service.id);
+                    setIsDeleteModalOpen(true);
+                  }}
+                  className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  title="حذف"
+                >
+                  <Trash2 size={16} />
+                </button>
               </div>
+            </div>
 
-              <div className="space-y-3 mt-4">
-                <div className="flex items-center gap-2 text-sm text-slate-600">
-                  <div className="w-6 flex justify-center text-slate-400"><Briefcase size={16} /></div>
-                  <span className="font-bold">{service.projectName}</span>
-                </div>
-                {service.proformaNumber && (
-                  <div className="flex items-center gap-2 text-sm text-slate-600">
-                    <div className="w-6 flex justify-center text-slate-400"><FileText size={16} /></div>
-                    <span className="font-mono">{service.proformaNumber}</span>
+            {open && (
+              <div className="border-t border-slate-100 px-4 pb-4 pt-3 space-y-4 text-sm" data-after-sales-detail={service.id}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex items-center gap-2 text-slate-600">
+                    <div className="w-5 flex justify-center text-slate-400"><Briefcase size={15} /></div>
+                    <span className="font-bold">{service.projectName}</span>
                   </div>
-                )}
-                <div className="flex items-center gap-2 text-sm text-slate-600">
-                  <div className="w-6 flex justify-center text-slate-400"><Calendar size={16} /></div>
-                  <span>تاریخ شروع: <span className="font-mono">{service.startDate}</span></span>
+                  {service.proformaNumber && (
+                    <div className="flex items-center gap-2 text-slate-600">
+                      <div className="w-5 flex justify-center text-slate-400"><FileText size={15} /></div>
+                      <span className="font-mono">{service.proformaNumber}</span>
+                    </div>
+                  )}
+                  {service.requestDate && (
+                    <div className="flex items-center gap-2 text-slate-600">
+                      <div className="w-5 flex justify-center text-slate-400"><Calendar size={15} /></div>
+                      <span>دریافت درخواست: <span className="font-mono">{service.requestDate}</span></span>
+                    </div>
+                  )}
+                  {service.startDate && (
+                    <div className="flex items-center gap-2 text-slate-600">
+                      <div className="w-5 flex justify-center text-slate-400"><Calendar size={15} /></div>
+                      <span>دریافت کالا: <span className="font-mono">{service.startDate}</span></span>
+                    </div>
+                  )}
+                  {(service.endDate || service.returnDate) && (
+                    <div className="flex items-center gap-2 text-slate-600">
+                      <div className="w-5 flex justify-center text-slate-400"><CheckCircle2 size={15} /></div>
+                      <span>
+                        {service.returnDate ? `تحویل: ${service.returnDate}` : `پایان: ${service.endDate}`}
+                      </span>
+                    </div>
+                  )}
                 </div>
-                {(service.endDate || service.returnDate) && (
-                  <div className="flex items-center gap-2 text-sm text-slate-600">
-                    <div className="w-6 flex justify-center text-slate-400"><CheckCircle2 size={16} /></div>
-                    <span>
-                      {service.returnDate ? `تحویل: ${service.returnDate}` : `پایان: ${service.endDate}`}
-                    </span>
-                  </div>
-                )}
-              </div>
 
-              {/* Whatever this company chose to record about the case. */}
-              <div className="mt-4">
+                {/*
+                  * The three free-text blocks, each drawn only when it has
+                  * something in it — a heading with nothing under it reads as
+                  * something that failed to load. «دلیل برگشت» is the one that
+                  * was missing from every card in the module: the list query
+                  * never selected it and the adapter wrote a blank over it.
+                  */}
+                {[
+                  { label: 'شرح درخواست مشتری', value: service.customerRequest },
+                  { label: 'دلیل برگشت / مشکل', value: service.issueDescription },
+                  { label: 'اقدامات انجام شده', value: service.actionsTaken },
+                ].filter(block => (block.value || '').trim()).map(block => (
+                  <div key={block.label} className="p-3 bg-slate-50 rounded-xl">
+                    <span className="text-secondary font-bold block mb-1 text-xs">{block.label}:</span>
+                    {/* The writer's own line breaks, which a textarea now takes. */}
+                    <p className="text-slate-700 leading-relaxed font-medium whitespace-pre-line">{block.value}</p>
+                  </div>
+                ))}
+
+                {/* Whatever this company chose to record about the case. */}
                 <CustomFieldsDetailView
                   module="afterSalesServices"
                   customFields={settings?.customFields || []}
                   customValues={service.customValues}
                 />
-              </div>
 
-              {service.items && service.items.length > 0 ? (
-                <div className="mt-5 border-t border-slate-100 pt-4 space-y-3">
-                  <span className="text-xs font-extrabold text-slate-400 block mb-2">لیست اقلام و وضعیت‌ها:</span>
-                  <div className="space-y-2.5 pr-1">
+                {service.items && service.items.length > 0 && (
+                  <div className="space-y-2.5">
+                    <span className="text-xs font-extrabold text-secondary block">لیست اقلام و وضعیت‌ها:</span>
                     {service.items.map((item, idx) => (
-                      <div key={item.id || idx} className="p-3 bg-slate-50 rounded-xl border border-slate-150 space-y-2 hover:bg-slate-100/50 transition-colors">
+                      <div key={item.id || idx} className="p-3 bg-slate-50 rounded-xl border border-slate-150 space-y-2">
                         <div className="flex justify-between items-start gap-2">
                           <span className="font-bold text-slate-800 text-xs leading-tight">{item.productName}</span>
                           <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border shrink-0 ${getStatusColor(item.status)}`}>
@@ -629,9 +743,13 @@ export default function AfterSalesServicesView({
                           </span>
                         </div>
                         <div className="text-xs text-slate-600 space-y-1">
-                          <p><span className="text-slate-400 font-bold">مشکل:</span> {item.issueDescription}</p>
-                          {item.actionsTaken && <p><span className="text-slate-400 font-bold">اقدامات:</span> {item.actionsTaken}</p>}
-                          <div className="flex justify-between items-center text-[10px] text-slate-400 pt-1.5 border-t border-slate-200/50 mt-1">
+                          <p><span className="text-secondary font-bold">مشکل:</span> {item.issueDescription}</p>
+                          {item.actionsTaken && (
+                            <p className="whitespace-pre-line">
+                              <span className="text-secondary font-bold">اقدامات:</span> {item.actionsTaken}
+                            </p>
+                          )}
+                          <div className="flex justify-between items-center text-[10px] text-secondary pt-1.5 border-t border-slate-200/50 mt-1">
                             <span>شروع: <span className="font-mono">{item.startDate}</span></span>
                             {item.endDate && <span>پایان: <span className="font-mono">{item.endDate}</span></span>}
                           </div>
@@ -639,30 +757,28 @@ export default function AfterSalesServicesView({
                       </div>
                     ))}
                   </div>
+                )}
+
+                <div className="pt-3 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2 text-xs text-secondary">
+                  <span>ثبت کننده: {service.createdBy}</span>
+                  {/*
+                    * `createdAt` is a real timestamp, so it arrives as an ISO
+                    * instant — `.split(' ')[0]` on one finds no space and
+                    * printed the whole «2026-09-21T14:03:11.000Z» on a Persian
+                    * screen. Folded with the reader that takes the **local**
+                    * calendar fields: `toShamsiStr` on the raw string matches
+                    * the UTC prefix and ignores the zone, so on this UTC+03:30
+                    * host a record written at 02:00 would be dated yesterday.
+                    */}
+                  <span className="font-mono">{formatDateTimeToShamsi(service.createdAt)}</span>
                 </div>
-              ) : (
-                <div className="mt-5 p-4 bg-slate-50 rounded-xl space-y-3 text-sm">
-                  <div>
-                    <span className="text-slate-500 font-bold block mb-1">دلیل برگشت/مشکل:</span>
-                    <p className="text-slate-700 leading-relaxed font-medium">{service.issueDescription}</p>
-                  </div>
-                  {service.actionsTaken && (
-                    <div>
-                      <span className="text-slate-500 font-bold block mb-1">اقدامات انجام شده:</span>
-                      <p className="text-slate-700 leading-relaxed font-medium">{service.actionsTaken}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
-              <span>ثبت کننده: {service.createdBy}</span>
-              <span className="font-mono">{(service.createdAt || '').split(' ')[0] || service.createdAt || ''}</span>
-            </div>
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
         {filteredServices.length === 0 && !list.initialLoading && (
-          <div className="col-span-full py-12 text-center bg-white rounded-2xl border border-slate-200 border-dashed">
+          <div className="py-12 text-center bg-white rounded-2xl border border-slate-200 border-dashed">
             <Wrench className="mx-auto text-slate-300 mb-4" size={48} />
             <h3 className="text-lg font-bold text-slate-600 mb-2">هیچ رکورد خدمات پس از فروش یافت نشد</h3>
             <p className="text-slate-500 text-sm">برای ثبت خدمات جدید روی دکمه «ثبت خدمات جدید» کلیک کنید.</p>
@@ -782,6 +898,48 @@ export default function AfterSalesServicesView({
                     disabled={!selectedProjectId}
                   />
                 </div>
+
+                {/*
+                  * The day the request arrived — not the day the goods did.
+                  *
+                  * «تاریخ دریافت کالا» sits on each row and is rolled up into
+                  * the header, but the equipment often turns up days after the
+                  * complaint and sometimes never turns up at all, so counting
+                  * a case from it starts the clock at the wrong moment or
+                  * leaves an obviously open case looking unstarted.
+                  */}
+                <div className="space-y-2">
+                  <ShamsiDatePicker
+                    label={`تاریخ دریافت درخواست${getFieldAsterisk(settings, 'afterSalesServices', 'requestDate')}`}
+                    required={isFieldRequired(settings, 'afterSalesServices', 'requestDate')}
+                    value={requestDate}
+                    onChange={(val) => setRequestDate(val)}
+                  />
+                </div>
+
+                {/*
+                  * What the customer said, in their own words.
+                  *
+                  * Deliberately not «علت برگشت», which is a `<select>` over the
+                  * company's own list and is rolled up from the rows — that is
+                  * our classification of the fault, and this is their account
+                  * of it. A quotation is written from one and the case is
+                  * understood from the other.
+                  */}
+                <div className="space-y-2 md:col-span-2">
+                  <label className="text-sm font-bold text-slate-700">
+                    {renderFieldLabelWithAsterisk(settings, 'afterSalesServices', 'customerRequest', 'شرح درخواست مشتری')}
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={customerRequest}
+                    onChange={(e) => setCustomerRequest(e.target.value)}
+                    required={isFieldRequired(settings, 'afterSalesServices', 'customerRequest')}
+                    placeholder="متن درخواست مشتری، همان‌طور که مطرح شده است..."
+                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-medium leading-6 resize-y"
+                    data-after-sales-request
+                  />
+                </div>
               </div>
 
               {/* بخش ۲: فرم ثبت یا ویرایش ردیف کالا در جدول */}
@@ -885,14 +1043,23 @@ export default function AfterSalesServicesView({
                   {/* اقدامات انجام شده */}
                   <div className="space-y-1.5 lg:col-span-3">
                     <label className="text-xs font-bold text-slate-700">{renderFieldLabelWithAsterisk(settings, 'afterSalesServices', 'actionsTaken', 'اقدامات انجام شده')}</label>
-                    <input
-                      type="text"
+                    {/*
+                      * A textarea, because repairs are a list and not a
+                      * sentence: «باز شد، برد تغذیه تعویض شد، کالیبره شد» is
+                      * three lines somebody writes over three days, and an
+                      * `<input>` swallowed the Enter key — it submits the form
+                      * rather than starting a line, so the only way to record
+                      * the second step was to run it into the first.
+                      */}
+                    <textarea
+                      rows={3}
                       required={isFieldRequired(settings, 'afterSalesServices', 'actionsTaken')}
                       value={itemAction}
                       onChange={(e) => setItemAction(e.target.value)}
-                      placeholder="شرح کارها و تعمیراتی که روی این کالا انجام شده است..."
-                      className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-medium"
+                      placeholder="شرح کارها و تعمیراتی که روی این کالا انجام شده است... (هر اقدام در یک خط)"
+                      className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none text-xs font-medium leading-6 resize-y"
                       disabled={!selectedProjectId}
+                      data-after-sales-actions
                     />
                   </div>
 
