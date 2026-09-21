@@ -44,6 +44,7 @@ import {
 import { FOLLOW_UP_STATES } from "./salesFollowUp";
 import { REFERRAL_STATUSES, TASK_STATUSES } from "./workBoard";
 import { PROJECT_STAGES } from "./projectStage";
+import { conditionValueList } from "./workflowConditions";
 
 export type WorkflowTriggerType = WorkflowRule["triggerType"];
 
@@ -516,7 +517,37 @@ export const WORKFLOW_OPERATORS = [
   { value: "not_equals", label: "مخالف باشد با" },
   { value: "greater_than", label: "بیشتر باشد از" },
   { value: "less_than", label: "کمتر باشد از" },
+  /*
+   * The one a rule could not be written without, and it was reported as the
+   * assistant refusing to build one: «اگر پروژه در وضعیت جدید **یا** در حال
+   * مذاکره بود».
+   *
+   * Conditions are ANDed, so two values of one field was not a condition at
+   * all — it was two rules, which is two cards saying one thing and drifting
+   * apart, or five «مخالف باشد با …» that have to be revisited every time the
+   * module gains a status. Neither is what anybody means.
+   */
+  { value: "in", label: "یکی از این‌ها باشد" },
 ] as const satisfies readonly { value: WorkflowRule["conditions"][number]["operator"]; label: string }[];
+
+/**
+ * An `in` condition that names nothing, or null.
+ *
+ * Asked at save time for the reason `staleConditionField` is: an empty list
+ * matches no record, so the rule saves cleanly, prints on its card and never
+ * fires — the catalogue's own silent failure, reached this time by choosing an
+ * operator and then not answering it. The field is **named**, because «یک شرط
+ * ناقص» sends somebody hunting through six rows.
+ */
+export function emptyInCondition(
+  rule: { conditions?: readonly { field?: string; operator?: string; value?: string }[] | null },
+): string | null {
+  for (const cond of rule.conditions ?? []) {
+    if (cond?.operator !== "in") continue;
+    if (conditionValueList(cond?.value).length === 0) return String(cond?.field ?? "");
+  }
+  return null;
+}
 
 /** Fails `npm run lint` for an operator the rule card cannot name. */
 const _everyOperatorIsOffered: Covers<
@@ -840,6 +871,30 @@ export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
         + "«تهیه پیش‌فاکتور» یعنی پیش‌فاکتور در دست تهیه است؛ «بررسی آفر توسط مشتری» یعنی "
         + "برای مشتری ارسال شده. پس هر پرسشی از جنس «فلان کار هنوز انجام نشده» یا "
         + "«اینجا گیر کرده» را با همین فیلد بپرس.",
+    },
+    /*
+     * «هنوز پیش‌فاکتوری برایش صادر نشده», asked directly.
+     *
+     * The stage *nearly* answers it — «جدید» and «در حال مذاکره» both mean no
+     * inquiry and no quotation — and that «and no inquiry» is the difference:
+     * a job somebody has already sent three supplier inquiries for reads
+     * «در انتظار پاسخ تأمین‌کننده», so a rule written on the stage silently
+     * excludes it. For «has anybody quoted this» that narrowing is somebody
+     * else's question, and the two are worth being able to ask apart.
+     *
+     * It counts **every** kind of document, technical offers included, exactly
+     * as `quotationWhere`'s «بدون هیچ پیش‌فاکتوری» does: the label says «no
+     * document», a technical offer is a document, and two readings of «does
+     * this project have a quotation» disagreeing is the fault that clause was
+     * corrected for. A rule that means the priced kind asks the stage instead.
+     */
+    {
+      value: "proformaCount", label: "تعداد پیش‌فاکتورهای صادرشده", derived: true,
+      hint: "چند پیش‌فاکتور تا حالا برای این پروژه صادر شده — از هر نوعی، فنی و "
+        + "مالی و خدمات پس از فروش. «برابر با ۰» یعنی هنوز هیچ سندی صادر نشده، که "
+        + "همان «پیش‌فاکتور صادر نشده» است. توجه: این با مرحلهٔ «جدید» یکی نیست — "
+        + "«جدید» علاوه بر نداشتن پیش‌فاکتور، نداشتنِ استعلام قیمت را هم شرط می‌کند، "
+        + "پس پروژه‌ای که برایش استعلام رفته از «جدید» بیرون می‌رود ولی اینجا هنوز ۰ است.",
     },
   ],
   purchaseOrder: [

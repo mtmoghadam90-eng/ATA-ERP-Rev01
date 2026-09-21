@@ -303,6 +303,50 @@ async function derivedTaskValues(
  * A model with nothing derived answers an empty map, which is every subject
  * whose conditions are all stored columns.
  */
+/**
+ * What a project's own records say, for the whole band in one read.
+ *
+ * `proformaCount` answers «هنوز پیش‌فاکتوری برایش صادر نشده», which no column
+ * on `projects` carries and the stage only nearly answers — «جدید» also
+ * requires that nobody has sent a supplier inquiry, so a job that has been
+ * quoted to no one but asked about three times is outside it.
+ *
+ * One grouped read for every row the sweep is looking at, the shape
+ * `derivedDeliveryValues` takes: a count per project would be a query per
+ * record on a pass that runs over five hundred of them.
+ *
+ * **Every kind of document counts**, technical offers included — the same
+ * reading `quotationWhere`'s «بدون هیچ پیش‌فاکتوری» takes, because the question
+ * is «has anything been written for this job» and a second answer to that on
+ * another screen is how the two come to disagree.
+ */
+async function derivedProjectValues(
+  rows: Record<string, unknown>[],
+): Promise<Map<string, Record<string, unknown>>> {
+  const out = new Map<string, Record<string, unknown>>();
+  if (rows.length === 0) return out;
+
+  const ids = [...new Set(rows.map((r) => String(r.id ?? "")).filter(Boolean))];
+  const byProject = new Map<string, number>();
+  if (ids.length > 0) {
+    const groups = await getDb().proforma.groupBy({
+      by: ["projectId"],
+      where: { projectId: { in: ids } },
+      _count: { _all: true },
+    });
+    for (const group of groups) {
+      byProject.set(String(group.projectId), group._count._all);
+    }
+  }
+
+  for (const row of rows) {
+    // Zero rather than absent: «no quotation» is the answer the rule is written
+    // about, and an undefined compared against «0» never matches.
+    out.set(String(row.id), { proformaCount: byProject.get(String(row.id)) ?? 0 });
+  }
+  return out;
+}
+
 async function derivedValuesFor(
   model: string,
   rows: Record<string, unknown>[],
@@ -310,6 +354,7 @@ async function derivedValuesFor(
   if (model === "proforma") return derivedProformaValues(rows);
   if (model === "task") return derivedTaskValues(rows);
   if (model === "packagingDelivery") return derivedDeliveryValues(rows);
+  if (model === "project") return derivedProjectValues(rows);
   return new Map<string, Record<string, unknown>>();
 }
 

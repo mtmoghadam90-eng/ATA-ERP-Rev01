@@ -2,13 +2,14 @@ import type { WorkflowRule } from "../types";
 import { TASK_PRIORITIES } from "./moduleStatuses";
 import {
   ENRICHED_PAYLOAD_VARIABLES, RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS,
-  WORKFLOW_ACTION_TYPES,
+  WORKFLOW_ACTION_TYPES, WORKFLOW_OPERATORS,
   TRIGGER_ENTITY, TriggerField,
   WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS, isAssigneeToken, isResponsibleModule,
   templateVariablesFor, triggerFields,
 } from "./workflowTriggers";
 import { ALL_CHANNELS, MESSAGE_VARIABLES, isChannel } from "./messaging";
 import { SCHEDULE_SUBJECTS } from "./workflowSchedule";
+import { conditionValueList } from "./workflowConditions";
 
 /**
  * Describing a workflow rule in Persian and getting the form filled in.
@@ -141,7 +142,15 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     scheduleFields,
     "",
     "## اپراتورهای شرط",
-    "  equals | not_equals | greater_than | less_than",
+    /*
+     * Built from the catalogue, or the first operator added to the union is one
+     * the assistant is never told about — the same fault the trigger list had.
+     */
+    `  ${WORKFLOW_OPERATORS.map((o) => `${o.value} (${o.label})`).join(" | ")}`,
+    "  شرط‌های یک قانون با «و» ترکیب می‌شوند، نه «یا». پس «اگر وضعیت الف یا ب بود»",
+    "  را هرگز با دو شرط equals ننویس (هیچ‌وقت اجرا نمی‌شود) و هرگز به دو قانون",
+    "  جداگانه نشکن: با یک شرط in بنویس و مقادیر را با «،» جدا کن — مثلاً",
+    '  {"field":"status","operator":"in","value":"جدید، در حال مذاکره"}.',
     "",
     "## اقدام‌ها (actions[].type)",
     "  create_task — ساخت وظیفه. taskConfig: titleTemplate, descTemplate,",
@@ -263,7 +272,16 @@ export function buildWorkflowDraftPrompt(
 
 /* ------------------------------ the sanitiser ----------------------------- */
 
-const OPERATORS = ["equals", "not_equals", "greater_than", "less_than"] as const;
+/*
+ * The catalogue's own list, not a sixth typing of it.
+ *
+ * Written out here it silently downgraded anything it did not know to
+ * «equals» — so the first operator added to the union would have been one the
+ * assistant could never produce, and the rule it drafted would have read
+ * correctly on its card while asking a narrower question than the sentence it
+ * came from.
+ */
+const OPERATORS = WORKFLOW_OPERATORS.map((o) => o.value) as readonly string[];
 /*
  * The ids come from the catalogue, not from a fourth copy of the list: the
  * settings screen's dropdown and its rule card each kept their own and one of
@@ -437,23 +455,50 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
       continue;
     }
 
-    const value = text(cond.value, 200);
-    // A field with a fixed list is exactly where an invented value hides: the
-    // rule saves and matches nothing, for ever, with no error anywhere.
-    if (spec.options?.length && !spec.options.includes(value)) {
-      warnings.push(
-        `شرط «${spec.label}» حذف شد: مقدار «${value}» جزو مقادیر مجاز آن نیست (${spec.options.join("، ")}).`,
-      );
-      continue;
+    const operator = OPERATORS.includes(String(cond.operator))
+      ? (cond.operator as WorkflowRule["conditions"][number]["operator"])
+      : "equals";
+
+    let value = text(cond.value, 200);
+    /*
+     * A field with a fixed list is exactly where an invented value hides: the
+     * rule saves and matches nothing, for ever, with no error anywhere.
+     *
+     * «یکی از این‌ها باشد» names a *list*, so it is checked entry by entry and
+     * the good ones are **kept**: a model that writes «جدید، در حال مذاکره،
+     * مذاکره» has one value wrong and two right, and dropping the whole
+     * condition over the third would throw away the rule that was asked for.
+     * A list with nothing left standing is dropped, since an empty `in` matches
+     * no record at all.
+     */
+    if (spec.options?.length) {
+      if (operator === "in") {
+        const asked = conditionValueList(value);
+        const good = asked.filter((v) => spec.options!.includes(v));
+        const bad = asked.filter((v) => !spec.options!.includes(v));
+        if (bad.length > 0) {
+          warnings.push(
+            `از شرط «${spec.label}» مقدار${bad.length > 1 ? "های" : ""} «${bad.join("، ")}» حذف شد: `
+            + `جزو مقادیر مجاز آن نیست (${spec.options.join("، ")}).`,
+          );
+        }
+        if (good.length === 0) {
+          warnings.push(`شرط «${spec.label}» حذف شد: هیچ‌کدام از مقادیرش معتبر نبود.`);
+          continue;
+        }
+        value = good.join("، ");
+      } else if (!spec.options.includes(value)) {
+        warnings.push(
+          `شرط «${spec.label}» حذف شد: مقدار «${value}» جزو مقادیر مجاز آن نیست (${spec.options.join("، ")}).`,
+        );
+        continue;
+      }
     }
     if (!value) {
       warnings.push(`شرط «${spec.label}» حذف شد: مقداری برای مقایسه تعیین نشده بود.`);
       continue;
     }
 
-    const operator = (OPERATORS as readonly string[]).includes(String(cond.operator))
-      ? (cond.operator as WorkflowRule["conditions"][number]["operator"])
-      : "equals";
     conditions.push({ field, operator, value });
   }
 
