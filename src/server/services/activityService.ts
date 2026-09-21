@@ -15,7 +15,7 @@ import {
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
-import { expandDateFields } from "../dates";
+import { expandDateFields, normalizeJalali } from "../dates";
 import { getTodayShamsi } from "../../dateUtils";
 import { toNullableString } from "../childSync";
 import { applyCategoryMilestoneTriggers } from "./milestoneAutomation";
@@ -367,6 +367,19 @@ export interface ActivityInput {
     assignedToName?: string | null;
     actionRequired?: string;
   };
+  /**
+   * The deadline for every request this message raises.
+   *
+   * **One message, one deadline**, however many colleagues it names: the
+   * message *is* the request, so «@علی @رضا تا شنبه بررسی کنید» is one promise
+   * and a date per person would be three controls saying what the sentence
+   * already says — the same reasoning that removed the referral checkbox.
+   *
+   * Both are absent on an ordinary message, which is every message that names
+   * nobody, and neither is written where no referral is raised.
+   */
+  dueDate?: string | null;
+  dueDateByAssignee?: boolean;
 }
 
 /**
@@ -566,6 +579,15 @@ export async function addActivity(
       }
     }
 
+    /*
+     * The deadline the composer agreed, on every request this message raises.
+     *
+     * `expandDateFields` writes both columns or neither, and an absent key
+     * leaves the date null — which is what «no deadline» has always meant and
+     * still does.
+     */
+    const dueColumns = expandDateFields(input as Record<string, unknown>, ["dueDate"]);
+
     const created = [];
     for (const request of requests) {
       created.push(await tx.projectReferral.create({
@@ -576,6 +598,8 @@ export async function addActivity(
           assignedByUserId: user.id,
           assignedByName: author?.fullName ?? null,
           actionRequired: request.actionRequired,
+          ...dueColumns,
+          dueDateByAssignee: !!input.dueDateByAssignee,
         } as Prisma.ProjectReferralUncheckedCreateInput,
       }));
     }
@@ -1423,6 +1447,99 @@ export async function updateReferralAction(
       module: "ارجاعات",
       title: "ویرایش متن ارجاع",
       description: `${actor?.fullName ?? "یک همکار"} متن ارجاع${where} را ویرایش کرد: ${text}`,
+      projectId: project?.id ?? null,
+      actorUserId: user.id,
+    });
+  }
+
+  return "ok";
+}
+
+/**
+ * Sets, moves or clears a referral's deadline.
+ *
+ * **Either party may write it, and the two reasons are different.** The person
+ * who raised it is agreeing a date, or moving one they agreed; the assignee is
+ * answering «مهلت را خودت تعیین کن», which is the whole point of that switch —
+ * so restricting this to the referrer the way `updateReferralAction` does would
+ * make the option unanswerable from any screen.
+ *
+ * Setting a date **clears the markers** the reminder pass writes, because they
+ * name the deadline they answered and a fresh date is a fresh promise: without
+ * that, moving a deadline forward would leave the old «already reminded» stamp
+ * standing and the new date would pass in silence.
+ *
+ * `dueDateByAssignee` is absent-means-not-edited, the `syncChildren` rule: the
+ * assignee filling the date in must not also be deciding whether they were the
+ * one asked to.
+ */
+export async function setReferralDue(
+  id: string,
+  input: { dueDate?: string | null; dueDateByAssignee?: boolean },
+  user: AuthUser,
+): Promise<"ok" | "forbidden" | "not-found"> {
+  const db = getDb();
+  const referral = await db.projectReferral.findUnique({
+    where: { id },
+    select: {
+      id: true, assignedToUserId: true, assignedByUserId: true, dueDateJalali: true,
+      activity: { select: { group: { select: { project: { select: { id: true, name: true, code: true } } } } } },
+    },
+  });
+  if (!referral) return "not-found";
+
+  const involved = referral.assignedToUserId === user.id
+    || referral.assignedByUserId === user.id;
+  if (!involved && !user.isSystemAdmin) return "forbidden";
+
+  const dates = "dueDate" in input
+    ? expandDateFields(input as Record<string, unknown>, ["dueDate"])
+    : {};
+  const flag = "dueDateByAssignee" in input
+    ? { dueDateByAssignee: !!input.dueDateByAssignee }
+    : {};
+
+  await db.projectReferral.update({
+    where: { id },
+    data: {
+      ...dates,
+      ...flag,
+      /*
+       * A new promise is a new reminder. The markers name the deadline they
+       * answered, so leaving them would let a date moved forward pass without
+       * a word — and clearing the «already asked» stamp is what lets the switch
+       * be turned on a second time and mean something.
+       */
+      ...("dueDate" in input
+        ? { dueSoonNoticeFor: null, dueOverdueNoticeFor: null }
+        : {}),
+      ...("dueDateByAssignee" in input && !input.dueDateByAssignee
+        ? { dueAskedNoticeOn: null }
+        : {}),
+    } as Prisma.ProjectReferralUncheckedUpdateInput,
+  });
+
+  /*
+   * The other party is told, because a deadline is an agreement between two
+   * people and one of them changing it silently is how it stops being one.
+   */
+  const other = user.id === referral.assignedByUserId
+    ? referral.assignedToUserId
+    : referral.assignedByUserId;
+  const nextDue = normalizeJalali((dates as Record<string, unknown>).dueDateJalali)
+    ?? referral.dueDateJalali;
+  if (other && other !== user.id && "dueDate" in input) {
+    const actor = await db.user.findUnique({
+      where: { id: user.id }, select: { fullName: true },
+    });
+    const project = referral.activity?.group?.project;
+    await notifyUser({
+      userId: other,
+      module: "ارجاعات",
+      title: nextDue ? "تعیین مهلت ارجاع" : "حذف مهلت ارجاع",
+      description: nextDue
+        ? `${actor?.fullName ?? "یک همکار"} مهلت این ارجاع را ${nextDue} تعیین کرد.`
+        : `${actor?.fullName ?? "یک همکار"} مهلت این ارجاع را برداشت.`,
       projectId: project?.id ?? null,
       actorUserId: user.id,
     });

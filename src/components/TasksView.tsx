@@ -464,6 +464,14 @@ export default function TasksView({
   const [relatedToId, setRelatedToId] = useState('');
   const [priority, setPriority] = useState<Task['priority']>('متوسط');
   const [dueDate, setDueDate] = useState(getTodayShamsi());
+  /**
+   * «مهلت را ارجاع‌شونده تعیین کند» — the third answer beside a date and none.
+   *
+   * It has to be its own value for the same reason it is its own column: a
+   * deadline the assignee still owes looks exactly like a deadline nobody
+   * wanted, so nothing would ever ask them for one.
+   */
+  const [dueByAssignee, setDueByAssignee] = useState(false);
   const [assignedTo, setAssignedTo] = useState('');
   const [status, setStatus] = useState<Task['status']>(TASK_TODO);
 
@@ -512,6 +520,9 @@ export default function TasksView({
     setRelatedToId('');
     setPriority('متوسط');
     setDueDate(getTodayShamsi());
+    // Off on a fresh form, or a task raised after one that left the deadline
+    // to its assignee would quietly do the same.
+    setDueByAssignee(false);
     setAssignedTo('');
     setStatus(TASK_TODO);
     setCustomValues({});
@@ -558,6 +569,7 @@ export default function TasksView({
     setRelatedToId(task.relatedToId || '');
     setPriority(task.priority);
     setDueDate(task.dueDate);
+    setDueByAssignee(!!task.dueDateByAssignee);
     setAssignedTo(task.assignedTo || '');
     setStatus(task.status);
     setCustomValues(task.customValues || {});
@@ -616,7 +628,16 @@ export default function TasksView({
       alert('فیلد "درجه اولویت" الزامی است.');
       return;
     }
-    if (isFieldRequired(settings, 'tasks', 'dueDate') && !dueDate) {
+    /*
+     * «مهلت را ارجاع‌شونده تعیین کند» answers the required field.
+     *
+     * Without this clause the two controls contradict each other: a company
+     * that switches «مهلت انجام» on in Settings and a person who leaves the
+     * date to the assignee produce a form that cannot be submitted from any
+     * screen and blames a box that is not drawn — the exact shape the
+     * required-fields invariant exists to prevent.
+     */
+    if (isFieldRequired(settings, 'tasks', 'dueDate') && !dueDate && !dueByAssignee) {
       alert('فیلد "مهلت انجام" الزامی است.');
       return;
     }
@@ -662,7 +683,10 @@ export default function TasksView({
       relatedToId: relatedToId || undefined,
       relatedToName: relatedToId ? resolvedRelatedName : undefined,
       priority,
-      dueDate,
+      // Exclusive by construction: the checkbox clears the date when it is
+      // ticked, and the picker is stood down while it is.
+      dueDate: dueByAssignee ? '' : dueDate,
+      dueDateByAssignee: dueByAssignee,
       assignedTo,
       status,
       customValues,
@@ -799,12 +823,17 @@ export default function TasksView({
      * the same throughout: a record is filtered on the value it effectively
      * has. `referralPassesTaskFilters` is where that is written down — a
      * referral answers the status filter through its column, counts as
-     * «متوسط», is always about a project, and drops out of a question about a
-     * due date, which it does not have.
+     * «متوسط», is always about a project, and answers a question about a
+     * deadline from the one it carries — or drops out where it carries none,
+     * exactly as an undated task does.
      */
     const referralCards: BoardCard[] = referrals.filter((ref) =>
       referralPassesTaskFilters(
-        { status: ref.status, assignedToUserId: ref.assignedToUserId },
+        {
+          status: ref.status,
+          assignedToUserId: ref.assignedToUserId,
+          dueDate: ref.dueDateJalali ?? null,
+        },
         {
           lane: list.filters.lane,
           priority: list.filters.priority,
@@ -815,9 +844,13 @@ export default function TasksView({
           dateTo: list.filters.dateTo,
           hideCompleted: list.filters.hideCompleted,
         },
+        today,
       )).map((ref) => ({
       kind: 'referral',
       id: ref.id,
+      // The deadline a request now carries, so it sorts among the tasks under
+      // «نزدیک‌ترین سررسید» instead of falling to the end of every column.
+      dueDate: ref.dueDateJalali ?? null,
       // The message itself is the request — there is no separate «what should
       // they do» box any more — so it is what the card is titled with.
       title: ref.activity?.text || ref.actionRequired || 'ارجاع کار',
@@ -1614,6 +1647,8 @@ export default function TasksView({
                   assignedByUserId: openReferral.assignedByUserId,
                   actionRequired: openReferral.actionRequired ?? openReferral.activity?.text ?? '',
                   status: openReferral.status,
+                  dueDateJalali: openReferral.dueDateJalali ?? null,
+                  dueDateByAssignee: !!openReferral.dueDateByAssignee,
                   messages: (openReferral.messages ?? []).map((m) => ({
                     id: m.id,
                     text: m.text,
@@ -1653,6 +1688,15 @@ export default function TasksView({
                 }}
                 onEditAction={async (text) => {
                   await inboxApi.updateReferralAction(openReferral.id, text);
+                  refreshReferrals();
+                }}
+                /*
+                 * Only the date. `dueDateByAssignee` is absent-means-not-edited
+                 * on that endpoint, and the assignee answering «تا کی؟» is not
+                 * deciding who was asked it.
+                 */
+                onSetDue={async (dueDate) => {
+                  await inboxApi.setReferralDue(openReferral.id, { dueDate });
                   refreshReferrals();
                 }}
               />
@@ -2039,20 +2083,69 @@ export default function TasksView({
 
                 {/* Due Date */}
                 <div className="space-y-1.5" id="task-due-date-picker-wrapper">
-                  <ShamsiDatePicker
+                  {!isNewFollowUp && dueByAssignee ? (
                     /*
-                      A chase's date is not a deadline: it is the day the
-                      customer is to be called, and it is what decides whether
-                      the card sits in «در انتظار مشتری» or «در حال انجام». So
-                      it is always required here and says what it is.
+                      The switch **is** the answer, so the picker stands down
+                      rather than sitting there greyed.
+
+                      A disabled date box under a label still reading «سررسید»
+                      invites somebody to wonder why they cannot type in it; the
+                      sentence says what will happen instead, which is that the
+                      other person is the one being asked.
                     */
-                    label={isNewFollowUp
-                      ? 'تاریخ اقدام بعدی (تماس با مشتری) *'
-                      : `مهلت انجام (سررسید)${getFieldAsterisk(settings, 'tasks', 'dueDate')}`}
-                    required={isNewFollowUp || isFieldRequired(settings, 'tasks', 'dueDate')}
-                    value={dueDate}
-                    onChange={(val) => setDueDate(val)}
-                  />
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-slate-500">مهلت انجام (سررسید)</label>
+                      <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                        تعیین مهلت بر عهدهٔ ارجاع‌شونده است و پس از ثبت، از او خواسته می‌شود.
+                      </p>
+                    </div>
+                  ) : (
+                    <ShamsiDatePicker
+                      /*
+                        A chase's date is not a deadline: it is the day the
+                        customer is to be called, and it is what decides whether
+                        the card sits in «در انتظار مشتری» or «در حال انجام». So
+                        it is always required here and says what it is.
+                      */
+                      label={isNewFollowUp
+                        ? 'تاریخ اقدام بعدی (تماس با مشتری) *'
+                        : `مهلت انجام (سررسید)${getFieldAsterisk(settings, 'tasks', 'dueDate')}`}
+                      required={isNewFollowUp || isFieldRequired(settings, 'tasks', 'dueDate')}
+                      value={dueDate}
+                      onChange={(val) => setDueDate(val)}
+                    />
+                  )}
+
+                  {/*
+                    «مهلت را ارجاع‌شونده تعیین کند» — a third answer, not a
+                    blank.
+
+                    Without it, a deadline somebody is still owed looks exactly
+                    like a deadline nobody wanted, so the assignee is never
+                    asked for one and neither reminder can ever fire. Ticking it
+                    clears the date, because the two are alternatives: a date
+                    agreed here is not a date the other person was asked to
+                    pick.
+
+                    Never on a **chase**: its date is the day to ring the
+                    customer and it is what parks the card, so there is nothing
+                    for somebody else to decide.
+                  */}
+                  {!isNewFollowUp && (
+                    <label className="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={dueByAssignee}
+                        onChange={(e) => {
+                          setDueByAssignee(e.target.checked);
+                          if (e.target.checked) setDueDate('');
+                        }}
+                        data-task-due-by-assignee
+                        className="w-3.5 h-3.5 accent-sky-600"
+                      />
+                      مهلت را ارجاع‌شونده تعیین کند
+                    </label>
+                  )}
                 </div>
 
                 {/* Assignee */}

@@ -12,6 +12,7 @@ import {
   markActivitiesRead, toggleActivityReaction,
   reassignReferral,
   updateReferralAction,
+  setReferralDue,
   setReferralStatus, updateActivity, upsertCategoryGroup,
 } from "../services/activityService";
 import { normalizeAttachments } from "../../utils/attachments";
@@ -207,6 +208,17 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
               actionRequired: typeof referral.actionRequired === "string" ? referral.actionRequired : undefined,
             }
           : undefined,
+        /*
+         * The deadline for whatever this message asks of whoever it names.
+         *
+         * Spread rather than assigned: `expandDateFields` writes a key that is
+         * present-but-undefined as null, which is the same value while claiming
+         * the question was answered — the fault the web-RFQ channel columns
+         * were corrected for.
+         */
+        ...(typeof body.dueDate === "string" ? { dueDate: body.dueDate } : {}),
+        ...(typeof body.dueDateByAssignee === "boolean"
+          ? { dueDateByAssignee: body.dueDateByAssignee } : {}),
       }, user);
 
       if (outcome === "forbidden") return denied(res);
@@ -446,6 +458,49 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
       res.json({ success: true });
     } catch (err) {
       sendError(res, err, "PUT /api/referrals/:id/action");
+    }
+  });
+
+  /*
+   * Agrees, moves or removes a referral's deadline.
+   *
+   * **Either party**, enforced in the service — unlike the request's own text,
+   * which only the referrer may rewrite. The assignee writing here is answering
+   * «مهلت را خودت تعیین کن», and refusing them would make that switch a
+   * question nobody can answer.
+   */
+  app.put("/api/referrals/:id/due", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, REFERRAL_KEY, "write");
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      /*
+       * Absent means «not edited» for both, the `syncChildren` distinction: a
+       * screen sending only the date must not also be deciding who was asked to
+       * set it, and one sending only the switch must not blank the date.
+       */
+      const input: { dueDate?: string | null; dueDateByAssignee?: boolean } = {};
+      if ("dueDate" in body) {
+        input.dueDate = typeof body.dueDate === "string" && body.dueDate.trim()
+          ? body.dueDate : null;
+      }
+      if ("dueDateByAssignee" in body) input.dueDateByAssignee = !!body.dueDateByAssignee;
+      if (Object.keys(input).length === 0) {
+        res.status(400).json({ success: false, error: "مقداری برای ثبت ارسال نشده است." });
+        return;
+      }
+
+      const outcome = await setReferralDue(req.params.id, input, user);
+      if (outcome === "forbidden") {
+        return denied(res, "فقط طرفین این ارجاع می‌توانند مهلت آن را تغییر دهند.");
+      }
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "ارجاع یافت نشد." });
+        return;
+      }
+      res.json({ success: true });
+    } catch (err) {
+      sendError(res, err, "PUT /api/referrals/:id/due");
     }
   });
 

@@ -35,6 +35,16 @@ export interface ReferralRow {
   /** When it was picked up and when it closed — the board's own record. */
   startedAt?: string | null;
   completedAt?: string | null;
+  /**
+   * «تا کی؟», and who was asked to answer it.
+   *
+   * A referral had no deadline at all until now, so the board sorted every one
+   * of them last under «نزدیک‌ترین سررسید» and «عقب‌افتاده» dropped them by
+   * construction. Optional still: most requests carry none, and a blank here
+   * is a real answer rather than a gap.
+   */
+  dueDateJalali?: string | null;
+  dueDateByAssignee?: boolean;
   messages: ReferralMessageRow[];
   activity: {
     id: string;
@@ -153,6 +163,19 @@ export const inboxApi = {
    */
   updateReferralAction: (id: string, actionRequired: string) =>
     api.put<Record<string, never>>(`/api/referrals/${id}/action`, { actionRequired }),
+
+  /**
+   * Agrees, moves or removes the deadline.
+   *
+   * **Either party may**, unlike the request's own text: the assignee writing
+   * here is answering «مهلت را خودت تعیین کن», and a rule that refused them
+   * would make that switch a question nobody can answer. Absent keys mean «not
+   * edited», so the date and the switch are moved independently.
+   */
+  setReferralDue: (
+    id: string,
+    body: { dueDate?: string | null; dueDateByAssignee?: boolean },
+  ) => api.put<Record<string, never>>(`/api/referrals/${id}/due`, body),
 
   /** Hands the thread to someone else and puts it back into "awaiting action". */
   reassignReferral: (id: string, assignedToUserId: string) =>

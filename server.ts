@@ -56,6 +56,7 @@ import { ensureRatesFresh } from "./src/server/services/rateRefresh";
 import { refreshHolidayCache } from "./src/server/services/holidayService";
 import { ensureSettingsPatches } from "./src/server/settings";
 import { ensureWorkflowSweepRanToday, runDueWorkflows } from "./src/server/services/workflowSweep";
+import { ensureDueRemindersRanToday } from "./src/server/services/dueReminderSweep";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 import { UPLOADS_DIR, ensureUploadsDir } from "./src/server/uploadsDir";
 import { recalculateCustomerValueNow } from "./src/server/services/customerValueRecalc";
@@ -630,6 +631,15 @@ registerCampaignRoutes(app, routeDeps);
          * sweep. Not awaited — a follow-up task must never hold up a login.
          */
         void ensureWorkflowSweepRanToday();
+        /*
+         * And the day's deadline reminders, which are not workflow rules and so
+         * cannot ride on that guard: `runDueWorkflows` returns early for a
+         * company that has written none, which is most of them, while these
+         * reminders are what a due date *means* rather than something somebody
+         * set up. Same principle — started, never awaited, swallows its own
+         * failures.
+         */
+        void ensureDueRemindersRanToday();
       } else {
         // Increment failed attempts
         const currentU = userLoginAttempts.get(userKey) || { count: 0, lastAttempt: 0 };

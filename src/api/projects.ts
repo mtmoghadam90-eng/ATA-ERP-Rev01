@@ -274,6 +274,9 @@ export interface ActivityReferralRow {
   assignedToName: string | null;
   assignedByUserId: string | null;
   assignedByName: string | null;
+  /** «تا کی؟», and whether the assignee is the one asked to say. */
+  dueDateJalali: string | null;
+  dueDateByAssignee: boolean;
   createdAt: string;
   messages: ActivityReferralMessageRow[];
 }
@@ -447,6 +450,14 @@ export const projectsApi = {
     /** The message this one answers; the server checks it is in the same group. */
     replyToId?: string | null;
     referral?: { assignedToUserId?: string | null; assignedToName?: string | null; actionRequired?: string };
+    /**
+     * The deadline for every referral this message raises.
+     *
+     * Sent only when the message names somebody, and absent on every ordinary
+     * message — the server writes nothing where no request is raised.
+     */
+    dueDate?: string;
+    dueDateByAssignee?: boolean;
   }) => api.post<{ activity: ActivityRow }>("/api/activities", body).then((r) => r.activity),
 
   /**

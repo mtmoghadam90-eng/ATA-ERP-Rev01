@@ -1072,6 +1072,7 @@ head("Activity composer: naming a colleague");
   ];
 
   let sent: string | null = null;
+  let sentDue: { dueDate: string; dueDateByAssignee: boolean } | null = null;
   const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
   const root = createRoot(host);
   await act(async () => {
@@ -1083,7 +1084,10 @@ head("Activity composer: naming a colleague");
       onAttachmentsChange: () => {},
       onPickFiles: () => {},
       uploading: false,
-      onSend: async (text: string) => { sent = text; },
+      onSend: async (
+        text: string,
+        due: { dueDate: string; dueDateByAssignee: boolean },
+      ) => { sent = text; sentDue = due; },
     }));
   });
   await settle();
@@ -1141,6 +1145,75 @@ head("Activity composer: naming a colleague");
 
   const sendNow = host.querySelector("#activity-composer-send") as HTMLButtonElement;
   ok("now it can be sent", sendNow?.disabled === false);
+
+  /*
+   * **The deadline control appears with the request and not before it.**
+   *
+   * A date box on an ordinary message would be asking about a promise nobody
+   * is making — this feed was stripped of a checkbox, a colleague picker and a
+   * "what should they do" box for exactly that reason — so it is drawn inside
+   * the block that already says «برای … ارجاع ثبت می‌شود», and a message that
+   * names nobody looks exactly as it always did.
+   */
+  ok("the deadline control is drawn once somebody is named",
+    !!host.querySelector("[data-referral-due]"));
+
+  const byAssignee = host.querySelector("[data-referral-due-by-assignee]") as HTMLInputElement;
+  ok("...with «مهلت را ارجاع‌شونده تعیین کند» beside it", !!byAssignee);
+
+  /*
+   * A checkbox that draws perfectly and calls nothing back type-checks and
+   * reads perfectly — the «switch that does nothing» fault, which is why this
+   * is asserted against what actually reaches the caller rather than against
+   * the markup.
+   */
+  await act(async () => {
+    handlers(byAssignee).onChange?.({ target: { checked: true } });
+  });
+  await settle();
+
+  await act(async () => {
+    sendNow?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settle();
+
+  ok("the answer reaches the caller with the message",
+    sentDue?.dueDateByAssignee === true);
+  ok("...and no date beside it, since the two are alternatives",
+    sentDue?.dueDate === "");
+
+  act(() => { root.unmount(); });
+  host.remove();
+}
+
+head("Activity composer: an ordinary message asks about no deadline");
+{
+  const settle = async () => {
+    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  };
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(React.createElement(ActivityComposer, {
+      users: [{ id: "u1", fullName: "علی رضایی" }],
+      replyTo: null,
+      onCancelReply: () => {},
+      attachments: [],
+      onAttachmentsChange: () => {},
+      onPickFiles: () => {},
+      uploading: false,
+      onSend: async () => {},
+    }));
+  });
+  await settle();
+
+  /*
+   * The negative half, and the one that keeps the feature honest: drawn
+   * unconditionally the bar would grow a date box on every note anybody writes
+   * about a job, which is the clutter the messenger was made out of.
+   */
+  ok("no deadline control on a message that names nobody",
+    !host.querySelector("[data-referral-due]"));
 
   act(() => { root.unmount(); });
   host.remove();

@@ -41,6 +41,16 @@ export interface AddActivityInput extends ActivityAttachmentInput {
    * would lose a request.
    */
   referral?: ActivityReferralInput;
+  /**
+   * The deadline agreed for whoever this message names.
+   *
+   * One date for the whole message, because the message *is* the request: a
+   * sentence naming two colleagues asks both of them for the same thing by the
+   * same day, and a date per person would be the second copy this feed was
+   * stripped of controls to avoid.
+   */
+  dueDate?: string | null;
+  dueDateByAssignee?: boolean;
 }
 
 export interface ProjectActivitiesApi {
@@ -222,6 +232,10 @@ export function useProjectActivities(projectId: string | null | undefined): Proj
             actionRequired: input.referral.actionRequired,
           }
         : undefined,
+      // Spread, never assigned: a key that is present and undefined is written
+      // as null by `scalarData`, which claims the question was answered.
+      ...(input.dueDate ? { dueDate: input.dueDate } : {}),
+      ...(input.dueDateByAssignee ? { dueDateByAssignee: true } : {}),
     });
     refresh();
   }, [refresh]);

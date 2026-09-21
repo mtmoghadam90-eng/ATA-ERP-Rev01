@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { AtSign, CornerUpLeft, Paperclip, Send, X } from 'lucide-react';
+import { AtSign, CalendarClock, CornerUpLeft, Paperclip, Send, X } from 'lucide-react';
 import {
   MentionableUser, insertMention, mentionIsComplete, mentionQuery, mentionSuggestions,
   parseMentions,
 } from '../utils/mentions';
 import type { ActivityAttachment } from '../utils/attachments';
+import ShamsiDatePicker from './ShamsiDatePicker';
 
 /**
  * Writing a message on a project's feed.
@@ -31,7 +32,16 @@ interface Props {
   onAttachmentsChange: (next: ActivityAttachment[]) => void;
   onPickFiles: (files: FileList | null) => void;
   uploading: boolean;
-  onSend: (text: string) => Promise<void>;
+  /**
+   * The deadline travels with the message, because the message is the request.
+   *
+   * Both are meaningless on a message that names nobody, and the composer
+   * never sends them there — the control is not even drawn.
+   */
+  onSend: (
+    text: string,
+    due: { dueDate: string; dueDateByAssignee: boolean },
+  ) => Promise<void>;
 }
 
 export default function ActivityComposer({
@@ -39,6 +49,8 @@ export default function ActivityComposer({
   onPickFiles, uploading, onSend,
 }: Props) {
   const [text, setText] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [dueByAssignee, setDueByAssignee] = useState(false);
   const [caret, setCaret] = useState(0);
   const [busy, setBusy] = useState(false);
   const [highlight, setHighlight] = useState(0);
@@ -98,8 +110,20 @@ export default function ActivityComposer({
     if (!text.trim() && attachments.length === 0) return;
     setBusy(true);
     try {
-      await onSend(text.trim());
+      /*
+       * The deadline is sent only where a request is actually raised.
+       *
+       * The control is drawn under the same condition, so a date typed into a
+       * message and then un-named — every mention removed before sending — is
+       * a date about nothing, and writing it would leave the next message
+       * carrying a deadline nobody agreed.
+       */
+      await onSend(text.trim(), named.length > 0
+        ? { dueDate, dueDateByAssignee: dueByAssignee }
+        : { dueDate: '', dueDateByAssignee: false });
       setText('');
+      setDueDate('');
+      setDueByAssignee(false);
       setCaret(0);
     } finally {
       setBusy(false);
@@ -193,13 +217,68 @@ export default function ActivityComposer({
         )}
       </div>
 
-      {/* Who this message is asking, spelled out before it is sent. */}
+      {/*
+        Who this message is asking, and by when — drawn only once somebody is
+        named.
+
+        **The deadline lives here and nowhere else in this bar.** A referral is
+        raised by naming a colleague, so a date control on an ordinary message
+        would be asking about a promise nobody is making; putting it inside the
+        block that already says «برای … ارجاع ثبت می‌شود» is what keeps an
+        everyday note exactly as simple as it was.
+
+        Two answers, and they are different things rather than two spellings of
+        one: a date the writer is agreeing, or «تعیینش با خودت» — which is a
+        real answer and not a blank, because it is what makes the system ask
+        the other person for one instead of letting the request sit undated.
+      */}
       {named.length > 0 && (
-        <p className="text-[10px] text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-2 py-1">
-          با ارسال این پیام، برای{' '}
-          <strong>{named.map((u) => u.fullName).join('، ')}</strong>{' '}
-          ارجاع ثبت می‌شود و متن همین پیام به‌عنوان اقدام خواسته‌شده ثبت خواهد شد.
-        </p>
+        <div
+          className="text-[10px] text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-2 py-1.5 space-y-1.5"
+          data-referral-due
+        >
+          <p>
+            با ارسال این پیام، برای{' '}
+            <strong>{named.map((u) => u.fullName).join('، ')}</strong>{' '}
+            ارجاع ثبت می‌شود و متن همین پیام به‌عنوان اقدام خواسته‌شده ثبت خواهد شد.
+          </p>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-1 font-bold shrink-0">
+              <CalendarClock size={11} />
+              مهلت انجام:
+            </span>
+
+            {dueByAssignee ? (
+              <span className="text-slate-600">تعیین مهلت بر عهدهٔ ارجاع‌شونده است.</span>
+            ) : (
+              <div className="w-40">
+                <ShamsiDatePicker
+                  value={dueDate}
+                  onChange={setDueDate}
+                  compact
+                  placeholder="اختیاری"
+                />
+              </div>
+            )}
+
+            <label className="flex items-center gap-1 cursor-pointer text-slate-600">
+              <input
+                type="checkbox"
+                checked={dueByAssignee}
+                onChange={(e) => {
+                  setDueByAssignee(e.target.checked);
+                  // The two answers are exclusive: a date agreed here is not a
+                  // date the other person was asked to pick.
+                  if (e.target.checked) setDueDate('');
+                }}
+                data-referral-due-by-assignee
+                className="w-3 h-3 accent-sky-600"
+              />
+              مهلت را ارجاع‌شونده تعیین کند
+            </label>
+          </div>
+        </div>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
