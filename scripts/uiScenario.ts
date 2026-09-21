@@ -56,6 +56,7 @@ import LoginView from "../src/components/LoginView";
 import Avatar from "../src/components/Avatar";
 import TaskCompletionModal from "../src/components/TaskCompletionModal";
 import ModuleNotesSection from "../src/components/ModuleNotesSection";
+import { RelationPicker } from "../src/components/RelationPicker";
 import TaskCalendarModal from "../src/components/TaskCalendarModal";
 import type { NextActionDraft } from "../src/utils/nextAction";
 import { resizeColumns } from "../src/utils/columnWidths";
@@ -2534,6 +2535,112 @@ head("A document's notes: a file is content, and the delete is only where it is 
 
   act(() => { mRoot.unmount(); });
   mHost.remove();
+}
+
+
+head("The relationship picker asks the server for the opposite type");
+
+/*
+ * «تعریف ارتباط» is one component shared by the two customer forms — it had
+ * been two, and the quick-add form's copy had no search box at all. Sharing it
+ * closes that, and opens one failure no type-check can see: a picker that
+ * queries **its own** customer type renders perfectly, searches perfectly, and
+ * offers exactly the wrong half of the directory. Both answers are full of
+ * plausible names, so nothing on the screen would say so.
+ *
+ * So this renders it over a stubbed fetch and reads the URL it really asked
+ * for, and then types into the box and reads the URL again — because a search
+ * input whose `onChange` never reaches the query is the «switch that does
+ * nothing» fault, and it type-checks.
+ */
+{
+  const gR = globalThis as unknown as Record<string, unknown>;
+  const realFetchR = gR.fetch;
+  const askedR: string[] = [];
+  gR.fetch = (async (url: string) => {
+    askedR.push(String(url));
+    const body = {
+      success: true,
+      rows: [
+        { id: "c1", customerType: "حقیقی", companyName: "علی رضایی", firstName: "علی", lastName: "رضایی", position: "مدیر خرید", industry: null },
+        { id: "c2", customerType: "حقیقی", companyName: "زهرا احمدی", firstName: "زهرا", lastName: "احمدی", position: "کارشناس", industry: null },
+      ],
+      total: 2, page: 1, pageSize: 25, totalPages: 1,
+    };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+
+  const hostR = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootR = createRoot(hostR);
+  const settleR = async () => {
+    for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  const toggled: string[] = [];
+  await act(async () => {
+    rootR.render(React.createElement(RelationPicker, {
+      // A company's form, so the picker must go looking for **people**.
+      customerType: "حقوقی",
+      selected: [],
+      onToggle: (id: string) => { toggled.push(id); },
+    }));
+  });
+  await settleR();
+
+  ok("the picker queries the customers endpoint",
+    askedR.some((u) => u.includes("/api/customers")), askedR.join(" | "));
+  /*
+   * The half that matters. A link joins the opposite type, so a company's form
+   * asks for حقیقی — encoded, since it travels in a query string.
+   */
+  ok("...for the opposite customer type",
+    askedR.some((u) => u.includes(encodeURIComponent("حقیقی"))),
+    askedR.join(" | "));
+  ok("...and never for its own",
+    !askedR.some((u) => u.includes(encodeURIComponent("حقوقی"))),
+    askedR.join(" | "));
+
+  /* The search box has to reach the query, or it narrows nothing. */
+  const boxR = hostR.querySelector("input[type=\"text\"]") as HTMLInputElement | null;
+  ok("there is a search box to type in", !!boxR);
+  const beforeR = askedR.length;
+  await act(async () => {
+    // Driven through the control's own handler, the way every typing test in
+    // this file does — jsdom dispatches the event but React 19 reads its props.
+    boxR!.value = "رضایی";
+    handlers(boxR!).onChange?.({ target: boxR });
+  });
+  // The term is debounced, so the request lands a moment later.
+  await act(async () => { await new Promise((r) => setTimeout(r, 400)); });
+  await settleR();
+  ok("typing reaches the server query",
+    askedR.slice(beforeR).some((u) => u.includes(encodeURIComponent("رضایی"))),
+    askedR.slice(beforeR).join(" | "));
+
+  /*
+   * The results list is the one element in this application allowed a scrollbar
+   * inside a form, and it is allowed it *by name*. Drawn without the marker the
+   * exemption in `test:rules` stops matching and the rule goes back to being
+   * enforced, which is the behaviour wanted — but the marker also has to be on
+   * the element that really scrolls, which only a render can say.
+   */
+  const resultsR = hostR.querySelector("[data-relation-results]") as HTMLElement | null;
+  ok("the results list is marked as a picker's results", !!resultsR);
+  ok("...and it is the element carrying the scroll",
+    (resultsR?.className ?? "").includes("overflow-y-auto"), resultsR?.className);
+
+  /* And a tick reaches the caller, rather than being a checkbox that draws. */
+  const firstBox = hostR.querySelector("input[type=\"checkbox\"]") as HTMLInputElement | null;
+  ok("the candidates are drawn as ticks", !!firstBox);
+  await act(async () => {
+    firstBox?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleR();
+  ok("ticking one reaches the caller", toggled.length === 1, JSON.stringify(toggled));
+
+  act(() => { rootR.unmount(); });
+  hostR.remove();
+  gR.fetch = realFetchR;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

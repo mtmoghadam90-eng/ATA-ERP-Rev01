@@ -25,7 +25,7 @@ import CustomFieldsForm from './CustomFieldsForm';
 import CustomerValueFields from './CustomerValueFields';
 import CustomerValueCard, { RANK_STYLE } from './CustomerValueCard';
 import { Pencil } from 'lucide-react';
-import { formatMoney, toPersianDigits } from '../numUtils';
+import { formatMoney } from '../numUtils';
 import { COST_TO_SERVE_LEVELS, PAYMENT_BEHAVIOURS, RANK_META } from '../utils/customerValue';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
 import { exportToCSV } from '../excelUtils';
@@ -35,8 +35,7 @@ import { customersApi } from '../api/customers';
 import { customerToWriteInput, detailToCustomer, rowToCustomer } from '../api/customerAdapter';
 import { useCustomerList } from '../api/useCustomerList';
 import { SegmentSaveModal } from './SegmentSaveModal';
-import { useEntitySearch } from '../api/useEntitySearch';
-import type { CustomerRow } from '../api/customers';
+import { RelationPicker } from './RelationPicker';
 import { useNextAction } from '../utils/useNextAction';
 import SaveWithNextActionButton from './SaveWithNextActionButton';
 import { NextActionPrompt } from './NextActionModal';
@@ -138,24 +137,10 @@ interface CustomersViewProps {
  * customer can be deleted, and the duplicate check when saving one, are queries
  * too — both used to need the entire table in the browser to answer.
  */
-/**
- * How many candidates the relationship picker asks the server for, and how many
- * of them it draws.
- *
- * They are different numbers on purpose. The **fetch** is generous because it is
- * what a search reaches into — narrowing it would make the box find less. The
- * **render** is short because the checklist had no cap at all: with nothing
- * typed it drew every row it was handed, so the form opened on a wall of
- * checkboxes with the search box that shortens it pushed off the top.
- *
- * Capped by *count* and never by height. A `max-h-` with `overflow-y-auto`
- * would be a second scrollbar inside a form that already scrolls — a window
- * onto a list whose shape the reader cannot see — which is a rule this codebase
- * holds in `test:rules` for six other screens. A short list plus «search for
- * the rest» is the same information without the second bar.
- */
-const RELATION_FETCH_LIMIT = 25;
-const RELATION_VISIBLE = 6;
+/* The relationship picker — its search, its cap and the reason its results are
+   allowed to scroll — moved into `RelationPicker`, which `QuickAddModal` reads
+   too. It had no search box at all, which is the drift this file's own note
+   about the five customer creation forms exists to warn about. */
 
 export default function CustomersView({
   industries,
@@ -260,7 +245,6 @@ export default function CustomersView({
 
   // Selection for relationships
   const [selectedLinks, setSelectedLinks] = useState<string[]>([]);
-  const [relationSearch, setRelationSearch] = useState('');
 
   // Quick Add states inside Relationship block
   const [showQuickAddRelation, setShowQuickAddRelation] = useState(false);
@@ -442,7 +426,6 @@ export default function CustomersView({
     setPosition('');
 
     setSelectedLinks([]);
-    setRelationSearch('');
     resetQuickForm();
     setCustomValues({});
     // A new customer starts unassessed rather than on the defaults: an
@@ -504,7 +487,6 @@ export default function CustomersView({
     setPosition(customer.position || '');
 
     setSelectedLinks(customer.linkedCustomerIds || []);
-    setRelationSearch('');
     resetQuickForm();
     setCustomValues(customer.customValues || {});
     setShowModal(true);
@@ -810,29 +792,6 @@ export default function CustomersView({
 
     exportToCSV('گزارش_مشتریان', headers, rows);
   };
-
-  // Get active candidates for relationship linking in modal
-  // Candidates for the relationship picker, searched on the server. A link
-  // always joins the opposite type, so the query is filtered to it.
-  const relationSearchState = useEntitySearch<CustomerRow>({
-    path: '/api/customers',
-    limit: RELATION_FETCH_LIMIT,
-    params: { customerType: customerType === 'حقوقی' ? 'حقیقی' : 'حقوقی' },
-    getLabel: (row) => row.companyName,
-    // Only while the form is open; otherwise it queries behind a closed modal.
-    enabled: showModal,
-  });
-
-  React.useEffect(() => {
-    relationSearchState.setTerm(relationSearch);
-  }, [relationSearch, relationSearchState.setTerm]);
-
-  const relationCandidates = React.useMemo(
-    () => relationSearchState.matches
-      .filter((row) => !editingCustomer || row.id !== editingCustomer.id)
-      .map(rowToCustomer),
-    [relationSearchState.matches, editingCustomer],
-  );
 
   return (
     <div className="space-y-6 animate-fade-in" id="customers-view-container">
@@ -2085,42 +2044,44 @@ export default function CustomersView({
                   </div>
                 )}
 
-                {/* Relationship search with Quick Add trigger button */}
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <div className="relative flex-1">
-                    <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                    <input
-                      type="text"
-                      placeholder={customerType === 'حقوقی' ? 'جستجو در اشخاص حقیقی...' : 'جستجو در شرکت‌ها...'}
-                      value={relationSearch}
-                      onChange={(e) => setRelationSearch(e.target.value)}
-                      className="w-full pr-8 pl-3 py-1.5 border border-slate-200 rounded-lg text-xs bg-white focus:outline-none focus:ring-1 focus:ring-sky-500"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowQuickAddRelation(!showQuickAddRelation)}
-                    className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition flex items-center justify-center gap-1 ${
-                      showQuickAddRelation 
-                        ? 'bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100' 
-                        : 'bg-sky-50 text-sky-600 border-sky-200 hover:bg-sky-100'
-                    }`}
-                  >
-                    {showQuickAddRelation ? (
-                      <>
-                        <X size={12} />
-                        <span>انصراف از تعریف جدید</span>
-                      </>
-                    ) : (
-                      <>
-                        <Plus size={12} />
-                        <span>{customerType === 'حقوقی' ? 'تعریف مخاطب حقیقی جدید' : 'تعریف شرکت جدید'}</span>
-                      </>
-                    )}
-                  </button>
-                </div>
+                {/*
+                  The search and the candidate list are one component now,
+                  shared with `QuickAddModal` — the two had drifted exactly the
+                  way the five customer creation forms always do, and the other
+                  copy had no search box at all. See `RelationPicker`, which
+                  also carries the reason its results are allowed to scroll.
+                */}
+                <RelationPicker
+                  customerType={customerType}
+                  selected={selectedLinks}
+                  onToggle={handleToggleLink}
+                  excludeId={editingCustomer?.id ?? null}
+                  enabled={showModal}
+                  trailing={
+                    <button
+                      type="button"
+                      onClick={() => setShowQuickAddRelation(!showQuickAddRelation)}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition flex items-center justify-center gap-1 shrink-0 ${
+                        showQuickAddRelation
+                          ? 'bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100'
+                          : 'bg-sky-50 text-sky-600 border-sky-200 hover:bg-sky-100'
+                      }`}
+                    >
+                      {showQuickAddRelation ? (
+                        <>
+                          <X size={12} />
+                          <span>بستن فرم</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus size={12} />
+                          <span>تعریف سریع</span>
+                        </>
+                      )}
+                    </button>
+                  }
+                />
 
-                {/* Inline Quick Add Form */}
                 {showQuickAddRelation && (
                   <div className="p-4 bg-white border border-slate-200 rounded-xl space-y-3.5 shadow-xs">
                     <div className="flex justify-between items-center border-b border-slate-100 pb-2">
@@ -2329,57 +2290,6 @@ export default function CustomersView({
                   </div>
                 )}
 
-                {/* Candidate checklist container */}
-                <div className="border border-slate-100 rounded-lg divide-y divide-slate-100 bg-white">
-                  {relationCandidates.length > 0 ? (
-                    relationCandidates.slice(0, RELATION_VISIBLE).map(rc => {
-                      const isChecked = selectedLinks.includes(rc.id);
-                      return (
-                        <label 
-                          key={rc.id}
-                          className="flex items-center gap-3 px-3 py-2 hover:bg-slate-50/50 cursor-pointer text-xs select-none"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={() => handleToggleLink(rc.id)}
-                            className="rounded border-slate-300 text-sky-500 focus:ring-sky-500"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="font-bold text-slate-800 truncate">
-                              {rc.customerType === 'حقوقی' ? rc.companyName : `${rc.firstName || ''} ${rc.lastName || ''}`}
-                            </p>
-                            <p className="text-[10px] text-slate-400 truncate">
-                              {rc.customerType === 'حقوقی' ? `صنعت: ${rc.industry || '—'}` : `سمت: ${rc.position || '—'}`}
-                            </p>
-                          </div>
-                        </label>
-                      );
-                    })
-                  ) : (
-                    <div className="p-4 text-center text-[11px] text-slate-400 italic">
-                      {relationSearch.trim()
-                        ? 'موردی با این جستجو پیدا نشد.'
-                        : 'موردی جهت ارتباط یافت نشد.'}
-                    </div>
-                  )}
-
-                  {/*
-                    What the short list is hiding, said rather than left to be
-                    discovered. Two sentences because two different things are
-                    true: the server sent more than is drawn, or the server
-                    itself stopped at its own limit and there may be more behind
-                    that — «۱۹ مورد دیگر» would be a figure this screen does not
-                    have in the second case.
-                  */}
-                  {relationCandidates.length > RELATION_VISIBLE && (
-                    <div className="px-3 py-2 text-[10px] text-slate-500 bg-slate-50/70 text-center">
-                      {relationSearchState.matches.length >= RELATION_FETCH_LIMIT
-                        ? 'موارد بیشتری هم هست؛ برای رسیدن به مورد دلخواه، نام آن را در کادر بالا جستجو کنید.'
-                        : `${toPersianDigits(String(relationCandidates.length - RELATION_VISIBLE))} مورد دیگر نمایش داده نشده؛ برای دیدنشان جستجو کنید.`}
-                    </div>
-                  )}
-                </div>
               </div>
 
               {/* The computed half, read-only, with its working shown. */}

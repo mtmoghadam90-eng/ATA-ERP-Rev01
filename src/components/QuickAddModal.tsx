@@ -11,6 +11,7 @@ import type { DuplicateMatch } from '../utils/customerDuplicates';
 import DuplicateCustomerModal from './DuplicateCustomerModal';
 import { SearchableSelect } from './SearchableSelect';
 import { customersApi } from '../api/customers';
+import { RelationPicker } from './RelationPicker';
 import { detailToCustomer, findServerDuplicates } from '../api/customerAdapter';
 import { getTodayShamsi } from '../dateUtils';
 import { PROJECT_STATUSES } from "../utils/moduleStatuses";
@@ -812,42 +813,33 @@ export default function QuickAddModal({
                   </select>
                 </div>
 
-                {/* Relationship selector */}
-                {customers.length > 0 && (
-                  <div className="space-y-1.5 md:col-span-2 p-3 bg-slate-50 border border-slate-150 rounded-xl">
-                    <label className="text-xs font-bold text-slate-700 block mb-1">
-                      {custType === 'حقوقی' ? 'تعریف ارتباط با اشخاص حقیقی مرتبط' : 'تعریف ارتباط با شرکت‌های (حقوقی) مرتبط'}
-                    </label>
-                    <div className="border border-slate-200 rounded-lg p-2 bg-white space-y-1">
-                      {customers
-                        .filter(c => c.customerType === (custType === 'حقوقی' ? 'حقیقی' : 'حقوقی'))
-                        .map(c => {
-                          const name = c.customerType === 'حقوقی' ? c.companyName : `${c.firstName || ''} ${c.lastName || ''}`.trim();
-                          const isChecked = selectedLinks.includes(c.id);
-                          return (
-                            <label key={c.id} className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer hover:bg-slate-50 p-1.5 rounded transition">
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => {
-                                  if (isChecked) {
-                                    setSelectedLinks(selectedLinks.filter(id => id !== c.id));
-                                  } else {
-                                    setSelectedLinks([...selectedLinks, c.id]);
-                                  }
-                                }}
-                                className="rounded border-slate-300 text-sky-600 focus:ring-sky-500"
-                              />
-                              <span className="font-semibold">{name}</span>
-                            </label>
-                          );
-                        })}
-                      {customers.filter(c => c.customerType === (custType === 'حقوقی' ? 'حقیقی' : 'حقوقی')).length === 0 && (
-                        <span className="text-xs text-slate-400 block text-center py-2">هیچ مخاطبی با ماهیت مخالف جهت اتصال یافت نشد.</span>
-                      )}
-                    </div>
-                  </div>
-                )}
+                {/*
+                  Relationship selector.
+                  
+                  It had no search box and no cap: it drew every candidate the
+                  `customers` prop happened to hold, so it was a wall of
+                  checkboxes — and, worse, it could only offer people already on
+                  the page in the background, which is the «filtered a list the
+                  browser already had» fault this application has corrected on
+                  the contact field and the recipient field. It is drawn
+                  unconditionally now: the old `customers.length > 0` guard made
+                  the whole section vanish rather than say there was nobody to
+                  link to, and the server is what answers that question anyway.
+                */}
+                <div className="space-y-1.5 md:col-span-2 p-3 bg-slate-50 border border-slate-150 rounded-xl">
+                  <label className="text-xs font-bold text-slate-700 block mb-1">
+                    {custType === 'حقوقی' ? 'تعریف ارتباط با اشخاص حقیقی مرتبط' : 'تعریف ارتباط با شرکت‌های (حقوقی) مرتبط'}
+                  </label>
+                  <RelationPicker
+                    customerType={custType}
+                    selected={selectedLinks}
+                    onToggle={(id) =>
+                      setSelectedLinks((prev) =>
+                        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+                      )
+                    }
+                  />
+                </div>
               </div>
 
               {/* Custom Fields */}

@@ -239,6 +239,9 @@ import {
 } from "../src/utils/salesFollowUp";
 import { copiedProformaDates } from "../src/utils/proformaCopy";
 import {
+  recipientDisplayName, resolveSentRecipients, selfRecipientName, sentRecipientsRefusal,
+} from "../src/utils/proformaRecipients";
+import {
   REMINDER_REPEATS, dueReminderAt, nextOccurrenceOnOrAfter, normalizeRepeat,
   occurrenceKey, repeatOccursOn, shamsiMonthLength,
 } from "../src/utils/reminderRepeat";
@@ -10672,16 +10675,29 @@ head("A document's notes: files, a Shamsi clock, and a delete that is offered ho
      * its own to scroll, hence the null.
      */
     ["src/components/ModuleNotesSection.tsx", null],
+    /*
+     * And the shared relationship picker, which both customer forms drop into
+     * their own scrolling body. Reading it here is the point: its results list
+     * *does* scroll, deliberately, and an exemption that works by not looking
+     * at the file is the same as no rule at all — the next component to put a
+     * `max-h-` inside a form would pass for exactly the same reason.
+     */
+    ["src/components/RelationPicker.tsx", null],
   ] as const) {
     const src = strip(readFileSync(file, "utf8"));
     const name = file.split("/").pop();
     /*
      * A dropdown is not a form section: an absolutely-positioned popover over
-     * five hundred options has to scroll, and always did.
+     * five hundred options has to scroll, and always did — and neither is a
+     * picker's *result* list, which is what the search box above it just
+     * answered rather than anything the person wrote. `data-relation-results`
+     * is how that one is named; it is a named exception and not a pattern, so
+     * anything else carrying both classes still fails.
      */
     const inner = src.split("\n").filter((line) =>
       /overflow-y-auto/.test(line) && /max-h-/.test(line)
-      && !/absolute/.test(line) && !/p-6 /.test(line) && !/flex-1/.test(line));
+      && !/absolute/.test(line) && !/p-6 /.test(line) && !/flex-1/.test(line)
+      && !/data-relation-results/.test(line));
     eq(`${name} has no inner scroll inside its form`, inner.length, 0);
     if (outer) ok(`${name} still scrolls as a whole`, outer.test(src));
   }
@@ -10693,39 +10709,101 @@ head("A document's notes: files, a Shamsi clock, and a delete that is offered ho
 
   /* -- and the list that got long once the scrollbar went -- */
   /*
-   * The customer form's relationship checklist drew every candidate the server
-   * sent, so with nothing typed the form opened on a wall of checkboxes and the
-   * search box that shortens it was pushed off the top. Capped by **count**,
-   * never by height: a `max-h-` here would be the second scrollbar the loop
-   * above forbids, which is why the cap is a `slice` and the rest is reached by
-   * searching.
+   * «تعریف ارتباط» is one component now, and it had been two.
+   *
+   * `CustomersView`'s copy searched the server and capped what it drew;
+   * `QuickAddModal`'s copy had **no search box at all** and drew every
+   * candidate its `customers` prop happened to hold — so it was a wall of
+   * checkboxes, and worse, it could only offer people already on the page in
+   * the background, which is the «filtered a list the browser already had»
+   * fault this application has corrected on the contact field and the
+   * recipient field. Reported as «قابلیت سرچ وجود داشته باشد»: the search did
+   * exist, on the other form. That is the five-customer-creation-forms rule
+   * arriving on a sub-section rather than on a save.
+   *
+   * These read `RelationPicker` and then check that neither form has grown a
+   * second copy — a checklist written out again on either screen is exactly
+   * how the two came apart the first time.
    */
-  const customersView = strip(readFileSync("src/components/CustomersView.tsx", "utf8"));
-  ok("the customer screen survived having its comments stripped",
-    customersView.includes("relationCandidates"));
-  ok("the relationship checklist draws only the first few",
-    /relationCandidates\.slice\(0, RELATION_VISIBLE\)/.test(customersView));
-  ok("...and says what the rest is reached by",
-    /relationCandidates\.length > RELATION_VISIBLE/.test(customersView)
-    && /جستجو کنید/.test(customersView));
+  const relationPicker = strip(readFileSync("src/components/RelationPicker.tsx", "utf8"));
+  ok("the relationship picker survived having its comments stripped",
+    relationPicker.includes("RELATION_FETCH_LIMIT"));
+
+  /* The box has to reach the query, or it narrows nothing. */
+  ok("the search box drives the server query",
+    /value=\{search\.term\}/.test(relationPicker)
+    && /onChange=\{\(e\) => search\.setTerm\(e\.target\.value\)\}/.test(relationPicker));
+  /*
+   * A link joins the **opposite** type — a company's links are the people who
+   * work there and a person's are the companies they belong to — so a picker
+   * asking for its own type would offer exactly the wrong half of the
+   * directory, and silently, since both answers are full of plausible names.
+   */
+  ok("...and asks for the opposite customer type",
+    /customerType: customerType === 'حقوقی' \? 'حقیقی' : 'حقوقی'/.test(relationPicker));
+
   /*
    * The two figures are different on purpose and in one direction: the fetch is
    * what a search reaches into, so a cap equal to or below what is drawn would
    * make «search for the rest» advice that cannot be followed.
    */
-  const fetchLimit = Number(/const RELATION_FETCH_LIMIT = (\d+)/.exec(customersView)?.[1]);
-  const visible = Number(/const RELATION_VISIBLE = (\d+)/.exec(customersView)?.[1]);
-  ok("both figures are named rather than written into the markup",
-    Number.isFinite(fetchLimit) && Number.isFinite(visible), [fetchLimit, visible]);
-  ok("the search reaches further than the list draws", fetchLimit > visible,
-    [fetchLimit, visible]);
-  ok("and the list is genuinely short", visible <= 10, visible);
-  /* The box has to reach the query, or it narrows nothing. */
-  ok("the search box drives the server query",
-    /relationSearchState\.setTerm\(relationSearch\)/.test(customersView)
-    && /value=\{relationSearch\}/.test(customersView));
-  ok("...and the picker asks for the opposite customer type",
-    /limit: RELATION_FETCH_LIMIT/.test(customersView));
+  const fetchLimit = Number(/RELATION_FETCH_LIMIT = (\d+)/.exec(relationPicker)?.[1]);
+  const visibleRows = Number(/RELATION_VISIBLE_ROWS = (\d+)/.exec(relationPicker)?.[1]);
+  const rowPx = Number(/RELATION_ROW_PX = (\d+)/.exec(relationPicker)?.[1]);
+  ok("the figures are named rather than written into the markup",
+    Number.isFinite(fetchLimit) && Number.isFinite(visibleRows) && Number.isFinite(rowPx),
+    [fetchLimit, visibleRows, rowPx]);
+  ok("the search reaches further than the list shows", fetchLimit > visibleRows,
+    [fetchLimit, visibleRows]);
+  ok("and the list is genuinely short", visibleRows <= 4, visibleRows);
+  /*
+   * The height the browser gets must be the product of those two, or «three
+   * rows» quietly becomes two and a half and the fourth is cut in half — the
+   * kind of drift a render test would not call a failure either.
+   */
+  const capPx = Number(/max-h-\[(\d+)px\]/.exec(relationPicker)?.[1]);
+  eq("the drawn cap is exactly that many rows", capPx, visibleRows * rowPx);
+  /*
+   * And it must be a class rather than an inline style, or the one-scrollbar
+   * loop above reads straight past it and the exemption asserts nothing.
+   */
+  ok("the cap is a class the scrollbar check can see",
+    !/style=\{\{\s*maxHeight/.test(relationPicker));
+  ok("...on the element marked as a picker's results",
+    /data-relation-results[\s\S]{0,160}?max-h-\[\d+px\]/.test(relationPicker));
+  /* What is behind the fold is said, not left to be discovered. */
+  ok("the fold says what is behind it",
+    /RELATION_FETCH_LIMIT/.test(relationPicker) && /جستجو کنید/.test(relationPicker));
+
+  /*
+   * Both forms read it, and neither keeps a checklist of its own. The negative
+   * half is the one worth having: a second copy is what this whole section
+   * exists to have caught.
+   */
+  for (const file of [
+    "src/components/CustomersView.tsx",
+    "src/components/QuickAddModal.tsx",
+  ]) {
+    const src = strip(readFileSync(file, "utf8"));
+    const name = file.split("/").pop();
+    ok(`${name} uses the shared relationship picker`, /<RelationPicker/.test(src));
+    /*
+     * What identifies a second copy is a *rendered* checklist — a tick bound to
+     * the link set — which is the line both old copies shared. The
+     * opposite-type expression is not the signature: both files legitimately
+     * use it for the quick-add form that creates a customer of that type.
+     */
+    ok(`${name} keeps no candidate checklist of its own`,
+      !/const isChecked = selectedLinks\.includes\(/.test(src), name);
+  }
+  /*
+   * The quick-add form drew the section only when its `customers` prop had
+   * something in it, so on a screen that had loaded nothing the whole control
+   * vanished rather than saying there was nobody to link to — and the server is
+   * what answers that question now in any case.
+   */
+  ok("the quick-add form no longer hides the section when its prop is empty",
+    !/\{customers\.length > 0 && \(/.test(strip(readFileSync("src/components/QuickAddModal.tsx", "utf8"))));
 }
 
 /* ==========================================================================
@@ -18820,6 +18898,110 @@ head("Telegram: the company's own account, as a fifth channel");
     ok("...rather than writing the list out again",
       !/channel\?: 'SMS' \| 'WHATSAPP'/.test(types));
   }
+}
+
+
+/* ==========================================================================
+ * «ارسال شده برای چه شخصی» when the buyer is that person
+ *
+ * Reported as «وقتی مشتری حقیقی هست باید اسم همون مشتری انتخاب بشه. الان بازم
+ * میپرسه مشتری حقیقی رو انتخاب کن و تا انتخاب نکنی ثبت نمیکنه» — and it was
+ * not merely inconvenient, it was a dead end. The field is scoped by
+ * `linkedTo`, and a customer link joins the **opposite** type, so a natural
+ * person's links are all companies: the query answered with nothing, no
+ * control on the screen could fill the list in, and the save refused. Such a
+ * document could not be marked «ارسال شده» from anywhere in the application.
+ * ========================================================================== */
+head("A quotation to a person is sent to that person");
+{
+  const person = { customerType: "حقیقی", companyName: "محمد مقدم" };
+  const parts = { customerType: "حقیقی", firstName: "علی", lastName: "رضایی" };
+  const company = { customerType: "حقوقی", companyName: "پالایش نفت اصفهان" };
+
+  /* The whole of the report, in one line. */
+  eq("a person buying for themselves is the recipient",
+    JSON.stringify(resolveSentRecipients(person, [])), JSON.stringify(["محمد مقدم"]));
+  eq("...so the save no longer refuses", sentRecipientsRefusal(person, []), null);
+
+  /*
+   * A list row carries only `companyName`, which is filled for a natural
+   * person too; the name parts are the fallback for a fuller record. Written
+   * the other way round the chip would be blank on exactly the screen the
+   * field is used from.
+   */
+  eq("the name falls back to the parts",
+    JSON.stringify(resolveSentRecipients(parts, [])), JSON.stringify(["علی رضایی"]));
+  eq("and a list row's own spelling is preferred",
+    recipientDisplayName({ companyName: "شرکت الف", firstName: "ب", lastName: "ج" }), "شرکت الف");
+
+  /*
+   * The question the field exists for is untouched: a quotation to a company is
+   * read by a person there, and which one is a real answer somebody has to
+   * give.
+   */
+  eq("a company still has to name somebody", selfRecipientName(company), null);
+  ok("...and is refused until it does", !!sentRecipientsRefusal(company, []));
+  eq("...and accepted once it has",
+    sentRecipientsRefusal(company, ["خانم احمدی"]), null);
+
+  /*
+   * A type this build does not know reads as «not a person», which is the safe
+   * direction: a record written by an integration falls through to the ordinary
+   * «choose somebody», where the other reading would file a company's name as a
+   * person on a document a customer reads.
+   */
+  eq("an unfamiliar customer type answers nobody",
+    selfRecipientName({ customerType: "چیز دیگر", companyName: "؟" }), null);
+  /* And a person with no name is not a recipient of the empty string. */
+  eq("a nameless person answers nobody",
+    selfRecipientName({ customerType: "حقیقی", companyName: "   " }), null);
+
+  /*
+   * Whatever was chosen wins. A person buying for themselves may have asked for
+   * it to reach their accountant instead, and the rule only ever fills a blank
+   * — read the other way it would quietly re-add a name somebody removed.
+   */
+  eq("a choice overrules the default",
+    JSON.stringify(resolveSentRecipients(person, ["خانم احمدی"])),
+    JSON.stringify(["خانم احمدی"]));
+  /* Blank ticks are not an answer, so they cannot satisfy the refusal. */
+  eq("whitespace is not somebody",
+    JSON.stringify(resolveSentRecipients(company, ["  ", ""])), JSON.stringify([]));
+  ok("...and is still refused", !!sentRecipientsRefusal(company, [" "]));
+
+  /* -- and the screen reads the rule rather than a second copy of it -- */
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  const view = strip(readFileSync("src/components/ProformasView.tsx", "utf8"));
+
+  /*
+   * Both save paths, because the document is marked sent from two places — the
+   * form, and the grid's own status modal — and a rule applied to one of them
+   * is the fault that was reported still standing on the other door.
+   */
+  const saves = view.match(/resolveSentRecipients\(/g) || [];
+  ok("both save paths resolve the recipients", saves.length >= 2, saves.length);
+  const refusals = view.match(/sentRecipientsRefusal\(/g) || [];
+  ok("...and both ask the shared refusal", refusals.length >= 2, refusals.length);
+  ok("neither writes the sentence out again",
+    !/حداقل یک شخص دریافت‌کننده/.test(view));
+
+  /*
+   * The buyer has to be *offerable*, not only defaulted: `linkedTo` cannot
+   * return them, so the list merges them in. Without this the chip could be
+   * removed and never put back.
+   */
+  ok("the list offers the buyer themselves", /const recipientOptions = /.test(view));
+  ok("...and both boxes draw that list",
+    (view.match(/const filtered = recipientOptions;/g) || []).length === 2);
+
+  /*
+   * Changing the buyer clears the recipients, and in the handler rather than an
+   * effect — an effect cannot tell a buyer somebody picked from a buyer an edit
+   * has just loaded, and would wipe the stored list of every document opened.
+   */
+  ok("choosing a different buyer drops the old buyer's people",
+    /setContactPrefix\(""\);[\s\S]{0,80}?setSelectedSentRecipients\(\[\]\);/.test(view));
 }
 
 
