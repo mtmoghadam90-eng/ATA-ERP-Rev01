@@ -8,35 +8,53 @@ import { ProjectInput, createProject } from "./projectService";
 import { loadSettings } from "../settings";
 import { nextProjectCode } from "../documentNumberSpecs";
 import {
-  BASELINE_PROBE_LIMIT, MAX_IMPORT_ATTEMPTS, WebRfq, WebRfqFeed,
-  customerFor, feedConfigRefusal, feedRequestUrl, inquiryKeyFor, isBeforeLine,
-  parseFeed, parseFeedRow, projectDescriptionFor, projectItemFor, projectNameFor,
-  syncWindow, webEntryIn,
+  BASELINE_PROBE_LIMIT, DEFAULT_WEB_RFQ_SOURCE, MAX_IMPORT_ATTEMPTS,
+  WEB_RFQ_SOURCES, WebRfq, WebRfqFeed, WebRfqSourceId,
+  customerFor, duplicateFeedRefusal, feedConfigRefusal, feedRequestUrl,
+  inquiryKeyFor, isBeforeLine, isWebRfqSource, parseFeed, parseFeedRow,
+  projectDescriptionFor, projectItemsFor, projectNameFor, syncWindow, webEntryIn,
 } from "../../utils/webRfq";
 
 /**
  * Pulling the website's price requests in, on a timer.
  *
- * The advisor plugin on the public site records every «استعلام قیمت» as a
- * structured row and emails it. This turns that row into the two records
- * somebody can actually work from — the customer, and a project carrying the
- * confirmed specification — so the enquiry arrives on a board rather than in an
- * inbox.
+ * Two plugins on the public site record a «استعلام قیمت» and email it — the
+ * advisor's conversation and the technical form — and an email is a copy for a
+ * person to read rather than a record anybody can quote from. This turns each
+ * request into the two records somebody can work from: the customer, and a
+ * project carrying the specification, so the enquiry arrives on a board.
  *
  * **It pulls and is never pushed to.** The site is public and this server is on
  * a private LAN which must not be exposed, so an inbound webhook is unavailable
- * in principle. That is also why the site's endpoint is a plain read with no
+ * in principle. That is also why each plugin's endpoint is a plain read with no
  * state of its own: nothing there records what has been taken, and the unique
- * index on `web_rfq_imports.rfqId` is the whole of the once-only guarantee —
- * which holds whether the last poll finished, crashed, or ran twice.
+ * index on `web_rfq_imports(source, rfqId)` is the whole of the once-only
+ * guarantee — which holds whether the last poll finished, crashed, or ran twice.
  *
- * The shape is `rateRefresh`'s: one in-process promise so overlapping ticks do
- * not poll four ways at once, and a report the settings panel draws, because
- * **the failure mode of a poller is silence** — a feed that stopped answering
- * looks exactly like a week in which nobody asked for a price.
+ * **Everything here is per source**, and that is the second plugin's whole cost.
+ * Both number their own requests from one, so a key that was the number alone
+ * would have refused the form's request #9 as «already imported» on the
+ * strength of the advisor's — silently, which is the failure this module is
+ * built to avoid. The configuration, the line, the report and the in-flight
+ * promise are all per source for the same reason: they answer questions about
+ * one plugin, and one shared answer would be wrong for whichever card was not
+ * being looked at.
+ *
+ * The shape is `rateRefresh`'s: one in-process promise per source so overlapping
+ * ticks do not poll four ways at once, and a report the settings panel draws,
+ * because **the failure mode of a poller is silence** — a feed that stopped
+ * answering looks exactly like a week in which nobody asked for a price.
  */
 
-const CONFIG_ID = "default";
+/**
+ * The configuration row's id **is** the source.
+ *
+ * There is exactly one configuration per plugin, so a separate discriminator
+ * column beside the key would be a second thing saying what the key already
+ * says. The row written before the second source existed was keyed «default»
+ * and is renamed to «ADVISOR» by the migration, which is what it always was.
+ */
+const configId = (source: WebRfqSourceId): string => source;
 
 /** One poll every five minutes. Fast enough that an enquiry is on the board
  *  before anybody could have read the email it arrived with. */
@@ -46,6 +64,8 @@ export const WEB_RFQ_TICK_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 20000;
 
 export interface WebRfqConfigView {
+  /** Which plugin this card is about. */
+  source: WebRfqSourceId;
   feedUrl: string;
   /** A hint, never the token. Null when nothing is stored. */
   tokenHint: string | null;
@@ -79,15 +99,42 @@ export interface WebRfqReport {
   running: boolean;
 }
 
-let lastRunAt = 0;
-let lastOkAt = 0;
-let lastError: string | null = null;
-let lastImported = 0;
-let baselineDrawnAt: number | null = null;
-let inFlight: Promise<number> | null = null;
+interface SourceState {
+  lastRunAt: number;
+  lastOkAt: number;
+  lastError: string | null;
+  lastImported: number;
+  baselineDrawnAt: number | null;
+  inFlight: Promise<number> | null;
+}
 
-export function webRfqReport(): WebRfqReport {
-  return { lastRunAt, lastOkAt, lastError, lastImported, baselineDrawnAt, running: inFlight !== null };
+const blankState = (): SourceState => ({
+  lastRunAt: 0, lastOkAt: 0, lastError: null,
+  lastImported: 0, baselineDrawnAt: null, inFlight: null,
+});
+
+/*
+ * One state per source, keyed off the catalogue rather than written out: a
+ * source added there and forgotten here would report the other one's last
+ * error under its own name, which is a panel lying about which feed is down.
+ */
+const states = new Map<WebRfqSourceId, SourceState>(
+  WEB_RFQ_SOURCES.map((source) => [source.id, blankState()]),
+);
+
+const stateOf = (source: WebRfqSourceId): SourceState => {
+  let state = states.get(source);
+  if (!state) { state = blankState(); states.set(source, state); }
+  return state;
+};
+
+export function webRfqReport(source: WebRfqSourceId = DEFAULT_WEB_RFQ_SOURCE): WebRfqReport {
+  const state = stateOf(source);
+  return {
+    lastRunAt: state.lastRunAt, lastOkAt: state.lastOkAt, lastError: state.lastError,
+    lastImported: state.lastImported, baselineDrawnAt: state.baselineDrawnAt,
+    running: state.inFlight !== null,
+  };
 }
 
 /* ------------------------------ configuration ----------------------------- */
@@ -98,19 +145,38 @@ const mask = (value: string | null | undefined): string | null => {
   return text.length <= 4 ? "••••" : `••••${text.slice(-4)}`;
 };
 
-async function readConfig() {
-  return getDb().webRfqConfig.findUnique({ where: { id: CONFIG_ID } });
+async function readConfig(source: WebRfqSourceId) {
+  return getDb().webRfqConfig.findUnique({ where: { id: configId(source) } });
 }
 
-export async function getWebRfqConfig(): Promise<WebRfqConfigView> {
-  const row = await readConfig();
+/**
+ * The addresses every *other* source is configured with.
+ *
+ * Read so that pointing two cards at one feed can be refused where it is typed:
+ * the same requests read under two sources become two projects for one enquiry,
+ * which is the duplicate this module exists to prevent arriving through the
+ * control added to widen it.
+ */
+async function otherFeedUrls(source: WebRfqSourceId): Promise<string[]> {
+  const rows = await getDb().webRfqConfig.findMany({
+    where: { id: { not: configId(source) } },
+    select: { feedUrl: true },
+  });
+  return rows.map((row) => String(row.feedUrl ?? "").trim()).filter(Boolean);
+}
+
+export async function getWebRfqConfig(source: WebRfqSourceId): Promise<WebRfqConfigView> {
+  const row = await readConfig(source);
+  const others = await otherFeedUrls(source);
   return {
+    source,
     feedUrl: row?.feedUrl ?? "",
     tokenHint: mask(row?.token),
     active: row?.active ?? false,
     ownerUserId: row?.ownerUserId ?? null,
     startAfterId: row?.startAfterId ?? null,
-    refusal: feedConfigRefusal(row?.feedUrl, row?.token),
+    refusal: feedConfigRefusal(row?.feedUrl, row?.token)
+      ?? others.map((url) => duplicateFeedRefusal(row?.feedUrl, url)).find(Boolean) ?? null,
   };
 }
 
@@ -135,9 +201,12 @@ export interface WebRfqConfigInput {
  * asking the question of the request alone would refuse a perfectly good
  * stored token every time somebody corrected the address.
  */
-export async function saveWebRfqConfig(input: WebRfqConfigInput): Promise<string | null> {
+export async function saveWebRfqConfig(
+  source: WebRfqSourceId,
+  input: WebRfqConfigInput,
+): Promise<string | null> {
   const db = getDb();
-  const existing = await readConfig();
+  const existing = await readConfig(source);
 
   const feedUrl = input.feedUrl !== undefined
     ? String(input.feedUrl).trim().slice(0, 500)
@@ -148,6 +217,15 @@ export async function saveWebRfqConfig(input: WebRfqConfigInput): Promise<string
 
   const refusal = feedConfigRefusal(feedUrl, token);
   if (refusal) return refusal;
+  /*
+   * Refused here rather than noticed later: by the time a poll could see two
+   * sources reading one feed, the second project is already on somebody's
+   * board and somebody has to work out which of the two to delete.
+   */
+  for (const other of await otherFeedUrls(source)) {
+    const clash = duplicateFeedRefusal(feedUrl, other);
+    if (clash) return clash;
+  }
 
   const data = {
     feedUrl: feedUrl || null,
@@ -163,8 +241,8 @@ export async function saveWebRfqConfig(input: WebRfqConfigInput): Promise<string
   };
 
   await db.webRfqConfig.upsert({
-    where: { id: CONFIG_ID },
-    create: { id: CONFIG_ID, ...data },
+    where: { id: configId(source) },
+    create: { id: configId(source), ...data },
     update: data,
   });
   return null;
@@ -173,7 +251,9 @@ export async function saveWebRfqConfig(input: WebRfqConfigInput): Promise<string
 /* --------------------------------- reading -------------------------------- */
 
 /** What arrived from the site, or a reason it did not. */
-async function fetchFeed(url: string, token: string, sinceId: number, limit: number): Promise<WebRfqFeed> {
+async function fetchFeed(
+  source: WebRfqSourceId, url: string, token: string, sinceId: number, limit: number,
+): Promise<WebRfqFeed> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -189,7 +269,7 @@ async function fetchFeed(url: string, token: string, sinceId: number, limit: num
         ? "سایت توکن را نپذیرفت؛ توکن ERP و افزونه یکی نیست."
         : `سایت با کد ${res.status} پاسخ داد.`);
     }
-    return parseFeed(await res.json());
+    return parseFeed(await res.json(), source);
   } finally {
     clearTimeout(timer);
   }
@@ -285,7 +365,13 @@ async function webChannelValues(): Promise<{
 /** Turns one request into a customer and a project. Returns the project's code. */
 async function importOne(rfq: WebRfq, user: AuthUser): Promise<{ customerId: string; projectId: string; code: string }> {
   const customerId = await findOrCreateCustomer(rfq, user);
-  const item = projectItemFor(rfq);
+  /*
+   * One «اقلام مورد نیاز» row per item, with its own quantity. The form plugin
+   * takes up to fifty in one request, and folding them into a single line would
+   * lose exactly what those rows are for — the scope of the job somebody has to
+   * quote. The advisor's requests carry one and come out unchanged.
+   */
+  const items = projectItemsFor(rfq);
   const code = await nextProjectCode(customerId);
 
   const input: ProjectInput = {
@@ -303,7 +389,7 @@ async function importOne(rfq: WebRfq, user: AuthUser): Promise<{ customerId: str
     creationDate: getTodayShamsi(),
     ownerUserId: user.id,
     salesExpert: user.fullName,
-    items: item ? [item] : [],
+    items,
   };
   const project = await createProject(input, user, getTodayShamsi());
 
@@ -344,6 +430,7 @@ async function attempt(rowId: string, rfq: WebRfq, user: AuthUser): Promise<bool
         status: "IMPORTED", attempts: { increment: 1 }, error: null,
         customerId: result.customerId, projectId: result.projectId,
         projectCode: result.code, importedAt: new Date(), payload,
+        reference: rfq.reference || null,
       },
     });
     return true;
@@ -357,9 +444,10 @@ async function attempt(rowId: string, rfq: WebRfq, user: AuthUser): Promise<bool
   }
 }
 
-async function runSync(): Promise<number> {
+async function runSync(source: WebRfqSourceId): Promise<number> {
   const db = getDb();
-  const config = await readConfig();
+  const state = stateOf(source);
+  const config = await readConfig(source);
   if (!config?.active) throw new Error("انتقال استعلام‌های سایت فعال نیست.");
 
   const refusal = feedConfigRefusal(config.feedUrl, config.token);
@@ -387,19 +475,27 @@ async function runSync(): Promise<number> {
    * carries a higher number than anything in it and would later read as new.
    */
   if (config.startAfterId === null) {
-    const probe = await fetchFeed(config.feedUrl!, config.token!, 0, BASELINE_PROBE_LIMIT);
+    const probe = await fetchFeed(source, config.feedUrl!, config.token!, 0, BASELINE_PROBE_LIMIT);
     await db.webRfqConfig.update({
-      where: { id: CONFIG_ID },
+      where: { id: configId(source) },
       data: { startAfterId: probe.maxId },
     });
-    baselineDrawnAt = probe.maxId;
+    state.baselineDrawnAt = probe.maxId;
     return 0;
   }
   const line = config.startAfterId;
 
-  const highest = await db.webRfqImport.aggregate({ _max: { rfqId: true } });
+  /*
+   * The highest already seen **for this source**. Asked of the whole table it
+   * would be the other plugin's numbering, which says nothing about this one —
+   * and where the other is further along it would push the window past requests
+   * this source has never imported, skipping them for good.
+   */
+  const highest = await db.webRfqImport.aggregate({
+    where: { source }, _max: { rfqId: true },
+  });
   const { sinceId, limit } = syncWindow(highest._max.rfqId ?? 0, line);
-  const feed = await fetchFeed(config.feedUrl!, config.token!, sinceId, limit);
+  const feed = await fetchFeed(source, config.feedUrl!, config.token!, sinceId, limit);
   /*
    * Filtered here as well as in the query. `since_id` is a request to a
    * machine on the internet — an older plugin, a proxy that dropped the
@@ -411,7 +507,7 @@ async function runSync(): Promise<number> {
 
   const seen = rows.length
     ? await db.webRfqImport.findMany({
-      where: { rfqId: { in: rows.map((r) => r.id) } },
+      where: { source, rfqId: { in: rows.map((r) => r.id) } },
       select: { rfqId: true, id: true, status: true, attempts: true },
     })
     : [];
@@ -431,9 +527,10 @@ async function runSync(): Promise<number> {
       try {
         await db.webRfqImport.create({
           data: {
-            id: rowId, rfqId: rfq.id, status: "FAILED", attempts: 0,
+            id: rowId, source, rfqId: rfq.id, status: "FAILED", attempts: 0,
             payload: JSON.stringify(rfq),
-            productName: rfq.productName || null, fullName: rfq.fullName || null,
+            reference: rfq.reference || null,
+            productName: projectNameFor(rfq) || null, fullName: rfq.fullName || null,
           },
         });
       } catch {
@@ -456,14 +553,14 @@ async function runSync(): Promise<number> {
    */
   const offered = new Set(rows.map((r) => r.id));
   const stranded = await db.webRfqImport.findMany({
-    where: { status: "FAILED", attempts: { lt: MAX_IMPORT_ATTEMPTS } },
+    where: { source, status: "FAILED", attempts: { lt: MAX_IMPORT_ATTEMPTS } },
     orderBy: { rfqId: "asc" }, take: RETRY_PER_PASS,
     select: { id: true, rfqId: true, payload: true },
   });
   for (const row of stranded) {
     if (offered.has(row.rfqId)) continue; // already tried above, this pass
     if (row.rfqId <= line) continue;      // the line moved under it since
-    const rfq = parseFeedRow(safeJson(row.payload));
+    const rfq = parseFeedRow(safeJson(row.payload), source);
     if (!rfq) continue;
     if (await attempt(row.id, rfq, user)) imported += 1;
   }
@@ -478,37 +575,50 @@ async function runSync(): Promise<number> {
  * not answering is an ordinary outcome that belongs in the report rather than
  * in a stack trace nobody reads.
  */
-export function syncWebRfqs(): Promise<number> {
-  if (inFlight) return inFlight;
-  lastRunAt = Date.now();
-  baselineDrawnAt = null;
-  inFlight = runSync()
+export function syncWebRfqs(source: WebRfqSourceId = DEFAULT_WEB_RFQ_SOURCE): Promise<number> {
+  const state = stateOf(source);
+  if (state.inFlight) return state.inFlight;
+  state.lastRunAt = Date.now();
+  state.baselineDrawnAt = null;
+  state.inFlight = runSync(source)
     .then((count) => {
-      lastOkAt = Date.now();
-      lastError = null;
-      lastImported = count;
+      state.lastOkAt = Date.now();
+      state.lastError = null;
+      state.lastImported = count;
       return count;
     })
     .catch((err) => {
-      lastError = err instanceof Error ? err.message : String(err);
+      state.lastError = err instanceof Error ? err.message : String(err);
       return 0;
     })
-    .finally(() => { inFlight = null; });
-  return inFlight;
+    .finally(() => { state.inFlight = null; });
+  return state.inFlight;
 }
 
-/** The timer's entry point: does nothing at all while the feature is off. */
+/**
+ * The timer's entry point: does nothing at all while a source is off.
+ *
+ * Every source is polled, and each is guarded on **its own** configuration —
+ * one card switched off must not stop the other, and a source added to the
+ * catalogue is polled on the same commit rather than needing a second list
+ * here to be remembered.
+ */
 export async function tickWebRfqs(): Promise<void> {
-  const config = await readConfig().catch(() => null);
-  if (!config?.active) return;
-  await afterCommit("web rfq sync", () => syncWebRfqs());
+  for (const source of WEB_RFQ_SOURCES) {
+    const config = await readConfig(source.id).catch(() => null);
+    if (!config?.active) continue;
+    await afterCommit(`web rfq sync (${source.id})`, () => syncWebRfqs(source.id));
+  }
 }
 
 /* -------------------------------- the screen ------------------------------ */
 
 export interface WebRfqImportRow {
   id: string;
+  source: string;
   rfqId: number;
+  /** The plugin's own reference, where it issues one. */
+  reference: string | null;
   status: string;
   attempts: number;
   projectId: string | null;
@@ -522,12 +632,15 @@ export interface WebRfqImportRow {
 }
 
 /** The most recent imports, newest first — the durable record of what arrived. */
-export async function listWebRfqImports(limit = 50): Promise<WebRfqImportRow[]> {
+export async function listWebRfqImports(
+  source: WebRfqSourceId, limit = 50,
+): Promise<WebRfqImportRow[]> {
   return getDb().webRfqImport.findMany({
+    where: { source },
     orderBy: { rfqId: "desc" },
     take: Math.max(1, Math.min(200, limit)),
     select: {
-      id: true, rfqId: true, status: true, attempts: true,
+      id: true, source: true, reference: true, rfqId: true, status: true, attempts: true,
       projectId: true, projectCode: true, customerId: true,
       productName: true, fullName: true, error: true,
       createdAt: true, importedAt: true,
@@ -542,10 +655,21 @@ export async function listWebRfqImports(limit = 50): Promise<WebRfqImportRow[]> 
  * reads the stored payload, so a retry needs nothing from the site — by now the
  * request may have fallen outside the window a poll asks for.
  */
-export async function retryWebRfqImport(id: string): Promise<boolean> {
-  const done = await getDb().webRfqImport.updateMany({
+export async function retryWebRfqImport(id: string): Promise<WebRfqSourceId | null> {
+  const db = getDb();
+  /*
+   * The row names its own source, so the caller does not have to — and must
+   * not: a retry addressed to the wrong source would re-poll the wrong feed
+   * and leave this request exactly where it was, reported as retried.
+   */
+  const row = await db.webRfqImport.findUnique({
+    where: { id }, select: { source: true },
+  });
+  if (!row) return null;
+  const done = await db.webRfqImport.updateMany({
     where: { id, status: "FAILED" },
     data: { attempts: 0, error: null },
   });
-  return done.count > 0;
+  if (!done.count) return null;
+  return isWebRfqSource(row.source) ? row.source : DEFAULT_WEB_RFQ_SOURCE;
 }

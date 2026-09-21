@@ -55,10 +55,30 @@ import {
 import { hasEverPurchased, saleDateOf } from "../src/server/services/customerValueService";
 import { taskRelationKind } from "../src/utils/taskRelations";
 import {
-  BASELINE_PROBE_LIMIT, SYNC_BACKTRACK, SYNC_PAGE_LIMIT,
-  WEB_RFQ_COMMUNICATION_METHOD, WEB_RFQ_MARKETING_CHANNEL,
-  customerFor, feedConfigRefusal, feedRequestUrl, inquiryKeyFor, isBeforeLine, parseFeed, parseFeedRow,
-  projectDescriptionFor, projectItemFor, projectNameFor, splitFullName, syncWindow, webEntryIn,
+  BASELINE_PROBE_LIMIT,
+  DEFAULT_WEB_RFQ_SOURCE,
+  SYNC_BACKTRACK,
+  SYNC_PAGE_LIMIT,
+  WEB_RFQ_COMMUNICATION_METHOD,
+  WEB_RFQ_MARKETING_CHANNEL,
+  WEB_RFQ_SOURCES,
+  WebRfq,
+  customerFor,
+  duplicateFeedRefusal,
+  feedConfigRefusal,
+  feedRequestUrl,
+  inquiryKeyFor,
+  isBeforeLine,
+  isWebRfqSource,
+  parseFeed,
+  parseFeedRow,
+  projectDescriptionFor,
+  projectItemsFor,
+  projectNameFor,
+  splitFullName,
+  syncWindow,
+  webEntryIn,
+  webRfqSourceSpec,
 } from "../src/utils/webRfq";
 import { SETTINGS_PATCHES, applySettingsPatches } from "../src/utils/settingsPatches";
 import { ACTIVITY_REACTIONS, isAllowedReaction, summarizeReactions } from "../src/utils/reactions";
@@ -19195,26 +19215,107 @@ head("A condition can name more than one value");
 /* ---------------------------- website price requests ---------------------- */
 head("Web RFQ: the site's price requests, as customers and projects");
 {
-  const rfq = {
-    id: 12, fullName: "سید محمد حسین رضایی", company: "پتروشیمی نمونه",
-    mobile: "+989121234567", email: "a@b.com", notes: "فوری است",
-    productId: 55, productName: "فلومتر التراسونیک", productUrl: "https://x/p/55",
-    specs: "سایز خط: DN50\nخروجی: 4–20 mA", panelUrl: "https://x/wp-admin",
+  const rfq: WebRfq = {
+    source: "ADVISOR", id: 12, reference: "",
+    fullName: "سید محمد حسین رضایی", company: "پتروشیمی نمونه",
+    mobile: "+989121234567", email: "a@b.com", city: "", deadline: "",
+    notes: "فوری است", productUrl: "https://x/p/55", panelUrl: "https://x/wp-admin",
+    attachmentCount: 0,
+    lines: [{
+      productId: 55, productName: "فلومتر التراسونیک", quantity: 1,
+      specs: "سایز خط: DN50\nخروجی: 4–20 mA",
+    }],
     submittedAt: "2026-09-20 10:00:00",
   };
+  /** The wire shape the advisor plugin sends — flat, one product on the row. */
+  const wire = {
+    id: 12, full_name: "سید محمد حسین رضایی", company: "پتروشیمی نمونه",
+    mobile: "+989121234567", email: "a@b.com", customer_notes: "فوری است",
+    product_id: 55, product_name: "فلومتر التراسونیک", product_url: "https://x/p/55",
+    specs: "سایز خط: DN50\nخروجی: 4–20 mA", panel_url: "https://x/wp-admin",
+    submitted_at: "2026-09-20 10:00:00",
+  };
+
+  /* --- the two sources --- */
+  /*
+   * Both plugins number their own requests from one, so the number alone
+   * cannot identify a request: keyed on it, the form's #9 would be refused as
+   * «already imported» on the strength of the advisor's, and refused silently.
+   * The prefixes have to differ for the same reason, one level up — two
+   * projects filed under one «شماره درخواست» is one search answering for two
+   * enquiries.
+   */
+  ok("there are two sources and their ids are distinct",
+    WEB_RFQ_SOURCES.length === 2
+    && new Set(WEB_RFQ_SOURCES.map((x) => x.id)).size === WEB_RFQ_SOURCES.length);
+  ok("...and so are their inquiry prefixes",
+    new Set(WEB_RFQ_SOURCES.map((x) => x.inquiryPrefix)).size === WEB_RFQ_SOURCES.length);
+  ok("...and their labels and sample addresses, or two cards read as one",
+    new Set(WEB_RFQ_SOURCES.map((x) => x.label)).size === WEB_RFQ_SOURCES.length
+    && new Set(WEB_RFQ_SOURCES.map((x) => x.samplePath)).size === WEB_RFQ_SOURCES.length);
+  ok("every source is recognised by the guard the routes read",
+    WEB_RFQ_SOURCES.every((x) => isWebRfqSource(x.id)));
+  ok("...and an invented one is not", !isWebRfqSource("WORDPRESS") && !isWebRfqSource(""));
+  eq("the default is the advisor, which is what every stored row already is",
+    DEFAULT_WEB_RFQ_SOURCE, "ADVISOR");
+  eq("an unknown source falls back rather than throwing",
+    webRfqSourceSpec("nope").id, DEFAULT_WEB_RFQ_SOURCE);
 
   /* --- what arrives is data from a machine on the internet --- */
   eq("a feed row with no number is dropped",
-    parseFeedRow({ ...rfq, id: 0 }), null);
+    parseFeedRow({ ...wire, id: 0 }, "ADVISOR"), null);
   eq("a row naming nobody at all is dropped",
-    parseFeedRow({ ...rfq, full_name: "", company: "" }), null);
+    parseFeedRow({ ...wire, full_name: "", company: "" }, "ADVISOR"), null);
   eq("a company with no person still names somebody",
-    parseFeedRow({ ...rfq, full_name: "", company: "شرکت" })?.company, "شرکت");
+    parseFeedRow({ ...wire, full_name: "", company: "شرکت" }, "ADVISOR")?.company, "شرکت");
   eq("snake_case is what the site sends",
-    parseFeedRow({ id: 3, full_name: "علی", product_name: "پ" })?.productName, "پ");
-  eq("a feed with no items array reads as empty", parseFeed({ ok: true }).items.length, 0);
+    parseFeedRow({ id: 3, full_name: "علی", product_name: "پ" }, "ADVISOR")?.lines[0]?.productName, "پ");
+  eq("a feed with no items array reads as empty", parseFeed({ ok: true }, "ADVISOR").items.length, 0);
   eq("unusable rows are skipped rather than failing the whole feed",
-    parseFeed({ items: [{ id: 0 }, { id: 4, full_name: "الف" }] }).items.length, 1);
+    parseFeed({ items: [{ id: 0 }, { id: 4, full_name: "الف" }] }, "ADVISOR").items.length, 1);
+
+  /*
+   * The source is an **argument** and never read off the row: which plugin
+   * answered is a fact about the configuration that was polled, and a feed
+   * that could name its own source could file its requests under the other
+   * one's numbering — which is precisely the collision the key exists to stop.
+   */
+  eq("the source comes from the caller, not from the row",
+    parseFeedRow({ ...wire, source: "FORM" }, "ADVISOR")?.source, "ADVISOR");
+
+  /*
+   * One reader, two wire shapes, and it **never reads both** — the
+   * `parseAttachments` rule. The advisor sends the product flat on the row and
+   * so does every payload stored before the second source existed; the form
+   * sends a `lines` array. Reading the flat keys as well would put the first
+   * item on the project twice.
+   */
+  {
+    const flat = parseFeedRow(wire, "ADVISOR");
+    eq("a flat row becomes exactly one line", flat?.lines.length, 1);
+    eq("...carrying its specification", flat?.lines[0]?.specs.includes("DN50"), true);
+    const listed = parseFeedRow({
+      id: 9, reference: "ATA-RFQ-20260921-K7QX2M", full_name: "الف",
+      product_name: "نادیده", specs: "نادیده",
+      lines: [
+        { product_id: 1, product_name: "فشارسنج", quantity: 3, specs: "رنج: 0-10 bar" },
+        { product_id: 2, product_name: "ترموول", quantity: 2, specs: "" },
+      ],
+    }, "FORM");
+    eq("a listed row keeps every item", listed?.lines.length, 2);
+    ok("...with the quantities the customer asked for",
+      listed?.lines[0]?.quantity === 3 && listed?.lines[1]?.quantity === 2);
+    ok("...and the flat keys beside them are not read a second time",
+      !(listed?.lines ?? []).some((line) => line.productName === "نادیده"));
+    eq("a line naming nothing and saying nothing is not a line",
+      parseFeedRow({ id: 1, full_name: "الف", lines: [{ quantity: 4 }] }, "FORM")?.lines.length, 0);
+    eq("a quantity the site did not state reads as one, never as none",
+      parseFeedRow({ id: 1, full_name: "الف", lines: [{ product_name: "پ" }] }, "FORM")?.lines[0]?.quantity, 1);
+    eq("the form's own contact column is read too",
+      parseFeedRow({ id: 1, customer_name: "رضا" }, "FORM")?.fullName, "رضا");
+    eq("...and its attachment count", 
+      parseFeedRow({ id: 1, full_name: "الف", attachment_count: 3 }, "FORM")?.attachmentCount, 3);
+  }
 
   /* --- the token crosses on every poll, so the address rule is the relay's --- */
   ok("nothing configured is not a refusal", feedConfigRefusal("", "") === null);
@@ -19239,6 +19340,20 @@ head("Web RFQ: the site's price requests, as customers and projects");
   ok("feed and relay agree about a missing token", bothRefuse("https://site.ir/x", ""));
   ok("feed and relay agree about an address-less token", bothRefuse("", "abc"));
 
+  /*
+   * Two cards pointed at one feed would read the same requests under two
+   * sources and import each enquiry as two projects — the duplicate this whole
+   * module exists to prevent, arriving through the control added to widen it.
+   * Refused where it is typed, because by the time a poll could notice, the
+   * second project is already on somebody's board.
+   */
+  ok("one address in two cards is refused",
+    (duplicateFeedRefusal("https://s/f", "https://s/f") ?? "").includes("دو بار"));
+  eq("two different addresses are fine",
+    duplicateFeedRefusal("https://s/a", "https://s/b"), null);
+  eq("a blank on either side is not a clash",
+    duplicateFeedRefusal("https://s/a", ""), null);
+
   /* --- the line, and the window above it --- */
   /*
    * The requests already on the site were answered, and the projects for them
@@ -19250,13 +19365,13 @@ head("Web RFQ: the site's price requests, as customers and projects");
    * would later read as new.
    */
   eq("the line comes from the site's own highest number",
-    parseFeed({ max_id: 47, items: [{ id: 30, full_name: "الف" }] }).maxId, 47);
+    parseFeed({ max_id: 47, items: [{ id: 30, full_name: "الف" }] }, "ADVISOR").maxId, 47);
   eq("...including one above everything the feed listed",
-    parseFeed({ max_id: 47, items: [] }).maxId, 47);
+    parseFeed({ max_id: 47, items: [] }, "ADVISOR").maxId, 47);
   eq("a site that does not say falls back to the highest row it sent",
-    parseFeed({ items: [{ id: 30, full_name: "الف" }] }).maxId, 30);
+    parseFeed({ items: [{ id: 30, full_name: "الف" }] }, "ADVISOR").maxId, 30);
   eq("an empty feed from a silent site draws no line at all",
-    parseFeed({ items: [] }).maxId, 0);
+    parseFeed({ items: [] }, "ADVISOR").maxId, 0);
 
   ok("a request at the line is excluded", isBeforeLine({ id: 47 }, 47));
   ok("...and everything below it", isBeforeLine({ id: 12 }, 47));
@@ -19359,6 +19474,24 @@ head("Web RFQ: the site's price requests, as customers and projects");
   /* --- the mapping --- */
   eq("the request's own number is what the project is filed under",
     inquiryKeyFor(rfq), "WEB-RFQ-12");
+  /*
+   * The two sources file under different prefixes, because both number from
+   * one: a shared prefix would put two unrelated enquiries under one
+   * «شماره درخواست», which is a search answering for the wrong job.
+   */
+  eq("...and the other source under its own prefix",
+    inquiryKeyFor({ ...rfq, source: "FORM" }), "WEB-FORM-12");
+  ok("the two keys for one number really differ",
+    inquiryKeyFor({ ...rfq, source: "FORM" }) !== inquiryKeyFor(rfq));
+  /*
+   * Where the plugin issues a reference it **wins**: the form emails the
+   * customer «درخواست شما با کد ATA-RFQ-… ثبت شد», so that is literally their
+   * own reference for the enquiry, which is what the column means and what
+   * they will quote on the phone.
+   */
+  eq("a plugin's own reference is the key where there is one",
+    inquiryKeyFor({ ...rfq, source: "FORM", reference: "ATA-RFQ-20260921-K7QX2M" }),
+    "ATA-RFQ-20260921-K7QX2M");
   eq("a company makes the record «حقوقی»", customerFor(rfq).customerType, "حقوقی");
   eq("...and the person who wrote in is kept as the key person",
     customerFor(rfq).keyPerson, "سید محمد حسین رضایی");
@@ -19381,7 +19514,20 @@ head("Web RFQ: the site's price requests, as customers and projects");
 
   eq("the project is named for the equipment", projectNameFor(rfq), "فلومتر التراسونیک");
   ok("a request naming no equipment still gets a name",
-    projectNameFor({ ...rfq, productName: "" }).includes("WEB-RFQ-12"));
+    projectNameFor({ ...rfq, lines: [] }).includes("WEB-RFQ-12"));
+  /*
+   * A job asking for four instruments named after only the first reads, on
+   * every grid it appears in, as a job for one.
+   */
+  eq("several items are counted in the name",
+    projectNameFor({
+      ...rfq,
+      lines: [
+        { productId: 0, productName: "فشارسنج", quantity: 1, specs: "" },
+        { productId: 0, productName: "ترموول", quantity: 2, specs: "" },
+        { productId: 0, productName: "لول ترانسمیتر", quantity: 1, specs: "" },
+      ],
+    }), "فشارسنج و 2 قلم دیگر");
 
   const desc = projectDescriptionFor(rfq);
   ok("the confirmed specification is the point of the description",
@@ -19390,25 +19536,88 @@ head("Web RFQ: the site's price requests, as customers and projects");
     desc.includes("توضیحات تکمیلی مشتری"));
   ok("both links travel", desc.includes("https://x/p/55") && desc.includes("https://x/wp-admin"));
   /*
+   * The form's files stay on the site: it keeps them outside the web root
+   * behind a deny-all rule and serves them only to a signed-in administrator,
+   * so this server cannot fetch them. Saying how many there are beside the
+   * link is the honest answer — a project silently missing the drawing the
+   * whole enquiry was about is the failure that matters.
+   */
+  {
+    const withFiles = projectDescriptionFor({ ...rfq, source: "FORM", attachmentCount: 2 });
+    ok("attachments are named rather than silently left behind",
+      withFiles.includes("2 فایل پیوست"));
+    ok("...and a request with none says nothing about files",
+      !projectDescriptionFor(rfq).includes("فایل پیوست"));
+    const multi = projectDescriptionFor({
+      ...rfq, source: "FORM", reference: "ATA-RFQ-1", city: "اصفهان", deadline: "تا آخر مهر",
+      lines: [
+        { productId: 0, productName: "فشارسنج", quantity: 3, specs: "رنج: 0-10 bar" },
+        { productId: 0, productName: "ترموول", quantity: 2, specs: "جنس: 316" },
+      ],
+    });
+    ok("every item's own specification is written out",
+      multi.includes("0-10 bar") && multi.includes("جنس: 316"));
+    ok("...each with the quantity asked for",
+      multi.includes("قلم 1") && multi.includes("قلم 2")
+      && multi.includes("تعداد 3") && multi.includes("تعداد 2"));
+    ok("the city and the deadline travel where the form asked for them",
+      multi.includes("اصفهان") && multi.includes("تا آخر مهر"));
+    ok("...and the plugin's own reference", multi.includes("ATA-RFQ-1"));
+  }
+  /*
    * A heading with nothing under it reads as something that failed to load, so
    * each block is written only when it has something in it.
    */
   const bare = projectDescriptionFor({
-    ...rfq, specs: "", notes: "", productUrl: "", panelUrl: "", productName: "",
+    ...rfq, lines: [], notes: "", productUrl: "", panelUrl: "",
   });
-  ok("an empty specification draws no heading", !bare.includes("مشخصات تأییدشده"));
+  ok("no equipment draws no equipment block", !bare.includes("تجهیز درخواستی"));
   ok("an empty note draws no heading", !bare.includes("توضیحات تکمیلی"));
   ok("...and the request is still identifiable", bare.includes("12"));
+  /*
+   * The city goes on the customer and the **province is not guessed**: there
+   * is no city-to-province table here, and a guessed province is one
+   * `canonicalizeProvince` would store happily and nobody could tell from an
+   * answer somebody gave.
+   */
+  eq("the city the form asked for reaches the customer",
+    customerFor({ ...rfq, city: "اصفهان" }).city, "اصفهان");
+  ok("...and a blank one leaves the key absent rather than null",
+    !("city" in customerFor(rfq)));
+  ok("the province is never guessed from it",
+    !("province" in customerFor({ ...rfq, city: "اصفهان" })));
 
   /*
    * The line names the equipment and carries **no** productId: that column is
    * a real foreign key into this database and the site's is a WordPress post
    * id, so writing it would point at nothing.
    */
-  const line = projectItemFor(rfq);
-  ok("the required-items line names the equipment", line?.name === "فلومتر التراسونیک");
-  ok("...and carries no product id", !("productId" in (line ?? {})));
-  eq("no equipment means no line", projectItemFor({ ...rfq, productName: "" }), null);
+  const lines = projectItemsFor(rfq);
+  ok("the required-items line names the equipment", lines[0]?.name === "فلومتر التراسونیک");
+  ok("...and carries no product id", !("productId" in (lines[0] ?? {})));
+  eq("no equipment means no line", projectItemsFor({ ...rfq, lines: [] }).length, 0);
+  /*
+   * One row per item with its own quantity. The form takes up to fifty in one
+   * request, and folding them into a single line would lose exactly what those
+   * rows are for — the scope of the job somebody has to quote.
+   */
+  {
+    const many = projectItemsFor({
+      ...rfq, source: "FORM",
+      lines: [
+        { productId: 7, productName: "فشارسنج", quantity: 3, specs: "" },
+        { productId: 8, productName: "", quantity: 9, specs: "رنج" },
+        { productId: 9, productName: "ترموول", quantity: 2, specs: "" },
+      ],
+    });
+    eq("a request for three instruments becomes three rows, not one", many.length, 2);
+    ok("...each with the quantity the customer asked for",
+      many[0]?.quantity === 3 && many[1]?.quantity === 2);
+    ok("an unnamed row is left out — nobody can quote from it",
+      !many.some((item) => !item.name));
+    ok("and none of them carries the site's product id",
+      many.every((item) => !("productId" in item)));
+  }
 }
 
 head("Web RFQ: the service and the site's endpoint");
@@ -19431,7 +19640,7 @@ head("Web RFQ: the service and the site's endpoint");
     pass1.includes("webRfqImport.create")
     && pass1.indexOf("webRfqImport.create") < pass1.indexOf("await attempt(rowId, rfq, user)"));
   ok("a failed import is retried from the stored payload, not re-fetched",
-    svc.includes("parseFeedRow(safeJson(row.payload))"));
+    svc.includes("parseFeedRow(safeJson(row.payload), source)"));
   /*
    * The first poll draws the line and imports nothing. The line is written
    * before anything else can run, so a pass interrupted halfway cannot leave
@@ -19447,6 +19656,63 @@ head("Web RFQ: the service and the site's endpoint");
     && !/config\.startAfterId\s*(\?\?|\|\|)\s*0/.test(svc));
   ok("the line is applied to the rows as well as to the query",
     svc.includes("isBeforeLine(r, line)"));
+  /*
+   * **Every** read of the imports table is narrowed by source, and this is the
+   * check that matters most in the whole block. Both plugins number their own
+   * requests from one, so a query that forgot the source would answer about
+   * the wrong plugin: the highest-seen aggregate would push this source's
+   * window past requests it has never imported — skipping them for good — and
+   * the «already imported» lookup would refuse the form's #9 on the strength
+   * of the advisor's, silently. Held per call site rather than by counting the
+   * word, since a query added later without it is exactly this fault.
+   */
+  for (const call of [
+    "webRfqImport.aggregate({\n    where: { source },",
+    "where: { source, rfqId: { in: rows.map((r) => r.id) } },",
+    "where: { source, status: \"FAILED\", attempts: { lt: MAX_IMPORT_ATTEMPTS } },",
+    "id: rowId, source, rfqId: rfq.id,",
+    "where: { source },\n    orderBy: { rfqId: \"desc\" },",
+  ]) {
+    ok(`the imports table is read per source — ${call.slice(0, 40)}…`, svc.includes(call));
+  }
+  /*
+   * The configuration, the line and the report are per source too: one shared
+   * in-flight promise would let one plugin's poll report the other's result,
+   * and one shared line would draw the advisor's baseline over the form's.
+   */
+  ok("the configuration row's id is the source",
+    /const configId = \(source: WebRfqSourceId\): string => source;/.test(svc));
+  ok("the report and the in-flight promise are per source",
+    svc.includes("const states = new Map<WebRfqSourceId, SourceState>")
+    && svc.includes("state.inFlight"));
+  ok("...and the states are keyed off the catalogue, not written out",
+    svc.includes("WEB_RFQ_SOURCES.map((source) => [source.id, blankState()])"));
+  /*
+   * Every source is polled and each is guarded on its own configuration: one
+   * card switched off must not stop the other, and a source added to the
+   * catalogue must be polled on the same commit.
+   */
+  ok("the timer walks the catalogue rather than naming one source",
+    /for \(const source of WEB_RFQ_SOURCES\)/.test(svc));
+  /*
+   * Two cards pointed at one feed would import each enquiry twice. Refused on
+   * the save, where somebody can still change it.
+   */
+  ok("one feed in two cards is refused where it is typed",
+    svc.includes("duplicateFeedRefusal(feedUrl, other)"));
+  /*
+   * The retry names no source: the row carries its own, and a retry addressed
+   * to the wrong feed would poll the wrong plugin and report success.
+   */
+  ok("a retry reads the source off the row it is retrying",
+    svc.includes("where: { id }, select: { source: true },"));
+  /*
+   * One «اقلام مورد نیاز» row per item, with its own quantity — the form takes
+   * up to fifty in a request, and one folded line loses the scope of the job.
+   */
+  ok("every item becomes its own required-items row",
+    svc.includes("projectItemsFor(rfq)") && svc.includes("items,")
+    && !svc.includes("item ? [item] : []"));
   ok("...and to the replay of failed imports",
     svc.includes("row.rfqId <= line"));
   ok("a baseline pass is reported, or «0 imported» reads as broken",
@@ -19514,6 +19780,85 @@ head("Web RFQ: the service and the site's endpoint");
    */
   ok("the site reports where its numbering has got to",
     php.includes("'max_id'") && /SELECT MAX\(id\) FROM \$t"/.test(php));
+
+  /*
+   * The second plugin's endpoint. It answers the same contract and is held to
+   * the same rules — but two of them are its own, and both are decisions.
+   */
+  const formPhp = readFileSync("website/ata-smart-rfq-erp-feed.php", "utf-8");
+  ok("the form's feed refuses to answer without a configured token",
+    formPhp.includes("erp_feed_off") && formPhp.includes("ATA_ERP_FEED_MIN_TOKEN"));
+  ok("...and compares it in constant time", formPhp.includes("hash_equals"));
+  ok("...and writes nothing: it is a read with no state of its own",
+    !/\b(UPDATE|INSERT|DELETE)\b/.test(formPhp));
+  ok("...and answers newest-first, so the first sync takes what is live",
+    /ORDER BY id DESC/.test(formPhp));
+  ok("...and reports where its own numbering has got to",
+    formPhp.includes("'max_id'") && /SELECT MAX\(id\) FROM \$requests_table/.test(formPhp));
+  /*
+   * Its REST namespace is its own, or the two plugins would register one route
+   * and whichever loaded second would lose. The shared token helpers are
+   * guarded, or defining them twice in one WordPress is a fatal error — which
+   * takes the whole site down, not just the feed.
+   */
+  ok("the two feeds register different routes",
+    formPhp.includes("'ata-rfq/v1'") && php.includes("'ata/v1'"));
+  ok("the shared token helpers are guarded against being defined twice",
+    formPhp.includes("if ( ! function_exists( 'ata_erp_feed_token' ) )")
+    && formPhp.includes("if ( ! function_exists( 'ata_erp_feed_presented' ) )"));
+  /*
+   * **No status filter, and that is the decision.** Unlike the advisor — where
+   * `pending` means the contact form was never filled in — every row here is a
+   * submitted form; the statuses only say where the site's own operator has
+   * got to. Filtering on them would drop a request marked «پاسخ داده‌شده» in
+   * the panel before the ERP's next five-minute poll, for ever.
+   */
+  ok("the form's feed offers every request, whatever the site marked it",
+    !/WHERE[^;]*status/i.test(formPhp));
+  /*
+   * The items and the attachment counts are one query each for the whole page,
+   * never one per row: a poll of fifty requests would otherwise be a hundred
+   * and one round trips to the site's database.
+   */
+  ok("items and attachment counts are read in one query each",
+    formPhp.includes("WHERE request_id IN ($in) ORDER BY id ASC")
+    && formPhp.includes("GROUP BY request_id"));
+  /*
+   * The files themselves never leave the site: the plugin keeps them outside
+   * the web root behind a deny-all rule and serves them only to a signed-in
+   * administrator, so the feed counts them and links the panel.
+   */
+  ok("attachments are counted, never shipped",
+    formPhp.includes("'attachment_count'")
+    && !formPhp.includes("base64_encode") && !formPhp.includes("relative_path'"));
+
+  /*
+   * The key widened from the number to (source, number), and the **DROP must
+   * precede the CREATE** — left the other way round, the narrower index goes
+   * on refusing precisely the second plugin's requests, which is the fault the
+   * migration was written to fix. `workflow_firing_occurrence` and
+   * `workflow_firing_due_day` each record the same ordering.
+   */
+  const sourceMig = readFileSync(
+    "prisma/migrations/20260930000000_web_rfq_sources/migration.sql", "utf-8");
+  ok("the import key gains the source",
+    /CREATE UNIQUE INDEX \[web_rfq_imports_source_rfqId_key\]/.test(sourceMig));
+  ok("...and the narrower one is dropped first",
+    /DROP INDEX \[web_rfq_imports_rfqId_key\]/.test(sourceMig)
+    && sourceMig.indexOf("DROP INDEX") < sourceMig.indexOf("CREATE UNIQUE INDEX"));
+  /*
+   * `DEFAULT 'ADVISOR'` rather than a backfill: every row already there is the
+   * advisor's, which is what it is — and a backfill would be DML reading a
+   * column the same batch adds, which SQL Server refuses at compile time
+   * however it is guarded.
+   */
+  ok("the column carries its own default rather than a backfill",
+    /\[source\] NVARCHAR\(20\) NOT NULL CONSTRAINT \[web_rfq_imports_source_df\] DEFAULT 'ADVISOR'/.test(sourceMig)
+    && !/UPDATE \[dbo\]\.\[web_rfq_imports\]/.test(sourceMig));
+  ok("the configuration row keyed «default» becomes the advisor's",
+    /UPDATE \[dbo\]\.\[web_rfq_config\] SET \[id\] = N'ADVISOR'/.test(sourceMig));
+  ok("the schema's unique key is the pair, never the number alone",
+    /@@unique\(\[source, rfqId\]\)/.test(readFileSync("prisma/schema.prisma", "utf-8")));
 
   /*
    * The timer must be well inside nothing in particular here — but it has to

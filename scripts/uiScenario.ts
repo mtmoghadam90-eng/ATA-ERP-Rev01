@@ -2755,8 +2755,18 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
     try { parsed = init?.body ? JSON.parse(init.body) : null; } catch { parsed = null; }
     askedW.push({ url: String(url), method, body: parsed });
 
+    /*
+     * The configuration answers for whichever source the URL named. A card
+     * whose calls pointed at the *other* source would render perfectly and
+     * report the wrong feed's state — which no type-check can see, so the
+     * stub echoes the source back and the assertions read it.
+     */
+    const source = String(url).includes("/FORM/") ? "FORM" : "ADVISOR";
     const config = {
-      feedUrl: "https://site.ir/wp-json/ata/v1/rfq/erp-feed",
+      source,
+      feedUrl: source === "FORM"
+        ? "https://site.ir/wp-json/ata-rfq/v1/erp-feed"
+        : "https://site.ir/wp-json/ata/v1/rfq/erp-feed",
       tokenHint: "••••3456", active: true, ownerUserId: "u1",
       startAfterId: 47, refusal: null,
     };
@@ -2778,13 +2788,15 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
     for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
   };
 
-  await act(async () => { rootW.render(React.createElement(WebRfqPanel)); });
+  await act(async () => { rootW.render(React.createElement(WebRfqPanel, { source: "ADVISOR" })); });
   await settleW();
 
   ok("the panel reads its configuration",
-    askedW.some((r) => r.url.includes("/api/web-rfq/config") && r.method === "GET"));
+    askedW.some((r) => r.url.includes("/api/web-rfq/ADVISOR/config") && r.method === "GET"));
   ok("...and the log of what has arrived",
-    askedW.some((r) => r.url.includes("/api/web-rfq/imports")));
+    askedW.some((r) => r.url.includes("/api/web-rfq/ADVISOR/imports")));
+  ok("...and asks about no other source",
+    !askedW.some((r) => r.url.includes("/FORM/")));
 
   /*
    * The stored token comes back as a hint and nothing else. If the box were
@@ -2806,6 +2818,7 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
   const saved = askedW.slice(before).find((r) => r.method === "PUT");
   ok("pressing save really writes", !!saved);
   const body = (saved?.body ?? {}) as Record<string, unknown>;
+  ok("...to this card's own source", saved?.url.includes("/api/web-rfq/ADVISOR/config") === true);
   ok("...sending the address that is in the box", body.feedUrl === "https://site.ir/wp-json/ata/v1/rfq/erp-feed");
   ok("...and a blank token, which the server reads as «unchanged»", body.token === "");
   ok("...never the masked hint", body.token !== "••••3456");
@@ -2854,10 +2867,46 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
   await act(async () => { syncBtn?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
   await settleW();
   ok("«همگام‌سازی حالا» reaches the server",
-    askedW.slice(beforeSync).some((r) => r.url.includes("/api/web-rfq/sync") && r.method === "POST"));
+    askedW.slice(beforeSync).some((r) => r.url.includes("/api/web-rfq/ADVISOR/sync") && r.method === "POST"));
 
   act(() => { rootW.unmount(); });
   hostW.remove();
+
+  /*
+   * The second card, and the one assertion this whole block exists for.
+   *
+   * One component draws both, so a spec whose calls pointed at the other
+   * source would render perfectly, fill in perfectly, and report the wrong
+   * plugin's last error under this plugin's name. Nothing but driving it can
+   * see that — the prop is a string either way — so the second card is
+   * rendered and every URL it asked for is read.
+   */
+  {
+    const hostF = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+    const rootF = createRoot(hostF);
+    const before2 = askedW.length;
+    await act(async () => { rootF.render(React.createElement(WebRfqPanel, { source: "FORM" })); });
+    await settleW();
+    const mine = askedW.slice(before2).filter((r) => r.url.includes("/api/web-rfq/"));
+    ok("the second card asks about the second source",
+      mine.some((r) => r.url.includes("/api/web-rfq/FORM/config"))
+      && mine.some((r) => r.url.includes("/api/web-rfq/FORM/imports")));
+    ok("...and about no other, whatever the first card asked",
+      mine.length > 0 && mine.every((r) => r.url.includes("/api/web-rfq/FORM/")));
+    ok("...and draws its own plugin's address as the placeholder",
+      (Array.from(hostF.querySelectorAll("input")) as HTMLInputElement[])
+        .some((b) => b.value.includes("ata-rfq/v1/erp-feed")));
+    /*
+     * The markers carry the source too, so a render test cannot press the
+     * wrong card's button and report the right one as working.
+     */
+    ok("its own controls are addressable as its own",
+      !!hostF.querySelector("[data-web-rfq-save='FORM']")
+      && !!hostF.querySelector("[data-web-rfq-sync='FORM']"));
+    act(() => { rootF.unmount(); });
+    hostF.remove();
+  }
+
   gW.fetch = realFetchW;
 }
 
