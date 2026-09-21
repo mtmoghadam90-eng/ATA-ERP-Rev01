@@ -61,6 +61,8 @@ export interface TaskRow {
   } | null;
   dueDate: string | null;
   dueDateJalali: string | null;
+  /** Whether the deadline was left to the assignee to name. */
+  dueDateByAssignee: boolean;
   assignedToUserId: string | null;
   assignedToName: string | null;
   reminderEnabled: boolean;
@@ -107,6 +109,7 @@ export interface TaskWriteInput {
   priority?: string;
   status?: string;
   dueDate?: string | null;
+  dueDateByAssignee?: boolean;
   assignedToUserId?: string | null;
   assignedToName?: string | null;
   reminderEnabled?: boolean;
@@ -228,6 +231,7 @@ export function rowToTask(row: TaskRow): Task {
     priority: row.priority as Task["priority"],
     status: row.status as Task["status"],
     dueDate: row.dueDateJalali ?? "",
+    dueDateByAssignee: !!row.dueDateByAssignee,
     assignedTo: row.assignedToName ?? "",
     // Carried so a save from the board or the calendar writes the assignee
     // back as it found them. Without it every edit sent a null id and detached
@@ -266,6 +270,7 @@ export function taskToWriteInput(
     priority: task.priority,
     status: task.status,
     dueDate: task.dueDate ?? null,
+    dueDateByAssignee: !!task.dueDateByAssignee,
     assignedToUserId: task.assignedToUserId ?? null,
     assignedToName: task.assignedTo ?? null,
     reminderEnabled: task.reminderEnabled,

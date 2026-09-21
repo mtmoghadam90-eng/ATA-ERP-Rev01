@@ -13,7 +13,8 @@ import { topUpActiveWork } from "../services/workLoadService";
 
 const WRITABLE: (keyof TaskInput)[] = [
   "title", "description", "relatedToType", "relatedToId", "relatedToName",
-  "priority", "status", "dueDate", "assignedToUserId", "assignedToName",
+  "priority", "status", "dueDate", "dueDateByAssignee",
+  "assignedToUserId", "assignedToName",
   "reminderEnabled", "reminderDate", "reminderTime",
   // The series and its end. `reminderAckedFor` is deliberately not here: the
   // ack endpoint is its only writer, or a form posting the whole record would

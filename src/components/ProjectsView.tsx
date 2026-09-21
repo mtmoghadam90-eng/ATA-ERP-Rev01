@@ -6067,6 +6067,24 @@ export default function ProjectsView({
                                                   <Inbox size={9} />
                                                   {ref.assignedTo || 'همکار'}: {status}
                                                   {/*
+                                                    The deadline, on the chip
+                                                    that already says whose
+                                                    request it is and where it
+                                                    has got to — the third thing
+                                                    somebody reading a feed wants
+                                                    to know about a request.
+                                                    Silent where none was agreed,
+                                                    which is most of them.
+                                                  */}
+                                                  {ref.dueDateJalali && (
+                                                    <span className="font-mono opacity-75">
+                                                      · تا {ref.dueDateJalali}
+                                                    </span>
+                                                  )}
+                                                  {!ref.dueDateJalali && ref.dueDateByAssignee && !done && (
+                                                    <span className="opacity-75">· مهلت با ارجاع‌شونده</span>
+                                                  )}
+                                                  {/*
                                                     Closing it is one press, for
                                                     either party. The panel that
                                                     used to carry this button is
@@ -6129,7 +6147,7 @@ export default function ProjectsView({
                                           setNewActivityAttachment((prev: any) => ({ ...prev, [group.id]: next }));
                                         }
                                       }}
-                                      onSend={async (text) => {
+                                      onSend={async (text, due) => {
                                         const attachmentData: ActivityAttachment[] =
                                           newActivityAttachment[group.id] ?? [];
                                         try {
@@ -6137,6 +6155,11 @@ export default function ProjectsView({
                                             text,
                                             attachments: attachmentData,
                                             replyToId: replyTo?.groupId === group.id ? replyTo.id : null,
+                                            // The deadline for whoever the message
+                                            // names; the composer sends nothing
+                                            // where it names nobody.
+                                            dueDate: due.dueDate || null,
+                                            dueDateByAssignee: due.dueDateByAssignee,
                                           });
                                           setNewActivityAttachment((prev: any) => ({ ...prev, [group.id]: [] }));
                                           setReplyTo(null);

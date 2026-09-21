@@ -351,6 +351,10 @@ import {
   failedMessageBody, failedMessageTitle, noticeSubject,
 } from "../src/utils/workflowNotice";
 import { deriveServiceHeader } from "../src/server/afterSalesStatus";
+import {
+  DUE_SOON_DAYS, OVERDUE_WINDOW_DAYS,
+  dueNoticeBody, dueNoticeRecipient, dueNoticeTitle, dueNoticesFor, dueScanRange,
+} from "../src/utils/dueReminders";
 
 /**
  * Every check that reads a source file reads it through here, and the reason is
@@ -20137,6 +20141,335 @@ head("After-sales records what the customer said, and the card shows it");
     && !/UPDATE \[dbo\]\.\[after_sales_services\]/.test(startMig));
   ok("...guarded on what it is changing, so re-running it is safe",
     /\[is_nullable\] = 0/.test(startMig));
+}
+
+/* ------------------- a deadline that tells somebody ---------------------- */
+head("A deadline reminds the assignee, and reports back to whoever asked");
+{
+  const TODAY = "1405/07/10";
+  const open = (extra: Record<string, unknown> = {}) => ({
+    open: true,
+    assigneeUserId: "u-assignee",
+    creatorUserId: "u-creator",
+    ...extra,
+  });
+
+  /*
+   * **The two notices go to two different people, and that is the design.**
+   *
+   * The assignee is the one who can still finish it, so the day-before
+   * reminder is theirs; the person who asked is the one whose decision it now
+   * is — chase it, move it, or let it go — so the passed deadline is theirs.
+   * Reversed, each would reach somebody who can do nothing with it.
+   */
+  eq("the day-before reminder goes to whoever has to do the work",
+    dueNoticeRecipient("SOON", open()), "u-assignee");
+  eq("a passed deadline goes back to whoever asked",
+    dueNoticeRecipient("OVERDUE", open()), "u-creator");
+  eq("...and «تا کی؟» goes to the person being asked",
+    dueNoticeRecipient("ASK", open()), "u-assignee");
+
+  /* -------------------------- one day before ---------------------------- */
+
+  const dueTomorrow = open({ dueDateJalali: "1405/07/11" });
+  eq("the day before the deadline, the assignee is reminded",
+    dueNoticesFor(dueTomorrow, TODAY).join(","), "SOON");
+  /*
+   * The window reaches the deadline itself rather than firing only on `due−1`.
+   * The pass runs once a day, so a server that was off — or a record created
+   * the morning before its own deadline — would otherwise miss the single day
+   * this notice exists for.
+   */
+  eq("...and on the day itself, if the pass did not run yesterday",
+    dueNoticesFor(open({ dueDateJalali: TODAY }), TODAY).join(","), "SOON");
+  eq("two days out is not yet",
+    dueNoticesFor(open({ dueDateJalali: "1405/07/12" }), TODAY).join(","), "");
+  /*
+   * Once per deadline, named by the deadline it answered rather than by a
+   * flag — `workflow_firings.dueDay`'s own rule. A date that is **moved** is a
+   * new promise and earns a fresh reminder; a date that is not never earns a
+   * second one.
+   */
+  eq("a deadline already spoken about is not spoken about again",
+    dueNoticesFor(open({ dueDateJalali: "1405/07/11", dueSoonNoticeFor: "1405/07/11" }), TODAY)
+      .join(","), "");
+  eq("...but moving the deadline is a new promise",
+    dueNoticesFor(open({ dueDateJalali: "1405/07/11", dueSoonNoticeFor: "1405/06/02" }), TODAY)
+      .join(","), "SOON");
+  eq("a task nobody is assigned reminds nobody",
+    dueNoticesFor({ ...dueTomorrow, assigneeUserId: null }, TODAY).join(","), "");
+
+  /* ---------------------------- past the day ---------------------------- */
+
+  eq("the day after, the person who asked is told",
+    dueNoticesFor(open({ dueDateJalali: "1405/07/09" }), TODAY).join(","), "OVERDUE");
+  eq("...once, and not every morning after that",
+    dueNoticesFor(
+      open({ dueDateJalali: "1405/07/09", dueOverdueNoticeFor: "1405/07/09" }), TODAY,
+    ).join(","), "");
+  /*
+   * A deadline a month gone is history — the card is still on the board with
+   * its date on it, and a notice now is the board noise this file exists to
+   * avoid. It is also what bounds the first pass after this ships, since
+   * nothing is backfilled.
+   */
+  eq("a deadline inside the window is still worth a word",
+    dueNoticesFor(open({ dueDateJalali: "1405/06/11" }), TODAY).join(","), "OVERDUE");
+  eq("...and one long past is history",
+    dueNoticesFor(open({ dueDateJalali: "1404/07/09" }), TODAY).join(","), "");
+  eq("an automation-raised task reports back to nobody",
+    dueNoticesFor(
+      { ...open({ dueDateJalali: "1405/07/09" }), creatorUserId: null }, TODAY,
+    ).join(","), "");
+
+  /* --------------------- a deadline still owed to us -------------------- */
+
+  /*
+   * The switch has to *do* something, or it is the fault this codebase keeps
+   * repairing: read as an ordinary blank, «مهلت را ارجاع‌شونده تعیین کند»
+   * leaves the record undated for ever, so neither of the two notices above
+   * can ever fire and the person who asked never learns nothing was promised.
+   */
+  eq("a deadline left to the assignee is asked for",
+    dueNoticesFor(open({ dueDateByAssignee: true }), TODAY).join(","), "ASK");
+  eq("...once ever, since a request repeated daily is one nobody answers",
+    dueNoticesFor(
+      open({ dueDateByAssignee: true, dueAskedNoticeOn: "1405/07/02" }), TODAY,
+    ).join(","), "");
+  eq("...and never once they have answered it",
+    dueNoticesFor(
+      open({ dueDateByAssignee: true, dueDateJalali: "1405/07/20" }), TODAY,
+    ).join(","), "");
+  eq("an ordinary undated record is asked nothing",
+    dueNoticesFor(open(), TODAY).join(","), "");
+
+  /* ------------------------------ finished ------------------------------ */
+
+  /*
+   * A notice that goes on speaking about work already done is what makes
+   * people stop reading notices — and a deadline is the one thing a closed
+   * record still carries, so this has to be checked rather than assumed.
+   */
+  for (const shape of [
+    { dueDateJalali: "1405/07/11" },
+    { dueDateJalali: "1405/07/09" },
+    { dueDateByAssignee: true },
+  ]) {
+    eq(`finished work owes nothing (${JSON.stringify(shape)})`,
+      dueNoticesFor({ ...open(shape), open: false }, TODAY).join(","), "");
+  }
+
+  /*
+   * **At most one notice a day**, swept rather than asserted: `SOON` and
+   * `OVERDUE` are separated by whether the deadline has passed and `ASK` only
+   * exists where there is none, so no shape can produce two — and a rule that
+   * did would put the same record in somebody's inbox twice on one morning.
+   */
+  let worst = 0;
+  for (const offset of [-40, -31, -30, -5, -1, 0, 1, 2, 9]) {
+    const due = offset === 0 ? TODAY : addDaysToShamsi(TODAY, offset);
+    for (const byAssignee of [false, true]) {
+      for (const soonMark of [null, due]) {
+        for (const overdueMark of [null, due]) {
+          worst = Math.max(worst, dueNoticesFor(open({
+            dueDateJalali: due,
+            dueDateByAssignee: byAssignee,
+            dueSoonNoticeFor: soonMark,
+            dueOverdueNoticeFor: overdueMark,
+          }), TODAY).length);
+        }
+      }
+    }
+  }
+  eq("no shape ever owes two notices on one day", worst, 1);
+
+  /* ------------------------------ the band ------------------------------ */
+
+  const band = dueScanRange(TODAY);
+  eq("the scan reaches back exactly as far as a notice does",
+    band.from, addDaysToShamsi(TODAY, -OVERDUE_WINDOW_DAYS));
+  eq("...and forward exactly as far as the reminder looks",
+    band.to, addDaysToShamsi(TODAY, DUE_SOON_DAYS));
+
+  /* ----------------------------- the wording ---------------------------- */
+
+  /*
+   * A notice nobody can place is a notice nobody can act on — `workflowNotice`'s
+   * own rule, arriving on the other kind of record.
+   */
+  const body = dueNoticeBody("OVERDUE", "referral", {
+    headline: "لطفاً دیتاشیت را بررسی کن",
+    counterpart: "علی رضایی",
+    dueDateJalali: "1405/07/09",
+    project: "ATA-05-38 — پتروشیمی نمونه",
+  });
+  ok("the notice names the deadline that passed", body.includes("1405/07/09"));
+  ok("...who it is waiting on", body.includes("علی رضایی"));
+  ok("...what was asked", body.includes("لطفاً دیتاشیت را بررسی کن"));
+  ok("...and the job it belongs to", body.includes("ATA-05-38"));
+  ok("a task and a referral are named as what they are",
+    dueNoticeTitle("OVERDUE", "task").includes("وظیفه")
+    && dueNoticeTitle("OVERDUE", "referral").includes("ارجاع"));
+
+  /* --------------------------- the pass itself -------------------------- */
+
+  const sweep = readFileSync("src/server/services/dueReminderSweep.ts", "utf-8");
+
+  /*
+   * **A sales chase is never reminded about.** Its due date is the day to ring
+   * the customer and it is what parks the card in «در انتظار مشتری»; the board
+   * moves it on its own morning and the follow-up queue already draws
+   * «عقب‌افتاده» on it. A notice beside all that would be a second, weaker copy
+   * of the health badge — the same reason a chase is never texted.
+   */
+  ok("the chases are left to the follow-up queue",
+    /taskKind: \{ not: FOLLOW_UP_KIND \}/.test(sweep));
+
+  /*
+   * **The claim comes before the notice**, which is the whole of the
+   * once-per-deadline guarantee: two overlapping passes then notify once
+   * between them. Written the other way round it type-checks, reads perfectly,
+   * and sends the same reminder every morning until somebody closes the record.
+   */
+  const raiseBody = sweep.slice(sweep.indexOf("async function raise("));
+  ok("the marker is claimed before the notice is raised",
+    raiseBody.indexOf("await claim(") > 0
+    && raiseBody.indexOf("await claim(") < raiseBody.indexOf("notifyUser("));
+
+  /*
+   * The marker is compared without a bare `not` on a nullable column: SQL
+   * evaluates that to unknown for a NULL and would drop exactly the records
+   * that have never been reminded about at all.
+   */
+  ok("«never, or a different deadline» is spelled out",
+    /\[field\]: null \}, \{ \[field\]: \{ not: value \}/.test(sweep));
+
+  /*
+   * The three marker columns really exist, on both tables.
+   *
+   * The pass casts its `where` — a dynamic key cannot be typed against Prisma's
+   * generated input — so a misspelling here compiles cleanly, claims nothing,
+   * and sends the same reminder every morning for ever. The type-checker cannot
+   * see it; this can.
+   */
+  const schema = readFileSync("prisma/schema.prisma", "utf-8");
+  const referralModel = schema.slice(
+    schema.indexOf("model ProjectReferral {"), schema.indexOf("model ReferralMessage {"));
+  const taskModel = schema.slice(
+    schema.indexOf("model Task {"), schema.indexOf("model ModuleNote {"));
+  for (const field of ["dueSoonNoticeFor", "dueOverdueNoticeFor", "dueAskedNoticeOn"]) {
+    ok(`the pass stamps a real column: ${field}`, sweep.includes(`"${field}"`));
+    ok(`...on the referrals`, new RegExp(`\\n  ${field}\\s`).test(referralModel));
+    ok(`...and on the tasks`, new RegExp(`\\n  ${field}\\s`).test(taskModel));
+  }
+
+  /*
+   * It raises notices and nothing else. A pass that could write a task or queue
+   * a message would be a second automation engine beside the one that exists.
+   */
+  ok("the pass writes no tasks and sends no messages",
+    !/task\.create\(/.test(sweep) && !/queueMessage/.test(sweep));
+
+  /*
+   * Its own guard rather than a line inside the workflow sweep: that one
+   * returns early for a company that has written no scheduled rules, which is
+   * most of them, and these reminders are not rules anybody wrote.
+   */
+  const srv = readFileSync("server.ts", "utf-8");
+  ok("the pass is started at login, beside the workflow sweep",
+    srv.includes("void ensureDueRemindersRanToday();"));
+
+  /* ------------------------ the referral's own half --------------------- */
+
+  /*
+   * A referral had no deadline at all, so both questions about one were
+   * answered «this does not describe me» — and every request dropped out of
+   * «عقب‌افتاده» by construction, which is the one filter that exists to find
+   * exactly them.
+   */
+  const late = {
+    status: REFERRAL_PENDING, assignedToUserId: "u", dueDate: "1405/07/01",
+  };
+  ok("a request past its deadline is late",
+    referralPassesTaskFilters(late, { overdue: true }, TODAY));
+  ok("...and one still ahead of it is not",
+    !referralPassesTaskFilters(
+      { ...late, dueDate: "1405/07/20" }, { overdue: true }, TODAY));
+  ok("...nor one already finished",
+    !referralPassesTaskFilters(
+      { ...late, status: REFERRAL_DONE }, { overdue: true }, TODAY));
+  /*
+   * Unchanged where there is no deadline, which is the file's own rule: a
+   * person asking «چه چیزی عقب افتاده» is not asking to be shown things nothing
+   * was ever promised about.
+   */
+  ok("an undated request still drops out of the question",
+    !referralPassesTaskFilters(
+      { status: REFERRAL_PENDING, assignedToUserId: "u" }, { overdue: true }, TODAY));
+  ok("...and out of a window it cannot be inside",
+    !referralPassesTaskFilters(
+      { status: REFERRAL_PENDING }, { dateFrom: "1405/07/01" }, TODAY));
+  ok("a dated one answers the window",
+    referralPassesTaskFilters(late, { dateFrom: "1405/06/01", dateTo: "1405/07/05" }, TODAY));
+
+  /*
+   * With no clock nothing can be late — the safe direction, since it leaves
+   * the request in the list rather than hiding it.
+   */
+  ok("with no clock, nothing is reported late",
+    !referralPassesTaskFilters(late, { overdue: true }));
+
+  /* --------------------------- both write paths ------------------------- */
+
+  const tasksRoute = readFileSync("src/server/routes/tasks.ts", "utf-8");
+  ok("the task's switch is writable, or the form would collect it for nothing",
+    /"dueDateByAssignee"/.test(tasksRoute));
+
+  /*
+   * Selected **and** carried. A column the query asks for and the adapter drops
+   * is the `rowToTask`/`completionNote` fault — here it would open the box
+   * unticked on a task set up exactly that way, and the next save would quietly
+   * switch it off.
+   */
+  const taskSvc = readFileSync("src/server/services/taskService.ts", "utf-8");
+  const listSelect = taskSvc.slice(
+    taskSvc.indexOf("const LIST_SELECT"), taskSvc.indexOf("export async function listTasks"));
+  ok("the task row carries the switch", /dueDateByAssignee: true/.test(listSelect));
+  const taskApi = readFileSync("src/api/tasks.ts", "utf-8");
+  ok("...and the adapter reads it rather than blanking it",
+    /dueDateByAssignee: !!row\.dueDateByAssignee/.test(taskApi));
+  ok("...and sends it back", /dueDateByAssignee: !!task\.dueDateByAssignee/.test(taskApi));
+
+  /*
+   * A new promise clears the markers, or a deadline moved forward would carry
+   * the old «already reminded» stamp and pass in silence.
+   */
+  const activitySvc = readFileSync("src/server/services/activityService.ts", "utf-8");
+  const setDue = activitySvc.slice(
+    activitySvc.indexOf("export async function setReferralDue"),
+    activitySvc.indexOf("/** Appends a reply to a referral thread. */"));
+  ok("moving the deadline clears what was already said about it",
+    /dueSoonNoticeFor: null, dueOverdueNoticeFor: null/.test(setDue));
+  ok("either party may write it — only the request's own text is the referrer's",
+    /assignedToUserId === user\.id/.test(setDue) && /assignedByUserId === user\.id/.test(setDue));
+
+  /* ------------------------------ migration ----------------------------- */
+
+  const mig = readFileSync(
+    "prisma/migrations/20260930000400_due_reminders/migration.sql", "utf-8");
+  for (const col of ["dueDate", "dueDateJalali", "dueDateByAssignee", "dueSoonNoticeFor"]) {
+    ok(`the migration adds ${col} to the referrals, guarded`,
+      new RegExp(`COL_LENGTH\\(N'\\[dbo\\]\\.\\[project_referrals\\]', N'${col}'\\) IS NULL`)
+        .test(mig));
+  }
+  /*
+   * Nothing is backfilled, and the window is what makes that safe: NULL means
+   * «never spoken about», and stamping every existing row as already-notified
+   * would silence exactly the work that is late today.
+   */
+  ok("...and backfills nothing",
+    !/UPDATE \[dbo\]\.\[project_referrals\]/.test(mig)
+    && !/UPDATE \[dbo\]\.\[tasks\]/.test(mig));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

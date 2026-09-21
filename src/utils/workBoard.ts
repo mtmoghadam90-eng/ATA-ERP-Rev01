@@ -300,6 +300,19 @@ export function onPlateWhere(today: Date | null): Record<string, unknown> {
   return { OR: [laneWhere("TODO", today), laneWhere("DOING", today)] };
 }
 
+/**
+ * Every task that still has work in it — `taskLane`'s DONE column, negated.
+ *
+ * Written once rather than at each call site, because the two readings have to
+ * agree: `taskLane` sends an unrecognised status to an open column on purpose,
+ * so a query listing the open words instead of excluding the closed ones would
+ * hide exactly the automation-raised tasks that carry «در انتظار». Safe as an
+ * exclusion because `status` is NOT NULL with a default.
+ */
+export function openTaskWhere(): Record<string, unknown> {
+  return { status: { notIn: [TASK_DONE, TASK_CANCELLED] } };
+}
+
 export function taskStatusForLane(lane: MovableLane, current?: string | null): string {
   if (lane === "TODO") return TASK_TODO;
   if (lane === "DOING") return TASK_DOING;
@@ -422,7 +435,7 @@ export interface BoardCardOrder {
   createdAt: string;
   /** Absent on a referral — see `PRIORITY_ORDER`. */
   priority?: string | null;
-  /** Shamsi, `YYYY/MM/DD`. Absent on a referral, which has no due date. */
+  /** Shamsi, `YYYY/MM/DD`. Optional on both kinds: a deadline always was. */
   dueDate?: string | null;
 }
 
@@ -436,7 +449,10 @@ export interface BoardCardOrder {
  * **A card with no due date sorts last, never first.** Shamsi dates compare as
  * strings, so an empty one would come before every real date and put everything
  * undated at the top of a column somebody opened to see what is due soonest —
- * which is the opposite of the question. A referral has no due date at all.
+ * which is the opposite of the question. That covers a referral with no
+ * deadline exactly as it covers a task with none; a referral that carries one
+ * sorts among the tasks on the same date, which is the whole reason it has a
+ * column of its own to answer for now.
  *
  * Returns a new array; the input is never reordered in place, since the caller
  * is holding React state.
@@ -523,6 +539,15 @@ export interface ReferralFilterSubject {
   assignedToUserId?: string | null;
   /** Whether the referral is attached to a project at all. */
   hasProject?: boolean;
+  /**
+   * The deadline, where one was agreed — `YYYY/MM/DD`.
+   *
+   * A referral used to have none at all, so both questions below were answered
+   * «this does not describe me» and every request dropped out of «عقب‌افتاده»
+   * by construction: a referral three weeks past its date was invisible on the
+   * one filter that exists to find exactly that.
+   */
+  dueDate?: string | null;
 }
 
 /** The choices the status filter offers, as the columns they select. */
@@ -548,6 +573,7 @@ const ANY = (value: string | undefined) => !value || value === "all";
 export function referralPassesTaskFilters(
   referral: ReferralFilterSubject,
   filters: TaskFilterState,
+  todayJalali?: string,
 ): boolean {
   const lane = referralLane(referral.status);
 
@@ -576,11 +602,35 @@ export function referralPassesTaskFilters(
   if (!ANY(filters.relatedToType) && filters.relatedToType !== "پروژه") return false;
 
   /*
-   * Both of these are questions about a **due date**, which a referral does not
-   * have — so it is not late, and it is not inside any window.
+   * The two questions about a **deadline**, answered from the one it carries.
+   *
+   * The rule is unchanged and it is the file's own: a record is filtered on the
+   * value it effectively has, and where it has none the question does not
+   * describe it. What changed is that a referral can now have one — so an
+   * undated request still drops out of both (a person asking «what is late» is
+   * not asking to see things nothing was ever promised about), while a dated
+   * one answers them exactly as a task does.
+   *
+   * `todayJalali` is a parameter rather than a clock read here, so the rule
+   * stays pure and the screen and the tests ask it the same question. Without
+   * one nothing can be late, which is the safe direction: a missing clock
+   * leaves the request in the list rather than hiding it.
    */
-  if (filters.overdue) return false;
-  if (filters.dateFrom || filters.dateTo) return false;
+  const due = String(referral.dueDate ?? "").trim();
+  if (!due) {
+    if (filters.overdue) return false;
+    if (filters.dateFrom || filters.dateTo) return false;
+    return true;
+  }
+
+  if (filters.overdue) {
+    const today = String(todayJalali ?? "").trim();
+    // Past its day and not finished. A closed request is not late, whatever
+    // its date says — the work was done.
+    if (!today || due >= today || lane === "DONE") return false;
+  }
+  if (filters.dateFrom && due < filters.dateFrom) return false;
+  if (filters.dateTo && due > filters.dateTo) return false;
 
   return true;
 }

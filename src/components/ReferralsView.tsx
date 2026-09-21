@@ -247,6 +247,10 @@ export default function ReferralsView({
            */
           assignedToUserId: row.assignedToUserId ?? null,
           assignedByUserId: row.assignedByUserId ?? null,
+          // The deadline and who was asked to set it, so the thread can draw
+          // and change both — a referral row carries them now.
+          dueDateJalali: row.dueDateJalali ?? null,
+          dueDateByAssignee: !!row.dueDateByAssignee,
           createdAt: row.createdAt,
           messages: row.messages.map(m => ({
             id: m.id,
@@ -434,6 +438,23 @@ export default function ReferralsView({
       refresh();
     } catch (err) {
       reportError(err, 'ویرایش متن ارجاع با خطا مواجه شد.');
+    }
+  };
+
+  /*
+   * Only the date is sent — never `dueDateByAssignee`.
+   *
+   * Absent means «not edited» on that endpoint, and the assignee filling a date
+   * in is answering the question rather than deciding who was asked it: writing
+   * the switch back from here would let one party silently change what the
+   * other one set up.
+   */
+  const handleSetDue = async (referralId: string, dueDate: string | null) => {
+    try {
+      await inboxApi.setReferralDue(referralId, { dueDate });
+      refresh();
+    } catch (err) {
+      reportError(err, 'ثبت مهلت ارجاع با خطا مواجه شد.');
     }
   };
 
@@ -898,6 +919,7 @@ export default function ReferralsView({
                             }}
                             onSubmit={(body) => handleReplySubmit(referral.id, body)}
                             onEditAction={(text) => handleEditAction(referral.id, text)}
+                            onSetDue={(dueDate) => handleSetDue(referral.id, dueDate)}
                           />
                         </div>
                       </div>

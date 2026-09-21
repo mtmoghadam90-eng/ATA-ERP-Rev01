@@ -701,6 +701,15 @@ export interface Task {
   relatedToName?: string;
   priority: 'پایین' | 'متوسط' | 'بالا' | 'فوری';
   dueDate: string;
+  /**
+   * «مهلت را ارجاع‌شونده تعیین کند» — the third answer beside a date and none.
+   *
+   * Without it, a deadline the assignee still owes is indistinguishable from a
+   * deadline nobody wanted, so nothing ever asks them for one and neither of
+   * the two reminders can fire. `dueNoticesFor` is what turns it into the one
+   * notice that does.
+   */
+  dueDateByAssignee?: boolean;
   /** The assignee's display name. */
   assignedTo: string;
   /**
@@ -1029,6 +1038,15 @@ export interface ProjectReferral {
   /** The two accounts, which decide who may answer, close or reopen. */
   assignedToUserId?: string | null;
   assignedByUserId?: string | null;
+  /**
+   * The deadline, and whether the assignee is the one who was asked to name it.
+   *
+   * Optional on purpose — most requests carry neither, and a blank is a real
+   * answer rather than a gap. They are on the chip in the feed, so a request's
+   * deadline is read where the request is.
+   */
+  dueDateJalali?: string | null;
+  dueDateByAssignee?: boolean;
   createdAt: string;
   /** «در حال اقدام» is new: with two states the board's middle column could not be said. */
   status: 'در انتظار اقدام' | 'در حال اقدام' | 'انجام شده';

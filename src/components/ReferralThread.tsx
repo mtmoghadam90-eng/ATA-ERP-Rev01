@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  CheckCircle2, MessageSquare, Paperclip, Pencil, RefreshCcw, Send, X,
+  CalendarClock, CheckCircle2, MessageSquare, Paperclip, Pencil, RefreshCcw, Send, X,
 } from 'lucide-react';
 
 import { referralIsOpen } from '../utils/workBoard';
+import ShamsiDatePicker from './ShamsiDatePicker';
 
 /**
  * A referral, read as the conversation it actually is.
@@ -40,6 +41,9 @@ export interface ThreadReferral {
   assignedTo?: string;
   assignedByUserId?: string | null;
   assignedToUserId?: string | null;
+  /** «تا کی؟», and whether the assignee is the one who was asked to say. */
+  dueDateJalali?: string | null;
+  dueDateByAssignee?: boolean;
   messages?: ThreadMessage[];
 }
 
@@ -67,13 +71,23 @@ interface Props {
   onSubmit?: (body: ReferralComposerSubmit) => Promise<void>;
   /** Corrects the request. Only offered to the person who raised it. */
   onEditAction?: (text: string) => Promise<void>;
+  /**
+   * Agrees or moves the deadline. Offered to **either** party.
+   *
+   * Unlike the request's own text: the assignee writing here is answering
+   * «مهلت را خودت تعیین کن», and refusing them would leave that switch a
+   * question nobody could answer from any screen. Omitted where the screen has
+   * no write path, and the strip is then read-only rather than absent — a
+   * deadline is worth reading wherever the request is.
+   */
+  onSetDue?: (dueDate: string | null) => Promise<void>;
   /** Smaller type, for the activity feed. */
   compact?: boolean;
 }
 
 export default function ReferralThread({
   referral, currentUserId, formatDate, users = [],
-  onPickAttachment, onSubmit, onEditAction, compact = false,
+  onPickAttachment, onSubmit, onEditAction, onSetDue, compact = false,
 }: Props) {
   /*
    * Open, which is not the same question as «در انتظار اقدام».
@@ -102,6 +116,10 @@ export default function ReferralThread({
   const [draftAction, setDraftAction] = useState(referral.actionRequired);
   const [savingAction, setSavingAction] = useState(false);
 
+  const [editingDue, setEditingDue] = useState(false);
+  const [draftDue, setDraftDue] = useState(referral.dueDateJalali ?? '');
+  const [savingDue, setSavingDue] = useState(false);
+
   /*
    * Seeded on open and on the referral changing, not on every render.
    *
@@ -115,7 +133,9 @@ export default function ReferralThread({
     seededFor.current = referral.id;
     setDraftAction(referral.actionRequired);
     setEditing(false);
-  }, [referral.id, referral.actionRequired]);
+    setDraftDue(referral.dueDateJalali ?? '');
+    setEditingDue(false);
+  }, [referral.id, referral.actionRequired, referral.dueDateJalali]);
 
   const messages = referral.messages ?? [];
 
@@ -129,6 +149,17 @@ export default function ReferralThread({
       setForwardTo('');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const saveDue = async (value: string | null) => {
+    if (!onSetDue) return;
+    setSavingDue(true);
+    try {
+      await onSetDue(value);
+      setEditingDue(false);
+    } finally {
+      setSavingDue(false);
     }
   };
 
@@ -203,6 +234,81 @@ export default function ReferralThread({
             </div>
           )}
         </div>
+      </div>
+
+      {/*
+        The deadline, under the request it belongs to.
+
+        Drawn even when there is none, and that is the point: «بدون مهلت» is an
+        answer somebody can act on, while an absent strip reads as a thread that
+        simply does not have the feature — which is how a referral went years
+        with nothing able to say it was late.
+
+        «تعیین مهلت با ارجاع‌شونده» is its own wording rather than a blank,
+        because it is the one state that is *waiting* on somebody: the person
+        who raised it has said «تا کی خودت بگو», and the reminder pass asks for
+        it once.
+      */}
+      <div
+        className={`flex flex-wrap items-center gap-2 ${size.meta} text-slate-500`}
+        data-referral-due-strip={referral.id}
+      >
+        <span className="flex items-center gap-1 font-bold text-slate-400">
+          <CalendarClock size={11} />
+          مهلت:
+        </span>
+
+        {editingDue ? (
+          <>
+            <div className="w-40">
+              <ShamsiDatePicker
+                value={draftDue}
+                onChange={setDraftDue}
+                compact
+                placeholder="بدون مهلت"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => void saveDue(draftDue.trim() || null)}
+              disabled={savingDue}
+              className="px-2 py-0.5 font-bold bg-sky-600 hover:bg-sky-700 text-white rounded transition disabled:opacity-50"
+              id={`referral-due-save-${referral.id}`}
+            >
+              {savingDue ? '…' : 'ثبت'}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setDraftDue(referral.dueDateJalali ?? ''); setEditingDue(false); }}
+              className="px-2 py-0.5 font-bold text-slate-500 hover:bg-slate-200 rounded transition"
+            >
+              انصراف
+            </button>
+          </>
+        ) : (
+          <>
+            {referral.dueDateJalali ? (
+              <span className="font-mono font-bold text-slate-700">{referral.dueDateJalali}</span>
+            ) : referral.dueDateByAssignee ? (
+              <span className="font-bold text-amber-700">
+                تعیین مهلت بر عهدهٔ {isAssignee ? 'شما' : referral.assignedTo || 'ارجاع‌شونده'}
+              </span>
+            ) : (
+              <span>بدون مهلت</span>
+            )}
+            {onSetDue && (isAssignee || isReferrer) && isOpen && (
+              <button
+                type="button"
+                onClick={() => { setDraftDue(referral.dueDateJalali ?? ''); setEditingDue(true); }}
+                className="text-sky-500 hover:text-sky-700 transition"
+                title="تعیین یا تغییر مهلت"
+                id={`referral-due-edit-${referral.id}`}
+              >
+                <Pencil size={11} />
+              </button>
+            )}
+          </>
+        )}
       </div>
 
       {/* The replies. Whoever is not the referrer sits on the other side. */}

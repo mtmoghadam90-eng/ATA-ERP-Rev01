@@ -310,6 +310,13 @@ const LIST_SELECT = {
   createdByUserId: true, createdByName: true,
   relatedToType: true, relatedToId: true, relatedToName: true,
   dueDate: true, dueDateJalali: true,
+  /*
+   * The form draws the third answer, so the row has to carry it: selected and
+   * then not carried, the box would open unticked on a task that had been set
+   * up exactly that way and the next save would quietly turn the switch off —
+   * the `rowToTask`/`completionNote` fault on a checkbox.
+   */
+  dueDateByAssignee: true,
   assignedToUserId: true, assignedToName: true,
   reminderEnabled: true, reminderDateJalali: true, reminderTime: true,
   reminderRepeat: true, reminderAnchor: true,
@@ -551,6 +558,15 @@ export interface TaskInput {
   priority?: string;
   status?: string;
   dueDate?: string | null;
+  /**
+   * «مهلت را ارجاع‌شونده تعیین کند».
+   *
+   * A third state beside «a date» and «no date», and it needs its own key for
+   * the reason it needs its own column: without it, a deadline somebody is
+   * still owed looks exactly like a deadline nobody wanted, so the assignee is
+   * never asked and `dueNoticesFor` has nothing to raise.
+   */
+  dueDateByAssignee?: boolean;
   assignedToUserId?: string | null;
   assignedToName?: string | null;
   reminderEnabled?: boolean;
@@ -587,6 +603,7 @@ function scalarData(input: TaskInput): Record<string, unknown> {
   if ("status" in input) set("status", toNullableString(input.status, 30) ?? TASK_DOING);
   if ("assignedToUserId" in input) set("assignedToUserId", toNullableString(input.assignedToUserId, 36));
   if ("assignedToName" in input) set("assignedToName", toNullableString(input.assignedToName, 200));
+  if ("dueDateByAssignee" in input) set("dueDateByAssignee", !!input.dueDateByAssignee);
   if ("reminderEnabled" in input) set("reminderEnabled", !!input.reminderEnabled);
   if ("reminderTime" in input) set("reminderTime", toNullableString(input.reminderTime, 5));
   /*

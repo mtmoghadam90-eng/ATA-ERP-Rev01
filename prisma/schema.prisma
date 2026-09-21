@@ -582,7 +582,7 @@ model Project {
   customerId String   @db.NVarChar(36)
   customer   Customer @relation("ProjectCustomer", fields: [customerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  status               String    @db.NVarChar(50)
+  status                String    @db.NVarChar(50)
   /// Since when has it carried that status — the clock a dwell rule counts from.
   ///
   /// `stageChangedAt` below answers the same question about the *work*, and the
@@ -600,15 +600,15 @@ model Project {
   /// its goods shipped. So the stage is its own derived column, written by
   /// `syncProjectStage` in the same transaction as whatever moved it.
   /// `src/utils/projectStage.ts` is the rule.
-  stage                String?   @db.NVarChar(60)
-  stageChangedAt       DateTime?
-  stageChangedAtJalali String?   @db.NVarChar(10)
+  stage                 String?   @db.NVarChar(60)
+  stageChangedAt        DateTime?
+  stageChangedAtJalali  String?   @db.NVarChar(10)
   /// A stage a person set by hand — «توقف پروژه توسط کارفرما» and the like,
   /// which no record implies. Locked pins it for good; unlocked shows it now
   /// and hands control back at the next recalculation, clearing this.
-  manualStage          String?   @db.NVarChar(60)
-  manualStageLocked    Boolean   @default(false)
-  lossReason           String?   @db.NVarChar(300)
+  manualStage           String?   @db.NVarChar(60)
+  manualStageLocked     Boolean   @default(false)
+  lossReason            String?   @db.NVarChar(300)
 
   /// Derived from the deciding quotations in the same transaction as the status
   /// and the loss reason — never typed a second time on this form.
@@ -1580,12 +1580,47 @@ model ProjectReferral {
   startedAt   DateTime?
   completedAt DateTime?
 
+  /// «تا کی؟» — optional, exactly as a task's is.
+  ///
+  /// A referral had no deadline at all, so nothing could ever say it was late:
+  /// the board sorted every one of them last under «نزدیک‌ترین سررسید» and the
+  /// «عقب‌افتاده» filter dropped them by construction. It is set on the message
+  /// that raises the request — one message naming two colleagues is one
+  /// deadline for both, because the message *is* the request — and afterwards
+  /// by either party through `PUT /api/referrals/:id/due`.
+  dueDate       DateTime? @db.Date
+  dueDateJalali String?   @db.NVarChar(10)
+
+  /// «مهلت را ارجاع‌شونده تعیین کند».
+  ///
+  /// A third state, and it has to be its own column: with only a date, «no
+  /// deadline» and «a deadline the assignee still owes us» look identical, so
+  /// nobody is ever asked for one. `dueNoticesFor` turns it into the `ASK`
+  /// notice, or the switch would do nothing at all.
+  dueDateByAssignee Boolean @default(false)
+
+  /// Which deadline each reminder has already answered.
+  ///
+  /// The deadline itself rather than a flag, for the reason
+  /// `workflow_firings.dueDay` is that column: a date that is moved is a new
+  /// promise and earns a fresh reminder, while a date that is not never earns
+  /// a second one. Null is «never reminded», which is every row written before
+  /// these columns — the migration backfills nothing, and
+  /// `OVERDUE_WINDOW_DAYS` is what bounds the first pass.
+  dueSoonNoticeFor    String? @db.NVarChar(10)
+  dueOverdueNoticeFor String? @db.NVarChar(10)
+  /// The day the «مهلت را تعیین کنید» notice went out. Once ever, since a
+  /// request repeated every morning is a request nobody answers.
+  dueAskedNoticeOn    String? @db.NVarChar(10)
+
   createdAt DateTime @default(now())
 
   messages ReferralMessage[]
 
   @@index([assignedToUserId, status])
   @@index([activityId])
+  /// The reminder pass narrows on the deadline before it reads anything.
+  @@index([dueDate])
   @@map("project_referrals")
 }
 
@@ -1667,6 +1702,28 @@ model Task {
   dueDate       DateTime? @db.Date
   dueDateJalali String?   @db.NVarChar(10)
 
+  /// «مهلت را ارجاع‌شونده تعیین کند».
+  ///
+  /// A third state, and it has to be its own column: with only a date, «no
+  /// deadline» and «a deadline the assignee still owes us» look identical, so
+  /// nobody is ever asked for one. `dueNoticesFor` turns it into the `ASK`
+  /// notice, or the switch would do nothing at all.
+  dueDateByAssignee Boolean @default(false)
+
+  /// Which deadline each reminder has already answered.
+  ///
+  /// The deadline itself rather than a flag, for the reason
+  /// `workflow_firings.dueDay` is that column: a date that is moved is a new
+  /// promise and earns a fresh reminder, while a date that is not never earns
+  /// a second one. Null is «never reminded», which is every row written before
+  /// these columns — the migration backfills nothing, and
+  /// `OVERDUE_WINDOW_DAYS` is what bounds the first pass.
+  dueSoonNoticeFor    String? @db.NVarChar(10)
+  dueOverdueNoticeFor String? @db.NVarChar(10)
+  /// The day the «مهلت را تعیین کنید» notice went out. Once ever, since a
+  /// request repeated every morning is a request nobody answers.
+  dueAskedNoticeOn    String? @db.NVarChar(10)
+
   assignedToUserId String? @db.NVarChar(36)
   assignedToName   String? @db.NVarChar(200)
 
@@ -1743,17 +1800,17 @@ model Task {
 /// Free-form notes attachable to several record types (proforma, PO, project,
 /// packing list, service). One table with a discriminator rather than five.
 model ModuleNote {
-  id         String   @id @default(uuid()) @db.NVarChar(36)
-  entityType String   @db.NVarChar(40)
-  entityId   String   @db.NVarChar(36)
-  text       String   @db.NVarChar(Max)
-  authorName String?  @db.NVarChar(200)
+  id           String   @id @default(uuid()) @db.NVarChar(36)
+  entityType   String   @db.NVarChar(40)
+  entityId     String   @db.NVarChar(36)
+  text         String   @db.NVarChar(Max)
+  authorName   String?  @db.NVarChar(200)
   /// The account that wrote it. Null on every row written before the column,
   /// which is why the name comparison survives as the fallback.
-  authorUserId String? @db.NVarChar(36)
+  authorUserId String?  @db.NVarChar(36)
   /// `[{name,size,url}]`, read and written only through `src/utils/attachments.ts`.
-  attachments String?  @db.NVarChar(Max)
-  createdAt  DateTime @default(now())
+  attachments  String?  @db.NVarChar(Max)
+  createdAt    DateTime @default(now())
 
   @@index([entityType, entityId])
   @@map("module_notes")
@@ -2314,7 +2371,7 @@ model WebRfqConfig {
 /// a project refuses for reasons it can name, and a log row of what arrived
 /// from the website is not one of them.
 model WebRfqImport {
-  id     String @id @db.NVarChar(36)
+  id String @id @db.NVarChar(36)
 
   /// Which plugin it came from — «ADVISOR» or «FORM».
   ///
@@ -2327,16 +2384,16 @@ model WebRfqImport {
   source String @default("ADVISOR") @db.NVarChar(20)
 
   /// The plugin's own number for the request — `#12` on its email and panel.
-  rfqId  Int
+  rfqId Int
 
   /// The plugin's own human reference, where it issues one — the code the
   /// customer was emailed and will quote on the phone. Null for the advisor,
   /// which issues none.
   reference String? @db.NVarChar(60)
   /// IMPORTED | FAILED
-  status String @db.NVarChar(20)
+  status    String  @db.NVarChar(20)
   /// How many times it has been tried. See `MAX_IMPORT_ATTEMPTS`.
-  attempts Int  @default(0)
+  attempts  Int     @default(0)
 
   customerId  String? @db.NVarChar(36)
   projectId   String? @db.NVarChar(36)

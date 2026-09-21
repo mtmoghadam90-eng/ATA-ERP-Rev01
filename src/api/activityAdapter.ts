@@ -55,6 +55,8 @@ function referralToView(ref: ActivityReferralRow): ProjectReferral {
     // reopen the referrals screen does — decided by account, never by name.
     assignedToUserId: ref.assignedToUserId,
     assignedByUserId: ref.assignedByUserId,
+    dueDateJalali: ref.dueDateJalali ?? null,
+    dueDateByAssignee: !!ref.dueDateByAssignee,
     actionRequired: ref.actionRequired ?? "",
     createdAt: ref.createdAt,
     status: (ref.status as ProjectReferral["status"]) ?? "در انتظار اقدام",

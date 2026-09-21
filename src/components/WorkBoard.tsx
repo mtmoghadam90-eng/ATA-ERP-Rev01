@@ -61,6 +61,14 @@ export interface BoardReferralCard {
   assignedTo?: string | null;
   createdBy?: string | null;
   context?: { code: string; name: string; customerName: string | null } | null;
+  /**
+   * «تا کی؟», where one was agreed.
+   *
+   * A referral had no deadline at all until now, which is why this card and
+   * `sortBoardCards` both used to treat «سررسید» as a task's business — and
+   * why every request sat at the end of a column ordered by it.
+   */
+  dueDate?: string | null;
   /** How many replies the thread already carries — a card can say «۳ پاسخ». */
   replies: number;
 }
@@ -405,7 +413,13 @@ export default function WorkBoard({
                     )}
 
                     <div className="pr-6 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-400 font-mono">
-                      {card.kind === 'task' && card.dueDate && <span>سررسید: {card.dueDate}</span>}
+                      {/*
+                        The deadline, for **either** kind of card.
+                        It used to be drawn for a task alone, because a referral
+                        had none to draw; now that a request carries one, the
+                        card that sorts by it has to say what it sorted on.
+                      */}
+                      {card.dueDate && <span>سررسید: {card.dueDate}</span>}
                       {/* The two facts the board records: when it started, when it closed. */}
                       {card.kind === 'task' && card.startedAt && <span>شروع: {card.startedAt}</span>}
                       {card.kind === 'task' && card.completedAt && (
