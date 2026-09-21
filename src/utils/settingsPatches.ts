@@ -39,6 +39,9 @@ import { DEFAULT_NEXT_ACTION_KINDS } from "./nextAction";
 import { PROJECT_TECHNICAL_OFFERED } from "./moduleStatuses";
 import { STAGE_OFFER_REVIEW, STAGE_OFFER_REVIEW_WAS } from "./projectStage";
 import {
+  WEB_RFQ_COMMUNICATION_METHOD, WEB_RFQ_MARKETING_CHANNEL, webEntryIn,
+} from "./webRfq";
+import {
   RESULT_LOST_TO_COMPETITOR, RESULT_PURCHASE_CANCELLED, RESULT_PURCHASE_CONFIRMED,
 } from "./salesFollowUp";
 import {
@@ -74,6 +77,41 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
       return {
         ...settings,
         dropdownItems: { ...settings.dropdownItems, followUpResults: next },
+      };
+    },
+  },
+  {
+    id: "web-rfq-channel-1",
+    describe: "گزینهٔ «وب‌سایت» در کانال بازاریابی و روش ارتباط، برای استعلام‌های سایت",
+    apply: (settings) => {
+      /*
+       * The two columns a website enquiry fills in are `<select>`s over these
+       * lists, so a list with no website entry means the import must leave both
+       * blank — the value would otherwise be rewritten to whatever heads the
+       * list the first time somebody opened the project and pressed save.
+       *
+       * Added **only where the list has no entry that already means it**, which
+       * `webEntryIn` decides across every spelling this build recognises: a
+       * company that calls it «وب‌سایت» must not end up with «وب‌سایت / آنلاین»
+       * beside it, because two names for one channel split every report that
+       * groups by it. That is the `categoryKey` lesson, and it is the reason
+       * this patch reads before it appends.
+       */
+      const lists = settings.dropdownItems;
+      const marketingChannels = webEntryIn(lists?.marketingChannels)
+        ? null
+        : appendMissing(lists?.marketingChannels, [WEB_RFQ_MARKETING_CHANNEL]);
+      const communicationMethods = webEntryIn(lists?.communicationMethods)
+        ? null
+        : appendMissing(lists?.communicationMethods, [WEB_RFQ_COMMUNICATION_METHOD]);
+      if (!marketingChannels && !communicationMethods) return null;
+      return {
+        ...settings,
+        dropdownItems: {
+          ...lists,
+          ...(marketingChannels ? { marketingChannels } : {}),
+          ...(communicationMethods ? { communicationMethods } : {}),
+        },
       };
     },
   },

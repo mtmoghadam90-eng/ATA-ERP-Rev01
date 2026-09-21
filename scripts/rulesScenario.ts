@@ -56,10 +56,11 @@ import { hasEverPurchased, saleDateOf } from "../src/server/services/customerVal
 import { taskRelationKind } from "../src/utils/taskRelations";
 import {
   BASELINE_PROBE_LIMIT, SYNC_BACKTRACK, SYNC_PAGE_LIMIT,
+  WEB_RFQ_COMMUNICATION_METHOD, WEB_RFQ_MARKETING_CHANNEL,
   customerFor, feedConfigRefusal, feedRequestUrl, inquiryKeyFor, isBeforeLine, parseFeed, parseFeedRow,
-  projectDescriptionFor, projectItemFor, projectNameFor, splitFullName, syncWindow,
+  projectDescriptionFor, projectItemFor, projectNameFor, splitFullName, syncWindow, webEntryIn,
 } from "../src/utils/webRfq";
-import { applySettingsPatches } from "../src/utils/settingsPatches";
+import { SETTINGS_PATCHES, applySettingsPatches } from "../src/utils/settingsPatches";
 import { ACTIVITY_REACTIONS, isAllowedReaction, summarizeReactions } from "../src/utils/reactions";
 import { readViewPreferences, writeViewPreferences } from "../src/utils/viewPreferences";
 import {
@@ -19284,6 +19285,77 @@ head("Web RFQ: the site's price requests, as customers and projects");
   ok("a caller cannot ask for more than the page limit",
     feedRequestUrl("https://s/f", 0, 5000).includes(`limit=${SYNC_PAGE_LIMIT}`));
 
+  /* --- «this came from the website» --- */
+  /*
+   * Read before it is written. A company that calls the channel «وب سایت» must
+   * not end up with «وب‌سایت / آنلاین» beside it: two names for one channel
+   * split every report that groups by it, which is `categoryKey`'s own lesson
+   * arriving on another column — and it is why the fold drops the separators
+   * that are the only difference between those spellings.
+   */
+  eq("the seeded marketing list answers with its own entry",
+    webEntryIn(["تماس مستقیم", "وب‌سایت / آنلاین", "معرفی"]), "وب‌سایت / آنلاین");
+  eq("...and a renamed one answers with theirs, not ours",
+    webEntryIn(["تلفن", "وب سایت"]), "وب سایت");
+  eq("...however the separators are written",
+    webEntryIn(["وبسایت/آنلاین"]), "وبسایت/آنلاین");
+  eq("a list with nothing of the kind answers null",
+    webEntryIn(["تلفن", "ایمیل", "جلسه حضوری"]), null);
+  eq("a stored value that is not a list answers null", webEntryIn(undefined), null);
+  eq("...and one carrying a non-string does not throw", webEntryIn([1, null, "سایت"]), "سایت");
+  ok("the canonical spellings are themselves recognised",
+    webEntryIn([WEB_RFQ_MARKETING_CHANNEL]) === WEB_RFQ_MARKETING_CHANNEL
+    && webEntryIn([WEB_RFQ_COMMUNICATION_METHOD]) === WEB_RFQ_COMMUNICATION_METHOD);
+  /*
+   * The two columns are different questions with different lists, so the
+   * canonical answers are allowed to differ — but each must be findable in its
+   * own list, or the patch below would append a value the import then cannot
+   * read back.
+   */
+  ok("a fresh installation offers both", (() => {
+    const lists = DEFAULT_SETTINGS.dropdownItems;
+    return webEntryIn(lists.marketingChannels) !== null
+      && webEntryIn(lists.communicationMethods) !== null;
+  })());
+
+  {
+    const onlyWeb = SETTINGS_PATCHES.filter((p) => p.id === "web-rfq-channel-1");
+    ok("the patch exists, so a live document gains the option", onlyWeb.length === 1);
+    const docOf = (marketingChannels: string[], communicationMethods: string[]) => ({
+      ...DEFAULT_SETTINGS,
+      dropdownItems: { ...DEFAULT_SETTINGS.dropdownItems, marketingChannels, communicationMethods },
+      appliedPatches: [],
+    } as never);
+
+    const before = docOf(
+      ["تماس مستقیم", "وب‌سایت / آنلاین", "معرفی"],
+      ["تلفن", "ایمیل", "جلسه حضوری"],
+    );
+    const after = applySettingsPatches(before, onlyWeb)?.next as never as {
+      dropdownItems: { marketingChannels: string[]; communicationMethods: string[] };
+    };
+    eq("a list already naming it is left exactly alone",
+      after.dropdownItems.marketingChannels.join("|"),
+      "تماس مستقیم|وب‌سایت / آنلاین|معرفی");
+    ok("...while the one that named nothing gains it",
+      webEntryIn(after.dropdownItems.communicationMethods) === WEB_RFQ_COMMUNICATION_METHOD);
+
+    const renamed = applySettingsPatches(docOf(["تلفن", "وب سایت"], ["وبسایت"]), onlyWeb)
+      ?.next as never as { dropdownItems: { marketingChannels: string[]; communicationMethods: string[] } };
+    ok("a company's own spelling never gets a second name beside it",
+      !renamed.dropdownItems.marketingChannels.includes(WEB_RFQ_MARKETING_CHANNEL)
+      && !renamed.dropdownItems.communicationMethods.includes(WEB_RFQ_COMMUNICATION_METHOD));
+
+    /*
+     * A patch is applied once and recorded, so an entry somebody deliberately
+     * removes afterwards stays removed — the rule every patch here follows.
+     */
+    const alreadyRun = docOf(["تلفن"], ["تلفن"]) as never as { appliedPatches: string[] };
+    alreadyRun.appliedPatches = ["web-rfq-channel-1"];
+    const deleted = applySettingsPatches(alreadyRun as never, onlyWeb);
+    eq("an entry deliberately deleted stays deleted", deleted, null);
+  }
+
   /* --- the mapping --- */
   eq("the request's own number is what the project is filed under",
     inquiryKeyFor(rfq), "WEB-RFQ-12");
@@ -19382,13 +19454,19 @@ head("Web RFQ: the service and the site's endpoint");
   ok("a project with no owner is refused rather than written to nobody",
     svc.includes("config.ownerUserId") && svc.includes("مسئول پروژه"));
   /*
-   * The channel is a `<select>` over the company's own list, and a `<select>`
-   * whose value matches no option renders the first — so a list that does not
-   * name this channel gets nothing rather than a value that would be silently
-   * rewritten the first time somebody opened the project and pressed save.
+   * Both columns are `<select>`s over the company's own lists, and a `<select>`
+   * whose value matches no option renders the first — so a list that names no
+   * website entry gets nothing rather than a value that would be silently
+   * rewritten the first time somebody opened the project and pressed save. The
+   * key is **spread**, because a key present-but-undefined is written as null
+   * by `scalarData`, which claims the question was answered.
    */
-  ok("the marketing channel is written only when the company's list offers it",
-    /includes\(WEB_RFQ_MARKETING_CHANNEL\)/.test(svc) && svc.includes("return undefined"));
+  ok("both website columns are read from the company's own lists",
+    svc.includes("webEntryIn(lists?.marketingChannels)")
+    && svc.includes("webEntryIn(lists?.communicationMethods)"));
+  ok("...and are spread, so an unanswerable one stays absent rather than null",
+    svc.includes("...(await webChannelValues())")
+    && /\.\.\.\(marketingChannel \? \{ marketingChannel \} : \{\}\)/.test(svc));
   ok("the numbering rule is not copied back into the service",
     svc.includes("nextProjectCode") && !svc.includes("projectFormat"));
   /*
