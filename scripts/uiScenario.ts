@@ -53,6 +53,7 @@ import ColumnResizeHandle from "../src/components/ColumnResizeHandle";
 import NextActionModal from "../src/components/NextActionModal";
 import SaveWithNextActionButton from "../src/components/SaveWithNextActionButton";
 import LoginView from "../src/components/LoginView";
+import WebRfqPanel from "../src/components/WebRfqPanel";
 import Avatar from "../src/components/Avatar";
 import TaskCompletionModal from "../src/components/TaskCompletionModal";
 import ModuleNotesSection from "../src/components/ModuleNotesSection";
@@ -2732,6 +2733,89 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
 
   act(() => { rootC.unmount(); });
   hostC.remove();
+}
+
+/*
+ * The website price-request panel.
+ *
+ * Two failures here are invisible to every other layer. A save button whose
+ * handler never sends the token — or sends the masked hint it was shown — is
+ * a control that draws, reads and does nothing, which type-checks perfectly;
+ * and the token box must never be *seeded* from what the server sent back,
+ * because the server sends a hint («••••3456») and seeding from it would post
+ * those characters as the real token the next time somebody pressed save.
+ */
+{
+  const gW = globalThis as unknown as Record<string, unknown>;
+  const realFetchW = gW.fetch;
+  const askedW: { url: string; method: string; body: unknown }[] = [];
+  gW.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
+    const method = String(init?.method ?? "GET");
+    let parsed: unknown = null;
+    try { parsed = init?.body ? JSON.parse(init.body) : null; } catch { parsed = null; }
+    askedW.push({ url: String(url), method, body: parsed });
+
+    const config = {
+      feedUrl: "https://site.ir/wp-json/ata/v1/rfq/erp-feed",
+      tokenHint: "••••3456", active: true, ownerUserId: "u1", refusal: null,
+    };
+    const report = { lastRunAt: 0, lastOkAt: 0, lastError: null, lastImported: 0, running: false };
+    const body = String(url).includes("/imports")
+      ? { success: true, imports: [] }
+      : String(url).includes("/api/users")
+        ? { success: true, rows: [{ id: "u1", fullName: "محمد مقدم", isActive: true }], total: 1, page: 1, pageSize: 200, totalPages: 1 }
+        : { success: true, config, report };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+
+  const hostW = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootW = createRoot(hostW);
+  const settleW = async () => {
+    for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  await act(async () => { rootW.render(React.createElement(WebRfqPanel)); });
+  await settleW();
+
+  ok("the panel reads its configuration",
+    askedW.some((r) => r.url.includes("/api/web-rfq/config") && r.method === "GET"));
+  ok("...and the log of what has arrived",
+    askedW.some((r) => r.url.includes("/api/web-rfq/imports")));
+
+  /*
+   * The stored token comes back as a hint and nothing else. If the box were
+   * seeded from it, the bullets would be posted as the token and the feed
+   * would start refusing on the next save — silently, since the panel would
+   * report a successful write.
+   */
+  const boxes = Array.from(hostW.querySelectorAll("input")) as HTMLInputElement[];
+  const tokenBox = boxes.find((b) => b.getAttribute("type") === "password");
+  ok("the token box is never seeded from the masked hint", tokenBox?.value === "");
+  ok("...and the hint is shown so the stored token is recognisable",
+    hostW.textContent?.includes("••••3456") === true);
+
+  const before = askedW.length;
+  const saveBtn = hostW.querySelector("[data-web-rfq-save]") as HTMLButtonElement | null;
+  await act(async () => { saveBtn?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settleW();
+
+  const saved = askedW.slice(before).find((r) => r.method === "PUT");
+  ok("pressing save really writes", !!saved);
+  const body = (saved?.body ?? {}) as Record<string, unknown>;
+  ok("...sending the address that is in the box", body.feedUrl === "https://site.ir/wp-json/ata/v1/rfq/erp-feed");
+  ok("...and a blank token, which the server reads as «unchanged»", body.token === "");
+  ok("...never the masked hint", body.token !== "••••3456");
+
+  const beforeSync = askedW.length;
+  const syncBtn = hostW.querySelector("[data-web-rfq-sync]") as HTMLButtonElement | null;
+  await act(async () => { syncBtn?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settleW();
+  ok("«همگام‌سازی حالا» reaches the server",
+    askedW.slice(beforeSync).some((r) => r.url.includes("/api/web-rfq/sync") && r.method === "POST"));
+
+  act(() => { rootW.unmount(); });
+  hostW.remove();
+  gW.fetch = realFetchW;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

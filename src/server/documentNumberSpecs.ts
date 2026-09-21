@@ -79,3 +79,29 @@ export async function nextPackingListNumber(projectId: string): Promise<string> 
     context: { projectCode: project?.code ?? "GEN" },
   });
 }
+
+/**
+ * The next code for a project.
+ *
+ * It lived inline in `POST /api/projects` while a form was the only thing that
+ * raised a job. The website's price requests raise one too, and a second copy
+ * of a numbering rule is precisely what this file exists to prevent — the
+ * quotation series is here for the same reason.
+ */
+export async function nextProjectCode(customerId: string | null | undefined): Promise<string> {
+  const db = getDb();
+  const customer = customerId
+    ? await db.customer.findUnique({ where: { id: customerId }, select: { companyName: true } })
+    : null;
+
+  return nextDocumentNumber({
+    formatKey: "projectFormat", startSeqKey: "projectStartSeq",
+    fallbackFormat: "ATA-{YYYY}-{SEQ:3}",
+    existing: async (prefix) => (await db.project.findMany({
+      where: { code: { startsWith: prefix } },
+      select: { code: true },
+    })).map((r) => r.code),
+    taken: async (v) => !!(await db.project.findUnique({ where: { code: v }, select: { id: true } })),
+    context: { customerName: customer?.companyName },
+  });
+}

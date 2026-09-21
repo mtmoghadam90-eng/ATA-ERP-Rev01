@@ -2225,3 +2225,65 @@ model ApiToken {
   @@index([userId])
   @@map("api_tokens")
 }
+
+/// Where the public website's price-request feed is, and the credentials for it.
+///
+/// A single row, like `assistant_credentials` and for the same reason: the
+/// token must never reach a browser, and `settings` is one JSON document every
+/// screen loads whole. The address is shown back so somebody can check they
+/// typed the right one; the token goes out masked and a blank one on save means
+/// «unchanged» — the rule every provider credential here already follows.
+model WebRfqConfig {
+  id      String  @id @db.NVarChar(36)
+  feedUrl String? @db.NVarChar(500)
+  token   String? @db.NVarChar(200)
+  active  Boolean @default(false)
+
+  /// Whose projects these become — so an enquiry raised at midnight is on
+  /// somebody's board in the morning rather than nobody's. Not a relation: the
+  /// account being deleted must not take the configuration with it.
+  ownerUserId String? @db.NVarChar(36)
+
+  updatedAt DateTime @default(now())
+
+  @@map("web_rfq_config")
+}
+
+/// One price request pulled off the website, and what became of it.
+///
+/// This is the record that makes importing idempotent: the site's endpoint is
+/// a plain read with no state of its own, so nothing there knows what has been
+/// taken — the unique index on `rfqId` is the whole of that guarantee, and it
+/// holds whether the last poll finished, crashed or ran twice.
+///
+/// `payload` is what the site sent, kept so a failed import can be tried again
+/// without asking for it a second time — by then the request may have fallen
+/// outside the window the poll asks for.
+///
+/// The customer and project ids are **plain columns, not relations**: deleting
+/// a project refuses for reasons it can name, and a log row of what arrived
+/// from the website is not one of them.
+model WebRfqImport {
+  id     String @id @db.NVarChar(36)
+  /// The site's own number for the request — `#12` on its email and panel.
+  rfqId  Int    @unique
+  /// IMPORTED | FAILED
+  status String @db.NVarChar(20)
+  /// How many times it has been tried. See `MAX_IMPORT_ATTEMPTS`.
+  attempts Int  @default(0)
+
+  customerId  String? @db.NVarChar(36)
+  projectId   String? @db.NVarChar(36)
+  projectCode String? @db.NVarChar(60)
+  productName String? @db.NVarChar(400)
+  fullName    String? @db.NVarChar(191)
+
+  payload String  @db.NVarChar(Max)
+  error   String? @db.NVarChar(Max)
+
+  createdAt  DateTime  @default(now())
+  importedAt DateTime?
+
+  @@index([status])
+  @@map("web_rfq_imports")
+}

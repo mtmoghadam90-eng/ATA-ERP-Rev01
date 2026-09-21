@@ -32,6 +32,7 @@ import {
   Plug,
   AlarmClock,
   CalendarDays,
+  Globe,
   Sparkles
 } from 'lucide-react';
 import { ERPSettings, CustomField, User, Project, AuditLog, WorkflowRule } from '../types';
@@ -39,6 +40,7 @@ import { APP_MODULES, DEFAULT_MODULE_ORDER } from '../appModules';
 import { MODULE_ICONS } from './moduleIcons';
 import AssistantSettingsPanel from './AssistantSettingsPanel';
 import ApiTokensPanel from './ApiTokensPanel';
+import WebRfqPanel from './WebRfqPanel';
 import { MessageTemplateRow, messagingApi } from '../api/messaging';
 import { ALL_CHANNELS, CHANNEL_LABELS, Channel, isChannel } from '../utils/messaging';
 import { formatERPNumber } from '../numUtils';
@@ -140,7 +142,7 @@ export default function SettingsView({
   };
   
   // Tab control
-  const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields' | 'customerValue' | 'assistant' | 'apiTokens' | 'holidays' | 'stuckWork'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'customFields' | 'activityCategories' | 'dropdowns' | 'sidebarOrder' | 'adminNotifications' | 'deliveryChecklist' | 'auditLog' | 'workflows' | 'rates' | 'requiredFields' | 'customerValue' | 'assistant' | 'apiTokens' | 'holidays' | 'stuckWork' | 'webRfq'>('general');
 
   /*
    * Opened on a particular tab when another screen asked for it.
@@ -1372,6 +1374,18 @@ export default function SettingsView({
           <AlarmClock size={16} className="text-rose-500" />
           کارهای متوقف
         </button>
+
+        <button
+          onClick={() => setActiveTab('webRfq')}
+          className={`py-2 px-4 md:py-2.5 md:px-5 text-xs md:text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 rounded-xl border flex-shrink-0 ${
+            activeTab === 'webRfq'
+              ? 'bg-sky-50 text-sky-600 border-sky-300 shadow-sm shadow-sky-100'
+              : 'bg-white text-slate-500 hover:text-slate-800 hover:bg-slate-50 border-slate-200'
+          }`}
+        >
+          <Globe size={16} className="text-rose-500" />
+          استعلام‌های وب‌سایت
+        </button>
       </div>
 
       {activeTab === 'requiredFields' ? (
@@ -1530,6 +1544,8 @@ export default function SettingsView({
         <HolidayCalendarTab />
       ) : activeTab === 'stuckWork' ? (
         <StuckThresholdsPanel settings={settings} updateSettings={updateSettings} />
+      ) : activeTab === 'webRfq' ? (
+        <WebRfqPanel />
       ) : activeTab === 'rates' ? (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="mb-6">

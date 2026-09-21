@@ -228,8 +228,18 @@ const _txTypesCover: Covers<Transaction["type"], typeof TRANSACTION_TYPES> = tru
 
 /* ------------------------------- customers ------------------------------- */
 
+/**
+ * The two customer types, **named** rather than read out of the list below by
+ * index. The pair is a list, a list may be reordered, and `CUSTOMER_TYPES[0]`
+ * would then quietly mean the other one — the rule `PROFORMA_SENT_STATUS`
+ * follows, and the distinction decides whether a record gets a company name or
+ * a person's.
+ */
+export const CUSTOMER_TYPE_INDIVIDUAL = "حقیقی" satisfies Customer["customerType"];
+export const CUSTOMER_TYPE_COMPANY = "حقوقی" satisfies Customer["customerType"];
+
 export const CUSTOMER_TYPES = [
-  "حقیقی", "حقوقی",
+  CUSTOMER_TYPE_INDIVIDUAL, CUSTOMER_TYPE_COMPANY,
 ] as const satisfies readonly Customer["customerType"][];
 const _customerTypesCover: Covers<Customer["customerType"], typeof CUSTOMER_TYPES> = true;
 

@@ -3,8 +3,7 @@ import archiver from "archiver";
 import { parseListQuery } from "../listing";
 import { resolveUploadPath } from "../uploadsDir";
 import { RouteDeps, sendError } from "./types";
-import { getDb } from "../db";
-import { nextDocumentNumber } from "../documentNumbers";
+import { nextProjectCode } from "../documentNumberSpecs";
 import {
   PROJECT_FILTERABLE, PROJECT_SORTABLE, ProjectInput,
   countProjectReferences, createProject, deleteProject, getProject,
@@ -342,22 +341,11 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
       }
       if (!input.status) input.status = "جدید";
 
-      // Blank means "make one up" — see documentNumbers.ts.
+      // Blank means "make one up" — see documentNumberSpecs.ts, which is the
+      // single home of this series now that the website's price requests raise
+      // projects too.
       if (!input.code || !String(input.code).trim()) {
-        const db = getDb();
-        const customer = await db.customer.findUnique({
-          where: { id: input.customerId }, select: { companyName: true },
-        });
-        input.code = await nextDocumentNumber({
-          formatKey: "projectFormat", startSeqKey: "projectStartSeq",
-          fallbackFormat: "ATA-{YYYY}-{SEQ:3}",
-          existing: async (prefix) => (await db.project.findMany({
-            where: { code: { startsWith: prefix } },
-            select: { code: true },
-          })).map((r) => r.code),
-          taken: async (v) => !!(await db.project.findUnique({ where: { code: v }, select: { id: true } })),
-          context: { customerName: customer?.companyName },
-        });
+        input.code = await nextProjectCode(input.customerId);
       }
 
       const project = await createProject(input, user, getTodayShamsi());
