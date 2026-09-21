@@ -23,6 +23,9 @@ const DELIVERY_WRITABLE: (keyof DeliveryInput)[] = [
 const SERVICE_WRITABLE: (keyof ServiceInput)[] = [
   "projectId", "proformaNumber", "proformaItemName", "itemName", "status",
   "issueDescription", "actionsTaken", "startDate", "endDate", "returnDate",
+  // Neither is derived from the rows, so both have to be writable or the form
+  // would collect them and the endpoint would drop them in silence.
+  "customerRequest", "requestDate",
   "createdBy", "items", "customValues",
 ];
 

@@ -347,6 +347,9 @@ import { AVATAR_SIZES, avatarColors, avatarHue, initialsOf } from "../src/utils/
 import { readdirSync, readFileSync as readFileBytes, statSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import type { CustomerRow } from "../src/api/customers";
+import {
+  failedMessageBody, failedMessageTitle, noticeSubject,
+} from "../src/utils/workflowNotice";
 
 /**
  * Every check that reads a source file reads it through here, and the reason is
@@ -19869,6 +19872,208 @@ head("Web RFQ: the service and the site's endpoint");
   ok("the sync runs on a timer in the server process",
     srv.includes("setInterval(() => { void tickWebRfqs(); }, WEB_RFQ_TICK_MS)"));
   ok("...and is cleared on shutdown", srv.includes("clearInterval(webRfqTimer)"));
+}
+
+
+/* ------------------- a notice that says what it is about ------------------ */
+head("Workflow notices name the record, not only the rule");
+{
+  /*
+   * Reported as «وقتی اعلان میاد که پیام خودکار ارسال نشد، معلوم نیست برای
+   * کدوم پروژه و مشتری بوده». The notice carried the rule's name and the
+   * reason and not one word about which record, so the only way to act on it
+   * was to guess which of the day's events had fired the rule — a notice
+   * nobody can act on, which teaches people the bell means nothing.
+   *
+   * Nothing had to be looked up: `enrichPayload` resolves all of these from
+   * their ids before the actions run, and the notice threw them away.
+   */
+  const payload = {
+    projectCode: "ATA-05-38", projectName: "پتروشیمی نمونه",
+    customerName: "شرکت الف", proformaNumber: "QT-ATA-05-38-P1",
+  };
+
+  ok("the project's code leads, because that is what every screen searches by",
+    noticeSubject(payload).startsWith("پروژه ATA-05-38"));
+  ok("...with the name beside it, which is what a person recognises",
+    noticeSubject(payload).includes("پتروشیمی نمونه"));
+  ok("the customer is named — half these refusals are facts about their record",
+    noticeSubject(payload).includes("مشتری شرکت الف"));
+  ok("...and the document, which says which of several quotations this was",
+    noticeSubject(payload).includes("QT-ATA-05-38-P1"));
+
+  eq("a project with only a code still names it",
+    noticeSubject({ projectCode: "ATA-01-02" }), "پروژه ATA-01-02");
+  eq("...and one with only a name", noticeSubject({ projectName: "الف" }), "پروژه الف");
+  /*
+   * A purchase order is named where there is no quotation. Never both: they
+   * answer the same question at the same grain, and a notice listing two
+   * documents invites the reader to wonder which one it is about.
+   */
+  ok("a purchase order is named when no quotation is",
+    noticeSubject({ poNumber: "PO-9" }).includes("سفارش خرید PO-9"));
+  ok("...and never beside one",
+    !noticeSubject({ poNumber: "PO-9", proformaNumber: "QT-1" }).includes("PO-9"));
+
+  /*
+   * Empty is a real answer — a product's low-stock rule names no project — and
+   * it is deliberately **not** «نامشخص»: a label promising an identity and
+   * delivering none reads as data that failed to load rather than as a kind of
+   * event that has none.
+   */
+  eq("a payload naming no record answers with nothing at all",
+    noticeSubject({ productName: "فلومتر" }), "");
+  eq("...and so does a payload that is not one", noticeSubject(null), "");
+  eq("a blank name is not a name", noticeSubject({ projectName: "   " }), "");
+
+  /* The title keeps the rule first — «which automation» is the first question. */
+  ok("the title still names the rule",
+    failedMessageTitle("یادآوری تحویل", payload).includes("یادآوری تحویل"));
+  ok("...and now the record too",
+    failedMessageTitle("یادآوری تحویل", payload).includes("ATA-05-38"));
+  eq("a rule firing on nothing identifiable keeps the title it always had",
+    failedMessageTitle("قانون", {}), "پیام خودکار ارسال نشد: قانون");
+
+  /* The body leads with the reason, which is the actionable half. */
+  ok("the reason comes first",
+    failedMessageBody("این مشتری شماره موبایل ندارد", payload)
+      .startsWith("این مشتری شماره موبایل ندارد"));
+  ok("...and the record follows on its own line",
+    failedMessageBody("چرا", payload).includes("\nپروژه ATA-05-38"));
+  eq("no record leaves the reason exactly as it was",
+    failedMessageBody("چرا", {}), "چرا");
+
+  /*
+   * Held at the call sites, not merely in the file: the notice was correct
+   * everywhere except the two places it is raised, and a template literal
+   * written back at either is this fault returning.
+   */
+  const wf = readFileSync("src/server/services/workflowService.ts", "utf-8");
+  eq("both failed-message notices name the record",
+    (wf.match(/failedMessageTitle\(rule\.name, enrichedPayload\)/g) ?? []).length, 2);
+  eq("...and carry the reason through the same rule",
+    (wf.match(/failedMessageBody\([^)]*, enrichedPayload\)/g) ?? []).length, 2);
+  ok("no bare rule name is written as a notice title again",
+    !/`پیام خودکار ارسال نشد: \$\{rule\.name\}`/.test(wf));
+}
+
+/* ----------------------- after-sales: the case record --------------------- */
+head("After-sales records what the customer said, and the card shows it");
+{
+  const svc = readFileSync("src/server/services/deliveryService.ts", "utf-8");
+
+  /*
+   * «دلیل برگشت» was blank on every card in the module, and the cause was a
+   * projection: the columns exist on the header and are rolled up from the
+   * rows, the list query never asked for them, and the adapter then wrote
+   * `""` over them. The `rowToTask`/`completionNote` fault one module along —
+   * so this is held at the select **and** at the adapter, since either half
+   * alone leaves the screen exactly as it was.
+   */
+  const listSelect = svc.slice(
+    svc.indexOf("const SERVICE_LIST_SELECT"), svc.indexOf("export async function listServices"));
+  for (const key of ["issueDescription", "actionsTaken", "customerRequest", "requestDateJalali"]) {
+    ok(`the list row carries ${key}`, new RegExp(`${key}: true`).test(listSelect));
+  }
+
+  const api = readFileSync("src/api/afterSales.ts", "utf-8");
+  const rowTo = api.slice(api.indexOf("export function rowToService"), api.indexOf("export function detailToService"));
+  ok("the adapter reads the reason rather than blanking it",
+    /issueDescription: row\.issueDescription \?\? ""/.test(rowTo)
+    && !/issueDescription: ""/.test(rowTo));
+  ok("...and the actions beside it",
+    /actionsTaken: row\.actionsTaken \?\? ""/.test(rowTo));
+  ok("...and the customer's own words", /customerRequest: row\.customerRequest/.test(rowTo));
+  /*
+   * A list row carries no rows, only their number, so the summary line reads
+   * the count: `items.length` there is 0 for every record and would read as
+   * «no goods on a service case», which is not a thing that exists.
+   */
+  ok("the number of items reaches the summary line",
+    /itemCount: row\._count\?\.items/.test(rowTo));
+
+  /*
+   * The request date is the one date on this record the rows cannot answer
+   * for. `applyServiceHeader` recomputes everything in `SERVICE_DATE_FIELDS`
+   * from the lines, so a `requestDate` in that list would be cleared on every
+   * save — the field would accept a date, store it, and lose it.
+   */
+  ok("the roll-up's date list does not name the request date",
+    /SERVICE_DATE_FIELDS = \["startDate", "endDate", "returnDate"\]/.test(svc));
+  ok("...and the request date is written by the scalars instead",
+    svc.includes("SERVICE_REQUEST_DATE_FIELDS"));
+  ok("the customer's own words are written and never derived",
+    svc.includes('set("customerRequest"')
+    && !/header\.customerRequest/.test(svc));
+
+  const routes = readFileSync("src/server/routes/deliveries.ts", "utf-8");
+  ok("both new fields are writable, or the form would collect them for nothing",
+    /"customerRequest", "requestDate"/.test(routes));
+
+  /*
+   * The card printed `createdAt` with `.split(' ')[0]`, and an ISO instant has
+   * no space in it — so «2026-09-21T14:03:11.000Z» was drawn on a Persian
+   * screen. Folded with the reader that takes the **local** calendar fields;
+   * `toShamsiStr` on the raw string matches the UTC prefix and ignores the
+   * zone, which on this UTC+03:30 host dates an 02:00 record to yesterday.
+   */
+  const view = readFileSync("src/components/AfterSalesServicesView.tsx", "utf-8");
+  ok("the card draws its timestamp in Shamsi",
+    view.includes("formatDateTimeToShamsi(service.createdAt)"));
+  ok("...and the ISO string is no longer cut at a space that is not there",
+    !/service\.createdAt \|\| ''\)\.split\(' '\)/.test(view));
+
+  /*
+   * A row that opens. The heading is the control, the detail is behind it, and
+   * closed is the default — a list that opened everything would be the wall of
+   * cards it replaced.
+   */
+  ok("the list is rows rather than a grid of cards",
+    view.includes("data-after-sales-list")
+    && !/filteredServices\.map[\s\S]{0,400}grid-cols-3/.test(view));
+  ok("each row carries its own disclosure",
+    view.includes("data-after-sales-toggle") && view.includes("data-after-sales-detail"));
+  ok("...and nothing is open until it is pressed",
+    /useState<Set<string>>\(\(\) => new Set\(\)\)/.test(view));
+  /*
+   * A fresh Set rather than a mutation: React compares by identity, so
+   * `prev.add(id)` answers the same object and the row would never redraw.
+   */
+  ok("toggling replaces the set rather than mutating it",
+    /const next = new Set\(prev\)/.test(view));
+
+  /*
+   * Repairs are a list, not a sentence — and an `<input>` swallows the Enter
+   * key, so the second step could only be run into the first.
+   */
+  /*
+   * The element carrying the marker, not merely a textarea somewhere in the
+   * file: this form has several, and asking whether one exists would pass with
+   * the actions box still an `<input>`.
+   */
+  const elementAt = (marker: string): string => {
+    const at = view.indexOf(marker);
+    if (at < 0) return "";
+    const before = view.slice(0, at);
+    return (before.slice(before.lastIndexOf("<") + 1).match(/^[a-zA-Z]+/) ?? [""])[0];
+  };
+  eq("the actions box takes several lines", elementAt("data-after-sales-actions"), "textarea");
+  eq("...and the customer's request does too", elementAt("data-after-sales-request"), "textarea");
+  ok("what is typed keeps its line breaks where it is read back",
+    view.includes("whitespace-pre-line"));
+
+  /*
+   * Three nullable columns and no backfill: NULL means «recorded before the
+   * question was asked», and filling `requestDate` from `startDate` would
+   * claim an answer nobody gave.
+   */
+  const mig = readFileSync(
+    "prisma/migrations/20260930000100_after_sales_request/migration.sql", "utf-8");
+  for (const col of ["customerRequest", "requestDate", "requestDateJalali"]) {
+    ok(`the migration adds ${col}, guarded`,
+      new RegExp(`COL_LENGTH\\(N'\\[dbo\\]\\.\\[after_sales_services\\]', N'${col}'\\) IS NULL`).test(mig));
+  }
+  ok("...and backfills nothing", !/UPDATE \[dbo\]\.\[after_sales_services\]/.test(mig));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

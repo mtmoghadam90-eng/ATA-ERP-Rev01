@@ -1306,6 +1306,27 @@ model AfterSalesService {
   issueDescription String? @db.NVarChar(Max)
   actionsTaken     String? @db.NVarChar(Max)
 
+  /// What the customer said, in their own words.
+  ///
+  /// Deliberately **not** `issueDescription`: that column is rolled up from
+  /// the rows by `deriveServiceHeader` and is the company's own classification
+  /// («علت برگشت», picked from `settings.dropdownItems.returnReasons`), so a
+  /// save would overwrite whatever was typed here. This is the request as it
+  /// arrived — the sentence somebody read on the phone or in an email — and
+  /// nothing derives it, which is exactly why it needs a column of its own.
+  customerRequest String? @db.NVarChar(Max)
+
+  /// The day the *request* reached us, which is not the day the goods did.
+  ///
+  /// `startDate` is «تاریخ دریافت کالا» and is rolled up from the rows: the
+  /// equipment often arrives days after the complaint and sometimes never
+  /// arrives at all, so counting a service case from it starts the clock at
+  /// the wrong moment, or leaves it unstarted on a case that is plainly open.
+  /// Nullable because every row written before this column has no answer, and
+  /// a backfill from `startDate` would be inventing one.
+  requestDate       DateTime? @db.Date
+  requestDateJalali String?   @db.NVarChar(10)
+
   startDate        DateTime  @db.Date
   startDateJalali  String?   @db.NVarChar(10)
   endDate          DateTime? @db.Date

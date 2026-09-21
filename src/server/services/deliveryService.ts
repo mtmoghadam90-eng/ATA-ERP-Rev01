@@ -720,8 +720,25 @@ export async function deleteDelivery(
 export const SERVICE_SORTABLE = ["itemName", "status", "startDate", "endDate", "createdAt"] as const;
 export const SERVICE_FILTERABLE = ["projectId", "status"] as const;
 
-const SERVICE_SEARCH = ["itemName", "proformaNumber", "proformaItemName", "issueDescription", "actionsTaken"] as const;
+const SERVICE_SEARCH = [
+  "itemName", "proformaNumber", "proformaItemName",
+  "issueDescription", "actionsTaken", "customerRequest",
+] as const;
+
+/**
+ * The three dates rolled up from the rows.
+ *
+ * `requestDate` is deliberately **not** here: these three are recomputed by
+ * `applyServiceHeader` from what the lines say, and this list is also what
+ * `mapServiceItem` expands on a line. The day the *request* arrived is neither
+ * — no line carries it and nothing derives it — so it is written by
+ * `serviceScalarData` alone, and adding it here would have the roll-up
+ * overwrite it with nothing on every save.
+ */
 export const SERVICE_DATE_FIELDS = ["startDate", "endDate", "returnDate"] as const;
+
+/** The header's own date, which no line answers for. */
+const SERVICE_REQUEST_DATE_FIELDS = ["requestDate"] as const;
 
 export function buildServiceWhere(
   q: ListQuery,
@@ -742,9 +759,22 @@ export function buildServiceWhere(
   return and.length === 0 ? {} : { AND: and };
 }
 
+/*
+ * `issueDescription` and `actionsTaken` are **on the list row**, and their
+ * absence was a fault rather than a projection choice.
+ *
+ * Both are columns on the header, rolled up from the rows, and the card draws
+ * them — but the select never asked for them and `rowToService` then wrote
+ * `""` into both, so «دلیل برگشت» was blank on every card in the module and
+ * the only way to read it was to open the record. Reported exactly that way.
+ * The same shape as `rowToTask` dropping `completionNote`: selected or not,
+ * what the adapter returns is what the screen gets.
+ */
 const SERVICE_LIST_SELECT = {
   id: true, projectId: true, itemName: true, status: true,
   proformaNumber: true, proformaItemName: true,
+  issueDescription: true, actionsTaken: true, customerRequest: true,
+  requestDateJalali: true,
   startDate: true, startDateJalali: true, endDateJalali: true, returnDateJalali: true,
   createdBy: true, createdAt: true,
   customValues: true,
@@ -801,6 +831,10 @@ export interface ServiceInput {
   status?: string;
   issueDescription?: string | null;
   actionsTaken?: string | null;
+  /** What the customer said. Never derived — see the column's own note. */
+  customerRequest?: string | null;
+  /** The day their request reached us, which is not the day the goods did. */
+  requestDate?: string | null;
   startDate?: string | null;
   endDate?: string | null;
   returnDate?: string | null;
@@ -833,10 +867,22 @@ function serviceScalarData(input: ServiceInput): Record<string, unknown> {
   if ("status" in input) set("status", toNullableString(input.status, 50));
   if ("issueDescription" in input) set("issueDescription", toNullableString(input.issueDescription));
   if ("actionsTaken" in input) set("actionsTaken", toNullableString(input.actionsTaken));
+  if ("customerRequest" in input) set("customerRequest", toNullableString(input.customerRequest));
   if ("createdBy" in input) set("createdBy", toNullableString(input.createdBy, 200));
   if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
 
-  return { ...out, ...expandDateFields(input as Record<string, unknown>, SERVICE_DATE_FIELDS) };
+  /*
+   * The request date travels with the scalars and never with the roll-up: it
+   * is the one date on this record that the lines cannot answer for, so
+   * `applyServiceHeader` must leave it exactly where it was.
+   */
+  return {
+    ...out,
+    ...expandDateFields(input as Record<string, unknown>, SERVICE_DATE_FIELDS),
+    ...("requestDate" in input
+      ? expandDateFields(input as Record<string, unknown>, SERVICE_REQUEST_DATE_FIELDS)
+      : {}),
+  };
 }
 
 /**

@@ -57,6 +57,8 @@ import WebRfqPanel from "../src/components/WebRfqPanel";
 import Avatar from "../src/components/Avatar";
 import TaskCompletionModal from "../src/components/TaskCompletionModal";
 import ModuleNotesSection from "../src/components/ModuleNotesSection";
+import AfterSalesServicesView from "../src/components/AfterSalesServicesView";
+import { DEFAULT_SETTINGS } from "../src/seedData";
 import { RelationPicker } from "../src/components/RelationPicker";
 import { ConditionValueField } from "../src/components/ConditionValueField";
 import TaskCalendarModal from "../src/components/TaskCalendarModal";
@@ -2908,6 +2910,131 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
   }
 
   gW.fetch = realFetchW;
+}
+
+
+/*
+ * The after-sales list is a row that opens.
+ *
+ * Two things here cannot be seen from the source. A disclosure whose state
+ * never reaches the block reads perfectly and type-checks — `prev.add(id)` on
+ * a Set returns the same object, so React compares it equal and nothing
+ * redraws — and the fault this replaced was the opposite shape: the detail was
+ * always drawn, which is what made a dozen open cases fill two screens.
+ *
+ * And «دلیل برگشت» is the field that was blank on every card in the module,
+ * because the list query never selected it and the adapter wrote `""` over it.
+ * A render test is the only thing that can say it now arrives: both halves
+ * type-check either way.
+ */
+{
+  const gA = globalThis as unknown as Record<string, unknown>;
+  const realFetchA = gA.fetch;
+  const askedA: string[] = [];
+
+  const serviceRow = {
+    id: "svc-1", projectId: "p-1", itemName: "فلومتر التراسونیک",
+    status: "در حال بررسی",
+    proformaNumber: "QT-ATA-05-38-P1", proformaItemName: null,
+    issueDescription: "نشتی از محل اتصال",
+    actionsTaken: "باز شد\nواشر تعویض شد",
+    customerRequest: "دستگاه از روز اول نشتی دارد",
+    requestDateJalali: "1405/06/20",
+    startDateJalali: "1405/06/25", endDateJalali: null, returnDateJalali: null,
+    createdBy: "محمد مقدم",
+    // A real ISO instant, which is what the column answers with — and what the
+    // card used to print verbatim on a Persian screen.
+    createdAt: "2026-09-21T14:03:11.000Z",
+    project: { id: "p-1", code: "ATA-05-38", name: "پتروشیمی نمونه" },
+    _count: { items: 2 },
+    customValues: null,
+  };
+
+  gA.fetch = (async (url: string) => {
+    askedA.push(String(url));
+    const body = String(url).includes("/api/after-sales")
+      ? { success: true, rows: [serviceRow], total: 1, page: 1, pageSize: 50, totalPages: 1 }
+      : { success: true, rows: [], total: 0, page: 1, pageSize: 25, totalPages: 1 };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+
+  const hostA = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootA = createRoot(hostA);
+  const settleA = async () => {
+    for (let i = 0; i < 14; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  await act(async () => {
+    rootA.render(React.createElement(AfterSalesServicesView, {
+      settings: DEFAULT_SETTINGS as never,
+      currentUser: { id: "u-1", fullName: "محمد مقدم" } as never,
+    }));
+  });
+  await settleA();
+
+  const toggle = () => hostA.querySelector("[data-after-sales-toggle='svc-1']") as HTMLElement | null;
+  const detail = () => hostA.querySelector("[data-after-sales-detail='svc-1']");
+
+  ok("the record is drawn as a row", !!toggle());
+  ok("...naming the goods and the job on one line",
+    (toggle()?.textContent ?? "").includes("فلومتر التراسونیک")
+    && (toggle()?.textContent ?? "").includes("پتروشیمی نمونه"));
+  /*
+   * Closed by default. Opened, a list of a dozen cases is the wall of cards
+   * this replaced — which was the whole of the report.
+   */
+  ok("nothing is expanded until it is pressed", detail() === null);
+  ok("...so the reason is genuinely absent rather than merely hidden",
+    !(hostA.textContent ?? "").includes("نشتی از محل اتصال"));
+
+  await act(async () => {
+    toggle()?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleA();
+
+  ok("pressing the row opens it", !!detail());
+  /*
+   * The three free-text blocks. «دلیل برگشت» is the one that was blank on
+   * every card: selected by nobody, blanked by the adapter, drawn as an empty
+   * paragraph. It arrives now, and so does the customer's own account, which
+   * the record had nowhere to keep at all.
+   */
+  ok("...showing the reason the goods came back",
+    (detail()?.textContent ?? "").includes("نشتی از محل اتصال"));
+  ok("...and what the customer said",
+    (detail()?.textContent ?? "").includes("دستگاه از روز اول نشتی دارد"));
+  ok("...and every line of what was done, not only the first",
+    (detail()?.textContent ?? "").includes("باز شد")
+    && (detail()?.textContent ?? "").includes("واشر تعویض شد"));
+  ok("...and the day the request arrived, beside the day the goods did",
+    (detail()?.textContent ?? "").includes("1405/06/20")
+    && (detail()?.textContent ?? "").includes("1405/06/25"));
+  /*
+   * The timestamp. `.split(' ')[0]` on an ISO instant finds no space, so the
+   * whole «2026-09-21T14:03:11.000Z» was printed; and the fold has to read the
+   * **local** calendar fields, or the date is a day out on this UTC+03:30 host.
+   */
+  ok("the record's own timestamp is Shamsi, not the ISO instant",
+    !(detail()?.textContent ?? "").includes("2026-09-21T"));
+  ok("...and reads as a Persian date", /14\d\d\/\d\d\/\d\d/.test(detail()?.textContent ?? ""));
+
+  /*
+   * Pressing the row opens nothing else. The edit button beside it is what
+   * fetches the record; a disclosure that also opened the form would make the
+   * list unreadable with one press.
+   */
+  ok("opening a row fetches no record",
+    !askedA.some((u) => /\/api\/after-sales\/svc-1$/.test(u)));
+
+  await act(async () => {
+    toggle()?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleA();
+  ok("pressing it again closes it", detail() === null);
+
+  act(() => { rootA.unmount(); });
+  hostA.remove();
+  gA.fetch = realFetchA;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
