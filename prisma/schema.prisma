@@ -2244,6 +2244,18 @@ model WebRfqConfig {
   /// account being deleted must not take the configuration with it.
   ownerUserId String? @db.NVarChar(36)
 
+  /// The line: nothing numbered at or below this is ever imported.
+  ///
+  /// Set once by the first poll, which imports **nothing** and only reads how
+  /// far the site's numbering has got — everything already there was answered,
+  /// or entered here by hand, before this existed, and importing it would put a
+  /// duplicate project beside every one of them.
+  ///
+  /// **Null and zero are different answers.** Null is «no line drawn yet», which
+  /// is what the baseline pass answers; a stored zero is somebody having decided
+  /// the line is «everything», and it must survive a save like any other value.
+  startAfterId Int?
+
   updatedAt DateTime @default(now())
 
   @@map("web_rfq_config")

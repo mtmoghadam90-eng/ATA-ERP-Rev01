@@ -43,6 +43,15 @@ export function registerWebRfqRoutes(app: express.Express, deps: RouteDeps): voi
         ownerUserId: body.ownerUserId === undefined
           ? undefined
           : (body.ownerUserId ? String(body.ownerUserId) : null),
+        /*
+         * Null is «draw the line again on the next poll» and zero is «import
+         * everything» — two different answers, so a falsy check here would
+         * silently turn the first into the second and pull in the whole of the
+         * site's history, which is the one thing the line exists to prevent.
+         */
+        startAfterId: body.startAfterId === undefined
+          ? undefined
+          : (body.startAfterId === null ? null : Number(body.startAfterId)),
       });
       if (refusal) {
         res.status(400).json({ success: false, error: refusal });

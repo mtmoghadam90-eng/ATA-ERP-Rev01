@@ -8,8 +8,8 @@ import { ProjectInput, createProject } from "./projectService";
 import { loadSettings } from "../settings";
 import { nextProjectCode } from "../documentNumberSpecs";
 import {
-  MAX_IMPORT_ATTEMPTS, WEB_RFQ_MARKETING_CHANNEL, WebRfq,
-  customerFor, feedConfigRefusal, feedRequestUrl, inquiryKeyFor,
+  BASELINE_PROBE_LIMIT, MAX_IMPORT_ATTEMPTS, WEB_RFQ_MARKETING_CHANNEL, WebRfq, WebRfqFeed,
+  customerFor, feedConfigRefusal, feedRequestUrl, inquiryKeyFor, isBeforeLine,
   parseFeed, parseFeedRow, projectDescriptionFor, projectItemFor, projectNameFor, syncWindow,
 } from "../../utils/webRfq";
 
@@ -50,6 +50,12 @@ export interface WebRfqConfigView {
   tokenHint: string | null;
   active: boolean;
   ownerUserId: string | null;
+  /**
+   * The line: nothing numbered at or below it is imported. Null until the
+   * first poll draws it — which is not the same as zero, and the panel says
+   * which of the two it is looking at.
+   */
+  startAfterId: number | null;
   /** Why the stored pair cannot be used, or null. */
   refusal: string | null;
 }
@@ -60,6 +66,15 @@ export interface WebRfqReport {
   lastError: string | null;
   /** How many were newly imported on the last successful poll. */
   lastImported: number;
+  /**
+   * The number the last pass drew the line at, or null.
+   *
+   * A baseline pass imports nothing on purpose, and «۰ استعلام منتقل شد» with
+   * no explanation reads as a feature that does not work — which is exactly
+   * how a correct-but-unconfigured thing gets reported as broken. This is what
+   * lets the panel say what really happened.
+   */
+  baselineDrawnAt: number | null;
   running: boolean;
 }
 
@@ -67,10 +82,11 @@ let lastRunAt = 0;
 let lastOkAt = 0;
 let lastError: string | null = null;
 let lastImported = 0;
+let baselineDrawnAt: number | null = null;
 let inFlight: Promise<number> | null = null;
 
 export function webRfqReport(): WebRfqReport {
-  return { lastRunAt, lastOkAt, lastError, lastImported, running: inFlight !== null };
+  return { lastRunAt, lastOkAt, lastError, lastImported, baselineDrawnAt, running: inFlight !== null };
 }
 
 /* ------------------------------ configuration ----------------------------- */
@@ -92,6 +108,7 @@ export async function getWebRfqConfig(): Promise<WebRfqConfigView> {
     tokenHint: mask(row?.token),
     active: row?.active ?? false,
     ownerUserId: row?.ownerUserId ?? null,
+    startAfterId: row?.startAfterId ?? null,
     refusal: feedConfigRefusal(row?.feedUrl, row?.token),
   };
 }
@@ -102,6 +119,11 @@ export interface WebRfqConfigInput {
   token?: string;
   active?: boolean;
   ownerUserId?: string | null;
+  /**
+   * Absent means «not edited», and null means «draw the line again on the next
+   * poll». A number — zero included — is a decision, and is stored as one.
+   */
+  startAfterId?: number | null;
 }
 
 /**
@@ -133,6 +155,9 @@ export async function saveWebRfqConfig(input: WebRfqConfigInput): Promise<string
     ownerUserId: input.ownerUserId !== undefined
       ? (input.ownerUserId || null)
       : (existing?.ownerUserId ?? null),
+    startAfterId: input.startAfterId !== undefined
+      ? (input.startAfterId === null ? null : Math.max(0, Math.trunc(input.startAfterId)))
+      : (existing?.startAfterId ?? null),
     updatedAt: new Date(),
   };
 
@@ -147,7 +172,7 @@ export async function saveWebRfqConfig(input: WebRfqConfigInput): Promise<string
 /* --------------------------------- reading -------------------------------- */
 
 /** What arrived from the site, or a reason it did not. */
-async function fetchFeed(url: string, token: string, sinceId: number, limit: number): Promise<WebRfq[]> {
+async function fetchFeed(url: string, token: string, sinceId: number, limit: number): Promise<WebRfqFeed> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -330,9 +355,43 @@ async function runSync(): Promise<number> {
   const user = await importingUser(config.ownerUserId);
   if (!user) throw new Error("حساب مسئول پروژه‌های واردشده یافت نشد یا غیرفعال است.");
 
+  /*
+   * The first poll draws the line and imports nothing.
+   *
+   * Everything already on the site was answered — or entered here by hand —
+   * before this existed, so importing it would put a duplicate project beside
+   * every one of those. So the first pass reads how far the site's numbering
+   * has got, stores it, and stops; only what is raised from then on comes
+   * across. The line is written **before** anything else can run, so a poll
+   * interrupted halfway cannot leave it undrawn and import the history on the
+   * next tick.
+   *
+   * It is `max_id` from the site and never the highest row in the list: the
+   * feed hands over only *submitted* requests, so one typed and not yet sent
+   * carries a higher number than anything in it and would later read as new.
+   */
+  if (config.startAfterId === null) {
+    const probe = await fetchFeed(config.feedUrl!, config.token!, 0, BASELINE_PROBE_LIMIT);
+    await db.webRfqConfig.update({
+      where: { id: CONFIG_ID },
+      data: { startAfterId: probe.maxId },
+    });
+    baselineDrawnAt = probe.maxId;
+    return 0;
+  }
+  const line = config.startAfterId;
+
   const highest = await db.webRfqImport.aggregate({ _max: { rfqId: true } });
-  const { sinceId, limit } = syncWindow(highest._max.rfqId ?? 0);
-  const rows = await fetchFeed(config.feedUrl!, config.token!, sinceId, limit);
+  const { sinceId, limit } = syncWindow(highest._max.rfqId ?? 0, line);
+  const feed = await fetchFeed(config.feedUrl!, config.token!, sinceId, limit);
+  /*
+   * Filtered here as well as in the query. `since_id` is a request to a
+   * machine on the internet — an older plugin, a proxy that dropped the
+   * parameter, a site answering more than it was asked — and the line is a
+   * decision made here, so the one that matters is applied where it cannot be
+   * answered wrongly.
+   */
+  const rows = feed.items.filter((r) => !isBeforeLine(r, line));
 
   const seen = rows.length
     ? await db.webRfqImport.findMany({
@@ -387,6 +446,7 @@ async function runSync(): Promise<number> {
   });
   for (const row of stranded) {
     if (offered.has(row.rfqId)) continue; // already tried above, this pass
+    if (row.rfqId <= line) continue;      // the line moved under it since
     const rfq = parseFeedRow(safeJson(row.payload));
     if (!rfq) continue;
     if (await attempt(row.id, rfq, user)) imported += 1;
@@ -405,6 +465,7 @@ async function runSync(): Promise<number> {
 export function syncWebRfqs(): Promise<number> {
   if (inFlight) return inFlight;
   lastRunAt = Date.now();
+  baselineDrawnAt = null;
   inFlight = runSync()
     .then((count) => {
       lastOkAt = Date.now();
