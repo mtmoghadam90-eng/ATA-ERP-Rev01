@@ -57,6 +57,7 @@ import Avatar from "../src/components/Avatar";
 import TaskCompletionModal from "../src/components/TaskCompletionModal";
 import ModuleNotesSection from "../src/components/ModuleNotesSection";
 import { RelationPicker } from "../src/components/RelationPicker";
+import { ConditionValueField } from "../src/components/ConditionValueField";
 import TaskCalendarModal from "../src/components/TaskCalendarModal";
 import type { NextActionDraft } from "../src/utils/nextAction";
 import { resizeColumns } from "../src/utils/columnWidths";
@@ -2641,6 +2642,96 @@ head("The relationship picker asks the server for the opposite type");
   act(() => { rootR.unmount(); });
   hostR.remove();
   gR.fetch = realFetchR;
+}
+
+
+head("A condition on «یکی از این‌ها باشد» names more than one value");
+
+/*
+ * Reported as a rule the assistant refused to build: «اگر پروژه در وضعیت جدید
+ * **یا** در حال مذاکره بود». Conditions are ANDed and there were four
+ * operators, so two values of one field was not a condition at all.
+ *
+ * The operator alone is not the whole of it: a single dropdown beside `in`
+ * would be a control that contradicts the operator it answers — pick «یکی از
+ * این‌ها باشد», then be able to name exactly one. That is the failure this
+ * renders for, because ticks that draw perfectly and never call back
+ * type-check, read perfectly and leave the rule holding one value.
+ */
+{
+  const hostC = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootC = createRoot(hostC);
+  const OPTIONS = ["جدید", "در حال مذاکره", "برنده (موفق)"];
+
+  let stored = "";
+  const draw = (operator: string, value: string, options: readonly string[] = OPTIONS) =>
+    act(() => {
+      rootC.render(React.createElement(ConditionValueField, {
+        field: "status",
+        operator,
+        value,
+        options,
+        onChange: (next: string) => { stored = next; },
+      }));
+    });
+
+  /* -- `equals` keeps the single dropdown it always had -- */
+  draw("equals", "جدید");
+  ok("an ordinary condition draws one dropdown",
+    !!hostC.querySelector("select") && !hostC.querySelector("[data-condition-values]"));
+
+  /* -- `in` draws a tick per value -- */
+  draw("in", "");
+  const ticks = [...hostC.querySelectorAll("[data-condition-values] input[type=\"checkbox\"]")];
+  ok("«یکی از این‌ها باشد» draws a tick per value", ticks.length === OPTIONS.length, ticks.length);
+  ok("...and no single-value dropdown beside it", !hostC.querySelector("select"));
+
+  /*
+   * The half a type-check cannot see: the tick has to reach the caller, and
+   * with the value the rule will be stored under.
+   */
+  await act(async () => {
+    (ticks[0] as HTMLInputElement).dispatchEvent(
+      new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  ok("ticking one writes it back", stored === "جدید", stored);
+
+  /* And a second tick **adds** rather than replacing — the whole point. */
+  draw("in", stored);
+  const ticks2 = [...hostC.querySelectorAll("[data-condition-values] input[type=\"checkbox\"]")];
+  await act(async () => {
+    (ticks2[1] as HTMLInputElement).dispatchEvent(
+      new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  ok("ticking a second adds to the list", stored === "جدید، در حال مذاکره", stored);
+
+  /* What is already stored is drawn as ticked, or the form forgets on reopen. */
+  draw("in", "جدید، در حال مذاکره");
+  const ticks3 = [...hostC.querySelectorAll("[data-condition-values] input[type=\"checkbox\"]")]
+    .map((el) => (el as HTMLInputElement).checked);
+  ok("a stored list comes back ticked",
+    JSON.stringify(ticks3) === JSON.stringify([true, true, false]), ticks3);
+
+  /* Unticking removes just that one. */
+  const boxes4 = [...hostC.querySelectorAll("[data-condition-values] input[type=\"checkbox\"]")];
+  await act(async () => {
+    (boxes4[0] as HTMLInputElement).dispatchEvent(
+      new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  ok("unticking removes only that value", stored === "در حال مذاکره", stored);
+
+  /*
+   * A field with no closed list — a figure, a free-text value — still gets a
+   * typed box under `in`, where the person's own comma is the separator. A tick
+   * grid over no options would be an empty row saying nothing.
+   */
+  draw("in", "الف، ب", []);
+  ok("a field with no list falls back to a typed box",
+    !!hostC.querySelector("input[type=\"text\"]")
+    && !hostC.querySelector("[data-condition-values]"));
+
+  act(() => { rootC.unmount(); });
+  hostC.remove();
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

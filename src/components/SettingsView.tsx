@@ -55,8 +55,10 @@ import { SCHEDULE_SUBJECTS, describeSchedule, scheduleRepeats } from '../utils/w
 import StuckThresholdsPanel from './StuckThresholdsPanel';
 import { escalationIsConfigured } from '../utils/workflowEscalation';
 import { cloneWorkflowRule } from '../utils/workflowRules';
+import { ConditionValueField } from './ConditionValueField';
 import {
-  RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS, WORKFLOW_ACTION_TYPES,
+  RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS, WORKFLOW_ACTION_TYPES, WORKFLOW_OPERATORS,
+  emptyInCondition,
   MESSAGE_ONCE_SCOPES, WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS,
   actionLabel, conditionFieldLabel, isMessageOnceScope, operatorLabel,
   defaultConditionField, staleConditionField, triggerFields, triggerGroups, triggerLabel,
@@ -819,6 +821,20 @@ export default function SettingsView({
       alert(
         `شرط «${staleField}» با «کدام تاریخ» انتخاب‌شده نمی‌خواند و این قانون هیچ‌وقت اجرا نمی‌شود. `
         + 'آن شرط را حذف کنید یا روی یکی از فیلدهای همین رکورد بگذارید.',
+      );
+      return;
+    }
+
+    /*
+     * The same refusal from the other side: «یکی از این‌ها باشد» with nothing
+     * ticked matches no record, so the rule would save, print on its card and
+     * never fire.
+     */
+    const emptyField = emptyInCondition(editingRule);
+    if (emptyField) {
+      alert(
+        `شرط «${emptyField}» روی «یکی از این‌ها باشد» است ولی هیچ مقداری برایش انتخاب نشده، `
+        + 'و این قانون هیچ‌وقت اجرا نمی‌شود. حداقل یک مقدار را تیک بزنید.',
       );
       return;
     }
@@ -3832,41 +3848,42 @@ export default function SettingsView({
                               }}
                               className="border border-slate-200 rounded-lg p-2 bg-white focus:outline-none focus:border-sky-500"
                             >
-                              <option value="equals">برابر باشد با</option>
-                              <option value="not_equals">مخالف باشد با</option>
-                              <option value="greater_than">بزرگتر از</option>
-                              <option value="less_than">کوچکتر از</option>
+                              {/*
+                                The catalogue, not a fifth copy of it.
+
+                                These four were written out here while the rule
+                                *card* two panels away read `operatorLabel`, and
+                                they had already drifted: the card said «بیشتر
+                                باشد از» and this box said «بزرگتر از» — one
+                                operator with two names, on the two controls a
+                                person uses one after the other. The check that
+                                was meant to catch it looked for the label in
+                                single quotes and these are JSX text, so it
+                                passed while the copy stood.
+                              */}
+                              {WORKFLOW_OPERATORS.map(op => (
+                                <option key={op.value} value={op.value}>{op.label}</option>
+                              ))}
                             </select>
 
                             
-                            {cond.field === 'proformaAmount' || cond.field === 'totalAmount' || cond.field === 'price' || cond.field === 'amountRIYAL' || cond.field === 'stockLevel' || cond.field === 'minStockLevel' || valueOptions.length === 0 ? (
-                              <input
-                                type={['stockLevel', 'minStockLevel', 'proformaAmount', 'totalAmount', 'price', 'amountRIYAL'].includes(cond.field) ? "number" : "text"}
-                                value={cond.value}
-                                onChange={(e) => {
-                                  const updatedConds = [...editingRule.conditions];
-                                  updatedConds[condIdx].value = e.target.value;
-                                  setEditingRule({ ...editingRule, conditions: updatedConds });
-                                }}
-                                placeholder={['stockLevel', 'minStockLevel'].includes(cond.field) ? "تعداد" : "مقدار مورد نظر"}
-                                className="border border-slate-200 rounded-lg p-2 bg-white focus:outline-none focus:border-sky-500 font-mono text-left"
-                              />
-                            ) : (
-                              <select
-                                value={cond.value}
-                                onChange={(e) => {
-                                  const updatedConds = [...editingRule.conditions];
-                                  updatedConds[condIdx].value = e.target.value;
-                                  setEditingRule({ ...editingRule, conditions: updatedConds });
-                                }}
-                                className="border border-slate-200 rounded-lg p-2 bg-white focus:outline-none focus:border-sky-500"
-                              >
-                                <option value="">-- انتخاب مقدار --</option>
-                                {valueOptions.map(val => (
-                                  <option key={val} value={val}>{val}</option>
-                                ))}
-                              </select>
-                            )}
+                            {/*
+                              Its own component, because its failure is one no
+                              type-check can see — a control that draws, reads
+                              and never calls back — and because this file is
+                              far too large to render in `test:ui`.
+                            */}
+                            <ConditionValueField
+                              field={cond.field}
+                              operator={cond.operator}
+                              value={cond.value}
+                              options={valueOptions}
+                              onChange={(next) => {
+                                const updatedConds = [...editingRule.conditions];
+                                updatedConds[condIdx] = { ...updatedConds[condIdx], value: next };
+                                setEditingRule({ ...editingRule, conditions: updatedConds });
+                              }}
+                            />
 
 
                             <button

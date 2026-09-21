@@ -238,6 +238,8 @@ import {
   versionRefusalReason, impliedSettlement,
 } from "../src/utils/salesFollowUp";
 import { copiedProformaDates } from "../src/utils/proformaCopy";
+import { conditionValueList, matchesConditions as matchConds } from "../src/utils/workflowConditions";
+import { emptyInCondition } from "../src/utils/workflowTriggers";
 import {
   recipientDisplayName, resolveSentRecipients, selfRecipientName, sentRecipientsRefusal,
 } from "../src/utils/proformaRecipients";
@@ -12601,10 +12603,27 @@ head("A document's notes: files, a Shamsi clock, and a delete that is offered ho
       ok(`«${a.value}» has a Persian name`, /[\u0600-\u06FF]/.test(a.label));
       eq(`...and actionLabel answers it`, actionLabel(a.value), a.label);
     }
-    eq("every operator is named", WORKFLOW_OPERATORS.length, 4);
+    eq("every operator is named", WORKFLOW_OPERATORS.length, 5);
     ok("...including the two the card used to get wrong",
       operatorLabel("greater_than") !== operatorLabel("not_equals")
       && operatorLabel("less_than") !== operatorLabel("not_equals"));
+    /*
+     * The **editor** reads the catalogue too, which it did not.
+     *
+     * These four were written out as JSX options beside a card that read
+     * `operatorLabel`, and they had already drifted — the card said «بیشتر باشد
+     * از» and the box said «بزرگتر از», one operator with two names on the two
+     * controls a person uses one after the other. The check above was meant to
+     * catch exactly this and looked for the label in **single quotes**; these
+     * are JSX text, so it passed while the fifth copy stood. It reads the
+     * option shape now.
+     */
+    ok("the operator dropdown reads the same list",
+      /WORKFLOW_OPERATORS\.map/.test(settingsSrc));
+    for (const op of WORKFLOW_OPERATORS) {
+      ok(`...rather than its own «${op.label}»`,
+        !new RegExp(`<option value="${op.value}">`).test(settingsSrc), op.value);
+    }
     // An id a stored rule invented prints as itself rather than as the wrong
     // action — the raw value is the truthful answer when there is no name.
     eq("an unknown action keeps its own id", actionLabel("send_pigeon"), "send_pigeon");
@@ -19004,6 +19023,168 @@ head("A quotation to a person is sent to that person");
     /setContactPrefix\(""\);[\s\S]{0,80}?setSelectedSentRecipients\(\[\]\);/.test(view));
 }
 
+
+
+/* ==========================================================================
+ * «اگر وضعیت جدید یا در حال مذاکره بود» — a condition that could not be said
+ *
+ * Reported as a rule the assistant refused to build: «اگر پروژه‌ای در وضعیت
+ * جدید یا در حال مذاکره بود و پیش‌فاکتور برایش صادر نشده، یک وظیفه بساز».
+ * Neither half was expressible, for two unrelated reasons.
+ *
+ * Conditions are **ANDed** and there were four operators, so two values of one
+ * field was not a condition at all — it was two rules, which is two cards to
+ * keep in step saying one thing, or five «مخالف باشد با …» that have to be
+ * revisited every time the module gains a status. And «پیش‌فاکتور صادر نشده»
+ * had no field: the stage only nearly answers it, since «جدید» also requires
+ * that nobody has sent a supplier inquiry.
+ * ========================================================================== */
+head("A condition can name more than one value");
+{
+  const project = (status: string, proformaCount: number) =>
+    ({ id: "p1", status, proformaCount });
+
+  /* The reported rule, written the way it is now written. */
+  const asked = [
+    { field: "status", operator: "in", value: "جدید، در حال مذاکره" },
+    { field: "proformaCount", operator: "equals", value: "0" },
+  ];
+  eq("a new project with no quotation matches",
+    matchConds(asked as never, project("جدید", 0)), true);
+  eq("...and one in negotiation, which is the half that needed «or»",
+    matchConds(asked as never, project("در حال مذاکره", 0)), true);
+  eq("a project already quoted does not",
+    matchConds(asked as never, project("جدید", 2)), false);
+  eq("nor does one that is won",
+    matchConds(asked as never, project("برنده (موفق)", 0)), false);
+
+  /*
+   * Both commas separate. The list is typed by somebody writing Persian and the
+   * editor itself writes «،», so a splitter that knew only the Latin one would
+   * match nothing for a rule that reads perfectly on its card.
+   */
+  eq("the Persian comma separates",
+    JSON.stringify(conditionValueList("جدید، در حال مذاکره")),
+    JSON.stringify(["جدید", "در حال مذاکره"]));
+  eq("...and the Latin one",
+    JSON.stringify(conditionValueList("جدید, در حال مذاکره")),
+    JSON.stringify(["جدید", "در حال مذاکره"]));
+  eq("blanks and spacing are dropped",
+    JSON.stringify(conditionValueList("  جدید ,, ,در حال مذاکره ")),
+    JSON.stringify(["جدید", "در حال مذاکره"]));
+  eq("and a value named twice is one",
+    JSON.stringify(conditionValueList("جدید، جدید")), JSON.stringify(["جدید"]));
+
+  /*
+   * An empty list matches **nothing**, and the save refuses one outright.
+   *
+   * Neither answer is good on its own: matching everything would raise a task
+   * on every project in the company, and matching nothing is the catalogue's
+   * own silent failure. The refusal is what stops anybody reaching either, and
+   * it names the field — «یک شرط ناقص» sends somebody hunting through six rows.
+   */
+  eq("an `in` naming nothing matches nothing",
+    matchConds([{ field: "status", operator: "in", value: "  " }] as never,
+      project("جدید", 0)), false);
+  eq("...and the save refuses it by name",
+    emptyInCondition({ conditions: [{ field: "status", operator: "in", value: "" }] }),
+    "status");
+  eq("a list with something in it is not refused",
+    emptyInCondition({ conditions: [{ field: "status", operator: "in", value: "جدید" }] }),
+    null);
+  /* The refusal is about `in` alone; nothing else changes shape. */
+  eq("an ordinary empty condition is not this refusal's business",
+    emptyInCondition({ conditions: [{ field: "status", operator: "equals", value: "" }] }),
+    null);
+
+  /*
+   * The four operators are untouched — these are stored in live rules and a
+   * change in what one means would silently alter automations nobody asked to
+   * change, which is why `matchesConditions` preserves them exactly.
+   */
+  eq("equals still equals",
+    matchConds([{ field: "status", operator: "equals", value: "جدید" }] as never,
+      project("جدید", 0)), true);
+  eq("not_equals still does not",
+    matchConds([{ field: "status", operator: "not_equals", value: "جدید" }] as never,
+      project("جدید", 0)), false);
+  eq("and an operator this build does not know still matches",
+    matchConds([{ field: "status", operator: "sideways", value: "x" }] as never,
+      project("جدید", 0)), true);
+
+  /* -- «پیش‌فاکتور صادر نشده» is a field, and the sweep computes it -- */
+  const projectFields = SCHEDULE_MODEL_FIELDS.project.map((f) => f.value);
+  ok("the project offers how many quotations it has", projectFields.includes("proformaCount"),
+    projectFields);
+  const countField = SCHEDULE_MODEL_FIELDS.project.find((f) => f.value === "proformaCount");
+  ok("...as a derived field, since no column carries it", countField?.derived === true);
+  /*
+   * A hint is required of a derived field, and this one has to say the thing
+   * that is easy to get wrong: it is **not** the same question as the stage.
+   */
+  ok("...and its hint holds it apart from the stage",
+    (countField?.hint ?? "").includes("جدید"), countField?.hint);
+
+  const sweepSrcIn = readFileSync("src/server/services/workflowSweep.ts", "utf8");
+  ok("the sweep derives it for the whole band in one read",
+    /derivedProjectValues/.test(sweepSrcIn)
+    && /by: \["projectId"\]/.test(sweepSrcIn));
+  ok("...and the project model is dispatched to it",
+    /model === "project"\) return derivedProjectValues/.test(sweepSrcIn));
+  /*
+   * Zero rather than absent, because «0» is the whole point of the field and an
+   * `undefined` compared against it never matches — the rule would save, print
+   * and never fire.
+   */
+  ok("a project nobody has quoted answers 0 rather than nothing",
+    /proformaCount: byProject\.get\(String\(row\.id\)\) \?\? 0/.test(sweepSrcIn));
+
+  /* -- and the assistant can draft the sentence it refused -- */
+  const DRAFT_CTX = { templateIds: ["tpl-1"], fallbackName: "خواستهٔ کاربر" };
+  const draftSrcIn = readFileSync("src/utils/workflowDraft.ts", "utf8");
+  ok("the drafter validates operators against the catalogue",
+    /OPERATORS = WORKFLOW_OPERATORS\.map/.test(draftSrcIn));
+  ok("...rather than a sixth hand-typed list",
+    !/"equals", "not_equals"/.test(draftSrcIn));
+  ok("and its prompt says conditions are ANDed, so «or» is one `in`",
+    /operator":"in"/.test(draftSrcIn));
+
+  /*
+   * A drafted `in` is checked **value by value** and the good ones kept: a
+   * model that writes one invented value beside two real ones has written the
+   * rule that was asked for, and dropping the whole condition over the third
+   * would throw it away.
+   */
+  const drafted = sanitizeDraftedRule({
+    name: "پیشبرد مراحل فنی",
+    triggerType: "time_elapsed",
+    schedule: { subject: "project_creation", days: 3, direction: "after" },
+    conditions: [
+      { field: "status", operator: "in", value: "جدید، در حال مذاکره، مذاکره" },
+      { field: "proformaCount", operator: "equals", value: "0" },
+    ],
+    actions: [{ type: "create_task", taskConfig: { titleTemplate: "پیشبرد مراحل فنی پروژه" } }],
+  } as never, DRAFT_CTX);
+  const statusCond = drafted.rule?.conditions?.find((c) => c.field === "status");
+  eq("the drafted condition keeps the operator", statusCond?.operator, "in");
+  eq("...and the values that really exist",
+    statusCond?.value, "جدید، در حال مذاکره");
+  ok("...with the invented one named rather than silently dropped",
+    drafted.warnings.some((w) => w.includes("مذاکره") && w.includes("حذف شد")),
+    JSON.stringify(drafted.warnings));
+  ok("and the rule still carries the count condition",
+    !!drafted.rule?.conditions?.find((c) => c.field === "proformaCount"));
+
+  /* A list where nothing survives is dropped, since it would match no record. */
+  const allBad = sanitizeDraftedRule({
+    name: "x", triggerType: "time_elapsed",
+    schedule: { subject: "project_creation", days: 3, direction: "after" },
+    conditions: [{ field: "status", operator: "in", value: "الف، ب" }],
+    actions: [{ type: "create_task", taskConfig: { titleTemplate: "t" } }],
+  } as never, DRAFT_CTX);
+  eq("an `in` with no real value at all is dropped",
+    allBad.rule?.conditions?.length ?? 0, 0);
+}
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {

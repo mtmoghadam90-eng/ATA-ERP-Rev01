@@ -1463,7 +1463,7 @@ export interface WorkflowRule {
   };
   conditions: {
     field: string; // e.g. 'newOutcome', 'newStatus'
-    operator: 'equals' | 'not_equals' | 'greater_than' | 'less_than';
+    operator: 'equals' | 'not_equals' | 'greater_than' | 'less_than' | 'in';
     value: string;
   }[];
   actions: {
