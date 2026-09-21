@@ -1327,7 +1327,19 @@ model AfterSalesService {
   requestDate       DateTime? @db.Date
   requestDateJalali String?   @db.NVarChar(10)
 
-  startDate        DateTime  @db.Date
+  /// «تاریخ دریافت کالا», and nullable because the rows it is rolled up from
+  /// are.
+  ///
+  /// `deriveServiceHeader` answers the earliest date any line carries, and a
+  /// line is allowed to carry none — the complaint is recorded on the phone
+  /// and the equipment arrives days later, or is diagnosed on site and never
+  /// arrives at all. NOT NULL here meant the roll-up could not store what the
+  /// form was already letting people say: every save of such a case died with
+  /// «Argument `startDate` must not be null» and the record could not be
+  /// written from any screen. The alternative — stamping today — would print a
+  /// receipt date for goods nobody has received, which is the claim this
+  /// column exists to make truthfully.
+  startDate        DateTime? @db.Date
   startDateJalali  String?   @db.NVarChar(10)
   endDate          DateTime? @db.Date
   endDateJalali    String?   @db.NVarChar(10)
