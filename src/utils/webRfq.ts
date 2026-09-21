@@ -36,8 +36,19 @@ export const WEB_RFQ_INQUIRY_PREFIX = "WEB-RFQ-";
 /** The marketing channel a website request came through, when the list has it. */
 export const WEB_RFQ_MARKETING_CHANNEL = "وب‌سایت / آنلاین";
 
-/** How many requests the very first synchronisation reaches back for. */
-export const FIRST_SYNC_LIMIT = 20;
+/**
+ * How many rows the baseline pass asks for.
+ *
+ * The first poll after this is switched on **imports nothing**: it reads where
+ * the site's numbering has got to and records that as the line, so only what
+ * is raised from then on comes across. Anything already on the site was
+ * answered — or entered here by hand — before this existed, and importing it
+ * would put a second, duplicate project beside every one of those.
+ *
+ * A handful rather than one, so the panel can say what it found rather than
+ * only that it found something.
+ */
+export const BASELINE_PROBE_LIMIT = 5;
 
 /**
  * How far behind the highest request already seen the next poll asks from.
@@ -134,18 +145,41 @@ export function parseFeedRow(raw: unknown): WebRfq | null {
   };
 }
 
-/** Every usable row of a feed response, in the order the site sent them. */
-export function parseFeed(body: unknown): WebRfq[] {
-  const items = (body && typeof body === "object")
-    ? (body as Record<string, unknown>).items
-    : null;
-  if (!Array.isArray(items)) return [];
-  const out: WebRfq[] = [];
-  for (const item of items) {
-    const row = parseFeedRow(item);
-    if (row) out.push(row);
+/** A feed response: the usable rows, and where the site's numbering has got to. */
+export interface WebRfqFeed {
+  items: WebRfq[];
+  /**
+   * The highest request number on the site, **whatever its status**.
+   *
+   * Not the highest among `items`, and the difference is the whole point of
+   * the column: the feed hands over only *submitted* requests, so a request
+   * typed but not yet sent carries a higher number than anything in the list.
+   * Taking the line from the list would let that one across the moment it was
+   * sent, as though it were new — and it is not, it was already on the site
+   * when this was switched on. Zero when the site did not say, which is an
+   * older copy of the plugin file.
+   */
+  maxId: number;
+}
+
+export function parseFeed(body: unknown): WebRfqFeed {
+  const raw = (body && typeof body === "object") ? body as Record<string, unknown> : {};
+  const items: WebRfq[] = [];
+  if (Array.isArray(raw.items)) {
+    for (const item of raw.items) {
+      const row = parseFeedRow(item);
+      if (row) items.push(row);
+    }
   }
-  return out;
+  /*
+   * A site that does not report it falls back to the highest row it did send.
+   * That is weaker — an unsent request numbered above it would later read as
+   * new — but it is the safe direction of weaker: it still excludes every
+   * request the site has already answered, which is what was asked for.
+   */
+  const stated = whole(raw.max_id ?? raw.maxId);
+  const seen = items.reduce((top, row) => Math.max(top, row.id), 0);
+  return { items, maxId: Math.max(stated, seen) };
 }
 
 /* ------------------------------ configuration ----------------------------- */
@@ -204,18 +238,37 @@ export function feedRequestUrl(base: string, sinceId: number, limit: number): st
 }
 
 /**
- * Which number to ask from, given the highest already seen.
+ * Which number to ask from, given the line and the highest already seen.
  *
- * Nothing seen at all means the first synchronisation, which deliberately does
- * **not** reach back through the site's whole history: a company switching this
- * on wants the enquiries it is still working, not three years of answered ones
- * appearing as open projects on somebody's board this afternoon. `since_id` of
- * zero with a small limit is what asks for that, because the site answers
- * newest-first.
+ * `startAfterId` is the line: the site's numbering as it stood when this was
+ * switched on, below which nothing is ever imported. **Absent and zero are two
+ * different answers** — absent means no line has been drawn yet, which is what
+ * the baseline pass is for, while a stored zero is somebody having decided the
+ * line is «everything», and both must survive a save.
+ *
+ * The backtrack overlaps the last window because the site numbers requests in
+ * *creation* order and hands over the ones *submitted*, and those orders
+ * genuinely differ — but it may never reach below the line, or the very
+ * requests the line was drawn to exclude would come back in through it.
  */
-export function syncWindow(highestSeen: number): { sinceId: number; limit: number } {
-  if (highestSeen <= 0) return { sinceId: 0, limit: FIRST_SYNC_LIMIT };
-  return { sinceId: Math.max(0, highestSeen - SYNC_BACKTRACK), limit: SYNC_PAGE_LIMIT };
+export function syncWindow(
+  highestSeen: number,
+  startAfterId: number,
+): { sinceId: number; limit: number } {
+  const floor = Math.max(0, startAfterId);
+  const back = highestSeen > 0 ? highestSeen - SYNC_BACKTRACK : 0;
+  return { sinceId: Math.max(floor, back, 0), limit: SYNC_PAGE_LIMIT };
+}
+
+/**
+ * Whether this request is one the line excludes.
+ *
+ * Asked of every row rather than trusted to the query: `since_id` is a request
+ * to a machine on the internet and the line is a decision made here, so the
+ * one that matters is checked where it cannot be answered wrongly.
+ */
+export function isBeforeLine(rfq: Pick<WebRfq, "id">, startAfterId: number): boolean {
+  return rfq.id <= Math.max(0, startAfterId);
 }
 
 /* -------------------------------- mapping --------------------------------- */

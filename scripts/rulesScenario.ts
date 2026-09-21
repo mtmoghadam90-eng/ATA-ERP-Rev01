@@ -55,8 +55,8 @@ import {
 import { hasEverPurchased, saleDateOf } from "../src/server/services/customerValueService";
 import { taskRelationKind } from "../src/utils/taskRelations";
 import {
-  FIRST_SYNC_LIMIT, SYNC_BACKTRACK, SYNC_PAGE_LIMIT,
-  customerFor, feedConfigRefusal, feedRequestUrl, inquiryKeyFor, parseFeed, parseFeedRow,
+  BASELINE_PROBE_LIMIT, SYNC_BACKTRACK, SYNC_PAGE_LIMIT,
+  customerFor, feedConfigRefusal, feedRequestUrl, inquiryKeyFor, isBeforeLine, parseFeed, parseFeedRow,
   projectDescriptionFor, projectItemFor, projectNameFor, splitFullName, syncWindow,
 } from "../src/utils/webRfq";
 import { applySettingsPatches } from "../src/utils/settingsPatches";
@@ -19211,9 +19211,9 @@ head("Web RFQ: the site's price requests, as customers and projects");
     parseFeedRow({ ...rfq, full_name: "", company: "شرکت" })?.company, "شرکت");
   eq("snake_case is what the site sends",
     parseFeedRow({ id: 3, full_name: "علی", product_name: "پ" })?.productName, "پ");
-  eq("a feed with no items array reads as empty", parseFeed({ ok: true }).length, 0);
+  eq("a feed with no items array reads as empty", parseFeed({ ok: true }).items.length, 0);
   eq("unusable rows are skipped rather than failing the whole feed",
-    parseFeed({ items: [{ id: 0 }, { id: 4, full_name: "الف" }] }).length, 1);
+    parseFeed({ items: [{ id: 0 }, { id: 4, full_name: "الف" }] }).items.length, 1);
 
   /* --- the token crosses on every poll, so the address rule is the relay's --- */
   ok("nothing configured is not a refusal", feedConfigRefusal("", "") === null);
@@ -19238,14 +19238,44 @@ head("Web RFQ: the site's price requests, as customers and projects");
   ok("feed and relay agree about a missing token", bothRefuse("https://site.ir/x", ""));
   ok("feed and relay agree about an address-less token", bothRefuse("", "abc"));
 
+  /* --- the line, and the window above it --- */
+  /*
+   * The requests already on the site were answered, and the projects for them
+   * were entered by hand. Importing them would put a duplicate beside every
+   * one, so the line is where the site's numbering had got to when this was
+   * switched on — and it is `max_id`, the highest row **whatever its status**,
+   * never the highest one the feed listed: the feed hands over only submitted
+   * requests, so one typed and not yet sent is numbered above all of them and
+   * would later read as new.
+   */
+  eq("the line comes from the site's own highest number",
+    parseFeed({ max_id: 47, items: [{ id: 30, full_name: "الف" }] }).maxId, 47);
+  eq("...including one above everything the feed listed",
+    parseFeed({ max_id: 47, items: [] }).maxId, 47);
+  eq("a site that does not say falls back to the highest row it sent",
+    parseFeed({ items: [{ id: 30, full_name: "الف" }] }).maxId, 30);
+  eq("an empty feed from a silent site draws no line at all",
+    parseFeed({ items: [] }).maxId, 0);
+
+  ok("a request at the line is excluded", isBeforeLine({ id: 47 }, 47));
+  ok("...and everything below it", isBeforeLine({ id: 12 }, 47));
+  ok("the one above it is the first that comes across", !isBeforeLine({ id: 48 }, 47));
+  ok("a line of zero excludes nothing", !isBeforeLine({ id: 1 }, 0));
+
   /* --- the window --- */
-  eq("the first sync takes the newest few, not the site's whole history",
-    syncWindow(0).limit, FIRST_SYNC_LIMIT);
-  eq("...and asks from the beginning, since the site answers newest-first",
-    syncWindow(0).sinceId, 0);
+  eq("the probe asks for a handful, enough to say what it found",
+    BASELINE_PROBE_LIMIT > 0 && BASELINE_PROBE_LIMIT <= SYNC_PAGE_LIMIT, true);
+  eq("with a line and nothing imported yet, the poll starts at the line",
+    syncWindow(0, 47).sinceId, 47);
   eq("later polls overlap, because submitted order is not creation order",
-    syncWindow(100).sinceId, 100 - SYNC_BACKTRACK);
-  ok("the overlap never goes below zero", syncWindow(3).sinceId === 0);
+    syncWindow(100, 0).sinceId, 100 - SYNC_BACKTRACK);
+  /*
+   * The overlap may never reach below the line, or the very requests it was
+   * drawn to exclude come back in through the door opened for the other fault.
+   */
+  eq("...but the overlap never digs under the line",
+    syncWindow(50, 47).sinceId, 47);
+  ok("the overlap never goes below zero", syncWindow(3, 0).sinceId === 0);
   ok("the token is never in the URL",
     !feedRequestUrl("https://s/f", 10, 20).includes("token"));
   ok("the window travels as query parameters",
@@ -19330,6 +19360,25 @@ head("Web RFQ: the service and the site's endpoint");
     && pass1.indexOf("webRfqImport.create") < pass1.indexOf("await attempt(rowId, rfq, user)"));
   ok("a failed import is retried from the stored payload, not re-fetched",
     svc.includes("parseFeedRow(safeJson(row.payload))"));
+  /*
+   * The first poll draws the line and imports nothing. The line is written
+   * before anything else can run, so a pass interrupted halfway cannot leave
+   * it undrawn and import the whole history on the next tick.
+   */
+  const baseline = svc.slice(
+    svc.indexOf("if (config.startAfterId === null)"), svc.indexOf("const line = config"));
+  ok("the first poll draws the line and returns without importing",
+    baseline.includes("startAfterId: probe.maxId") && /return 0;/.test(baseline)
+    && !baseline.includes("attempt("));
+  ok("null and zero are told apart — a stored zero is a decision, not an undrawn line",
+    svc.includes("config.startAfterId === null")
+    && !/config\.startAfterId\s*(\?\?|\|\|)\s*0/.test(svc));
+  ok("the line is applied to the rows as well as to the query",
+    svc.includes("isBeforeLine(r, line)"));
+  ok("...and to the replay of failed imports",
+    svc.includes("row.rfqId <= line"));
+  ok("a baseline pass is reported, or «0 imported» reads as broken",
+    svc.includes("baselineDrawnAt = probe.maxId"));
   ok("a project with no owner is refused rather than written to nobody",
     svc.includes("config.ownerUserId") && svc.includes("مسئول پروژه"));
   /*
@@ -19361,6 +19410,13 @@ head("Web RFQ: the service and the site's endpoint");
     !/\b(UPDATE|INSERT|DELETE)\b/.test(php));
   ok("the whole conversation is not shipped on every poll",
     !php.includes("ata_rfq_all_messages"));
+  /*
+   * `max_id` is the highest row whatever its status, so a request typed and
+   * not yet sent is still below the line. Narrowing it to the submitted ones
+   * would let exactly that one across as though it were new.
+   */
+  ok("the site reports where its numbering has got to",
+    php.includes("'max_id'") && /SELECT MAX\(id\) FROM \$t"/.test(php));
 
   /*
    * The timer must be well inside nothing in particular here — but it has to

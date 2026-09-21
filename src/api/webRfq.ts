@@ -13,6 +13,8 @@ export interface WebRfqConfig {
   tokenHint: string | null;
   active: boolean;
   ownerUserId: string | null;
+  /** The line: nothing at or below it is imported. Null until it is drawn. */
+  startAfterId: number | null;
   refusal: string | null;
 }
 
@@ -21,6 +23,8 @@ export interface WebRfqReport {
   lastOkAt: number;
   lastError: string | null;
   lastImported: number;
+  /** What the last pass drew the line at, when it was a baseline pass. */
+  baselineDrawnAt: number | null;
   running: boolean;
 }
 
@@ -44,7 +48,12 @@ type ConfigAnswer = { config: WebRfqConfig; report: WebRfqReport };
 export const webRfqApi = {
   config: () => api.get<ConfigAnswer>("/api/web-rfq/config"),
 
-  save: (input: { feedUrl?: string; token?: string; active?: boolean; ownerUserId?: string | null }) =>
+  save: (input: {
+    feedUrl?: string; token?: string; active?: boolean;
+    ownerUserId?: string | null;
+    /** Null means «draw it again on the next poll»; zero means «everything». */
+    startAfterId?: number | null;
+  }) =>
     api.put<ConfigAnswer>("/api/web-rfq/config", input),
 
   sync: () => api.post<{ imported: number; report: WebRfqReport }>("/api/web-rfq/sync", {}),

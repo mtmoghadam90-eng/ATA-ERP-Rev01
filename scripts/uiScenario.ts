@@ -2757,9 +2757,13 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
 
     const config = {
       feedUrl: "https://site.ir/wp-json/ata/v1/rfq/erp-feed",
-      tokenHint: "••••3456", active: true, ownerUserId: "u1", refusal: null,
+      tokenHint: "••••3456", active: true, ownerUserId: "u1",
+      startAfterId: 47, refusal: null,
     };
-    const report = { lastRunAt: 0, lastOkAt: 0, lastError: null, lastImported: 0, running: false };
+    const report = {
+      lastRunAt: 0, lastOkAt: 0, lastError: null, lastImported: 0,
+      baselineDrawnAt: null, running: false,
+    };
     const body = String(url).includes("/imports")
       ? { success: true, imports: [] }
       : String(url).includes("/api/users")
@@ -2805,6 +2809,45 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
   ok("...sending the address that is in the box", body.feedUrl === "https://site.ir/wp-json/ata/v1/rfq/erp-feed");
   ok("...and a blank token, which the server reads as «unchanged»", body.token === "");
   ok("...never the masked hint", body.token !== "••••3456");
+  /*
+   * The line the site's history sits below. Sent back as the number it is —
+   * a save that dropped it would leave it null, and the next poll would draw
+   * it again from wherever the site had got to by then.
+   */
+  ok("...and the line, as a number", body.startAfterId === 47);
+
+  /*
+   * Blank is «draw it again», zero is «import everything», and the two must
+   * not collapse into each other: a falsy check would turn an emptied box
+   * into a request for the site's whole history, which is the one thing the
+   * line exists to prevent.
+   */
+  const lineBox = hostW.querySelector("[data-web-rfq-line]") as HTMLInputElement | null;
+  ok("the line is drawn in a box somebody can correct", !!lineBox && lineBox.value === "47");
+
+  // React 19 does not observe the native value setter here, so the component's
+  // own handler is driven — which is what is under test anyway.
+  const setLine = (value: string) => {
+    const box = hostW.querySelector("[data-web-rfq-line]") as HTMLInputElement;
+    box.value = value;
+    handlers(box).onChange?.({ target: box });
+  };
+
+  const beforeBlank = askedW.length;
+  await act(async () => { setLine(""); });
+  await act(async () => { saveBtn?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settleW();
+  const blanked = askedW.slice(beforeBlank).find((r) => r.method === "PUT");
+  ok("an emptied box asks for the line to be drawn again",
+    (blanked?.body as Record<string, unknown>)?.startAfterId === null);
+
+  const beforeZero = askedW.length;
+  await act(async () => { setLine("0"); });
+  await act(async () => { saveBtn?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settleW();
+  const zeroed = askedW.slice(beforeZero).find((r) => r.method === "PUT");
+  ok("...and a typed zero is a decision, not the same as blank",
+    (zeroed?.body as Record<string, unknown>)?.startAfterId === 0);
 
   const beforeSync = askedW.length;
   const syncBtn = hostW.querySelector("[data-web-rfq-sync]") as HTMLButtonElement | null;

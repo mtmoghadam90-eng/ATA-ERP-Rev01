@@ -38,6 +38,8 @@ export default function WebRfqPanel() {
   const [token, setToken] = useState("");
   const [active, setActive] = useState(false);
   const [ownerUserId, setOwnerUserId] = useState("");
+  /** Kept as text: an empty box is «not drawn yet», which is not zero. */
+  const [startAfter, setStartAfter] = useState("");
 
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "bad"; text: string } | null>(null);
@@ -47,6 +49,7 @@ export default function WebRfqPanel() {
     setFeedUrl(next.feedUrl);
     setActive(next.active);
     setOwnerUserId(next.ownerUserId ?? "");
+    setStartAfter(next.startAfterId === null ? "" : String(next.startAfterId));
     // Never seeded from the stored value — there is no stored value to seed
     // from, only a hint. A blank box means «unchanged» on save.
     setToken("");
@@ -69,7 +72,13 @@ export default function WebRfqPanel() {
     setBusy(true);
     setMessage(null);
     try {
-      const answer = await webRfqApi.save({ feedUrl, token, active, ownerUserId: ownerUserId || null });
+      const typed = startAfter.trim();
+      const answer = await webRfqApi.save({
+        feedUrl, token, active, ownerUserId: ownerUserId || null,
+        // Blank is «draw it again on the next poll», which is not zero —
+        // zero would mean «import everything», the opposite answer.
+        startAfterId: typed === "" ? null : Math.max(0, Math.trunc(Number(typed) || 0)),
+      });
       apply(answer.config);
       setReport(answer.report);
       setMessage({ kind: "ok", text: "تنظیمات ذخیره شد." });
@@ -86,9 +95,19 @@ export default function WebRfqPanel() {
     try {
       const answer = await webRfqApi.sync();
       setReport(answer.report);
+      /*
+       * A baseline pass imports nothing on purpose, and «۰ استعلام منتقل شد»
+       * with no explanation reads as a feature that does not work — which is
+       * exactly how a correct-but-unconfigured thing gets reported as broken.
+       */
       setMessage(answer.report.lastError
         ? { kind: "bad", text: answer.report.lastError }
-        : { kind: "ok", text: `همگام‌سازی انجام شد؛ ${answer.imported} استعلام تازه منتقل شد.` });
+        : answer.report.baselineDrawnAt !== null
+          ? {
+            kind: "ok",
+            text: `استعلام‌های موجود سایت (تا شمارهٔ ${answer.report.baselineDrawnAt}) منتقل نشدند؛ از این پس فقط درخواست‌های تازه می‌آیند.`,
+          }
+          : { kind: "ok", text: `همگام‌سازی انجام شد؛ ${answer.imported} استعلام تازه منتقل شد.` });
       await load();
     } catch (err) {
       setMessage({ kind: "bad", text: err instanceof Error ? err.message : "همگام‌سازی ناموفق بود." });
@@ -126,8 +145,9 @@ export default function WebRfqPanel() {
 
         <div className="rounded-xl bg-sky-50 border border-sky-200 p-4 text-sm text-slate-700 leading-6">
           سرور ERP روی شبکهٔ داخلی است و سایت عمومی، پس سایت نمی‌تواند چیزی به اینجا بفرستد؛
-          ERP هر پنج دقیقه خودش سایت را می‌خواند. در اولین همگام‌سازی حداکثر ۲۰ استعلام آخر
-          منتقل می‌شود، نه کل سابقهٔ سایت.
+          ERP هر پنج دقیقه خودش سایت را می‌خواند. <strong>اولین همگام‌سازی هیچ چیزی منتقل
+          نمی‌کند</strong> و فقط شمارهٔ فعلی سایت را به‌عنوان خط ثبت می‌کند؛ استعلام‌های قبلی
+          که پروژه‌شان را دستی ساخته‌اید دست‌نخورده می‌مانند و فقط درخواست‌های بعد از آن می‌آیند.
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -170,6 +190,24 @@ export default function WebRfqPanel() {
             </select>
             <p className="text-xs text-secondary mt-1.5">
               پروژه به نام این حساب ثبت می‌شود؛ پروژه‌ای که به کسی تعلق نداشته باشد در هیچ تخته‌ای دیده نمی‌شود.
+            </p>
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+              انتقال فقط از شمارهٔ بعد از
+            </label>
+            <input
+              type="text" inputMode="numeric" dir="ltr" value={startAfter}
+              onChange={(e) => setStartAfter(e.target.value.replace(/[^0-9]/g, ""))}
+              placeholder="در اولین همگام‌سازی خودکار پر می‌شود"
+              data-web-rfq-line
+              className="w-full md:w-48 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-sky-400"
+            />
+            <p className="text-xs text-secondary mt-1.5 leading-5">
+              استعلام‌هایی با این شماره و پایین‌تر هرگز منتقل نمی‌شوند. خالی بگذارید تا در
+              همگام‌سازی بعدی دوباره از روی وضعیت فعلی سایت تعیین شود؛ <span className="font-mono">0</span>
+              {" "}یعنی «همه‌چیز منتقل شود»، که با خالی یکی نیست.
             </p>
           </div>
         </div>
