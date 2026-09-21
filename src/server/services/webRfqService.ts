@@ -8,9 +8,10 @@ import { ProjectInput, createProject } from "./projectService";
 import { loadSettings } from "../settings";
 import { nextProjectCode } from "../documentNumberSpecs";
 import {
-  BASELINE_PROBE_LIMIT, MAX_IMPORT_ATTEMPTS, WEB_RFQ_MARKETING_CHANNEL, WebRfq, WebRfqFeed,
+  BASELINE_PROBE_LIMIT, MAX_IMPORT_ATTEMPTS, WebRfq, WebRfqFeed,
   customerFor, feedConfigRefusal, feedRequestUrl, inquiryKeyFor, isBeforeLine,
-  parseFeed, parseFeedRow, projectDescriptionFor, projectItemFor, projectNameFor, syncWindow,
+  parseFeed, parseFeedRow, projectDescriptionFor, projectItemFor, projectNameFor,
+  syncWindow, webEntryIn,
 } from "../../utils/webRfq";
 
 /**
@@ -255,20 +256,30 @@ async function findOrCreateCustomer(rfq: WebRfq, user: AuthUser): Promise<string
   return created.id;
 }
 
-/** Whether the company's own list has this channel, so a `<select>` can show it. */
-async function marketingChannelIfOffered(): Promise<string | undefined> {
-  const channels = (await loadSettings())?.dropdownItems?.marketingChannels;
-  if (Array.isArray(channels) && channels.includes(WEB_RFQ_MARKETING_CHANNEL)) {
-    return WEB_RFQ_MARKETING_CHANNEL;
-  }
-  /*
-   * Deliberately absent rather than written anyway. The project form's channel
-   * is a `<select>` over the company's own list, and a `<select>` whose value
-   * matches no option renders the **first** — so a channel this installation
-   * has renamed would be silently rewritten to whatever heads their list the
-   * first time somebody opened the project and pressed save.
-   */
-  return undefined;
+/**
+ * The two «this came from the website» values, in the company's own spelling.
+ *
+ * Both are `<select>`s over an editable list, so each is written **only** when
+ * that list already carries an entry meaning the website — a `<select>` whose
+ * value matches no option renders the **first**, so a channel this installation
+ * has renamed would be silently rewritten to whatever heads their list the
+ * first time somebody opened the project and pressed save.
+ *
+ * `settingsPatches` is what puts the entry there on a live document, so the
+ * blank answer is now the rare case (a company that deliberately removed it)
+ * rather than the ordinary one.
+ */
+async function webChannelValues(): Promise<{
+  marketingChannel?: string;
+  communicationMethod?: string;
+}> {
+  const lists = (await loadSettings())?.dropdownItems;
+  const marketingChannel = webEntryIn(lists?.marketingChannels);
+  const communicationMethod = webEntryIn(lists?.communicationMethods);
+  return {
+    ...(marketingChannel ? { marketingChannel } : {}),
+    ...(communicationMethod ? { communicationMethod } : {}),
+  };
 }
 
 /** Turns one request into a customer and a project. Returns the project's code. */
@@ -283,7 +294,12 @@ async function importOne(rfq: WebRfq, user: AuthUser): Promise<{ customerId: str
     customerId,
     description: projectDescriptionFor(rfq),
     customerInquiryNumber: inquiryKeyFor(rfq),
-    marketingChannel: await marketingChannelIfOffered(),
+    /*
+     * Spread rather than assigned, so a list with no website entry leaves the
+     * column **absent**: `scalarData` writes a key that is present-but-undefined
+     * as null, which is the same value but claims the question was answered.
+     */
+    ...(await webChannelValues()),
     creationDate: getTodayShamsi(),
     ownerUserId: user.id,
     salesExpert: user.fullName,

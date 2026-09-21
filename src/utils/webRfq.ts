@@ -21,6 +21,7 @@
  */
 
 import { CUSTOMER_TYPE_COMPANY, CUSTOMER_TYPE_INDIVIDUAL } from "./moduleStatuses";
+import { categoryKey } from "./productCategories";
 
 /**
  * The prefix under which a request's own number is recorded on the project.
@@ -33,8 +34,64 @@ import { CUSTOMER_TYPE_COMPANY, CUSTOMER_TYPE_INDIVIDUAL } from "./moduleStatuse
  */
 export const WEB_RFQ_INQUIRY_PREFIX = "WEB-RFQ-";
 
-/** The marketing channel a website request came through, when the list has it. */
+/* ------------------------- «this came from the site» ---------------------- */
+
+/**
+ * The two columns that say a request arrived through the website.
+ *
+ * Both are `<select>`s over the company's **own** editable lists, so neither may
+ * be written with a value the list does not carry: a `<select>` whose value
+ * matches no option renders the **first**, and the value would be silently
+ * rewritten to whatever heads that list the first time somebody opened the
+ * project and pressed save.
+ *
+ * These are the spellings a fresh installation is seeded with and the ones
+ * `settingsPatches` adds to a live document — but they are the *canonical*
+ * answers rather than the only ones, because a company may have renamed theirs.
+ */
 export const WEB_RFQ_MARKETING_CHANNEL = "وب‌سایت / آنلاین";
+export const WEB_RFQ_COMMUNICATION_METHOD = "وب‌سایت";
+
+/**
+ * Every spelling of «the website» this build recognises in one of those lists.
+ *
+ * Read rather than written: the point is to find the entry a company already
+ * has, so that appending a canonical one never puts a second name for the same
+ * thing beside it — two spellings of one channel split every report that groups
+ * by it, which is `categoryKey`'s own lesson arriving on another column.
+ */
+export const WEB_CHANNEL_ALIASES = [
+  WEB_RFQ_MARKETING_CHANNEL, WEB_RFQ_COMMUNICATION_METHOD,
+  "وب سایت", "وبسایت", "سایت", "آنلاین", "اینترنت",
+];
+
+/**
+ * The fold, **derived from `categoryKey` rather than written a second time**.
+ *
+ * It folds what that one already does — ی/ي, ک/ك, the zero-width joiner, case —
+ * and then drops the spaces and slashes too, because «وب‌سایت / آنلاین» and
+ * «وب سایت/آنلاین» are one entry written two ways and only the separators
+ * differ. It is deliberately not a change to `categoryKey`, whose own callers
+ * need «فرا سو» and «فراسو» kept apart.
+ */
+const webKey = (value: unknown): string => categoryKey(value).replace(/[\s/]+/g, "");
+
+const WEB_KEYS = new Set(WEB_CHANNEL_ALIASES.map(webKey));
+
+/**
+ * The entry in this list that already means «the website», or null.
+ *
+ * Null is what makes the column stay blank rather than being written with
+ * something the dropdown cannot offer — the same direction every other rule
+ * here takes when the answer is not knowable.
+ */
+export function webEntryIn(list: unknown): string | null {
+  if (!Array.isArray(list)) return null;
+  for (const entry of list) {
+    if (typeof entry === "string" && WEB_KEYS.has(webKey(entry))) return entry;
+  }
+  return null;
+}
 
 /**
  * How many rows the baseline pass asks for.
