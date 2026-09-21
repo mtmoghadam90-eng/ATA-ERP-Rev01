@@ -4,6 +4,12 @@ import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { inlineDocumentAssets } from '../utils/inlineAssets';
 import { namePrefixFor } from '../utils/honorific';
 import {
+  recipientDisplayName,
+  resolveSentRecipients,
+  selfRecipientName,
+  sentRecipientsRefusal,
+} from '../utils/proformaRecipients';
+import {
   Plus,
   Search,
   Filter,
@@ -1114,12 +1120,64 @@ export default function ProformasView({
   /**
    * The name to record for a person, and the one the field matches on.
    *
-   * A natural person's record keeps their name in `firstName`/`lastName`;
-   * `companyName` is filled for them too, so it is preferred and the parts are
-   * the fallback.
+   * The rule itself is `recipientDisplayName` in `proformaRecipients.ts`, since
+   * the save paths need the same reading and a second copy here is how the chip
+   * on the screen comes to say one thing and the stored row another.
    */
-  const recipientName = (c: { companyName?: string; firstName?: string; lastName?: string }) =>
-    c.companyName || `${c.firstName || ''} ${c.lastName || ''}`.trim();
+  const recipientName = recipientDisplayName;
+
+  /** The buyer the recipient question is being asked about. */
+  const recipientBuyer = React.useMemo(
+    () => customers.find((c) => c.id === recipientOwnerId),
+    [customers, recipientOwnerId],
+  );
+
+  /**
+   * The buyer's own name, when the buyer is a natural person.
+   *
+   * Null for a company, which is the ordinary case and the one the field was
+   * written for.
+   */
+  const selfRecipient = selfRecipientName(recipientBuyer);
+
+  /**
+   * The people this field may offer.
+   *
+   * `linkedTo` joins the **opposite** type, so an individual buyer's links are
+   * all companies and the server answers with nothing — right for a company
+   * buyer and a dead end for a person, whose quotation is addressed to
+   * themselves. They are merged in here rather than asked of the server,
+   * because no query returns a row on the strength of its being the buyer.
+   */
+  const recipientOptions = React.useMemo(() => {
+    const rows = recipientPicker.matches as unknown as Customer[];
+    if (!selfRecipient || !recipientBuyer) return rows;
+    if (rows.some((r) => r.id === recipientBuyer.id)) return rows;
+    // The search box narrows the server's list and must narrow this entry too,
+    // or a term matching nobody would still print the buyer.
+    const term = recipientPicker.term.trim();
+    if (term && !selfRecipient.includes(term)) return rows;
+    return [recipientBuyer, ...rows];
+  }, [recipientPicker.matches, recipientPicker.term, recipientBuyer, selfRecipient]);
+
+  /**
+   * A quotation addressed to a person is sent to that person, and the chip says
+   * so before anybody presses save.
+   *
+   * Keyed on the buyer rather than on the modal opening, so choosing an
+   * individual buyer half way through filling the form seeds it too; and once
+   * per buyer, so removing the chip is a decision that sticks. A list already
+   * on the record wins, which is what keeps an edit of a stored document from
+   * being rewritten as it loads — the reason this waits for the name to resolve
+   * rather than marking the buyer seeded the moment its id is known.
+   */
+  const seededRecipientFor = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!recipientOwnerId || !selfRecipient) return;
+    if (seededRecipientFor.current === recipientOwnerId) return;
+    seededRecipientFor.current = recipientOwnerId;
+    setSelectedSentRecipients((prev) => (prev.length > 0 ? prev : [selfRecipient]));
+  }, [recipientOwnerId, selfRecipient]);
 
   /**
    * The projects the form can choose from.
@@ -2299,15 +2357,25 @@ export default function ProformasView({
     }));
 
     const finalSentMethod = status === "ارسال شده" ? (sentMethodType === "سایر" ? customSentMethod : sentMethodType) : undefined;
-    const finalSentRecipients = status === "ارسال شده" ? selectedSentRecipients : undefined;
+    /*
+     * Resolved rather than taken: a quotation addressed to a natural person is
+     * sent to that person, so the blank answers itself. Computing it here and
+     * not only in the form is what makes a save correct even when the buyer's
+     * record had not finished loading when the chip would have been drawn.
+     */
+    const finalSentRecipients =
+      status === "ارسال شده"
+        ? resolveSentRecipients(selectedCustObj, selectedSentRecipients)
+        : undefined;
 
     if (status === "ارسال شده") {
       if (!finalSentMethod || !finalSentMethod.trim()) {
         alert("لطفاً طریقه ارسال پیش‌فاکتور را مشخص کنید.");
         return;
       }
-      if (!finalSentRecipients || finalSentRecipients.length === 0) {
-        alert("لطفاً حداقل یک شخص دریافت‌کننده (مشتری حقیقی) را انتخاب کنید.");
+      const recipientRefusal = sentRecipientsRefusal(selectedCustObj, selectedSentRecipients);
+      if (recipientRefusal) {
+        alert(recipientRefusal);
         return;
       }
     }
@@ -2454,8 +2522,9 @@ export default function ProformasView({
         alert("لطفاً طریقه ارسال پیش‌فاکتور را مشخص کنید.");
         return;
       }
-      if (selectedSentRecipients.length === 0) {
-        alert("لطفاً حداقل یک شخص دریافت‌کننده (مشتری حقیقی) را انتخاب کنید.");
+      const recipientRefusal = sentRecipientsRefusal(recipientBuyer, selectedSentRecipients);
+      if (recipientRefusal) {
+        alert(recipientRefusal);
         return;
       }
     }
@@ -2465,7 +2534,11 @@ export default function ProformasView({
       newStatusSelected,
       newStatusSelected === "باخته" ? lossReason : undefined,
       newStatusSelected === "ارسال شده" ? finalSentMethod : undefined,
-      newStatusSelected === "ارسال شده" ? selectedSentRecipients : undefined,
+      // Resolved through the same rule the form's own save uses, so marking a
+      // document sent from the grid and from the form record one answer.
+      newStatusSelected === "ارسال شده"
+        ? resolveSentRecipients(recipientBuyer, selectedSentRecipients)
+        : undefined,
     );
     setShowStatusModal(false);
   };
@@ -3564,8 +3637,10 @@ export default function ProformasView({
                             onMouseDown={(e) => e.preventDefault()}
                           >
                             {(() => {
-                              // Scoped and searched by the server; see recipientPicker.
-                              const filtered = recipientPicker.matches as unknown as Customer[];
+                              // Scoped and searched by the server, plus the buyer
+                              // themselves when the buyer is a person; see
+                              // recipientOptions.
+                              const filtered = recipientOptions;
 
                               // Three different situations, and one message used
                               // to cover all of them.
@@ -3581,6 +3656,11 @@ export default function ProformasView({
                                     {recipientPicker.term
                                       ? 'مشتری حقیقی با این نام یافت نشد.'
                                       : 'هیچ مشتری حقیقی به این کارفرما متصل نشده است.'}
+                                    {!recipientPicker.term && (
+                                      <span className="block mt-0.5 text-slate-400">
+                                        در فرم مشتری، بخش «تعریف ارتباط» می‌توانید اشخاص این کارفرما را تعریف کنید.
+                                      </span>
+                                    )}
                                   </div>
                                 );
                               }
@@ -4093,6 +4173,17 @@ export default function ProformasView({
                         } else {
                           setContactPrefix("");
                         }
+                        /*
+                         * The recipients belong to the buyer that was there a
+                         * moment ago — people linked to *that* company — so
+                         * carrying them across records the document as sent to
+                         * somebody who has nothing to do with it. Cleared in the
+                         * handler rather than in an effect on purpose: an effect
+                         * could not tell a buyer somebody changed from a buyer
+                         * an edit had just loaded, and would wipe the stored
+                         * list of every document opened.
+                         */
+                        setSelectedSentRecipients([]);
                       }}
                       required={isFieldRequired(settings, 'proformas', 'customerId')}
                       onSearchChange={customerPicker.setTerm}
@@ -4414,8 +4505,10 @@ export default function ProformasView({
                             onMouseDown={(e) => e.preventDefault()}
                           >
                             {(() => {
-                              // Scoped and searched by the server; see recipientPicker.
-                              const filtered = recipientPicker.matches as unknown as Customer[];
+                              // Scoped and searched by the server, plus the buyer
+                              // themselves when the buyer is a person; see
+                              // recipientOptions.
+                              const filtered = recipientOptions;
 
                               // Three different situations, and one message used
                               // to cover all of them.
@@ -4431,6 +4524,11 @@ export default function ProformasView({
                                     {recipientPicker.term
                                       ? 'مشتری حقیقی با این نام یافت نشد.'
                                       : 'هیچ مشتری حقیقی به این کارفرما متصل نشده است.'}
+                                    {!recipientPicker.term && (
+                                      <span className="block mt-0.5 text-slate-400">
+                                        در فرم مشتری، بخش «تعریف ارتباط» می‌توانید اشخاص این کارفرما را تعریف کنید.
+                                      </span>
+                                    )}
                                   </div>
                                 );
                               }
