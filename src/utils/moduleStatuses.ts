@@ -46,8 +46,18 @@ type Covers<Union extends string, List extends readonly string[]> =
  */
 export const PROJECT_TECHNICAL_OFFERED = "ارائه پیش‌فاکتور فنی" as const;
 
+/**
+ * Where a job starts, **named** rather than read out of the list below by index.
+ *
+ * `projects.status` is NOT NULL with no database default, so a writer that does
+ * not name it fails outright — which is what the website import did, since the
+ * default lived in `POST /api/projects` rather than in `createProject`. Two
+ * writers, one of them silently incomplete: the rule this file keeps repairing.
+ */
+export const PROJECT_STATUS_NEW = "جدید" satisfies Project["status"];
+
 export const PROJECT_STATUSES = [
-  "جدید", "در حال مذاکره", "ارائه پیش‌فاکتور",
+  PROJECT_STATUS_NEW, "در حال مذاکره", "ارائه پیش‌فاکتور",
   PROJECT_TECHNICAL_OFFERED,
   "برنده (موفق)", "باخته", "لغو شده", "نیمه برنده",
 ] as const satisfies readonly Project["status"][];
