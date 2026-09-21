@@ -41,6 +41,7 @@ import { MODULE_ICONS } from './moduleIcons';
 import AssistantSettingsPanel from './AssistantSettingsPanel';
 import ApiTokensPanel from './ApiTokensPanel';
 import WebRfqPanel from './WebRfqPanel';
+import { WEB_RFQ_SOURCES } from '../utils/webRfq';
 import { MessageTemplateRow, messagingApi } from '../api/messaging';
 import { ALL_CHANNELS, CHANNEL_LABELS, Channel, isChannel } from '../utils/messaging';
 import { formatERPNumber } from '../numUtils';
@@ -1545,7 +1546,16 @@ export default function SettingsView({
       ) : activeTab === 'stuckWork' ? (
         <StuckThresholdsPanel settings={settings} updateSettings={updateSettings} />
       ) : activeTab === 'webRfq' ? (
-        <WebRfqPanel />
+        /*
+         * One card per plugin, from the catalogue rather than written out
+         * twice: a source added there must appear here on the same commit, or
+         * it is a feed nothing can configure and therefore nothing polls.
+         */
+        <div className="space-y-8">
+          {WEB_RFQ_SOURCES.map((source) => (
+            <WebRfqPanel key={source.id} source={source.id} />
+          ))}
+        </div>
       ) : activeTab === 'rates' ? (
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
           <div className="mb-6">

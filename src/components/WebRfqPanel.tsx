@@ -3,14 +3,23 @@ import { AlertTriangle, CheckCircle2, Globe, Loader2, RefreshCw } from "lucide-r
 import { WebRfqConfig, WebRfqImportRow, WebRfqReport, webRfqApi } from "../api/webRfq";
 import { useUserDirectory } from "../api/useUserDirectory";
 import { toShamsiStr } from "../dateUtils";
+import { WebRfqSourceId, webRfqSourceSpec } from "../utils/webRfq";
 
 /**
- * «استعلام‌های وب‌سایت» — the panel that switches the import on and shows what
- * has arrived.
+ * «استعلام‌های وب‌سایت» — the card that switches one plugin's import on and
+ * shows what has arrived through it.
  *
  * Its own component rather than another branch of `SettingsView`, which is far
  * too large to render: this one fetches, so it needs to be drivable by
  * `test:ui`.
+ *
+ * **One component, one card per source**, the `MessengerLinkPanel` rule: a
+ * second near-copy of three hundred lines is how the two come to disagree
+ * about what «ناموفق» looks like, which is a screen somebody then has to learn
+ * twice. Its own failure mode is one no type-check can see — a card whose
+ * calls point at the *other* source would render perfectly and report the
+ * wrong feed's state — so `test:ui` renders both and asserts which URL each
+ * one asked for.
  *
  * Two things it deliberately draws that nothing else could. **The last poll's
  * result**, because the failure mode of a poller is silence — a feed that
@@ -28,7 +37,8 @@ const stamp = (value: number | string | null): string => {
   return `${day} — ${time}`;
 };
 
-export default function WebRfqPanel() {
+export default function WebRfqPanel({ source }: { source: WebRfqSourceId }) {
+  const spec = webRfqSourceSpec(source);
   const { users } = useUserDirectory();
   const [config, setConfig] = useState<WebRfqConfig | null>(null);
   const [report, setReport] = useState<WebRfqReport | null>(null);
@@ -57,14 +67,16 @@ export default function WebRfqPanel() {
 
   const load = useCallback(async () => {
     try {
-      const [cfg, list] = await Promise.all([webRfqApi.config(), webRfqApi.imports()]);
+      const [cfg, list] = await Promise.all([
+        webRfqApi.config(source), webRfqApi.imports(source),
+      ]);
       apply(cfg.config);
       setReport(cfg.report);
       setRows(list.imports);
     } catch (err) {
       setMessage({ kind: "bad", text: err instanceof Error ? err.message : "خطا در خواندن تنظیمات." });
     }
-  }, [apply]);
+  }, [apply, source]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -73,7 +85,7 @@ export default function WebRfqPanel() {
     setMessage(null);
     try {
       const typed = startAfter.trim();
-      const answer = await webRfqApi.save({
+      const answer = await webRfqApi.save(source, {
         feedUrl, token, active, ownerUserId: ownerUserId || null,
         // Blank is «draw it again on the next poll», which is not zero —
         // zero would mean «import everything», the opposite answer.
@@ -93,7 +105,7 @@ export default function WebRfqPanel() {
     setBusy(true);
     setMessage(null);
     try {
-      const answer = await webRfqApi.sync();
+      const answer = await webRfqApi.sync(source);
       setReport(answer.report);
       /*
        * A baseline pass imports nothing on purpose, and «۰ استعلام منتقل شد»
@@ -129,16 +141,17 @@ export default function WebRfqPanel() {
   };
 
   return (
-    <div className="space-y-6" data-web-rfq-panel>
+    <div className="space-y-6" data-web-rfq-panel={source}>
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 space-y-5">
         <div className="flex items-start gap-3">
           <Globe size={20} className="text-sky-500 mt-0.5 shrink-0" />
           <div>
-            <h3 className="text-lg font-bold text-slate-900">استعلام‌های وب‌سایت</h3>
+            <h3 className="text-lg font-bold text-slate-900">{spec.label}</h3>
+            <p className="text-xs text-secondary mt-0.5">{spec.hint}</p>
             <p className="text-secondary text-sm mt-1 leading-6">
-              هر درخواست استعلام قیمتی که در سایت ثبت می‌شود، اینجا به یک مشتری و یک پروژهٔ جدید
-              تبدیل می‌شود تا بتوانید برایش پیش‌فاکتور صادر کنید. ایمیلی که تا امروز می‌گرفتید
-              سر جای خودش می‌ماند.
+              هر درخواست استعلام قیمتی که از این راه در سایت ثبت می‌شود، اینجا به یک مشتری و یک
+              پروژهٔ جدید تبدیل می‌شود تا بتوانید برایش پیش‌فاکتور صادر کنید. ایمیلی که تا امروز
+              می‌گرفتید سر جای خودش می‌ماند.
             </p>
           </div>
         </div>
@@ -148,6 +161,8 @@ export default function WebRfqPanel() {
           ERP هر پنج دقیقه خودش سایت را می‌خواند. <strong>اولین همگام‌سازی هیچ چیزی منتقل
           نمی‌کند</strong> و فقط شمارهٔ فعلی سایت را به‌عنوان خط ثبت می‌کند؛ استعلام‌های قبلی
           که پروژه‌شان را دستی ساخته‌اید دست‌نخورده می‌مانند و فقط درخواست‌های بعد از آن می‌آیند.
+          هر افزونه شمارهٔ خودش را دارد، پس آدرس، توکن و خطِ این کارت فقط به همین افزونه مربوط است
+          و <strong>یک آدرس نباید در دو کارت وارد شود</strong>.
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -156,7 +171,7 @@ export default function WebRfqPanel() {
             <input
               type="text" dir="ltr" value={feedUrl}
               onChange={(e) => setFeedUrl(e.target.value)}
-              placeholder="https://example.com/wp-json/ata/v1/rfq/erp-feed"
+              placeholder={spec.samplePath}
               className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-sky-400"
             />
             <p className="text-xs text-secondary mt-1.5">باید https باشد؛ توکن نباید روی اتصال رمزنشده برود.</p>
@@ -201,7 +216,7 @@ export default function WebRfqPanel() {
               type="text" inputMode="numeric" dir="ltr" value={startAfter}
               onChange={(e) => setStartAfter(e.target.value.replace(/[^0-9]/g, ""))}
               placeholder="در اولین همگام‌سازی خودکار پر می‌شود"
-              data-web-rfq-line
+              data-web-rfq-line={source}
               className="w-full md:w-48 px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-sky-400"
             />
             <p className="text-xs text-secondary mt-1.5 leading-5">
@@ -238,14 +253,14 @@ export default function WebRfqPanel() {
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button" onClick={() => void save()} disabled={busy}
-            data-web-rfq-save
+            data-web-rfq-save={source}
             className="px-4 py-2 rounded-xl bg-sky-500 text-white text-sm font-semibold hover:bg-sky-600 disabled:opacity-50"
           >
             ذخیره تنظیمات
           </button>
           <button
             type="button" onClick={() => void syncNow()} disabled={busy}
-            data-web-rfq-sync
+            data-web-rfq-sync={source}
             className="px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 flex items-center gap-2"
           >
             {busy ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
@@ -279,10 +294,11 @@ export default function WebRfqPanel() {
           <p className="text-sm text-secondary">هنوز استعلامی منتقل نشده است.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[720px]">
+            <table className="w-full text-sm min-w-[840px]">
               <thead>
                 <tr className="text-right text-xs text-secondary border-b border-slate-200">
                   <th className="py-2 px-2 font-semibold">شماره سایت</th>
+                  <th className="py-2 px-2 font-semibold">کد پیگیری</th>
                   <th className="py-2 px-2 font-semibold">درخواست‌کننده</th>
                   <th className="py-2 px-2 font-semibold">تجهیز</th>
                   <th className="py-2 px-2 font-semibold">کد پروژه</th>
@@ -294,6 +310,7 @@ export default function WebRfqPanel() {
                 {rows.map((row) => (
                   <tr key={row.id} className="border-b border-slate-100 align-top">
                     <td className="py-2 px-2 font-mono text-xs">#{row.rfqId}</td>
+                    <td className="py-2 px-2 font-mono text-[11px] break-all">{row.reference || "—"}</td>
                     <td className="py-2 px-2">{row.fullName || "—"}</td>
                     <td className="py-2 px-2 break-words">{row.productName || "—"}</td>
                     <td className="py-2 px-2 font-mono text-xs">{row.projectCode || "—"}</td>

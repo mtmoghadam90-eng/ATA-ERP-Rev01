@@ -1,7 +1,14 @@
 import { api } from "./client";
+import { WebRfqSourceId } from "../utils/webRfq";
 
 /**
- * The website's price-request feed, from the settings screen.
+ * The website's price-request feeds, from the settings screen.
+ *
+ * Every call names its **source** — there is one configuration, one line and
+ * one report per plugin, and a call that could omit it would answer about
+ * whichever card was not being looked at. The retry is the one exception, and
+ * deliberately: the import row carries its own source, so naming one here
+ * could only ever contradict it.
  *
  * The token is write-only: `config` answers a masked hint and never the value,
  * and saving with a blank one means «unchanged» — the rule every stored secret
@@ -9,6 +16,7 @@ import { api } from "./client";
  */
 
 export interface WebRfqConfig {
+  source: WebRfqSourceId;
   feedUrl: string;
   tokenHint: string | null;
   active: boolean;
@@ -30,7 +38,10 @@ export interface WebRfqReport {
 
 export interface WebRfqImportRow {
   id: string;
+  source: string;
   rfqId: number;
+  /** The plugin's own reference, where it issues one. */
+  reference: string | null;
   status: string;
   attempts: number;
   projectId: string | null;
@@ -46,19 +57,22 @@ export interface WebRfqImportRow {
 type ConfigAnswer = { config: WebRfqConfig; report: WebRfqReport };
 
 export const webRfqApi = {
-  config: () => api.get<ConfigAnswer>("/api/web-rfq/config"),
+  config: (source: WebRfqSourceId) =>
+    api.get<ConfigAnswer>(`/api/web-rfq/${source}/config`),
 
-  save: (input: {
+  save: (source: WebRfqSourceId, input: {
     feedUrl?: string; token?: string; active?: boolean;
     ownerUserId?: string | null;
     /** Null means «draw it again on the next poll»; zero means «everything». */
     startAfterId?: number | null;
   }) =>
-    api.put<ConfigAnswer>("/api/web-rfq/config", input),
+    api.put<ConfigAnswer>(`/api/web-rfq/${source}/config`, input),
 
-  sync: () => api.post<{ imported: number; report: WebRfqReport }>("/api/web-rfq/sync", {}),
+  sync: (source: WebRfqSourceId) =>
+    api.post<{ imported: number; report: WebRfqReport }>(`/api/web-rfq/${source}/sync`, {}),
 
-  imports: () => api.get<{ imports: WebRfqImportRow[] }>("/api/web-rfq/imports"),
+  imports: (source: WebRfqSourceId) =>
+    api.get<{ imports: WebRfqImportRow[] }>(`/api/web-rfq/${source}/imports`),
 
   retry: (id: string) =>
     api.post<{ imported: number; report: WebRfqReport }>(`/api/web-rfq/imports/${id}/retry`, {}),

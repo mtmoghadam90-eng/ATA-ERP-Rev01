@@ -1,17 +1,19 @@
 /**
  * Price requests raised on the public website, as records in the ERP.
  *
- * The site's advisor plugin already stores every «استعلام قیمت» as a structured
- * row — the contact details, the equipment, and the technical specification the
- * assistant extracted and the customer confirmed — and emails it. An email is
- * a copy for a person to read; it is not a record anybody can quote from, so
- * the request was retyped into the ERP by hand or answered out of the inbox.
+ * Two plugins on the site record one, and they are genuinely two things. The
+ * **advisor** takes a visitor through a conversation and stores the one
+ * specification they settled on; the **form** hands them a technical datasheet
+ * per item and lets them attach their own drawings, so one request there is
+ * several pieces of equipment with their own quantities. Both email the result,
+ * and an email is a copy for a person to read — not a record anybody can quote
+ * from, so the request was retyped here by hand or answered out of the inbox.
  *
  * **The direction is the whole design decision.** The website is public and
  * this server is on a private LAN that must never be exposed, so nothing on the
  * site can push anything here: a webhook is not available in principle, not
  * merely unconfigured. So the ERP *pulls*, on a timer, exactly as it already
- * pulls the exchange rates — and the site's endpoint is a plain read with no
+ * pulls the exchange rates — and each plugin's endpoint is a plain read with no
  * state of its own, which is what keeps a failed import from being a request
  * the site believes it has already handed over.
  *
@@ -23,16 +25,84 @@
 import { CUSTOMER_TYPE_COMPANY, CUSTOMER_TYPE_INDIVIDUAL } from "./moduleStatuses";
 import { categoryKey } from "./productCategories";
 
+/* ------------------------------- the sources ------------------------------ */
+
 /**
- * The prefix under which a request's own number is recorded on the project.
+ * The prefix under which an advisor request's own number is recorded.
  *
  * It goes in `customerInquiryNumber` — «شماره درخواست», the customer's own
  * reference for the enquiry, which is exactly what a number raised on their
  * side of the conversation is, and which the printed quotation already shows
  * them. That it is also *searchable* is what makes a second import findable
  * from the screen rather than only from the log.
+ *
+ * Kept as its own name rather than read out of the catalogue below by index:
+ * a list may be reordered, and this spelling is on every project imported
+ * before the second source existed.
  */
 export const WEB_RFQ_INQUIRY_PREFIX = "WEB-RFQ-";
+
+/** One plugin the site records price requests with. */
+export interface WebRfqSourceSpec {
+  id: string;
+  /** What the panel calls it — two cards, and neither may be a guess. */
+  label: string;
+  /** Which plugin this is, in one line, because the labels alone could be either. */
+  hint: string;
+  /** The address its feed answers on, as a placeholder in the panel. */
+  samplePath: string;
+  /**
+   * What a request is filed under when the plugin issues no reference of its
+   * own. The two prefixes must differ: both plugins number their requests from
+   * one, and one prefix would file two different enquiries under one key.
+   */
+  inquiryPrefix: string;
+}
+
+/**
+ * The catalogue, and the single list of sources.
+ *
+ * The union below is **derived from it**, so a source cannot exist in one and
+ * not the other — the drift `APP_MODULES` and `WORKFLOW_ACTION_TYPES` are each
+ * the answer to, on a much smaller list.
+ */
+export const WEB_RFQ_SOURCES = [
+  {
+    id: "ADVISOR",
+    label: "مشاور هوشمند سایت",
+    hint: "افزونهٔ «ata-advisor» — گفتگوی مشاور با بازدیدکننده؛ یک تجهیز در هر درخواست.",
+    samplePath: "https://example.com/wp-json/ata/v1/rfq/erp-feed",
+    inquiryPrefix: WEB_RFQ_INQUIRY_PREFIX,
+  },
+  {
+    id: "FORM",
+    label: "فرم استعلام قیمت",
+    hint: "افزونهٔ «ata-smart-rfq» — فرم فنی و پیوست؛ چند قلم در هر درخواست.",
+    samplePath: "https://example.com/wp-json/ata-rfq/v1/erp-feed",
+    inquiryPrefix: "WEB-FORM-",
+  },
+] as const satisfies readonly WebRfqSourceSpec[];
+
+export type WebRfqSourceId = typeof WEB_RFQ_SOURCES[number]["id"];
+
+/**
+ * The source a request belongs to when nobody said.
+ *
+ * Every row and every configuration written before the second plugin existed
+ * is the advisor's, which is what it is — the `DEFAULT 'CUSTOMER'` rule on
+ * `messages.audience`, and the reason the column's database default says the
+ * same thing.
+ */
+export const DEFAULT_WEB_RFQ_SOURCE: WebRfqSourceId = "ADVISOR";
+
+export function isWebRfqSource(value: unknown): value is WebRfqSourceId {
+  return WEB_RFQ_SOURCES.some((source) => source.id === value);
+}
+
+/** The catalogue entry for a source, falling back to the advisor's. */
+export function webRfqSourceSpec(id: unknown): WebRfqSourceSpec {
+  return WEB_RFQ_SOURCES.find((source) => source.id === id) ?? WEB_RFQ_SOURCES[0];
+}
 
 /* ------------------------- «this came from the site» ---------------------- */
 
@@ -48,6 +118,7 @@ export const WEB_RFQ_INQUIRY_PREFIX = "WEB-RFQ-";
  * These are the spellings a fresh installation is seeded with and the ones
  * `settingsPatches` adds to a live document — but they are the *canonical*
  * answers rather than the only ones, because a company may have renamed theirs.
+ * Both plugins are the same website, so neither source changes these.
  */
 export const WEB_RFQ_MARKETING_CHANNEL = "وب‌سایت / آنلاین";
 export const WEB_RFQ_COMMUNICATION_METHOD = "وب‌سایت";
@@ -96,9 +167,9 @@ export function webEntryIn(list: unknown): string | null {
 /**
  * How many rows the baseline pass asks for.
  *
- * The first poll after this is switched on **imports nothing**: it reads where
- * the site's numbering has got to and records that as the line, so only what
- * is raised from then on comes across. Anything already on the site was
+ * The first poll after a source is switched on **imports nothing**: it reads
+ * where that plugin's numbering has got to and records it as the line, so only
+ * what is raised from then on comes across. Anything already on the site was
  * answered — or entered here by hand — before this existed, and importing it
  * would put a second, duplicate project beside every one of those.
  *
@@ -136,23 +207,68 @@ export const MAX_IMPORT_ATTEMPTS = 3;
 
 /* ------------------------------ what arrives ------------------------------ */
 
-/** One price request, as the website's feed describes it. */
+/**
+ * One piece of equipment on a request.
+ *
+ * The advisor's requests carry exactly one and the form's carry up to fifty,
+ * each with its own quantity and its own datasheet — which is the whole reason
+ * this is a list rather than three columns: folding several items into one
+ * «اقلام مورد نیاز» row would lose the quantities, and the scope of the job is
+ * what those rows are for.
+ */
+export interface WebRfqLine {
+  /**
+   * The site's own product id — a WordPress post id, recorded for the reader
+   * and **never** written onto a project line, where the column is a real
+   * foreign key into this database.
+   */
+  productId: number;
+  productName: string;
+  quantity: number;
+  /** The confirmed specification, one «مشخصه: مقدار» per line. */
+  specs: string;
+}
+
+/** One price request, as a plugin's feed describes it. */
 export interface WebRfq {
-  /** The site's own number for it — `#12` on the email and in its panel. */
+  /** Which plugin it came from. Supplied by the reader, never read off the row. */
+  source: WebRfqSourceId;
+  /** The plugin's own number for it — `#12` on the email and in its panel. */
   id: number;
+  /**
+   * The plugin's own human reference, when it issues one.
+   *
+   * The form plugin emails the customer «درخواست شما با کد ATA-RFQ-… ثبت شد»,
+   * so that string is literally the customer's own reference for the enquiry —
+   * which is what `customerInquiryNumber` means, and what makes the number they
+   * quote on the phone findable from the screen. The advisor issues none.
+   */
+  reference: string;
   fullName: string;
   company: string;
   mobile: string;
   email: string;
+  /** Where they are, when the form asked. Free text; the province is not guessed. */
+  city: string;
+  /** «تا چه زمانی لازم دارید» — free text, so it is prose and not a date column. */
+  deadline: string;
   /** Whatever the customer typed in the «توضیحات تکمیلی» box. */
   notes: string;
-  productId: number;
-  productName: string;
   productUrl: string;
-  /** The confirmed technical specification, one «مشخصه: مقدار» per line. */
-  specs: string;
-  /** A link back to the conversation in the site's own panel. */
+  /** A link back to the request in the site's own panel. */
   panelUrl: string;
+  /**
+   * How many files the customer attached.
+   *
+   * A count and not the files: the form plugin stores them outside the web root
+   * behind a deny-all rule and serves them only to a signed-in administrator,
+   * so this server cannot fetch them. Naming the count beside the panel link is
+   * the honest answer — a project that claimed to hold files it does not would
+   * be worse than one that says where they are.
+   */
+  attachmentCount: number;
+  /** The equipment asked for. Empty when the request was a bare file upload. */
+  lines: WebRfqLine[];
   /** When the customer pressed the button, as the site wrote it. */
   submittedAt: string;
 }
@@ -165,6 +281,52 @@ const whole = (value: unknown): number => {
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
 };
 
+const amount = (value: unknown): number => {
+  const n = Number(String(value ?? "").trim());
+  return Number.isFinite(n) && n > 0 ? n : 1;
+};
+
+/**
+ * The equipment on a row, from either wire shape.
+ *
+ * The form plugin sends a `lines` array; the advisor sends the single product
+ * flat on the row, and so does every payload stored before this existed — so
+ * one reader reconciles both and **never reads both**, exactly as
+ * `parseAttachments` reconciles a JSON column against the older single columns.
+ * Reading the flat keys as well would put the first item on the project twice.
+ */
+function parseLines(r: Record<string, unknown>): WebRfqLine[] {
+  const raw = r.lines ?? r.items;
+  if (Array.isArray(raw)) {
+    const lines: WebRfqLine[] = [];
+    for (const entry of raw) {
+      if (!entry || typeof entry !== "object") continue;
+      const line = entry as Record<string, unknown>;
+      const productName = text(line.product_name ?? line.productName, 400);
+      const specs = text(line.specs, 8000);
+      // A line naming nothing and saying nothing is not a line.
+      if (!productName && !specs) continue;
+      lines.push({
+        productId: whole(line.product_id ?? line.productId),
+        productName,
+        quantity: amount(line.quantity),
+        specs,
+      });
+    }
+    return lines;
+  }
+
+  const productName = text(r.product_name ?? r.productName, 400);
+  const specs = text(r.specs, 8000);
+  if (!productName && !specs) return [];
+  return [{
+    productId: whole(r.product_id ?? r.productId),
+    productName,
+    quantity: amount(r.quantity ?? 1),
+    specs,
+  }];
+}
+
 /**
  * One feed row, or null.
  *
@@ -174,35 +336,42 @@ const whole = (value: unknown): number => {
  * customer — both are dropped rather than imported as something plausible and
  * wrong, which on this path would be a project nobody can chase attached to a
  * customer nobody can ring.
+ *
+ * The **source is an argument**, never read off the row: which plugin answered
+ * is a fact about the configuration that was polled, and a feed that could name
+ * its own source could file its requests under the other one's numbering.
  */
-export function parseFeedRow(raw: unknown): WebRfq | null {
+export function parseFeedRow(raw: unknown, source: WebRfqSourceId): WebRfq | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
 
   const id = whole(r.id);
   if (!id) return null;
 
-  const fullName = text(r.full_name ?? r.fullName, 191);
+  const fullName = text(r.full_name ?? r.fullName ?? r.customer_name, 191);
   const company = text(r.company, 191);
   if (!fullName && !company) return null;
 
   return {
+    source,
     id,
+    reference: text(r.reference, 60),
     fullName,
     company,
     mobile: text(r.mobile, 50),
     email: text(r.email, 191),
-    notes: text(r.customer_notes ?? r.notes, 1500),
-    productId: whole(r.product_id ?? r.productId),
-    productName: text(r.product_name ?? r.productName, 400),
+    city: text(r.city, 100),
+    deadline: text(r.deadline, 200),
+    notes: text(r.customer_notes ?? r.notes ?? r.note, 1500),
     productUrl: text(r.product_url ?? r.productUrl, 500),
-    specs: text(r.specs, 8000),
     panelUrl: text(r.panel_url ?? r.panelUrl, 500),
-    submittedAt: text(r.submitted_at ?? r.submittedAt, 40),
+    attachmentCount: whole(r.attachment_count ?? r.attachmentCount),
+    lines: parseLines(r),
+    submittedAt: text(r.submitted_at ?? r.submittedAt ?? r.created_at, 40),
   };
 }
 
-/** A feed response: the usable rows, and where the site's numbering has got to. */
+/** A feed response: the usable rows, and where the plugin's numbering has got to. */
 export interface WebRfqFeed {
   items: WebRfq[];
   /**
@@ -219,12 +388,12 @@ export interface WebRfqFeed {
   maxId: number;
 }
 
-export function parseFeed(body: unknown): WebRfqFeed {
+export function parseFeed(body: unknown, source: WebRfqSourceId): WebRfqFeed {
   const raw = (body && typeof body === "object") ? body as Record<string, unknown> : {};
   const items: WebRfq[] = [];
   if (Array.isArray(raw.items)) {
     for (const item of raw.items) {
-      const row = parseFeedRow(item);
+      const row = parseFeedRow(item, source);
       if (row) items.push(row);
     }
   }
@@ -286,6 +455,27 @@ export function feedConfigRefusal(
   return null;
 }
 
+/**
+ * Why these two feeds cannot both be used, or null.
+ *
+ * Two sources are two plugins, and pointing both cards at **one** address is
+ * the mistake the second card invites: the requests would be read twice, once
+ * under each source, and imported as two projects for one enquiry — the
+ * duplicate this whole module exists to avoid, arriving through the control
+ * added to widen it. It is refused where it is typed, because by the time a
+ * poll could notice, the second project is already on somebody's board.
+ */
+export function duplicateFeedRefusal(
+  url: string | null | undefined,
+  otherUrl: string | null | undefined,
+): string | null {
+  const mine = String(url ?? "").trim();
+  const theirs = String(otherUrl ?? "").trim();
+  if (!mine || !theirs) return null;
+  if (mine !== theirs) return null;
+  return "این آدرس برای منبع دیگری هم ثبت شده است؛ یک فید نباید دو بار خوانده شود، وگرنه هر استعلام دو پروژه می‌سازد.";
+}
+
 /** The address a poll asks, with the window it wants. */
 export function feedRequestUrl(base: string, sinceId: number, limit: number): string {
   const url = new URL(String(base).trim());
@@ -297,7 +487,7 @@ export function feedRequestUrl(base: string, sinceId: number, limit: number): st
 /**
  * Which number to ask from, given the line and the highest already seen.
  *
- * `startAfterId` is the line: the site's numbering as it stood when this was
+ * `startAfterId` is the line: the plugin's numbering as it stood when this was
  * switched on, below which nothing is ever imported. **Absent and zero are two
  * different answers** — absent means no line has been drawn yet, which is what
  * the baseline pass is for, while a stored zero is somebody having decided the
@@ -330,9 +520,21 @@ export function isBeforeLine(rfq: Pick<WebRfq, "id">, startAfterId: number): boo
 
 /* -------------------------------- mapping --------------------------------- */
 
-/** The key this request is recorded under on its project. */
-export function inquiryKeyFor(rfq: Pick<WebRfq, "id">): string {
-  return `${WEB_RFQ_INQUIRY_PREFIX}${rfq.id}`;
+/**
+ * The key this request is recorded under on its project.
+ *
+ * **The plugin's own reference wins** where it issues one: the form plugin
+ * emails the customer «درخواست شما با کد ATA-RFQ-… ثبت شد», so that is
+ * literally their reference for the enquiry, which is what the column means
+ * and what they will quote on the phone. Where there is none the prefix and
+ * the number stand in — and the two sources' prefixes differ, because both
+ * plugins number from one and a shared prefix would file two unrelated
+ * enquiries under the same key.
+ */
+export function inquiryKeyFor(rfq: Pick<WebRfq, "id" | "source" | "reference">): string {
+  const reference = String(rfq.reference ?? "").trim();
+  if (reference) return reference.slice(0, 60);
+  return `${webRfqSourceSpec(rfq.source).inquiryPrefix}${rfq.id}`;
 }
 
 /**
@@ -361,6 +563,7 @@ export interface WebRfqCustomer {
   keyPerson?: string;
   mobile: string;
   email: string;
+  city?: string;
   notes: string;
 }
 
@@ -375,10 +578,18 @@ export interface WebRfqCustomer {
  * «حقیقی», and `companyName` is filled with the person's own name the way the
  * customers screen already does it, so every dropdown and every printed
  * document has something to show.
+ *
+ * The city is written where the form asked for one and is **spread**, because
+ * `scalarData` writes a key that is present-but-undefined as null, which is the
+ * same value while claiming the question was answered. The **province is left
+ * alone**: there is no city-to-province table here, and a guessed province is
+ * one `canonicalizeProvince` would happily store and nobody could tell from an
+ * answer somebody gave.
  */
 export function customerFor(rfq: WebRfq): WebRfqCustomer {
   const { firstName, lastName } = splitFullName(rfq.fullName);
   const origin = `ثبت‌شده از استعلام سایت ${inquiryKeyFor(rfq)}`;
+  const city = rfq.city.trim();
 
   if (rfq.company) {
     return {
@@ -387,6 +598,7 @@ export function customerFor(rfq: WebRfq): WebRfqCustomer {
       keyPerson: rfq.fullName,
       mobile: rfq.mobile,
       email: rfq.email,
+      ...(city ? { city } : {}),
       notes: origin,
     };
   }
@@ -397,61 +609,98 @@ export function customerFor(rfq: WebRfq): WebRfqCustomer {
     lastName,
     mobile: rfq.mobile,
     email: rfq.email,
+    ...(city ? { city } : {}),
     notes: origin,
   };
 }
 
-/** The project's own name — the equipment, or the request when there is none. */
+/**
+ * The project's own name.
+ *
+ * The first item's equipment, and where there are several the count comes with
+ * it — a job asking for four instruments named after only the first reads, on
+ * every grid it appears in, as a job for one. A request that named no equipment
+ * at all (the form's «فقط فایل» mode) is named for the request itself.
+ */
 export function projectNameFor(rfq: WebRfq): string {
-  const product = rfq.productName.trim();
-  return (product || `استعلام سایت ${inquiryKeyFor(rfq)}`).slice(0, 400);
+  const first = rfq.lines[0]?.productName.trim() ?? "";
+  if (!first) return `استعلام سایت ${inquiryKeyFor(rfq)}`.slice(0, 400);
+  if (rfq.lines.length > 1) {
+    return `${first} و ${rfq.lines.length - 1} قلم دیگر`.slice(0, 400);
+  }
+  return first.slice(0, 400);
 }
 
 /**
  * Everything the request said, as the project's description.
  *
- * The specification is the point of it: it is what the visitor and the site's
- * assistant settled on, line by line, and it is what a quotation is written
- * from. The customer's own note comes under its own heading rather than being
- * run into it, and both links travel — the product page because the quotation
- * is for that equipment, and the conversation because the specification is a
- * summary and the thread is the evidence behind it.
+ * The specification is the point of it: it is what the customer filled in or
+ * settled on, line by line, and it is what a quotation is written from. The
+ * customer's own note comes under its own heading rather than being run into
+ * it, and both links travel — the product page because the quotation is for
+ * that equipment, and the panel because the specification is a summary, the
+ * thread and the attachments are the evidence behind it, and those files are
+ * reachable from nowhere else.
  *
  * A heading with nothing under it is worse than no heading, so each block is
  * written only when it has something in it.
  */
 export function projectDescriptionFor(rfq: WebRfq): string {
-  const blocks: string[] = [`درخواست استعلام از وب‌سایت — شماره ${rfq.id}`];
+  const spec = webRfqSourceSpec(rfq.source);
+  const blocks: string[] = [
+    `درخواست استعلام از وب‌سایت (${spec.label}) — شماره ${rfq.id}`,
+  ];
 
+  if (rfq.reference) blocks.push(`کد پیگیری سایت: ${rfq.reference}`);
   if (rfq.submittedAt) blocks.push(`تاریخ ثبت در سایت: ${rfq.submittedAt}`);
   if (rfq.fullName) blocks.push(`تماس‌گیرنده: ${rfq.fullName}`);
 
   const contact = [rfq.mobile, rfq.email].filter(Boolean).join(" — ");
   if (contact) blocks.push(`راه ارتباطی: ${contact}`);
+  if (rfq.city) blocks.push(`شهر: ${rfq.city}`);
+  if (rfq.deadline) blocks.push(`زمان مورد نیاز مشتری: ${rfq.deadline}`);
 
-  if (rfq.productName) {
-    blocks.push(rfq.productUrl
-      ? `تجهیز درخواستی: ${rfq.productName}\n${rfq.productUrl}`
-      : `تجهیز درخواستی: ${rfq.productName}`);
-  }
-  if (rfq.specs) blocks.push(`مشخصات تأییدشده توسط مشتری:\n${rfq.specs}`);
+  rfq.lines.forEach((line, index) => {
+    const heading = rfq.lines.length > 1
+      ? `قلم ${index + 1}: ${line.productName || "بدون نام"} — تعداد ${line.quantity}`
+      : `تجهیز درخواستی: ${line.productName || "بدون نام"} — تعداد ${line.quantity}`;
+    const parts = [heading];
+    if (index === 0 && rfq.productUrl) parts.push(rfq.productUrl);
+    if (line.specs) parts.push(line.specs);
+    blocks.push(parts.join("\n"));
+  });
+
   if (rfq.notes) blocks.push(`توضیحات تکمیلی مشتری:\n${rfq.notes}`);
-  if (rfq.panelUrl) blocks.push(`متن کامل گفتگو در پنل سایت:\n${rfq.panelUrl}`);
+  /*
+   * The files stay on the site: the form plugin keeps them outside the web root
+   * behind a deny-all rule and serves them only to a signed-in administrator,
+   * so this server cannot fetch them. Saying how many there are beside the link
+   * is the honest answer — a project silently missing the drawing the whole
+   * enquiry was about is the failure that matters.
+   */
+  if (rfq.attachmentCount > 0) {
+    blocks.push(`${rfq.attachmentCount} فایل پیوست در پنل سایت ثبت شده است (اینجا منتقل نمی‌شود).`);
+  }
+  if (rfq.panelUrl) blocks.push(`اصل درخواست در پنل سایت:\n${rfq.panelUrl}`);
 
   return blocks.join("\n\n");
 }
 
 /**
- * The «اقلام مورد نیاز» line this request implies, or null.
+ * The «اقلام مورد نیاز» lines this request implies.
  *
- * One line naming the equipment, with **no `productId`** however confident the
- * site is about its own catalogue: that column is a real foreign key into
- * *this* database and the site's `product_id` is a WordPress post id, so
- * writing it would point at nothing — the trap `scrubProductRefs` exists for.
- * The name is what a person matches against the catalogue when they quote.
+ * One line per item, with **no `productId`** however confident the site is
+ * about its own catalogue: that column is a real foreign key into *this*
+ * database and the site's `product_id` is a WordPress post id, so writing it
+ * would point at nothing — the trap `scrubProductRefs` exists for. The name is
+ * what a person matches against the catalogue when they quote, and the quantity
+ * is what the customer asked for, which is the scope of the job.
+ *
+ * A line with no name gets none: an unnamed row on that grid is one nobody can
+ * quote from, and whatever it said is already in the description.
  */
-export function projectItemFor(rfq: WebRfq): { name: string; quantity: number } | null {
-  const name = rfq.productName.trim();
-  if (!name) return null;
-  return { name: name.slice(0, 400), quantity: 1 };
+export function projectItemsFor(rfq: WebRfq): { name: string; quantity: number }[] {
+  return rfq.lines
+    .filter((line) => line.productName.trim())
+    .map((line) => ({ name: line.productName.trim().slice(0, 400), quantity: line.quantity }));
 }

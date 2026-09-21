@@ -2234,6 +2234,11 @@ model ApiToken {
 /// typed the right one; the token goes out masked and a blank one on save means
 /// «unchanged» — the rule every provider credential here already follows.
 model WebRfqConfig {
+  /// The source — «ADVISOR» or «FORM», one row per plugin the site records a
+  /// price request with. The id *is* the discriminator: there is exactly one
+  /// configuration per plugin, so a column beside the key would be a second
+  /// thing saying what the key already says. The row written before the second
+  /// plugin existed was keyed «default» and is renamed by 20260930000000.
   id      String  @id @db.NVarChar(36)
   feedUrl String? @db.NVarChar(500)
   token   String? @db.NVarChar(200)
@@ -2277,8 +2282,24 @@ model WebRfqConfig {
 /// from the website is not one of them.
 model WebRfqImport {
   id     String @id @db.NVarChar(36)
-  /// The site's own number for the request — `#12` on its email and panel.
-  rfqId  Int    @unique
+
+  /// Which plugin it came from — «ADVISOR» or «FORM».
+  ///
+  /// Both number their own requests from one, so the number alone cannot
+  /// identify a request: keyed on it, the form's #9 would be refused as
+  /// «already imported» on the strength of the advisor's, and refused
+  /// *silently*, which is the whole failure this table exists to prevent.
+  /// Every row written before the second plugin is the advisor's, which is
+  /// what the column's default says.
+  source String @default("ADVISOR") @db.NVarChar(20)
+
+  /// The plugin's own number for the request — `#12` on its email and panel.
+  rfqId  Int
+
+  /// The plugin's own human reference, where it issues one — the code the
+  /// customer was emailed and will quote on the phone. Null for the advisor,
+  /// which issues none.
+  reference String? @db.NVarChar(60)
   /// IMPORTED | FAILED
   status String @db.NVarChar(20)
   /// How many times it has been tried. See `MAX_IMPORT_ATTEMPTS`.
@@ -2296,6 +2317,7 @@ model WebRfqImport {
   createdAt  DateTime  @default(now())
   importedAt DateTime?
 
+  @@unique([source, rfqId])
   @@index([status])
   @@map("web_rfq_imports")
 }
