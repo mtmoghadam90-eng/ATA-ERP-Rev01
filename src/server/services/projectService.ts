@@ -6,7 +6,7 @@ import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } fr
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { scrubProductRefs } from "../refIntegrity";
 import { deriveProjectStage, resolveStage } from "../../utils/projectStage";
-import { PROFORMA_SENT_STATUS, inquiryWorkflowStatus } from "../../utils/moduleStatuses";
+import { PROFORMA_SENT_STATUS, PROJECT_STATUS_NEW, inquiryWorkflowStatus } from "../../utils/moduleStatuses";
 import { statusChangeColumns } from "../../utils/statusDwell";
 import { scheduleProjectStageTrigger } from "./projectStageEvents";
 import { isWonStatus } from "../proformaStatus";
@@ -774,6 +774,17 @@ export async function createProject(input: ProjectInput, user: AuthUser, todayJa
 
   const project = await db.$transaction(async (tx) => {
     const data = scalarData(input) as Prisma.ProjectUncheckedCreateInput;
+
+    /*
+     * Where a job starts, defaulted **here** rather than in the route.
+     *
+     * `projects.status` is NOT NULL with no database default, so a caller that
+     * does not name it fails at the insert — which is exactly what the website
+     * import did, because the default sat in `POST /api/projects` and nothing
+     * else knew about it. A default that only one of two writers applies is a
+     * default that is not one.
+     */
+    if (!data.status) data.status = PROJECT_STATUS_NEW;
 
     // Default creationDate to today if not provided
     if (!data.creationDate) {

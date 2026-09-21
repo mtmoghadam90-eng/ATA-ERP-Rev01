@@ -307,7 +307,7 @@ import {
 import {
   DELIVERY_DELIVERED, DELIVERY_PREPARING, DELIVERY_WORKFLOW_STATUSES,
   INQUIRY_FINAL_OFFER, INQUIRY_INITIAL_OFFER, INQUIRY_SENT, INQUIRY_WINNER,
-  INQUIRY_WORKFLOW_STATUSES, PROJECT_STATUSES, PURCHASE_ORDER_STATUSES, TASK_PRIORITIES,
+  INQUIRY_WORKFLOW_STATUSES, PROJECT_STATUSES, PROJECT_STATUS_NEW, PURCHASE_ORDER_STATUSES, TASK_PRIORITIES,
   consignmentDeliveredOn, deliveryWorkflowStatus, inquiryWorkflowStatus,
 } from "../src/utils/moduleStatuses";
 import {
@@ -19391,6 +19391,25 @@ head("Web RFQ: the service and the site's endpoint");
     /includes\(WEB_RFQ_MARKETING_CHANNEL\)/.test(svc) && svc.includes("return undefined"));
   ok("the numbering rule is not copied back into the service",
     svc.includes("nextProjectCode") && !svc.includes("projectFormat"));
+  /*
+   * `projects.status` is NOT NULL with no database default, so a writer that
+   * does not name it fails at the insert. The default sat in
+   * `POST /api/projects` alone, so the import — which calls `createProject`
+   * directly, as the assistant and every other server-side writer do — died
+   * with «Argument `status` is missing» on the very first real enquiry.
+   *
+   * The default belongs to the service, and the route must not carry a second
+   * copy: two writers with one of them silently incomplete is the fault.
+   */
+  const projSvc = readFileSync("src/server/services/projectService.ts", "utf-8");
+  ok("a new project's status is defaulted in the service, where every writer reaches it",
+    /if \(!data\.status\) data\.status = PROJECT_STATUS_NEW;/.test(projSvc));
+  const projRoute = readFileSync("src/server/routes/projects.ts", "utf-8");
+  ok("...and the route carries no second copy of it",
+    !/input\.status\s*=/.test(projRoute));
+  ok("the starting status is named, never read out of the list by index",
+    /PROJECT_STATUS_NEW\s*=\s*"جدید"/.test(readFileSync("src/utils/moduleStatuses.ts", "utf-8"))
+    && PROJECT_STATUSES[0] === PROJECT_STATUS_NEW);
 
   const routes = readFileSync("src/server/routes/webRfq.ts", "utf-8");
   ok("every web-rfq route is gated on its own key",

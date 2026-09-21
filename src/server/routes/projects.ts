@@ -339,7 +339,6 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
         res.status(400).json({ success: false, error: "تاریخ ایجاد پروژه الزامی است." });
         return;
       }
-      if (!input.status) input.status = "جدید";
 
       // Blank means "make one up" — see documentNumberSpecs.ts, which is the
       // single home of this series now that the website's price requests raise
