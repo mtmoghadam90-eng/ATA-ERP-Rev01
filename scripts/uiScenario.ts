@@ -2453,13 +2453,17 @@ head("Completing a task: the note reaches the caller");
     taskKind: "GENERAL", priority: "متوسط",
   };
   let confirmed: string | null = null;
+  let confirmedNext: boolean | null = null;
   let cancelled = 0;
 
   const draw = (t: unknown) => act(() => {
     nRoot.render(React.createElement(TaskCompletionModal, {
       task: t as never,
       onCancel: () => { cancelled += 1; },
-      onConfirm: (note: string) => { confirmed = note; },
+      onConfirm: (note: string, withNextAction: boolean) => {
+        confirmed = note;
+        confirmedNext = withNextAction;
+      },
     }));
   });
 
@@ -2487,6 +2491,25 @@ head("Completing a task: the note reaches the caller");
   ok("...and drawing it has written nothing", confirmed === null);
   act(() => { confirm!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
   ok("...pressing it hands over exactly what was typed",
+    confirmed === "قیمت رقیب گرفته شد و ۵٪ تخفیف پیشنهاد شد", confirmed);
+  ok("...and asks for no next action", confirmedNext === false, String(confirmedNext));
+
+  /*
+   * **«ثبت و اقدام بعدی» is the same completion plus one answer.**
+   *
+   * The choice is in the button rather than in a dialog after every tick — the
+   * `SaveWithNextActionButton` rule — and it travels as an argument rather than
+   * through a ref, so this is what says the second button is not simply the
+   * first one drawn twice. A button that renders perfectly and hands over the
+   * same `false` as its neighbour type-checks and reads correctly, and the
+   * follow-on question would then never be asked from the one gesture people
+   * finish a task with.
+   */
+  const confirmNext = nHost.querySelector("#task-completion-confirm-next") as HTMLElement | null;
+  ok("the second answer is offered beside the first", !!confirmNext);
+  act(() => { confirmNext!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("...and says so to the caller", confirmedNext === true, String(confirmedNext));
+  ok("...carrying the same note, since it is the same completion",
     confirmed === "قیمت رقیب گرفته شد و ۵٪ تخفیف پیشنهاد شد", confirmed);
 
   /*

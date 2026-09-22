@@ -10271,10 +10271,64 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   // Typed into a textarea, so the writer's own line breaks are theirs.
   ok("...and the writer's line breaks kept", /whitespace-pre-line/.test(view));
 
+  /* -- «و حالا بعدش چه؟», on the gesture that finishes the work -- */
+
+  /*
+   * «ذخیره و ثبت اقدام بعدی» sits beside «ذخیره» on ten forms, so the question
+   * could be reached only by *opening* the task, setting its status by hand and
+   * saving — while the gesture people actually finish a task with is the tick.
+   * Both doors now ask it, and the second is what makes the first reachable
+   * from where the work ends.
+   */
+  const tickModal = strip(readFileSync("src/components/TaskCompletionModal.tsx", "utf8"));
+  ok("the tick offers the next action beside the plain confirm",
+    tickModal.includes('id="task-completion-confirm-next"')
+    && tickModal.includes('id="task-completion-confirm"'));
+  /*
+   * The intent is an **argument**, not a ref. `arm`/`takeArmed` exist to bridge
+   * a `type="submit"` and a handler that runs in a later tick; here the button
+   * *is* the action, and a flag that can be left set is exactly what that pair
+   * was written to clear. Held as «each button names its own answer», since two
+   * buttons calling `onConfirm(note)` identically type-check and render
+   * perfectly while the second one silently does what the first does.
+   */
+  ok("...and each button says which one was pressed",
+    /onConfirm\(note, false\)/.test(tickModal) && /onConfirm\(note, true\)/.test(tickModal));
+
+  /*
+   * **The completion lands first, and a refused one raises nothing.** `ask`
+   * reads `undefined` as «the write failed» — the contract all ten save buttons
+   * rely on — so a tick that the server refused must not leave a card pointing
+   * at work nobody finished. Written the other way round it type-checks and
+   * reads perfectly.
+   */
+  const completion = tasksView.slice(
+    tasksView.indexOf("const confirmCompletion"),
+    tasksView.indexOf("const getPriorityClass"));
+  ok("the follow-on question comes after the write",
+    completion.indexOf("tasksApi.update(") < completion.indexOf("nextAction.ask("));
+  ok("...and a refused completion asks nothing",
+    /let done: Task \| undefined;/.test(completion)
+    && /done = task;/.test(completion)
+    && completion.indexOf("done = task;") > completion.indexOf("tasksApi.update("));
+
+  /*
+   * One description for both doors. Written out at each, the two would answer
+   * «what is this next action about» differently within a month — and it is
+   * the job rather than the task, or the card reads «تماس تلفنی — تماس تلفنی»
+   * with no way back to the work.
+   */
+  ok("both doors describe the next action through one function",
+    (tasksView.match(/nextAction\.ask\([^)]*nextActionFromTask\)/g) ?? []).length === 2);
+  ok("...which carries the task's own relation forward, not the task",
+    /relatedToType: task\.relatedToType \|\| 'عمومی'/.test(tasksView)
+    && (tasksView.match(/relatedToName: task\.relatedToName/g) ?? []).length === 1);
+
   // The stripper must not be eating the file: every check above would pass
   // vacuously against an empty string.
   ok("the comment stripper left the sources intact",
-    service.length > 4000 && view.length > 4000 && modal.length > 2000);
+    service.length > 4000 && view.length > 4000 && modal.length > 2000
+    && tickModal.length > 1000);
 }
 
 /* ==========================================================================
