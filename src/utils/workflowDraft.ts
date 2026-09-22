@@ -188,7 +188,16 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     assignees,
     "",
     "## متغیرهای متن وظیفه و اعلان (titleTemplate / descTemplate)",
-    "  این‌ها همیشه در دسترس‌اند:",
+    /*
+     * «همیشه در دسترس» was the lie this list told, and it cost a real rule:
+     * every one of these is resolved from an id, so a trigger whose payload
+     * carries none of them can never fill it in — the screen offered
+     * {proformaNumber} on a project rule and the renderer printed the token.
+     * The sanitiser drops what the chosen trigger cannot reach; saying so here
+     * is what stops the model proposing it in the first place.
+     */
+    "  این‌ها فقط وقتی پر می‌شوند که رویداد انتخاب‌شده به آن رکورد برسد —",
+    "  مثلاً {proformaNumber} فقط روی رویدادهای پیش‌فاکتور، نه روی رویدادهای پروژه:",
     payloadVariables,
     "  به‌علاوهٔ فیلدهای همان رویدادی که انتخاب کرده‌ای (فهرست‌شده در بالا) —",
     "  مثلاً {milestoneTitle} برای project_milestone_completed.",

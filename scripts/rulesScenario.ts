@@ -32,6 +32,9 @@ import {
   discountKeepFraction, netUnitPrice, summarizeHistory,
 } from "../src/utils/inquiryPriceHistory";
 import { referralJump, moduleNotificationJump } from "../src/utils/notificationJump";
+import {
+  TRIGGER_PAYLOAD_KEYS, SCHEDULE_MODEL_PAYLOAD_KEYS, unresolvableTemplateTokens,
+} from "../src/utils/workflowTriggers";
 import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr, getShamsiDaysDifference } from "../src/dateUtils";
 import { escalationFor, escalationIsConfigured } from "../src/utils/workflowEscalation";
@@ -16161,9 +16164,25 @@ head("A workflow rule, drafted from a sentence");
    */
   ok("a trigger's own field is a variable of its templates",
     templateVariablesFor("project_milestone_completed").some((v) => v.key === "milestoneTitle"));
-  ok("...and the enrichment keys are there whatever the trigger",
-    ENRICHED_PAYLOAD_VARIABLES.every((v) =>
-      templateVariablesFor("customer_created").some((t) => t.key === v.key)));
+  /*
+   * **And an enrichment key is offered only where the payload can reach it.**
+   *
+   * This check used to assert the opposite — that every key is offered
+   * whatever the trigger — which is exactly the fault that was reported: the
+   * screen offered `{proformaNumber}` on a rule whose event carries no
+   * quotation, `enrichPayload` had no id to resolve it from, and the renderer
+   * printed the token verbatim onto a colleague's task card.
+   */
+  ok("a customer event offers the customer's own name",
+    templateVariablesFor("customer_created").some((t) => t.key === "customerName"));
+  ok("...and not a quotation it can never reach",
+    !templateVariablesFor("customer_created").some((t) => t.key === "proformaNumber"));
+  ok("a quotation's own event offers its number",
+    templateVariablesFor("proforma_status_change").some((t) => t.key === "proformaNumber"));
+  ok("...and a project's event does not",
+    !templateVariablesFor("project_stage_change").some((t) => t.key === "proformaNumber"));
+  ok("...while still offering the job it does carry",
+    templateVariablesFor("project_stage_change").some((t) => t.key === "projectCode"));
   /*
    * The list is a *guarantee*, so it is held against the function that makes
    * it true. A key here that `enrichPayload` never assigns is a token printed
@@ -20668,6 +20687,186 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     /setExpandedGroups\(/.test(jumpEffect));
   ok("...and the message is anchored so the scroll can find it",
     /id=\{`activity-\$\{act\.id\}`\}/.test(projects));
+}
+
+/* ===================================================================== *
+ *  A template variable is offered only where the payload can fill it in. *
+ * ===================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /*
+   * **Reported**: «توی قوانین اتوماسیون از کد {proformaNumber} در قالب پیام
+   * تسک استفاده کردم اما شماره پیش‌فاکتور رو نیاورد و همون عبارت
+   * {proformaNumber} رو نوشت», on a job that had no quotation at all.
+   *
+   * Nothing was broken in the renderer: `replaceTemplateVars` prints a token
+   * it cannot resolve exactly as written, which is the right answer. The
+   * screen had offered a variable the event could never carry — a hand-typed
+   * row of six chips, identical for all thirty triggers — and `enrichPayload`
+   * resolves each of them from an id the payload has to hold.
+   */
+
+  /* ---------------- the table says what the service emits --------------- */
+
+  /*
+   * Held against the emitters in **both** directions, the rule `TRIGGER_ENTITY`
+   * already follows: a payload that gains an id and a table that claims one the
+   * service does not send are the same fault from two sides, and the second is
+   * the one that prints a token on somebody's card.
+   */
+  const emitted = new Map<string, Set<string>>();
+  for (const file of [
+    "activityService", "customerService", "deliveryService", "followUpService",
+    "inquiryService", "milestoneAutomation", "productService", "proformaService",
+    "projectService", "projectStageEvents", "purchaseOrderService",
+    "supplierService", "taskService", "transactionService",
+  ]) {
+    const src = strip(readFileSync(`src/server/services/${file}.ts`, "utf8"));
+    const call = /processWorkflowRules\(\s*"([a-z_]+)"\s*,\s*\{/g;
+    for (const match of src.matchAll(call)) {
+      let depth = 0;
+      let end = match.index! + match[0].length - 1;
+      for (let i = end; i < src.length; i++) {
+        if (src[i] === "{") depth++;
+        else if (src[i] === "}") { depth--; if (depth === 0) { end = i; break; } }
+      }
+      const body = src.slice(match.index! + match[0].length - 1, end + 1);
+      const keys = new Set<string>();
+      for (const key of body.matchAll(/(?:^|[{,\s])([A-Za-z_][A-Za-z0-9_]*)\s*[:,]/g)) {
+        keys.add(key[1]);
+      }
+      const already = emitted.get(match[1]);
+      if (already) for (const k of keys) already.add(k);
+      else emitted.set(match[1], keys);
+    }
+  }
+  ok("the emitters were read", emitted.size >= 25, emitted.size);
+
+  for (const [trigger, declared] of Object.entries(TRIGGER_PAYLOAD_KEYS)) {
+    if (trigger === "time_elapsed" || !declared) continue;
+    const real = emitted.get(trigger);
+    if (!real) { ok(`${trigger} is emitted somewhere`, false); continue; }
+    ok(`${trigger} really sends every key it claims`,
+      declared.every((key) => real.has(key)),
+      declared.filter((key) => !real.has(key)));
+    /*
+     * The other direction, narrowed to the keys a variable can be produced
+     * from: a payload carrying `proformaId` while the table forgets it would
+     * withhold a variable that does resolve, which is the quieter half.
+     */
+    const producible = new Set(ENRICHED_PAYLOAD_VARIABLES.flatMap((v) => v.needs));
+    ok(`...and claims every one it sends`,
+      [...real].filter((k) => producible.has(k)).every((k) => declared.includes(k)),
+      [...real].filter((k) => producible.has(k) && !declared.includes(k)));
+  }
+
+  /* ------------------- and the one that was reported -------------------- */
+
+  const keysFor = (trigger: string, model?: string | null) =>
+    templateVariablesFor(trigger, model ?? null).map((v) => v.key);
+
+  ok("a project event no longer offers a quotation's number",
+    !keysFor("project_stage_change").includes("proformaNumber"));
+  ok("...nor a product's low-stock event",
+    !keysFor("product_low_stock").includes("proformaNumber"));
+  ok("...nor a supplier's",
+    !keysFor("supplier_created").includes("proformaNumber"));
+  ok("a quotation's own events still do", ["proforma_created",
+    "proforma_status_change", "proforma_outcome_change", "follow_up_completed"]
+    .every((t) => keysFor(t).includes("proformaNumber")));
+  /*
+   * A consignment names the quotation it ships, so it reaches one — which is
+   * the check that stops the narrowing from passing by withholding everything.
+   */
+  ok("...and so does a packing list, which names one",
+    keysFor("packaging_delivery_created").includes("proformaNumber"));
+  ok("an order's number is offered on the order's own events",
+    keysFor("purchase_order_status_change").includes("poNumber"));
+  ok("...and nowhere else", !keysFor("customer_created").includes("poNumber"));
+  /*
+   * A trigger's own condition fields are payload keys by definition, so they
+   * are never withheld — that is what makes the narrowing safe to apply.
+   */
+  ok("a trigger's own field survives the narrowing",
+    keysFor("project_milestone_completed").includes("milestoneTitle"));
+  ok("an unknown trigger offers only its own fields, never the list",
+    keysFor("not_a_trigger").length === 0);
+
+  /* --------------------------- the scheduled half ----------------------- */
+
+  ok("a scheduled rule on a quotation offers its number",
+    keysFor("time_elapsed", "proforma").includes("proformaNumber"));
+  ok("...and one on a project does not",
+    !keysFor("time_elapsed", "project").includes("proformaNumber"));
+  /*
+   * The sales chase reaches its document because the sweep projects
+   * `relatedToId` across — the step the event triggers have no equivalent of.
+   */
+  ok("...while a sales chase does, through the projection the sweep makes",
+    keysFor("time_elapsed", "task").includes("proformaNumber"));
+  ok("a schedule model this build does not know offers nothing extra",
+    !keysFor("time_elapsed", "nonesuch").includes("projectCode"));
+  /*
+   * Both directions against `SCHEDULE_MODEL_FIELDS`, the check that would have
+   * caught the `delivery`/`packagingDelivery` misspelling: a model named by one
+   * table and not the other is a list nothing can ever offer.
+   */
+  ok("every schedule model that names fields names its payload keys too",
+    Object.keys(SCHEDULE_MODEL_FIELDS).every((m) => m in SCHEDULE_MODEL_PAYLOAD_KEYS),
+    Object.keys(SCHEDULE_MODEL_FIELDS).filter((m) => !(m in SCHEDULE_MODEL_PAYLOAD_KEYS)));
+  ok("...and the other way round",
+    Object.keys(SCHEDULE_MODEL_PAYLOAD_KEYS).every((m) => m in SCHEDULE_MODEL_FIELDS),
+    Object.keys(SCHEDULE_MODEL_PAYLOAD_KEYS).filter((m) => !(m in SCHEDULE_MODEL_FIELDS)));
+
+  /* ------------------------- and the warning itself --------------------- */
+
+  eq("a token the event cannot fill is named",
+    unresolvableTemplateTokens("پیش‌فاکتور {proformaNumber} برنده شد", "project_stage_change")
+      .join(","), "proformaNumber");
+  eq("...and one it can is not",
+    unresolvableTemplateTokens("پیش‌فاکتور {proformaNumber}", "proforma_outcome_change")
+      .length, 0);
+  eq("a token nothing anywhere defines is named too",
+    unresolvableTemplateTokens("سلام {مسئول}", "proforma_created").join(","), "مسئول");
+  eq("a template with no tokens is quiet",
+    unresolvableTemplateTokens("یک وظیفهٔ ساده", "project_created").length, 0);
+
+  /*
+   * **The pattern is the renderer's own.** A check reading tokens differently
+   * passes while the card still prints `{proformaNumber}`, which is the whole
+   * fault — so the two are held against each other, exactly as the drafter's
+   * copy already is.
+   */
+  const engine = strip(readFileSync("src/server/services/workflowService.ts", "utf8"));
+  const enginePattern = engine.match(/template\.replace\((\/[^\n]+?\/g),/)?.[1];
+  const cataloguePattern = strip(readFileSync("src/utils/workflowTriggers.ts", "utf8"))
+    .match(/TEMPLATE_TOKEN_PATTERN = (\/[^\n]+?\/g);/)?.[1];
+  ok("the renderer's token pattern was found", !!enginePattern, enginePattern);
+  eq("...and the catalogue reads tokens exactly as it does",
+    cataloguePattern, enginePattern);
+
+  /* ------------------------- and the screen reads it -------------------- */
+
+  const view = strip(readFileSync("src/components/SettingsView.tsx", "utf8"));
+  /*
+   * The palette was seven hand-typed chips, identical for every trigger — the
+   * copy this catalogue exists to end, on the one control that tells somebody
+   * which variables they may use.
+   */
+  ok("the rule editor draws the palette from the catalogue",
+    /templateVariablesFor\(editingRule\.triggerType, ruleScheduleModel\)/.test(view));
+  ok("...and no longer writes the variables out by hand",
+    !/\{'\{proformaNumber\}'\}/.test(view));
+  ok("...and warns about a token the event cannot fill",
+    /unresolvableTemplateTokens\(/.test(view));
+  /*
+   * A chip that says it is clickable and calls nothing back is the same fault
+   * one control along, so the reference list reads as one.
+   */
+  ok("...and the chips do not pretend to be buttons",
+    !/data-template-variables[\s\S]{0,400}cursor-pointer/.test(view));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

@@ -1012,26 +1012,138 @@ export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
 export interface TemplateVariable {
   key: string;
   label: string;
+  /**
+   * The payload keys `enrichPayload` resolves this one from.
+   *
+   * **A guarantee has to be conditional or it is not one.** Every entry below
+   * was offered for every trigger, and `enrichPayload` resolves each of them
+   * from an id — `proformaNumber` from `proformaId`, `projectName` from
+   * `projectId` — so a trigger whose payload carries no such id could never
+   * fill it in. The screen offered `{proformaNumber}` on a project rule, the
+   * renderer printed those sixteen characters verbatim, and a colleague read
+   * «پیش‌فاکتور شماره {proformaNumber}» on their task card. Reported exactly
+   * that way, on a job that had no quotation at all.
+   *
+   * So a variable is offered only where the trigger can reach the record
+   * behind it — `TRIGGER_PAYLOAD_KEYS` below says what each one carries.
+   */
+  needs: readonly string[];
 }
 
 export const ENRICHED_PAYLOAD_VARIABLES: readonly TemplateVariable[] = [
-  { key: "projectName", label: "نام پروژه" },
-  { key: "projectCode", label: "کد پروژه" },
-  { key: "customerName", label: "نام مشتری" },
-  { key: "supplierName", label: "نام تأمین‌کننده" },
-  { key: "productName", label: "نام کالا" },
-  { key: "proformaNumber", label: "شماره پیش‌فاکتور" },
-  { key: "poNumber", label: "شماره سفارش خرید" },
+  { key: "projectName", label: "نام پروژه", needs: ["projectId", "proformaId"] },
+  { key: "projectCode", label: "کد پروژه", needs: ["projectId", "proformaId"] },
+  /*
+   * A customer is reached from its own id or from a quotation's, and **never
+   * from a project**: `enrichPayload` reads `customerId` and nothing resolves
+   * one from a job, so the project triggers carry it themselves.
+   */
+  { key: "customerName", label: "نام مشتری", needs: ["customerId", "proformaId"] },
+  { key: "supplierName", label: "نام تأمین‌کننده", needs: ["supplierId"] },
+  { key: "productName", label: "نام کالا", needs: ["productId"] },
+  { key: "proformaNumber", label: "شماره پیش‌فاکتور", needs: ["proformaId", "proformaNumber"] },
+  { key: "poNumber", label: "شماره سفارش خرید", needs: ["purchaseOrderId", "poNumber"] },
   /*
    * Both spellings, because `enrichPayload` syncs them in both directions: a
    * trigger that emits `status` gets `newStatus` and the other way round, so a
-   * template may use either and neither is the "wrong" one.
+   * template may use either and neither is the "wrong" one — which is also why
+   * each names the other among the keys that produce it.
    */
-  { key: "newStatus", label: "وضعیت جدید" },
-  { key: "status", label: "وضعیت" },
-  { key: "newOutcome", label: "نتیجه جدید" },
-  { key: "outcome", label: "نتیجه" },
+  { key: "newStatus", label: "وضعیت جدید", needs: ["newStatus", "status"] },
+  { key: "status", label: "وضعیت", needs: ["newStatus", "status"] },
+  { key: "newOutcome", label: "نتیجه جدید", needs: ["newOutcome", "outcome"] },
+  { key: "outcome", label: "نتیجه", needs: ["newOutcome", "outcome"] },
 ];
+
+/**
+ * What each event's payload actually carries, for the enrichment to key on.
+ *
+ * Spelled out per trigger rather than derived, exactly as `TRIGGER_ENTITY` is
+ * and for the same reason: it sits beside the trigger it describes, and
+ * `test:rules` holds every entry against the keys the service really emits —
+ * in **both** directions, so a payload that gains an id and a table that
+ * claims one the service does not send both fail here rather than shipping as
+ * a variable that prints itself.
+ *
+ * Only the keys a `TemplateVariable` can be produced from are listed; a
+ * trigger's own condition fields are variables through `triggerFields` and
+ * need no entry. **A status is listed in the spelling the service actually
+ * sends and no other** — `task_completed` emits `newStatus` alone — because
+ * `enrichPayload` syncs the two in both directions and the variable's own
+ * `needs` names both, so `{status}` still resolves there. Claiming a spelling
+ * the emitter does not send would make this table a second, softer answer to
+ * what the payload holds, which is the drift it exists to prevent. `time_elapsed` is null because a scheduled rule's record is
+ * its schedule *model*, which `SCHEDULE_MODEL_PAYLOAD_KEYS` answers.
+ */
+export const TRIGGER_PAYLOAD_KEYS: Record<
+  WorkflowTriggerType, readonly string[] | null
+> = {
+  proforma_created: ["proformaId", "proformaNumber", "projectId", "customerId", "status"],
+  proforma_status_change: ["proformaId", "proformaNumber", "projectId", "customerId", "newStatus", "status"],
+  proforma_outcome_change: ["proformaId", "proformaNumber", "projectId", "customerId", "newOutcome", "outcome"],
+  project_created: ["projectId", "customerId", "status"],
+  project_status_change: ["projectId", "customerId", "newStatus", "status"],
+  project_stage_change: ["projectId", "customerId", "status"],
+  customer_created: ["customerId"],
+  customer_updated: ["customerId"],
+  supplier_created: ["supplierId"],
+  supplier_inquiry_created: ["inquiryId", "projectId", "supplierId"],
+  supplier_inquiry_status_change: ["inquiryId", "projectId", "supplierId", "newStatus", "status"],
+  purchase_order_created: ["purchaseOrderId", "poNumber", "projectId", "supplierId", "status"],
+  purchase_order_status_change: ["purchaseOrderId", "poNumber", "projectId", "supplierId", "newStatus", "status"],
+  product_created: ["productId"],
+  product_low_stock: ["productId"],
+  packaging_delivery_created: ["deliveryId", "proformaId", "projectId"],
+  packaging_delivery_status_change: ["deliveryId", "proformaId", "projectId", "newStatus", "status"],
+  after_sales_service_created: ["serviceId", "projectId", "status"],
+  after_sales_service_status_change: ["serviceId", "projectId", "newStatus", "status"],
+  transaction_created: ["transactionId", "projectId", "customerId"],
+  transaction_status_change: ["transactionId", "projectId", "customerId", "newStatus", "status"],
+  /*
+   * A task names its project only when it is *about* one — `relatedToType`
+   * decides that — so `{projectName}` is offered and may still be blank on a
+   * task raised against a quotation or a customer. That is the honest reading:
+   * the trigger can reach a project, and a particular record may not have one.
+   * It reaches no quotation at all, which is why `{proformaNumber}` is not
+   * offered here even for a sales chase.
+   */
+  task_created: ["taskId", "projectId"],
+  task_status_change: ["taskId", "projectId", "newStatus", "status"],
+  task_completed: ["taskId", "projectId", "newStatus"],
+  referral_created: ["referralId", "projectId"],
+  referral_status_change: ["referralId", "projectId", "newStatus", "status"],
+  activity_category_completed: ["groupId", "projectId"],
+  project_milestone_completed: ["milestoneId", "projectId"],
+  follow_up_completed: ["taskId", "proformaId", "proformaNumber", "projectId"],
+  time_elapsed: null,
+};
+
+/**
+ * The same question for a scheduled rule, asked of the record it counts from.
+ *
+ * Keyed by the schedule **model** for the reason `SCHEDULE_MODEL_FIELDS` is:
+ * it keeps `workflowSchedule.ts` out of this file's imports, and a scheduled
+ * rule's variables are about the record its date belongs to rather than about
+ * the trigger. `test:rules` holds the two key sets against each other in both
+ * directions, so a model with no entry here cannot pass by having nothing to
+ * check — which is precisely how the `delivery`/`packagingDelivery` misspelling
+ * survived.
+ */
+export const SCHEDULE_MODEL_PAYLOAD_KEYS: Record<string, readonly string[]> = {
+  proforma: ["proformaId", "proformaNumber", "projectId", "customerId", "status"],
+  project: ["projectId", "customerId", "status"],
+  purchaseOrder: ["purchaseOrderId", "poNumber", "projectId", "supplierId", "status"],
+  afterSalesService: ["serviceId", "projectId", "proformaNumber", "status"],
+  packagingDelivery: ["deliveryId", "proformaId", "projectId"],
+  supplierInquiry: ["inquiryId", "projectId", "supplierId"],
+  /*
+   * The sales chase, and it **does** reach its quotation: the sweep projects
+   * `relatedToId` across into `proformaId` precisely so `enrichPayload` can
+   * find the document's project and customer, which is the step the event
+   * triggers above have no equivalent of.
+   */
+  task: ["taskId", "proformaId", "projectId"],
+};
 
 /**
  * Every variable a rule's title, description or notification may use.
@@ -1050,23 +1162,76 @@ export function templateVariablesFor(
   triggerType: string,
   model?: string | null,
 ): TemplateVariable[] {
-  const own = triggerType === "time_elapsed"
+  const scheduled = triggerType === "time_elapsed";
+  const own = scheduled
     ? (model && SCHEDULE_MODEL_FIELDS[model]) || []
     : triggerFields(triggerType);
+
+  /*
+   * What this event's payload can be keyed on, which is what decides whether
+   * an enriched variable resolves at all.
+   *
+   * A trigger this build does not know answers **nothing**, so it offers only
+   * its own fields rather than the whole list — the safe direction, since the
+   * cost of withholding a variable is somebody typing a key by hand, while the
+   * cost of offering one is a token printed verbatim to a colleague, which is
+   * the fault being corrected.
+   */
+  const carried = new Set<string>(
+    scheduled
+      ? (model && SCHEDULE_MODEL_PAYLOAD_KEYS[model]) || []
+      : TRIGGER_PAYLOAD_KEYS[triggerType as WorkflowTriggerType] ?? [],
+  );
 
   const seen = new Set<string>();
   const all: TemplateVariable[] = [];
   for (const field of own) {
     if (seen.has(field.value)) continue;
     seen.add(field.value);
-    all.push({ key: field.value, label: field.label });
+    // A condition field *is* a payload key, so it always resolves: it needs
+    // itself and nothing else.
+    all.push({ key: field.value, label: field.label, needs: [field.value] });
   }
   for (const variable of ENRICHED_PAYLOAD_VARIABLES) {
     if (seen.has(variable.key)) continue;
+    if (!variable.needs.some((key) => carried.has(key))) continue;
     seen.add(variable.key);
     all.push(variable);
   }
   return all;
+}
+
+/**
+ * The `{tokens}` in a template this rule's own payload cannot fill in.
+ *
+ * **The pattern is `replaceTemplateVars`'s own** — it matches one or two
+ * braces and prints anything it cannot resolve exactly as written, so a check
+ * reading tokens differently would pass while the card still says
+ * `{proformaNumber}`; `test:rules` holds the two against each other, as it
+ * already does for the drafter's copy.
+ *
+ * It **warns and never refuses**: a template is free text and a person may
+ * legitimately write braces, so blocking the save would be a refusal about the
+ * wrong thing — the drafter's own rule, one screen along.
+ */
+const TEMPLATE_TOKEN_PATTERN = /\{{1,2}([^{}]+)\}{1,2}/g;
+
+export function unresolvableTemplateTokens(
+  template: string,
+  triggerType: string,
+  model?: string | null,
+  extraKeys: readonly string[] = [],
+): string[] {
+  const allowed = new Set<string>([
+    ...templateVariablesFor(triggerType, model).map((v) => v.key),
+    ...extraKeys,
+  ]);
+  const found: string[] = [];
+  for (const match of String(template ?? "").matchAll(TEMPLATE_TOKEN_PATTERN)) {
+    const key = match[1].trim();
+    if (key && !allowed.has(key) && !found.includes(key)) found.push(key);
+  }
+  return found;
 }
 
 /** True when the id is a module that can carry a responsible. */
