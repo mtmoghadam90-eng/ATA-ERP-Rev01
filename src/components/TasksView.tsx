@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import type { ActivityJump } from '../utils/notificationJump';
 import TaskCompletionModal from './TaskCompletionModal';
 import { 
   Plus, 
@@ -72,6 +73,26 @@ import { NextActionPrompt } from './NextActionModal';
  * query against today's Shamsi date, so the count describes the result rather
  * than the page.
  */
+/*
+ * The three views, named once.
+ *
+ * The tab bar drew this list inline while the header's icons named a tab in
+ * their own words — «notifications» for a tab this screen calls «inbox» — so
+ * one of the two had to be translated on the way in, and a spelling that has
+ * to be translated is a spelling that can drift. The icons hand over a key
+ * from here, and `isMainTab` is what refuses anything else: a tab id this
+ * screen does not have must leave the bar where it is rather than selecting
+ * nothing.
+ */
+export const TASK_MAIN_TABS = [
+  { key: 'board', label: 'تخته کار', icon: LayoutGrid },
+  { key: 'list', label: 'فهرست وظایف', icon: ListTodo },
+  { key: 'inbox', label: 'اعلان‌ها', icon: Bell },
+] as const;
+type MainTab = (typeof TASK_MAIN_TABS)[number]['key'];
+const isMainTab = (value: string | undefined): value is MainTab =>
+  TASK_MAIN_TABS.some((tab) => tab.key === value);
+
 interface TasksViewProps {
   settings: ERPSettings;
   /*
@@ -87,8 +108,29 @@ interface TasksViewProps {
    *
    * The header's inbox and bell icons used to switch to the referrals module,
    * which is a tab here now — so they say which tab rather than which screen.
+   * The value is one of this screen's own tab keys, never a third spelling of
+   * one: the bell used to hand over «notifications», which no tab here is
+   * called, so the name had to be translated on the way in and could drift.
    */
-  initialTab?: 'board' | 'inbox' | 'notifications';
+  initialTab?: string;
+  /**
+   * Applied once, then cleared by the caller.
+   *
+   * Left in place, coming back to this module through the sidebar hours later
+   * would silently reopen a tab nobody asked for — and, worse, pressing the
+   * same icon a second time would do nothing at all, because the value would
+   * not have changed.
+   */
+  onInitialTabApplied?: () => void;
+  /**
+   * Where a notice on the «اعلان‌ها» tab leads.
+   *
+   * Handed straight to the panel: this screen embeds it whole and has no
+   * opinion about the destination, which is a project's own activity feed and
+   * therefore a choice *between* views — so it belongs to `App`, exactly as
+   * the project jump does.
+   */
+  onOpenNotification?: (jump: ActivityJump) => void;
   /** Asks about closing the project's proforma activity category on a settlement. */
   categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
@@ -97,6 +139,8 @@ export default function TasksView({
   settings,
   currentUser,
   initialTab,
+  onInitialTabApplied,
+  onOpenNotification,
   categoryCompletion,
 }: TasksViewProps) {
   // Declared before the pickers below, which are disabled while it is closed.
@@ -268,13 +312,32 @@ export default function TasksView({
     writeViewPreferences('tasks.view', currentUser?.id, viewPrefs);
   }, [viewPrefs, currentUser?.id]);
 
-  const [mainTab, setMainTabState] = useState<'board' | 'list' | 'inbox'>(
-    initialTab === 'inbox' || initialTab === 'notifications' ? 'inbox'
-      : (viewPrefs.mainTab as 'board' | 'list' | 'inbox'));
-  const setMainTab = (tab: 'board' | 'list' | 'inbox') => {
+  const [mainTab, setMainTabState] = useState<MainTab>(
+    isMainTab(initialTab) ? initialTab : (viewPrefs.mainTab as MainTab));
+  const setMainTab = (tab: MainTab) => {
     setMainTabState(tab);
     setViewPrefs((prev) => ({ ...prev, mainTab: tab }));
   };
+  /*
+   * The header's icons, on every press rather than only on the first.
+   *
+   * The tab was seeded from the prop and nothing else, which is the «seeded
+   * from a prop» trap: a `useState` initializer reads its argument on the
+   * first render and never again, so pressing the bell while this screen was
+   * already open changed the value in `App` and nothing on the screen — the
+   * module stayed exactly where it was, on «تخته کار», which is how it was
+   * reported. The seeding stays so a mount lands on the right tab with no
+   * flash, and this is what answers a press.
+   *
+   * It writes `setMainTabState` and not `setMainTab`: a jump is «go here
+   * now», not a change to how this person likes to look at the screen, so it
+   * must not rewrite the remembered tab.
+   */
+  useEffect(() => {
+    if (!isMainTab(initialTab)) return;
+    setMainTabState(initialTab);
+    onInitialTabApplied?.();
+  }, [initialTab, onInitialTabApplied]);
   const [boardSort, setBoardSortState] = useState<BoardSort>(
     (BOARD_SORTS as readonly string[]).includes(viewPrefs.boardSort)
       ? viewPrefs.boardSort as BoardSort
@@ -1089,11 +1152,7 @@ export default function TasksView({
         included), so the two do not argue about which is which.
       */}
       <div className="border-b border-edge flex items-center gap-1 overflow-x-auto" id="task-main-tabs">
-        {([
-          { key: 'board' as const, label: 'تخته کار', icon: LayoutGrid },
-          { key: 'list' as const, label: 'فهرست وظایف', icon: ListTodo },
-          { key: 'inbox' as const, label: 'اعلان‌ها', icon: Bell },
-        ]).map((tab) => (
+        {TASK_MAIN_TABS.map((tab) => (
           <button
             key={tab.key}
             type="button"
@@ -1125,6 +1184,7 @@ export default function TasksView({
           notificationsOnly
           currentUser={currentUser}
           settings={settings}
+          onOpenNotification={onOpenNotification}
         />
       ) : (<>
 

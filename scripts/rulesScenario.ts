@@ -31,6 +31,7 @@ import {
 import {
   discountKeepFraction, netUnitPrice, summarizeHistory,
 } from "../src/utils/inquiryPriceHistory";
+import { referralJump, moduleNotificationJump } from "../src/utils/notificationJump";
 import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr, getShamsiDaysDifference } from "../src/dateUtils";
 import { escalationFor, escalationIsConfigured } from "../src/utils/workflowEscalation";
@@ -20524,6 +20525,149 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("...and backfills nothing",
     !/UPDATE \[dbo\]\.\[project_referrals\]/.test(mig)
     && !/UPDATE \[dbo\]\.\[tasks\]/.test(mig));
+}
+
+/* ===================================================================== *
+ *  A notification leads somewhere, and the bell opens the tab it names.  *
+ * ===================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const app = strip(readFileSync("src/App.tsx", "utf8"));
+  const tasks = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
+  const panel = strip(readFileSync("src/components/ReferralsView.tsx", "utf8"));
+  const projects = strip(readFileSync("src/components/ProjectsView.tsx", "utf8"));
+
+  /* ------------------ the bell opens «اعلان‌ها», on every press ----------------- */
+
+  /*
+   * **The tab was seeded from a prop and nothing else.**
+   *
+   * A `useState` initializer reads its argument on the first render and never
+   * again, so pressing the bell while «وظایف و پیگیری» was already open moved
+   * the value in `App` and left the screen exactly where it was — on «تخته
+   * کار», which is how it was reported. Both halves are held: the seeding (so
+   * a mount lands on the right tab with no flash) and the effect (so a press
+   * answers), and the effect must clear the jump or a second press of the same
+   * icon changes nothing at all.
+   */
+  const tabEffect = tasks.slice(
+    tasks.indexOf("const [mainTab, setMainTabState]"),
+    tasks.indexOf("const [boardSort, setBoardSortState]"));
+  ok("the tasks screen still seeds its tab from the prop",
+    /useState<MainTab>\(\s*isMainTab\(initialTab\)/.test(tabEffect));
+  ok("...and applies it in an effect, so a press moves a screen already open",
+    /useEffect\(\(\) => \{[\s\S]*isMainTab\(initialTab\)[\s\S]*setMainTabState\(initialTab\)/.test(tabEffect));
+  ok("...and clears it, so pressing the same icon twice works",
+    /onInitialTabApplied\?\.\(\)/.test(tabEffect));
+  /*
+   * The jump writes `setMainTabState` and not `setMainTab`: a jump is «go here
+   * now», not a change to how this person likes to look at the screen, and
+   * `setMainTab` is what persists the remembered tab.
+   */
+  ok("...without rewriting the remembered tab",
+    !/setMainTab\(initialTab\)/.test(tabEffect));
+
+  /*
+   * **The icons name one of the screen's own tab keys.**
+   *
+   * The bell used to hand over «notifications», which no tab here is called,
+   * so the name had to be translated on the way in — and a spelling that has
+   * to be translated is one that can drift.
+   */
+  const named = [...app.matchAll(/openViewTab\('tasks',\s*'([^']+)'\)/g)].map(m => m[1]);
+  ok("both header icons hand over a tab", named.length === 2);
+  ok("...and the bell names the notices tab", named.includes("inbox"));
+  /*
+   * Read out of the screen's own catalogue rather than imported: `TasksView`
+   * pulls `file-saver` through the excel helpers, which is CJS with no ESM
+   * named export, so importing the component here takes the whole suite down.
+   */
+  const tabKeys = [...tasks.slice(
+    tasks.indexOf("export const TASK_MAIN_TABS"),
+    tasks.indexOf("] as const;"),
+  ).matchAll(/key: '([^']+)'/g)].map(m => m[1]);
+  ok("the screen names three tabs", tabKeys.length === 3);
+  ok("...and each icon names one of them",
+    named.every(tab => tabKeys.includes(tab)));
+  ok("...through the tab hand-off, not a state of their own",
+    !/setReferralsTab/.test(app));
+
+  /* ------------------------- where a notice leads ------------------------ */
+
+  const withProject = {
+    activity: { id: "act-1", group: { id: "grp-1", project: { id: "proj-1" } } },
+  };
+  /*
+   * **A reply leads to the referral, never to the reply.**
+   *
+   * The answer lives inside that referral's own thread, which the feed opens
+   * from the message that raised it — there is no row of its own for a reply,
+   * so a target naming one would scroll to an element that is not there.
+   */
+  ok("a notice leads to the referral's own message",
+    referralJump(withProject)?.activityId === "act-1");
+  ok("...in its category, so the feed has something to open",
+    referralJump(withProject)?.groupId === "grp-1");
+  ok("...in its project", referralJump(withProject)?.projectId === "proj-1");
+  /*
+   * No project, no link: a link that opens the projects screen and then finds
+   * nothing is worse than no link at all.
+   */
+  ok("a referral whose project is gone gets no link",
+    referralJump({ activity: { id: "act-1", group: { id: "g", project: null } } }) === null);
+  ok("...and neither does one with no message behind it at all",
+    referralJump({ activity: null }) === null);
+  ok("a module notice leads to its project and no further",
+    JSON.stringify(moduleNotificationJump({ projectId: "proj-9" }))
+      === JSON.stringify({ projectId: "proj-9" }));
+  ok("...and one about no project is not a link",
+    moduleNotificationJump({ projectId: null }) === null);
+
+  /* --------------------- and the panel really calls it -------------------- */
+
+  /*
+   * **The handler has to be passed, not merely declared.**
+   *
+   * `onViewProjectActivities` was declared on this panel and never handed to
+   * it by the screen that embeds it, so the one clickable thing on a notice
+   * did nothing — which is the whole reported fault, and a prop that is
+   * declared and unpassed type-checks perfectly.
+   */
+  ok("the notices panel calls the handler", /onOpenNotification\(jump\)/.test(panel));
+  ok("...and the screen embedding it passes one in",
+    /<ReferralsView[\s\S]{0,240}onOpenNotification=\{onOpenNotification\}/.test(tasks));
+  ok("...which the shell supplies", /onOpenNotification=\{openActivityJump\}/.test(app));
+  /*
+   * `projects.projectId` arrives on a module notice and was dropped by the
+   * mapping below it — the select-then-drop fault, on the one column the link
+   * hangs off.
+   */
+  ok("...and a module notice keeps the project it names",
+    /projectId: n\.projectId/.test(panel));
+
+  /* ------------------------ and the feed lands on it ---------------------- */
+
+  const jumpEffect = projects.slice(
+    projects.indexOf("if (!activityJump) return;"),
+    projects.indexOf("const [activityFocus, setActivityFocus]"));
+  /*
+   * Cleared **before** the fetch, not after: the shell hands the same object
+   * down on every render, so a jump left standing across an `await` is one the
+   * effect applies again — and clearing first is also what makes pressing the
+   * same notice a second time work.
+   */
+  ok("the jump is cleared before the record is fetched",
+    jumpEffect.indexOf("onActivityJumpApplied?.()")
+      < jumpEffect.indexOf("await openProjectDetails"));
+  /*
+   * A category is folded until somebody opens it, so a message inside a closed
+   * one is not on the page at all and there would be nothing to scroll to.
+   */
+  ok("...and the category is expanded, or there is nothing to scroll to",
+    /setExpandedGroups\(/.test(jumpEffect));
+  ok("...and the message is anchored so the scroll can find it",
+    /id=\{`activity-\$\{act\.id\}`\}/.test(projects));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

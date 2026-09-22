@@ -16,9 +16,10 @@ import {
 
   Bell
 } from 'lucide-react';
+import { referralJump, moduleNotificationJump } from '../utils/notificationJump';
+import type { ActivityJump } from '../utils/notificationJump';
 import { ERPSettings } from '../types';
 import type { User } from '../types';
-import { compressImage } from '../imageUtils';
 import { toShamsiStr } from '../dateUtils';
 import { ApiError } from '../api/client';
 import { NotificationRow, ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
@@ -58,6 +59,16 @@ interface ReferralsViewProps {
   settings: ERPSettings;
   currentUser: User | null;
   onViewProjectActivities?: (projectId: string) => void;
+  /**
+   * Where a notice leads.
+   *
+   * The panel reported what had happened and led nowhere — the project's name
+   * was the only thing on it wired to anything, and even that handler was
+   * never passed in by the screen that embeds this one. Reading «به ارجاع شما
+   * پاسخ داده شد» therefore meant going to «پروژه‌ها», finding the job,
+   * opening its feed and hunting for the category it was raised under.
+   */
+  onOpenNotification?: (jump: ActivityJump) => void;
   onViewCustomerDetails?: (customerName: string) => void;
 }
 
@@ -68,6 +79,7 @@ export default function ReferralsView({
   notificationsOnly,
   currentUser,
   onViewProjectActivities,
+  onOpenNotification,
   onViewCustomerDetails
 }: ReferralsViewProps) {
   const currentUserName = currentUser?.fullName || '';
@@ -119,15 +131,32 @@ export default function ReferralsView({
 
   /* The two referral tabs are one query with a different scope. The server
      decides what "mine" means from the session, so no name is compared here. */
+  /*
+   * The notices tab reads the referrals too, and used to read nothing.
+   *
+   * It returned early here — on the reasoning that the notices are not the
+   * referrals list — and the notices **are built from those rows**: every
+   * «پاسخ به ارجاع» on that panel is a message inside a referral this query
+   * fetches. So the panel embedded in «وظایف و پیگیری» opened on
+   * `notifications`, skipped the only query that could fill it, and showed
+   * the module notices alone; the standalone screen happened to work because
+   * it opens on «به من ارجاع شده» and keeps those rows when the tab moves,
+   * which is the quietest possible disguise for a list that never loads.
+   *
+   * The scope is **both directions** for that tab: a reply from the assignee
+   * is news to whoever asked, and a reply from whoever asked is news to the
+   * assignee — `groupedNotifications` already drops your own words, which is
+   * the whole of what «not news to you» means here.
+   */
   useEffect(() => {
-    if (activeTab === 'notifications') return;
     let cancelled = false;
     const controller = new AbortController();
     setLoading(true);
     setError(null);
 
     inboxApi.referrals({
-      scope: activeTab, pageSize: 200, sort: 'createdAt', order: 'desc',
+      scope: activeTab === 'notifications' ? 'mine' : activeTab,
+      pageSize: 200, sort: 'createdAt', order: 'desc',
     }, controller.signal)
       .then((data) => {
         if (cancelled) return;
@@ -326,6 +355,15 @@ export default function ReferralsView({
           projectId: r.activity?.group?.project?.id ?? '',
         },
         project: r.activity?.group?.project ?? null,
+        /*
+         * Where this notice leads, decided from the row it was built from.
+         *
+         * `group.id` above is the **referral's** id, not the category group's
+         * — it is what this panel keys its own expansion on — so the jump is
+         * derived from the referral rather than from the row assembled here,
+         * or the feed would be asked to open a group that does not exist.
+         */
+        jump: referralJump(r),
         items: r.messages
           // Your own reply is not news to you.
           .filter(m => m.responderUserId !== currentUser?.id)
@@ -343,8 +381,17 @@ export default function ReferralsView({
   }, [referrals, filterProject, currentUser?.id]);
 
   const myModuleNotifications = React.useMemo(
+    /*
+      `projectId` arrives on the row and was dropped here.
+
+      The server has answered it since the endpoint was written; this mapping
+      simply did not list it, so the one thing that says where a module notice
+      came from never reached the screen — the select-then-drop fault, on the
+      column the whole link hangs off.
+    */
     () => notifications.map(n => ({
       id: n.id, module: n.module, title: n.title, description: n.description,
+      projectId: n.projectId,
       timestamp: new Date(n.createdAt).getTime(), read: n.isRead, responsibleName: currentUserName,
     })),
     [notifications, currentUserName],
@@ -546,7 +593,16 @@ export default function ReferralsView({
       {/* Referrals List */}
       <div className="space-y-4">
         {activeTab === 'notifications' ? (
-          groupedNotifications.length === 0 && myModuleNotifications.length === 0 ? (
+          /*
+            «هیچ اعلانی یافت نشد» while the query is still running reads as an
+            empty inbox rather than as one that has not arrived — and this tab
+            genuinely waits on a request now.
+          */
+          loading && groupedNotifications.length === 0 && myModuleNotifications.length === 0 ? (
+            <div className="bg-white rounded-2xl p-12 text-center border border-slate-100 shadow-sm text-xs text-slate-400" id="notifications-loading">
+              در حال دریافت اعلان‌ها…
+            </div>
+          ) : groupedNotifications.length === 0 && myModuleNotifications.length === 0 ? (
             <div className="bg-white rounded-2xl p-12 text-center border border-slate-100 shadow-sm space-y-3">
               <Bell className="mx-auto text-slate-300" size={48} />
               <p className="text-sm text-slate-500 font-medium">هیچ اعلانی یافت نشد.</p>
@@ -556,7 +612,20 @@ export default function ReferralsView({
             {myModuleNotifications.map((notif) => (
               <div 
                 key={`mnotif-${notif.id}`} 
-                className={`bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden transition-all duration-300 hover:shadow-md ${!notif.read ? 'border-r-4 border-r-rose-400 bg-rose-50/10' : 'border-r-4 border-r-slate-300'}`}
+                onClick={() => {
+                  /*
+                    A module notice carries a project and nothing finer — there
+                    is no message and no category behind it — so it opens the
+                    job's feed and stops there. One that names no project is
+                    not a link at all.
+                  */
+                  const jump = onOpenNotification ? moduleNotificationJump(notif) : null;
+                  if (jump && onOpenNotification) onOpenNotification(jump);
+                }}
+                id={`module-notification-${notif.id}`}
+                className={`bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden transition-all duration-300 hover:shadow-md ${!notif.read ? 'border-r-4 border-r-rose-400 bg-rose-50/10' : 'border-r-4 border-r-slate-300'} ${
+                  onOpenNotification && moduleNotificationJump(notif) ? 'cursor-pointer hover:border-sky-200' : ''
+                }`}
               >
                 <div className="p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                   <div className="space-y-1">
@@ -581,7 +650,7 @@ export default function ReferralsView({
                   
                   {!notif.read && (
                     <button
-                      onClick={() => markModuleNotificationAsRead(notif.id)}
+                      onClick={(e) => { e.stopPropagation(); markModuleNotificationAsRead(notif.id); }}
                       className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg transition"
                     >
                       علامت خوانده شده
@@ -591,7 +660,7 @@ export default function ReferralsView({
               </div>
             ))}
             
-            {groupedNotifications.map(({ group, project, items }, idx) => {
+            {groupedNotifications.map(({ group, project, items, jump }, idx) => {
               const isExpanded = expandedNotificationGroups[group.id] ?? false;
               
               // Count unread in this group
@@ -612,14 +681,27 @@ export default function ReferralsView({
                   <div className="flex flex-wrap items-center gap-4 text-xs">
                     <div className="flex items-center gap-1.5 font-bold text-slate-700">
                       <Briefcase size={14} className="text-sky-500" />
+                      {/*
+                        The project opens the job's feed; the notice below
+                        opens the referral inside it. Without a handler — and
+                        without a project on the row — it renders as the plain
+                        text it always was, rather than as a link that goes
+                        nowhere.
+                      */}
                       <span
                         onClick={(e) => {
-                          if (onViewProjectActivities) {
-                            e.stopPropagation();
-                            onViewProjectActivities(group.projectId);
-                          }
+                          const open = onOpenNotification && jump
+                            ? () => onOpenNotification({ projectId: jump.projectId })
+                            : onViewProjectActivities
+                              ? () => onViewProjectActivities(group.projectId)
+                              : null;
+                          if (!open) return;
+                          e.stopPropagation();
+                          open();
                         }}
-                        className="text-sky-600 hover:text-sky-800 hover:underline cursor-pointer transition-colors"
+                        className={(onOpenNotification && jump) || onViewProjectActivities
+                          ? "text-sky-600 hover:text-sky-800 hover:underline cursor-pointer transition-colors"
+                          : "text-slate-700"}
                         title="مشاهده فعالیت‌های پروژه"
                       >
                         {project ? `${project.name} (${project.code})` : (group.projectId === 'proj-1' ? 'مخازن اهواز ۳' : 'پروژه')}
@@ -651,7 +733,30 @@ export default function ReferralsView({
                 {isExpanded && (
                   <div className="p-4 sm:p-5 bg-white space-y-4">
                     {items.map((item: any, i: number) => (
-                      <div key={`notif-item-${i}`} className={`flex flex-col gap-3 pb-4 ${i !== items.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                      /*
+                        The notice itself is the link.
+
+                        «وقتی روی اعلانی کلیک می‌کنیم باید به مقصد مربوط به
+                        اون اعلان بره» — a reply to a referral leads to that
+                        referral in the project's own feed, where the thread
+                        is, rather than leaving somebody to find the job and
+                        the category by hand. It is a `div` with a handler and
+                        not a `<button>`: the row carries a download link for
+                        an attachment, and a link inside a button is markup no
+                        browser agrees about. With no handler, or with no
+                        project on the row, it draws exactly as it did.
+                      */
+                      <div
+                        key={`notif-item-${i}`}
+                        onClick={jump && onOpenNotification ? () => onOpenNotification(jump) : undefined}
+                        id={`notification-item-${group.id}-${i}`}
+                        title={jump && onOpenNotification ? 'رفتن به این ارجاع در پروژه' : undefined}
+                        className={`flex flex-col gap-3 pb-4 ${i !== items.length - 1 ? 'border-b border-slate-100' : ''} ${
+                          jump && onOpenNotification
+                            ? 'cursor-pointer -mx-2 px-2 rounded-lg hover:bg-sky-50/60 transition-colors'
+                            : ''
+                        }`}
+                      >
                         <div className="flex items-center justify-between gap-3 flex-wrap">
                           <div className="flex items-center gap-2">
                             <div className={`px-2 py-0.5 rounded text-[10px] font-bold ${item.type === 'message' ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}`}>
@@ -680,6 +785,8 @@ export default function ReferralsView({
                               <a
                                 href={(item.type === 'message' ? item.message.attachment : item.activity.attachment).content}
                                 download={(item.type === 'message' ? item.message.attachment : item.activity.attachment).name}
+                                /* The row is a link now; downloading a file is not following it. */
+                                onClick={(e) => e.stopPropagation()}
                                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 text-xs font-bold transition group"
                                 title="دانلود فایل پیوست"
                               >
@@ -913,9 +1020,20 @@ export default function ReferralsView({
                             onPickAttachment={(file, done) => {
                               // The size rule is in `uploadFile`; see
                               // `src/utils/uploadLimits.ts`.
-                              compressImage(file, (dataUrl, sizeStr) => {
-                                done({ name: file.name, size: sizeStr, content: dataUrl });
-                              });
+                              //
+                              // Required at call time, the way `CustomFieldsForm`
+                              // and `ModuleNotesSection` already do it: at module
+                              // scope this pulls `file-saver`, which is CJS with
+                              // no ESM named export, and that makes this screen
+                              // unmountable outside a bundler and therefore
+                              // untestable — on the one panel whose click target
+                              // only a render can check.
+                              void (async () => {
+                                const { compressImage } = await import('../imageUtils');
+                                compressImage(file, (dataUrl, sizeStr) => {
+                                  done({ name: file.name, size: sizeStr, content: dataUrl });
+                                });
+                              })();
                             }}
                             onSubmit={(body) => handleReplySubmit(referral.id, body)}
                             onEditAction={(text) => handleEditAction(referral.id, text)}

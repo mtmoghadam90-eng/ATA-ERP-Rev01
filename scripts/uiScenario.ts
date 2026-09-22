@@ -58,6 +58,7 @@ import Avatar from "../src/components/Avatar";
 import TaskCompletionModal from "../src/components/TaskCompletionModal";
 import ModuleNotesSection from "../src/components/ModuleNotesSection";
 import AfterSalesServicesView from "../src/components/AfterSalesServicesView";
+import ReferralsView from "../src/components/ReferralsView";
 import { DEFAULT_SETTINGS } from "../src/seedData";
 import { RelationPicker } from "../src/components/RelationPicker";
 import { ConditionValueField } from "../src/components/ConditionValueField";
@@ -3131,6 +3132,119 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
   act(() => { rootA.unmount(); });
   hostA.remove();
   gA.fetch = realFetchA;
+}
+
+/**
+ * A notification leads somewhere, and «اعلان‌ها» has something to lead from.
+ *
+ * Two faults a type-check cannot see, one behind the other. The panel's rows
+ * were not clickable at all, and the one thing on them that was — the project
+ * name — called a handler the embedding screen never passed in. And the tab
+ * **returned early out of the only query that fills it**, so in the embed it
+ * showed the module notices alone: a list that never loads renders exactly
+ * like a list with nothing in it.
+ *
+ * The click target is the other half: a reply must lead to the **referral**,
+ * not to the reply — the feed draws no row of its own for an answer, so a
+ * jump naming one would scroll to an element that is not there, and both
+ * spellings compile and read perfectly.
+ */
+{
+  const gN = globalThis as unknown as Record<string, unknown>;
+  const realFetchN = gN.fetch;
+  const askedN: string[] = [];
+
+  const referralRow = {
+    id: "ref-1",
+    status: "در انتظار اقدام",
+    actionRequired: "لطفاً دیتاشیت را بررسی کن",
+    assignedByUserId: "u-1", assignedByName: "محمد مقدم",
+    assignedToUserId: "u-2", assignedToName: "مهندس رضایی",
+    createdAt: "2026-09-20T08:00:00.000Z",
+    activityId: "act-1",
+    messages: [{
+      id: "msg-1", text: "بررسی شد، مشکلی ندارد",
+      responderUserId: "u-2", responderName: "مهندس رضایی",
+      createdAt: "2026-09-21T09:00:00.000Z",
+    }],
+    activity: {
+      id: "act-1", text: "لطفاً دیتاشیت را بررسی کن",
+      createdAt: "2026-09-20T08:00:00.000Z",
+      group: {
+        id: "grp-1", categoryName: "پیش‌فاکتور",
+        project: { id: "proj-1", code: "ATA-05-38", name: "پتروشیمی نمونه", customer: null },
+      },
+    },
+  };
+
+  gN.fetch = (async (url: string) => {
+    askedN.push(String(url));
+    const body = String(url).includes("/api/referrals")
+      ? { success: true, rows: [referralRow], total: 1, page: 1, pageSize: 200, totalPages: 1 }
+      : { success: true, rows: [], unread: 0, total: 0, page: 1, pageSize: 200, totalPages: 1 };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+
+  const hostN = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootN = createRoot(hostN);
+  const settleN = async () => {
+    for (let i = 0; i < 14; i++) await act(async () => { await Promise.resolve(); });
+  };
+  const jumps: unknown[] = [];
+
+  await act(async () => {
+    rootN.render(React.createElement(ReferralsView, {
+      embedded: true,
+      notificationsOnly: true,
+      settings: DEFAULT_SETTINGS as never,
+      currentUser: { id: "u-1", fullName: "محمد مقدم" } as never,
+      onOpenNotification: (jump: unknown) => { jumps.push(jump); },
+    } as never));
+  });
+  await settleN();
+
+  /*
+   * The query the tab used to skip. Asserted on the URL rather than on the
+   * rows, because «no rows» is what the fault looked like from the screen.
+   */
+  ok("the notices tab asks for the referrals behind it",
+    askedN.some((u) => /\/api\/referrals\?/.test(u)));
+  ok("...for both directions, since a reply either way is news to the other",
+    askedN.some((u) => /\/api\/referrals\?[^"]*scope=mine/.test(u)));
+
+  /* The group is folded until somebody opens it, exactly as the feed is. */
+  const headers = Array.from(hostN.querySelectorAll<HTMLElement>("div"))
+    .filter((el) => (el.textContent ?? "").includes("۱ اعلان")
+      || (el.textContent ?? "").includes("1 اعلان"));
+  ok("a notice group is drawn", headers.length > 0);
+  await act(async () => {
+    headers[headers.length - 1]?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleN();
+
+  const item = hostN.querySelector<HTMLElement>("[id^='notification-item-']");
+  ok("...and opens to the reply", item !== null);
+
+  await act(async () => {
+    item?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleN();
+
+  ok("pressing a notice leads somewhere", jumps.length === 1);
+  /*
+   * The referral's own message, not the reply — and its category, or the feed
+   * would open the job and leave the reader hunting for the conversation.
+   */
+  ok("...to the referral's message rather than the answer",
+    (jumps[0] as { activityId?: string })?.activityId === "act-1");
+  ok("...in the category it was raised under",
+    (jumps[0] as { groupId?: string })?.groupId === "grp-1");
+  ok("...in its own project",
+    (jumps[0] as { projectId?: string })?.projectId === "proj-1");
+
+  act(() => { rootN.unmount(); });
+  hostN.remove();
+  gN.fetch = realFetchN;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
