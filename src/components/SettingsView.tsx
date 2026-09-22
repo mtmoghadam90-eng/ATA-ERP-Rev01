@@ -65,6 +65,7 @@ import {
   MESSAGE_ONCE_SCOPES, WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS,
   actionLabel, conditionFieldLabel, isMessageOnceScope, operatorLabel,
   defaultConditionField, staleConditionField, triggerFields, triggerGroups, triggerLabel,
+  templateVariablesFor, unresolvableTemplateTokens,
 } from '../utils/workflowTriggers';
 import ConfirmModal from './ConfirmModal';
 import { uploadFile } from '../imageUtils';
@@ -3515,7 +3516,19 @@ export default function SettingsView({
               )}
             </div>
 
-            {isRuleFormOpen && editingRule ? (
+            {isRuleFormOpen && editingRule ? (() => {
+              /*
+                Which record this rule's variables are about.
+
+                For a scheduled rule that is the record its **date** belongs to
+                rather than the trigger, exactly as a condition's fields are —
+                the same resolution the save's own `staleConditionField` check
+                does, and the same one the condition rows below do.
+              */
+              const ruleScheduleModel = editingRule.triggerType === 'time_elapsed'
+                ? SCHEDULE_SUBJECTS[editingRule.schedule?.subject || 'proforma_sent']?.model ?? null
+                : null;
+              return (
               <form onSubmit={handleSaveWorkflowRule} className="space-y-6 bg-slate-50/50 p-6 rounded-2xl border border-slate-200 animate-fade-in">
                 {/*
                   Describe the rule; the assistant fills the form in.
@@ -4066,16 +4079,69 @@ export default function SettingsView({
                               </button>
                             </div>
 
-                            {/* Show Token Helpers */}
-                            <div className="bg-sky-50 text-sky-800 p-2.5 rounded-lg border border-sky-100 flex flex-wrap items-center gap-2 text-[10px]">
+                            {/*
+                              The variables **this** rule's payload can fill in.
+
+                              Six names written out by hand, identical for every
+                              trigger — so the screen offered `{proformaNumber}`
+                              on a project rule, `enrichPayload` had no
+                              `proformaId` to resolve it from, and the renderer
+                              printed those sixteen characters onto a
+                              colleague's task card. Reported exactly that way.
+                              It is the catalogue's own list now, narrowed to
+                              what the chosen trigger really carries, so a
+                              variable that cannot resolve is not offered.
+
+                              They are plain `<code>` and not buttons: the chips
+                              carried `cursor-pointer` with no handler behind
+                              them, which is a control that says it does
+                              something and does not. A reference list is what
+                              this is, so it reads as one.
+                            */}
+                            <div className="bg-sky-50 text-sky-800 p-2.5 rounded-lg border border-sky-100 flex flex-wrap items-center gap-2 text-[10px]" data-template-variables>
                               <span className="font-bold">متغیرهای پویا قابل استفاده در قالب‌ها:</span>
-                              <code className="bg-white px-1.5 py-0.5 rounded border border-sky-200 cursor-pointer">{'{projectName}'}</code>
-                              <code className="bg-white px-1.5 py-0.5 rounded border border-sky-200 cursor-pointer">{'{projectCode}'}</code>
-                              <code className="bg-white px-1.5 py-0.5 rounded border border-sky-200 cursor-pointer">{'{proformaNumber}'}</code>
-                              <code className="bg-white px-1.5 py-0.5 rounded border border-sky-200 cursor-pointer">{'{poNumber}'}</code>
-                              <code className="bg-white px-1.5 py-0.5 rounded border border-sky-200 cursor-pointer">{'{newStatus}'}</code>
-                              <code className="bg-white px-1.5 py-0.5 rounded border border-sky-200 cursor-pointer">{'{newOutcome}'}</code>
+                              {templateVariablesFor(editingRule.triggerType, ruleScheduleModel).map((v) => (
+                                <code
+                                  key={v.key}
+                                  title={v.label}
+                                  className="bg-white px-1.5 py-0.5 rounded border border-sky-200"
+                                >{`{${v.key}}`}</code>
+                              ))}
                             </div>
+
+                            {/*
+                              And what this action's own text asks for and will
+                              not get.
+
+                              The palette no longer offers an unreachable
+                              variable, but a rule written before this — or one
+                              whose trigger was changed afterwards, which is how
+                              a condition goes stale one panel above — still
+                              carries the token. It **warns rather than
+                              refuses**: a template is free text and somebody
+                              may legitimately write braces, so blocking the
+                              save would be a refusal about the wrong thing;
+                              the drafter one screen along warns for the same
+                              reason.
+                            */}
+                            {(() => {
+                              const templates = act.type === 'create_task'
+                                ? [act.taskConfig?.titleTemplate, act.taskConfig?.descTemplate]
+                                : act.type === 'send_notification'
+                                  ? [act.notificationConfig?.titleTemplate, act.notificationConfig?.descTemplate]
+                                  : [];
+                              const unresolved = Array.from(new Set(templates.flatMap((t) =>
+                                unresolvableTemplateTokens(t || '', editingRule.triggerType, ruleScheduleModel))));
+                              if (unresolved.length === 0) return null;
+                              return (
+                                <div
+                                  className="bg-amber-50 text-amber-800 p-2.5 rounded-lg border border-amber-200 text-[10px] font-bold leading-relaxed"
+                                  data-template-warning
+                                >
+                                  {`این متغیرها با رویداد انتخاب‌شده پر نمی‌شوند و عیناً در متن چاپ می‌شوند: ${unresolved.map((k) => `{${k}}`).join('، ')}`}
+                                </div>
+                              );
+                            })()}
 
                             {act.type === 'create_task' && act.taskConfig && (
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -4756,7 +4822,8 @@ export default function SettingsView({
                   </button>
                 </div>
               </form>
-            ) : (
+              );
+            })() : (
               <div className="space-y-4">
                 {(settings.workflows || []).length === 0 ? (
                   <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/30">
