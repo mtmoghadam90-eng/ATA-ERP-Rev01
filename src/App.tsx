@@ -21,6 +21,7 @@ import { brandLogoUrl } from './utils/brand';
 import { useERPStore, onSessionExpired } from './useERPStore';
 import { ensureHolidayCalendar } from './api/holidays';
 import { ShieldAlert, Bell, Inbox, Menu, Calendar, CheckCircle2, Clock, User, Sun, Moon } from 'lucide-react';
+import type { ActivityJump } from './utils/notificationJump';
 import TaskCalendarModal from './components/TaskCalendarModal';
 import { getTodayShamsi, toShamsiStr } from './dateUtils';
 import { describeReminder } from './utils/reminderRepeat';
@@ -65,17 +66,30 @@ export default function App() {
     }
     return 'dashboard';
   });
-  /*
-   * Which tab of «وظایف و پیگیری» the header icons open.
-   *
-   * «کارتابل ارجاعات» was a module of its own and its records are cards on the
-   * work board now, so the inbox icon opens the board and the bell opens the
-   * notices. Both icons stay: they are how people reach their work and their
-   * notices from anywhere in the application.
-   */
-  const [referralsTab, setReferralsTab] = useState<'board' | 'inbox' | 'notifications'>('board');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
-  const [selectedProjectIdForActivities, setSelectedProjectIdForActivities] = useState<string | null>(null);
+  /*
+   * Where a notification leads.
+   *
+   * A notice on «اعلان‌ها» led nowhere: the panel's only link was the project
+   * name, and the handler behind it was never passed in — so reading «به
+   * ارجاع شما پاسخ داده شد» meant going to «پروژه‌ها», finding the job,
+   * opening its feed and hunting for the category it was raised under. This
+   * is a choice *between* views, so it lives here beside the project jump and
+   * the tab jump, and it is **cleared the moment it is applied** for the same
+   * reason they are: left in place, coming back to «پروژه‌ها» through the
+   * sidebar hours later would silently reopen somebody else's message, and
+   * pressing the same notice a second time would do nothing.
+   *
+   * It replaces a `selectedProjectIdForActivities` state that nothing ever
+   * set — the prop was passed, the effect behind it was written, and no caller
+   * existed, which is a switch that does nothing wearing the quietest disguise
+   * the codebase has.
+   */
+  const [activityJump, setActivityJump] = useState<ActivityJump | null>(null);
+  const openActivityJump = (jump: ActivityJump) => {
+    setActivityJump(jump);
+    setActiveView('projects');
+  };
   const [selectedCustomerNameForSearch, setSelectedCustomerNameForSearch] = useState<string | null>(null);
 
   /*
@@ -532,8 +546,8 @@ export default function App() {
             onOpenDocument={handleOpenDocument}
             settings={store.settings}
             currentUser={store.currentUser}
-            initialSelectedProjectId={selectedProjectIdForActivities}
-            onClearInitialSelectedProject={() => setSelectedProjectIdForActivities(null)}
+            activityJump={activityJump}
+            onActivityJumpApplied={() => setActivityJump(null)}
           />
         );
       case 'transactions':
@@ -559,7 +573,9 @@ export default function App() {
             categoryCompletion={categoryCompletion}
             settings={store.settings}
             currentUser={store.currentUser}
-            initialTab={referralsTab}
+            initialTab={tabFor('tasks')}
+            onInitialTabApplied={clearTabJump}
+            onOpenNotification={openActivityJump}
           />
         );
       case 'stuckWork':
@@ -677,9 +693,20 @@ export default function App() {
                >
                  {theme === 'dark' ? <Sun size={22} className="text-amber-400" /> : <Moon size={22} />}
                </button>
+               {/*
+                 Both icons go through the tab hand-off above.
+
+                 They used to set a `referralsTab` state of their own, which
+                 seeded the screen's tab on mount and nothing else — so
+                 pressing the bell while «وظایف و پیگیری» was already open
+                 changed the value here and left the module sitting on «تخته
+                 کار», which is how it was reported. They name one of that
+                 screen's **own** tab keys, so there is no third spelling to
+                 translate on the way in.
+               */}
                <button 
                  className="relative text-slate-500 hover:text-amber-600 transition p-1"
-                 onClick={() => { setReferralsTab('board'); setActiveView('tasks'); }}
+                 onClick={() => openViewTab('tasks', 'board')}
                  title="کارتابل: وظایف و ارجاع‌های باز (تخته کار)"
                >
                  <Inbox size={22} />
@@ -712,7 +739,7 @@ export default function App() {
                </button>
                <button 
                  className="relative text-slate-500 hover:text-rose-600 transition p-1"
-                 onClick={() => { setReferralsTab('notifications'); setActiveView('tasks'); }} 
+                 onClick={() => openViewTab('tasks', 'inbox')}
                  title="اعلان‌های سیستم"
                >
                  <Bell size={22} />

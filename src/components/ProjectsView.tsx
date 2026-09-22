@@ -1,6 +1,15 @@
 
 import React, { useState, useRef } from 'react';
+import type { ActivityJump } from '../utils/notificationJump';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
+
+/**
+ * How long a message opened from a notification stays marked.
+ *
+ * Long enough to find it after the scroll settles, short enough that the ring
+ * does not go on claiming «this is new» for the rest of the session.
+ */
+const ACTIVITY_FOCUS_MS = 4000;
 import { formatMoney } from '../numUtils';
 import {
   Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, AlertTriangle, TrendingUp, X,
@@ -164,8 +173,17 @@ export interface ProjectsViewProps {
   settings: ERPSettings;
   currentUser: UserType | null;
   users?: UserType[];
-  initialSelectedProjectId?: string | null;
-  onClearInitialSelectedProject?: () => void;
+  /**
+   * Open this job's feed, on this category, at this message.
+   *
+   * What a notification on «اعلان‌ها» leads to. It replaced an
+   * `initialSelectedProjectId` that nothing anywhere ever set — the prop and
+   * its effect were both written and no caller existed — and it carries the
+   * two things that were missing from it: which category group to open, and
+   * which message to land on.
+   */
+  activityJump?: ActivityJump | null;
+  onActivityJumpApplied?: () => void;
   /** Asks about closing the proforma activity category when a follow-up settles a sale. */
   categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
@@ -175,7 +193,7 @@ export default function ProjectsView({
   onOpenDocument,
   settings,
   currentUser,
-  initialSelectedProjectId, onClearInitialSelectedProject,
+  activityJump, onActivityJumpApplied,
   categoryCompletion,
 }: ProjectsViewProps) {
   const list = useProjectList();
@@ -455,14 +473,6 @@ export default function ProjectsView({
       setActivePreviewDoc(null);
     }
   }, [selectedProjectForActivities]);
-  React.useEffect(() => {
-    if (initialSelectedProjectId) {
-      void openProjectDetails({ id: initialSelectedProjectId });
-      if (onClearInitialSelectedProject) {
-        onClearInitialSelectedProject();
-      }
-    }
-  }, [initialSelectedProjectId, onClearInitialSelectedProject]);
   const [newActivityAttachment, setNewActivityAttachment] = useState<any>({});
   /*
    * The message being answered, per category group.
@@ -480,6 +490,53 @@ export default function ProjectsView({
   const [editingGroupIdForStartDate, setEditingGroupIdForStartDate] = useState<string | null>(null);
   const [editingGroupIdForEndDate, setEditingGroupIdForEndDate] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<any>({});
+  /*
+   * Opened from a notification: the job, then the category, then the message.
+   *
+   * Cleared **before** the record is fetched, not after — the caller hands the
+   * same object identity down on every render of the shell above, so a jump
+   * left standing while an `await` runs is one this effect would apply again;
+   * clearing first is also what makes pressing the same notice a second time
+   * work.
+   *
+   * The group is expanded rather than the feed being scrolled blindly: a
+   * category is folded until somebody opens it, so a message inside a closed
+   * one is not on the page at all and there would be nothing to scroll to.
+   * Expanding is also what marks the notice read, through the pass that
+   * already watches `expandedGroups`.
+   */
+  React.useEffect(() => {
+    if (!activityJump) return;
+    const target = activityJump;
+    onActivityJumpApplied?.();
+    void (async () => {
+      await openProjectDetails({ id: target.projectId });
+      if (target.groupId) {
+        setExpandedGroups((prev: any) => ({ ...prev, [target.groupId as string]: true }));
+      }
+      setActivityFocus(target.activityId ?? null);
+    })();
+  }, [activityJump, onActivityJumpApplied]);
+  /*
+   * The message the jump named, marked until it has been seen.
+   *
+   * Two effects rather than one, because the element does not exist on the
+   * render that sets this: the category's own messages arrive with the project
+   * and the group is expanded a tick later, so scrolling here would find
+   * nothing. This re-runs as the feed fills and stops the moment it has
+   * scrolled, and the mark is dropped after a few seconds — a ring left on one
+   * message for the rest of the session says «this is new» long after it is.
+   */
+  const [activityFocus, setActivityFocus] = useState<string | null>(null);
+  React.useEffect(() => {
+    if (!activityFocus) return;
+    const el = typeof document === 'undefined'
+      ? null : document.getElementById(`activity-${activityFocus}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const timer = setTimeout(() => setActivityFocus(null), ACTIVITY_FOCUS_MS);
+    return () => clearTimeout(timer);
+  }, [activityFocus, projectCategoryGroups, expandedGroups]);
   const [customValues, setCustomValues] = useState<any>({});
 
   /*
@@ -5775,7 +5832,23 @@ export default function ProjectsView({
                                     </p>
                                   ) : (
                                     (group.activities || []).map((act) => (
-                                      <div key={act.id} className="bg-slate-50/50 p-3.5 rounded-lg border border-slate-100 space-y-2.5 text-xs text-right">
+                                      /*
+                                        The message a notification lands on.
+
+                                        The id is what the jump scrolls to and
+                                        the ring is what says «this one» on a
+                                        feed of a dozen that look alike; both
+                                        fall away a few seconds later.
+                                      */
+                                      <div
+                                        key={act.id}
+                                        id={`activity-${act.id}`}
+                                        className={`bg-slate-50/50 p-3.5 rounded-lg border space-y-2.5 text-xs text-right transition-colors ${
+                                          activityFocus === act.id
+                                            ? 'border-sky-400 ring-2 ring-sky-200 bg-sky-50/60'
+                                            : 'border-slate-100'
+                                        }`}
+                                      >
                                         <div className="flex justify-between items-center text-[10px] text-slate-400">
                                           <div className="flex items-center gap-2">
                                             <span className="font-mono">{formatDateTimeToShamsi(act.createdAt)}</span>
