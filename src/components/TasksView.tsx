@@ -61,6 +61,7 @@ import { projectsApi } from '../api/projects';
 import { createCustomerWithLinks } from '../api/customerAdapter';
 import { detailToProject, projectToWriteInput } from '../api/projectAdapter';
 import { useNextAction } from '../utils/useNextAction';
+import { nextActionFromTask as describeNextAction } from '../utils/nextAction';
 import type { NextActionSource } from '../utils/nextAction';
 import SaveWithNextActionButton from './SaveWithNextActionButton';
 import { NextActionPrompt } from './NextActionModal';
@@ -646,38 +647,16 @@ export default function TasksView({
   const nextAction = useNextAction();
 
   /*
-   * What a task's next action inherits — one reading, for both doors.
+   * What a task's next action inherits — one reading, for every door.
    *
-   * It is asked in two places now: beside «ذخیره» on the form, and beside the
-   * tick when the work is finished. Written out at each, the two would answer
-   * «what is this about» differently within a month, which is the second-copy
-   * fault this codebase keeps repairing.
-   *
-   * **It names the job, never the task.** A task is already the shape of a next
-   * action, so pointing a second one at the first would produce a card reading
-   * «تماس تلفنی — تماس تلفنی» with no way back to the work; it carries the
-   * task's own relation forward instead — the project, the customer, the order
-   * the work is really about. A task related to nothing raises a next action
-   * related to nothing, which is honest.
-   *
-   * The parameter is **structural rather than `Task`**, because the two doors
-   * hand it two shapes: the form's save resolves to the server's `TaskRow`
-   * while the tick hands on the card the person pressed. Naming either type
-   * would make this usable from one of them only.
+   * The rule itself is `nextActionFromTask` in `utils/nextAction.ts`, because
+   * the project's own follow-up tab now ticks the job's ordinary work off too
+   * and a third copy is how the three come to answer «what is this about»
+   * differently. This closure supplies only the one thing that is local: the
+   * person pressing the button.
    */
-  const nextActionFromTask = (task: {
-    relatedToType?: string | null;
-    relatedToId?: string | null;
-    relatedToName?: string | null;
-    title?: string | null;
-    priority?: string | null;
-  }): NextActionSource => ({
-    relatedToType: task.relatedToType || 'عمومی',
-    relatedToId: task.relatedToId || '',
-    relatedToName: task.relatedToName || task.title || '',
-    assignedTo: currentUser?.fullName,
-    priority: task.priority,
-  });
+  const nextActionFromTask = (task: Parameters<typeof describeNextAction>[0]): NextActionSource =>
+    describeNextAction(task, currentUser?.fullName);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();

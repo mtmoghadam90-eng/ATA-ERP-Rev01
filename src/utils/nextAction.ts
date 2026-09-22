@@ -83,6 +83,47 @@ export interface NextActionSource {
   priority?: string | null;
 }
 
+/**
+ * What a task's own next action inherits — one reading, for every door.
+ *
+ * It is asked in three places now: beside «ذخیره» on the task form, beside the
+ * tick when the work is finished, and on a project's follow-up tab, where the
+ * job's ordinary work is ticked off beside its sales chases. Written out at
+ * each, they would answer «what is this next action about» differently within
+ * a month, which is the second-copy fault this codebase keeps repairing.
+ *
+ * **It names the job, never the task.** A task is already the shape of a next
+ * action, so pointing a second one at the first would produce a card reading
+ * «تماس تلفنی — تماس تلفنی» with no way back to the work; it carries the task's
+ * own relation forward instead — the project, the customer, the order the work
+ * is really about. A task related to nothing raises a next action related to
+ * nothing, which is honest.
+ *
+ * The parameter is **structural rather than `Task`**, because the doors hand it
+ * different shapes: the form's save resolves to the server's `TaskRow`, the
+ * tick hands on the card the person pressed, and the project tab hands on a row
+ * its own endpoint derived. Naming any one type would make this usable from
+ * that one only.
+ */
+export function nextActionFromTask(
+  task: {
+    relatedToType?: string | null;
+    relatedToId?: string | null;
+    relatedToName?: string | null;
+    title?: string | null;
+    priority?: string | null;
+  },
+  assignedTo?: string | null,
+): NextActionSource {
+  return {
+    relatedToType: task.relatedToType || "عمومی",
+    relatedToId: task.relatedToId || "",
+    relatedToName: task.relatedToName || task.title || "",
+    assignedTo,
+    priority: task.priority,
+  };
+}
+
 /** The fields the modal edits, before anything is written. */
 export interface NextActionDraft {
   kind: string;

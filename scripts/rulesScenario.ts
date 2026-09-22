@@ -35,6 +35,7 @@ import { referralJump, moduleNotificationJump } from "../src/utils/notificationJ
 import {
   TRIGGER_PAYLOAD_KEYS, SCHEDULE_MODEL_PAYLOAD_KEYS, unresolvableTemplateTokens,
 } from "../src/utils/workflowTriggers";
+import { relationSpellings } from "../src/utils/taskRelations";
 import { toNumber } from "../src/server/childSync";
 import { getTodayShamsi, addWorkingDaysToShamsi, addDaysToShamsi, jalaliToGregorian, toShamsiStr, getShamsiDaysDifference } from "../src/dateUtils";
 import { escalationFor, escalationIsConfigured } from "../src/utils/workflowEscalation";
@@ -10317,16 +10318,25 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
     && completion.indexOf("done = task;") > completion.indexOf("tasksApi.update("));
 
   /*
-   * One description for both doors. Written out at each, the two would answer
+   * One description for every door. Written out at each, they would answer
    * «what is this next action about» differently within a month — and it is
    * the job rather than the task, or the card reads «تماس تلفنی — تماس تلفنی»
    * with no way back to the work.
+   *
+   * The rule moved to `utils/nextAction.ts` when a **third** door arrived: the
+   * project's own follow-up tab ticks the job's ordinary work off beside its
+   * chases, and a copy there would have been the second-copy fault this check
+   * exists to catch, arriving through the screen it was written for.
    */
-  ok("both doors describe the next action through one function",
+  ok("both of this screen's doors describe the next action through one function",
     (tasksView.match(/nextAction\.ask\([^)]*nextActionFromTask\)/g) ?? []).length === 2);
+  ok("...and the rule itself is shared rather than written out here",
+    /from '\.\.\/utils\/nextAction'/.test(tasksView)
+    && !/relatedToType: task\.relatedToType \|\| 'عمومی'/.test(tasksView));
+  const nextActionRule = strip(readFileSync("src/utils/nextAction.ts", "utf8"));
   ok("...which carries the task's own relation forward, not the task",
-    /relatedToType: task\.relatedToType \|\| 'عمومی'/.test(tasksView)
-    && (tasksView.match(/relatedToName: task\.relatedToName/g) ?? []).length === 1);
+    /relatedToType: task\.relatedToType \|\| "عمومی"/.test(nextActionRule)
+    && (nextActionRule.match(/relatedToName: task\.relatedToName/g) ?? []).length === 1);
 
   // The stripper must not be eating the file: every check above would pass
   // vacuously against an empty string.
@@ -20867,6 +20877,130 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
    */
   ok("...and the chips do not pretend to be buttons",
     !/data-template-variables[\s\S]{0,400}cursor-pointer/.test(view));
+}
+
+/* ===================================================================== *
+ *  A project's tab shows the job's own work, not only its sales chases.  *
+ * ===================================================================== */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const svc = strip(readFileSync("src/server/services/followUpService.ts", "utf8"));
+  const tab = strip(readFileSync("src/components/ProjectFollowUpTab.tsx", "utf8"));
+
+  /*
+   * **Reported**: «در پروژه بخش پیگیری‌های پروژه علاوه بر پیگیری‌های فروش
+   * وظیفه‌های عمومی مربوط به پروژه‌ها رو هم نشون بده و از همونجا هم بشه کارها
+   * رو انجام داد». The tab answered «what is happening on this job» with one
+   * kind of work; everything else agreed about the job was on the board, mixed
+   * in with every other project in the company.
+   */
+
+  const query = svc.slice(
+    svc.indexOf("async function projectTasks"),
+    svc.indexOf("const truncated = rows.length"));
+  ok("the project's own work is read", query.length > 200, query.length);
+
+  /*
+   * **Both spellings, or half the work is missing and the list looks healthy.**
+   * `relatedToType` is written in two languages — the task form stores «پروژه»
+   * and every automated writer stores `"project"` — so a query naming one finds
+   * exactly the other writer's half of nothing.
+   */
+  ok("the query asks for every spelling of the relation",
+    /relationSpellings\("project"\)/.test(query)
+    && /relationSpellings\("proforma"\)/.test(query));
+  ok("...derived from the same map the reader uses, not written out beside it",
+    !/"پروژه"/.test(query) && !/'پروژه'/.test(query));
+  const relations = strip(readFileSync("src/utils/taskRelations.ts", "utf8"));
+  ok("...which is what `relationSpellings` is",
+    /KINDS\[key\] === kind/.test(relations));
+  eq("both of a project's spellings come back",
+    relationSpellings("project").sort().join(","), "project,پروژه");
+  eq("...and both of a quotation's",
+    relationSpellings("proforma").sort().join(","), "proforma,پیش‌فاکتور");
+
+  /*
+   * **`visibilityClause` inside the query, never a filter afterwards.** A task
+   * belongs to two people and `tasksAll` widens that; narrowing after the read
+   * would leak the existence of work this account may not see — the rule every
+   * list in this application is built on.
+   */
+  ok("the scope is applied inside the query",
+    /visibilityClause\(user\)/.test(query)
+    && query.indexOf("visibilityClause") < query.indexOf("db.task.findMany"));
+  /*
+   * And an account that may not read tasks is reported as **withheld**, never
+   * as an empty list: «there is nothing to do» is the opposite of «you may not
+   * look», which is the stuck-work report's own rule.
+   */
+  ok("...and a caller who may not read tasks is told so rather than shown none",
+    /hasPermission\(user, "tasks"\)/.test(query) && /withheld: true/.test(query));
+
+  /*
+   * **A chase already drawn per quotation is not drawn again below.** One
+   * record in two places under two headings is exactly what merging the board
+   * removed; a chase raised against the *project* rather than a quotation is
+   * still listed, because no screen can close one and hiding it would be the
+   * quieter half of the same fault.
+   */
+  ok("the chases drawn per quotation are excluded from the list",
+    /NOT: \{ taskKind: FOLLOW_UP_KIND \}/.test(query));
+  ok("...only on the quotations' half, so a chase on the project itself shows",
+    query.indexOf("NOT: { taskKind: FOLLOW_UP_KIND }")
+      > query.indexOf('relationSpellings("proforma")'));
+
+  /*
+   * Newest first, so a truncation loses the oldest finished work rather than
+   * an arbitrary slice — and the screen says so instead of quietly showing a
+   * short list.
+   */
+  ok("the scan is newest-first and bounded",
+    /orderBy: \{ createdAt: "desc" \}/.test(query)
+    && /take: PROJECT_TASK_SCAN_LIMIT \+ 1/.test(query));
+  ok("...and the truncation is reported", /tasksTruncated/.test(svc) && /tasksTruncated/.test(tab));
+
+  /* ------------------------- and the screen acts ------------------------- */
+
+  /*
+   * The board's own modal, so «شرح اقدام» is asked one way — and the board's
+   * own columns and order, so a parked next action sits in «در انتظار» here
+   * exactly as it does there.
+   */
+  ok("the tab ticks work off through the board's own completion modal",
+    /<TaskCompletionModal/.test(tab) && /task=\{ticking\}/.test(tab));
+  ok("...and columns the work with the board's own rule",
+    /taskBoardLane\(/.test(tab) && /sortBoardCards\(/.test(tab));
+  ok("...naming the columns from `LANE_LABELS` rather than its own words",
+    /LANE_LABELS\[task\.lane\]/.test(tab));
+
+  /*
+   * Two keys and no more: posting a whole record read a moment ago would write
+   * the list's copy back over anything changed since.
+   */
+  const tick = tab.slice(tab.indexOf("const confirmTick"), tab.indexOf("const submitSchedule"));
+  ok("the tick writes the status and the note and nothing else",
+    /tasksApi\.update\(task\.id, \{ status: TASK_DONE, completionNote:/.test(tick));
+  /*
+   * The follow-on question comes **after** the write, and a refused write asks
+   * nothing — `ask` reads `undefined` as «the save failed», so a tick the
+   * server rejected must not raise a card pointing at work nobody finished.
+   */
+  ok("...the follow-on question comes after it",
+    tick.indexOf("tasksApi.update(") < tick.indexOf("nextAction.ask("));
+  ok("...and a refused tick asks nothing",
+    /let done: ProjectTaskRow \| undefined;/.test(tick)
+    && tick.indexOf("done = task;") > tick.indexOf("tasksApi.update("));
+  ok("...through the one shared description, not a third copy",
+    /nextActionFromTask\(row, currentUser\?\.fullName\)/.test(tick));
+
+  /*
+   * **A sales chase is refused by the ordinary tick**, so one that reached this
+   * list is drawn without the button rather than with one that would be
+   * refused — a control that cannot work is worse than none.
+   */
+  ok("a chase in the list is drawn without a tick",
+    /task\.taskKind === FOLLOW_UP_KIND \? \(/.test(tab));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
 import { CalendarPlus, CheckCircle2, X } from "lucide-react";
-import type { Task } from "../types";
 
 /**
  * «چه کاری انجام شد؟» — asked once, as the task is ticked off.
@@ -43,8 +42,17 @@ import type { Task } from "../types";
  * to say what one parameter already says.
  */
 export interface TaskCompletionModalProps {
-  /** The task being ticked. The modal is drawn only while this is set. */
-  task: Task | null;
+  /**
+   * The task being ticked. The modal is drawn only while this is set.
+   *
+   * **Structural rather than `Task`**, for the reason `nextActionFromTask`'s
+   * parameter is: the doors hand it different shapes — the board hands a
+   * `Task`, a project's follow-up tab hands a row its own endpoint derived —
+   * and naming either type would make this modal usable from that one only,
+   * which is how a second «ثبت انجام کار» dialog comes to be written. These
+   * three fields are the whole of what it reads.
+   */
+  task: { id: string; title: string; completionNote?: string | null } | null;
   onCancel: () => void;
   /**
    * Ticks the task off.

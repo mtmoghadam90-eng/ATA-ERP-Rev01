@@ -6263,6 +6263,7 @@ export default function ProjectsView({
                   <ProjectFollowUpTab
                     projectId={selectedProjectForActivities.id}
                     settings={settings}
+                    currentUser={currentUser}
                     categoryCompletion={categoryCompletion}
                   />
                 ) : null

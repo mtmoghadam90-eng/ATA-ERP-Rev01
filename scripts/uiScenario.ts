@@ -59,6 +59,8 @@ import TaskCompletionModal from "../src/components/TaskCompletionModal";
 import ModuleNotesSection from "../src/components/ModuleNotesSection";
 import AfterSalesServicesView from "../src/components/AfterSalesServicesView";
 import ReferralsView from "../src/components/ReferralsView";
+import ProjectFollowUpTab from "../src/components/ProjectFollowUpTab";
+import { LANE_LABELS } from "../src/utils/workBoard";
 import { DEFAULT_SETTINGS } from "../src/seedData";
 import { RelationPicker } from "../src/components/RelationPicker";
 import { ConditionValueField } from "../src/components/ConditionValueField";
@@ -3245,6 +3247,146 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
   act(() => { rootN.unmount(); });
   hostN.remove();
   gN.fetch = realFetchN;
+}
+
+/**
+ * A project's tab shows the job's own work, and ticks it off from there.
+ *
+ * Two things only a render can say. The rows are columned with the board's own
+ * `taskBoardLane`, so a **next action parked until its day** belongs in «در
+ * انتظار» here exactly as it does there — a comparator written for this screen
+ * would type-check and read perfectly while putting it in the wrong column.
+ * And the tick has to reach the server with **two keys**: a whole-record write
+ * compiles just as well and silently writes the list's copy back over anything
+ * changed since.
+ */
+{
+  const gP = globalThis as unknown as Record<string, unknown>;
+  const realFetchP = gP.fetch;
+  const askedP: { url: string; body: unknown }[] = [];
+
+  const reportBody = {
+    success: true,
+    projectId: "p-1",
+    quotes: [],
+    tasksWithheld: false,
+    tasksTruncated: false,
+    tasks: [
+      {
+        id: "t-open", title: "تماس با سازنده", description: "قیمت نهایی را بگیر",
+        status: "برای انجام", taskKind: "GENERAL", priority: "بالا",
+        dueDateJalali: "1405/07/10", createdAt: "2026-09-20T08:00:00.000Z",
+        assignedToName: "مهندس رضایی", createdByName: "محمد مقدم",
+        relatedToType: "project", relatedToId: "p-1", relatedToName: "پتروشیمی نمونه",
+        proformaNumber: null, completionNote: null, completedAtJalali: null,
+      },
+      {
+        // Parked until its day: the board puts this in «در انتظار مشتری», and
+        // so must this screen.
+        id: "t-parked", title: "پیگیری ارسال مدارک", description: null,
+        status: "برای انجام", taskKind: "NEXT_ACTION", priority: "متوسط",
+        dueDateJalali: "1499/01/01", createdAt: "2026-09-21T08:00:00.000Z",
+        assignedToName: "محمد مقدم", createdByName: "محمد مقدم",
+        relatedToType: "پروژه", relatedToId: "p-1", relatedToName: "پتروشیمی نمونه",
+        proformaNumber: null, completionNote: null, completedAtJalali: null,
+      },
+      {
+        id: "t-done", title: "ارسال نقشه‌ها", description: null,
+        status: "انجام شده", taskKind: "GENERAL", priority: "متوسط",
+        dueDateJalali: null, createdAt: "2026-09-10T08:00:00.000Z",
+        assignedToName: "محمد مقدم", createdByName: "محمد مقدم",
+        relatedToType: "project", relatedToId: "p-1", relatedToName: "پتروشیمی نمونه",
+        proformaNumber: null, completionNote: "به ایمیل مشتری ارسال شد", completedAtJalali: "1405/07/01",
+      },
+    ],
+    summary: {
+      quotes: 0, chaseable: 0, settled: 0, withoutNextAction: 0, overdue: 0,
+      followUps: 0, lastFollowUpDateJalali: null, lastFollowUpResult: null, openTasks: 2,
+    },
+  };
+
+  gP.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
+    askedP.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : null });
+    const body = String(url).includes("/api/sales-follow-up/project/")
+      ? reportBody
+      : { success: true, rows: [], total: 0, page: 1, pageSize: 50, totalPages: 1 };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+
+  const hostP = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootP = createRoot(hostP);
+  const settleP = async () => {
+    for (let i = 0; i < 14; i++) await act(async () => { await Promise.resolve(); });
+  };
+
+  await act(async () => {
+    rootP.render(React.createElement(ProjectFollowUpTab, {
+      projectId: "p-1",
+      settings: DEFAULT_SETTINGS as never,
+      currentUser: { fullName: "محمد مقدم" },
+    } as never));
+  });
+  await settleP();
+
+  const row = (id: string) => hostP.querySelector<HTMLElement>(`#project-task-${id}`);
+  ok("the job's ordinary work is drawn on its follow-up tab", row("t-open") !== null);
+  ok("...with what it is for, not only its title",
+    (row("t-open")?.textContent ?? "").includes("قیمت نهایی را بگیر"));
+  ok("...and who it is on",
+    (row("t-open")?.textContent ?? "").includes("مهندس رضایی"));
+
+  /*
+   * The board's own column rule, on a card whose *status* says «برای انجام»
+   * while its date says otherwise — which is exactly the pair a comparator
+   * written here would get wrong.
+   */
+  ok("a next action parked until its day reads as waiting",
+    (row("t-parked")?.textContent ?? "").includes(LANE_LABELS.WAITING),
+    row("t-parked")?.textContent);
+  /*
+   * And the card beside it, whose *status* is the same word, does not — which
+   * is the pair that says the column really came from `taskBoardLane` rather
+   * than from the status a comparator here would have read.
+   */
+  ok("...while work that can be picked up now reads as to-do",
+    (row("t-open")?.textContent ?? "").includes(LANE_LABELS.TODO)
+    && !(row("t-open")?.textContent ?? "").includes(LANE_LABELS.WAITING));
+
+  /* Finished work is behind one press, so the list is what is still to do. */
+  ok("finished work is not drawn until it is asked for", row("t-done") === null);
+  await act(async () => {
+    hostP.querySelector<HTMLElement>("#project-tasks-toggle-done")
+      ?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleP();
+  ok("...and is, once it is", row("t-done") !== null);
+  ok("...carrying what was done", (row("t-done")?.textContent ?? "").includes("به ایمیل مشتری"));
+
+  /* The tick: the modal opens, and the write carries two keys. */
+  await act(async () => {
+    hostP.querySelector<HTMLElement>("#project-task-complete-t-open")
+      ?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleP();
+  const noteBox = hostP.querySelector<HTMLTextAreaElement>("#task-completion-note");
+  ok("the tick opens the board's own completion modal", noteBox !== null);
+
+  const before = askedP.length;
+  await act(async () => {
+    hostP.querySelector<HTMLElement>("#task-completion-confirm")
+      ?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleP();
+  const write = askedP.slice(before).find((a) => /\/api\/tasks\/t-open$/.test(a.url));
+  ok("...and the tick reaches the task", !!write, askedP.slice(before).map((a) => a.url));
+  ok("...writing the status and the note and nothing else",
+    Object.keys((write?.body ?? {}) as Record<string, unknown>).sort().join(",")
+      === "completionNote,status",
+    Object.keys((write?.body ?? {}) as Record<string, unknown>).sort().join(","));
+
+  act(() => { rootP.unmount(); });
+  hostP.remove();
+  gP.fetch = realFetchP;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
