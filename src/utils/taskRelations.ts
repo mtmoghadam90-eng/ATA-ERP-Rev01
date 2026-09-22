@@ -36,3 +36,17 @@ export function taskRelationKind(relatedToType: unknown): TaskRelationKind | nul
   const key = String(relatedToType ?? "").trim();
   return KINDS[key] ?? null;
 }
+
+/**
+ * Every spelling a query has to ask for to find one kind of relation.
+ *
+ * **Derived from the map above rather than written out beside it**, which is
+ * the whole point of this file: a query naming only «پروژه» finds the tasks a
+ * person typed and none of the ones the workflow engine raised, and a query
+ * naming only `"project"` finds exactly the opposite half — each answering with
+ * a plausible-looking list that is missing the other writer's work, which is
+ * the silent half of the fault this file was written for.
+ */
+export function relationSpellings(kind: TaskRelationKind): string[] {
+  return Object.keys(KINDS).filter((key) => KINDS[key] === kind);
+}

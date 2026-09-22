@@ -112,9 +112,41 @@ export interface ProjectFollowUpQuote {
   history: FollowUpHistoryEntry[];
 }
 
+/**
+ * One piece of the job's ordinary work, beside its sales chases.
+ *
+ * The chases were on the project's own tab and everything else agreed about
+ * the job — ring the manufacturer, chase the broker, send the drawings — was
+ * only on the board among every other job in the company.
+ */
+export interface ProjectTaskRow {
+  id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  taskKind: string | null;
+  priority: string | null;
+  dueDateJalali: string | null;
+  createdAt: string;
+  assignedToName: string | null;
+  createdByName: string | null;
+  relatedToType: string | null;
+  relatedToId: string | null;
+  relatedToName: string | null;
+  /** Set when the task hangs off one of this job's quotations. */
+  proformaNumber: string | null;
+  completionNote: string | null;
+  completedAtJalali: string | null;
+}
+
 export interface ProjectFollowUpReport {
   projectId: string;
   quotes: ProjectFollowUpQuote[];
+  /** The job's own work, minus the chases drawn against its quotations. */
+  tasks: ProjectTaskRow[];
+  /** True when this account may not read tasks — which is not «there are none». */
+  tasksWithheld: boolean;
+  tasksTruncated: boolean;
   summary: {
     quotes: number;
     chaseable: number;
@@ -124,6 +156,7 @@ export interface ProjectFollowUpReport {
     followUps: number;
     lastFollowUpDateJalali: string | null;
     lastFollowUpResult: string | null;
+    openTasks: number;
   };
 }
 

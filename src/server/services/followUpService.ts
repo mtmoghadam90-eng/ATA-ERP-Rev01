@@ -23,6 +23,9 @@ import {
   type SettleOutcome,
 } from "../../utils/salesFollowUp";
 import { TASK_CANCELLED, TASK_TODO } from "../../utils/workBoard";
+import { FOLLOW_UP_KIND } from "../../utils/salesFollowUp";
+import { relationSpellings, taskRelationKind } from "../../utils/taskRelations";
+import { visibilityClause } from "./taskService";
 import { resolveAssignee } from "./assigneeLookup";
 
 /**
@@ -1176,9 +1179,52 @@ export interface ProjectFollowUpQuote {
   history: FollowUpHistoryEntry[];
 }
 
+/**
+ * One piece of the job's **ordinary** work, beside its sales chases.
+ *
+ * Reported as «علاوه بر پیگیری‌های فروش وظیفه‌های عمومی مربوط به پروژه رو هم
+ * نشون بده»: a job's chases were on its own tab and everything else people had
+ * agreed to do about it — ring the manufacturer, chase the customs broker,
+ * send the drawings — was only on the board, mixed in with every other job in
+ * the company. A tab that answers «what is happening on this project» and shows
+ * one kind of work is answering half the question.
+ */
+export interface ProjectTaskRow {
+  id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  taskKind: string | null;
+  priority: string | null;
+  dueDateJalali: string | null;
+  createdAt: string;
+  assignedToName: string | null;
+  createdByName: string | null;
+  /** What it hangs off, in whichever language the writer used. */
+  relatedToType: string | null;
+  relatedToId: string | null;
+  relatedToName: string | null;
+  /** The quotation it belongs to, when it hangs off one of this job's. */
+  proformaNumber: string | null;
+  completionNote: string | null;
+  completedAtJalali: string | null;
+}
+
 export interface ProjectFollowUpReport {
   projectId: string;
   quotes: ProjectFollowUpQuote[];
+  /**
+   * The job's own work that is not a chase already drawn above.
+   *
+   * Empty both when there is none and when this account may not read tasks —
+   * which are not the same answer, so `tasksWithheld` says which. An empty list
+   * reads as «there is nothing to do», the opposite of «you may not look»; the
+   * stuck-work report draws that distinction for the same reason.
+   */
+  tasks: ProjectTaskRow[];
+  tasksWithheld: boolean;
+  /** The scan stopped at its bound; the oldest finished work is missing. */
+  tasksTruncated: boolean;
   summary: {
     quotes: number;
     /** Still being chased — sent, not settled. */
@@ -1191,6 +1237,8 @@ export interface ProjectFollowUpReport {
     followUps: number;
     lastFollowUpDateJalali: string | null;
     lastFollowUpResult: string | null;
+    /** Ordinary work on this job that nobody has finished. */
+    openTasks: number;
   };
 }
 
@@ -1294,6 +1342,8 @@ export async function projectFollowUpReport(
     } satisfies ProjectFollowUpQuote;
   });
 
+  const work = await projectTasks(projectId, quotes, user, db);
+
   const everyEntry = quotes.flatMap((q) => q.history)
     .filter((h) => !!h.completedAtJalali)
     .sort((a, b) => (a.completedAtJalali! < b.completedAtJalali! ? 1 : -1));
@@ -1301,6 +1351,9 @@ export async function projectFollowUpReport(
   return {
     projectId,
     quotes,
+    tasks: work.tasks,
+    tasksWithheld: work.withheld,
+    tasksTruncated: work.truncated,
     summary: {
       quotes: quotes.length,
       chaseable: quotes.filter((q) => !q.settled).length,
@@ -1312,7 +1365,112 @@ export async function projectFollowUpReport(
       followUps: quotes.reduce((sum, q) => sum + q.history.length, 0),
       lastFollowUpDateJalali: everyEntry[0]?.completedAtJalali ?? null,
       lastFollowUpResult: everyEntry[0]?.result ?? null,
+      openTasks: work.tasks.filter(
+        (t) => !(FINISHED_TASK_STATUSES as readonly string[]).includes(t.status),
+      ).length,
     },
+  };
+}
+
+/**
+ * How much of a job's ordinary work one read may carry.
+ *
+ * Ordered **newest first** so a truncation loses the oldest finished work
+ * rather than an arbitrary slice — the rule the demand analysis follows, and
+ * the only direction that keeps the open work on the screen whatever the bound
+ * does. The screen says so rather than quietly showing a short list.
+ */
+const PROJECT_TASK_SCAN_LIMIT = 200;
+
+/**
+ * The job's own work, minus the chases already drawn against its quotations.
+ *
+ * Three decisions.
+ *
+ * **Both spellings, always.** `relatedToType` is written in two languages — the
+ * task form stores «پروژه» and every automated writer stores `"project"` — so a
+ * query naming one finds exactly half the work and looks perfectly healthy
+ * doing it. `relationSpellings` derives the list from the same map
+ * `taskRelationKind` reads, which is what stops the query and the reader
+ * disagreeing.
+ *
+ * **A quotation's work belongs to the job too.** A task raised against one of
+ * this project's proformas — «کاتالوگ را برای مشتری بفرست» — is work on this
+ * job, and leaving it out would hide it behind a document rather than showing
+ * it where somebody is looking. What is *excluded* is only what is already on
+ * the screen: a `SALES_FOLLOW_UP` on one of those quotations is drawn per
+ * quote above, and drawing it again below would be one record in two places,
+ * which is the merge this application keeps making rather than undoing.
+ *
+ * **`visibilityClause` is inside the query and never a filter afterwards.** A
+ * task belongs to two people and `tasksAll` widens that; narrowing after the
+ * read would leak the existence of work this account may not see, and it is
+ * the reason this reads through the tasks module's own rule rather than
+ * writing a second one here.
+ */
+async function projectTasks(
+  projectId: string,
+  quotes: readonly { id: string; proformaNumber: string }[],
+  user: AuthUser,
+  db: ReturnType<typeof getDb>,
+): Promise<{ tasks: ProjectTaskRow[]; withheld: boolean; truncated: boolean }> {
+  if (!hasPermission(user, "tasks")) {
+    return { tasks: [], withheld: true, truncated: false };
+  }
+
+  const visibility = visibilityClause(user);
+  const about: Prisma.TaskWhereInput[] = [
+    { relatedToType: { in: relationSpellings("project") }, relatedToId: projectId },
+  ];
+  if (quotes.length) {
+    about.push({
+      relatedToType: { in: relationSpellings("proforma") },
+      relatedToId: { in: quotes.map((q) => q.id) },
+      // The chases on those documents are drawn per quote above; one record in
+      // two places is the thing this tab exists to stop.
+      NOT: { taskKind: FOLLOW_UP_KIND },
+    });
+  }
+
+  const rows = await db.task.findMany({
+    where: { AND: [{ OR: about }, ...(visibility ? [visibility as Prisma.TaskWhereInput] : [])] },
+    orderBy: { createdAt: "desc" },
+    take: PROJECT_TASK_SCAN_LIMIT + 1,
+    select: {
+      id: true, title: true, description: true, status: true, taskKind: true,
+      priority: true, dueDateJalali: true, createdAt: true,
+      assignedToName: true, createdByName: true,
+      relatedToType: true, relatedToId: true, relatedToName: true,
+      completionNote: true, completedAtJalali: true,
+    },
+  });
+
+  const truncated = rows.length > PROJECT_TASK_SCAN_LIMIT;
+  const numbers = new Map(quotes.map((q) => [q.id, q.proformaNumber]));
+
+  return {
+    truncated,
+    withheld: false,
+    tasks: rows.slice(0, PROJECT_TASK_SCAN_LIMIT).map((row) => ({
+      id: row.id,
+      title: row.title,
+      description: row.description ?? null,
+      status: row.status,
+      taskKind: row.taskKind ?? null,
+      priority: row.priority ?? null,
+      dueDateJalali: row.dueDateJalali ?? null,
+      createdAt: row.createdAt.toISOString(),
+      assignedToName: row.assignedToName ?? null,
+      createdByName: row.createdByName ?? null,
+      relatedToType: row.relatedToType ?? null,
+      relatedToId: row.relatedToId ?? null,
+      relatedToName: row.relatedToName ?? null,
+      proformaNumber: taskRelationKind(row.relatedToType) === "proforma"
+        ? numbers.get(String(row.relatedToId)) ?? null
+        : null,
+      completionNote: row.completionNote ?? null,
+      completedAtJalali: row.completedAtJalali ?? null,
+    })),
   };
 }
 

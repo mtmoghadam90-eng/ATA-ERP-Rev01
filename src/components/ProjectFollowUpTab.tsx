@@ -1,21 +1,30 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, CalendarClock, CheckCircle2, History, Loader2, PhoneOff, Plus, RefreshCcw,
+  AlertTriangle, CalendarClock, CheckCircle2, ClipboardList, History, Loader2, PhoneOff, Plus,
+  RefreshCcw, User as UserIcon,
 } from 'lucide-react';
 import FollowUpCompletionModal from './FollowUpCompletionModal';
+import TaskCompletionModal from './TaskCompletionModal';
+import { NextActionPrompt } from './NextActionModal';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { ApiError } from '../api/client';
 import {
-  ProjectFollowUpQuote, ProjectFollowUpReport, salesFollowUpApi,
+  ProjectFollowUpQuote, ProjectFollowUpReport, ProjectTaskRow, salesFollowUpApi,
 } from '../api/salesFollowUp';
+import { tasksApi } from '../api/tasks';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { formatMoney } from '../numUtils';
 import { addDaysToShamsi, getTodayShamsi } from '../dateUtils';
-import { isTerminalOutcome } from '../utils/salesFollowUp';
+import { FOLLOW_UP_KIND, isTerminalOutcome } from '../utils/salesFollowUp';
 import type { ERPSettings } from '../types';
 import { settlementCategoryPrompt } from '../utils/salesFollowUp';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
+import { useNextAction } from '../utils/useNextAction';
+import { nextActionFromTask } from '../utils/nextAction';
+import {
+  LANE_LABELS, TASK_DONE, sortBoardCards, taskBoardLane, type BoardLane,
+} from '../utils/workBoard';
 
 /**
  * One project's sales follow-up, on the project itself.
@@ -34,6 +43,14 @@ import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 interface Props {
   projectId: string;
   settings: ERPSettings;
+  /**
+   * Whoever is looking at the tab.
+   *
+   * Only so a next action raised from here starts with their name on it — the
+   * same default the ten forms use. The server decides what this account may
+   * read; nothing on this screen does.
+   */
+  currentUser?: { fullName?: string | null } | null;
   /** Asks about closing the project's proforma activity category on a settlement. */
   categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
@@ -47,6 +64,20 @@ const HEALTH_TONE: Record<string, string> = {
   NO_RESPONSE: 'bg-slate-50 text-slate-500 border-slate-200',
 };
 
+/**
+ * The board's four columns, toned the way the board tones them.
+ *
+ * The labels come from `LANE_LABELS` rather than being written out, so this tab
+ * and the board cannot name one column two ways — the `DETAIL_LABELS` rule, on
+ * the two screens a person reads one after the other.
+ */
+const LANE_TONE: Record<BoardLane, string> = {
+  WAITING: 'bg-slate-50 text-slate-500 border-slate-200',
+  TODO: 'bg-sky-50 text-sky-700 border-sky-200',
+  DOING: 'bg-amber-50 text-amber-700 border-amber-200',
+  DONE: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+};
+
 const HEALTH_LABEL: Record<string, string> = {
   OVERDUE: 'عقب‌افتاده',
   DUE_TODAY: 'امروز',
@@ -56,7 +87,9 @@ const HEALTH_LABEL: Record<string, string> = {
   NO_RESPONSE: 'بدون پاسخ',
 };
 
-export default function ProjectFollowUpTab({ projectId, settings, categoryCompletion }: Props) {
+export default function ProjectFollowUpTab({
+  projectId, settings, currentUser, categoryCompletion,
+}: Props) {
   const [report, setReport] = useState<ProjectFollowUpReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +101,18 @@ export default function ProjectFollowUpTab({ projectId, settings, categoryComple
   const [completing, setCompleting] = useState<ProjectFollowUpQuote | null>(null);
   const [scheduling, setScheduling] = useState<ProjectFollowUpQuote | null>(null);
   const [dueDate, setDueDate] = useState(addDaysToShamsi(getTodayShamsi(), 2));
+
+  /*
+   * Ticking the job's ordinary work off, from the tab that shows it.
+   *
+   * The same two controls the board offers — `TaskCompletionModal` asks «شرح
+   * اقدام» and carries «ثبت و اقدام بعدی» beside it — rather than a bare tick
+   * of this screen's own, because a second way to finish a task is a second
+   * copy of what finishing one means.
+   */
+  const [ticking, setTicking] = useState<ProjectTaskRow | null>(null);
+  const nextAction = useNextAction();
+  const [showDoneTasks, setShowDoneTasks] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -90,6 +135,68 @@ export default function ProjectFollowUpTab({ projectId, settings, categoryComple
 
   const summary = report?.summary;
 
+  /*
+   * The job's own work, in the board's own columns and the board's own order.
+   *
+   * `taskBoardLane` and `sortBoardCards` rather than a comparator written here:
+   * a next action parked until its day belongs in «در انتظار» on this screen
+   * exactly as it does on the board, and a second reading of that is how the
+   * two come to disagree about where a card is. Undated work sorts last, which
+   * is that rule's own doing.
+   */
+  const todayJalali = getTodayShamsi();
+  const laneOf = useCallback(
+    (task: ProjectTaskRow): BoardLane => taskBoardLane(
+      { status: task.status, taskKind: task.taskKind, dueDate: task.dueDateJalali },
+      todayJalali,
+    ),
+    [todayJalali],
+  );
+
+  const workLanes = useMemo(() => {
+    const cards = (report?.tasks ?? []).map((task) => ({
+      ...task,
+      lane: laneOf(task),
+      dueDate: task.dueDateJalali,
+    }));
+    const inLane = (lane: BoardLane) =>
+      sortBoardCards(cards.filter((c) => c.lane === lane), 'due');
+    return {
+      // «در انتظار» first: it is work agreed for a later day, and reading it
+      // before what can be picked up now is what the column means.
+      open: [...inLane('DOING'), ...inLane('TODO'), ...inLane('WAITING')],
+      done: inLane('DONE'),
+    };
+  }, [report?.tasks, laneOf]);
+
+  /*
+   * Two keys and no more.
+   *
+   * Posting a whole record read a moment ago would write the list's copy back
+   * over anything changed since — the rule `taskToWriteInput` keeps by not
+   * carrying the note at all.
+   */
+  const confirmTick = async (note: string, withNextAction: boolean) => {
+    const task = ticking;
+    if (!task) return;
+    setTicking(null);
+    let done: ProjectTaskRow | undefined;
+    try {
+      await tasksApi.update(task.id, { status: TASK_DONE, completionNote: note.trim() || null });
+      done = task;
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'ثبت انجام کار با خطا مواجه شد.');
+    }
+    // `undefined` is a refused write: a tick the server rejected must not leave
+    // a card pointing at work nobody finished.
+    await nextAction.ask(
+      withNextAction,
+      done,
+      (row) => nextActionFromTask(row, currentUser?.fullName),
+    );
+  };
+
   const submitSchedule = async () => {
     if (!scheduling) return;
     try {
@@ -106,7 +213,7 @@ export default function ProjectFollowUpTab({ projectId, settings, categoryComple
   return (
     <div className="space-y-4" dir="rtl" id="project-follow-up-tab">
       {/* The state of the chase on this job, over every quotation on it. */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         {([
           { key: 'quotes', label: 'پیش‌فاکتورها', tone: 'text-slate-800', icon: History },
           { key: 'chaseable', label: 'در حال پیگیری', tone: 'text-sky-600', icon: RefreshCcw },
@@ -114,6 +221,7 @@ export default function ProjectFollowUpTab({ projectId, settings, categoryComple
           { key: 'overdue', label: 'عقب‌افتاده', tone: 'text-rose-600', icon: CalendarClock },
           { key: 'settled', label: 'تعیین‌تکلیف‌شده', tone: 'text-emerald-600', icon: CheckCircle2 },
           { key: 'followUps', label: 'دفعات پیگیری', tone: 'text-slate-800', icon: PhoneOff },
+          { key: 'openTasks', label: 'وظایف باز پروژه', tone: 'text-indigo-600', icon: ClipboardList },
         ] as const).map((tile) => (
           <div key={tile.key} className="bg-white rounded-2xl border border-slate-100 p-4">
             <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1">
@@ -157,6 +265,138 @@ export default function ProjectFollowUpTab({ projectId, settings, categoryComple
         <p className="text-slate-400 text-xs text-center py-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
           برای این پروژه هنوز پیش‌فاکتوری صادر نشده است.
         </p>
+      )}
+
+      {/*
+        The job's ordinary work, beside its chases.
+
+        Above the quotations deliberately: a chase is drawn per document and
+        reads as part of that document's story, while this is the job's own
+        list — «الان روی این پروژه چه کارهایی مانده» — which is the first thing
+        somebody opening the tab is asking.
+      */}
+      {report && !report.tasksWithheld && (
+        <section className="bg-white rounded-2xl border border-slate-150 p-4 space-y-3" id="project-tasks">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <ClipboardList size={14} className="text-indigo-500" />
+              وظایف پروژه
+              <span className="text-[10px] font-bold text-slate-400">
+                ({workLanes.open.length.toLocaleString('fa-IR')} باز)
+              </span>
+            </h4>
+            {workLanes.done.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowDoneTasks((v) => !v)}
+                id="project-tasks-toggle-done"
+                className="text-[11px] font-bold text-slate-500 hover:text-slate-800 transition"
+              >
+                {showDoneTasks
+                  ? 'پنهان کردن انجام‌شده‌ها'
+                  : `نمایش ${workLanes.done.length.toLocaleString('fa-IR')} کار انجام‌شده`}
+              </button>
+            )}
+          </div>
+
+          {workLanes.open.length === 0 && workLanes.done.length === 0 ? (
+            <p className="text-[11px] text-slate-400">
+              هیچ وظیفه‌ای برای این پروژه ثبت نشده است.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {[...workLanes.open, ...(showDoneTasks ? workLanes.done : [])].map((task) => (
+                <li
+                  key={task.id}
+                  id={`project-task-${task.id}`}
+                  className={`rounded-xl border px-3 py-2 space-y-1.5 ${
+                    task.lane === 'DONE'
+                      ? 'bg-slate-50 border-slate-100'
+                      : 'bg-white border-slate-150'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <p className={`text-[12px] font-bold min-w-0 break-words ${
+                      task.lane === 'DONE' ? 'text-slate-400 line-through' : 'text-slate-800'
+                    }`}>
+                      {task.title}
+                    </p>
+                    {/*
+                      The tick, and only where it is allowed.
+
+                      A `SALES_FOLLOW_UP` is refused by the ordinary tick — it
+                      is closed by recording what the customer said — so one
+                      that reached this list (a chase raised against the project
+                      rather than a quotation, which no screen can close) is
+                      drawn without the button rather than with one that would
+                      be refused.
+                    */}
+                    {task.lane !== 'DONE' && (
+                      task.taskKind === FOLLOW_UP_KIND ? (
+                        <span className="text-[10px] text-amber-600 font-bold shrink-0">
+                          پیگیری فروش — از صفحه پیگیری‌ها ثبت می‌شود
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setTicking(task)}
+                          id={`project-task-complete-${task.id}`}
+                          className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-[11px] font-bold transition flex items-center gap-1.5 shrink-0"
+                        >
+                          <CheckCircle2 size={13} />
+                          ثبت انجام کار
+                        </button>
+                      )
+                    )}
+                  </div>
+
+                  {task.description && (
+                    <p className="text-[11px] text-slate-500 leading-relaxed whitespace-pre-line break-words">
+                      {task.description}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-500">
+                    <span className={`font-bold px-1.5 py-0.5 rounded border ${
+                      LANE_TONE[task.lane] ?? 'bg-slate-50 text-slate-500 border-slate-200'
+                    }`}>
+                      {LANE_LABELS[task.lane]}
+                    </span>
+                    {task.assignedToName && (
+                      <span className="flex items-center gap-1">
+                        <UserIcon size={10} />
+                        {task.assignedToName}
+                      </span>
+                    )}
+                    {task.dueDateJalali && (
+                      <span className="flex items-center gap-1 font-mono">
+                        <CalendarClock size={10} />
+                        {task.dueDateJalali}
+                      </span>
+                    )}
+                    {/* Which quotation it hangs off, when it hangs off one. */}
+                    {task.proformaNumber && (
+                      <span className="font-mono text-slate-400">{task.proformaNumber}</span>
+                    )}
+                    {task.priority && <span className="text-slate-400">{task.priority}</span>}
+                  </div>
+
+                  {task.lane === 'DONE' && task.completionNote && (
+                    <p className="text-[11px] text-slate-500 leading-relaxed whitespace-pre-line border-r-2 border-slate-200 pr-2">
+                      {task.completionNote}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {report.tasksTruncated && (
+            <p className="text-[10px] text-amber-600 font-bold">
+              تعداد وظایف این پروژه از حد نمایش بیشتر است؛ قدیمی‌ترین کارهای انجام‌شده نشان داده نشده‌اند.
+            </p>
+          )}
+        </section>
       )}
 
       <div className="space-y-3">
@@ -290,6 +530,17 @@ export default function ProjectFollowUpTab({ projectId, settings, categoryComple
           }}
         />
       )}
+
+      {/* The board's own completion modal, so «شرح اقدام» is asked one way. */}
+      {ticking && (
+        <TaskCompletionModal
+          task={ticking}
+          onCancel={() => setTicking(null)}
+          onConfirm={(note, withNextAction) => void confirmTick(note, withNextAction)}
+        />
+      )}
+
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
 
       {scheduling && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
