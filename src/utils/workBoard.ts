@@ -374,6 +374,63 @@ export function referralIsOpen(status: string | null | undefined): boolean {
   return referralLane(status) !== "DONE";
 }
 
+/* ---------------------------- pressing a card ---------------------------- */
+
+/**
+ * What pressing a card's headline is *for*, which is not the same on the two
+ * views.
+ *
+ * The list draws a tick beside every card, so its headline is free to mean
+ * «open the record». The board has no per-card tick at all — only a column
+ * toolbar over cards somebody has already selected — so the gesture a person
+ * reaches for when they have just finished something had nothing to press, and
+ * the headline opened an edit box nobody wanted. Reported as «روی عنوان کارت
+ * وظیفه کلیک می‌کنیم، ویرایش باز نشه؛ انگار تیک انجامش را زده‌ایم».
+ *
+ * The press therefore carries its own intent and the rule is written once here
+ * rather than branching inside the screen, because the two views ask for
+ * different targets from the same card and a second reading of «what kind of
+ * work is this» is how the board and the list come to disagree about it.
+ */
+export const CARD_PRESSES = ["open", "complete"] as const;
+export type CardPress = (typeof CARD_PRESSES)[number];
+
+/** Where a press lands. Each is a form this screen already owns. */
+export const CARD_TARGETS = ["referral", "follow-up", "complete", "edit"] as const;
+export type CardTarget = (typeof CARD_TARGETS)[number];
+
+export interface CardPressSubject {
+  kind: "task" | "referral";
+  status?: string | null;
+  taskKind?: string | null;
+}
+
+/**
+ * The rule, in the order the answers rule each other out.
+ *
+ * A **referral** is answered in its own thread whichever view it was pressed
+ * on — there is nothing to tick, and its status moves when somebody replies.
+ *
+ * An open **sales chase** goes to its completion form, which is the existing
+ * behaviour on both views and stays: it is closed by recording what the
+ * customer said, the bare tick is refused by the server, and a `complete`
+ * press must not be a second, weaker door onto the same thing.
+ *
+ * A **finished** card never routes to a completion, whatever the press says.
+ * «انگار تیک را زده‌ایم» has no meaning for work already done, and the tick's
+ * own answer there is to *reopen* it — which a headline press must not do
+ * silently, since a person reads a heading before they decide anything. It
+ * opens the record instead, where the status, the note and the dates are
+ * somebody's to correct.
+ */
+export function cardPressTarget(card: CardPressSubject, press: CardPress): CardTarget {
+  if (card.kind === "referral") return "referral";
+  const finished = taskLane(card.status) === "DONE";
+  if (card.taskKind === FOLLOW_UP_KIND && !finished) return "follow-up";
+  if (press === "complete" && !finished) return "complete";
+  return "edit";
+}
+
 /* -------------------------- activity categories -------------------------- */
 
 /**

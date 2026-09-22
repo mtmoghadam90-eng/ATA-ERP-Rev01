@@ -3389,6 +3389,85 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
   gP.fetch = realFetchP;
 }
 
+/*
+ * The board's headline is the tick, so the record needs a door of its own.
+ *
+ * The screen decides what a press is *for* (`cardPressTarget`), which a rule
+ * test holds; what only a render can show is that the board draws the way back
+ * to the record, that it is drawn on a task and not on a referral — which has
+ * no edit box here and is answered in its own thread — and that the two
+ * controls really hand over different things. `onClick={() => onOpen(card)}`
+ * on the pencil type-checks and reads perfectly.
+ */
+head("The work board: the record is one press away from the headline");
+{
+  const hostE = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootE = createRoot(hostE);
+
+  const openedE: string[] = [];
+  const editedE: string[] = [];
+
+  const cardsE = [
+    {
+      kind: "task" as const, id: "t1", title: "ثبت سفارش خرید",
+      createdAt: "2026-01-01", priority: "متوسط", status: "برای انجام",
+    },
+    {
+      kind: "referral" as const, id: "r1", title: "لطفاً دیتاشیت را چک کن",
+      createdAt: "2026-01-02", status: "در انتظار اقدام", replies: 0,
+    },
+  ];
+
+  const renderE = (withEdit: boolean) => act(() => {
+    rootE.render(React.createElement(WorkBoard, {
+      cards: cardsE,
+      sort: "date" as const,
+      today: "1405/01/10",
+      load: null,
+      selected: new Set<string>(),
+      moving: false,
+      onToggleSelect: () => {},
+      onMove: () => {},
+      onOpen: (card: { kind: string; id: string }) => { openedE.push(`${card.kind}:${card.id}`); },
+      ...(withEdit
+        ? { onEdit: (card: { kind: string; id: string }) => { editedE.push(`${card.kind}:${card.id}`); } }
+        : {}),
+    }));
+  });
+
+  // A caller with no edit box draws no button, rather than one that does
+  // nothing — the switch-that-does-nothing fault, on a control.
+  renderE(false);
+  ok("a board given no edit handler draws no edit button",
+    !hostE.querySelector("#work-board-edit-task:t1"));
+
+  renderE(true);
+  const buttonE = (id: string) => ([...hostE.querySelectorAll("button")] as HTMLButtonElement[])
+    .find((el) => el.id === id);
+
+  ok("the task card offers the record beside its badges", !!buttonE("work-board-edit-task:t1"));
+  // A referral is answered on its thread, which the headline opens; an edit
+  // button there would be a control onto a form it does not have.
+  ok("...and a referral card does not", !buttonE("work-board-edit-referral:r1"));
+
+  act(() => {
+    buttonE("work-board-edit-task:t1")!
+      .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  ok("pressing it asks for the record", editedE.join(",") === "task:t1", editedE);
+  ok("...and completes nothing", openedE.length === 0, openedE);
+
+  act(() => {
+    buttonE("work-board-open-task:t1")!
+      .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  ok("the headline is still the press the screen routes", openedE.join(",") === "task:t1", openedE);
+  ok("...and opens no edit box of its own", editedE.join(",") === "task:t1", editedE);
+
+  act(() => { rootE.unmount(); });
+  hostE.remove();
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {
