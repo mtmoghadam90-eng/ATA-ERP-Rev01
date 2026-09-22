@@ -33,9 +33,9 @@ import ReferralsView from './ReferralsView';
 import ReferralThread from './ReferralThread';
 import FollowUpCompletionModal from './FollowUpCompletionModal';
 import {
-  BOARD_SORTS, BoardSort, LANE_FILTERS, LANE_FILTER_LABELS, MovableLane, SORT_LABELS,
+  BOARD_SORTS, BoardSort, CardPress, LANE_FILTERS, LANE_FILTER_LABELS, MovableLane, SORT_LABELS,
   TASK_TODO,
-  referralPassesTaskFilters, serverOrderFor, sortBoardCards, taskLane,
+  cardPressTarget, referralPassesTaskFilters, serverOrderFor, sortBoardCards, taskLane,
 } from '../utils/workBoard';
 import { ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
 import { salesFollowUpApi, type FollowUpRow } from '../api/salesFollowUp';
@@ -1069,29 +1069,49 @@ export default function TasksView({
   };
 
   /**
-   * Opening a card.
+   * Pressing a card's headline.
    *
    * The whole reason for the merge: a referral is answered in its own thread
    * and a sales follow-up through its own completion form, both without
-   * leaving this screen. An ordinary task opens the edit box it always had.
+   * leaving this screen.
+   *
+   * What an **ordinary task** does depends on where it was pressed, and
+   * `cardPressTarget` is the rule rather than a branch written out here: the
+   * list draws a tick beside every card so its headline opens the record,
+   * while the board has no per-card tick and its headline is the tick. A
+   * finished card is never completed by either — it opens the record, where
+   * the tick's own answer (reopening it) is a decision somebody makes rather
+   * than something a press does on the way past.
    */
-  const openCard = async (card: BoardCard) => {
-    if (card.kind === 'referral') {
+  const openCard = async (card: BoardCard, press: CardPress = 'open') => {
+    const target = cardPressTarget(card, press);
+    if (target === 'referral') {
       setOpenReferral(referrals.find((r) => r.id === card.id) ?? null);
       return;
     }
     /*
      * A follow-up that is still open opens its completion form. A closed one
-     * goes through `handleOpenEdit`, which opens the same form in correcting
-     * mode — `completeFollowUp` would refuse a second completion, but the
-     * result and the note are still somebody's to fix.
+     * lands on `edit`, which is `handleOpenEdit` opening the same form in
+     * correcting mode — `completeFollowUp` would refuse a second completion,
+     * but the result and the note are still somebody's to fix.
      */
-    if (card.taskKind === 'SALES_FOLLOW_UP' && taskLane(card.status) !== 'DONE') {
+    if (target === 'follow-up') {
       await openFollowUp(card.id);
       return;
     }
     const task = tasks.find((t) => t.id === card.id);
-    if (task) handleOpenEdit(task);
+    if (!task) return;
+    /*
+     * The same state the tick fills in, and deliberately not
+     * `handleToggleComplete`: that is the tick, and the tick reopens a card
+     * that is already done. The rule above has ruled that case out, so what is
+     * left here is one open task and one modal.
+     */
+    if (target === 'complete') {
+      setCompletingTask(task);
+      return;
+    }
+    handleOpenEdit(task);
   };
 
   return (
@@ -1323,7 +1343,11 @@ export default function TasksView({
           selected={selectedCards}
           onToggleSelect={toggleCard}
           onMove={(lane) => { void moveSelection(lane); }}
-          onOpen={(card) => { void openCard(card); }}
+          onOpen={(card) => { void openCard(card, 'complete'); }}
+          onEdit={(card) => {
+            const task = tasks.find((t) => t.id === card.id);
+            if (task) handleOpenEdit(task);
+          }}
           moving={movingCards || followUpLoading}
         />
       )}

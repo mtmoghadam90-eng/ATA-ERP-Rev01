@@ -98,6 +98,7 @@ import {
   referralPassesTaskFilters, laneWhere, onPlateWhere, serverOrderFor, sortBoardCards, taskLane,
   taskStatusForLane, REFERRAL_STATUSES, TASK_STATUSES,
   BOARD_LANES, LANE_FILTERS, MOVABLE_LANES, isMovableLane, rankForTopUp, taskBoardLane,
+  CARD_PRESSES, CARD_TARGETS, cardPressTarget,
 } from "../src/utils/workBoard";
 import {
   normalizeLimit, remainingCapacity, topUpShortfall, workLimitRefusalReason,
@@ -9896,8 +9897,14 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   ok("the list's tick opens the completion form for a follow-up",
     /task\.taskKind === 'SALES_FOLLOW_UP' && task\.status !== 'انجام شده'/.test(view)
     && /void openFollowUp\(task\.id\)/.test(view));
-  ok("...and the board card opens the same one",
-    /card\.taskKind === 'SALES_FOLLOW_UP' && taskLane\(card\.status\) !== 'DONE'/.test(view));
+  /*
+   * A card pressed anywhere opens the same one, through `cardPressTarget` —
+   * the branch used to be written out here as well, and one reading of «what
+   * kind of work is this» is what stops the board and the list disagreeing.
+   */
+  ok("...and a pressed card opens the same one",
+    /const target = cardPressTarget\(card, press\);/.test(view)
+    && /if \(target === 'follow-up'\) \{\s*await openFollowUp\(card\.id\);/.test(view));
   /*
    * Submitted against the task that was pressed, never the row's own
    * `nextActionTaskId`: the row is the quotation's and the completion is
@@ -15608,6 +15615,110 @@ head("The corrections batch: uploads, the board, the feed and the front page");
     /پایپ‌لاین پروژه‌ها و فروش/.test(dashboard) && !/پیپ‌لاین/.test(dashboard));
   ok("and a withdrawn opportunity is counted apart from the losses",
     /summary\.revenue\.cancelledCount/.test(dashboard));
+}
+
+head("The board has no tick, so its headline is one");
+{
+  const strip = (text: string) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* ------------------------------ the rule -------------------------------- */
+
+  /*
+   * A referral is answered in its own thread whichever view it was pressed on
+   * and whatever the press says it is for — there is nothing on it to tick.
+   */
+  for (const press of CARD_PRESSES) {
+    for (const status of [...REFERRAL_STATUSES, "وضعیتی که این نسخه نمی‌شناسد"]) {
+      eq(`a referral «${status}» pressed to ${press} opens its thread`,
+        cardPressTarget({ kind: "referral", status }, press), "referral");
+    }
+  }
+
+  /*
+   * The sweep that matters: every shape of task card against both presses.
+   *
+   * Two invariants, and the second is the one a branch written out in the
+   * screen would get wrong — «انگار تیک را زده‌ایم» has no meaning for work
+   * already done, and the tick's own answer there is to *reopen* it, which a
+   * headline press must never do on the way past.
+   */
+  const KINDS = [null, "GENERAL", "NEXT_ACTION", "SALES_FOLLOW_UP", "کاری که این نسخه نمی‌شناسد"];
+  const STATUSES = [...TASK_STATUSES, "در انتظار", "", null];
+  for (const press of CARD_PRESSES) {
+    for (const taskKind of KINDS) {
+      for (const status of STATUSES) {
+        const target = cardPressTarget({ kind: "task", status, taskKind }, press);
+        const where = `${taskKind ?? "—"} / ${status ?? "—"} / ${press}`;
+        ok(`a task card lands on exactly one target (${where})`,
+          CARD_TARGETS.filter((t) => t === target).length === 1, target);
+        if (taskLane(status) === "DONE") {
+          ok(`...and finished work is never completed again (${where})`,
+            target === "edit", target);
+        }
+      }
+    }
+  }
+
+  // An open chase goes to its own form from either view: the bare tick is
+  // refused by the server, so a `complete` press must not be a second door.
+  for (const press of CARD_PRESSES) {
+    eq(`an open chase pressed to ${press} opens its completion form`,
+      cardPressTarget({ kind: "task", status: TASK_TODO, taskKind: "SALES_FOLLOW_UP" }, press),
+      "follow-up");
+  }
+  eq("a closed chase opens the record, where its result is corrected",
+    cardPressTarget({ kind: "task", status: TASK_DONE, taskKind: "SALES_FOLLOW_UP" }, "complete"),
+    "edit");
+
+  // And the whole point: one open ordinary task, two views, two answers.
+  for (const status of [TASK_TODO, TASK_DOING, "در انتظار"]) {
+    eq(`«${status}» opens the record from the list`,
+      cardPressTarget({ kind: "task", status, taskKind: "GENERAL" }, "open"), "edit");
+    eq(`«${status}» is ticked from the board`,
+      cardPressTarget({ kind: "task", status, taskKind: "GENERAL" }, "complete"), "complete");
+  }
+
+  /* --------------------------- the call sites ----------------------------- */
+
+  const view = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
+  ok("the tasks view source survived having its comments stripped",
+    view.includes("const openCard"));
+
+  // The screen asks the rule rather than branching on the kind a second time.
+  ok("the press is routed by the shared rule",
+    /const target = cardPressTarget\(card, press\);/.test(view));
+  ok("...and the board's headline says what it is for",
+    /onOpen=\{\(card\) => \{ void openCard\(card, 'complete'\); \}\}/.test(view));
+
+  /*
+   * The list keeps its own answer, because it draws a tick beside every card:
+   * a headline that completed there would leave no way to open the record at
+   * all, which is the fault this change is fixing wearing the other hat.
+   */
+  const listPresses = view.match(/void openCard\(card\);/g) ?? [];
+  ok("the list's two headlines still open the record", listPresses.length === 2,
+    String(listPresses.length));
+
+  /*
+   * `setCompletingTask` and never `handleToggleComplete`: that is the tick,
+   * and the tick reopens a card that is already done.
+   */
+  const open = view.slice(view.indexOf("const openCard"), view.indexOf("return (", view.indexOf("const openCard")));
+  ok("the completion fills in the same state the tick does",
+    /setCompletingTask\(task\)/.test(open) && !/handleToggleComplete\(/.test(open));
+
+  /*
+   * Editing has to stay reachable from the board, or a date cannot be fixed on
+   * the screen somebody is standing at.
+   */
+  const board = strip(readFileSync("src/components/WorkBoard.tsx", "utf8"));
+  ok("the board source survived having its comments stripped",
+    board.includes("BOARD_LANES.map"));
+  ok("the board offers the record beside the badges",
+    /onEdit && card\.kind === 'task'/.test(board) && /work-board-edit-/.test(board));
+  ok("...and the screen wires it to the edit box",
+    /onEdit=\{\(card\) => \{/.test(view) && /handleOpenEdit\(task\)/.test(view));
 }
 
 head("A board card summarises, and keeps the rest behind one press");

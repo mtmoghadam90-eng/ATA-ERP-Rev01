@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
-  CheckCircle2, ChevronDown, ChevronUp, CornerDownLeft, Inbox, ListTodo, MessageSquare, Phone,
+  CheckCircle2, ChevronDown, ChevronUp, CornerDownLeft, Inbox, ListTodo, MessageSquare, Pencil,
+  Phone,
 } from 'lucide-react';
 
 import { cardDetail, hasMoreToShow } from '../utils/cardSummary';
@@ -87,8 +88,25 @@ interface Props {
   onToggleSelect: (key: string) => void;
   /** Moves everything ticked into `lane`. Never «در انتظار مشتری» — see below. */
   onMove: (lane: MovableLane) => void;
-  /** Opens the card: the referral thread, the follow-up form, or the edit box. */
+  /**
+   * Pressing the headline.
+   *
+   * On this view it means «انجام شد» for an ordinary task, because the board
+   * has no per-card tick; the screen decides that through `cardPressTarget`,
+   * so a referral still opens its thread and a chase its completion form.
+   */
   onOpen: (card: BoardCard) => void;
+  /**
+   * Editing the record, which the headline no longer reaches here.
+   *
+   * Drawn beside the badges rather than on the headline: one gesture per
+   * intent, the rule the «شرح» button already follows. Without it the board
+   * would be a screen on which a date cannot be corrected — the headline is
+   * the tick now, and the list view is a tab away, which is not where somebody
+   * standing at a column is looking. Optional, so a caller that has no edit
+   * box draws no button rather than one that does nothing.
+   */
+  onEdit?: (card: BoardCard) => void;
   moving: boolean;
 }
 
@@ -150,7 +168,7 @@ const LANE_NOTE: Partial<Record<BoardLane, string>> = {
 };
 
 export default function WorkBoard({
-  cards, sort, today, load, selected, onToggleSelect, onMove, onOpen, moving,
+  cards, sort, today, load, selected, onToggleSelect, onMove, onOpen, onEdit, moving,
 }: Props) {
   /*
    * Which cards are showing their detail. A per-card disclosure and not data,
@@ -368,6 +386,26 @@ export default function WorkBoard({
                         >
                           {isOpen ? <ChevronUp size={9} /> : <ChevronDown size={9} />}
                           {isOpen ? 'بستن' : 'شرح'}
+                        </button>
+                      )}
+
+                      {/*
+                        The way back to the record, for a task only.
+
+                        A referral has no edit box here — it is answered in its
+                        own thread, which the headline still opens — so drawing
+                        one on it would be a control that opens the wrong form.
+                      */}
+                      {onEdit && card.kind === 'task' && (
+                        <button
+                          type="button"
+                          onClick={() => onEdit(card)}
+                          id={`work-board-edit-${key}`}
+                          title="ویرایش وظیفه"
+                          className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-white border-slate-200 text-slate-600 hover:text-sky-600 hover:border-sky-300 transition inline-flex items-center gap-1"
+                        >
+                          <Pencil size={9} />
+                          ویرایش
                         </button>
                       )}
                     </div>
