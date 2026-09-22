@@ -60,6 +60,7 @@ import { projectsApi } from '../api/projects';
 import { createCustomerWithLinks } from '../api/customerAdapter';
 import { detailToProject, projectToWriteInput } from '../api/projectAdapter';
 import { useNextAction } from '../utils/useNextAction';
+import type { NextActionSource } from '../utils/nextAction';
 import SaveWithNextActionButton from './SaveWithNextActionButton';
 import { NextActionPrompt } from './NextActionModal';
 
@@ -581,6 +582,40 @@ export default function TasksView({
 
   const nextAction = useNextAction();
 
+  /*
+   * What a task's next action inherits — one reading, for both doors.
+   *
+   * It is asked in two places now: beside «ذخیره» on the form, and beside the
+   * tick when the work is finished. Written out at each, the two would answer
+   * «what is this about» differently within a month, which is the second-copy
+   * fault this codebase keeps repairing.
+   *
+   * **It names the job, never the task.** A task is already the shape of a next
+   * action, so pointing a second one at the first would produce a card reading
+   * «تماس تلفنی — تماس تلفنی» with no way back to the work; it carries the
+   * task's own relation forward instead — the project, the customer, the order
+   * the work is really about. A task related to nothing raises a next action
+   * related to nothing, which is honest.
+   *
+   * The parameter is **structural rather than `Task`**, because the two doors
+   * hand it two shapes: the form's save resolves to the server's `TaskRow`
+   * while the tick hands on the card the person pressed. Naming either type
+   * would make this usable from one of them only.
+   */
+  const nextActionFromTask = (task: {
+    relatedToType?: string | null;
+    relatedToId?: string | null;
+    relatedToName?: string | null;
+    title?: string | null;
+    priority?: string | null;
+  }): NextActionSource => ({
+    relatedToType: task.relatedToType || 'عمومی',
+    relatedToId: task.relatedToId || '',
+    relatedToName: task.relatedToName || task.title || '',
+    assignedTo: currentUser?.fullName,
+    priority: task.priority,
+  });
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     // Read once, at the top: a chase is routed elsewhere below and the required
@@ -709,13 +744,7 @@ export default function TasksView({
      * work is really about; a task related to nothing raises a next action
      * related to nothing, which is honest.
      */
-    void nextAction.ask(wantsNextAction, saved, (task) => ({
-      relatedToType: task.relatedToType || 'عمومی',
-      relatedToId: task.relatedToId || '',
-      relatedToName: task.relatedToName || task.title || '',
-      assignedTo: currentUser?.fullName,
-      priority: task.priority,
-    }));
+    void nextAction.ask(wantsNextAction, saved, nextActionFromTask);
   };
 
   /*
@@ -752,21 +781,42 @@ export default function TasksView({
    * same reason it is refused for a chase: only this gesture and
    * `completeFollowUp` ever write it.
    */
-  const confirmCompletion = async (note: string) => {
+  const confirmCompletion = async (note: string, withNextAction: boolean) => {
     const task = completingTask;
     if (!task) return;
     setCompletingTask(null);
+
+    /*
+     * The completion answers with the task, or with nothing.
+     *
+     * `ask` reads `undefined` as «the write was refused» — the contract every
+     * one of the ten save buttons relies on — so a tick that failed raises no
+     * card pointing at work nobody finished. The task itself is what is handed
+     * on rather than the server's row: the next action inherits the relation,
+     * the title and the priority, and those are exactly what was on the card
+     * the person pressed.
+     */
+    let done: Task | undefined;
     try {
       await tasksApi.update(task.id, {
         status: 'انجام شده',
         // Blank is «nothing to add», which is an answer — never «unchanged».
         completionNote: note.trim() || null,
       });
+      done = task;
       void topUpBoard();
       list.refresh();
     } catch (err) {
       reportError(err, 'ثبت انجام کار با خطا مواجه شد.');
     }
+
+    /*
+     * And only then the follow-on question — the save-first rule, for the same
+     * reason it is forced on the form: the two are two requests, the completion
+     * is true on its own, and a next action raised before it lands could point
+     * at a task that was never closed.
+     */
+    await nextAction.ask(withNextAction, done, nextActionFromTask);
   };
 
   const getPriorityClass = (pr: Task['priority']) => {
@@ -1719,7 +1769,7 @@ export default function TasksView({
       <TaskCompletionModal
         task={completingTask}
         onCancel={() => setCompletingTask(null)}
-        onConfirm={(note) => { void confirmCompletion(note); }}
+        onConfirm={(note, withNextAction) => { void confirmCompletion(note, withNextAction); }}
       />
 
       {followUpRow && (

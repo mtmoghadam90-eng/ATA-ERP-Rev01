@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { CheckCircle2, X } from "lucide-react";
+import { CalendarPlus, CheckCircle2, X } from "lucide-react";
 import type { Task } from "../types";
 
 /**
@@ -26,13 +26,35 @@ import type { Task } from "../types";
  * to. And **the board's bulk move is untouched**: that is one press over several
  * ticked cards, and asking per card there would make it a form rather than a
  * gesture.
+ *
+ * **And the tick is where «حالا بعدش چه؟» belongs**, which is the one thing it
+ * did not ask. «ذخیره و ثبت اقدام بعدی» sits beside «ذخیره» on ten forms, so
+ * the question could only be reached by *opening* the task, setting its status
+ * by hand and saving — while the gesture people actually finish a task with is
+ * this one. That is the same Odoo shape the save button already takes: the
+ * choice is in the **button**, so it costs one press when the answer is yes and
+ * nothing at all when it is no — as against a dialog on every completion, which
+ * is answered «no» often enough to become a reflex and takes the tenth with it.
+ *
+ * **The intent travels as an argument rather than through `arm`/`takeArmed`.**
+ * That pair exists to bridge a `type="submit"` button and a form handler that
+ * runs in a later tick; here the button *is* the action, so a ref would be a
+ * flag that can be left set — exactly what `takeArmed` was written to clear —
+ * to say what one parameter already says.
  */
 export interface TaskCompletionModalProps {
   /** The task being ticked. The modal is drawn only while this is set. */
   task: Task | null;
   onCancel: () => void;
-  /** The note as typed; blank means «nothing to add», never «unchanged». */
-  onConfirm: (note: string) => void;
+  /**
+   * Ticks the task off.
+   *
+   * `note` is as typed; blank means «nothing to add», never «unchanged».
+   * `withNextAction` says which of the two buttons was pressed — the host
+   * writes the completion either way and asks the follow-on question only on
+   * the second, **after** the write has landed.
+   */
+  onConfirm: (note: string, withNextAction: boolean) => void;
   saving?: boolean;
 }
 
@@ -100,13 +122,29 @@ export default function TaskCompletionModal({
           </button>
           <button
             type="button"
-            onClick={() => onConfirm(note)}
+            onClick={() => onConfirm(note, false)}
             disabled={saving}
             id="task-completion-confirm"
             className="px-3 py-1.5 rounded-lg text-xs bg-emerald-500 text-white hover:bg-emerald-600 transition inline-flex items-center gap-1.5 disabled:opacity-60"
           >
             <CheckCircle2 size={14} />
             ثبت انجام کار
+          </button>
+          {/*
+            The second answer, and the reason it is a button rather than a
+            question: finishing a piece of work is exactly when the next one is
+            known, and it costs nothing on the completions that have no next
+            step — which is most of them.
+          */}
+          <button
+            type="button"
+            onClick={() => onConfirm(note, true)}
+            disabled={saving}
+            id="task-completion-confirm-next"
+            className="px-3 py-1.5 rounded-lg text-xs bg-sky-600 text-white hover:bg-sky-700 transition inline-flex items-center gap-1.5 disabled:opacity-60"
+          >
+            <CalendarPlus size={14} />
+            ثبت و اقدام بعدی
           </button>
         </div>
       </div>
