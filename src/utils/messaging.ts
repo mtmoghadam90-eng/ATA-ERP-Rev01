@@ -661,7 +661,7 @@ export const RECIPIENT_PROBLEM_LABELS: Record<RecipientProblem, string> = {
  * The send channel a project's «روش ارتباط اصلی» implies, or "" for the default.
  *
  * The communication method is how the customer talks to us, and a customer who
- * talks to us on WhatsApp or Bale is best written to there — so a new project
+ * talks to us on WhatsApp, Bale, Telegram or email is best written to there — so a new project
  * picks its «روش ارسال ترجیحی» from it rather than leaving the default a person
  * then has to remember to change. Anything else answers "" (the SMS default),
  * which is what the field has always meant when nobody chose.
@@ -678,6 +678,8 @@ export function channelForCommunicationMethod(method: string | null | undefined)
   if (!text) return "";
   if (/واتس|whats\s*app/.test(text.replace(/\s+/g, ""))) return CHANNELS.WHATSAPP;
   if (/(^|[^\p{L}])(بله|bale)($|[^\p{L}])/u.test(text)) return CHANNELS.BALE;
+  if (/تلگرام|telegram/.test(text)) return CHANNELS.TELEGRAM;
+  if (/ایمیل|email|e-mail|پست\s*الکترونیک/.test(text)) return CHANNELS.EMAIL;
   return "";
 }
 
