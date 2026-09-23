@@ -849,6 +849,9 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
         recipient: message.recipient,
         subject: message.subject,
         body: message.body,
+        // The same on every attempt, so a provider that deduplicates (Safir)
+        // sends a retried message once.
+        requestId: message.id,
       });
 
       if (result.ok) {

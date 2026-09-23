@@ -21563,6 +21563,8 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("...with no refusal", built.error === null);
   ok("a missing key names what is missing",
     /کلید دسترسی/.test(m.safirRequest({ safirBotId: "1" }, "09123456789", "x").error ?? ""));
+  ok("a foreign number is refused, since Safir takes only 98…",
+    !!m.safirRequest({ safirBotId: "1", safirApiKey: "k" }, "+4915112345678", "x").error);
   ok("a landline is refused before it is sent",
     !!m.safirRequest({ safirBotId: "1", safirApiKey: "k" }, "02188776655", "x").error);
 
@@ -21592,8 +21594,14 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     ok("...posted to Safir's endpoint", seen[0]?.url === m.SAFIR_SEND_URL, seen[0]?.url);
     ok("...with the key as a header and nowhere in the URL",
       seen[0]?.headers["api-access-key"] === "SECRETKEY" && !seen[0]?.url.includes("SECRETKEY"));
-    answer = { status: 200, body: { ok: false, message: "invalid phone" } };
-    ok("a 200 carrying a refusal is a failure", !(await sendBale(cfg, { recipient: "09121234567", body: "x" } as never)).ok);
+    answer = { status: 200, body: { message_id: null, error_data: [{ phone_number: "989121234567", code: 17, description: "NotBaleUser" }] } };
+    const notOnBale = await sendBale(cfg, { recipient: "09121234567", body: "x" } as never);
+    ok("a 200 carrying error_data is a failure", !notOnBale.ok);
+    ok("...and code 17 says the person has no Bale account", /حساب کاربری ندارد/.test(notOnBale.error ?? ""), notOnBale.error);
+    answer = { status: 200, body: { message_id: "m2", error_data: [] } };
+    await sendBale(cfg, { recipient: "09121234567", body: "x", requestId: "row-7" } as never);
+    ok("the outbox row id travels as request_id, so a retry is sent once",
+      JSON.parse(seen[seen.length - 1].body).request_id === "row-7");
     answer = { status: 401, body: {} };
     ok("a 401 names the key and the bot id",
       /کلید دسترسی/.test((await sendBale(cfg, { recipient: "09121234567", body: "x" } as never)).error ?? ""));
@@ -21608,6 +21616,8 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("Safir's key is a secret that never leaves the server", /BALE: \["botToken", "safirApiKey"\]/.test(svc));
   ok("the Bale mode and the bot id are stored config", /BALE: \["mode", "botToken", "safirBotId", "safirApiKey"\]/.test(svc));
   const queue = svc.slice(svc.indexOf("const baleByPhone"), svc.indexOf("const baleByPhone") + 400);
+  const worker = svc.slice(svc.indexOf("channelIsPaced(channel) && alreadySent > 0"));
+  ok("the queue hands every attempt its row id", /requestId: message\.id/.test(worker.slice(0, 900)));
   ok("queueing a Bale message reads the mode off the provider row and hands it on",
     /baleModeOf\(\(await providerConfig\(CHANNELS\.BALE\)\)\?\.config\)/.test(queue) && /\{ baleByPhone \}/.test(queue));
 }
