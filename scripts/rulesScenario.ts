@@ -300,6 +300,7 @@ import {
 import { decidingProformas } from "../src/server/proformaStatus";
 import {
   categoryKey, matchKnownCategory, mergeRefusalReason, unknownImportCategories,
+  OTHER_CATEGORY, lineCategory, manualLineCategoryOptions,
 } from "../src/utils/productCategories";
 import {
   NOTICE_EXCERPT_LENGTH, activityRecipients, noticeExcerpt, parseMemberIds, serializeMemberIds,
@@ -21378,6 +21379,66 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
    */
   ok("a chase in the list is drawn without a tick",
     /task\.taskKind === FOLLOW_UP_KIND \? \(/.test(tab));
+}
+
+/*
+ * A hand-typed proforma line is filed under a warehouse category.
+ *
+ * Every free-text line used to report as «سایر تجهیزات», because the category
+ * was read off the product and a manual line has none — so «نرخ تبدیل به تفکیک
+ * دسته» put a hand-typed pressure transmitter beside the bolts.
+ */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  eq("a manual line counts under its own category",
+    lineCategory({ product: null, category: "ابزار دقیق - فشار" }), "ابزار دقیق - فشار");
+  eq("...a catalogue line under its product's, whatever the line carries",
+    lineCategory({ product: { category: "ابزار دقیق - دما" }, category: "ابزار دقیق - فشار" }),
+    "ابزار دقیق - دما");
+  eq("...and a line nobody filed is «سایر تجهیزات», as before",
+    lineCategory({ product: null, category: null }), OTHER_CATEGORY);
+  eq("...a blank is not an answer",
+    lineCategory({ product: { category: "  " }, category: "  " }), OTHER_CATEGORY);
+
+  const opts = manualLineCategoryOptions(["ابزار دقیق - فشار", "ابزار دقیق - دما"]);
+  eq("the options are the company's list plus «سایر»",
+    opts.map((o) => o.value).join("|"), ["ابزار دقیق - فشار", "ابزار دقیق - دما", OTHER_CATEGORY].join("|"));
+  eq("...«سایر» stores the reports' own bucket", opts[2].label, "سایر");
+  eq("...and is not offered twice when the list already means it",
+    manualLineCategoryOptions(["فشار", "سایر تجهیزات"]).map((o) => o.value).join("|"), "فشار|سایر تجهیزات");
+
+  const dash = strip(readFileSync("src/server/services/dashboardService.ts", "utf8"));
+  ok("both dashboard figures read the line's category through the one rule",
+    (dash.match(/lineCategory\(item\)/g) ?? []).length === 2
+    && !/item\.product\?\.category \|\|/.test(dash));
+  const dashSelect = dash.slice(dash.indexOf("async function dashboardProformas"),
+    dash.indexOf("export async function dashboardSummary"));
+  ok("...and the dashboard's read carries the line's own column",
+    /items:\s*\{\s*select:\s*\{[^}]*category: true/.test(dashSelect));
+
+  const svc = strip(readFileSync("src/server/services/proformaService.ts", "utf8"));
+  const mapper = svc.slice(svc.indexOf("function mapItem("), svc.indexOf("function mapItem(") + 3000);
+  ok("a catalogue line stores no category of its own",
+    /category: productId \? null : toNullableString\(row\.category, 150\)/.test(mapper));
+
+  const demand = strip(readFileSync("src/server/services/demandService.ts", "utf8"));
+  const quoteLines = demand.slice(demand.indexOf("proformaItem.findMany"), demand.indexOf("proformaItem.findMany") + 2500);
+  ok("demand filtered by category reaches the manual lines filed under it",
+    /\{ productId: null, category \}/.test(quoteLines)
+    && /category: row\.product\?\.category \?\? row\.category \?\? null/.test(quoteLines));
+
+  const view = strip(readFileSync("src/components/ProformasView.tsx", "utf8"));
+  const manual = view.slice(view.indexOf('placeholder="نام کالا یا عنوان خدمات دستی..."'),
+    view.indexOf("<SearchableSelect", view.indexOf('placeholder="نام کالا یا عنوان خدمات دستی..."')));
+  ok("the manual line offers the category box",
+    /data-manual-line-category/.test(manual) && /manualCategoryOptions\.map/.test(manual));
+  ok("...and loading a document keeps what was chosen",
+    /category: item\.category,\s*\}\)\);\s*setItems\(loadedItems\)/.test(view));
+  const schema = readFileSync("prisma/schema.prisma", "utf8");
+  const itemModel = schema.slice(schema.indexOf("model ProformaItem {"), schema.indexOf('@@map("proforma_items")'));
+  ok("the column is on the proforma line", /\n\s*category\s+String\?/.test(itemModel));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

@@ -91,3 +91,55 @@ export function mergeRefusalReason(
   }
   return null;
 }
+
+/**
+ * The bucket a proforma line with no category falls into, on every report.
+ *
+ * It is also what «سایر» on a manual line stores: a person saying «none of the
+ * list» is an answer, and storing it rather than leaving the column blank is
+ * what lets the form tell «somebody chose other» from «nobody has said yet».
+ */
+export const OTHER_CATEGORY = "سایر تجهیزات";
+
+/**
+ * Which category a proforma line counts under.
+ *
+ * A catalogue line is the product's — the product's own category is the one
+ * the warehouse maintains, and a copy on the line would be a second answer
+ * that goes stale the day somebody recategorises the product. A **free-text
+ * line** has no product to ask, so it carries its own (`ProformaItem.category`,
+ * chosen on the form); before that column existed every manual line landed in
+ * «سایر تجهیزات», which put a hand-typed pressure transmitter beside the bolts
+ * and made «نرخ تبدیل به تفکیک دسته» wrong for exactly the goods the company
+ * does not yet stock.
+ *
+ * The product wins even when the line also carries a value: a line switched
+ * from manual to the catalogue keeps whatever it was sent, and the catalogue is
+ * the authority for a catalogue item.
+ */
+export function lineCategory(line: {
+  product?: { category?: string | null } | null;
+  category?: string | null;
+}): string {
+  const fromProduct = String(line.product?.category ?? "").trim();
+  if (fromProduct) return fromProduct;
+  const own = String(line.category ?? "").trim();
+  return own || OTHER_CATEGORY;
+}
+
+/**
+ * The options a manual line's category box offers: the company's own list,
+ * then «سایر» — unless the list already has an entry meaning the same bucket,
+ * in which case offering both would be two names for one category, the split
+ * this whole file exists to prevent.
+ */
+export function manualLineCategoryOptions(known: readonly string[]): { value: string; label: string }[] {
+  const options = known
+    .map((entry) => String(entry ?? "").trim())
+    .filter(Boolean)
+    .map((entry) => ({ value: entry, label: entry }));
+  if (!matchKnownCategory(OTHER_CATEGORY, known)) {
+    options.push({ value: OTHER_CATEGORY, label: "سایر" });
+  }
+  return options;
+}

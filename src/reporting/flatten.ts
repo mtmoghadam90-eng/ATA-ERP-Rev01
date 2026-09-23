@@ -429,6 +429,9 @@ export const flattenProformaItems = (proformas: any[]): Row[] => {
         delivery_unit: s(it.deliveryUnit),
         delivery_type: s(it.deliveryType),
         payment_term: s(it.paymentTerm),
+        // A free-text line's own category; blank on a catalogue line, whose
+        // category is the product's (join on product_id).
+        line_category: s(it.category),
         tech_specs: s(it.techSpecs),
       });
     });

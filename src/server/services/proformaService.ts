@@ -314,6 +314,7 @@ export interface ProformaItemInput {
   deliveryType?: string | null;
   deliveryPostfix?: string | null;
   paymentTerm?: string | null;
+  category?: string | null;
   selectedFeatures?: unknown;
   selectedImage?: string | null;
 }
@@ -507,9 +508,10 @@ function mapItem(row: ProformaItemInput, currency: string): Record<string, unkno
   // Recompute rather than trust the client's arithmetic: a stale or tampered
   // line total would flow straight into the invoice total.
   const totalPrice = quantity * unitPrice;
+  const productId = toNullableString(row.productId, 36);
 
   return {
-    productId: toNullableString(row.productId, 36),
+    productId,
     variantId: toNullableString(row.variantId, 36),
     productName,
     productCode: toNullableString(row.productCode, 60),
@@ -535,6 +537,9 @@ function mapItem(row: ProformaItemInput, currency: string): Record<string, unkno
     deliveryType: toNullableString(row.deliveryType, 20),
     deliveryPostfix: toNullableString(row.deliveryPostfix, 100),
     paymentTerm: toNullableString(row.paymentTerm, 200),
+    // A catalogue line's category is its product's, never a copy on the line:
+    // see `lineCategory`. Only a free-text line stores one.
+    category: productId ? null : toNullableString(row.category, 150),
     selectedFeatures: toJsonColumn(row.selectedFeatures),
     selectedImage: toNullableString(row.selectedImage, 500),
   };
