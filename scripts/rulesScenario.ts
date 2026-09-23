@@ -21622,6 +21622,29 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     /baleModeOf\(\(await providerConfig\(CHANNELS\.BALE\)\)\?\.config\)/.test(queue) && /\{ baleByPhone \}/.test(queue));
 }
 
+// ── A new project's send channel follows its communication method, until chosen by hand
+{
+  const { channelForCommunicationMethod: cfm } = await import("../src/utils/messaging");
+  eq("WhatsApp as the method picks WhatsApp", cfm("واتساپ"), "WHATSAPP");
+  eq("...however it is spelled", cfm("واتس اپ") + cfm("WhatsApp"), "WHATSAPPWHATSAPP");
+  eq("Bale as the method picks Bale", cfm("پیام‌رسان بله"), "BALE");
+  eq("...but only as a whole word", cfm("مقابله"), "");
+  eq("anything else leaves the SMS default", cfm("تلفن") + cfm("ایمیل") + cfm(""), "");
+
+  const form = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  const methodAt = form.indexOf("data-communication-method");
+  const channelAt = form.indexOf("data-messaging-channel");
+  ok("the communication method is drawn before the preferred channel",
+    methodAt > 0 && channelAt > 0 && methodAt < channelAt);
+  const methodHandler = form.slice(form.lastIndexOf("onChange", methodAt), methodAt);
+  ok("changing the method moves the channel only while it is not locked",
+    /if \(!messagingChannelLocked\) setMessagingChannel\(channelForCommunicationMethod\(method\)\)/.test(methodHandler));
+  const channelHandler = form.slice(form.lastIndexOf("onChange", channelAt), channelAt);
+  ok("picking a channel by hand locks it", /setMessagingChannelLocked\(true\)/.test(channelHandler));
+  ok("a project reopened with a stored channel keeps it",
+    /setMessagingChannelLocked\(!!proj\.messagingChannel\)/.test(form));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
