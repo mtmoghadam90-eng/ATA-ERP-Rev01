@@ -655,10 +655,97 @@ export const RECIPIENT_PROBLEM_LABELS: Record<RecipientProblem, string> = {
   NO_CHANNEL: "روش ارسال مشخص نشده است.",
 };
 
+/* ------------------------------ Bale: two doors ---------------------------- */
+
+/**
+ * How Bale is reached, and the two answers are different addresses.
+ *
+ * `BOT` is the bot API (`tapi.bale.ai`): it writes only to somebody who has
+ * started the bot, by a numeric chat id nobody can read off their own screen —
+ * so it reaches the handful of people somebody typed an id in for. `SAFIR` is
+ * Bale's business messaging service («سفیر»): it writes to a **mobile number**,
+ * which every customer record already carries, so it addresses the directory as
+ * it stands. A mode of the one channel rather than a sixth channel, for the
+ * reason Kavenegar is a field of «پیامک»: the templates, the outbox history and
+ * the medium the customer reads it in are Bale's either way.
+ *
+ * **Absent — or unknown — is BOT**, which is what every configuration stored
+ * before this existed means, so nothing moves until somebody picks Safir.
+ */
+export const BALE_MODES = { BOT: "BOT", SAFIR: "SAFIR" } as const;
+export type BaleMode = typeof BALE_MODES[keyof typeof BALE_MODES];
+
+export const BALE_MODE_LABELS: Record<BaleMode, string> = {
+  BOT: "ربات بله (شناسه گفتگو)",
+  SAFIR: "سفیر بله (شماره موبایل)",
+};
+
+export function baleModeOf(config: unknown): BaleMode {
+  const stored = (config as { mode?: unknown } | null | undefined)?.mode;
+  return stored === BALE_MODES.SAFIR ? BALE_MODES.SAFIR : BALE_MODES.BOT;
+}
+
+/** Safir's send endpoint, as the dashboard prints it. */
+export const SAFIR_SEND_URL = "https://safir.bale.ai/api/v3/send_message";
+
+/**
+ * The request Safir is posted, or a refusal naming what is missing.
+ *
+ * Pure, so `test:rules` can hold the exact wire shape the dashboard documents —
+ * `bot_id` as a **number**, the phone as `98…` digits with no `+`, the text
+ * under `message_data.message.text` — without a network. The phone goes through
+ * `internationalDigits`, the one reading every messenger here uses, so a number
+ * written `0912…`, `+98 912…` or in Persian digits reaches Safir as the same
+ * twelve digits, and one that is not a mobile is refused here rather than sent
+ * to be refused there.
+ */
+/**
+ * Both keys always present, because `strict` is off here and a discriminated
+ * union does not narrow (see `RelayAnswer` in `whatsappTransport.ts`).
+ */
+export interface SafirRequest {
+  error: string | null;
+  apiKey: string;
+  body: { bot_id: number; phone_number: string; message_data: { message: { text: string } } } | null;
+}
+
+export function safirRequest(
+  config: { safirBotId?: unknown; safirApiKey?: unknown } | null | undefined,
+  recipient: string | null | undefined,
+  text: string,
+): SafirRequest {
+  const apiKey = String(config?.safirApiKey ?? "").trim();
+  const botIdText = digitsOf(String(config?.safirBotId ?? ""));
+  if (!apiKey || !botIdText) {
+    const missing = [!botIdText && "شناسه بازو (Bot_id)", !apiKey && "کلید دسترسی (api-access-key)"]
+      .filter(Boolean).join(" و ");
+    return { error: `تنظیمات سفیر بله کامل نیست: ${missing}.`, apiKey: "", body: null };
+  }
+  const phone = internationalDigits(recipient);
+  if (!phone) {
+    return {
+      error: `«${String(recipient ?? "").trim() || "—"}» شماره موبایل معتبری نیست؛ سفیر بله با شماره موبایل پیام می‌فرستد.`,
+      apiKey: "",
+      body: null,
+    };
+  }
+  return {
+    error: null,
+    apiKey,
+    body: { bot_id: Number(botIdText), phone_number: phone, message_data: { message: { text } } },
+  };
+}
+
 /** What each channel needs from a contact. */
 export function addressFor(
   candidate: RecipientCandidate | null | undefined,
   channel: Channel,
+  /**
+   * Bale through Safir is addressed by the mobile, not the chat id. Told by the
+   * caller rather than read here, because the mode lives on the provider row
+   * and this function is pure.
+   */
+  options: { baleByPhone?: boolean } = {},
 ): string | null {
   if (!candidate) return null;
   /*
@@ -672,7 +759,8 @@ export function addressFor(
    * use.
    */
   const value = channel === CHANNELS.SMS || channel === CHANNELS.WHATSAPP
-    || channel === CHANNELS.TELEGRAM ? candidate.mobile
+    || channel === CHANNELS.TELEGRAM
+    || (channel === CHANNELS.BALE && options.baleByPhone) ? candidate.mobile
     : channel === CHANNELS.EMAIL ? candidate.email
       : candidate.baleChatId;
   const text = String(value ?? "").trim();
@@ -784,6 +872,7 @@ export const looksLikeMobile = (value: string | null | undefined): boolean =>
 export function resolveRecipient(
   candidates: (RecipientCandidate | null | undefined)[],
   channel: Channel | null | undefined,
+  options: { baleByPhone?: boolean } = {},
 ): RecipientResult {
   if (!isChannel(channel)) return { recipient: null, problem: "NO_CHANNEL" };
 
@@ -801,7 +890,7 @@ export function resolveRecipient(
 
   for (const person of people) {
     if (person.doNotContact) continue;
-    const address = addressFor(person, channel);
+    const address = addressFor(person, channel, options);
     if (address) {
       return {
         recipient: { channel, address, name: person.name?.trim() || null },

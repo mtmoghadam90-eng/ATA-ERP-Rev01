@@ -17,7 +17,8 @@ import {
   BaleChatRow, MessageRow, MessageTemplateRow, ProviderSummary, messagingApi,
 } from '../api/messaging';
 import {
-  ALL_CHANNELS, ALL_SMS_PROVIDERS, CHANNELS, CHANNEL_LABELS, Channel, MESSAGE_STATUS,
+  ALL_CHANNELS, ALL_SMS_PROVIDERS, BALE_MODES, BALE_MODE_LABELS, CHANNELS, CHANNEL_LABELS,
+  Channel, MESSAGE_STATUS, baleModeOf,
   SAMPLE_VARIABLE_VALUES, SMS_PROVIDERS, SMS_PROVIDER_SPECS,
   STATUS_LABELS, isChannel, renderTemplate, smsLength, smsProviderOf, smsProviderSpec,
 } from '../utils/messaging';
@@ -138,6 +139,7 @@ const PROVIDER_FIELDS: Record<Channel, ProviderField[]> = {
 const SECRET_LABELS: Record<string, string> = {
   password: 'رمز عبور',
   botToken: 'توکن ربات',
+  safirApiKey: 'کلید دسترسی (api-access-key)',
   apiHash: 'API Hash',
 };
 
@@ -153,6 +155,13 @@ function fieldsFor(channel: Channel, config: Record<string, unknown>): ProviderF
   if (channel === CHANNELS.SMS) {
     return smsProviderSpec(config).fields.filter((f) => !f.secret);
   }
+  if (channel === CHANNELS.BALE && baleModeOf(config) === BALE_MODES.SAFIR) {
+    return [{
+      key: 'safirBotId',
+      label: 'شناسه بازو (Bot_id)',
+      hint: 'از داشبورد business.bale.ai، بخش «سفیر ← وب‌سرویس ← اطلاعات وب‌سرویس».',
+    }];
+  }
   return PROVIDER_FIELDS[channel];
 }
 
@@ -167,6 +176,11 @@ function secretsFor(
     // The other panel's stored credentials are kept and stay hidden; they are
     // simply not asked for while it is not the panel in use.
     return used.filter((key) => key in secrets);
+  }
+  if (channel === CHANNELS.BALE) {
+    // The other mode's secret is kept and stays hidden; it is not asked for.
+    const used = baleModeOf(config) === BALE_MODES.SAFIR ? 'safirApiKey' : 'botToken';
+    return [used].filter((key) => key in secrets);
   }
   return Object.keys(secrets);
 }
@@ -1658,6 +1672,30 @@ function Providers({
               </div>
             )}
 
+            {/*
+              Which door into Bale. The bot writes only to people who started
+              it, by a chat id; Safir writes to a mobile number. Kept as a field
+              of the one channel so templates and history stay «بله» either way.
+            */}
+            {row.channel === CHANNELS.BALE && (
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-600">روش ارسال در بله</label>
+                <select
+                  value={baleModeOf(effective)}
+                  onChange={(e) => setField('mode', e.target.value)}
+                  data-bale-mode
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-bold bg-white"
+                >
+                  {Object.values(BALE_MODES).map((id) => (
+                    <option key={id} value={id}>{BALE_MODE_LABELS[id]}</option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-400">
+                  با تغییر روش، اطلاعات روش قبلی پاک نمی‌شود؛ اگر برگردید دوباره در دسترس است.
+                </p>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {fieldsFor(row.channel, effective).map((field) => (
                 <div key={field.key} className="space-y-1">
@@ -1748,7 +1786,17 @@ function Providers({
               <MessengerLinkPanel spec={TELEGRAM_PANEL} onNotice={onNotice} />
             )}
 
-            {row.channel === CHANNELS.BALE && (
+            {row.channel === CHANNELS.BALE && baleModeOf(effective) === BALE_MODES.SAFIR && (
+              <div className="rounded-xl bg-sky-50/60 border border-sky-100 p-3">
+                <p className="text-[11px] text-sky-900 leading-6">
+                  سفیر با <strong>شماره موبایل</strong> مشتری پیام می‌فرستد و لازم نیست مشتری قبلاً به ربات پیام داده باشد؛
+                  شناسه گفتگوی بله در پرونده مشتری در این روش خوانده نمی‌شود.
+                  هر پیام طبق تعرفه سفیر از اعتبار حساب کسر می‌شود، و گیرنده باید در بله حساب داشته باشد.
+                </p>
+              </div>
+            )}
+
+            {row.channel === CHANNELS.BALE && baleModeOf(effective) === BALE_MODES.BOT && (
               <div className="space-y-2 rounded-xl bg-amber-50/60 border border-amber-100 p-3">
                 <p className="text-[11px] text-amber-800 leading-6">
                   بله فقط با «شناسه عددی گفتگو» پیام می‌فرستد، نه با شماره موبایل.
@@ -1819,7 +1867,8 @@ function Providers({
                   onChange={(e) => setTestTo((t) => ({ ...t, [row.channel]: e.target.value }))}
                   placeholder={
                     row.channel === CHANNELS.EMAIL ? 'name@example.com'
-                      : row.channel === CHANNELS.BALE ? 'شناسه عددی گفتگو'
+                      : row.channel === CHANNELS.BALE && baleModeOf(effective) === BALE_MODES.BOT
+                        ? 'شناسه عددی گفتگو'
                         : '09121234567'
                   }
                   dir="ltr"

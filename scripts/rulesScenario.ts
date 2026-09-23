@@ -21549,6 +21549,69 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   }
 }
 
+// ── Bale through Safir: a mobile number, a documented wire shape, 200 is not success
+{
+  const m = await import("../src/utils/messaging");
+  eq("an absent Bale mode is the bot", m.baleModeOf({}), "BOT");
+  eq("...and so is one this build does not know", m.baleModeOf({ mode: "FAX" }), "BOT");
+  eq("SAFIR is read as SAFIR", m.baleModeOf({ mode: "SAFIR" }), "SAFIR");
+
+  const built = m.safirRequest({ safirBotId: "۱۴۴۳۶۰۸۵۳۱", safirApiKey: "k" }, "۰۹۱۲ ۳۴۵ ۶۷۸۹", "سلام");
+  eq("the request is the dashboard's shape, bot_id a number and the phone 98…",
+    JSON.stringify(built.body),
+    JSON.stringify({ bot_id: 1443608531, phone_number: "989123456789", message_data: { message: { text: "سلام" } } }));
+  ok("...with no refusal", built.error === null);
+  ok("a missing key names what is missing",
+    /کلید دسترسی/.test(m.safirRequest({ safirBotId: "1" }, "09123456789", "x").error ?? ""));
+  ok("a landline is refused before it is sent",
+    !!m.safirRequest({ safirBotId: "1", safirApiKey: "k" }, "02188776655", "x").error);
+
+  const person = { name: "ع", mobile: "09121234567", baleChatId: "555" };
+  eq("the bot addresses Bale by chat id", m.addressFor(person, m.CHANNELS.BALE), "555");
+  eq("Safir addresses Bale by the mobile", m.addressFor(person, m.CHANNELS.BALE, { baleByPhone: true }), "09121234567");
+  eq("...and resolveRecipient passes the mode through",
+    m.resolveRecipient([person], m.CHANNELS.BALE, { baleByPhone: true }).recipient?.address, "09121234567");
+
+  const g = globalThis as unknown as Record<string, unknown>;
+  const realFetch = g.fetch;
+  const seen: { url: string; headers: Record<string, string>; body: string }[] = [];
+  let answer: { status: number; body: unknown } = { status: 200, body: { message_id: "m1" } };
+  g.fetch = async (url: unknown, init: { headers?: Record<string, string>; body?: string }) => {
+    seen.push({ url: String(url), headers: init?.headers ?? {}, body: String(init?.body ?? "") });
+    return {
+      ok: answer.status >= 200 && answer.status < 300,
+      status: answer.status,
+      json: async () => answer.body,
+    } as unknown as Response;
+  };
+  try {
+    const { sendBale } = await import("../src/server/services/messaging/drivers");
+    const cfg = { mode: "SAFIR", safirBotId: "1443608531", safirApiKey: "SECRETKEY" };
+    const sent = await sendBale(cfg, { recipient: "09121234567", body: "سلام" } as never);
+    ok("a Safir send succeeds and keeps the provider's id", sent.ok && sent.providerMessageId === "m1", sent);
+    ok("...posted to Safir's endpoint", seen[0]?.url === m.SAFIR_SEND_URL, seen[0]?.url);
+    ok("...with the key as a header and nowhere in the URL",
+      seen[0]?.headers["api-access-key"] === "SECRETKEY" && !seen[0]?.url.includes("SECRETKEY"));
+    answer = { status: 200, body: { ok: false, message: "invalid phone" } };
+    ok("a 200 carrying a refusal is a failure", !(await sendBale(cfg, { recipient: "09121234567", body: "x" } as never)).ok);
+    answer = { status: 401, body: {} };
+    ok("a 401 names the key and the bot id",
+      /کلید دسترسی/.test((await sendBale(cfg, { recipient: "09121234567", body: "x" } as never)).error ?? ""));
+    const before = seen.length;
+    await sendBale({ botToken: "t" }, { recipient: "555", body: "x" } as never);
+    ok("the bot mode still goes to the bot API", seen.length === before + 1 && seen[before].url.startsWith("https://tapi.bale.ai/"));
+  } finally {
+    g.fetch = realFetch;
+  }
+
+  const svc = readFileSync("src/server/services/messaging/messageService.ts", "utf8");
+  ok("Safir's key is a secret that never leaves the server", /BALE: \["botToken", "safirApiKey"\]/.test(svc));
+  ok("the Bale mode and the bot id are stored config", /BALE: \["mode", "botToken", "safirBotId", "safirApiKey"\]/.test(svc));
+  const queue = svc.slice(svc.indexOf("const baleByPhone"), svc.indexOf("const baleByPhone") + 400);
+  ok("queueing a Bale message reads the mode off the provider row and hands it on",
+    /baleModeOf\(\(await providerConfig\(CHANNELS\.BALE\)\)\?\.config\)/.test(queue) && /\{ baleByPhone \}/.test(queue));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

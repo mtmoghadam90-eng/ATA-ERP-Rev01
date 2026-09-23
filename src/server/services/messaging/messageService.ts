@@ -6,7 +6,7 @@ import { expandDateFields } from "../../dates";
 import { getTodayShamsi, isOfficialHoliday, toShamsiStr } from "../../../dateUtils";
 import { loadSettings } from "../../settings";
 import {
-  ALL_CHANNELS, ALL_SMS_CONFIG_FIELDS, ALL_SMS_SECRET_FIELDS,
+  ALL_CHANNELS, ALL_SMS_CONFIG_FIELDS, ALL_SMS_SECRET_FIELDS, BALE_MODES, baleModeOf,
   CHANNELS, Channel, MAX_SEND_ATTEMPTS, MESSAGE_STATUS, MessageAudience, QuietHours,
   isChannel,
   isCustomerFacing, nextSendableTime, renderTemplate, resolveRecipient, retryDelayMs,
@@ -50,7 +50,9 @@ const SECRET_FIELDS: Record<Channel, string[]> = {
    * the way out whichever one is currently selected.
    */
   SMS: ALL_SMS_SECRET_FIELDS,
-  BALE: ["botToken"],
+  // The bot token and Safir's access key: both stay hidden whichever mode is
+  // in use, so switching back is not a retyping (the SMS panels' rule).
+  BALE: ["botToken", "safirApiKey"],
   EMAIL: ["password"],
   /*
    * None. WhatsApp has no credential to type: the authorisation *is* the linked
@@ -86,7 +88,7 @@ const CONFIG_FIELDS: Record<Channel, string[]> = {
    * typed into it.
    */
   SMS: ALL_SMS_CONFIG_FIELDS,
-  BALE: ["botToken"],
+  BALE: ["mode", "botToken", "safirBotId", "safirApiKey"],
   EMAIL: [
     "host", "port", "secure", "user", "password",
     "fromAddress", "fromName", "allowSelfSigned",
@@ -320,6 +322,8 @@ export async function providerChats(channel: Channel): Promise<BaleChatsResult> 
 
   const provider = await providerConfig(channel);
   if (!provider) return { ok: false, chats: [], error: "تنظیمات بله هنوز ثبت نشده است." };
+  // Safir addresses people by their mobile; there is no chat id to look up.
+  if (baleModeOf(provider.config) === BALE_MODES.SAFIR) return { ok: true, chats: [] };
 
   return baleRecentChats(provider.config as BaleConfig);
 }
@@ -602,9 +606,19 @@ export async function queueForCustomer(
     ?? CHANNELS.SMS;
 
   // The named contact first, the customer's own details as the fallback.
+  /*
+   * Bale through Safir is addressed by the mobile, the bot by a chat id — and
+   * which one is a fact about the provider row, so it is read here rather than
+   * guessed. Read only for Bale: for every other channel the answer cannot
+   * change the address, and a query per queued message for nothing is a cost.
+   */
+  const baleByPhone = channel === CHANNELS.BALE
+    && baleModeOf((await providerConfig(CHANNELS.BALE))?.config) === BALE_MODES.SAFIR;
+
   const { recipient, problem } = resolveRecipient(
     [asCandidate(contact), asCandidate(customer)],
     channel,
+    { baleByPhone },
   );
 
   if (!recipient) {
