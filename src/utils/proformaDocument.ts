@@ -71,6 +71,19 @@ export interface ProformaDocumentInput {
  * Builds the document. Pure: no fetching, no `/uploads` resolution — the caller
  * passes that through `inlineDocumentAssets`.
  */
+/**
+ * The fixed columns of the goods table, in pixels; the specification takes
+ * whatever is left, and is the column this table exists for.
+ *
+ * The photograph is 92px and its cell carries 6px of padding a side, so 104
+ * holds it exactly — it was 118 with 10px padding, fourteen pixels of air
+ * taken off the specification on every row. The index, quantity and unit
+ * hold one to four characters and were sized for more.
+ */
+export const ITEM_COL_PX = { index: 28, image: 104, quantity: 42, unit: 46 } as const;
+/** The narrowest a money column may be: six monospace figures at 12px. */
+export const PRICE_COL_MIN_PX = 62;
+
 export function renderProformaDocument(input: ProformaDocumentInput): string {
   const {
     proforma: pf, template, customer: customerObj, contactRecord, creator: creatorUser,
@@ -107,12 +120,16 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
     ]),
   );
   const priceFontPx = amountChars <= 10 ? 12 : amountChars <= 13 ? 11 : 10;
-  // The floor is what gives the money columns their presence: a short figure
-  // in a hairline column next to a very wide specification looked lopsided,
-  // so they keep a decent width even when the amount does not need it.
+  // The column is as wide as its longest figure and no wider. It used to
+  // keep a 96px floor «for presence», which on a dollar quotation — where
+  // every figure is four characters — spent two 96px columns on «35» and
+  // «140» while the specification beside them wrapped every line of its
+  // table (reported: «برای ستون مشخصات فنی فضای کمی در نظر گرفتی… از فضای
+  // مبلغ کم کن»). The heading wraps onto two lines instead, which a
+  // heading can afford and a specification cannot.
   const priceColWidth = Math.min(
     128,
-    Math.max(96, Math.round(amountChars * priceFontPx * 0.6) + 18),
+    Math.max(PRICE_COL_MIN_PX, Math.round(amountChars * priceFontPx * 0.6) + 18),
   );
 
   /*
@@ -159,7 +176,7 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
            specification it belongs to — the same shape as the preview on
            screen. Side by side, the name crowded a 48px thumbnail and the
            specs read as though they belonged to nothing. -->
-      <td style="padding: 10px; text-align: center; vertical-align: middle;">
+      <td style="padding: 6px; text-align: center; vertical-align: middle;">
         ${
           imgToRender
             ? `<img src="${imgToRender}" alt="${item.productName}" style="width: 92px; height: 92px; object-fit: contain; border-radius: 8px; border: 1px solid #e2e8f0; background-color: #ffffff;" referrerPolicy="no-referrer" />`
@@ -949,11 +966,11 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
                   <table style="table-layout: fixed;">
                       <thead>
                           <tr>
-                              <th style="width: 34px;">ردیف</th>
-                              <th style="width: 118px;">تصویر کالا</th>
+                              <th style="width: ${ITEM_COL_PX.index}px;">ردیف</th>
+                              <th style="width: ${ITEM_COL_PX.image}px;">تصویر کالا</th>
                               <th>نوع کالا و مشخصات فنی</th>
-                              <th style="width: 52px;">تعداد</th>
-                              <th style="width: 56px;">واحد</th>
+                              <th style="width: ${ITEM_COL_PX.quantity}px;">تعداد</th>
+                              <th style="width: ${ITEM_COL_PX.unit}px;">واحد</th>
                               ${
                                 pf.proformaType !== "TECHNICAL"
                                   ? `
