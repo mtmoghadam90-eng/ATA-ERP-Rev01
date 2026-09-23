@@ -265,7 +265,7 @@ import {
   assertLinesCosted, normalizeLineCost, stampSentDate,
 } from "../src/server/services/proformaService";
 import { formatMoney } from "../src/numUtils";
-import { renderProformaDocument } from "../src/utils/proformaDocument";
+import { ITEM_COL_PX, PRICE_COL_MIN_PX, renderProformaDocument } from "../src/utils/proformaDocument";
 import {
   AUTO_CLOSE_NOTE, DEFAULT_FOLLOW_UP_RESULTS, FOLLOW_UP_DECISIONS, FOLLOW_UP_HEALTH,
   FOLLOW_UP_STATES, TASK_KINDS, completionRefusalReason, correctionRefusalReason,
@@ -21439,6 +21439,42 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   const schema = readFileSync("prisma/schema.prisma", "utf8");
   const itemModel = schema.slice(schema.indexOf("model ProformaItem {"), schema.indexOf('@@map("proforma_items")'));
   ok("the column is on the proforma line", /\n\s*category\s+String\?/.test(itemModel));
+}
+
+/*
+ * The specification column is what the goods table exists for.
+ *
+ * Reported against a dollar quotation: the two money columns kept a 96px
+ * floor «for presence» while holding «35» and «140», and the photograph's cell
+ * carried fourteen pixels of air, so the specification beside them wrapped
+ * every line of its table. The money columns are now as wide as their longest
+ * figure, and the fixed columns hold exactly what they carry.
+ */
+{
+  const small = (price: number, currency: string) => renderProformaDocument({
+    proforma: {
+      id: "pf-w", proformaNumber: "ATA-W", customerId: "c", customerName: "x",
+      issueDate: "1405/07/01", expiryDate: "1405/08/01", currency, proformaType: "FINANCIAL",
+      items: [{ id: "i", productId: null, productName: "P", techSpecs: "a", quantity: 1,
+        unit: "عدد", unitPriceRIYAL: price, totalPriceRIYAL: price, status: "جاری" }],
+      totalAmount: price, discountPercent: 0, discountAmount: 0, taxPercent: 0,
+      taxAmount: 0, finalAmount: price, notes: "", status: "ارسال شده",
+    } as never,
+    template: { companyName: "c", showLogo: false, showTerms: true, showSignatures: true, showTotals: true } as never,
+    customer: { id: "c", customerType: "حقوقی" } as never, creator: null, products: [], showBrand: true,
+  });
+  const priceWidths = (doc: string) =>
+    [...doc.matchAll(/<th style="width: (\d+)px;">بهای (?:واحد|کل)/g)].map((m) => Number(m[1]));
+  eq("a short figure gets a narrow money column, not a 96px floor",
+    priceWidths(small(140, "دلار")).join(","), `${PRICE_COL_MIN_PX},${PRICE_COL_MIN_PX}`);
+  ok("...while a rial figure still gets the room it needs on one line",
+    priceWidths(small(1_250_000_000, "ریال")).every((w) => w >= 100));
+  ok("the photograph's cell holds the 92px picture and its padding exactly",
+    ITEM_COL_PX.image === 92 + 2 * 6
+    && small(140, "دلار").includes('<td style="padding: 6px; text-align: center; vertical-align: middle;">'));
+  const fixed = ITEM_COL_PX.index + ITEM_COL_PX.image + ITEM_COL_PX.quantity + ITEM_COL_PX.unit;
+  ok("...and the fixed columns leave the specification most of an A4 line",
+    fixed + 2 * PRICE_COL_MIN_PX <= 350);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
