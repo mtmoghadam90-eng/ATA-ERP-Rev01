@@ -261,6 +261,7 @@ export interface ActivityReferralMessageRow {
   attachmentName: string | null;
   attachmentSize: string | null;
   attachmentUrl: string | null;
+  attachments?: string | null;
   createdAt: string;
 }
 

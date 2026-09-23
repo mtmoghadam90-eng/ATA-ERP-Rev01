@@ -2,6 +2,7 @@ import type { Customer, Product, Proforma, ProformaTemplate } from "../types";
 import { formatMoney } from "../numUtils";
 import { escapeHtml, renderRichText } from "./richText";
 import { familyNameOnly } from "./customerLabel";
+import { namePrefixFor } from "./honorific";
 import { proformaDocumentTitle } from "./moduleStatuses";
 
 /**
@@ -84,6 +85,40 @@ export const ITEM_COL_PX = { index: 28, image: 104, quantity: 42, unit: 46 } as 
 /** The narrowest a money column may be: six monospace figures at 12px. */
 export const PRICE_COL_MIN_PX = 62;
 
+/**
+ * The two lines of the buyer panel: «نام خریدار / شرکت» and «مخاطب».
+ *
+ * A natural-person buyer has no company, and the document is addressed to
+ * that person themselves — so the company line is a dash and the contact is
+ * the buyer, with the honorific the proforma form recorded or, failing that,
+ * the one their gender calls for. Printing the person's own name on the
+ * company line and «نماینده خریدار» on the contact line described a
+ * company that does not exist. A company buyer is unchanged: its name, and
+ * the contact person it named. Values are escaped here, since they are
+ * interpolated into HTML.
+ */
+export function buyerPanelLines(input: {
+  customerType?: string;
+  customerName?: string;
+  customerLastName?: string;
+  customerGender?: string | null;
+  contactPrefix?: string;
+  contactFamilyName?: string;
+}): { company: string; contact: string } {
+  const prefix = String(input.contactPrefix ?? "").trim();
+  if (input.customerType === "حقیقی") {
+    const who = familyNameOnly(input.customerName, input.customerLastName);
+    const honorific = prefix || namePrefixFor(input.customerGender);
+    const contact = [honorific, who].filter(Boolean).join(" ");
+    return { company: "-", contact: escapeHtml(contact || "-") };
+  }
+  const contactPrefix = input.customerType === "حقوقی" && prefix ? prefix + " " : "";
+  return {
+    company: escapeHtml(input.customerName ?? ""),
+    contact: escapeHtml(contactPrefix + (input.contactFamilyName || "نماینده خریدار")),
+  };
+}
+
 export function renderProformaDocument(input: ProformaDocumentInput): string {
   const {
     proforma: pf, template, customer: customerObj, contactRecord, creator: creatorUser,
@@ -94,6 +129,14 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
   const contactFamilyName =
     familyNameOnly(pf.contactName, contactRecord?.lastName)
     || familyNameOnly(customerObj?.contactName, customerObj?.contactLastName);
+  const buyer = buyerPanelLines({
+    customerType: customerObj?.customerType,
+    customerName: pf.customerName,
+    customerLastName: customerObj?.lastName,
+    customerGender: customerObj?.gender,
+    contactPrefix: pf.contactPrefix,
+    contactFamilyName,
+  });
   const targetCurrency = pf.currency || "ریال";
   // The document no longer prints an exchange rate or a rial equivalent, so
   // nothing here needs today's rate — see the totals panel below.
@@ -946,8 +989,8 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
               <div class="section-card" style="margin-bottom: 14px;">
                   <h4 class="section-title">مشخصات خریدار</h4>
                   <div class="buyer-horizontal-row">
-                      <div><span style="color: #64748b;">نام خریدار / شرکت:</span> <strong>${customerObj?.customerType === "حقیقی" && pf.contactPrefix ? pf.contactPrefix + " " : ""}${pf.customerName}</strong></div>
-                      <div><span style="color: #64748b;">مخاطب:</span> ${customerObj?.customerType === "حقوقی" && pf.contactPrefix ? pf.contactPrefix + " " : ""}${contactFamilyName || "نماینده خریدار"}</div>
+                      <div><span style="color: #64748b;">نام خریدار / شرکت:</span> <strong>${buyer.company}</strong></div>
+                      <div><span style="color: #64748b;">مخاطب:</span> ${buyer.contact}</div>
                   </div>
                   ${projectRow}
               </div>

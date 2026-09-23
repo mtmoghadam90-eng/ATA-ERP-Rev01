@@ -24,6 +24,7 @@ import { toShamsiStr } from '../dateUtils';
 import { ApiError } from '../api/client';
 import { NotificationRow, ReferralRow, inboxApi, submitReferralReply } from '../api/inbox';
 import ReferralThread, { ReferralComposerSubmit } from './ReferralThread';
+import { parseAttachments } from '../utils/attachments';
 import { useRevalidate } from '../api/liveData';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { REFERRAL_DONE, REFERRAL_PENDING, referralIsOpen } from '../utils/workBoard';
@@ -290,9 +291,11 @@ export default function ReferralsView({
             // the other one — the same trap the two ids above exist for.
             responderUserId: m.responderUserId ?? null,
             createdAt: m.createdAt,
-            attachment: m.attachmentUrl
-              ? { name: m.attachmentName ?? '', size: m.attachmentSize ?? '', url: m.attachmentUrl }
-              : null,
+            // The list when there is one, the three old columns otherwise —
+            // never both, or the first file shows twice.
+            attachments: parseAttachments(m.attachments, {
+              name: m.attachmentName, size: m.attachmentSize, url: m.attachmentUrl,
+            }),
           })),
         },
       });
@@ -451,7 +454,7 @@ export default function ReferralsView({
     try {
       const outcome = await submitReferralReply(referralId, {
         text: body.text,
-        attachment: body.attachment,
+        attachments: body.attachments,
         outcome: body.outcome,
         forwardToUserId: body.forwardToUserId,
       });
@@ -1017,23 +1020,15 @@ export default function ReferralsView({
                             currentUserId={currentUser?.id}
                             formatDate={shamsi}
                             users={users.filter(u => u.id !== currentUser?.id)}
-                            onPickAttachment={(file, done) => {
-                              // The size rule is in `uploadFile`; see
-                              // `src/utils/uploadLimits.ts`.
-                              //
+                            onUploadFile={async (file) => {
                               // Required at call time, the way `CustomFieldsForm`
                               // and `ModuleNotesSection` already do it: at module
                               // scope this pulls `file-saver`, which is CJS with
                               // no ESM named export, and that makes this screen
                               // unmountable outside a bundler and therefore
-                              // untestable — on the one panel whose click target
-                              // only a render can check.
-                              void (async () => {
-                                const { compressImage } = await import('../imageUtils');
-                                compressImage(file, (dataUrl, sizeStr) => {
-                                  done({ name: file.name, size: sizeStr, content: dataUrl });
-                                });
-                              })();
+                              // untestable. The size rule is in `uploadFile`.
+                              const { uploadFile } = await import('../imageUtils');
+                              return uploadFile(file, 'referral-files');
                             }}
                             onSubmit={(body) => handleReplySubmit(referral.id, body)}
                             onEditAction={(text) => handleEditAction(referral.id, text)}

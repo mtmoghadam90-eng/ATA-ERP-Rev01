@@ -1040,6 +1040,8 @@ export interface ProjectReferralResponse {
   responderUserId?: string | null;
   createdAt: string;
   attachment?: { name: string; size: string; content?: string } | null;
+  /** Every file on the reply; `attachment` is only the first, for older readers. */
+  attachments?: { name: string; size: string; url: string }[];
 }
 
 export interface ProjectReferral {
