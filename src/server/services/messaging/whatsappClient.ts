@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs";
 import {
-  WHATSAPP_STATES, WhatsappState, whatsappCanSend, whatsappJid, whatsappSendRefusal,
+  WHATSAPP_STATES, WhatsappState, credsArePaired, whatsappCanSend, whatsappJid, whatsappSendRefusal,
 } from "../../../utils/whatsapp";
 import type { OutgoingMessage, SendResult } from "./drivers";
 
@@ -63,8 +63,8 @@ export const WHATSAPP_SESSION_DIR = path.join(process.cwd(), "whatsapp-session")
  * handshake completes (`read ECONNRESET`) and therefore no pairing code ever
  * arrives: the panel sat on «قطع شده» and did not move, which is the loop.
  *
- * `creds.registered` is the flag baileys sets after a successful pairing (in
- * `Socket/messages-recv`), so that is what «linked» means. An unreadable or
+ * `credsArePaired` is what «linked» means — `registered` **or** `me.id`, since
+ * a QR pairing never sets the first (see that function). An unreadable or
  * half-written file answers **false** — the safe direction here, since false
  * only means somebody has to press the button again, while true opens sockets
  * nobody asked for.
@@ -72,7 +72,7 @@ export const WHATSAPP_SESSION_DIR = path.join(process.cwd(), "whatsapp-session")
 export function whatsappIsLinked(): boolean {
   try {
     const raw = fs.readFileSync(path.join(WHATSAPP_SESSION_DIR, "creds.json"), "utf8");
-    return (JSON.parse(raw) as { registered?: unknown }).registered === true;
+    return credsArePaired(JSON.parse(raw));
   } catch {
     return false;
   }
@@ -350,9 +350,9 @@ async function openSocket(): Promise<void> {
    * Whether a device is paired, read from the **live** credentials.
    *
    * `whatsappIsLinked()` reads `creds.json` off the disk, which is right
-   * everywhere there is no socket — and wrong here. baileys sets
-   * `creds.registered` and emits `creds.update`, and `saveCreds` writes the file
-   * *asynchronously*; WhatsApp's own `restartRequired` close can arrive first.
+   * everywhere there is no socket — and wrong here. baileys sets `creds.me`
+   * (and, for a pairing code, `creds.registered`) and emits `creds.update`,
+   * and `saveCreds` writes the file *asynchronously*; WhatsApp's own `restartRequired` close can arrive first.
    * The handler then read a file still saying `registered: false` about a scan
    * that had just succeeded, reported `UNLINKED`, and cleared the retry.
    *
@@ -361,8 +361,8 @@ async function openSocket(): Promise<void> {
    * library did not populate it.
    */
   const paired = (): boolean => {
-    const live = (auth as { creds?: { registered?: unknown } } | null)?.creds?.registered;
-    return live === true || (live === undefined && whatsappIsLinked());
+    const live = (auth as { creds?: unknown } | null)?.creds;
+    return credsArePaired(live) || (live === undefined && whatsappIsLinked());
   };
 
   socket.ev.on("connection.update", (update: Record<string, any>) => {

@@ -158,6 +158,36 @@ export function whatsappGapMs(random: number): number {
 }
 
 /**
+ * Whether a set of baileys credentials belongs to a device that has been paired.
+ *
+ * **`registered` alone is not that, and reading it alone cost every QR-linked
+ * line its automatic reconnect.** baileys sets `creds.registered = true` in one
+ * place only — the *pairing-code* flow (`Socket/messages-recv`, «link code
+ * pairing»). A device linked by scanning the QR goes through `pair-success`
+ * instead, whose `configureSuccessfulPairing` writes `me`, `account` and the
+ * signal identity and leaves `registered` at the `false` `initAuthCreds()` gave
+ * it. So a line scanned from the settings panel read as «never paired» for the
+ * life of the session: every ordinary close (WhatsApp drops a linked device's
+ * socket routinely — a network blip, a server-side rotation) took the unpaired
+ * branch, answered `UNLINKED` and **cancelled the retry**, and boot did not
+ * restore it either. Pressing «اتصال دستگاه» worked without a rescan, because
+ * the session was perfectly valid — which is exactly how it was reported.
+ *
+ * `me.id` is what baileys itself reads as «logged in» (it starts buffering
+ * events on it), it is set by both pairing flows, and it is absent from the
+ * seeded credentials — so the file that exists before anybody has scanned
+ * anything still answers false, which is the fault the `registered` reading was
+ * written to prevent.
+ */
+export function credsArePaired(creds: unknown): boolean {
+  if (!creds || typeof creds !== "object") return false;
+  const c = creds as { registered?: unknown; me?: { id?: unknown } | null };
+  if (c.registered === true) return true;
+  const id = c.me?.id;
+  return typeof id === "string" && id.trim().length > 0;
+}
+
+/**
  * Why a pass is not sending this message, or null.
  *
  * Separate from the state labels because the *queue* needs a sentence to store

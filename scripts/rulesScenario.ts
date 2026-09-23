@@ -164,7 +164,7 @@ import {
   WHATSAPP_GAP_MS, WHATSAPP_PER_PASS, WHATSAPP_STATES, WHATSAPP_STATE_ADVICE,
   WHATSAPP_STATE_LABELS, WHATSAPP_USER_DOMAIN, isWhatsappAddressable, relayConfigFrom,
   relayConfigRefusal, whatsappCanSend, whatsappFailureKind, whatsappGapMs, whatsappJid,
-  whatsappSendRefusal,
+  whatsappSendRefusal, credsArePaired,
 } from "../src/utils/whatsapp";
 import { channelIsPaced, channelPassLimit } from "../src/server/services/messaging/messageService";
 import { telegramCredentialsFrom } from "../src/server/services/messaging/telegramClient";
@@ -18427,8 +18427,25 @@ head("Competitors: who we lose to, and by how much");
    * socket is reset before the handshake, so no code ever arrives and the loop
    * is all there is.
    */
-  ok("a linked device is decided by creds.registered",
-    /\.registered === true/.test(clientCode));
+  ok("a linked device is decided by the shared pairing predicate",
+    /return credsArePaired\(JSON\.parse\(raw\)\)/.test(clientCode));
+  /*
+   * **And that predicate is not `registered` alone.** baileys sets
+   * `creds.registered` only in the pairing-*code* flow; a QR pairing writes
+   * `me`/`account` through `pair-success` and leaves `registered: false`. Read
+   * alone, every QR-linked line looked unpaired on each ordinary close, took the
+   * no-retry branch and stayed «متصل نیست» until somebody pressed the button —
+   * which then reconnected without a scan, because the session was valid.
+   */
+  ok("a QR-paired device (me.id, registered false) is paired",
+    credsArePaired({ registered: false, me: { id: "989121234567:12@s.whatsapp.net" } }));
+  ok("a pairing-code device (registered true) is paired",
+    credsArePaired({ registered: true }));
+  ok("the seeded credentials, before any scan, are not paired",
+    !credsArePaired({ registered: false, noiseKey: {}, signedIdentityKey: {} }));
+  ok("...nor is a blank id, a missing object or garbage",
+    !credsArePaired({ registered: false, me: { id: "  " } })
+    && !credsArePaired(null) && !credsArePaired(undefined) && !credsArePaired("x"));
   ok("...and never by the file merely existing",
     !/existsSync\([^)]*creds\.json/.test(clientCode)
     && !/existsSync\(\s*path\.join\(WHATSAPP_SESSION_DIR/.test(clientCode));
@@ -18466,8 +18483,10 @@ head("Competitors: who we lose to, and by how much");
    * there is no socket.
    */
   ok("the close handler reads the live credentials", /auth as \{ creds\?/.test(clientCode));
-  ok("...with the disk as the fallback rather than the authority",
-    /live === true \|\| \(live === undefined && whatsappIsLinked\(\)\)/.test(clientCode));
+  ok("...through the same predicate, with the disk as the fallback",
+    /credsArePaired\(live\) \|\| \(live === undefined && whatsappIsLinked\(\)\)/.test(clientCode));
+  ok("...and no reader asks registered on its own again",
+    !/\.registered === true/.test(clientCode) && !/creds\?\.registered/.test(clientCode));
 
   /*
    * «باید دوباره وصل شوی» is the second half of a scan, not a failure.
