@@ -24,6 +24,15 @@ export interface OutgoingMessage {
   recipient: string;
   subject?: string | null;
   body: string;
+  /**
+   * The outbox row's own id, the same on every attempt at it.
+   *
+   * Safir takes it as `request_id` and sends a repeated one **once**, which is
+   * exactly the retry that otherwise doubles a message: the request reached the
+   * provider, the answer did not reach us, and the queue tries again. Absent for
+   * a test send, which is not a row. Other drivers ignore it.
+   */
+  requestId?: string | null;
 }
 
 export interface SendResult {
@@ -335,6 +344,23 @@ export interface BaleConfig {
 }
 
 /**
+ * Safir's documented error codes, each as the thing to do about it.
+ *
+ * Only a code that names a remedy gets its own sentence; the rest fall through
+ * to Bale's own description. 17 is the one to know about: Safir can only reach
+ * somebody who has a Bale account, and it says so here rather than silently.
+ */
+const SAFIR_ERRORS: Record<number, string> = {
+  2: "خطای داخلی سرور سفیر؛ کمی بعد دوباره تلاش می‌شود.",
+  3: "سفیر فعلاً پیام بیشتری نمی‌پذیرد (محدودیت تعداد ارسال). کمی بعد دوباره تلاش می‌شود.",
+  4: "درخواست ارسال به سفیر نامعتبر بود (ورودی JSON). شناسه بازو را در تنظیمات بله بررسی کنید.",
+  8: "سفیر این شماره را نامعتبر دانست. شماره موبایل مخاطب را بررسی کنید.",
+  17: "این مخاطب در بله حساب کاربری ندارد، پس سفیر نمی‌تواند به او پیام بدهد. از پیامک یا روش دیگری استفاده کنید.",
+  20: "اعتبار حساب سفیر کافی نیست؛ حساب را در داشبورد کسب‌وکار بله شارژ کنید.",
+  21: "بازوی سفیر به سقف تعداد مخاطبان رسیده است؛ از پنل کسب‌وکار بله محدودیت را بررسی کنید.",
+};
+
+/**
  * Safir's answer, turned into something the reader can act on.
  *
  * Its error body is not documented anywhere this build could read, so this
@@ -345,19 +371,19 @@ export interface BaleConfig {
  */
 function safirFailure(payload: unknown, status: number): string {
   const p = (payload ?? {}) as Record<string, unknown>;
-  const said = [p.message, p.description, p.error, p.detail, p.error_message]
-    .map((v) => (typeof v === "string" ? v : v && typeof v === "object" ? JSON.stringify(v) : ""))
+  // The documented shape: `error_data` is a list of ErrorInfo, one per number.
+  const first = Array.isArray(p.error_data) ? p.error_data[0] as Record<string, unknown> | undefined
+    : (p.error_data && typeof p.error_data === "object" ? p.error_data as Record<string, unknown> : undefined);
+  const code = Number(first?.code);
+  const said = [first?.description, p.message, p.description, p.detail]
+    .map((v) => (typeof v === "string" ? v : ""))
     .find((v) => v.trim()) ?? "";
+  if (Number.isFinite(code) && SAFIR_ERRORS[code]) return SAFIR_ERRORS[code];
   if (status === 401 || status === 403) {
     return `کلید دسترسی یا شناسه بازوی سفیر پذیرفته نشد. هر دو را از داشبورد business.bale.ai دوباره بردارید.${said ? ` (${said})` : ""}`;
   }
-  if (status === 402) {
-    return `اعتبار حساب سفیر کافی نیست؛ حساب را در داشبورد بله شارژ کنید.${said ? ` (${said})` : ""}`;
-  }
-  if (status === 429) {
-    return "سفیر فعلاً پیام بیشتری نمی‌پذیرد (محدودیت تعداد). کمی بعد دوباره تلاش می‌شود.";
-  }
-  return `ارسال با سفیر بله ناموفق بود: ${said || `پاسخ ${status}`}`;
+  if (status === 429) return SAFIR_ERRORS[3];
+  return `ارسال با سفیر بله ناموفق بود: ${said || (Number.isFinite(code) ? `کد ${code}` : `پاسخ ${status}`)}`;
 }
 
 /**
@@ -369,7 +395,7 @@ function safirFailure(payload: unknown, status: number): string {
  * `ok: false`, `success: false` or carries an `error` is read as a failure too.
  */
 async function sendSafir(config: BaleConfig, message: OutgoingMessage): Promise<SendResult> {
-  const built = safirRequest(config, message.recipient, message.body);
+  const built = safirRequest(config, message.recipient, message.body, message.requestId);
   if (built.error || !built.body) return { ok: false, error: built.error ?? "درخواست سفیر ساخته نشد." };
 
   try {
@@ -382,16 +408,20 @@ async function sendSafir(config: BaleConfig, message: OutgoingMessage): Promise<
     });
 
     const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
-    const refused = payload && (payload.ok === false || payload.success === false
-      || (payload.error != null && payload.error !== "" && payload.error !== false));
 
-    if (!response.ok || refused) {
+    /*
+     * Success is a `message_id` with nothing in `error_data`. Both halves are
+     * read, because the errors are reported **per number inside the body** — a
+     * 200 carrying `error_data: [{ code: 17 }]` is a message nobody received.
+     */
+    const errors = payload?.error_data;
+    const hasErrors = Array.isArray(errors) ? errors.length > 0 : !!errors;
+    const id = payload?.message_id;
+
+    if (!response.ok || hasErrors || id == null || id === "") {
       return { ok: false, error: safirFailure(payload, response.status) };
     }
-
-    const id = payload?.message_id ?? payload?.messageId ?? payload?.id
-      ?? (payload?.result as Record<string, unknown> | undefined)?.message_id;
-    return { ok: true, providerMessageId: id != null && id !== "" ? String(id) : null };
+    return { ok: true, providerMessageId: String(id) };
   } catch (err) {
     return { ok: false, error: describe(err) };
   }

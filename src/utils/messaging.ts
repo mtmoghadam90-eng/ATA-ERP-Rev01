@@ -706,13 +706,20 @@ export const SAFIR_SEND_URL = "https://safir.bale.ai/api/v3/send_message";
 export interface SafirRequest {
   error: string | null;
   apiKey: string;
-  body: { bot_id: number; phone_number: string; message_data: { message: { text: string } } } | null;
+  body: {
+    request_id?: string;
+    bot_id: number;
+    phone_number: string;
+    message_data: { message: { text: string } };
+  } | null;
 }
 
 export function safirRequest(
   config: { safirBotId?: unknown; safirApiKey?: unknown } | null | undefined,
   recipient: string | null | undefined,
   text: string,
+  /** The outbox row id — Safir sends a repeated `request_id` once. */
+  requestId?: string | null,
 ): SafirRequest {
   const apiKey = String(config?.safirApiKey ?? "").trim();
   const botIdText = digitsOf(String(config?.safirBotId ?? ""));
@@ -722,7 +729,8 @@ export function safirRequest(
     return { error: `تنظیمات سفیر بله کامل نیست: ${missing}.`, apiKey: "", body: null };
   }
   const phone = internationalDigits(recipient);
-  if (!phone) {
+  // Safir takes only Iranian numbers: 98 and ten digits, nothing else.
+  if (!phone || !/^989\d{9}$/.test(phone)) {
     return {
       error: `«${String(recipient ?? "").trim() || "—"}» شماره موبایل معتبری نیست؛ سفیر بله با شماره موبایل پیام می‌فرستد.`,
       apiKey: "",
@@ -732,7 +740,12 @@ export function safirRequest(
   return {
     error: null,
     apiKey,
-    body: { bot_id: Number(botIdText), phone_number: phone, message_data: { message: { text } } },
+    body: {
+      ...(requestId ? { request_id: String(requestId) } : {}),
+      bot_id: Number(botIdText),
+      phone_number: phone,
+      message_data: { message: { text } },
+    },
   };
 }
 
