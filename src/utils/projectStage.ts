@@ -212,7 +212,7 @@ export interface StageFacts {
   purchaseOrders?: { status?: string | null }[];
   /** One entry per packing list; `delivered` is «تاریخ تحویل قطعی خورده». */
   deliveries?: { delivered?: boolean | null }[];
-  /** One entry per after-sales record; `open` is «هنوز تحویل داده نشده». */
+  /** One entry per after-sales record; `open` is `afterSalesIsOpen` — neither completed nor delivered. */
   afterSales?: { open?: boolean | null }[];
 }
 
@@ -358,8 +358,14 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
   }
 
   /* -- nothing open: the furthest thing that actually happened -- */
-  if (afterSales.length > 0) return "خاتمه‌یافته";
-  if (deliveries.length > 0) return "تحویل شده";
+  /*
+   * A finished after-sales case hands the project back to «تحویل شده»: the
+   * service is done and the goods are with the customer, which is exactly what
+   * that stage says. It used to answer «خاتمه‌یافته», which nothing else
+   * derives — that is a person's decision that the job is over, and it stays
+   * available as a manual stage.
+   */
+  if (afterSales.length > 0 || deliveries.length > 0) return "تحویل شده";
   if (orders.length > 0) {
     // Every order received, and nothing packed yet: the goods are in.
     return orders.every((po) => po.status === PO_RECEIVED)

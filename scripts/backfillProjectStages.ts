@@ -23,7 +23,7 @@
 import "dotenv/config";
 import { getDb, disconnectDb, isDbConfigured } from "../src/server/db";
 import { deriveProjectStage, resolveStage } from "../src/utils/projectStage";
-import { inquiryWorkflowStatus } from "../src/utils/moduleStatuses";
+import { afterSalesIsOpen, inquiryWorkflowStatus } from "../src/utils/moduleStatuses";
 import { isWonStatus } from "../src/server/proformaStatus";
 import { getTodayShamsi } from "../src/dateUtils";
 import { normalizeJalali } from "../src/server/dates";
@@ -81,7 +81,7 @@ async function main(): Promise<void> {
       isCancelled: p.status === "لغو شده",
       purchaseOrders: p.purchaseOrders,
       deliveries: p.deliveries.map((d) => ({ delivered: !!d.actualDeliveryDate })),
-      afterSales: p.services.map((s) => ({ open: s.status !== "تحویل داده شده" })),
+      afterSales: p.services.map((s) => ({ open: afterSalesIsOpen(s.status) })),
     });
 
     /*

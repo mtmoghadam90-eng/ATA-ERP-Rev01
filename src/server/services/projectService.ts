@@ -6,7 +6,7 @@ import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } fr
 import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { scrubProductRefs } from "../refIntegrity";
 import { deriveProjectStage, resolveStage } from "../../utils/projectStage";
-import { PROFORMA_SENT_STATUS, PROJECT_STATUS_NEW, inquiryWorkflowStatus } from "../../utils/moduleStatuses";
+import { PROFORMA_SENT_STATUS, PROJECT_STATUS_NEW, afterSalesIsOpen, inquiryWorkflowStatus } from "../../utils/moduleStatuses";
 import { statusChangeColumns } from "../../utils/statusDwell";
 import { scheduleProjectStageTrigger } from "./projectStageEvents";
 import { isWonStatus } from "../proformaStatus";
@@ -494,8 +494,12 @@ export async function syncProjectStage(
     supplierInquiries: inquiries.map((i) => ({ status: inquiryWorkflowStatus(i) })),
     purchaseOrders: orders,
     deliveries: deliveries.map((d) => ({ delivered: !!d.actualDeliveryDate })),
-    // «تحویل داده شده» is the one status that closes an after-sales record.
-    afterSales: afterSales.map((s) => ({ open: s.status !== "تحویل داده شده" })),
+    /*
+     * Closed is «تکمیل شده» as well as «تحویل داده شده» — the module's own
+     * rule, not a second reading of it. Comparing against delivery alone kept a
+     * service finished on site holding the project in «خدمات پس از فروش».
+     */
+    afterSales: afterSales.map((s) => ({ open: afterSalesIsOpen(s.status) })),
   });
 
   const resolved = resolveStage(derived, project, opts?.recalculating !== false);
