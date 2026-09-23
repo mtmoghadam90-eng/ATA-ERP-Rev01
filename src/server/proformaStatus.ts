@@ -13,7 +13,8 @@
  */
 
 import {
-  PROFORMA_SENT_STATUS, PROFORMA_TECHNICAL_TYPE, PROJECT_TECHNICAL_OFFERED,
+  PROFORMA_SENT_STATUS, PROFORMA_TECHNICAL_TYPE, PROJECT_TECHNICAL_APPROVED,
+  PROJECT_TECHNICAL_OFFERED,
 } from "../utils/moduleStatuses";
 
 /**
@@ -74,6 +75,22 @@ export function commercialProformas<T extends { proformaType?: string | null }>(
   return proformas.filter((pf) => pf.proformaType !== PROFORMA_TECHNICAL_TYPE);
 }
 
+/**
+ * Whether the customer has approved a technical proposal that still stands.
+ *
+ * Any kind of document may carry it — a financial quotation prints as «پیشنهاد
+ * فنی و مالی», so its technical half can be accepted while the price is still
+ * being argued — and a cancelled or lost document carries nothing forward: the
+ * approval was of an offer that is no longer on the table.
+ */
+export function technicalApprovalStands(proformas: OutcomeProforma[]): boolean {
+  return proformas.some((pf) => {
+    if (pf.isCancelled || !pf.technicalApprovedDate) return false;
+    const outcome = getProformaOutcome(pf);
+    return outcome !== "باخته" && outcome !== "لغو شده";
+  });
+}
+
 /** Whether a technical offer has actually reached the customer. */
 function technicalOfferSent(proformas: OutcomeProforma[]): boolean {
   return proformas.some(
@@ -94,6 +111,7 @@ export type ProformaOutcome =
 export type ProjectStatus =
   | "جدید" | "در حال مذاکره" | "ارائه پیش‌فاکتور"
   | typeof PROJECT_TECHNICAL_OFFERED
+  | typeof PROJECT_TECHNICAL_APPROVED
   | "برنده (موفق)" | "باخته" | "لغو شده" | "نیمه برنده";
 
 export interface OutcomeItem {
@@ -114,6 +132,11 @@ export interface OutcomeProforma {
   items?: OutcomeItem[] | null;
   /** The document-level reason, used when the lines carry none of their own. */
   lossReason?: string | null;
+  /**
+   * When the customer approved the technical proposal, or null. Read by
+   * `technicalApprovalStands`; it decides no outcome and moves no line.
+   */
+  technicalApprovedDate?: Date | string | null;
 }
 
 /**
@@ -250,8 +273,20 @@ export function deriveProjectStatus(proformas: StatusProforma[]): ProjectStatus 
      * about the project than an unopened folder does, and stamping the column
      * for it would report an offer the customer has never seen.
      */
+    if (technicalApprovalStands(proformas)) return PROJECT_TECHNICAL_APPROVED;
     return technicalOfferSent(proformas) ? PROJECT_TECHNICAL_OFFERED : null;
   }
+
+  /*
+   * «ارائه پیش‌فاکتور» with the technical half already accepted.
+   *
+   * Only where the sale is otherwise still open: a won or part-won document is
+   * further along than an approval and a wholly lost set is decided against,
+   * so both of those are answered above and below without it.
+   */
+  const offered = technicalApprovalStands(proformas)
+    ? PROJECT_TECHNICAL_APPROVED
+    : "ارائه پیش‌فاکتور";
 
   const outcomes = commercial.map((pf) => getProformaOutcome(pf));
   if (outcomes.every((o) => o === "لغو شده")) return "لغو شده";
@@ -269,7 +304,7 @@ export function deriveProjectStatus(proformas: StatusProforma[]): ProjectStatus 
    */
   const items: OutcomeItem[] = decidingProformas(commercial).flatMap((pf) => pf.items ?? []);
 
-  if (items.length === 0) return "ارائه پیش‌فاکتور";
+  if (items.length === 0) return offered;
 
   const won = items.filter((i) => i.status === ITEM_WON).length;
   const lost = items.filter((i) => i.status === ITEM_LOST).length;
@@ -277,7 +312,7 @@ export function deriveProjectStatus(proformas: StatusProforma[]): ProjectStatus 
   if (won === items.length) return "برنده (موفق)";
   if (lost === items.length) return "باخته";
   if (won > 0) return "نیمه برنده";
-  return "ارائه پیش‌فاکتور";
+  return offered;
 }
 
 /**
@@ -388,7 +423,7 @@ const PROFORMA_DERIVED_STATUSES = new Set<string>([
   // Every one of these was written by the rule above and by nothing else, the
   // technical-offer state included: deleting the specification has to take it
   // with it, or the project goes on reporting an offer it no longer holds.
-  "ارائه پیش‌فاکتور", PROJECT_TECHNICAL_OFFERED,
+  "ارائه پیش‌فاکتور", PROJECT_TECHNICAL_OFFERED, PROJECT_TECHNICAL_APPROVED,
   "برنده (موفق)", "باخته", "نیمه برنده", "لغو شده",
 ]);
 

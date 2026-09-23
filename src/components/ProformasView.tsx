@@ -2711,6 +2711,10 @@ export default function ProformasView({
       // because reusing the quotation's would say a price had gone out.
       case "ارائه پیش‌فاکتور فنی":
         return "bg-violet-50 text-violet-700 border-violet-200";
+      // Accepted technically and not yet won — teal, between the offer's
+      // violet and the win's emerald, so it reads as neither.
+      case "تأیید پیشنهاد فنی":
+        return "bg-teal-50 text-teal-700 border-teal-200";
       case "برنده (موفق)":
         return "bg-emerald-50 text-emerald-700 border-emerald-200";
       case "باخته":

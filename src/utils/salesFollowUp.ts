@@ -170,6 +170,42 @@ export const RESULT_PURCHASE_CONFIRMED = "تأیید نهایی خرید";
 export const RESULT_PURCHASE_CANCELLED = "لغو خرید توسط مشتری";
 export const RESULT_LOST_TO_COMPETITOR = "واگذاری به رقیب (باخت)";
 
+/**
+ * The customer has accepted *what* is being offered — not yet the price.
+ *
+ * Deliberately **not** among the three above and not an `impliedSettlement`:
+ * it moves no line, decides no outcome and closes nothing. What it does is
+ * record `Proforma.technicalApprovedDate`, from which the project's status
+ * reads «تأیید پیشنهاد فنی» and its stage «تهیه پیش‌فاکتور» — both derived,
+ * because both columns are recomputed from the proformas on every write and a
+ * value typed straight onto the project would be gone at the next save.
+ */
+export const RESULT_TECHNICAL_APPROVED = "تأیید پیشنهاد فنی";
+
+/**
+ * Two typings of one result, folded to one.
+ *
+ * The list is the company's own and is retyped by hand: «تایید» without the
+ * hamza, ي for ی and a stray half-space are spelling, not a different answer,
+ * and a rule keyed on the exact string would silently stop recording the
+ * approval the day somebody edited the entry. A genuinely different wording
+ * still does not match, which is the right way for it to degrade.
+ */
+export function resultKey(result: unknown): string {
+  return String(result ?? "")
+    .replace(/[\u0623\u0625\u0622]/g, "\u0627")
+    .replace(/\u064A/g, "\u06CC")
+    .replace(/\u0643/g, "\u06A9")
+    .replace(/\u200C/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Whether a recorded result says the technical proposal was approved. */
+export function impliesTechnicalApproval(result: unknown): boolean {
+  return resultKey(result) === resultKey(RESULT_TECHNICAL_APPROVED);
+}
+
 
 /**
  * What the customer said, as a controlled list.
@@ -188,6 +224,7 @@ export const RESULT_LOST_TO_COMPETITOR = "واگذاری به رقیب (باخت
 export const DEFAULT_FOLLOW_UP_RESULTS = [
   "دریافت پیش‌فاکتور تأیید شد",
   "در حال بررسی فنی",
+  RESULT_TECHNICAL_APPROVED,
   "در حال بررسی مالی/مدیریتی",
   "درخواست اصلاح قیمت",
   "درخواست اصلاح مشخصات یا تعداد",

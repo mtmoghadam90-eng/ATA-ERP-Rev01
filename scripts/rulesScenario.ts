@@ -86,6 +86,11 @@ import {
   webRfqSourceSpec,
 } from "../src/utils/webRfq";
 import { SETTINGS_PATCHES, applySettingsPatches } from "../src/utils/settingsPatches";
+import {
+  RESULT_TECHNICAL_APPROVED, impliesTechnicalApproval,
+} from "../src/utils/salesFollowUp";
+import { PROJECT_TECHNICAL_APPROVED } from "../src/utils/moduleStatuses";
+import { isWonStatus, technicalApprovalStands } from "../src/server/proformaStatus";
 import { ACTIVITY_REACTIONS, isAllowedReaction, summarizeReactions } from "../src/utils/reactions";
 import { readViewPreferences, writeViewPreferences } from "../src/utils/viewPreferences";
 import {
@@ -11041,9 +11046,23 @@ head("A document's notes: files, a Shamsi clock, and a delete that is offered ho
    */
   ok("...and never closes the chase again",
     !/status: "انجام شده"/.test(body));
+  /*
+   * The outcome lives on the lines and on `isCancelled`, so «never settles» is
+   * that neither is written. The project *is* re-derived when a result is
+   * corrected to or from «تأیید پیشنهاد فنی» — but only there, and that moves
+   * the approval stamp, which decides no outcome; anywhere else a status sync
+   * here would be the sale being re-decided by a correction.
+   */
+  const syncs = body.match(/syncProjectStatus\(/g) ?? [];
+  const approvalBranch = body.slice(body.indexOf("if (await syncTechnicalApproval("));
   ok("...and never settles the sale",
-    !/syncProjectStatus/.test(body) && !/scheduleCustomerValueRecalculation/.test(body)
-    && !/settleOutcome/.test(body));
+    !/proformaItem\./.test(body) && !/isCancelled/.test(body)
+    && !/scheduleCustomerValueRecalculation/.test(body) && !/settleOutcome/.test(body));
+  ok("...re-deriving the project only for a technical approval",
+    syncs.length === 1 && body.includes("if (await syncTechnicalApproval(")
+    && approvalBranch.indexOf("syncProjectStatus(") > 0
+    && approvalBranch.indexOf("syncProjectStatus(") < approvalBranch.indexOf("}"),
+    String(syncs.length));
   /*
    * A replacement it should not have raised is **cancelled**, not completed: it
    * was never done, it should never have existed. Conditional, so two
@@ -15719,6 +15738,161 @@ head("The board has no tick, so its headline is one");
     /onEdit && card\.kind === 'task'/.test(board) && /work-board-edit-/.test(board));
   ok("...and the screen wires it to the edit box",
     /onEdit=\{\(card\) => \{/.test(view) && /handleOpenEdit\(task\)/.test(view));
+}
+
+head("«تأیید پیشنهاد فنی» moves the project on, and is not a win");
+{
+  const strip = (text: string) =>
+    text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+
+  /* ------------------------------- the result ------------------------------ */
+
+  ok("the result is offered on a fresh installation",
+    DEFAULT_FOLLOW_UP_RESULTS.includes(RESULT_TECHNICAL_APPROVED));
+  ok("...and recognised as itself", impliesTechnicalApproval(RESULT_TECHNICAL_APPROVED));
+  // A retyped entry is the same answer: no hamza, Arabic ی, a stray space.
+  for (const typed of ["تایید پیشنهاد فنی", "تأييد پيشنهاد فنی", "  تأیید  پیشنهاد فنی "]) {
+    ok(`«${typed.trim()}» reads as the same result`, impliesTechnicalApproval(typed));
+  }
+  // And a different answer is a different answer.
+  for (const other of [RESULT_PURCHASE_CONFIRMED, "در حال بررسی فنی", "", null]) {
+    ok(`«${other ?? "—"}» is not a technical approval`, !impliesTechnicalApproval(other));
+  }
+  // The decisive half: it suggests no settlement, so nothing about the sale moves.
+  ok("it suggests no commercial outcome", impliedSettlement(RESULT_TECHNICAL_APPROVED) === null);
+
+  /* ------------------------------- the status ------------------------------ */
+
+  ok("the status is on the project's own list", (PROJECT_STATUSES as readonly string[])
+    .includes(PROJECT_TECHNICAL_APPROVED));
+  ok("...and is not a win", !isWonStatus(PROJECT_TECHNICAL_APPROVED));
+
+  const at = "2026-09-01T00:00:00Z";
+  const quote = (over: Record<string, unknown> = {}) => ({
+    id: "q1", createdAt: at, proformaType: "FINANCIAL", status: "ارسال شده",
+    isCancelled: false, items: [{ status: null }, { status: null }], ...over,
+  });
+  const approvedOn = "2026-09-20";
+
+  eq("a sent quotation with nothing decided is «ارائه پیش‌فاکتور»",
+    deriveProjectStatus([quote()]), "ارائه پیش‌فاکتور");
+  eq("...and with its technical half approved, «تأیید پیشنهاد فنی»",
+    deriveProjectStatus([quote({ technicalApprovedDate: approvedOn })]), PROJECT_TECHNICAL_APPROVED);
+  eq("a win is further along than an approval",
+    deriveProjectStatus([quote({
+      technicalApprovedDate: approvedOn, items: [{ status: "برنده" }, { status: "برنده" }],
+    })]), "برنده (موفق)");
+  eq("...and part-won is too",
+    deriveProjectStatus([quote({
+      technicalApprovedDate: approvedOn, items: [{ status: "برنده" }, { status: null }],
+    })]), "نیمه برنده");
+  eq("a lost set is decided against, approval or not",
+    deriveProjectStatus([quote({
+      technicalApprovedDate: approvedOn, items: [{ status: "بازنده" }, { status: "بازنده" }],
+    })]), "باخته");
+  eq("a cancelled approved document carries nothing forward",
+    deriveProjectStatus([
+      quote({ id: "q1", technicalApprovedDate: approvedOn, isCancelled: true }),
+      quote({ id: "q2", createdAt: "2026-09-10T00:00:00Z" }),
+    ]), "ارائه پیش‌فاکتور");
+  ok("...which is the rule the status reads",
+    !technicalApprovalStands([{ isCancelled: true, technicalApprovedDate: approvedOn }])
+    && technicalApprovalStands([{ isCancelled: false, technicalApprovedDate: approvedOn }]));
+
+  // A project whose only document is a technical specification.
+  const spec = (over: Record<string, unknown> = {}) =>
+    quote({ proformaType: "TECHNICAL", items: [], ...over });
+  eq("a sent specification is «ارائه پیش‌فاکتور فنی»",
+    deriveProjectStatus([spec()]), "ارائه پیش‌فاکتور فنی");
+  eq("...and an approved one is «تأیید پیشنهاد فنی»",
+    deriveProjectStatus([spec({ technicalApprovedDate: approvedOn })]), PROJECT_TECHNICAL_APPROVED);
+
+  /* ------------------------------- the stage ------------------------------- */
+
+  const stage = (proformas: Record<string, unknown>[], inquiries: string[] = []) =>
+    deriveProjectStage({
+      projectStatus: "ارائه پیش‌فاکتور",
+      proformas: proformas as never,
+      supplierInquiries: inquiries.map((status) => ({ status })),
+    });
+  eq("a sent quotation is with the customer", stage([quote()]), STAGE_OFFER_REVIEW);
+  eq("...and once its technical half is approved, the quotation is being prepared",
+    stage([quote({ technicalApprovedDate: approvedOn })]), "تهیه پیش‌فاکتور");
+  eq("an approved specification moves the job on to the priced quotation",
+    stage([spec({ technicalApprovedDate: approvedOn })]), "تهیه پیش‌فاکتور");
+  // A revised price sent after the approval is exactly what the job then waits on.
+  eq("...while a newer offer out with the customer still reads as with the customer",
+    stage([quote({ technicalApprovedDate: approvedOn }), quote({ id: "q2" })]), STAGE_OFFER_REVIEW);
+  // The draft cannot be finished until the supplier's price arrives.
+  eq("an unanswered supplier inquiry still holds it back",
+    stage([spec({ technicalApprovedDate: approvedOn })], [INQUIRY_SENT]),
+    "در انتظار پاسخ تأمین‌کننده");
+
+  /* ----------------------------- live documents ---------------------------- */
+
+  const liveBase = {
+    ...DEFAULT_SETTINGS,
+    dropdownItems: {
+      ...DEFAULT_SETTINGS.dropdownItems,
+      followUpResults: ["در حال بررسی فنی", "عدم پاسخ"],
+      projectStatuses: ["جدید", "ارائه پیش‌فاکتور"],
+    },
+    appliedPatches: undefined,
+  } as ERPSettings;
+  const patchedLive = applySettingsPatches(liveBase);
+  ok("a live document gains the result", !!patchedLive?.next.dropdownItems.followUpResults
+    ?.includes(RESULT_TECHNICAL_APPROVED));
+  ok("...and the status its project select must be able to show",
+    !!patchedLive?.next.dropdownItems.projectStatuses?.includes(PROJECT_TECHNICAL_APPROVED));
+  const typedAlready = applySettingsPatches({
+    ...liveBase,
+    dropdownItems: { ...liveBase.dropdownItems, followUpResults: ["تایید پیشنهاد فنی"] },
+  } as ERPSettings);
+  eq("a company that already typed it without the hamza is not handed a second copy",
+    typedAlready?.next.dropdownItems.followUpResults
+      ?.filter((r) => impliesTechnicalApproval(r)).length, 1);
+
+  /* ------------------------------ the writers ------------------------------ */
+
+  const service = strip(readFileSync("src/server/services/followUpService.ts", "utf8"));
+  const completion = service.slice(
+    service.indexOf("export async function completeFollowUp"),
+    service.indexOf("export async function", service.indexOf("export async function completeFollowUp") + 10),
+  );
+  ok("the completion records the approval only for that result",
+    /const approvalMoved = impliesTechnicalApproval\(followUpResult\)\s*&& await syncTechnicalApproval\(tx, proformaId, todayJalali\);/
+      .test(completion));
+  ok("...inside the completion's own transaction, before the project is re-derived",
+    completion.indexOf("$transaction(") < completion.indexOf("syncTechnicalApproval(")
+    && completion.indexOf("syncTechnicalApproval(") < completion.indexOf("syncProjectStatus("));
+  ok("...and re-derives it for either reason, once",
+    /if \(settleOutcome \|\| approvalMoved\) \{\s*await syncProjectStatus\(/.test(completion)
+    && (completion.match(/syncProjectStatus\(/g) ?? []).length === 1);
+  // The approval is evidence-backed: it re-derives from the recorded results,
+  // so correcting one away takes it back and a second one keeps the first date.
+  const helper = service.slice(service.indexOf("async function syncTechnicalApproval"));
+  ok("the stamp is derived from every recorded chase, not toggled",
+    /results\.some\(\(r\) => impliesTechnicalApproval\(r\.followUpResult\)\)/.test(helper)
+    && /if \(approved === stamped\) return false;/.test(helper));
+
+  // Both readers of the rules have to hand the column over, or they never see it.
+  const proformaSvc = strip(readFileSync("src/server/services/proformaService.ts", "utf8"));
+  const statusRead = proformaSvc.slice(proformaSvc.indexOf("export async function syncProjectStatus"));
+  ok("the status sync reads the approval",
+    /technicalApprovedDate: true/.test(statusRead.slice(0, statusRead.indexOf("findUnique"))));
+  const projectSvc = strip(readFileSync("src/server/services/projectService.ts", "utf8"));
+  const stageRead = projectSvc.slice(projectSvc.indexOf("export async function syncProjectStage"));
+  ok("the stage sync reads the approval",
+    /technicalApprovedDate: true/.test(stageRead.slice(0, stageRead.indexOf("deriveProjectStage("))));
+  ok("the stage backfill reads it too",
+    /technicalApprovedDate: true/.test(readFileSync("scripts/backfillProjectStages.ts", "utf8")));
+
+  // Nobody sets it by posting a proforma: only a recorded chase does.
+  const proformaRoute = readFileSync("src/server/routes/proformas.ts", "utf8");
+  const scalar = proformaSvc.slice(proformaSvc.indexOf("function scalarData"));
+  ok("the proforma route does not accept it",
+    !/technicalApproved/.test(proformaRoute)
+    && !/technicalApproved/.test(scalar.slice(0, scalar.indexOf("\n}\n"))));
 }
 
 head("A board card summarises, and keeps the rest behind one press");

@@ -792,6 +792,11 @@ model Proforma {
   /// written, which is not the same thing.
   sentDate           DateTime? @db.Date
   sentDateJalali     String?   @db.NVarChar(10)
+  /// The day the customer approved the technical proposal, recorded through the
+  /// follow-up result «تأیید پیشنهاد فنی». Not a win: no line moves. The project's
+  /// status («تأیید پیشنهاد فنی») and stage («تهیه پیش‌فاکتور») derive from it.
+  technicalApprovedDate       DateTime? @db.Date
+  technicalApprovedDateJalali String?   @db.NVarChar(10)
 
   totalAmount            Decimal  @default(0) @db.Decimal(19, 2)
   discountPercent        Decimal  @default(0) @db.Decimal(9, 4)

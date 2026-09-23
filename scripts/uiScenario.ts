@@ -1714,6 +1714,31 @@ head("Follow-up editing: the form opens carrying the follow-up");
   }
 
   /* -- a deferral: the stored date is what opens, and it is one field -- */
+  /* -- «تأیید پیشنهاد فنی» says what it will do to the project, and that it is
+        not a win; any other result says nothing of the kind -- */
+  {
+    const note = "[data-technical-approval-note]";
+    const approved = await open({
+      taskId: "t-tech", closed: true, followUpResult: "تأیید پیشنهاد فنی",
+      completionNote: "", title: "تماس", description: "", dueDate: "1405/06/09",
+      assignee: "کارشناس فروش", priority: "متوسط",
+    });
+    const said = approved.text(note);
+    ok("the approval explains itself before it is saved", !!approved.host.querySelector(note));
+    ok("...naming the project status and the stage it moves to",
+      said.includes("تأیید پیشنهاد فنی") && said.includes("تهیه پیش‌فاکتور"), said);
+    ok("...and that it is not a win", said.includes("برنده شدن پروژه نیست"), said);
+    approved.close();
+
+    const other = await open({
+      taskId: "t-other", closed: true, followUpResult: "در حال بررسی فنی",
+      completionNote: "", title: "تماس", description: "", dueDate: "1405/06/09",
+      assignee: "کارشناس فروش", priority: "متوسط",
+    });
+    ok("any other result draws no such note", !other.host.querySelector(note));
+    other.close();
+  }
+
   {
     const m = await open({
       taskId: "t-deferred", closed: true, followUpResult: "خرید به تعویق افتاد",

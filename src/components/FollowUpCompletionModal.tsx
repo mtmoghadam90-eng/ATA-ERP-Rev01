@@ -6,8 +6,9 @@ import { SearchableSelect } from './SearchableSelect';
 import {
   DEFAULT_FOLLOW_UP_RESULTS, FollowUpDecision, SETTLE_OUTCOMES, SETTLE_OUTCOME_LABELS,
   SettleOutcome, completionRefusalReason, correctionRefusalReason, impliedSettlement,
-  recordedDecision,
+  impliesTechnicalApproval, recordedDecision,
 } from '../utils/salesFollowUp';
+import { PROJECT_TECHNICAL_APPROVED } from '../utils/moduleStatuses';
 import { getTodayShamsi, addDaysToShamsi } from '../dateUtils';
 import { TASK_PRIORITIES } from '../utils/moduleStatuses';
 import type { FollowUpRow, FollowUpCompletionBody } from '../api/salesFollowUp';
@@ -515,6 +516,22 @@ export default function FollowUpCompletionModal({
             <p className="text-[10px] text-slate-400 mt-1">
               این فهرست در تنظیمات قابل ویرایش است و «دلیل باخت» نیست.
             </p>
+            {/*
+              Said before the save rather than discovered after it: this result
+              moves the *project*, which nothing else on this form does — and
+              it is not a win, which is the reading somebody would otherwise
+              take from «تأیید».
+            */}
+            {impliesTechnicalApproval(followUpResult) && !outcomeIsTerminal && (
+              <p
+                data-technical-approval-note
+                className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 mt-2 leading-relaxed"
+              >
+                با ثبت این نتیجه، وضعیت پروژه «{PROJECT_TECHNICAL_APPROVED}» و مرحلهٔ آن
+                «تهیه پیش‌فاکتور» می‌شود. این به معنای برنده شدن پروژه نیست و وضعیت
+                ردیف‌های پیش‌فاکتور تغییر نمی‌کند.
+              </p>
+            )}
           </div>
           )}
 

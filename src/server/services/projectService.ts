@@ -449,7 +449,12 @@ export async function syncProjectStage(
      */
     tx.proforma.findMany({
       where: { projectId },
-      select: { proformaType: true, status: true, isCancelled: true },
+      select: {
+        proformaType: true, status: true, isCancelled: true,
+        // An approved technical proposal moves the job on to the priced
+        // quotation — see `deriveProjectStage`.
+        technicalApprovedDate: true,
+      },
     }),
     /*
      * Enough of each inquiry for `inquiryWorkflowStatus` and nothing more.

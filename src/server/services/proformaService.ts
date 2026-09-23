@@ -654,6 +654,8 @@ export async function syncProjectStatus(
       lossReason: true,
       // And who contested it, for the project's own copy below.
       competitorId: true,
+      // «تأیید پیشنهاد فنی» is derived from this, not stored on the project.
+      technicalApprovedDate: true,
       items: { select: { status: true, supplyMethod: true, lossReason: true } },
     },
   });

@@ -36,13 +36,14 @@
 
 import type { ERPSettings } from "../types";
 import { DEFAULT_NEXT_ACTION_KINDS } from "./nextAction";
-import { PROJECT_TECHNICAL_OFFERED } from "./moduleStatuses";
+import { PROJECT_TECHNICAL_APPROVED, PROJECT_TECHNICAL_OFFERED } from "./moduleStatuses";
 import { STAGE_OFFER_REVIEW, STAGE_OFFER_REVIEW_WAS } from "./projectStage";
 import {
   WEB_RFQ_COMMUNICATION_METHOD, WEB_RFQ_MARKETING_CHANNEL, webEntryIn,
 } from "./webRfq";
 import {
   RESULT_LOST_TO_COMPETITOR, RESULT_PURCHASE_CANCELLED, RESULT_PURCHASE_CONFIRMED,
+  RESULT_TECHNICAL_APPROVED, resultKey,
 } from "./salesFollowUp";
 import {
   DEFAULT_STAFF_TEMPLATES, STAFF_NOTIFICATION_KINDS, SUPERSEDED_STAFF_TEMPLATES,
@@ -293,6 +294,41 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
       return {
         ...settings,
         dropdownItems: { ...settings.dropdownItems, projectStatuses: next },
+      };
+    },
+  },
+  {
+    id: "technical-approval-1",
+    describe: "نتیجه پیگیری «تأیید پیشنهاد فنی» و وضعیت پروژه‌ای که از آن به دست می‌آید",
+    apply: (settings) => {
+      /*
+       * Two lists, for the two reasons each entry has to exist.
+       *
+       * The result is what somebody picks on the follow-up form, and on a
+       * database seeded before it the option would simply not be there — the
+       * feature reading as broken rather than as unconfigured, exactly how the
+       * settle-the-sale results were reported. It is compared **folded**, so a
+       * company that already typed «تایید پیشنهاد فنی» without the hamza is not
+       * handed a second copy beside it.
+       *
+       * The status is what `syncProjectStatus` then writes, and the project
+       * form's control is a `<select>` over that list: a value matching no
+       * option renders the first one, and saving would rewrite it to «جدید».
+       */
+      const results = settings.dropdownItems?.followUpResults ?? [];
+      const hasResult = results.some((r) => resultKey(r) === resultKey(RESULT_TECHNICAL_APPROVED));
+      const nextResults = hasResult ? null : [...results, RESULT_TECHNICAL_APPROVED];
+      const nextStatuses = appendMissing(settings.dropdownItems?.projectStatuses, [
+        PROJECT_TECHNICAL_APPROVED,
+      ]);
+      if (!nextResults && !nextStatuses) return null;
+      return {
+        ...settings,
+        dropdownItems: {
+          ...settings.dropdownItems,
+          ...(nextResults ? { followUpResults: nextResults } : {}),
+          ...(nextStatuses ? { projectStatuses: nextStatuses } : {}),
+        },
       };
     },
   },
