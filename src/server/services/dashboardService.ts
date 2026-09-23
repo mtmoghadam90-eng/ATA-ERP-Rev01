@@ -9,6 +9,7 @@ import {
   averageProformasPerProject, opportunityGroups, opportunityOutcome, wonValueRial,
 } from "../dashboardMetrics";
 import { countsTowardBalance } from "./transactionService";
+import { lineCategory } from "../../utils/productCategories";
 
 /**
  * The figures the front page shows.
@@ -104,6 +105,7 @@ async function dashboardProformas(where: Prisma.ProformaWhereInput) {
       items: {
         select: {
           status: true, quantity: true, totalPriceRial: true,
+          category: true,
           product: { select: { category: true } },
         },
       },
@@ -227,7 +229,7 @@ export async function dashboardSummary(user: AuthUser): Promise<DashboardSummary
     // so the categories still add up to the total beside them.
     for (const item of pf.items) {
       if (item.status !== ITEM_WON) continue;
-      const category = item.product?.category || "سایر تجهیزات";
+      const category = lineCategory(item);
       byCategory.set(category, (byCategory.get(category) ?? 0) + Number(item.totalPriceRial) * effectiveRate);
     }
   }
@@ -262,7 +264,7 @@ export async function dashboardSummary(user: AuthUser): Promise<DashboardSummary
     for (const pf of decidingProformas(group)) {
       if (pf.isCancelled || pf.status === "لغو شده") continue;
       for (const item of pf.items) {
-        const category = item.product?.category || "سایر تجهیزات";
+        const category = lineCategory(item);
         const bucket = conversion.get(category) ?? { won: 0, total: 0 };
         const quantity = Number(item.quantity);
         bucket.total += quantity;

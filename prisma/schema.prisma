@@ -931,6 +931,11 @@ model ProformaItem {
   /// leaving the question to whoever is writing it.
   paymentTerm String? @db.NVarChar(200)
 
+  /// The warehouse category a **free-text** line belongs to, chosen on the
+  /// form; null on a catalogue line, which counts under its product's
+  /// category. See `lineCategory` in `src/utils/productCategories.ts`.
+  category String? @db.NVarChar(150)
+
   selectedFeatures String? @db.NVarChar(Max)
   selectedImage    String? @db.NVarChar(500)
 

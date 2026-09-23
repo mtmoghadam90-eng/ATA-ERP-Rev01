@@ -349,6 +349,12 @@ export interface ProformaItem {
    * from every value the list offers.
    */
   paymentTerm?: string;
+  /**
+   * The warehouse category of a **free-text** line, from
+   * `settings.dropdownItems.categories` or «سایر». Unused on a catalogue line,
+   * which counts under its product's category — see `lineCategory`.
+   */
+  category?: string;
   tagNumber?: string;
 }
 

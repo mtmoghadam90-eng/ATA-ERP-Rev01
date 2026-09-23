@@ -3,6 +3,7 @@ import { useExchangeRates } from '../api/exchangeRates';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import { inlineDocumentAssets } from '../utils/inlineAssets';
 import { namePrefixFor } from '../utils/honorific';
+import { manualLineCategoryOptions } from "../utils/productCategories";
 import {
   recipientDisplayName,
   resolveSentRecipients,
@@ -1420,6 +1421,9 @@ export default function ProformasView({
       // `??`, not `||`: a document written before this column existed has none,
       // and «nobody has said» is what its notes were already written against.
       paymentTerm: item.paymentTerm ?? "",
+      // Spelled out like every key above: this list is what the form edits and
+      // posts, so a field left out of it is erased on the next save.
+      category: item.category,
     }));
     setItems(loadedItems);
     const allEqual =
@@ -2224,6 +2228,12 @@ export default function ProformasView({
    * where the terms are added.
    */
   const paymentTermOptions = settings?.dropdownItems?.paymentTerms ?? [];
+  /**
+   * The categories a hand-typed line can be filed under: the warehouse's own
+   * list plus «سایر». A catalogue line takes its product's category and is
+   * never asked — see `lineCategory`.
+   */
+  const manualCategoryOptions = manualLineCategoryOptions(settings?.dropdownItems?.categories ?? []);
   /** A catalogue product brings its own unit; anything else starts at the first. */
   const defaultUnitFor = (unit?: string) => unit || unitOptions[0];
 
@@ -5017,6 +5027,31 @@ export default function ProformasView({
                                       className="w-full border border-slate-200 rounded-lg px-2 py-1 text-[10px] bg-white text-right"
                                     />
                                   </div>
+                                  {/*
+                                    Which warehouse category this hand-typed
+                                    line counts under on the dashboard's
+                                    category figures. Without it every manual
+                                    line reported as «سایر تجهیزات».
+                                  */}
+                                  <select
+                                    data-manual-line-category
+                                    value={item.category ?? ""}
+                                    onChange={(e) => {
+                                      const value = e.target.value;
+                                      setItems((prev) => prev.map((it, i) =>
+                                        i === idx ? { ...it, category: value || undefined } : it));
+                                    }}
+                                    className="w-full border border-slate-200 rounded-lg px-2 py-1 text-[10px] bg-white text-right"
+                                    title="دسته‌بندی انبار این کالا"
+                                  >
+                                    <option value="">دسته‌بندی انبار (انتخاب نشده — سایر)</option>
+                                    {manualCategoryOptions.map((option) => (
+                                      <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                    {item.category && !manualCategoryOptions.some((o) => o.value === item.category) && (
+                                      <option value={item.category} disabled>{item.category}</option>
+                                    )}
+                                  </select>
                                 </div>
                               ) : (
                                 <div className="flex-1 flex flex-col gap-2 min-w-0">

@@ -157,13 +157,20 @@ async function proformaLines(
         ...(visibility ?? {}),
         ...(range ? { issueDate: range } : {}),
       },
-      ...(category ? { product: { category } } : {}),
-      ...(search
-        ? { OR: [{ productName: contains(search) }, { product: { displayName: contains(search) } }] }
-        : {}),
+      AND: [
+        // A free-text line carries its own category; a catalogue line's is
+        // the product's. Asking the product alone left every manual line out
+        // of a category it was filed under.
+        ...(category
+          ? [{ OR: [{ product: { category } }, { productId: null, category }] }]
+          : []),
+        ...(search
+          ? [{ OR: [{ productName: contains(search) }, { product: { displayName: contains(search) } }] }]
+          : []),
+      ],
     },
     select: {
-      proformaId: true, productId: true, variantId: true,
+      proformaId: true, productId: true, variantId: true, category: true,
       productName: true, productCode: true, quantity: true,
       totalPriceRial: true, status: true,
       proforma: { select: { customerId: true } },
@@ -187,7 +194,7 @@ async function proformaLines(
       productName: row.product?.displayName ?? row.productName,
       productCode: row.product?.code ?? row.productCode,
       variantSku: row.variant?.sku ?? null,
-      category: row.product?.category ?? null,
+      category: row.product?.category ?? row.category ?? null,
       quantity: Number(row.quantity),
       /*
        * `totalPriceRial` holds the **document's own currency**, like
