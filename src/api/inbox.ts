@@ -1,5 +1,6 @@
 import { REFERRAL_DONE, REFERRAL_PENDING } from "../utils/workBoard";
 import { ListResponse, api } from "./client";
+import type { ActivityAttachment } from "../utils/attachments";
 
 /**
  * The signed-in user's inbox: referrals, notices, and what has been seen.
@@ -19,6 +20,8 @@ export interface ReferralMessageRow {
   attachmentName: string | null;
   attachmentSize: string | null;
   attachmentUrl: string | null;
+  /** JSON [{name,size,url}]; read through `parseAttachments`, never beside the three above. */
+  attachments?: string | null;
   createdAt: string;
 }
 
@@ -88,7 +91,8 @@ export interface NotificationRow {
  */
 export interface ReferralReply {
   text: string;
-  attachment?: { name: string; size: string; content?: string } | null;
+  /** Already uploaded: `/uploads/...` paths, never the bytes. */
+  attachments?: ActivityAttachment[];
   outcome?: "none" | "done" | "reopen";
   forwardToUserId?: string;
 }
@@ -98,11 +102,11 @@ export async function submitReferralReply(
   body: ReferralReply,
 ): Promise<"sent" | "sent-reopened" | "status-only" | "nothing"> {
   const forwardTo = body.forwardToUserId || undefined;
-  const attachment = body.attachment ?? null;
+  const attachments = body.attachments ?? [];
   const outcome = body.outcome ?? "none";
   let text = body.text.trim();
 
-  if (!text && !attachment && !forwardTo) {
+  if (!text && attachments.length === 0 && !forwardTo) {
     // A bare «done» or «reopen» is a legitimate thing to press; anything else
     // with nothing in it is not.
     if (outcome === "none") return "nothing";
@@ -115,9 +119,7 @@ export async function submitReferralReply(
 
   const posted = await inboxApi.replyToReferral(referralId, {
     text,
-    attachmentName: attachment?.name ?? null,
-    attachmentSize: attachment?.size ?? null,
-    attachmentUrl: attachment?.content ?? null,
+    attachments,
     andForwarded: !!forwardTo,
   });
 
@@ -185,9 +187,7 @@ export const inboxApi = {
     id: string,
     body: {
       text: string;
-      attachmentName?: string | null;
-      attachmentSize?: string | null;
-      attachmentUrl?: string | null;
+      attachments?: ActivityAttachment[];
       /** True when the same action hands the referral on, so no notice is raised. */
       andForwarded?: boolean;
     },

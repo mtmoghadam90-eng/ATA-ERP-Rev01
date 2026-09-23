@@ -3511,6 +3511,64 @@ head("The work board: the record is one press away from the headline");
   hostE.remove();
 }
 
+head("Referral thread: a reply carries several uploaded files");
+{
+  const { default: ReferralThread } = await import("../src/components/ReferralThread");
+  const uploaded: string[] = [];
+  const submitted: unknown[] = [];
+  const hostF = document.createElement("div");
+  document.body.appendChild(hostF);
+  const rootF = createRoot(hostF);
+  await act(async () => {
+    rootF.render(React.createElement(ReferralThread, {
+      referral: {
+        id: "ref1", status: "در انتظار اقدام", actionRequired: "بررسی کنید",
+        assignedToUserId: "u1", assignedByUserId: "u2",
+        messages: [{ text: "", responderUserId: "u2", attachments: [
+          { name: "a.pdf", size: "1 KB", url: "/uploads/referral-files/a.pdf" },
+          { name: "b.pdf", size: "2 KB", url: "/uploads/referral-files/b.pdf" },
+        ] }],
+      },
+      currentUserId: "u1",
+      formatDate: () => "",
+      onUploadFile: async (file: File) => { uploaded.push(file.name); return `/uploads/referral-files/${file.name}`; },
+      onSubmit: async (body: unknown) => { submitted.push(body); },
+    }));
+  });
+
+  const stored = hostF.querySelectorAll("[data-thread-files] a");
+  ok("a stored message draws every file it carries", stored.length === 2, stored.length);
+  ok("...as links to the uploaded path",
+    stored[0]?.getAttribute("href") === "/uploads/referral-files/a.pdf", stored[0]?.getAttribute("href"));
+
+  const input = hostF.querySelector("[data-thread-file-input]") as HTMLInputElement | null;
+  ok("the picker takes several files", !!input && input.multiple);
+  const picked = [
+    new dom.window.File(["x"], "one.pdf"),
+    new dom.window.File(["y"], "two.jpg"),
+  ];
+  await act(async () => {
+    handlers(input!).onChange?.({ target: { files: picked, value: "" } });
+    for (let k = 0; k < 6; k++) await Promise.resolve();
+  });
+  ok("each picked file is uploaded", uploaded.join(",") === "one.pdf,two.jpg", uploaded);
+
+  const send = Array.from(hostF.querySelectorAll("button"))
+    .find((b) => /ارسال|ثبت پاسخ/.test(b.textContent ?? "")) as HTMLButtonElement | undefined;
+  ok("there is a send button", !!send);
+  await act(async () => {
+    send?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    for (let k = 0; k < 6; k++) await Promise.resolve();
+  });
+  const body = submitted[0] as { attachments?: { url: string }[] } | undefined;
+  ok("both files reach the submit, by their uploaded paths",
+    (body?.attachments ?? []).map((f) => f.url).join(",")
+      === "/uploads/referral-files/one.pdf,/uploads/referral-files/two.jpg", body);
+
+  act(() => { rootF.unmount(); });
+  hostF.remove();
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {

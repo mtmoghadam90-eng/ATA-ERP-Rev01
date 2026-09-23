@@ -42,7 +42,8 @@ import { salesFollowUpApi, type FollowUpRow } from '../api/salesFollowUp';
 import { isTerminalOutcome, settlementCategoryPrompt } from '../utils/salesFollowUp';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
-import { compressImage } from '../imageUtils';
+import { uploadFile } from '../imageUtils';
+import { parseAttachments } from '../utils/attachments';
 import { useRevalidate } from '../api/liveData';
 import { readViewPreferences, writeViewPreferences } from '../utils/viewPreferences';
 import CustomFieldsForm from './CustomFieldsForm';
@@ -1768,21 +1769,17 @@ export default function TasksView({
                     responder: m.responderName ?? '',
                     responderUserId: m.responderUserId,
                     createdAt: m.createdAt,
-                    attachment: m.attachmentName
-                      ? { name: m.attachmentName, size: m.attachmentSize ?? '', content: m.attachmentUrl ?? undefined }
-                      : null,
+                    attachments: parseAttachments(m.attachments, {
+                      name: m.attachmentName, size: m.attachmentSize, url: m.attachmentUrl,
+                    }),
                   })),
                 }}
                 currentUserId={currentUser?.id}
                 formatDate={(iso) => new Date(iso).toLocaleString('fa-IR')}
                 // The size rule lives in `uploadFile`, which is the only path
-                // to the server — a check here was one of three that disagreed
-                // with it and with each other.
-                onPickAttachment={(file, done) => {
-                  compressImage(file, (dataUrl, sizeStr) => {
-                    done({ name: file.name, size: sizeStr, content: dataUrl });
-                  });
-                }}
+                // to the server. A real upload, not a data URL: the server kept
+                // those in a 500-character column, so they never opened.
+                onUploadFile={(file) => uploadFile(file, 'referral-files')}
                 onSubmit={async (body) => {
                   const outcome = await submitReferralReply(openReferral.id, body);
                   if (outcome === 'nothing') { alert('لطفاً پیام خود را بنویسید.'); return; }

@@ -1648,6 +1648,8 @@ model ReferralMessage {
   attachmentName String? @db.NVarChar(300)
   attachmentSize String? @db.NVarChar(50)
   attachmentUrl  String? @db.NVarChar(500)
+  /// JSON [{name,size,url}]; the three columns above carry the first entry.
+  attachments    String? @db.NVarChar(Max)
 
   createdAt DateTime @default(now())
 

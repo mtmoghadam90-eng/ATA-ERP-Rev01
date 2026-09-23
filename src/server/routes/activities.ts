@@ -511,6 +511,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
       const body = (req.body ?? {}) as Record<string, unknown>;
       const outcome = await addReferralMessage(req.params.id, {
         text: typeof body.text === "string" ? body.text : undefined,
+        attachments: Array.isArray(body.attachments) ? body.attachments : undefined,
         attachmentName: typeof body.attachmentName === "string" ? body.attachmentName : null,
         attachmentSize: typeof body.attachmentSize === "string" ? body.attachmentSize : null,
         attachmentUrl: typeof body.attachmentUrl === "string" ? body.attachmentUrl : null,
@@ -524,7 +525,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
         return;
       }
       if (outcome === "invalid") {
-        res.status(400).json({ success: false, error: "متن پاسخ الزامی است." });
+        res.status(400).json({ success: false, error: "متن پاسخ یا یک فایل پیوست لازم است." });
         return;
       }
       /*

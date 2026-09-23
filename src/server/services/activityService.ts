@@ -619,6 +619,9 @@ export async function addActivity(
           text,
           responderUserId: user.id,
           responderName: author?.fullName ?? null,
+          // The reply's files travel with its words, or the thread shows an
+          // answer whose attachment is only visible in the feed.
+          ...attachmentColumns(attachmentsOf(input)),
         } as Prisma.ReferralMessageUncheckedCreateInput,
       });
       if (request.assignedToUserId === user.id && request.status !== REFERRAL_DOING) {
@@ -1553,6 +1556,8 @@ export async function addReferralMessage(
   referralId: string,
   input: {
     text?: string;
+    /** The list, which wins; the three single-file fields are the old shape. */
+    attachments?: unknown;
     attachmentName?: string | null;
     attachmentSize?: string | null;
     attachmentUrl?: string | null;
@@ -1570,8 +1575,12 @@ export async function addReferralMessage(
   | { message: unknown; reopened: boolean }
 > {
   const db = getDb();
-  const text = toNullableString(input.text);
-  if (!text) return "invalid";
+  // Files alone are an answer — a signed page or a photograph is often the
+  // whole of it — so only a reply with neither words nor files is refused.
+  const text = toNullableString(input.text) ?? "";
+  const carriesFiles = normalizeAttachments(input.attachments).length > 0
+    || !!toNullableString(input.attachmentUrl);
+  if (!text && !carriesFiles) return "invalid";
 
   const referral = await db.projectReferral.findUnique({
     where: { id: referralId },
@@ -1599,11 +1608,18 @@ export async function addReferralMessage(
 
   const author = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
 
-  const attachments = attachmentColumns(normalizeAttachments([{
+  /*
+   * A list, like the feed's own messages. A reply used to carry one file, and
+   * that one as a data URL cut to the column's 500 characters — so it never
+   * opened. The browser now uploads and sends `/uploads/...` paths.
+   */
+  const listed = normalizeAttachments(input.attachments);
+  const files = listed.length > 0 ? listed : normalizeAttachments([{
     name: toNullableString(input.attachmentName, 300) ?? "",
     size: toNullableString(input.attachmentSize, 50) ?? "",
     url: toNullableString(input.attachmentUrl, 500) ?? "",
-  }]));
+  }]);
+  const attachments = attachmentColumns(files);
 
   /*
    * The reply goes into the thread **and** into the feed, in one transaction.
@@ -1631,9 +1647,7 @@ export async function addReferralMessage(
         text,
         responderUserId: user.id,
         responderName: author?.fullName ?? null,
-        attachmentName: attachments.attachmentName,
-        attachmentSize: attachments.attachmentSize,
-        attachmentUrl: attachments.attachmentUrl,
+        ...attachments,
       } as Prisma.ReferralMessageUncheckedCreateInput,
     });
 
@@ -1718,7 +1732,9 @@ export async function addReferralMessage(
         title: "پاسخ جدید به ارجاع",
         description:
           `${author?.fullName ?? "یک همکار"} به ارجاع${where} پاسخ داد: ` +
-          (text.length > 160 ? `${text.slice(0, 160)}…` : text),
+          (text
+            ? (text.length > 160 ? `${text.slice(0, 160)}…` : text)
+            : `${files.length} فایل پیوست`),
         projectId: project?.id ?? null,
         actorUserId: user.id,
       });

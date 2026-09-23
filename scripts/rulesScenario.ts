@@ -21503,6 +21503,52 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     fno("حق شناس", "حق شناس"), "حق شناس");
 }
 
+// ── A natural-person buyer: the company line is a dash, the contact is them
+{
+  const { buyerPanelLines: bpl } = await import("../src/utils/proformaDocument");
+  const person = bpl({ customerType: "حقیقی", customerName: "علی حق شناس",
+    customerLastName: "حق شناس", customerGender: "مرد", contactPrefix: "" });
+  eq("a natural-person buyer prints a dash for the company", person.company, "-");
+  eq("...and is the contact, with the honorific their gender calls for",
+    person.contact, "جناب آقای مهندس حق شناس");
+  eq("...the prefix recorded on the form wins over the derived one",
+    bpl({ customerType: "حقیقی", customerName: "مریم رضایی", customerGender: "زن",
+      contactPrefix: "سرکار خانم دکتر" }).contact, "سرکار خانم دکتر رضایی");
+  eq("...with no gender and no prefix the name stands alone",
+    bpl({ customerType: "حقیقی", customerName: "مریم رضایی" }).contact, "رضایی");
+  const company = bpl({ customerType: "حقوقی", customerName: "شرکت نمونه",
+    contactPrefix: "جناب آقای", contactFamilyName: "احمدی" });
+  eq("a company buyer keeps its name", company.company, "شرکت نمونه");
+  eq("...and its named contact", company.contact, "جناب آقای احمدی");
+  const doc = readFileSync("src/utils/proformaDocument.ts", "utf8");
+  ok("the buyer panel prints through buyerPanelLines",
+    /<strong>\$\{buyer\.company\}<\/strong>/.test(doc) && /مخاطب:<\/span> \$\{buyer\.contact\}/.test(doc));
+}
+
+// ── A referral reply carries a list of files, stored like an activity's
+{
+  const svc = readFileSync("src/server/services/activityService.ts", "utf8");
+  const reply = svc.slice(svc.indexOf("export async function addReferralMessage"),
+    svc.indexOf("/* ============================== module notes"));
+  ok("a referral reply reads the attachment list", /normalizeAttachments\(input\.attachments\)/.test(reply));
+  ok("...and writes it to both the thread and the feed",
+    (reply.match(/\.\.\.attachments,/g) ?? []).length === 2);
+  ok("...and a files-only reply is accepted", /if \(!text && !carriesFiles\) return "invalid"/.test(reply));
+  const feed = svc.slice(svc.indexOf("for (const request of answering)"), svc.indexOf("for (const request of answering)") + 800);
+  ok("a feed reply mirrored into a thread carries its files",
+    /attachmentColumns\(attachmentsOf\(input\)\)/.test(feed));
+  const route = readFileSync("src/server/routes/activities.ts", "utf8");
+  const post = route.slice(route.indexOf('"/api/referrals/:id/messages"'), route.indexOf('"/api/referrals/:id/messages"') + 900);
+  ok("the reply route passes the list through", /attachments: Array\.isArray\(body\.attachments\)/.test(post));
+  ok("the migration adds the column",
+    /ADD \[attachments\] NVARCHAR\(MAX\)/.test(readFileSync("prisma/migrations/20260930000700_referral_message_attachments/migration.sql", "utf8")));
+  for (const file of ["src/components/TasksView.tsx", "src/components/ReferralsView.tsx"]) {
+    const src = readFileSync(file, "utf8");
+    ok(`${file} uploads a reply's file rather than inlining a data URL`,
+      /onUploadFile=/.test(src) && !/onPickAttachment=/.test(src));
+  }
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

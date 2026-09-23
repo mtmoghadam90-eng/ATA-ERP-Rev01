@@ -4,6 +4,8 @@ import {
 } from 'lucide-react';
 
 import { referralIsOpen } from '../utils/workBoard';
+import { MAX_ACTIVITY_ATTACHMENTS, formatFileSize, type ActivityAttachment } from '../utils/attachments';
+import { oversizedUploadReason } from '../utils/uploadLimits';
 import ShamsiDatePicker from './ShamsiDatePicker';
 
 /**
@@ -30,7 +32,8 @@ export interface ThreadMessage {
   responder?: string;
   responderUserId?: string | null;
   createdAt?: string;
-  attachment?: { name: string; size: string; content?: string } | null;
+  /** Every file on the message, already hosted under `/uploads`. */
+  attachments?: ActivityAttachment[];
 }
 
 export interface ThreadReferral {
@@ -51,7 +54,7 @@ export type ReplyOutcome = 'none' | 'done' | 'reopen';
 
 export interface ReferralComposerSubmit {
   text: string;
-  attachment: { name: string; size: string; content?: string } | null;
+  attachments: ActivityAttachment[];
   outcome: ReplyOutcome;
   forwardToUserId: string;
 }
@@ -63,11 +66,16 @@ interface Props {
   formatDate: (value?: string) => string;
   /** Colleagues a referral can be handed to. Empty hides the forward picker. */
   users?: { id: string; fullName: string; position?: string }[];
-  /** Attaching a file. Omitted where the screen has no upload path. */
-  onPickAttachment?: (
-    file: File,
-    done: (attachment: { name: string; size: string; content?: string }) => void,
-  ) => void;
+  /**
+   * Puts one picked file on the server and answers its `/uploads/...` path.
+   *
+   * Omitted where the screen has no upload path. The host does the upload
+   * because `uploadFile` lives in `imageUtils`, which pulls `file-saver` at
+   * module scope and would make this component unmountable outside a bundler.
+   * It used to hand back a data URL, which the server stored in a 500-character
+   * column — so every reply's file was cut short and never opened.
+   */
+  onUploadFile?: (file: File) => Promise<string>;
   onSubmit?: (body: ReferralComposerSubmit) => Promise<void>;
   /** Corrects the request. Only offered to the person who raised it. */
   onEditAction?: (text: string) => Promise<void>;
@@ -87,7 +95,7 @@ interface Props {
 
 export default function ReferralThread({
   referral, currentUserId, formatDate, users = [],
-  onPickAttachment, onSubmit, onEditAction, onSetDue, compact = false,
+  onUploadFile, onSubmit, onEditAction, onSetDue, compact = false,
 }: Props) {
   /*
    * Open, which is not the same question as «در انتظار اقدام».
@@ -107,8 +115,8 @@ export default function ReferralThread({
   const isReferrer = !!currentUserId && referral.assignedByUserId === currentUserId;
 
   const [text, setText] = useState('');
-  const [attachment, setAttachment] =
-    useState<{ name: string; size: string; content?: string } | null>(null);
+  const [attachments, setAttachments] = useState<ActivityAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [forwardTo, setForwardTo] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -143,12 +151,43 @@ export default function ReferralThread({
     if (!onSubmit) return;
     setBusy(true);
     try {
-      await onSubmit({ text, attachment, outcome, forwardToUserId: forwardTo });
+      await onSubmit({ text, attachments, outcome, forwardToUserId: forwardTo });
       setText('');
-      setAttachment(null);
+      setAttachments([]);
       setForwardTo('');
     } finally {
       setBusy(false);
+    }
+  };
+
+  /*
+   * Several files, one after another.
+   *
+   * Sequential for the reason the feed's composer is: one disk and one image
+   * pipeline on the server, and ten at once on a phone connection is how the
+   * whole batch times out. The limits are checked on the batch first, so four
+   * are not uploaded before the fifth is refused.
+   */
+  const pickFiles = async (picked: File[]) => {
+    if (!onUploadFile || picked.length === 0) return;
+    if (attachments.length + picked.length > MAX_ACTIVITY_ATTACHMENTS) {
+      alert(`حداکثر ${MAX_ACTIVITY_ATTACHMENTS} فایل برای هر پیام قابل ثبت است.`);
+      return;
+    }
+    const oversized = picked.map(oversizedUploadReason).find(Boolean);
+    if (oversized) { alert(oversized); return; }
+    setUploading(true);
+    try {
+      const added: ActivityAttachment[] = [];
+      for (const file of picked) {
+        const url = await onUploadFile(file);
+        added.push({ name: file.name, size: formatFileSize(file.size), url });
+      }
+      setAttachments((prev) => [...prev, ...added]);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'بارگذاری فایل با خطا مواجه شد.');
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -330,31 +369,32 @@ export default function ReferralThread({
                 <span className="font-bold">{msg.responder || '—'}</span>
                 {msg.createdAt && <span className="font-mono">{formatDate(msg.createdAt)}</span>}
               </div>
-              <div className={`rounded-xl ${size.pad} ${size.body} leading-relaxed whitespace-pre-line border ${
-                fromReferrer
-                  ? 'bg-sky-50/60 border-sky-100 rounded-tr-sm text-slate-800'
-                  : `bg-emerald-50/60 border-emerald-100 rounded-tl-sm text-slate-800 ${mine ? 'ring-1 ring-emerald-200' : ''}`
-              }`}>
-                {msg.text}
-              </div>
-              {msg.attachment && (
-                <div className={fromReferrer ? '' : 'text-left'}>
-                  {msg.attachment.content ? (
+              {/* A reply may be files alone, and an empty bubble reads as a lost message. */}
+              {msg.text && (
+                <div className={`rounded-xl ${size.pad} ${size.body} leading-relaxed whitespace-pre-line border ${
+                  fromReferrer
+                    ? 'bg-sky-50/60 border-sky-100 rounded-tr-sm text-slate-800'
+                    : `bg-emerald-50/60 border-emerald-100 rounded-tl-sm text-slate-800 ${mine ? 'ring-1 ring-emerald-200' : ''}`
+                }`}>
+                  {msg.text}
+                </div>
+              )}
+              {(msg.attachments ?? []).length > 0 && (
+                <div className={`flex flex-wrap gap-1 ${fromReferrer ? '' : 'justify-end'}`} data-thread-files>
+                  {(msg.attachments ?? []).map((file) => (
                     <a
-                      href={msg.attachment.content}
-                      download={msg.attachment.name}
+                      key={file.url}
+                      href={file.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      download={file.name}
                       className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 text-[10px] font-bold transition"
                     >
                       <Paperclip size={10} />
-                      <span>{msg.attachment.name}</span>
-                      <span className="text-slate-400">({msg.attachment.size})</span>
+                      <span>{file.name}</span>
+                      {file.size && <span className="text-slate-400">({file.size})</span>}
                     </a>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-50 border border-slate-200 text-slate-500 text-[10px] font-bold">
-                      <Paperclip size={10} />
-                      {msg.attachment.name} ({msg.attachment.size})
-                    </span>
-                  )}
+                  ))}
                 </div>
               )}
             </div>
@@ -397,43 +437,48 @@ export default function ReferralThread({
                 </select>
               )}
 
-              {onPickAttachment && (
+              {onUploadFile && (
                 <label className="cursor-pointer inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 bg-white text-slate-600 text-[11px] font-bold transition">
                   <Paperclip size={12} className="text-slate-400" />
-                  <span>پیوست</span>
+                  <span>{uploading ? 'در حال بارگذاری…' : 'پیوست فایل'}</span>
                   <input
                     type="file"
+                    multiple
+                    disabled={uploading}
                     className="hidden"
+                    data-thread-file-input
                     onChange={(e) => {
-                      const file = e.target.files?.[0];
+                      // Copied out before the reset: an emptied input empties
+                      // the list it handed over.
+                      const picked = Array.from(e.target.files ?? []);
                       // Cleared so choosing the same file again still fires.
                       e.target.value = '';
-                      if (file) onPickAttachment(file, setAttachment);
+                      void pickFiles(picked);
                     }}
                   />
                 </label>
               )}
 
-              {attachment && (
-                <span className="inline-flex items-center gap-1.5 bg-sky-50 text-sky-700 text-[11px] px-2 py-1 rounded-lg border border-sky-100 font-medium">
-                  {attachment.name} ({attachment.size})
+              {attachments.map((file) => (
+                <span key={file.url} className="inline-flex items-center gap-1.5 bg-sky-50 text-sky-700 text-[11px] px-2 py-1 rounded-lg border border-sky-100 font-medium">
+                  {file.name}{file.size ? ` (${file.size})` : ''}
                   <button
                     type="button"
-                    onClick={() => setAttachment(null)}
+                    onClick={() => setAttachments((prev) => prev.filter((f) => f.url !== file.url))}
                     className="text-rose-500 hover:text-rose-700"
                     title="حذف فایل"
                   >
                     <X size={11} />
                   </button>
                 </span>
-              )}
+              ))}
             </div>
 
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => void send('none')}
-                disabled={busy}
+                disabled={busy || uploading}
                 id={`referral-send-${referral.id}`}
                 className="px-4 py-1.5 bg-sky-500 hover:bg-sky-600 text-white rounded-lg text-[11px] font-bold transition flex items-center gap-1.5 disabled:opacity-50"
               >
@@ -445,7 +490,7 @@ export default function ReferralThread({
                 <button
                   type="button"
                   onClick={() => void send('done')}
-                  disabled={busy}
+                  disabled={busy || uploading}
                   className="px-4 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-[11px] font-bold transition flex items-center gap-1.5 disabled:opacity-50"
                 >
                   <CheckCircle2 size={13} />
@@ -468,7 +513,7 @@ export default function ReferralThread({
                 <button
                   type="button"
                   onClick={() => void send('reopen')}
-                  disabled={busy}
+                  disabled={busy || uploading}
                   id={`referral-reopen-${referral.id}`}
                   className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[11px] font-bold transition flex items-center gap-1.5 disabled:opacity-50"
                 >

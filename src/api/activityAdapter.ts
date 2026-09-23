@@ -42,6 +42,9 @@ function messageToView(msg: ActivityReferralMessageRow): ProjectReferralResponse
     responderUserId: msg.responderUserId,
     createdAt: msg.createdAt,
     attachment: toAttachment(msg.attachmentName, msg.attachmentSize, msg.attachmentUrl),
+    attachments: parseAttachments(msg.attachments, {
+      name: msg.attachmentName, size: msg.attachmentSize, url: msg.attachmentUrl,
+    }),
   };
 }
 
