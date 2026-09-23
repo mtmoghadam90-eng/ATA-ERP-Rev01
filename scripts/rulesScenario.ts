@@ -127,7 +127,7 @@ import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/pr
 import {
   PROJECT_QUOTATION_FILTERS, buildProjectWhere, lossReasonRefusal, quotationWhere,
 } from "../src/server/services/projectService";
-import { PROFORMA_SENT_STATUS } from "../src/utils/moduleStatuses";
+import { PROFORMA_SENT_STATUS, afterSalesClosingReached } from "../src/utils/moduleStatuses";
 import type { ERPSettings, WorkflowRule } from "../src/types";
 import { cloneWorkflowRule } from "../src/utils/workflowRules";
 import { MESSAGE_ONCE_SCOPES, isMessageOnceScope, messageOnceKey } from "../src/utils/workflowTriggers";
@@ -21664,6 +21664,29 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("picking a channel by hand locks it", /setMessagingChannelLocked\(true\)/.test(channelHandler));
   ok("a project reopened with a stored channel keeps it",
     /setMessagingChannelLocked\(!!proj\.messagingChannel\)/.test(form));
+}
+
+{
+  /*
+   * An after-sales case offers to close its activity category when it
+   * **reaches** a closing status — «تکمیل شده» too, not only «تحویل داده شده».
+   * The screen asked on delivery alone, so a repair finished on site never
+   * asked at all. A transition, never the state: re-saving a closed case asks
+   * nothing.
+   */
+  eq("reaching «تکمیل شده» asks", afterSalesClosingReached("در حال تعمیر/خدمات", "تکمیل شده"), "تکمیل شده");
+  eq("reaching «تحویل داده شده» asks", afterSalesClosingReached("در حال بررسی", "تحویل داده شده"), "تحویل داده شده");
+  eq("a new case created already completed asks", afterSalesClosingReached(undefined, "تکمیل شده"), "تکمیل شده");
+  eq("completed → delivered asks again", afterSalesClosingReached("تکمیل شده", "تحویل داده شده"), "تحویل داده شده");
+  eq("re-saving a completed case asks nothing", afterSalesClosingReached("تکمیل شده", "تکمیل شده"), null);
+  eq("an open status asks nothing", afterSalesClosingReached("در حال بررسی", "در حال تعمیر/خدمات"), null);
+  eq("a missing status asks nothing", afterSalesClosingReached("در حال بررسی", undefined), null);
+  const asView = readFileSync("src/components/AfterSalesServicesView.tsx", "utf-8");
+  ok("the after-sales screen asks from the server's rolled-up status",
+    /afterSalesClosingReached\(oldStatus, saved\?\.status\)/.test(asView));
+  ok("...and keeps no copy of the roll-up of its own",
+    !/serviceItems\.every\(it => it\.status ===/.test(asView)
+    && !/oldStatus !== 'تحویل داده شده'/.test(asView));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
