@@ -187,6 +187,12 @@ export interface StageFacts {
     proformaType?: string | null;
     status?: string | null;
     isCancelled?: boolean | null;
+    /**
+     * The day the customer approved the technical proposal, or null. An
+     * approved document is no longer «with the customer»: what happens next is
+     * the priced quotation, which is «تهیه پیش‌فاکتور».
+     */
+    technicalApprovedDate?: Date | string | null;
   }[];
   /** True once the sales outcome is won or part-won. */
   isWon?: boolean;
@@ -241,7 +247,17 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
      */
     const live = proformas.filter((pf) => !pf.isCancelled);
     const priced = live.filter((pf) => pf.proformaType !== PROFORMA_TECHNICAL_TYPE);
-    if (priced.some((pf) => pf.status === PROFORMA_SENT_STATUS)) return STAGE_OFFER_REVIEW;
+    /*
+     * An approved technical proposal is not with the customer any more — they
+     * have answered it — so it takes no part in the two «sent» checks below.
+     * Another offer that has gone out and *not* been answered still does: a
+     * revised price sent after the approval is exactly what the job is then
+     * waiting on.
+     */
+    const approved = live.filter((pf) => !!pf.technicalApprovedDate);
+    const awaiting = (pf: (typeof live)[number]) =>
+      pf.status === PROFORMA_SENT_STATUS && !pf.technicalApprovedDate;
+    if (priced.some(awaiting)) return STAGE_OFFER_REVIEW;
 
     /*
      * A technical offer with the customer, checked next — and its place in the
@@ -264,8 +280,7 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
      * project earlier in the chain and never later.
      */
     const technicalSent = live.some(
-      (pf) => pf.proformaType === PROFORMA_TECHNICAL_TYPE
-        && pf.status === PROFORMA_SENT_STATUS,
+      (pf) => pf.proformaType === PROFORMA_TECHNICAL_TYPE && awaiting(pf),
     );
     if (technicalSent) return "بررسی پیشنهاد فنی توسط مشتری";
 
@@ -287,7 +302,12 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
     // A *priced* draft is what «تهیه پیش‌فاکتور» names. An unsent technical
     // specification says nothing about a quotation being written, so it falls
     // through to whatever the inquiries and the form say, exactly as before.
-    if (priced.length > 0) return "تهیه پیش‌فاکتور";
+    //
+    // And an approved technical proposal is the other way in: «what» is agreed,
+    // so the priced quotation is what somebody here is now writing. Below the
+    // inquiry check on purpose — that draft cannot be finished until the
+    // supplier's price arrives either.
+    if (priced.length > 0 || approved.length > 0) return "تهیه پیش‌فاکتور";
     if (undecided.length > 0) return "بررسی پیشنهاد تأمین‌کننده";
 
     /*

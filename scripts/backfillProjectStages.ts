@@ -47,7 +47,7 @@ async function main(): Promise<void> {
       // The kind comes with it: a sent technical offer and a sent quotation are
       // two different stages, and a repair that read neither would leave exactly
       // the rows it was run for reporting «جدید».
-      proformas: { select: { proformaType: true, status: true, isCancelled: true } },
+      proformas: { select: { proformaType: true, status: true, isCancelled: true, technicalApprovedDate: true } },
       /*
        * The inquiries too, or the backfill quietly cannot produce the two
        * stages before a quotation exists — and a repair that leaves exactly

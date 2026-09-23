@@ -3276,6 +3276,7 @@ export default function ProjectsView({
       case 'در حال مذاکره': return 'bg-blue-50 text-blue-700 border-blue-200';
       case 'ارائه پیش‌فاکتور': return 'bg-sky-50 text-sky-700 border-sky-200';
       case 'ارائه پیش‌فاکتور فنی': return 'bg-violet-50 text-violet-700 border-violet-200';
+      case 'تأیید پیشنهاد فنی': return 'bg-teal-50 text-teal-700 border-teal-200';
       case 'برنده (موفق)': return 'bg-emerald-50 text-emerald-700 border-emerald-200';
       case 'باخته': return 'bg-red-50 text-red-700 border-red-200';
       case 'لغو شده': return 'bg-amber-50 text-amber-700 border-amber-200';

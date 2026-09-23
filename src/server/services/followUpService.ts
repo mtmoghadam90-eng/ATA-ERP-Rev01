@@ -23,7 +23,7 @@ import {
   type SettleOutcome,
 } from "../../utils/salesFollowUp";
 import { TASK_CANCELLED, TASK_TODO } from "../../utils/workBoard";
-import { FOLLOW_UP_KIND } from "../../utils/salesFollowUp";
+import { FOLLOW_UP_KIND, impliesTechnicalApproval } from "../../utils/salesFollowUp";
 import { relationSpellings, taskRelationKind } from "../../utils/taskRelations";
 import { visibilityClause } from "./taskService";
 import { resolveAssignee } from "./assigneeLookup";
@@ -152,6 +152,53 @@ export type CompleteOutcome =
       proformaNumber: string;
     }
   | { ok: false; reason: string; code?: "not-found" | "forbidden" | "invalid" };
+
+/**
+ * Brings `Proforma.technicalApprovedDate` into line with the recorded chases.
+ *
+ * The approval is a fact about the document and the chases are the evidence
+ * for it, so this re-derives rather than toggles: approved while **any**
+ * recorded result on the document says «تأیید پیشنهاد فنی», whichever chase it
+ * was. A second approval keeps the first date — the customer approved it then,
+ * and the day it was said again is not news — and a correction that removes the
+ * last such result clears it. Folded through `impliesTechnicalApproval`, which
+ * SQL cannot ask, so the handful of results on one document are read.
+ *
+ * Answers whether the stamp moved, so the caller re-derives the project only
+ * when there is something to re-derive.
+ */
+async function syncTechnicalApproval(
+  tx: Prisma.TransactionClient,
+  proformaId: string,
+  todayJalali: string,
+): Promise<boolean> {
+  const [proforma, results] = await Promise.all([
+    tx.proforma.findUnique({
+      where: { id: proformaId },
+      select: { technicalApprovedDate: true },
+    }),
+    tx.task.findMany({
+      where: {
+        taskKind: FOLLOW_UP_KIND, relatedToType: "proforma", relatedToId: proformaId,
+        followUpResult: { not: null },
+      },
+      select: { followUpResult: true },
+    }),
+  ]);
+  if (!proforma) return false;
+
+  const approved = results.some((r) => impliesTechnicalApproval(r.followUpResult));
+  const stamped = !!proforma.technicalApprovedDate;
+  if (approved === stamped) return false;
+
+  await tx.proforma.update({
+    where: { id: proformaId },
+    data: approved
+      ? expandDateFields({ technicalApprovedDate: todayJalali }, ["technicalApprovedDate"])
+      : { technicalApprovedDate: null, technicalApprovedDateJalali: null },
+  });
+  return true;
+}
 
 /**
  * Records the result of one follow-up and decides what happens next.
@@ -324,6 +371,15 @@ export async function completeFollowUp(
      * document is decided line by line in the proforma's own outcome modal —
      * `SETTLE_OUTCOMES` deliberately does not offer «نیمه برنده».
      */
+    /*
+     * «تأیید پیشنهاد فنی» — recorded onto the document, in the same transaction
+     * as the result that says so. Not a settlement: no line moves, so nothing
+     * about the sale is decided; the project's status and stage are derived
+     * from the stamp below.
+     */
+    const approvalMoved = impliesTechnicalApproval(followUpResult)
+      && await syncTechnicalApproval(tx, proformaId, todayJalali);
+
     if (settleOutcome) {
       await tx.proformaItem.updateMany({
         where: { proformaId },
@@ -338,8 +394,11 @@ export async function completeFollowUp(
         },
       });
 
-      // The same function the outcome modal calls, so the two cannot disagree
-      // about what this project's status becomes.
+    }
+
+    // The same function the outcome modal calls, so the two cannot disagree
+    // about what this project's status becomes — once, for either reason.
+    if (settleOutcome || approvalMoved) {
       await syncProjectStatus(tx, proforma.projectId, todayJalali, user);
     }
 
@@ -893,6 +952,7 @@ export async function correctFollowUp(
     where: { id: proformaId },
     select: {
       id: true, proformaNumber: true, followUpState: true, deferredUntilJalali: true,
+      projectId: true,
       project: { select: { salesExpert: true } },
     },
   });
@@ -1026,6 +1086,18 @@ export async function correctFollowUp(
           : { deferredUntil: null, deferredUntilJalali: null }),
       },
     });
+
+    /*
+     * A result corrected *to* «تأیید پیشنهاد فنی» records the approval, and one
+     * corrected *away* from it takes it back — unless another recorded chase
+     * on the same document still says so. Only when either side names it, so
+     * a typo corrected in an unrelated note costs nothing.
+     */
+    if (impliesTechnicalApproval(task.followUpResult) || impliesTechnicalApproval(followUpResult)) {
+      if (await syncTechnicalApproval(tx, proformaId, todayJalali)) {
+        await syncProjectStatus(tx, proforma.projectId, todayJalali, user);
+      }
+    }
 
     return replacementId;
   });

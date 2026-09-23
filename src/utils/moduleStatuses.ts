@@ -47,6 +47,19 @@ type Covers<Union extends string, List extends readonly string[]> =
 export const PROJECT_TECHNICAL_OFFERED = "ارائه پیش‌فاکتور فنی" as const;
 
 /**
+ * The customer has approved *what* is being offered, and not yet the price.
+ *
+ * Recorded through the follow-up result «تأیید پیشنهاد فنی» onto the document
+ * (`Proforma.technicalApprovedDate`) and derived from there, like every other
+ * value `syncProjectStatus` writes — typed onto the project it would be
+ * overwritten by the next quotation saved. It is **not** a win: `isWonStatus`
+ * does not name it, so no won-contract figure, no winning date and no
+ * operational stage follows from it. It sits between the offer and the
+ * decision, and a decided quotation replaces it.
+ */
+export const PROJECT_TECHNICAL_APPROVED = "تأیید پیشنهاد فنی" as const;
+
+/**
  * Where a job starts, **named** rather than read out of the list below by index.
  *
  * `projects.status` is NOT NULL with no database default, so a writer that does
@@ -58,7 +71,7 @@ export const PROJECT_STATUS_NEW = "جدید" satisfies Project["status"];
 
 export const PROJECT_STATUSES = [
   PROJECT_STATUS_NEW, "در حال مذاکره", "ارائه پیش‌فاکتور",
-  PROJECT_TECHNICAL_OFFERED,
+  PROJECT_TECHNICAL_OFFERED, PROJECT_TECHNICAL_APPROVED,
   "برنده (موفق)", "باخته", "لغو شده", "نیمه برنده",
 ] as const satisfies readonly Project["status"][];
 const _projectStatusesCover: Covers<Project["status"], typeof PROJECT_STATUSES> = true;

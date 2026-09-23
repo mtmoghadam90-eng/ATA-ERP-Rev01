@@ -1348,6 +1348,7 @@ export default function TransactionsView({
                 <option value="در حال مذاکره">در حال مذاکره</option>
                 <option value="ارائه پیش‌فاکتور">ارائه پیش‌فاکتور</option>
                 <option value="ارائه پیش‌فاکتور فنی">ارائه پیش‌فاکتور فنی</option>
+                <option value="تأیید پیشنهاد فنی">تأیید پیشنهاد فنی</option>
                 <option value="جدید">جدید</option>
               </select>
             </div>
@@ -1377,6 +1378,7 @@ export default function TransactionsView({
                     else if (p.status === 'در حال مذاکره') statusColor = 'bg-amber-50 text-amber-600 border border-amber-200/50';
                     else if (p.status === 'ارائه پیش‌فاکتور') statusColor = 'bg-blue-50 text-blue-600 border border-blue-200/50';
                     else if (p.status === 'ارائه پیش‌فاکتور فنی') statusColor = 'bg-violet-50 text-violet-600 border border-violet-200/50';
+                    else if (p.status === 'تأیید پیشنهاد فنی') statusColor = 'bg-teal-50 text-teal-600 border border-teal-200/50';
                     else if (p.status === 'باخته') statusColor = 'bg-red-50 text-red-600 border border-red-200/50';
 
                     const isExpanded = expandedProjectId === p.id;
