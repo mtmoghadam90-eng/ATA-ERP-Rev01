@@ -34,7 +34,7 @@ import { getCodeError, cleanCode } from '../utils/documentCodes';
 import ConfirmModal from './ConfirmModal';
 import QuickAddModal from './QuickAddModal';
 import { SearchableSelect } from './SearchableSelect';
-import { ALL_CHANNELS, CHANNEL_LABELS } from '../utils/messaging';
+import { ALL_CHANNELS, CHANNEL_LABELS, channelForCommunicationMethod } from '../utils/messaging';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { Project, Customer, Product, ERPSettings, User as UserType } from '../types';
 import { ApiError } from '../api/client';
@@ -608,6 +608,14 @@ export default function ProjectsView({
   /** Who to write to about this job, and how — see the messaging module. */
   const [messagingContactId, setMessagingContactId] = useState("");
   const [messagingChannel, setMessagingChannel] = useState("");
+  /*
+   * Whether the preferred channel is a person's choice or the one derived from
+   * «روش ارتباط اصلی». Derived until somebody picks one by hand; from then on
+   * the method moving must not overwrite what they chose. A project opened for
+   * editing with a channel already stored is treated as chosen, so reopening a
+   * job never quietly changes how it is written to.
+   */
+  const [messagingChannelLocked, setMessagingChannelLocked] = useState(false);
   const [suppressAutoMessages, setSuppressAutoMessages] = useState(false);
   const [marketingChannel, setMarketingChannel] = useState("");
   const [leadQuality, setLeadQuality] = useState("متوسط");
@@ -1020,7 +1028,7 @@ export default function ProjectsView({
     // opportunity; it stays editable for the times they are not.
     setSalesExpert(currentUser?.fullName || "");
     setMessagingContactId("");
-    setMessagingChannel("");
+    setMessagingChannelLocked(false);
     // The first configured choice, not a literal: a literal the list does not
     // offer makes the select show its first option while the form saves the
     // literal — the value shown and the value stored then disagree.
@@ -1034,7 +1042,13 @@ export default function ProjectsView({
     setFinancialContactId("");
     setTechnicalContact("");
     setTechnicalContactId("");
-    setCommunicationMethod(firstOption(settings.dropdownItems?.communicationMethods, "تلفن"));
+    {
+      const method = firstOption(settings.dropdownItems?.communicationMethods, "تلفن");
+      setCommunicationMethod(method);
+      // A new project's channel follows its communication method until
+      // somebody chooses one by hand.
+      setMessagingChannel(channelForCommunicationMethod(method));
+    }
     setOpportunityDate(getTodayShamsi());
     setCustomerInquiryNumber("");
     setWinningDate("");
@@ -1081,6 +1095,7 @@ export default function ProjectsView({
     setMessagingContactId(proj.messagingContactId || "");
     setSuppressAutoMessages(proj.suppressAutoMessages === true);
     setMessagingChannel(proj.messagingChannel || "");
+    setMessagingChannelLocked(!!proj.messagingChannel);
     setMarketingChannel(proj.marketingChannel || "تماس مستقیم");
     setLeadQuality(proj.leadQuality || "متوسط");
     setReferrerName(proj.referrerName || "");
@@ -4216,11 +4231,42 @@ export default function ProjectsView({
                     )}
                   </div>
 
+                  {/*
+                    Communication Method — drawn directly above the preferred
+                    send channel, because that channel is derived from it.
+                  */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'projects', 'communicationMethod', 'روش ارتباط اصلی')}</label>
+                    <select
+                      value={communicationMethod}
+                      required={isFieldRequired(settings, 'projects', 'communicationMethod')}
+                      onChange={(e) => {
+                        const method = e.target.value;
+                        setCommunicationMethod(method);
+                        // WhatsApp and Bale carry the conversation there too;
+                        // anything else leaves the SMS default. Not once the
+                        // channel has been chosen by hand.
+                        if (!messagingChannelLocked) setMessagingChannel(channelForCommunicationMethod(method));
+                      }}
+                      data-communication-method
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
+                    >
+                      {withStoredOption(settings.dropdownItems?.communicationMethods || ['تلفن', 'ایمیل', 'جلسه حضوری', 'مکاتبه رسمی', 'شبکه‌های اجتماعی'], communicationMethod).map((m, idx) => (
+                        <option key={idx} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-slate-500">روش ارسال ترجیحی</label>
                     <select
                       value={messagingChannel}
-                      onChange={(e) => setMessagingChannel(e.target.value)}
+                      onChange={(e) => {
+                        setMessagingChannel(e.target.value);
+                        // A hand-picked channel is kept whatever the method does next.
+                        setMessagingChannelLocked(true);
+                      }}
+                      data-messaging-channel
                       className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
                     >
                       <option value="">-- پیش‌فرض (پیامک) --</option>
@@ -4326,20 +4372,6 @@ export default function ProjectsView({
                     />
                   </div>
 
-                  {/* Communication Method */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'projects', 'communicationMethod', 'روش ارتباط اصلی')}</label>
-                    <select
-                      value={communicationMethod}
-                      required={isFieldRequired(settings, 'projects', 'communicationMethod')}
-                      onChange={(e) => setCommunicationMethod(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
-                    >
-                      {withStoredOption(settings.dropdownItems?.communicationMethods || ['تلفن', 'ایمیل', 'جلسه حضوری', 'مکاتبه رسمی', 'شبکه‌های اجتماعی'], communicationMethod).map((m, idx) => (
-                        <option key={idx} value={m}>{m}</option>
-                      ))}
-                    </select>
-                  </div>
                 </div>
               </div>
 

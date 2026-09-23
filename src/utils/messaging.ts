@@ -655,6 +655,32 @@ export const RECIPIENT_PROBLEM_LABELS: Record<RecipientProblem, string> = {
   NO_CHANNEL: "روش ارسال مشخص نشده است.",
 };
 
+/* ------------------- communication method → send channel ------------------ */
+
+/**
+ * The send channel a project's «روش ارتباط اصلی» implies, or "" for the default.
+ *
+ * The communication method is how the customer talks to us, and a customer who
+ * talks to us on WhatsApp or Bale is best written to there — so a new project
+ * picks its «روش ارسال ترجیحی» from it rather than leaving the default a person
+ * then has to remember to change. Anything else answers "" (the SMS default),
+ * which is what the field has always meant when nobody chose.
+ *
+ * The list is the company's own editable one, so it is read by its **words**,
+ * folded for ی/ي, ک/ك, the half-space and case: «واتس اپ», «واتساپ» and
+ * «WhatsApp» are one answer. «بله» is matched as a whole word only, because it
+ * is also an ordinary Persian word that can sit inside a longer one.
+ */
+export function channelForCommunicationMethod(method: string | null | undefined): Channel | "" {
+  const text = String(method ?? "")
+    .replace(/ي/g, "ی").replace(/ك/g, "ک").replace(/\u200c/g, "")
+    .toLowerCase().trim();
+  if (!text) return "";
+  if (/واتس|whats\s*app/.test(text.replace(/\s+/g, ""))) return CHANNELS.WHATSAPP;
+  if (/(^|[^\p{L}])(بله|bale)($|[^\p{L}])/u.test(text)) return CHANNELS.BALE;
+  return "";
+}
+
 /* ------------------------------ Bale: two doors ---------------------------- */
 
 /**
