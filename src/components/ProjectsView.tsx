@@ -4243,7 +4243,7 @@ export default function ProjectsView({
                       onChange={(e) => {
                         const method = e.target.value;
                         setCommunicationMethod(method);
-                        // WhatsApp and Bale carry the conversation there too;
+                        // WhatsApp, Bale, Telegram and email carry the conversation there too;
                         // anything else leaves the SMS default. Not once the
                         // channel has been chosen by hand.
                         if (!messagingChannelLocked) setMessagingChannel(channelForCommunicationMethod(method));

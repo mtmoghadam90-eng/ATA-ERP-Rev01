@@ -21629,7 +21629,9 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   eq("...however it is spelled", cfm("واتس اپ") + cfm("WhatsApp"), "WHATSAPPWHATSAPP");
   eq("Bale as the method picks Bale", cfm("پیام‌رسان بله"), "BALE");
   eq("...but only as a whole word", cfm("مقابله"), "");
-  eq("anything else leaves the SMS default", cfm("تلفن") + cfm("ایمیل") + cfm(""), "");
+  eq("Telegram as the method picks Telegram", cfm("تلگرام") + cfm("Telegram"), "TELEGRAMTELEGRAM");
+  eq("email as the method picks email", cfm("ایمیل") + cfm("Email") + cfm("پست الکترونیک"), "EMAILEMAILEMAIL");
+  eq("anything else leaves the SMS default", cfm("تلفن") + cfm("جلسه حضوری") + cfm(""), "");
 
   const form = readFileSync("src/components/ProjectsView.tsx", "utf8");
   const methodAt = form.indexOf("data-communication-method");
