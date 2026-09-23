@@ -14003,12 +14003,28 @@ head("Stuck work: the dwell report");
       deliveries: [{ delivered: true }],
       afterSales: [{ open: true }],
     }), "خدمات پس از فروش");
-  eq("...and a closed one ends the project",
+  eq("...and a closed one hands the project back to «تحویل شده»",
     deriveProjectStage({
       isWon: true,
       deliveries: [{ delivered: true }],
       afterSales: [{ open: false }],
-    }), "خاتمه‌یافته");
+    }), "تحویل شده");
+  eq("...even with no packing list recorded",
+    deriveProjectStage({ isWon: true, afterSales: [{ open: false }] }), "تحویل شده");
+  {
+    /*
+     * «تکمیل شده» closes a case just as «تحویل داده شده» does, so both the
+     * service's stage sync and the backfill read the module's own rule.
+     */
+    const ps = readFileSync("src/server/services/projectService.ts", "utf-8");
+    const bf = readFileSync("scripts/backfillProjectStages.ts", "utf-8");
+    ok("the stage sync reads an after-sales case through afterSalesIsOpen",
+      /afterSales\.map\(\(s\) => \(\{ open: afterSalesIsOpen\(s\.status\) \}\)\)/.test(ps));
+    ok("...and so does the backfill",
+      /open: afterSalesIsOpen\(s\.status\)/.test(bf));
+    ok("...and neither compares against delivery alone",
+      !/open: s\.status !== "تحویل داده شده"/.test(ps + bf));
+  }
   /*
    * A status this build does not know must not be skipped: the order is open,
    * and the safe thing to say is that supply is pending. Silently ignoring it
