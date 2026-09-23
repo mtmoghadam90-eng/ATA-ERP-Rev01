@@ -21477,6 +21477,32 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     fixed + 2 * PRICE_COL_MIN_PX <= 350);
 }
 
+/*
+ * The printed contact's family name comes from the record, never from a
+ * guess at a joined string.
+ *
+ * Reported: a contact with no first name and «حق شناس» as the family name
+ * printed as «شناس». The document looked the contact up in the picker's
+ * current matches, missed, and split the stored display name — «حق شناس» —
+ * taking everything after the first word.
+ */
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const view = strip(readFileSync("src/components/ProformasView.tsx", "utf8"));
+  const build = view.slice(view.indexOf("const buildProformaDocument"),
+    view.indexOf("renderProformaDocument({", view.indexOf("const buildProformaDocument")));
+  ok("the printed document fetches a contact the screen does not hold",
+    /customersApi\.get\(id\)/.test(build) && /recordFor\(pf\.contactCustomerId\)/.test(build));
+  ok("...and the buyer too",
+    /recordFor\(pf\.customerId\)/.test(build));
+  ok("...rather than reading the picker's matches alone",
+    !/const contactRecord = pf\.contactCustomerId\s*\?\s*customers\.find/.test(build));
+  const { familyNameOnly: fno } = await import("../src/utils/customerLabel");
+  eq("a stored family name of two words prints whole",
+    fno("حق شناس", "حق شناس"), "حق شناس");
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

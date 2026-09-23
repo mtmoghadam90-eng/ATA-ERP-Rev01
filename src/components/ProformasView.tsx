@@ -62,7 +62,7 @@ import { customersApi, type CustomerRow } from "../api/customers";
 import { useEntitySearch } from "../api/useEntitySearch";
 import { productsApi, type ProductRow } from "../api/products";
 import { projectsApi, type ProjectRow } from "../api/projects";
-import { createCustomerWithLinks, findServerDuplicates } from "../api/customerAdapter";
+import { createCustomerWithLinks, detailToCustomer, findServerDuplicates } from "../api/customerAdapter";
 import { productToWriteInput, detailToProduct, rowToProduct } from "../api/productAdapter";
 import { projectToWriteInput, detailToProject } from "../api/projectAdapter";
 import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
@@ -2791,10 +2791,31 @@ export default function ProformasView({
   const buildProformaDocument = async (pf: Proforma): Promise<string | null> => {
     const template = activeTemplate;
     if (!template) return null;
-    const customerObj = customers.find((c) => c.id === pf.customerId);
-    const contactRecord = pf.contactCustomerId
-      ? customers.find((c) => c.id === pf.contactCustomerId)
-      : undefined;
+    /*
+     * The buyer and the contact are read from the server when this screen
+     * does not happen to hold them. `customers` is the picker's current
+     * matches, and a document is printed long after anybody searched for its
+     * contact — so the record was usually missing, and the renderer fell back
+     * to splitting the stored display name, taking «everything after the first
+     * word» as the family name. A contact whose first name is blank and whose
+     * family name is «حق شناس» is stored as exactly «حق شناس», and printed as
+     * «شناس». The record's own `lastName` is the answer; guessing it out of a
+     * joined string is not.
+     */
+    const recordFor = async (id?: string | null): Promise<Customer | undefined> => {
+      if (!id) return undefined;
+      const loaded = customers.find((c) => c.id === id);
+      if (loaded) return loaded;
+      try {
+        return detailToCustomer(await customersApi.get(id));
+      } catch {
+        return undefined;
+      }
+    };
+    const [customerObj, contactRecord] = await Promise.all([
+      recordFor(pf.customerId),
+      recordFor(pf.contactCustomerId),
+    ]);
     const creatorUser = pf.creatorId
       ? users.find((u) => u.id === pf.creatorId)
       : currentUser;
