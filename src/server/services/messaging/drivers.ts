@@ -1,7 +1,7 @@
 import nodemailer from "nodemailer";
 import {
-  CHANNELS, Channel, SMS_PROVIDERS, SMS_PROVIDER_SPECS, SmsProvider,
-  digitsOf, isBaleChatId, kavenegarSendUrl, looksLikeMobile, normalizeSenderLine,
+  BALE_MODES, CHANNELS, Channel, SAFIR_SEND_URL, SMS_PROVIDERS, SMS_PROVIDER_SPECS, SmsProvider,
+  baleModeOf, digitsOf, safirRequest, isBaleChatId, kavenegarSendUrl, looksLikeMobile, normalizeSenderLine,
   smsConfigRefusal, smsProviderOf,
 } from "../../../utils/messaging";
 
@@ -324,8 +324,77 @@ async function sendKavenegar(
 /* ---------------------------------- Bale --------------------------------- */
 
 export interface BaleConfig {
+  /** `BOT` (absent) or `SAFIR` — see `BALE_MODES`. */
+  mode?: string;
   /** The bot token from BotFather on Bale. */
   botToken?: string;
+  /** Safir's «شناسه بازو», a number printed on the business dashboard. */
+  safirBotId?: string | number;
+  /** Safir's `api-access-key`. A secret, like the bot token. */
+  safirApiKey?: string;
+}
+
+/**
+ * Safir's answer, turned into something the reader can act on.
+ *
+ * Its error body is not documented anywhere this build could read, so this
+ * reads the usual keys (`message`, `description`, `error`, `detail`) and names
+ * the remedy only where the status alone decides it. Anything else is relayed
+ * verbatim — inventing a sentence for a code whose meaning we have not seen is
+ * worse than repeating what Bale said.
+ */
+function safirFailure(payload: unknown, status: number): string {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const said = [p.message, p.description, p.error, p.detail, p.error_message]
+    .map((v) => (typeof v === "string" ? v : v && typeof v === "object" ? JSON.stringify(v) : ""))
+    .find((v) => v.trim()) ?? "";
+  if (status === 401 || status === 403) {
+    return `کلید دسترسی یا شناسه بازوی سفیر پذیرفته نشد. هر دو را از داشبورد business.bale.ai دوباره بردارید.${said ? ` (${said})` : ""}`;
+  }
+  if (status === 402) {
+    return `اعتبار حساب سفیر کافی نیست؛ حساب را در داشبورد بله شارژ کنید.${said ? ` (${said})` : ""}`;
+  }
+  if (status === 429) {
+    return "سفیر فعلاً پیام بیشتری نمی‌پذیرد (محدودیت تعداد). کمی بعد دوباره تلاش می‌شود.";
+  }
+  return `ارسال با سفیر بله ناموفق بود: ${said || `پاسخ ${status}`}`;
+}
+
+/**
+ * Bale's business messaging service, addressed by a mobile number.
+ *
+ * The request is `safirRequest`'s, built pure so its shape can be held without a
+ * network. **HTTP 200 is not taken as success on its own**: Kavenegar taught
+ * this file that a provider may answer 200 beside a refusal, so a body that says
+ * `ok: false`, `success: false` or carries an `error` is read as a failure too.
+ */
+async function sendSafir(config: BaleConfig, message: OutgoingMessage): Promise<SendResult> {
+  const built = safirRequest(config, message.recipient, message.body);
+  if (built.error || !built.body) return { ok: false, error: built.error ?? "درخواست سفیر ساخته نشد." };
+
+  try {
+    const response = await fetchWithTimeout(SAFIR_SEND_URL, {
+      method: "POST",
+      // The key travels as a header, as the dashboard shows — never in the URL,
+      // which reaches logs and the stored error of an outbox row.
+      headers: { "api-access-key": built.apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify(built.body),
+    });
+
+    const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
+    const refused = payload && (payload.ok === false || payload.success === false
+      || (payload.error != null && payload.error !== "" && payload.error !== false));
+
+    if (!response.ok || refused) {
+      return { ok: false, error: safirFailure(payload, response.status) };
+    }
+
+    const id = payload?.message_id ?? payload?.messageId ?? payload?.id
+      ?? (payload?.result as Record<string, unknown> | undefined)?.message_id;
+    return { ok: true, providerMessageId: id != null && id !== "" ? String(id) : null };
+  } catch (err) {
+    return { ok: false, error: describe(err) };
+  }
 }
 
 /**
@@ -361,6 +430,7 @@ function baleFailure(description: string, status: number): string {
  * against them, and there is no way around it from this side.
  */
 export async function sendBale(config: BaleConfig, message: OutgoingMessage): Promise<SendResult> {
+  if (baleModeOf(config) === BALE_MODES.SAFIR) return sendSafir(config, message);
   if (!config.botToken) {
     return { ok: false, error: "توکن ربات بله ثبت نشده است." };
   }
