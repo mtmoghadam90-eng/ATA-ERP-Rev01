@@ -242,6 +242,27 @@ export function afterSalesIsOpen(status: unknown): boolean {
   return !AFTER_SALES_CLOSED.includes(String(status ?? ""));
 }
 
+/**
+ * The closing status an after-sales save has just reached, or null.
+ *
+ * The project's «خدمات پس از فروش» activity category is offered its «اتمام کار»
+ * when the case **reaches** a closing status — and «تکمیل شده» is one, not only
+ * «تحویل داده شده». The screen asked on delivery alone, so a repair finished on
+ * site (nothing to hand back) or one whose goods are collected weeks later never
+ * asked at all, and the category stayed open for a job that was done.
+ *
+ * It is a **transition**, never the state: re-saving a closed case must not ask
+ * again. Moving from «تکمیل شده» on to «تحویل داده شده» *is* a new closing
+ * status and asks again, because somebody who answered «not yet» when the work
+ * was finished is the person the delivery question is for — and a category
+ * already closed is detected by the prompt itself, which then says so.
+ */
+export function afterSalesClosingReached(oldStatus: unknown, newStatus: unknown): string | null {
+  const next = String(newStatus ?? "");
+  if (afterSalesIsOpen(next)) return null;
+  return String(oldStatus ?? "") === next ? null : next;
+}
+
 /* ----------------------------- transactions ------------------------------ */
 
 export const TRANSACTION_TYPES = [

@@ -32,6 +32,7 @@ import CustomFieldsDetailView from './CustomFieldsDetailView';
 import CustomerAgreementAlert from './CustomerAgreementAlert';
 import { ApiError } from '../api/client';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
+import { afterSalesClosingReached } from '../utils/moduleStatuses';
 import { afterSalesApi, detailToService, rowToService, serviceToWriteInput } from '../api/afterSales';
 import { useAfterSalesList } from '../api/useAfterSalesList';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
@@ -459,15 +460,7 @@ export default function AfterSalesServicesView({
     });
 
     try {
-      const oldService = editingService;
-      const oldStatus = oldService?.status;
-      const newStatus = serviceItems.every(it => it.status === 'تحویل داده شده')
-        ? 'تحویل داده شده'
-        : serviceItems.some(it => it.status === 'تحویل داده شده' || it.status === 'تکمیل شده')
-        ? 'تکمیل شده'
-        : serviceItems.some(it => it.status === 'در حال تعمیر/خدمات')
-        ? 'در حال تعمیر/خدمات'
-        : 'در حال بررسی';
+      const oldStatus = editingService?.status;
 
       const saved = editingService
         ? await afterSalesApi.update(editingService.id, payload)
@@ -482,17 +475,26 @@ export default function AfterSalesServicesView({
         assignedTo: currentUser?.fullName,
       }));
 
-      // Prompt for category completion when status changes to "تحویل داده شده"
-      if (categoryCompletion && selectedProjectId &&
-          oldStatus !== 'تحویل داده شده' && newStatus === 'تحویل داده شده') {
-        // Get the item description for the message
+      /*
+       * Offer to close the category when the case reaches a closing status —
+       * «تکمیل شده» as well as «تحویل داده شده». The status is the one the
+       * server rolled up and returned, never a copy worked out here: the copy
+       * this screen kept read «some line completed» where the server's rule
+       * reads «every line», so the two disagreed about the very status the
+       * question hangs on.
+       */
+      const reached = afterSalesClosingReached(oldStatus, saved?.status);
+      if (categoryCompletion && selectedProjectId && reached) {
         const itemDesc = serviceItems.length > 1
           ? `${serviceItems.length} قلم کالا`
           : (serviceItems[0]?.productName || serviceItems[0]?.issueDescription || 'کالا');
+        const what = reached === 'تحویل داده شده'
+          ? `${itemDesc} تحویل مشتری داده شد.`
+          : `خدمات ${itemDesc} تکمیل شد.`;
         categoryCompletion.promptCompletion({
           projectId: selectedProjectId,
           categoryName: ACTIVITY_CATEGORY.AFTER_SALES,
-          message: `${itemDesc} تحویل مشتری داده شد. آیا می‌خواهید وضعیت دسته فعالیت مربوط به خدمات پس از فروش را به «اتمام کار» تغییر دهید؟`
+          message: `${what} آیا می‌خواهید وضعیت دسته فعالیت مربوط به خدمات پس از فروش را به «اتمام کار» تغییر دهید؟`
         });
       }
     } catch (err) {
