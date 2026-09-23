@@ -73,7 +73,7 @@ import {
   COST_SOURCES, COST_SOURCE_LABELS, landedUnitCostOf, lineNeedsCost, linesMissingCost,
 } from "../utils/costOfGoods";
 import { isPartial } from "../api/partial";
-import { type CopyMode, isTerminalOutcome } from "../utils/salesFollowUp";
+import { type CopyMode, isTerminalOutcome, technicalDocumentStatus } from "../utils/salesFollowUp";
 import SalesFollowUpTab from "./SalesFollowUpTab";
 import { useProformaList } from "../api/useProformaList";
 import { useUserDirectory } from "../api/useUserDirectory";
@@ -3317,6 +3317,34 @@ export default function ProformasView({
                           <td className="p-4 text-center">
                             <div className="flex flex-col items-center gap-1">
                               {(() => {
+                                /*
+                                  A technical proposal is its own document with its
+                                  own destination — technical approval, not a win —
+                                  so it is drawn from its own short list rather than
+                                  from an outcome read off lines that describe no
+                                  sale. The financial quotation beside it on the
+                                  same project keeps the win/loss column below.
+                                */
+                                if (pf.proformaType === "TECHNICAL") {
+                                  const tech = technicalDocumentStatus(pf);
+                                  const tone = tech === "تأیید فنی"
+                                    ? "bg-teal-50 text-teal-700 border-teal-200"
+                                    : tech === "لغو شده"
+                                      ? "bg-slate-200 text-slate-700 border-slate-300"
+                                      : tech === "پیش‌نویس"
+                                        ? "bg-slate-100 text-slate-600 border-slate-200"
+                                        : "bg-violet-50 text-violet-700 border-violet-200";
+                                  return (
+                                    <span
+                                      data-technical-status={tech}
+                                      title={tech === "تأیید فنی" && pf.technicalApprovedDate
+                                        ? `تأیید پیشنهاد فنی: ${pf.technicalApprovedDate}` : undefined}
+                                      className={`px-2.5 py-1 rounded-full font-bold text-[10px] border ${tone}`}
+                                    >
+                                      {tech}
+                                    </span>
+                                  );
+                                }
                                 const outcome = getProformaOutcomeStatus(pf);
                                 if (outcome === "لغو شده")
                                   return (

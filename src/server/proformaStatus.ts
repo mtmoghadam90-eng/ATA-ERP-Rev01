@@ -76,19 +76,17 @@ export function commercialProformas<T extends { proformaType?: string | null }>(
 }
 
 /**
- * Whether the customer has approved a technical proposal that still stands.
+ * Whether the project holds an approved technical proposal.
  *
- * Any kind of document may carry it — a financial quotation prints as «پیشنهاد
- * فنی و مالی», so its technical half can be accepted while the price is still
- * being argued — and a cancelled or lost document carries nothing forward: the
- * approval was of an offer that is no longer on the table.
+ * Only a **technical** document carries one: that is its destination, as the
+ * win is a financial quotation's, and the two are separate documents a project
+ * routinely holds side by side. Its line statuses decide nothing — a
+ * specification quotes no prices, so «باخته» on one describes no sale — and
+ * only a cancellation takes the approval off the table.
  */
 export function technicalApprovalStands(proformas: OutcomeProforma[]): boolean {
-  return proformas.some((pf) => {
-    if (pf.isCancelled || !pf.technicalApprovedDate) return false;
-    const outcome = getProformaOutcome(pf);
-    return outcome !== "باخته" && outcome !== "لغو شده";
-  });
+  return proformas.some((pf) => pf.proformaType === PROFORMA_TECHNICAL_TYPE
+    && !pf.isCancelled && !!pf.technicalApprovedDate);
 }
 
 /** Whether a technical offer has actually reached the customer. */

@@ -90,6 +90,8 @@ export interface ProformaRow {
   customValues: string | null;
   /** The day it was sent to the customer, not the day it was written. */
   sentDateJalali: string | null;
+  /** The day the customer approved the technical proposal, or null. */
+  technicalApprovedDateJalali?: string | null;
   /** Sales follow-up — a separate axis from the commercial outcome above. */
   followUpState: string;
   deferredUntilJalali: string | null;

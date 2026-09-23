@@ -416,6 +416,12 @@ export interface Proforma {
   /** The day it went to the customer — stamped when the status becomes «ارسال شده». */
   sentDate?: string;
   /**
+   * The day the customer approved the technical proposal. Recorded by the
+   * follow-up result «تأیید پیشنهاد فنی» and never by the form; it decides no
+   * outcome, so the grid shows it only where the outcome is still open.
+   */
+  technicalApprovedDate?: string;
+  /**
    * Sales follow-up — a separate axis from `status` and `outcomeStatus` above.
    * OPEN | DEFERRED | NO_RESPONSE, and nothing that already exists there.
    */

@@ -87,7 +87,8 @@ import {
 } from "../src/utils/webRfq";
 import { SETTINGS_PATCHES, applySettingsPatches } from "../src/utils/settingsPatches";
 import {
-  RESULT_TECHNICAL_APPROVED, impliesTechnicalApproval,
+  RESULT_TECHNICAL_APPROVED, TECHNICAL_DOCUMENT_STATUSES, impliesTechnicalApproval,
+  technicalApprovalRefusal, technicalDocumentStatus, technicalSettlementRefusal,
 } from "../src/utils/salesFollowUp";
 import { PROJECT_TECHNICAL_APPROVED } from "../src/utils/moduleStatuses";
 import { isWonStatus, technicalApprovalStands } from "../src/server/proformaStatus";
@@ -7089,8 +7090,11 @@ head("Project follow-up tab: what happened on this job");
    */
   ok("the project report is not filtered to the chaseable set",
     !/chaseableWhere\(\)/.test(body.slice(0, 2500)));
+  // A priced quotation is settled by its outcome and a technical proposal by
+  // its own answer — two documents, two destinations.
   ok("but a settled quotation is still marked as settled",
-    /settled: isTerminalOutcome\(outcome\)/.test(body));
+    /: isTerminalOutcome\(outcome\)/.test(body)
+    && /settled: row\.proformaType === PROFORMA_TECHNICAL_TYPE\s*\?\s*technicalDocumentStatus\(/.test(body));
   // Asking for a next action on a finished sale is the fault the queue screen
   // was corrected for.
   ok("and only the ones in play count as missing a next action",
@@ -15776,8 +15780,21 @@ head("«تأیید پیشنهاد فنی» moves the project on, and is not a wi
 
   eq("a sent quotation with nothing decided is «ارائه پیش‌فاکتور»",
     deriveProjectStatus([quote()]), "ارائه پیش‌فاکتور");
-  eq("...and with its technical half approved, «تأیید پیشنهاد فنی»",
-    deriveProjectStatus([quote({ technicalApprovedDate: approvedOn })]), PROJECT_TECHNICAL_APPROVED);
+  // A financial quotation is approved by being won; a stamp on one — written
+  // by nothing now, but on disk from before — says nothing about the project.
+  eq("...and an approval stamp on a financial quotation changes nothing",
+    deriveProjectStatus([quote({ technicalApprovedDate: approvedOn })]), "ارائه پیش‌فاکتور");
+  eq("...while an approved technical proposal beside it moves the project on",
+    deriveProjectStatus([
+      quote(),
+      quote({ id: "t1", proformaType: "TECHNICAL", items: [], technicalApprovedDate: approvedOn }),
+    ]), PROJECT_TECHNICAL_APPROVED);
+  // The case the two-document model exists for: both approved, each its own way.
+  eq("an approved technical proposal and a won quotation on one project read as won",
+    deriveProjectStatus([
+      quote({ items: [{ status: "برنده" }, { status: "برنده" }] }),
+      quote({ id: "t1", proformaType: "TECHNICAL", items: [], technicalApprovedDate: approvedOn }),
+    ]), "برنده (موفق)");
   eq("a win is further along than an approval",
     deriveProjectStatus([quote({
       technicalApprovedDate: approvedOn, items: [{ status: "برنده" }, { status: "برنده" }],
@@ -15795,9 +15812,17 @@ head("«تأیید پیشنهاد فنی» moves the project on, and is not a wi
       quote({ id: "q1", technicalApprovedDate: approvedOn, isCancelled: true }),
       quote({ id: "q2", createdAt: "2026-09-10T00:00:00Z" }),
     ]), "ارائه پیش‌فاکتور");
-  ok("...which is the rule the status reads",
-    !technicalApprovalStands([{ isCancelled: true, technicalApprovedDate: approvedOn }])
-    && technicalApprovalStands([{ isCancelled: false, technicalApprovedDate: approvedOn }]));
+  ok("...which is the rule the status reads, and it is a technical document's alone",
+    !technicalApprovalStands([{ proformaType: "TECHNICAL", isCancelled: true, technicalApprovedDate: approvedOn }])
+    && technicalApprovalStands([{ proformaType: "TECHNICAL", isCancelled: false, technicalApprovedDate: approvedOn }])
+    && !technicalApprovalStands([{ proformaType: "FINANCIAL", isCancelled: false, technicalApprovedDate: approvedOn }])
+    && !technicalApprovalStands([{ isCancelled: false, technicalApprovedDate: approvedOn }]));
+  // Its lines describe no sale, so «بازنده» on one does not withdraw it.
+  ok("...and a technical proposal's lines do not withdraw it",
+    technicalApprovalStands([{
+      proformaType: "TECHNICAL", isCancelled: false, technicalApprovedDate: approvedOn,
+      items: [{ status: "بازنده" }],
+    }]));
 
   // A project whose only document is a technical specification.
   const spec = (over: Record<string, unknown> = {}) =>
@@ -15816,8 +15841,8 @@ head("«تأیید پیشنهاد فنی» moves the project on, and is not a wi
       supplierInquiries: inquiries.map((status) => ({ status })),
     });
   eq("a sent quotation is with the customer", stage([quote()]), STAGE_OFFER_REVIEW);
-  eq("...and once its technical half is approved, the quotation is being prepared",
-    stage([quote({ technicalApprovedDate: approvedOn })]), "تهیه پیش‌فاکتور");
+  eq("...and a stamp on a financial quotation does not take it off the customer's desk",
+    stage([quote({ technicalApprovedDate: approvedOn })]), STAGE_OFFER_REVIEW);
   eq("an approved specification moves the job on to the priced quotation",
     stage([spec({ technicalApprovedDate: approvedOn })]), "تهیه پیش‌فاکتور");
   // A revised price sent after the approval is exactly what the job then waits on.
@@ -15827,6 +15852,48 @@ head("«تأیید پیشنهاد فنی» moves the project on, and is not a wi
   eq("an unanswered supplier inquiry still holds it back",
     stage([spec({ technicalApprovedDate: approvedOn })], [INQUIRY_SENT]),
     "در انتظار پاسخ تأمین‌کننده");
+
+  /* ------------------- a technical proposal's own statuses ------------------ */
+
+  // Its destination is the approval; «برنده» and «بازنده» mean nothing on it.
+  eq("an unsent technical proposal is a draft",
+    technicalDocumentStatus({ status: "پیش‌نویس" }), "پیش‌نویس");
+  eq("a sent one waits on the technical approval",
+    technicalDocumentStatus({ status: "ارسال شده" }), "در انتظار تأیید فنی");
+  eq("an approved one is «تأیید فنی»",
+    technicalDocumentStatus({ status: "ارسال شده", technicalApprovedDate: approvedOn }), "تأیید فنی");
+  eq("and a cancellation outranks the approval",
+    technicalDocumentStatus({ status: "ارسال شده", isCancelled: true, technicalApprovedDate: approvedOn }),
+    "لغو شده");
+  ok("every answer is on the document's own list", ([
+    { status: "پیش‌نویس" }, { status: "ارسال شده" },
+    { status: "ارسال شده", technicalApprovedDate: approvedOn }, { isCancelled: true },
+  ] as const).every((pf) => (TECHNICAL_DOCUMENT_STATUSES as readonly string[])
+    .includes(technicalDocumentStatus(pf))));
+
+  // Each document is answered by its own result, and the other one is refused.
+  ok("the approval is refused on a financial quotation",
+    !!technicalApprovalRefusal(RESULT_TECHNICAL_APPROVED, "FINANCIAL")
+    && !!technicalApprovalRefusal(RESULT_TECHNICAL_APPROVED, null));
+  ok("...and accepted on a technical one",
+    technicalApprovalRefusal(RESULT_TECHNICAL_APPROVED, "TECHNICAL") === null);
+  ok("...while any other result is nobody's business here",
+    technicalApprovalRefusal("در حال بررسی فنی", "FINANCIAL") === null);
+  ok("a technical proposal is never settled as a sale",
+    !!technicalSettlementRefusal("WON", "TECHNICAL")
+    && technicalSettlementRefusal("WON", "FINANCIAL") === null
+    && technicalSettlementRefusal(null, "TECHNICAL") === null);
+  // Reaching its destination owes no next action, like a settled sale.
+  ok("an approval recorded now closes the chase with no next action",
+    completionRefusalReason(
+      { decision: "TERMINAL", followUpResult: RESULT_TECHNICAL_APPROVED } as never,
+      { todayJalali: "1405/07/01", outcomeIsTerminal: false },
+    ) === null);
+  ok("...which an ordinary result still cannot",
+    completionRefusalReason(
+      { decision: "TERMINAL", followUpResult: "در حال بررسی فنی" } as never,
+      { todayJalali: "1405/07/01", outcomeIsTerminal: false },
+    ) !== null);
 
   /* ----------------------------- live documents ---------------------------- */
 
@@ -15889,6 +15956,31 @@ head("«تأیید پیشنهاد فنی» moves the project on, and is not a wi
 
   // Nobody sets it by posting a proforma: only a recorded chase does.
   const proformaRoute = readFileSync("src/server/routes/proformas.ts", "utf8");
+  // Refused on the wrong document before anything is written, at both doors.
+  const correctionBody = service.slice(service.indexOf("export async function correctFollowUp"));
+  ok("the completion refuses the wrong document's destination",
+    /technicalApprovalRefusal\(input\.followUpResult, proforma\.proformaType\)\s*\?\? technicalSettlementRefusal\(/
+      .test(completion)
+    && completion.indexOf("technicalApprovalRefusal(") < completion.indexOf("$transaction("));
+  ok("...and so does the correction",
+    /technicalApprovalRefusal\(input\.followUpResult, proforma\.proformaType\)/.test(
+      correctionBody.slice(0, correctionBody.indexOf("$transaction("))));
+  // A technical proposal is chased until approved, or the result could only
+  // ever be recorded from a card raised by some rule.
+  ok("the queue and its summary chase technical proposals toward approval",
+    (service.match(/followUpQueueWhere\(\)/g) ?? []).length >= 3
+    && /pendingTechnicalWhere\(\)/.test(service.slice(
+      service.indexOf("export function followUpQueueWhere"),
+      service.indexOf("export function followUpQueueWhere") + 200))
+    && /technicalApprovedDate: null/.test(service.slice(service.indexOf("function pendingTechnicalWhere"))));
+  // The grid draws the technical document's own status, not an outcome.
+  const grid = strip(readFileSync("src/components/ProformasView.tsx", "utf8"));
+  ok("the grid draws a technical proposal's own status",
+    /if \(pf\.proformaType === "TECHNICAL"\) \{\s*const tech = technicalDocumentStatus\(pf\);/.test(grid));
+  ok("...from a row that carries the date",
+    /technicalApprovedDateJalali: true/.test(proformaSvc.slice(proformaSvc.indexOf("const LIST_SELECT"), proformaSvc.indexOf("const LIST_SELECT") + 4000))
+    && /technicalApprovedDate: row\.technicalApprovedDateJalali/.test(readFileSync("src/api/proformaAdapter.ts", "utf8")));
+
   const scalar = proformaSvc.slice(proformaSvc.indexOf("function scalarData"));
   ok("the proforma route does not accept it",
     !/technicalApproved/.test(proformaRoute)
