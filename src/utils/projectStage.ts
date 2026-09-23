@@ -254,9 +254,14 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
      * revised price sent after the approval is exactly what the job is then
      * waiting on.
      */
-    const approved = live.filter((pf) => !!pf.technicalApprovedDate);
+    const approved = live.filter(
+      (pf) => pf.proformaType === PROFORMA_TECHNICAL_TYPE && !!pf.technicalApprovedDate,
+    );
+    // A financial quotation is never «approved» here: its answer is the win,
+    // which moves the project out of this branch altogether.
     const awaiting = (pf: (typeof live)[number]) =>
-      pf.status === PROFORMA_SENT_STATUS && !pf.technicalApprovedDate;
+      pf.status === PROFORMA_SENT_STATUS
+      && !(pf.proformaType === PROFORMA_TECHNICAL_TYPE && pf.technicalApprovedDate);
     if (priced.some(awaiting)) return STAGE_OFFER_REVIEW;
 
     /*

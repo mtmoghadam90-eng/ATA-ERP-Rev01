@@ -15,6 +15,8 @@ import type { SettleOutcome, FollowUpDecision, FollowUpHealth, FollowUpState } f
 export interface FollowUpRow {
   id: string;
   proformaNumber: string;
+  /** FINANCIAL or TECHNICAL. Absent on a row from an older server: financial. */
+  proformaType?: string;
   customerId: string;
   customerName: string | null;
   projectId: string | null;
@@ -92,6 +94,8 @@ export interface FollowUpHistoryEntry {
 export interface ProjectFollowUpQuote {
   id: string;
   proformaNumber: string;
+  /** FINANCIAL or TECHNICAL. */
+  proformaType?: string;
   status: string;
   outcome: string;
   currency: string;

@@ -23,7 +23,11 @@ import {
   type SettleOutcome,
 } from "../../utils/salesFollowUp";
 import { TASK_CANCELLED, TASK_TODO } from "../../utils/workBoard";
-import { FOLLOW_UP_KIND, impliesTechnicalApproval } from "../../utils/salesFollowUp";
+import {
+  FOLLOW_UP_KIND, impliesTechnicalApproval, technicalApprovalRefusal,
+  technicalDocumentStatus, technicalSettlementRefusal,
+} from "../../utils/salesFollowUp";
+import { PROFORMA_SENT_STATUS, PROFORMA_TECHNICAL_TYPE } from "../../utils/moduleStatuses";
 import { relationSpellings, taskRelationKind } from "../../utils/taskRelations";
 import { visibilityClause } from "./taskService";
 import { resolveAssignee } from "./assigneeLookup";
@@ -84,6 +88,32 @@ export function chaseableWhere(): Prisma.ProformaWhereInput {
       (w): w is Record<string, unknown> => w !== null,
     ) as Prisma.ProformaWhereInput[],
   };
+}
+
+/**
+ * A technical proposal still waiting on the customer.
+ *
+ * It is chased like a quotation — somebody rings to ask whether the
+ * specification is accepted — but its destination is the technical approval
+ * rather than a win, so «still open» is not read off its lines (which describe
+ * no sale) but off the document: sent, not cancelled, not yet approved.
+ */
+export function pendingTechnicalWhere(): Prisma.ProformaWhereInput {
+  return {
+    proformaType: PROFORMA_TECHNICAL_TYPE,
+    status: PROFORMA_SENT_STATUS,
+    isCancelled: false,
+    technicalApprovedDate: null,
+  };
+}
+
+/**
+ * Every document the sales desk chases, each toward its own destination: a
+ * priced quotation until it is decided, a technical proposal until it is
+ * approved. One project routinely holds both.
+ */
+export function followUpQueueWhere(): Prisma.ProformaWhereInput {
+  return { OR: [{ AND: [chaseableWhere(), notTechnical()] }, pendingTechnicalWhere()] };
 }
 
 /** The proforma's derived outcome, which decides whether the sale is over. */
@@ -245,11 +275,14 @@ export async function completeFollowUp(
   const proforma = await db.proforma.findUnique({
     where: { id: proformaId },
     select: {
-      id: true, proformaNumber: true, projectId: true,
+      id: true, proformaNumber: true, projectId: true, proformaType: true,
       project: { select: { salesExpert: true } },
     },
   });
   if (!proforma) return { ok: false, reason: "پیش‌فاکتور یافت نشد.", code: "not-found" };
+  const approvalRefusal = technicalApprovalRefusal(input.followUpResult, proforma.proformaType)
+    ?? technicalSettlementRefusal(input.settleOutcome, proforma.proformaType);
+  if (approvalRefusal) return { ok: false, reason: approvalRefusal, code: "invalid" };
 
   const decision = input.decision;
   const settleOutcome = input.settleOutcome ?? null;
@@ -674,6 +707,8 @@ export const FOLLOW_UP_FILTERABLE = ["followUpState", "projectId", "customerId"]
 export interface FollowUpQueueRow {
   id: string;
   proformaNumber: string;
+  /** FINANCIAL or TECHNICAL — the two have different destinations. */
+  proformaType: string;
   customerId: string;
   customerName: string | null;
   projectId: string | null;
@@ -731,7 +766,7 @@ export interface FollowUpSummary {
  * is the set a sales desk actually works: sent, not cancelled, not finished.
  */
 function queueWhere(q: ListQuery): Prisma.ProformaWhereInput {
-  const and: Prisma.ProformaWhereInput[] = [chaseableWhere(), notTechnical()];
+  const and: Prisma.ProformaWhereInput[] = [followUpQueueWhere()];
 
   // The number, the customer and the job — which is how a salesperson refers to
   // a quotation. The document's own columns carry none of the last two.
@@ -756,6 +791,7 @@ function queueWhere(q: ListQuery): Prisma.ProformaWhereInput {
 
 const QUEUE_SELECT = {
   id: true, proformaNumber: true, status: true, isCancelled: true, currency: true,
+  proformaType: true, technicalApprovedDateJalali: true,
   finalAmount: true, followUpState: true, deferredUntilJalali: true,
   issueDateJalali: true, sentDateJalali: true, customerId: true, projectId: true,
   customer: { select: { companyName: true } },
@@ -834,6 +870,7 @@ async function buildQueueRows(
     return {
       id: row.id,
       proformaNumber: row.proformaNumber,
+      proformaType: row.proformaType,
       customerId: row.customerId,
       customerName: row.customer?.companyName ?? null,
       projectId: row.projectId,
@@ -952,11 +989,13 @@ export async function correctFollowUp(
     where: { id: proformaId },
     select: {
       id: true, proformaNumber: true, followUpState: true, deferredUntilJalali: true,
-      projectId: true,
+      projectId: true, proformaType: true,
       project: { select: { salesExpert: true } },
     },
   });
   if (!proforma) return { ok: false, reason: "پیش‌فاکتور یافت نشد.", code: "not-found" };
+  const correctedApprovalRefusal = technicalApprovalRefusal(input.followUpResult, proforma.proformaType);
+  if (correctedApprovalRefusal) return { ok: false, reason: correctedApprovalRefusal, code: "invalid" };
 
   /*
    * The replacement this chase raised, if it is still being chased.
@@ -1231,6 +1270,8 @@ export interface FollowUpHistoryEntry {
 export interface ProjectFollowUpQuote {
   id: string;
   proformaNumber: string;
+  /** FINANCIAL or TECHNICAL — a technical proposal is settled by approval. */
+  proformaType: string;
   status: string;
   outcome: ProformaOutcome;
   currency: string;
@@ -1338,7 +1379,9 @@ export async function projectFollowUpReport(
   const todayJalali = getTodayShamsi();
 
   const rows = await db.proforma.findMany({
-    where: { AND: [{ projectId }, notTechnical()] },
+    // Every document on the job, the technical proposals included: they are
+    // chased toward their own destination and their history is this job's too.
+    where: { projectId },
     orderBy: { issueDate: "desc" },
     select: QUEUE_SELECT,
   });
@@ -1375,6 +1418,7 @@ export async function projectFollowUpReport(
     return {
       id: row.id,
       proformaNumber: row.proformaNumber,
+      proformaType: row.proformaType,
       status: row.status,
       outcome,
       currency: row.currency,
@@ -1386,8 +1430,15 @@ export async function projectFollowUpReport(
       deferredUntilJalali: row.deferredUntilJalali,
       // A won, lost or cancelled quotation needs no next action; «نیمه برنده»
       // is settled too, and a draft has not been sent to anybody.
-      settled: isTerminalOutcome(outcome)
-        || !(CHASEABLE_OUTCOMES as readonly string[]).includes(outcome),
+      // A technical proposal is settled by its own answer — approved or
+      // cancelled — and a draft one has not been sent to anybody.
+      settled: row.proformaType === PROFORMA_TECHNICAL_TYPE
+        ? technicalDocumentStatus({
+          status: row.status, isCancelled: row.isCancelled,
+          technicalApprovedDate: row.technicalApprovedDateJalali,
+        }) !== "در انتظار تأیید فنی"
+        : isTerminalOutcome(outcome)
+          || !(CHASEABLE_OUTCOMES as readonly string[]).includes(outcome),
       followUpHealth: followUpHealthOf(
         {
           followUpState,
@@ -1588,7 +1639,7 @@ export async function followUpSummary(
   // The same set the list shows, or the cards count quotations the table below
   // them does not contain — and «بدون اقدام بعدی» would report every settled
   // document in the database as neglected.
-  const active: Prisma.ProformaWhereInput = { AND: [chaseableWhere(), notTechnical()] };
+  const active: Prisma.ProformaWhereInput = followUpQueueWhere();
 
   /*
    * The task side is asked of the task table, not through a relation.

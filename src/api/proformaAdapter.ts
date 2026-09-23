@@ -70,6 +70,7 @@ export function rowToProforma(row: ProformaRow): Proforma {
     sentMethod: row.sentMethod ?? undefined,
     sentRecipients: parseJson<string[]>(row.sentRecipients, []),
     sentDate: row.sentDateJalali ?? undefined,
+    technicalApprovedDate: row.technicalApprovedDateJalali ?? undefined,
     lossReason: row.lossReason ?? undefined,
     competitorId: row.competitorId ?? undefined,
     competitorAmount: row.competitorAmount == null ? undefined : Number(row.competitorAmount),

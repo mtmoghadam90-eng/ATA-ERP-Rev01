@@ -1722,7 +1722,7 @@ head("Follow-up editing: the form opens carrying the follow-up");
       taskId: "t-tech", closed: true, followUpResult: "تأیید پیشنهاد فنی",
       completionNote: "", title: "تماس", description: "", dueDate: "1405/06/09",
       assignee: "کارشناس فروش", priority: "متوسط",
-    });
+    }, { proformaType: "TECHNICAL" });
     const said = approved.text(note);
     ok("the approval explains itself before it is saved", !!approved.host.querySelector(note));
     ok("...naming the project status and the stage it moves to",
@@ -1737,6 +1737,24 @@ head("Follow-up editing: the form opens carrying the follow-up");
     });
     ok("any other result draws no such note", !other.host.querySelector(note));
     other.close();
+
+    /*
+      The same result on a financial quotation: its destination is the win, so
+      the form says so and the button is dead — the server refuses it too, and
+      a button that submits into a refusal reads as the form being broken.
+    */
+    const financial = await open({
+      taskId: "t-fin", closed: true, followUpResult: "تأیید پیشنهاد فنی",
+      completionNote: "", title: "تماس", description: "", dueDate: "1405/06/09",
+      assignee: "کارشناس فروش", priority: "متوسط",
+    }, { proformaType: "FINANCIAL" });
+    const submitFin = financial.host.querySelector("#follow-up-submit") as HTMLButtonElement | null;
+    ok("on a financial quotation the approval draws no promise",
+      !financial.host.querySelector(note));
+    ok("...but the reason it is refused",
+      (financial.host.textContent ?? "").includes("فقط برای پیش‌فاکتور فنی"));
+    ok("...and the button is dead", submitFin?.disabled === true, submitFin?.disabled);
+    financial.close();
   }
 
   {

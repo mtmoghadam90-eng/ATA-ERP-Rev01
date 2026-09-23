@@ -6,7 +6,7 @@ import { SearchableSelect } from './SearchableSelect';
 import {
   DEFAULT_FOLLOW_UP_RESULTS, FollowUpDecision, SETTLE_OUTCOMES, SETTLE_OUTCOME_LABELS,
   SettleOutcome, completionRefusalReason, correctionRefusalReason, impliedSettlement,
-  impliesTechnicalApproval, recordedDecision,
+  impliesTechnicalApproval, recordedDecision, technicalApprovalRefusal,
 } from '../utils/salesFollowUp';
 import { PROJECT_TECHNICAL_APPROVED } from '../utils/moduleStatuses';
 import { getTodayShamsi, addDaysToShamsi } from '../dateUtils';
@@ -336,7 +336,15 @@ export default function FollowUpCompletionModal({
     re-runs* rather than a second reading of it written out here — that is what
     stops the form submitting what the server would refuse.
   */
-  const refusal = isCorrecting
+  /*
+    The server's own rule, run here so the button is dead rather than refused:
+    a financial quotation's destination is the win, and «تأیید پیشنهاد فنی»
+    belongs to the technical proposal beside it. Not asked while the chase's own
+    fields are being edited, which records no result.
+  */
+  const approvalRefusal = isEditingAction ? null
+    : technicalApprovalRefusal(followUpResult, row.proformaType);
+  const refusal = approvalRefusal ?? (isCorrecting
     ? (actionRefusal ?? correctionRefusalReason(
       {
         followUpResult,
@@ -349,7 +357,7 @@ export default function FollowUpCompletionModal({
     ))
     : isEditing
       ? actionRefusal
-      : completionRefusalReason(body, { todayJalali: today, outcomeIsTerminal });
+      : completionRefusalReason(body, { todayJalali: today, outcomeIsTerminal }));
 
   const submit = async () => {
     if (refusal) { setError(refusal); return; }
@@ -522,14 +530,14 @@ export default function FollowUpCompletionModal({
               it is not a win, which is the reading somebody would otherwise
               take from «تأیید».
             */}
-            {impliesTechnicalApproval(followUpResult) && !outcomeIsTerminal && (
+            {impliesTechnicalApproval(followUpResult) && !approvalRefusal && !outcomeIsTerminal && (
               <p
                 data-technical-approval-note
                 className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 mt-2 leading-relaxed"
               >
-                با ثبت این نتیجه، وضعیت پروژه «{PROJECT_TECHNICAL_APPROVED}» و مرحلهٔ آن
-                «تهیه پیش‌فاکتور» می‌شود. این به معنای برنده شدن پروژه نیست و وضعیت
-                ردیف‌های پیش‌فاکتور تغییر نمی‌کند.
+                با ثبت این نتیجه، این پیش‌فاکتور فنی «تأیید فنی» می‌شود، وضعیت پروژه
+                «{PROJECT_TECHNICAL_APPROVED}» و مرحلهٔ آن «تهیه پیش‌فاکتور». این به معنای
+                برنده شدن پروژه نیست؛ پیش‌فاکتور مالی مسیر خودش را تا برنده شدن دارد.
               </p>
             )}
           </div>
@@ -544,7 +552,8 @@ export default function FollowUpCompletionModal({
             call knows. Declining leaves the proforma exactly as it was, which
             is what happened before this existed.
           */}
-          {suggested && !outcomeIsTerminal && !isEditing && (
+          {/* A technical proposal is never won or lost, so it is not asked. */}
+          {suggested && !outcomeIsTerminal && !isEditing && row.proformaType !== 'TECHNICAL' && (
             <div className="border border-sky-200 bg-sky-50/70 rounded-xl p-3.5 space-y-2.5">
               <p className="text-[11px] font-bold text-sky-900 leading-relaxed">
                 این نتیجه یعنی تکلیف پیش‌فاکتور روشن شده. وضعیت تجاری آن را هم به
@@ -705,8 +714,13 @@ export default function FollowUpCompletionModal({
                   can only be chosen when the outcome already says the sale is
                   over. `correctionRefusalReason` refuses it either way.
                 */
+                // An approval recorded now is a technical proposal reaching its
+                // own destination, which needs no next action either.
+                const approvedNow = !isCorrecting && !approvalRefusal
+                  && impliesTechnicalApproval(followUpResult);
                 const disabled = d.value === 'TERMINAL'
                   && !outcomeIsTerminal
+                  && !approvedNow
                   && !(isCorrecting ? false : settleOutcome);
                 return (
                   <button

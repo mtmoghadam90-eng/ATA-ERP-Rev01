@@ -195,6 +195,9 @@ const LIST_SELECT = {
   // شده»: the issue date is when the document was written, which is a different
   // thing and routinely a different day.
   sentDateJalali: true,
+  // «تأیید فنی» on the grid's status column. Selected here or the adapter has
+  // nothing to hand the badge — the select-then-drop fault in the other order.
+  technicalApprovedDateJalali: true,
   // The follow-up state, and both ends of the revision chain.
   //
   // The card prints «نسخه جدید از PF-A» and «نسخه بعدی: PF-B», and both are

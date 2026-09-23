@@ -201,6 +201,66 @@ export function resultKey(result: unknown): string {
     .trim();
 }
 
+/**
+ * A technical proposal and a priced quotation are two documents, each with its
+ * own destination.
+ *
+ * A technical proforma quotes no prices, so «برنده» and «بازنده» mean nothing
+ * on it: it is written, sent, and then **approved technically** — or
+ * cancelled. A financial one is what a customer buys from, and its destination
+ * is the win. One project routinely carries both, each settled on its own
+ * terms, which is why a technical document's status is its own short list here
+ * rather than an outcome read off lines that describe no sale.
+ */
+export const TECHNICAL_DOCUMENT_STATUSES = [
+  "پیش‌نویس", "در انتظار تأیید فنی", "تأیید فنی", "لغو شده",
+] as const;
+export type TechnicalDocumentStatus = (typeof TECHNICAL_DOCUMENT_STATUSES)[number];
+
+export function technicalDocumentStatus(pf: {
+  status?: string | null;
+  isCancelled?: boolean | null;
+  technicalApprovedDate?: string | Date | null;
+}): TechnicalDocumentStatus {
+  if (pf.isCancelled) return "لغو شده";
+  if (pf.technicalApprovedDate) return "تأیید فنی";
+  return pf.status === "ارسال شده" ? "در انتظار تأیید فنی" : "پیش‌نویس";
+}
+
+/**
+ * Refused when the result names a technical approval and the document is not a
+ * technical proposal.
+ *
+ * A financial quotation is approved by being **won**, which «تأیید نهایی خرید»
+ * already records; accepting «تأیید پیشنهاد فنی» on one would give it a second,
+ * weaker destination that no report reads. Absent is financial, as the NOT NULL
+ * column's own default is.
+ */
+export function technicalApprovalRefusal(
+  result: unknown,
+  proformaType: string | null | undefined,
+): string | null {
+  if (!impliesTechnicalApproval(result)) return null;
+  if (proformaType === "TECHNICAL") return null;
+  return "نتیجهٔ «تأیید پیشنهاد فنی» فقط برای پیش‌فاکتور فنی ثبت می‌شود؛ "
+    + "پیش‌فاکتور مالی با برنده شدن تأیید می‌شود (نتیجهٔ «تأیید نهایی خرید»).";
+}
+
+/**
+ * Refused when a technical proposal is being settled as a sale.
+ *
+ * It quotes no prices, so there is nothing to win or lose on it: its answer is
+ * the technical approval. Marking its lines «برنده» would count a specification
+ * as a sale everywhere that reads line statuses.
+ */
+export function technicalSettlementRefusal(
+  settleOutcome: unknown,
+  proformaType: string | null | undefined,
+): string | null {
+  if (!settleOutcome || proformaType !== "TECHNICAL") return null;
+  return "پیش‌فاکتور فنی برنده یا بازنده نمی‌شود؛ مقصد آن «تأیید پیشنهاد فنی» است.";
+}
+
 /** Whether a recorded result says the technical proposal was approved. */
 export function impliesTechnicalApproval(result: unknown): boolean {
   return resultKey(result) === resultKey(RESULT_TECHNICAL_APPROVED);
@@ -484,7 +544,12 @@ export function completionRefusalReason(
    * greyed out at exactly the moment it was wanted: the call where the customer
    * confirms the purchase is the call after which no next action is needed.
    */
-  if (input.decision === "TERMINAL" && !context.outcomeIsTerminal && !input.settleOutcome) {
+  // A technical proposal approved on this call has reached its own destination,
+  // so no next action is owed on it either — the priced quotation beside it is
+  // chased as a document of its own. (Refused outright on a financial document,
+  // by `technicalApprovalRefusal`, before this is ever asked.)
+  if (input.decision === "TERMINAL" && !context.outcomeIsTerminal && !input.settleOutcome
+    && !impliesTechnicalApproval(input.followUpResult)) {
     return "بستن پیگیری بدون اقدام بعدی فقط وقتی ممکن است که نتیجه نهایی پیش‌فاکتور مشخص شده باشد"
       + " یا هم‌زمان در همین فرم ثبت شود.";
   }
