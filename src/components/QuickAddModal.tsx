@@ -15,6 +15,7 @@ import { RelationPicker } from './RelationPicker';
 import { detailToCustomer, findServerDuplicates } from '../api/customerAdapter';
 import { getTodayShamsi } from '../dateUtils';
 import { PROJECT_STATUSES } from "../utils/moduleStatuses";
+import { channelForCommunicationMethod } from "../utils/messaging";
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -423,6 +424,9 @@ export default function QuickAddModal({
         leadQuality: projLeadQuality || undefined,
         referrerName: projReferrerName.trim() || undefined,
         communicationMethod: projCommunicationMethod || undefined,
+        // The project form's rule: a new project is written to on the medium it
+        // talks to us on. Nobody picks a channel on this form, so it is derived.
+        messagingChannel: channelForCommunicationMethod(projCommunicationMethod) || undefined,
         financialContact: projFinancialContact.trim() || undefined,
         technicalContact: projTechnicalContact.trim() || undefined,
         opportunityDate: projOpportunityDate,

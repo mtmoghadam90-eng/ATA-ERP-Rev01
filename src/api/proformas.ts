@@ -113,7 +113,9 @@ export interface ProformaDetail extends Omit<ProformaRow, "items"> {
   extraCosts: string;
   historicalExchangeRate: string | null;
   notes: string | null;
-  contact: { id: string; companyName: string } | null;
+  contact: { id: string; companyName: string; lastName?: string | null } | null;
+  /** The detail read carries the buyer's own name fields, for the printed panel. */
+  customer: { id: string; companyName: string; customerType: string; lastName?: string | null; gender?: string | null } | null;
   items: ProformaItemRow[];
   /** Which lines count as won — derived, so the client need not re-derive it. */
   wonItemIds: string[];

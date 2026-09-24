@@ -140,12 +140,16 @@ export interface CategoryUsageRow {
   products: number;
   /** False for a category products carry that the dropdown list does not have. */
   known: boolean;
+  /** Hand-typed quotation lines filed under it. */
+  lines?: number;
 }
 
 export interface CategoryMergeResult {
   from: string;
   to: string;
   moved: number;
+  /** Hand-typed quotation lines moved with the products. */
+  linesMoved?: number;
   listEntryRemoved: boolean;
 }
 

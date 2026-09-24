@@ -261,6 +261,11 @@ export function technicalSettlementRefusal(
   return "پیش‌فاکتور فنی برنده یا بازنده نمی‌شود؛ مقصد آن «تأیید پیشنهاد فنی» است.";
 }
 
+/** The refusal for an approval recorded with a next action still to come. */
+export const TECHNICAL_APPROVAL_CLOSES =
+  "با «تأیید پیشنهاد فنی» پیش‌فاکتور فنی به مقصد رسیده و از صف پیگیری خارج می‌شود؛ "
+  + "«بدون اقدام بعدی» را انتخاب کنید. پیش‌فاکتور مالی جداگانه پیگیری می‌شود.";
+
 /** Whether a recorded result says the technical proposal was approved. */
 export function impliesTechnicalApproval(result: unknown): boolean {
   return resultKey(result) === resultKey(RESULT_TECHNICAL_APPROVED);
@@ -498,6 +503,17 @@ export function completionRefusalReason(
     return "ثبت نتیجه پیگیری الزامی است.";
   }
 
+  /*
+   * An approval is the technical proposal reaching its destination, and the
+   * document then leaves every follow-up screen (`pendingTechnicalWhere`, and
+   * the project tab marks it settled) — so a next action raised with it would
+   * be a chase nobody could reach from anywhere. It closes with «بدون اقدام
+   * بعدی»; the priced quotation beside it is chased as a document of its own.
+   */
+  if (impliesTechnicalApproval(input.followUpResult) && input.decision !== "TERMINAL") {
+    return TECHNICAL_APPROVAL_CLOSES;
+  }
+
   if (input.decision === "NEXT_ACTION") {
     if (!String(input.nextTitle ?? "").trim()) return "عنوان اقدام بعدی الزامی است.";
     if (!String(input.nextDueDate ?? "").trim()) return "تاریخ اقدام بعدی الزامی است.";
@@ -686,6 +702,11 @@ export function correctionRefusalReason(
   if (!String(input.followUpResult ?? "").trim()) return "ثبت نتیجه پیگیری الزامی است.";
 
   const decision = input.decision ?? ctx.recorded;
+  // Corrected *to* an approval, the chase closes for the reason the completion
+  // does — and «بدون اقدام بعدی» is then the one decision allowed, not refused.
+  if (impliesTechnicalApproval(input.followUpResult)) {
+    return decision === "TERMINAL" ? null : TECHNICAL_APPROVAL_CLOSES;
+  }
   /*
    * A settled sale is corrected in its words and not in its plan.
    *

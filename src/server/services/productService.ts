@@ -1002,6 +1002,12 @@ export interface CategoryUsage {
   products: number;
   /** False for a category products carry that the dropdown list does not have. */
   known: boolean;
+  /**
+   * Hand-typed quotation lines filed under it. Such a line stores the category
+   * itself (`ProformaItem.category`, a catalogue line reads its product's), so a
+   * category can be in use with no product under it at all.
+   */
+  lines?: number;
 }
 
 /**
@@ -1015,19 +1021,30 @@ export interface CategoryUsage {
 export async function listCategoryUsage(user: AuthUser): Promise<CategoryUsage[] | "forbidden"> {
   if (!hasPermission(user, "products")) return "forbidden";
 
-  const [rows, settings] = await Promise.all([
+  const [rows, lineRows, settings] = await Promise.all([
     getDb().product.groupBy({ by: ["category"], _count: { _all: true } }),
+    getDb().proformaItem.groupBy({
+      by: ["category"], where: { productId: null, category: { not: null } }, _count: { _all: true },
+    }),
     loadSettings(),
   ]);
   const known = settings?.dropdownItems?.categories ?? [];
 
-  const used = rows
+  const used: CategoryUsage[] = rows
     .map((r) => ({
       category: r.category ?? "",
       products: r._count._all,
       known: matchKnownCategory(r.category, known) !== null,
     }))
     .filter((r) => r.category);
+
+  for (const l of lineRows) {
+    const name = l.category ?? "";
+    if (!name) continue;
+    const hit = used.find((u) => u.category === name);
+    if (hit) hit.lines = l._count._all;
+    else used.push({ category: name, products: 0, known: matchKnownCategory(name, known) !== null, lines: l._count._all });
+  }
 
   // A list entry nothing is filed under is still a category somebody may pick,
   // so it belongs in the picker the merge screen draws.
@@ -1045,6 +1062,8 @@ export interface MergeOutcome {
   to: string;
   /** Products moved. */
   moved: number;
+  /** Hand-typed quotation lines moved — they store their own category. */
+  linesMoved: number;
   /** True when the source was also removed from the dropdown list. */
   listEntryRemoved: boolean;
 }
@@ -1083,6 +1102,7 @@ export async function mergeCategory(
 
   const db = getDb();
   let moved = 0;
+  let linesMoved = 0;
   let listEntryRemoved = false;
 
   await db.$transaction(async (tx) => {
@@ -1091,6 +1111,19 @@ export async function mergeCategory(
       data: { category: target },
     });
     moved = result.count;
+
+    /*
+     * A hand-typed line stores its category on itself, so it has to move with
+     * the products or it goes on reporting the merged-away bucket — the split
+     * the merge exists to end, kept alive by the lines a report reads first.
+     * A catalogue line stores none (`lineCategory` reads its product), so only
+     * the free-text ones are touched.
+     */
+    const lines = await tx.proformaItem.updateMany({
+      where: { productId: null, category: from },
+      data: { category: target },
+    });
+    linesMoved = lines.count;
 
     const remaining = known.filter((entry) => categoryKey(entry) !== categoryKey(from));
     if (remaining.length !== known.length && remaining.length > 0) {
@@ -1114,12 +1147,12 @@ export async function mergeCategory(
       action: "UPDATE",
       module: "محصولات",
       entityId: `category-merge`,
-      description: `ادغام دسته‌بندی «${from}» در «${target}» — ${moved} محصول منتقل شد`,
-      afterState: { from, to: target, moved, listEntryRemoved },
+      description: `ادغام دسته‌بندی «${from}» در «${target}» — ${moved} محصول و ${linesMoved} ردیف دستی پیش‌فاکتور منتقل شد`,
+      afterState: { from, to: target, moved, linesMoved, listEntryRemoved },
     },
     user,
     todayJalali,
   );
 
-  return { from, to: target, moved, listEntryRemoved };
+  return { from, to: target, moved, linesMoved, listEntryRemoved };
 }

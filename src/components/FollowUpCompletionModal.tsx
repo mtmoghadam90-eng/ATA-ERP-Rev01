@@ -516,7 +516,12 @@ export default function FollowUpCompletionModal({
             </label>
             <SearchableSelect
               value={followUpResult}
-              onChange={setFollowUpResult}
+              onChange={(value) => {
+                setFollowUpResult(value);
+                // An approval closes the chase (see `completionRefusalReason`),
+                // so the form answers the decision rather than refusing a default.
+                if (impliesTechnicalApproval(value) && !isEditingAction) setDecision('TERMINAL');
+              }}
               options={options.map((o) => ({ value: o, label: o }))}
               placeholder="-- انتخاب کنید --"
               required
@@ -535,9 +540,11 @@ export default function FollowUpCompletionModal({
                 data-technical-approval-note
                 className="text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 mt-2 leading-relaxed"
               >
-                با ثبت این نتیجه، این پیش‌فاکتور فنی «تأیید فنی» می‌شود، وضعیت پروژه
-                «{PROJECT_TECHNICAL_APPROVED}» و مرحلهٔ آن «تهیه پیش‌فاکتور». این به معنای
-                برنده شدن پروژه نیست؛ پیش‌فاکتور مالی مسیر خودش را تا برنده شدن دارد.
+                با ثبت این نتیجه، این پیش‌فاکتور فنی «تأیید فنی» می‌شود و وضعیت پروژه
+                «{PROJECT_TECHNICAL_APPROVED}». مرحلهٔ پروژه معمولاً «تهیه پیش‌فاکتور» می‌شود،
+                مگر استعلامی از تأمین‌کننده هنوز بی‌پاسخ باشد یا پیش‌فاکتور دیگری نزد مشتری
+                باشد. این به معنای برنده شدن پروژه نیست؛ پیش‌فاکتور مالی مسیر خودش را تا
+                برنده شدن دارد.
               </p>
             )}
           </div>
@@ -716,7 +723,9 @@ export default function FollowUpCompletionModal({
                 */
                 // An approval recorded now is a technical proposal reaching its
                 // own destination, which needs no next action either.
-                const approvedNow = !isCorrecting && !approvalRefusal
+                // Corrected *to* an approval too: the correction closes it for
+                // the same reason (`correctionRefusalReason`).
+                const approvedNow = !approvalRefusal
                   && impliesTechnicalApproval(followUpResult);
                 const disabled = d.value === 'TERMINAL'
                   && !outcomeIsTerminal

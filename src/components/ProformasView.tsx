@@ -62,7 +62,7 @@ import { customersApi, type CustomerRow } from "../api/customers";
 import { useEntitySearch } from "../api/useEntitySearch";
 import { productsApi, type ProductRow } from "../api/products";
 import { projectsApi, type ProjectRow } from "../api/projects";
-import { createCustomerWithLinks, detailToCustomer, findServerDuplicates } from "../api/customerAdapter";
+import { createCustomerWithLinks, findServerDuplicates } from "../api/customerAdapter";
 import { productToWriteInput, detailToProduct, rowToProduct } from "../api/productAdapter";
 import { projectToWriteInput, detailToProject } from "../api/projectAdapter";
 import { detailToProforma, proformaToWriteInput, rowToProforma } from "../api/proformaAdapter";
@@ -2802,20 +2802,31 @@ export default function ProformasView({
      * «شناس». The record's own `lastName` is the answer; guessing it out of a
      * joined string is not.
      */
-    const recordFor = async (id?: string | null): Promise<Customer | undefined> => {
+    /*
+     * They come from the **proforma's** own detail read, not the customers
+     * module: a picker row can be a projection with no `lastName` at all (the
+     * page's buyers are exactly that), and `GET /api/customers/:id` needs the
+     * `customers` permission, which an account that may print quotations need
+     * not hold. Either way the renderer fell back to splitting the display
+     * name. The structured fields are laid over whatever this screen holds.
+     */
+    const detail = await proformasApi.get(pf.id).catch(() => null);
+    const recordFor = (
+      id: string | null | undefined,
+      projected: Partial<Customer> | null | undefined,
+    ): Customer | undefined => {
       if (!id) return undefined;
       const loaded = customers.find((c) => c.id === id);
-      if (loaded) return loaded;
-      try {
-        return detailToCustomer(await customersApi.get(id));
-      } catch {
-        return undefined;
-      }
+      if (!loaded && !projected) return undefined;
+      return { ...(loaded ?? {}), ...(projected ?? {}), id } as Customer;
     };
-    const [customerObj, contactRecord] = await Promise.all([
-      recordFor(pf.customerId),
-      recordFor(pf.contactCustomerId),
-    ]);
+    const customerObj = recordFor(pf.customerId, detail?.customer ? {
+      customerType: detail.customer.customerType as Customer["customerType"],
+      lastName: detail.customer.lastName ?? undefined,
+      gender: (detail.customer.gender ?? undefined) as Customer["gender"],
+    } : null);
+    const contactRecord = recordFor(pf.contactCustomerId, detail?.contact
+      ? { lastName: detail.contact.lastName ?? undefined } : null);
     const creatorUser = pf.creatorId
       ? users.find((u) => u.id === pf.creatorId)
       : currentUser;

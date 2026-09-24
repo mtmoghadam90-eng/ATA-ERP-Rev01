@@ -7095,7 +7095,8 @@ head("Project follow-up tab: what happened on this job");
   // its own answer — two documents, two destinations.
   ok("but a settled quotation is still marked as settled",
     /: isTerminalOutcome\(outcome\)/.test(body)
-    && /settled: row\.proformaType === PROFORMA_TECHNICAL_TYPE\s*\?\s*technicalDocumentStatus\(/.test(body));
+    && /const technicalStatus = row\.proformaType === PROFORMA_TECHNICAL_TYPE\s*\?\s*technicalDocumentStatus\(/.test(body)
+    && /settled: technicalStatus\s*\?\s*technicalStatus !== "در انتظار تأیید فنی"/.test(body));
   // Asking for a next action on a finished sale is the fault the queue screen
   // was corrected for.
   ok("and only the ones in play count as missing a next action",
@@ -8887,7 +8888,7 @@ head("Product categories: one taxonomy, two ways in");
    * afternoon and recreate what was just merged.
    */
   ok("the merge moves the products and shortens the list together",
-    /\$transaction\([\s\S]{0,600}product\.updateMany[\s\S]{0,600}appSetting\.upsert/.test(mergeBody));
+    /\$transaction\([\s\S]{0,600}product\.updateMany[\s\S]{0,1400}appSetting\.upsert/.test(mergeBody));
   // The taxonomy is edited in Settings, so changing it is that authority — not
   // `products`, which every warehouse account holds.
   ok("and needs the settings permission, not the products one",
@@ -21510,6 +21511,16 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   const fixed = ITEM_COL_PX.index + ITEM_COL_PX.image + ITEM_COL_PX.quantity + ITEM_COL_PX.unit;
   ok("...and the fixed columns leave the specification most of an A4 line",
     fixed + 2 * PRICE_COL_MIN_PX <= 350);
+  /*
+   * Those widths are border-box, so the cell's own padding comes out of them:
+   * at 10px a side the unit column held 26px and «دستگاه» wrapped. The three
+   * narrow cells carry 3px, and the unit column holds a six-letter word.
+   */
+  const doc140 = small(140, "دلار");
+  ok("the narrow cells are padded 3px a side, not 10",
+    (doc140.match(/<td style="padding: 10px 3px; text-align: center;/g) ?? []).length >= 3
+    && !/<td style="padding: 10px; text-align: center;/.test(doc140));
+  ok("...and the unit column leaves room for «دستگاه»", ITEM_COL_PX.unit - 2 * 3 >= 6 * 7);
 }
 
 /*
@@ -21527,10 +21538,22 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   const view = strip(readFileSync("src/components/ProformasView.tsx", "utf8"));
   const build = view.slice(view.indexOf("const buildProformaDocument"),
     view.indexOf("renderProformaDocument({", view.indexOf("const buildProformaDocument")));
-  ok("the printed document fetches a contact the screen does not hold",
-    /customersApi\.get\(id\)/.test(build) && /recordFor\(pf\.contactCustomerId\)/.test(build));
+  /*
+   * Through the proforma's own detail read, never the customers module: a
+   * picker row can be a projection with no `lastName`, and that endpoint
+   * needs the `customers` permission a quotation printer need not hold.
+   */
+  ok("the printed document reads its names from the proforma detail",
+    /proformasApi\.get\(pf\.id\)/.test(build) && /recordFor\(pf\.contactCustomerId, detail\?\.contact/.test(build));
   ok("...and the buyer too",
-    /recordFor\(pf\.customerId\)/.test(build));
+    /recordFor\(pf\.customerId, detail\?\.customer/.test(build));
+  ok("...and never through the customers module",
+    !/customersApi\.get/.test(build));
+  const psvc = readFileSync("src/server/services/proformaService.ts", "utf8");
+  const getBody = psvc.slice(psvc.indexOf("export async function getProforma("), psvc.indexOf("export async function getProforma(") + 1500);
+  ok("the proforma detail carries the buyer's and the contact's name fields",
+    /customer: \{ select: \{[^}]*lastName: true, gender: true/.test(getBody)
+    && /contact: \{ select: \{ id: true, companyName: true, lastName: true \} \}/.test(getBody));
   ok("...rather than reading the picker's matches alone",
     !/const contactRecord = pf\.contactCustomerId\s*\?\s*customers\.find/.test(build));
   const { familyNameOnly: fno } = await import("../src/utils/customerLabel");
@@ -21650,9 +21673,9 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   const svc = readFileSync("src/server/services/messaging/messageService.ts", "utf8");
   ok("Safir's key is a secret that never leaves the server", /BALE: \["botToken", "safirApiKey"\]/.test(svc));
   ok("the Bale mode and the bot id are stored config", /BALE: \["mode", "botToken", "safirBotId", "safirApiKey"\]/.test(svc));
-  const queue = svc.slice(svc.indexOf("const baleByPhone"), svc.indexOf("const baleByPhone") + 400);
+  const queue = svc.slice(svc.indexOf("const baleMode = channel === CHANNELS.BALE"), svc.indexOf("const baleMode = channel === CHANNELS.BALE") + 600);
   const worker = svc.slice(svc.indexOf("channelIsPaced(channel) && alreadySent > 0"));
-  ok("the queue hands every attempt its row id", /requestId: message\.id/.test(worker.slice(0, 900)));
+  ok("the queue hands every attempt its row id", /requestId: message\.id/.test(worker.slice(0, 1600)));
   ok("queueing a Bale message reads the mode off the provider row and hands it on",
     /baleModeOf\(\(await providerConfig\(CHANNELS\.BALE\)\)\?\.config\)/.test(queue) && /\{ baleByPhone \}/.test(queue));
 }
@@ -21695,6 +21718,8 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   eq("a new case created already completed asks", afterSalesClosingReached(undefined, "تکمیل شده"), "تکمیل شده");
   eq("completed → delivered asks again", afterSalesClosingReached("تکمیل شده", "تحویل داده شده"), "تحویل داده شده");
   eq("re-saving a completed case asks nothing", afterSalesClosingReached("تکمیل شده", "تکمیل شده"), null);
+  eq("delivered corrected back to completed asks nothing",
+    afterSalesClosingReached("تحویل داده شده", "تکمیل شده"), null);
   eq("an open status asks nothing", afterSalesClosingReached("در حال بررسی", "در حال تعمیر/خدمات"), null);
   eq("a missing status asks nothing", afterSalesClosingReached("در حال بررسی", undefined), null);
   const asView = readFileSync("src/components/AfterSalesServicesView.tsx", "utf-8");
@@ -21703,6 +21728,121 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("...and keeps no copy of the roll-up of its own",
     !/serviceItems\.every\(it => it\.status ===/.test(asView)
     && !/oldStatus !== 'تحویل داده شده'/.test(asView));
+}
+
+{
+  /*
+   * A hand-typed quotation line stores its own category, so a merge that
+   * moves only the products leaves those lines reporting the bucket just
+   * merged away — the split kept alive by the rows a report reads first.
+   */
+  const ps = readFileSync("src/server/services/productService.ts", "utf-8");
+  const merge = ps.slice(ps.indexOf("export async function mergeCategory("));
+  ok("a category merge moves the hand-typed quotation lines with the products",
+    /tx\.proformaItem\.updateMany\(\{\s*where: \{ productId: null, category: from \}/.test(merge));
+  const usage = ps.slice(ps.indexOf("export async function listCategoryUsage("), ps.indexOf("export interface MergeOutcome"));
+  ok("...and the usage list counts them, so such a category can be found at all",
+    /proformaItem\.groupBy\(/.test(usage) && /productId: null/.test(usage));
+}
+
+{
+  /*
+   * A technical approval closes its chase. The document then leaves every
+   * follow-up screen, so a next action raised with it would be a chase nobody
+   * could reach — which is why the completion and the correction both refuse
+   * any decision but «بدون اقدام بعدی» there, and the form picks it.
+   */
+  const ctx = { todayJalali: "1405/07/01", outcomeIsTerminal: false };
+  ok("an approval with a next action still to come is refused",
+    completionRefusalReason({
+      followUpResult: RESULT_TECHNICAL_APPROVED, decision: "NEXT_ACTION",
+      nextTitle: "تماس", nextDueDate: "1405/07/05",
+    } as any, ctx) !== null);
+  ok("...and with a deferral", completionRefusalReason({
+    followUpResult: RESULT_TECHNICAL_APPROVED, decision: "DEFER", deferredUntil: "1405/08/01",
+  } as any, ctx) !== null);
+  eq("...while closing it with no next action is accepted", completionRefusalReason({
+    followUpResult: RESULT_TECHNICAL_APPROVED, decision: "TERMINAL",
+  } as any, ctx), null);
+  eq("a correction to an approval may close it though the sale is open",
+    correctionRefusalReason({ followUpResult: RESULT_TECHNICAL_APPROVED, decision: "TERMINAL" } as any,
+      { recorded: "NEXT_ACTION", outcomeIsTerminal: false }), null);
+  ok("...and must", correctionRefusalReason({ followUpResult: RESULT_TECHNICAL_APPROVED } as any,
+    { recorded: "NEXT_ACTION", outcomeIsTerminal: false }) !== null);
+  const modal = readFileSync("src/components/FollowUpCompletionModal.tsx", "utf-8");
+  ok("the form picks «بدون اقدام بعدی» when an approval is chosen",
+    /impliesTechnicalApproval\(value\) && !isEditingAction\) setDecision\('TERMINAL'\)/.test(modal));
+  ok("...and no longer promises a stage the derivation may not choose",
+    !/و مرحلهٔ آن «تهیه پیش‌فاکتور»\. این/.test(modal));
+}
+
+{
+  const { channelForCommunicationMethod: cfm, CHANNELS: CH } = await import("../src/utils/messaging");
+  /*
+   * A half-space separates two words, so folding it to nothing hid «بله» inside
+   * «پیام‌رسان‌بله» — the whole-word guard then answered SMS. It is a boundary.
+   */
+  eq("«پیام‌رسان‌بله» reads as Bale", cfm("پیام\u200cرسان\u200cبله"), CH.BALE);
+  eq("...while «مقابله» still does not", cfm("مقابله"), "");
+  eq("«واتس‌اپ» with a half-space is still WhatsApp", cfm("واتس\u200cاپ"), CH.WHATSAPP);
+  eq("«پست‌الکترونیک» is still email", cfm("پست\u200cالکترونیک"), CH.EMAIL);
+
+  /*
+   * The quick-add project form is a second way to create a project, and it
+   * sent the method without the channel — so a project made from a proforma
+   * or a task screen was written to by SMS whatever it said.
+   */
+  const qa = readFileSync("src/components/QuickAddModal.tsx", "utf-8");
+  ok("the quick-add project form derives the send channel from the method",
+    /messagingChannel: channelForCommunicationMethod\(projCommunicationMethod\)/.test(qa));
+  const types = readFileSync("src/types.ts", "utf-8");
+  ok("...and a project's channel is the module's own union, not a narrower copy",
+    /messagingChannel\?: Channel;/.test(types) && !/messagingChannel\?: 'SMS' \| 'BALE' \| 'EMAIL'/.test(types));
+
+  /*
+   * A Bale row is delivered under the mode its address was resolved in: the
+   * mode can move between queueing and delivery, and a Safir mobile sent to
+   * the bot is a chat id somebody else may own.
+   */
+  const ms = readFileSync("src/server/services/messaging/messageService.ts", "utf-8");
+  ok("a queued Bale message stores the mode its address was resolved under",
+    /baleMode,\s*\n\s*status: MESSAGE_STATUS\.QUEUED|channel: input\.channel,\s*\n\s*baleMode,/.test(ms)
+    && /\/\/ provider row says when the worker gets to it\.\n\s*baleMode,/.test(ms));
+  ok("...and the worker delivers it under that mode",
+    /channel === CHANNELS\.BALE && message\.baleMode\s*\n\s*\? \{ \.\.\.\(provider\.config as Record<string, unknown>\), mode: message\.baleMode \}/.test(ms)
+    && /sendThrough\(channel, config, \{/.test(ms));
+  ok("...on a column the schema declares",
+    /baleMode String\? @db\.NVarChar\(10\)/.test(readFileSync("prisma/schema.prisma", "utf-8")));
+
+  /*
+   * A reply's files join it as each one lands, so a failure half way through
+   * keeps the ones already on the server rather than orphaning them.
+   */
+  const thread = readFileSync("src/components/ReferralThread.tsx", "utf-8");
+  ok("a referral reply keeps the files uploaded before a later one failed",
+    /const url = await onUploadFile\(file\);[\s\S]{0,160}setAttachments\(\(prev\) => \[\.\.\.prev, added\]\)/.test(thread));
+  const pv = readFileSync("src/components/ProjectsView.tsx", "utf-8");
+  ok("...and so does the activity feed",
+    /return added\.length > 0 \? normalizeAttachments\(\[\.\.\.existing, \.\.\.added\]\) : null;/.test(pv));
+
+  /*
+   * A technical proposal's row on the project tab carries its own status —
+   * an outcome read off lines that quote no prices said «ارسال شده» about a
+   * proposal already approved.
+   */
+  const fus = readFileSync("src/server/services/followUpService.ts", "utf-8");
+  const report = fus.slice(fus.indexOf("export async function projectFollowUpReport("));
+  ok("the project tab reports a technical proposal's own status as its outcome",
+    /const outcome = technicalStatus \?\? getProformaOutcome\(row as never\);/.test(report));
+
+  /*
+   * A deleted chase can be the only evidence of a technical approval, so the
+   * ordinary task delete re-derives the stamp in its own transaction.
+   */
+  const ts = readFileSync("src/server/services/taskService.ts", "utf-8");
+  const del = ts.slice(ts.indexOf("export async function deleteTask("), ts.indexOf("export async function deleteTask(") + 1400);
+  ok("deleting a follow-up re-derives the technical approval it may have carried",
+    /\$transaction\(async \(tx\) => \{\s*await tx\.task\.delete\(\{ where: \{ id \} \}\);\s*await resyncApprovalAfterFollowUpRemoved\(tx, existing/.test(del));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

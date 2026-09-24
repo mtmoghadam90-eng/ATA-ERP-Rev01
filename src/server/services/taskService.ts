@@ -22,6 +22,7 @@ import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
 import { notifyStaff } from "./staffNotifications";
 import { afterCommit } from "../afterCommit";
+import { resyncApprovalAfterFollowUpRemoved } from "./followUpService";
 
 /**
  * Task data access.
@@ -1236,7 +1237,12 @@ export async function deleteTask(id: string, user: AuthUser, todayJalali: string
     return "not-found";
   }
 
-  await db.task.delete({ where: { id } });
+  // A deleted chase can be the only evidence of a technical approval, so the
+  // stamp is re-derived in the same transaction rather than left standing.
+  await db.$transaction(async (tx) => {
+    await tx.task.delete({ where: { id } });
+    await resyncApprovalAfterFollowUpRemoved(tx, existing, todayJalali, user);
+  });
 
   // Audit log
   await logAction(
