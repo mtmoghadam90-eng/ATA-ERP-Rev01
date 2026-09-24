@@ -366,11 +366,11 @@ export default function ProjectsView({
     }
 
     setUploadingActivityFiles(true);
+    // Sequential rather than parallel: the uploads share one disk and one
+    // sharp pipeline on the server, and ten at once on a phone connection is
+    // how the whole batch times out instead of the last one.
+    const added: ActivityAttachment[] = [];
     try {
-      // Sequential rather than parallel: the uploads share one disk and one
-      // sharp pipeline on the server, and ten at once on a phone connection is
-      // how the whole batch times out instead of the last one.
-      const added: ActivityAttachment[] = [];
       for (const file of files) {
         const url = await uploadFile(file);
         added.push({
@@ -382,7 +382,9 @@ export default function ProjectsView({
       return normalizeAttachments([...existing, ...added]);
     } catch {
       alert('بارگذاری فایل با خطا مواجه شد.');
-      return null;
+      // The files that did upload are kept: dropping them leaves them on the
+      // server with nothing pointing at them, and re-picking them uploads twice.
+      return added.length > 0 ? normalizeAttachments([...existing, ...added]) : null;
     } finally {
       setUploadingActivityFiles(false);
     }

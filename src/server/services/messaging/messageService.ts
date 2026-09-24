@@ -434,6 +434,12 @@ export interface QueueMessageInput {
    * dry run — is the thing those switches exist to stop.
    */
   audience?: MessageAudience;
+  /**
+   * The Bale mode the recipient was resolved under. Absent on a Bale message
+   * means «read the current one now», which `queueMessage` does, so every row
+   * on that channel carries the mode its address belongs to.
+   */
+  baleMode?: string | null;
 }
 
 /**
@@ -467,9 +473,14 @@ export async function queueMessage(input: QueueMessageInput) {
       : null,
   );
 
+  const baleMode = input.channel === CHANNELS.BALE
+    ? (input.baleMode ?? baleModeOf((await providerConfig(CHANNELS.BALE))?.config))
+    : null;
+
   return getDb().message.create({
     data: {
       channel: input.channel,
+      baleMode,
       recipient: input.recipient,
       recipientName: input.recipientName ?? null,
       subject: input.subject ?? null,
@@ -612,8 +623,10 @@ export async function queueForCustomer(
    * guessed. Read only for Bale: for every other channel the answer cannot
    * change the address, and a query per queued message for nothing is a cost.
    */
-  const baleByPhone = channel === CHANNELS.BALE
-    && baleModeOf((await providerConfig(CHANNELS.BALE))?.config) === BALE_MODES.SAFIR;
+  const baleMode = channel === CHANNELS.BALE
+    ? baleModeOf((await providerConfig(CHANNELS.BALE))?.config)
+    : null;
+  const baleByPhone = baleMode === BALE_MODES.SAFIR;
 
   const { recipient, problem } = resolveRecipient(
     [asCandidate(contact), asCandidate(customer)],
@@ -643,6 +656,9 @@ export async function queueForCustomer(
     campaignId: input.campaignId ?? null,
     createdByUserId: input.createdByUserId ?? null,
     createdByName: input.createdByName ?? null,
+    // The mode the address above was resolved under, not whatever the
+    // provider row says when the worker gets to it.
+    baleMode,
   });
 
   return { queued: true, messageId: message.id };
@@ -845,7 +861,16 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
           : whatsappGapMs(Math.random()));
       }
 
-      const result = await sendThrough(channel, provider.config, {
+      /*
+       * A Bale row is delivered under the mode its address was resolved in.
+       * Switching modes keeps the other mode's credentials, so this still has
+       * what it needs; reading the current mode instead would send a Safir
+       * mobile to the bot as a chat id, or a chat id to Safir as a number.
+       */
+      const config = channel === CHANNELS.BALE && message.baleMode
+        ? { ...(provider.config as Record<string, unknown>), mode: message.baleMode }
+        : provider.config;
+      const result = await sendThrough(channel, config, {
         recipient: message.recipient,
         subject: message.subject,
         body: message.body,

@@ -25,7 +25,7 @@ import {
 import { TASK_CANCELLED, TASK_TODO } from "../../utils/workBoard";
 import {
   FOLLOW_UP_KIND, impliesTechnicalApproval, technicalApprovalRefusal,
-  technicalDocumentStatus, technicalSettlementRefusal,
+  technicalDocumentStatus, technicalSettlementRefusal, type TechnicalDocumentStatus,
 } from "../../utils/salesFollowUp";
 import { PROFORMA_SENT_STATUS, PROFORMA_TECHNICAL_TYPE } from "../../utils/moduleStatuses";
 import { relationSpellings, taskRelationKind } from "../../utils/taskRelations";
@@ -228,6 +228,30 @@ async function syncTechnicalApproval(
       : { technicalApprovedDate: null, technicalApprovedDateJalali: null },
   });
   return true;
+}
+
+/**
+ * Re-derives a technical approval after a follow-up task has gone.
+ *
+ * The approval is a stamp derived from the recorded chases, and a chase can be
+ * deleted through the ordinary task delete — which knew nothing of it, so the
+ * stamp outlived its evidence and every later recalculation went on reporting
+ * the project as technically approved. Called inside the delete's own
+ * transaction, only for a follow-up whose result named an approval.
+ */
+export async function resyncApprovalAfterFollowUpRemoved(
+  tx: Prisma.TransactionClient,
+  task: { taskKind?: string | null; relatedToType?: string | null; relatedToId?: string | null; followUpResult?: string | null },
+  todayJalali: string,
+  user: AuthUser,
+): Promise<void> {
+  if (task.taskKind !== FOLLOW_UP_KIND || task.relatedToType !== "proforma" || !task.relatedToId) return;
+  if (!impliesTechnicalApproval(task.followUpResult)) return;
+  if (!(await syncTechnicalApproval(tx, task.relatedToId, todayJalali))) return;
+  const proforma = await tx.proforma.findUnique({
+    where: { id: task.relatedToId }, select: { projectId: true },
+  });
+  if (proforma?.projectId) await syncProjectStatus(tx, proforma.projectId, todayJalali, user);
 }
 
 /**
@@ -1273,7 +1297,12 @@ export interface ProjectFollowUpQuote {
   /** FINANCIAL or TECHNICAL — a technical proposal is settled by approval. */
   proformaType: string;
   status: string;
-  outcome: ProformaOutcome;
+  /**
+   * A priced quotation's derived outcome, or a technical proposal's own status
+   * (`technicalDocumentStatus`): its lines quote no prices, so an outcome read
+   * off them says «ارسال شده» about a proposal already approved.
+   */
+  outcome: ProformaOutcome | TechnicalDocumentStatus;
   currency: string;
   finalAmount: string;
   sentDateJalali: string | null;
@@ -1412,7 +1441,13 @@ export async function projectFollowUpReport(
 
   const quotes = rows.map((row) => {
     const openTask = open.get(row.id) ?? null;
-    const outcome = getProformaOutcome(row as never);
+    const technicalStatus = row.proformaType === PROFORMA_TECHNICAL_TYPE
+      ? technicalDocumentStatus({
+        status: row.status, isCancelled: row.isCancelled,
+        technicalApprovedDate: row.technicalApprovedDateJalali,
+      })
+      : null;
+    const outcome = technicalStatus ?? getProformaOutcome(row as never);
     const followUpState = normalizeFollowUpState(row.followUpState);
 
     return {
@@ -1432,11 +1467,8 @@ export async function projectFollowUpReport(
       // is settled too, and a draft has not been sent to anybody.
       // A technical proposal is settled by its own answer — approved or
       // cancelled — and a draft one has not been sent to anybody.
-      settled: row.proformaType === PROFORMA_TECHNICAL_TYPE
-        ? technicalDocumentStatus({
-          status: row.status, isCancelled: row.isCancelled,
-          technicalApprovedDate: row.technicalApprovedDateJalali,
-        }) !== "در انتظار تأیید فنی"
+      settled: technicalStatus
+        ? technicalStatus !== "در انتظار تأیید فنی"
         : isTerminalOutcome(outcome)
           || !(CHASEABLE_OUTCOMES as readonly string[]).includes(outcome),
       followUpHealth: followUpHealthOf(

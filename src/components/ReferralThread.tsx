@@ -178,12 +178,14 @@ export default function ReferralThread({
     if (oversized) { alert(oversized); return; }
     setUploading(true);
     try {
-      const added: ActivityAttachment[] = [];
+      // Each file joins the reply the moment it lands, so a failure half way
+      // through leaves the ones already uploaded on the reply rather than on
+      // the server with nothing pointing at them.
       for (const file of picked) {
         const url = await onUploadFile(file);
-        added.push({ name: file.name, size: formatFileSize(file.size), url });
+        const added: ActivityAttachment = { name: file.name, size: formatFileSize(file.size), url };
+        setAttachments((prev) => [...prev, added]);
       }
-      setAttachments((prev) => [...prev, ...added]);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'بارگذاری فایل با خطا مواجه شد.');
     } finally {

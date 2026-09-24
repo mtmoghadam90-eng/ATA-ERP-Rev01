@@ -2127,6 +2127,13 @@ model Message {
   /// waits for a working day rather than a customer's going out on Ashura.
   audience String @default("CUSTOMER") @db.NVarChar(20)
 
+  /// BOT | SAFIR — the Bale mode this row's recipient was resolved under, or
+  /// null for every other channel and for rows queued before the column. The
+  /// mode is a setting that can move between queueing and delivery, and Safir
+  /// addresses a mobile while the bot addresses a chat id: delivering under the
+  /// other one fails, or sends a mobile as somebody else's chat id.
+  baleMode String? @db.NVarChar(10)
+
   /**
    * ----------------------------- provenance -----------------------------
    */

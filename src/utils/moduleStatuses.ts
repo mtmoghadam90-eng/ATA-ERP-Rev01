@@ -260,7 +260,12 @@ export function afterSalesIsOpen(status: unknown): boolean {
 export function afterSalesClosingReached(oldStatus: unknown, newStatus: unknown): string | null {
   const next = String(newStatus ?? "");
   if (afterSalesIsOpen(next)) return null;
-  return String(oldStatus ?? "") === next ? null : next;
+  const prev = String(oldStatus ?? "");
+  // Open → closed is the event. Among the two closing statuses only the
+  // forward step counts: delivered corrected back to completed is a case that
+  // was already closed, and asking about it again reads as a new event.
+  if (afterSalesIsOpen(prev)) return next;
+  return prev === "تکمیل شده" && next === "تحویل داده شده" ? next : null;
 }
 
 /* ----------------------------- transactions ------------------------------ */

@@ -57,7 +57,7 @@ export default function CategoryMergePanel({ known, onMerged }: Props) {
    * have. That is exactly what an unguarded import creates, and it is the only
    * state this panel exists to clear.
    */
-  const strays = useMemo(() => rows.filter((r) => !r.known && r.products > 0), [rows]);
+  const strays = useMemo(() => rows.filter((r) => !r.known && (r.products > 0 || (r.lines ?? 0) > 0)), [rows]);
 
   const refusal = from && to ? mergeRefusalReason(from, to, known) : null;
 
@@ -69,7 +69,9 @@ export default function CategoryMergePanel({ known, onMerged }: Props) {
     try {
       const result = await productsApi.mergeCategory(from, to);
       setNotice(
-        `${result.moved.toLocaleString('fa-IR')} محصول از «${result.from}» به «${result.to}» منتقل شد`
+        `${result.moved.toLocaleString('fa-IR')} محصول`
+        + ((result.linesMoved ?? 0) > 0 ? ` و ${(result.linesMoved ?? 0).toLocaleString('fa-IR')} ردیف دستی پیش‌فاکتور` : '')
+        + ` از «${result.from}» به «${result.to}» منتقل شد`
         + (result.listEntryRemoved ? ' و «' + result.from + '» از فهرست حذف شد.' : '.'),
       );
       setFrom('');
@@ -139,7 +141,7 @@ export default function CategoryMergePanel({ known, onMerged }: Props) {
             <option value="">انتخاب کنید…</option>
             {rows.map((r) => (
               <option key={r.category} value={r.category}>
-                {r.category} — {r.products.toLocaleString('fa-IR')} محصول{r.known ? '' : ' (خارج از فهرست)'}
+                {r.category} — {r.products.toLocaleString('fa-IR')} محصول{(r.lines ?? 0) > 0 ? ` + ${(r.lines ?? 0).toLocaleString('fa-IR')} ردیف دستی` : ''}{r.known ? '' : ' (خارج از فهرست)'}
               </option>
             ))}
           </select>

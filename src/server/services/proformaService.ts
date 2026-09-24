@@ -253,8 +253,15 @@ export async function getProforma(id: string, user: AuthUser) {
   const proforma = await db.proforma.findFirst({
     where: visibility ? { AND: [{ id }, visibility] } : { id },
     include: {
-      customer: { select: { id: true, companyName: true, customerType: true, economicCode: true, address: true, phone: true } },
-      contact: { select: { id: true, companyName: true } },
+      /*
+       * `lastName` and `gender` are what the printed buyer panel addresses a
+       * person by. They ride on this proforma-gated read so printing needs no
+       * `customers` permission — an account allowed to print quotations but
+       * not to open the customers module would otherwise print «شناس» for a
+       * contact called «حق شناس», the fault the print path was corrected for.
+       */
+      customer: { select: { id: true, companyName: true, customerType: true, economicCode: true, address: true, phone: true, lastName: true, gender: true } },
+      contact: { select: { id: true, companyName: true, lastName: true } },
       /*
        * `customerInquiryNumber` is «شماره درخواست» on the printed document —
        * the customer's own reference for the enquiry this quotation answers, so

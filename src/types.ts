@@ -598,7 +598,7 @@ export interface Project {
   }[];
   /** Who to write to about this job, and how — see the messaging module. */
   messagingContactId?: string;
-  messagingChannel?: 'SMS' | 'BALE' | 'EMAIL';
+  messagingChannel?: Channel; // the module's own union — a narrower copy here dropped WhatsApp and Telegram
   /**
    * Automation leaves this job alone.
    *

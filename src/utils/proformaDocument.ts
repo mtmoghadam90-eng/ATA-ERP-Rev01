@@ -79,9 +79,11 @@ export interface ProformaDocumentInput {
  * The photograph is 92px and its cell carries 6px of padding a side, so 104
  * holds it exactly — it was 118 with 10px padding, fourteen pixels of air
  * taken off the specification on every row. The index, quantity and unit
- * hold one to four characters and were sized for more.
+ * hold one to four characters and were sized for more — and their cells
+ * carry 3px of side padding rather than 10, because these are border-box
+ * widths: at 10px a side the unit column held 26px, and «دستگاه» wrapped.
  */
-export const ITEM_COL_PX = { index: 28, image: 104, quantity: 42, unit: 46 } as const;
+export const ITEM_COL_PX = { index: 28, image: 104, quantity: 42, unit: 52 } as const;
 /** The narrowest a money column may be: six monospace figures at 12px. */
 export const PRICE_COL_MIN_PX = 62;
 
@@ -214,7 +216,7 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
             : undefined;
       return `
     <tr style="border-bottom: 1px solid #e2e8f0;">
-      <td style="padding: 10px; text-align: center; font-family: monospace; vertical-align: middle;">${index + 1}</td>
+      <td style="padding: 10px 3px; text-align: center; font-family: monospace; vertical-align: middle;">${index + 1}</td>
       <!-- The picture has a column of its own, and the name heads the
            specification it belongs to — the same shape as the preview on
            screen. Side by side, the name crowded a 48px thumbnail and the
@@ -258,8 +260,8 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
              above every specification and left the name floating. -->
         <div style="font-size: 11px; color: #475569; white-space: pre-line; line-height: 1.5; text-align: left; direction: ltr;">${item.techSpecs ? renderRichText(item.techSpecs) : "-"}</div>
       </td>
-      <td style="padding: 10px; text-align: center; font-family: monospace; vertical-align: middle;">${item.quantity}</td>
-      <td style="padding: 10px; text-align: center; vertical-align: middle;">${item.unit || prod?.unit || "عدد"}</td>
+      <td style="padding: 10px 3px; text-align: center; font-family: monospace; vertical-align: middle;">${item.quantity}</td>
+      <td style="padding: 10px 3px; text-align: center; vertical-align: middle;">${item.unit || prod?.unit || "عدد"}</td>
       ${
         pf.proformaType !== "TECHNICAL"
           ? `

@@ -673,7 +673,10 @@ export const RECIPIENT_PROBLEM_LABELS: Record<RecipientProblem, string> = {
  */
 export function channelForCommunicationMethod(method: string | null | undefined): Channel | "" {
   const text = String(method ?? "")
-    .replace(/ي/g, "ی").replace(/ك/g, "ک").replace(/\u200c/g, "")
+    .replace(/ي/g, "ی").replace(/ك/g, "ک")
+    // A half-space separates two words, so it becomes a boundary rather than
+    // nothing: «پیام‌رسان‌بله» folded to one run would hide «بله» inside it.
+    .replace(/\u200c/g, " ")
     .toLowerCase().trim();
   if (!text) return "";
   if (/واتس|whats\s*app/.test(text.replace(/\s+/g, ""))) return CHANNELS.WHATSAPP;
