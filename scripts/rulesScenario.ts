@@ -369,6 +369,7 @@ import {
   failedMessageBody, failedMessageTitle, noticeSubject,
 } from "../src/utils/workflowNotice";
 import { deriveServiceHeader } from "../src/server/afterSalesStatus";
+import { parseCreateFormHash, parseTelegramApiApp, telegramAppShortName, telegramLoginPhone, TELEGRAM_SHORT_NAME_RULE } from "../src/utils/telegramApiApp";
 import {
   DUE_SOON_DAYS, OVERDUE_WINDOW_DAYS,
   dueNoticeBody, dueNoticeRecipient, dueNoticeTitle, dueNoticesFor, dueScanRange,
@@ -21987,6 +21988,32 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
   ok("the button is drawn by the same rule", /canDeleteCategoryGroup\(group, currentUser\)/.test(view));
   ok("the old prefix-only test is gone", !/group\.categoryId\.startsWith\('cat-fact-'\)/.test(view));
+}
+
+
+// ── Telegram api_id/api_hash fetched without a browser ──────────────────
+{
+  const page = `<div class="form-group"><label>App api_id:</label><div><span class="form-control input-xlarge uneditable-input"><strong>1234567</strong></span></div></div>
+<div class="form-group"><label>App api_hash:</label><div><span class="form-control input-xlarge uneditable-input">0123456789abcdef0123456789abcdef</span></div></div>`;
+  eq("tg api: the pair is read off /apps", JSON.stringify(parseTelegramApiApp(page)), JSON.stringify({ apiId: "1234567", apiHash: "0123456789abcdef0123456789abcdef" }));
+  eq("tg api: a creation form is not a pair", parseTelegramApiApp('<form id="app_create_form"><input type="hidden" name="hash" value="abc123"/></form>'), null);
+  eq("tg api: a malformed hash is refused rather than printed", parseTelegramApiApp(page.replace("0123456789abcdef0123456789abcdef", "short")), null);
+  eq("tg api: the creation form's hash is read", parseCreateFormHash('<input type="hidden" name="hash" value="abc123"/>'), "abc123");
+  eq("tg api: attribute order does not matter", parseCreateFormHash('<input value="zz9" type="hidden" name="hash">'), "zz9");
+  eq("tg api: no form, no hash", parseCreateFormHash("<p>nothing</p>"), null);
+  let seed = 0; const rnd = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+  const names = new Set(Array.from({ length: 200 }, () => telegramAppShortName(rnd)));
+  ok("tg api: every proposed short name is one the site accepts", [...names].every(n => TELEGRAM_SHORT_NAME_RULE.test(n)));
+  ok("tg api: short names are unique rather than a word somebody already took", names.size > 190);
+  eq("tg api: a local mobile becomes international", telegramLoginPhone("09121234567"), "+989121234567");
+  eq("tg api: Persian digits are folded", telegramLoginPhone("۰۹۱۲۱۲۳۴۵۶۷"), "+989121234567");
+  eq("tg api: a foreign number keeps its country", telegramLoginPhone("+44 7700 900123"), "+447700900123");
+  eq("tg api: 00 prefix is read as +", telegramLoginPhone("0098 912 123 4567"), "+989121234567");
+  eq("tg api: not a number, no request", telegramLoginPhone("abc"), null);
+  const script = readFileSync("relay/fetchTelegramApi.ts", "utf8");
+  ok("tg api: the script writes the pair nowhere but the console", !/writeFile|appendFile|createWriteStream/.test(script));
+  ok("tg api: the script prints English (consoles mangle Persian)", !/[\u0600-\u06FF]/.test(script));
+  ok("tg api: the relay exposes it as a script", /"telegram:api"/.test(readFileSync("relay/package.json", "utf8")));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
