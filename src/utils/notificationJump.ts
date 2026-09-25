@@ -77,3 +77,31 @@ export function moduleNotificationJump(
   const projectId = text(notification.projectId);
   return projectId ? { projectId } : null;
 }
+
+/**
+ * A work card's project line leads to that project, opened.
+ *
+ * The code and the name on a task, a referral or a follow-up card were drawn in
+ * blue and led nowhere, so reading one meant opening «پروژه‌ها», typing the
+ * code and pressing the row — three steps for what the card already knew. The
+ * card carries the project's **id** (the server joined it), so the jump is the
+ * notification's own: the feed of that exact project, not a search that
+ * several projects called the same thing would answer.
+ *
+ * Answers **null** where the line names no project — a task about a customer
+ * carries the customer's id in the same slot with an empty code, and following
+ * that would open a project that does not exist. A referral also names its
+ * category and message, so the jump expands the conversation it came from.
+ */
+export function cardProjectJump(
+  context: { id?: string | null; code?: string | null } | null | undefined,
+  inside?: { groupId?: string | null; activityId?: string | null },
+): ActivityJump | null {
+  const projectId = text(context?.id);
+  if (!projectId || !text(context?.code)) return null;
+  return {
+    projectId,
+    groupId: text(inside?.groupId),
+    activityId: text(inside?.activityId),
+  };
+}

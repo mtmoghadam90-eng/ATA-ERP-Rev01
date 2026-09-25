@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { ActivityJump } from '../utils/notificationJump';
+import { cardProjectJump } from '../utils/notificationJump';
 import TaskCompletionModal from './TaskCompletionModal';
 import { 
   Plus, 
@@ -27,6 +28,7 @@ import { describeReminder } from '../utils/reminderRepeat';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import WorkBoard, { BoardCard } from './WorkBoard';
+import CardProjectLink from './CardProjectLink';
 import { DETAIL_LABELS } from '../utils/cardSummary';
 import ConfirmModal from './ConfirmModal';
 import ReferralsView from './ReferralsView';
@@ -133,6 +135,12 @@ interface TasksViewProps {
    * the project jump does.
    */
   onOpenNotification?: (jump: ActivityJump) => void;
+  /**
+   * Where a card's project code and name lead: that project, opened on its
+   * details. The same hand-off a notice uses, because both name a project by
+   * id and both belong to `App` — the destination is another view.
+   */
+  onOpenProject?: (jump: ActivityJump) => void;
   /** Asks about closing the project's proforma activity category on a settlement. */
   categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
@@ -143,6 +151,7 @@ export default function TasksView({
   initialTab,
   onInitialTabApplied,
   onOpenNotification,
+  onOpenProject,
   categoryCompletion,
 }: TasksViewProps) {
   // Declared before the pickers below, which are disabled while it is closed.
@@ -902,6 +911,7 @@ export default function TasksView({
       assignedTo: task.assignedTo,
       createdBy: task.createdByName,
       context: task.relatedProject ?? null,
+      projectJump: cardProjectJump(task.relatedProject),
       // The board card keeps these behind its «شرح» button. They are already on
       // the list row — `LIST_SELECT` carries all three — so this costs nothing.
       description: task.description,
@@ -958,6 +968,10 @@ export default function TasksView({
           customerName: ref.activity.group.project.customer?.companyName ?? null,
         }
         : null,
+      projectJump: cardProjectJump(ref.activity?.group?.project, {
+        groupId: ref.activity?.group?.id,
+        activityId: ref.activity?.id,
+      }),
       replies: ref.messages?.length ?? 0,
     }));
 
@@ -1349,6 +1363,7 @@ export default function TasksView({
             const task = tasks.find((t) => t.id === card.id);
             if (task) handleOpenEdit(task);
           }}
+          onOpenProject={onOpenProject}
           moving={movingCards || followUpLoading}
         />
       )}
@@ -1403,8 +1418,12 @@ export default function TasksView({
                   </button>
                   {card.context && (
                     <div className="text-[10px] text-sky-700 flex flex-wrap items-center gap-1">
-                      {card.context.code && <span className="font-mono font-bold">{card.context.code}</span>}
-                      {card.context.name && <span className="truncate">{card.context.name}</span>}
+                      <CardProjectLink
+                        code={card.context.code}
+                        name={card.context.name}
+                        jump={card.projectJump}
+                        onOpen={onOpenProject}
+                      />
                       {card.context.customerName && (
                         <span className="text-slate-500">— {card.context.customerName}</span>
                       )}
@@ -1507,15 +1526,12 @@ export default function TasksView({
                       printed — an empty «کد | نام |» would read as a project
                       that does not exist.
                     */}
-                    {task.relatedProject.code && (
-                      <>
-                        <span className="font-mono font-bold">{task.relatedProject.code}</span>
-                        <span className="text-sky-300">|</span>
-                      </>
-                    )}
-                    {task.relatedProject.name && (
-                      <span className="truncate">{task.relatedProject.name}</span>
-                    )}
+                    <CardProjectLink
+                      code={task.relatedProject.code}
+                      name={task.relatedProject.name}
+                      jump={cardProjectJump(task.relatedProject)}
+                      onOpen={onOpenProject}
+                    />
                     {task.relatedProject.customerName && (
                       <>
                         {task.relatedProject.name && <span className="text-sky-300">|</span>}

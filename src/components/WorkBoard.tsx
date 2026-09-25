@@ -11,6 +11,8 @@ import {
   isMovableLane, referralLane, sortBoardCards, taskBoardLane,
 } from '../utils/workBoard';
 import type { WorkLoad } from '../api/tasks';
+import type { ActivityJump } from '../utils/notificationJump';
+import CardProjectLink from './CardProjectLink';
 
 /**
  * The three columns, over both kinds of work.
@@ -41,6 +43,8 @@ export interface BoardTaskCard {
   assignedTo?: string | null;
   createdBy?: string | null;
   context?: { code: string; name: string; customerName: string | null } | null;
+  /** Where the code and name lead — the project, opened. Null draws text. */
+  projectJump?: ActivityJump | null;
   /**
    * What the task is *for*. On a chase this is «شرح اقدام بعدی» — the
    * instruction whoever closed the previous call left for this one — and it
@@ -62,6 +66,8 @@ export interface BoardReferralCard {
   assignedTo?: string | null;
   createdBy?: string | null;
   context?: { code: string; name: string; customerName: string | null } | null;
+  /** Where the code and name lead — the project, opened. Null draws text. */
+  projectJump?: ActivityJump | null;
   /**
    * «تا کی؟», where one was agreed.
    *
@@ -107,6 +113,8 @@ interface Props {
    * box draws no button rather than one that does nothing.
    */
   onEdit?: (card: BoardCard) => void;
+  /** Opens the project a card's code and name belong to, with its details. */
+  onOpenProject?: (jump: ActivityJump) => void;
   moving: boolean;
 }
 
@@ -168,7 +176,7 @@ const LANE_NOTE: Partial<Record<BoardLane, string>> = {
 };
 
 export default function WorkBoard({
-  cards, sort, today, load, selected, onToggleSelect, onMove, onOpen, onEdit, moving,
+  cards, sort, today, load, selected, onToggleSelect, onMove, onOpen, onEdit, onOpenProject, moving,
 }: Props) {
   /*
    * Which cards are showing their detail. A per-card disclosure and not data,
@@ -442,8 +450,12 @@ export default function WorkBoard({
 
                     {card.context && (card.context.code || card.context.customerName) && (
                       <div className="pr-6 text-[10px] text-sky-700 flex flex-wrap items-center gap-1">
-                        {card.context.code && <span className="font-mono font-bold">{card.context.code}</span>}
-                        {card.context.name && <span className="truncate">{card.context.name}</span>}
+                        <CardProjectLink
+                          code={card.context.code}
+                          name={card.context.name}
+                          jump={card.projectJump}
+                          onOpen={onOpenProject}
+                        />
                         {card.context.customerName && (
                           <span className="text-slate-500">— {card.context.customerName}</span>
                         )}
