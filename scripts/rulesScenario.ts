@@ -369,6 +369,7 @@ import {
   failedMessageBody, failedMessageTitle, noticeSubject,
 } from "../src/utils/workflowNotice";
 import { deriveServiceHeader } from "../src/server/afterSalesStatus";
+import { RELAY_TOO_OLD_ERROR } from "../src/server/services/messaging/telegramTransport";
 import {
   DUE_SOON_DAYS, OVERDUE_WINDOW_DAYS,
   dueNoticeBody, dueNoticeRecipient, dueNoticeTitle, dueNoticesFor, dueScanRange,
@@ -21987,6 +21988,18 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
   ok("the button is drawn by the same rule", /canDeleteCategoryGroup\(group, currentUser\)/.test(view));
   ok("the old prefix-only test is gone", !/group\.categoryId\.startsWith\('cat-fact-'\)/.test(view));
+}
+
+
+// ── A relay without Telegram routes names its own fix ────────────────────
+{
+  eq("tg relay 404: an old relay is configuration, not the account",
+    telegramFailureKind(RELAY_TOO_OLD_ERROR), "CONFIG");
+  ok("tg relay 404: the sentence says to update the relay",
+    /به‌روز/.test(RELAY_TOO_OLD_ERROR) && /relay/.test(RELAY_TOO_OLD_ERROR));
+  const src = readFileSync("src/server/services/messaging/telegramTransport.ts", "utf8");
+  const i404 = src.indexOf("response.status === 404"), iOk = src.indexOf("if (!response.ok)");
+  ok("tg relay 404: answered before the generic non-2xx relay of «not found»", i404 > 0 && i404 < iOk);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

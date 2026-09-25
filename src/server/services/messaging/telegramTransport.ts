@@ -101,6 +101,17 @@ async function call<T>(
       return { data: null, error: "توکن رله پذیرفته نشد؛ مقدار آن در دو طرف باید یکسان باشد." };
     }
 
+    /*
+     * A 404 from a relay that answers WhatsApp perfectly is not a missing
+     * account: it is a relay built before Telegram existed, whose router ends
+     * in `not found` for every `/tg/*` path. Relayed verbatim that reads as
+     * «something could not be found» and nobody would think to update the
+     * relay; this sentence names the fix.
+     */
+    if (response.status === 404) {
+      return { data: null, error: RELAY_TOO_OLD_ERROR };
+    }
+
     if (!response.ok) {
       const said = (parsed as { error?: unknown } | null)?.error;
       return {
@@ -115,6 +126,10 @@ async function call<T>(
     return { data: null, error: `ارتباط با رله برقرار نشد: ${describe(err)}` };
   }
 }
+
+/** Shown when the relay has no Telegram routes; read as CONFIG by `telegramFailureKind`. */
+export const RELAY_TOO_OLD_ERROR =
+  "نسخهٔ رله قدیمی است و تلگرام را نمی‌شناسد؛ رله را روی سرور VPS به‌روز کنید (git pull، سپس npm install در پوشهٔ relay و راه‌اندازی دوباره).";
 
 /* ------------------------------ the four doors ---------------------------- */
 
