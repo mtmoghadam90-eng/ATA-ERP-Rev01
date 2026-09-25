@@ -201,23 +201,6 @@ than a person types.
 - Telegram's `api_id`/`api_hash`, from <https://my.telegram.org> → API development
   tools, in the relay's env as `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`.
 
-  **If the browser page only answers «ERROR»** (the usual case from inside
-  Iran, behind a VPN, or with an extension rewriting the form), fetch the pair
-  from the relay host instead — same site, same flow, a clean client on a clean
-  IP:
-
-  ```bash
-  cd relay && npm run telegram:api
-  ```
-
-  It asks for the account's phone number and for the code Telegram sends **to
-  the Telegram app** (not an SMS), creates an application if the account has
-  none (with a unique short name — a taken one is the other common cause of
-  «ERROR»), and prints the two values. Nothing is written to disk. «Too many
-  attempts» means wait several hours; a refusal to create the application is
-  almost always the IP or a very new account, and the answer is another IP
-  later rather than another attempt now.
-
   **On the relay they are env variables and nowhere else**, because this process
   has no database: it reopens its own session at its own boot, long before any
   request could hand it anything. On the ERP the same pair is typed into

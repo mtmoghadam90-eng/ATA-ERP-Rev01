@@ -5,8 +5,7 @@
   "type": "module",
   "description": "Holds the company's WhatsApp and Telegram sessions on a reachable host. See docs/whatsapp-relay.md.",
   "scripts": {
-    "start": "tsx server.ts",
-    "telegram:api": "tsx fetchTelegramApi.ts"
+    "start": "tsx server.ts"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc14",
