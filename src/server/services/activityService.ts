@@ -22,7 +22,7 @@ import { applyCategoryMilestoneTriggers } from "./milestoneAutomation";
 import { processWorkflowRules } from "./workflowService";
 import { notifyUser } from "./notificationService";
 import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
-import { canModifyActivity } from "../../utils/activityAuthorship";
+import { canDeleteCategoryGroup, canModifyActivity } from "../../utils/activityAuthorship";
 import { afterCommit } from "../afterCommit";
 import { capacityRefusalMessage } from "../../utils/workLimits";
 import { canDeleteNote, noteHasContent, noteSummary } from "../../utils/moduleNotes";
@@ -173,6 +173,8 @@ export async function upsertCategoryGroup(
         data: {
           projectId: input.projectId,
           categoryId: input.categoryId,
+          // From the session, never the body: this is who may delete it.
+          createdByUserId: user.id,
           ...data,
         } as Prisma.ProjectCategoryGroupUncheckedCreateInput,
       });
@@ -241,10 +243,15 @@ export async function deleteCategoryGroup(
   const db = getDb();
   const group = await db.projectCategoryGroup.findUnique({
     where: { id },
-    select: { id: true, project: { select: { ownerUserId: true } } },
+    select: {
+      id: true, categoryId: true, createdByUserId: true,
+      project: { select: { ownerUserId: true } },
+    },
   });
   if (!group) return "not-found";
   if (!canSeeProjects(user) && group.project.ownerUserId !== user.id) return "forbidden";
+  // Its creator, or a system administrator — see `canDeleteCategoryGroup`.
+  if (!canDeleteCategoryGroup(group, user)) return "forbidden";
 
   await db.projectCategoryGroup.delete({ where: { id } });
   return "ok";

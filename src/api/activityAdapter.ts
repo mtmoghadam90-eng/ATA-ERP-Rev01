@@ -120,6 +120,7 @@ export function groupToView(row: CategoryGroupRow): ProjectCategoryGroup {
     startDate: row.startDateJalali ?? "",
     endDate: row.endDateJalali ?? null,
     memberUserIds: parseMemberIds(row.memberUserIds),
+    createdByUserId: row.createdByUserId ?? null,
     activities: (row.activities ?? []).map(activityToView),
   };
 }

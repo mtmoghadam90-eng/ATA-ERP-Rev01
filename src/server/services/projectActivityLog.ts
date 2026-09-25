@@ -5,6 +5,7 @@ import { expandDateFields } from "../dates";
 import { toNullableString } from "../childSync";
 import { GROUP_DATE_FIELDS } from "./activityService";
 import { canonicalCategoryName, sameCategory } from "../../utils/activityCategories";
+import { SYSTEM_GROUP_PREFIX } from "../../utils/activityAuthorship";
 
 /**
  * The project timeline's automatic entries.
@@ -95,7 +96,7 @@ export async function logProjectFact(
     const created = await db.projectCategoryGroup.create({
       data: {
         projectId: fact.projectId,
-        categoryId: `cat-fact-${randomSuffix()}`,
+        categoryId: `${SYSTEM_GROUP_PREFIX}${randomSuffix()}`,
         categoryName,
         status: "جاری",
         ...expandDateFields({ startDate: todayJalali }, GROUP_DATE_FIELDS),
