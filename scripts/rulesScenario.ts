@@ -31,7 +31,7 @@ import {
 import {
   discountKeepFraction, netUnitPrice, summarizeHistory,
 } from "../src/utils/inquiryPriceHistory";
-import { referralJump, moduleNotificationJump } from "../src/utils/notificationJump";
+import { referralJump, moduleNotificationJump, cardProjectJump } from "../src/utils/notificationJump";
 import {
   TRIGGER_PAYLOAD_KEYS, SCHEDULE_MODEL_PAYLOAD_KEYS, unresolvableTemplateTokens,
 } from "../src/utils/workflowTriggers";
@@ -21843,6 +21843,27 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   const del = ts.slice(ts.indexOf("export async function deleteTask("), ts.indexOf("export async function deleteTask(") + 1400);
   ok("deleting a follow-up re-derives the technical approval it may have carried",
     /\$transaction\(async \(tx\) => \{\s*await tx\.task\.delete\(\{ where: \{ id \} \}\);\s*await resyncApprovalAfterFollowUpRemoved\(tx, existing/.test(del));
+}
+
+{
+  console.log("\nA work card's project line opens the project");
+  eq("a project context leads to that project",
+    JSON.stringify(cardProjectJump({ id: "p1", code: "ATA-05-44" })), JSON.stringify({ projectId: "p1" }));
+  eq("a customer-only context (no code) leads nowhere", cardProjectJump({ id: "c1", code: "" }), null);
+  eq("no context leads nowhere", cardProjectJump(null), null);
+  eq("a referral carries its category and message",
+    JSON.stringify(cardProjectJump({ id: "p1", code: "X" }, { groupId: "g", activityId: "a" })),
+    JSON.stringify({ projectId: "p1", groupId: "g", activityId: "a" }));
+  const tasksSrc = readFileSync("src/components/TasksView.tsx", "utf8");
+  const appSrc = readFileSync("src/App.tsx", "utf8");
+  const boardSrc = readFileSync("src/components/WorkBoard.tsx", "utf8");
+  ok("App hands the tasks screen the project-opening jump",
+    /<TasksView[\s\S]{0,600}onOpenProject=\{openActivityJump\}/.test(appSrc));
+  ok("the board is handed it", /<WorkBoard[\s\S]{0,900}onOpenProject=\{onOpenProject\}/.test(tasksSrc));
+  ok("the board draws the line through CardProjectLink", /<CardProjectLink[\s\S]{0,200}onOpen=\{onOpenProject\}/.test(boardSrc));
+  ok("both list rows draw it too", (tasksSrc.match(/<CardProjectLink/g) ?? []).length === 2);
+  ok("no card prints the code as a bare span again",
+    !/<span className="font-mono font-bold">\{(card\.context|task\.relatedProject)\.code\}<\/span>/.test(tasksSrc + boardSrc));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

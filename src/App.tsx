@@ -576,6 +576,7 @@ export default function App() {
             initialTab={tabFor('tasks')}
             onInitialTabApplied={clearTabJump}
             onOpenNotification={openActivityJump}
+            onOpenProject={openActivityJump}
           />
         );
       case 'stuckWork':

@@ -3569,6 +3569,63 @@ head("Referral thread: a reply carries several uploaded files");
   hostF.remove();
 }
 
+/*
+ * A card's project code and name open that project.
+ *
+ * The press must reach the project with the card's own id and must not also
+ * open the card — both halves type-check whether the `stopPropagation` and
+ * the jump are there or not. A customer-only line leads nowhere.
+ */
+head("The work board: the project line opens the project");
+{
+  const hostG = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootG = createRoot(hostG);
+  const openedG: string[] = [];
+  const jumpsG: unknown[] = [];
+  const cardsG = [
+    {
+      kind: "task" as const, id: "t1", title: "تماس با سازنده",
+      createdAt: "2026-01-01", priority: "متوسط", status: "برای انجام",
+      context: { code: "ATA-05-44", name: "گیج های فشار", customerName: "فراسو" },
+      projectJump: { projectId: "p-44" },
+    },
+    {
+      kind: "referral" as const, id: "r1", title: "دیتاشیت را چک کن",
+      createdAt: "2026-01-02", status: "در انتظار اقدام", replies: 0,
+      context: { code: "ATA-05-45", name: "فلومتر", customerName: null },
+      projectJump: { projectId: "p-45", groupId: "g1", activityId: "a1" },
+    },
+    {
+      kind: "task" as const, id: "t2", title: "پیگیری مشتری",
+      createdAt: "2026-01-03", priority: "متوسط", status: "برای انجام",
+      context: { code: "", name: "", customerName: "فراسو" },
+      projectJump: null,
+    },
+  ];
+  act(() => {
+    rootG.render(React.createElement(WorkBoard, {
+      cards: cardsG, sort: "date" as const, today: "1405/01/10", load: null,
+      selected: new Set<string>(), moving: false,
+      onToggleSelect: () => {}, onMove: () => {},
+      onOpen: (card: { kind: string; id: string }) => { openedG.push(`${card.kind}:${card.id}`); },
+      onOpenProject: (jump: unknown) => { jumpsG.push(jump); },
+    }));
+  });
+  const links = [...hostG.querySelectorAll("[data-card-project]")] as HTMLButtonElement[];
+  ok("each card naming a project draws its line as a button", links.length === 2, links.length);
+  const link44 = links.find((el) => el.getAttribute("data-card-project") === "p-44");
+  act(() => { link44!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("pressing it hands over that project's id",
+    JSON.stringify(jumpsG) === JSON.stringify([{ projectId: "p-44" }]), jumpsG);
+  ok("...and does not open the card as well", openedG.length === 0, openedG);
+  const link45 = links.find((el) => el.getAttribute("data-card-project") === "p-45");
+  act(() => { link45!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("a referral's line opens the conversation it came from",
+    JSON.stringify(jumpsG[1]) === JSON.stringify({ projectId: "p-45", groupId: "g1", activityId: "a1" }), jumpsG);
+  act(() => { rootG.unmount(); });
+  hostG.remove();
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {
