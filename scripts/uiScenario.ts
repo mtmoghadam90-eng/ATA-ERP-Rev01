@@ -3677,6 +3677,59 @@ head("Configurator: an option is edited and removed in place");
   hostC.remove();
 }
 
+/*
+ * «خواندن همه» clears both kinds the badge counts.
+ *
+ * A reply is read per message and a module notice per row, and the server's
+ * `read-all` knows only the second — a button calling it alone renders
+ * perfectly and leaves every unread reply on the badge.
+ */
+head("Notifications: «خواندن همه» marks replies and notices together");
+{
+  const gR = globalThis as unknown as Record<string, unknown>;
+  const realFetchR = gR.fetch;
+  const posts: { url: string; body: string }[] = [];
+  const refRow = {
+    id: "ref-9", status: "در انتظار اقدام", actionRequired: "x",
+    assignedByUserId: "u-1", assignedToUserId: "u-2", createdAt: "2026-09-20T08:00:00.000Z",
+    activityId: "act-9",
+    messages: [{ id: "msg-9", text: "پاسخ", responderUserId: "u-2", responderName: "رضایی", createdAt: "2026-09-21T09:00:00.000Z" }],
+    activity: { id: "act-9", text: "x", createdAt: "2026-09-20T08:00:00.000Z",
+      group: { id: "g9", categoryName: "خرید", project: { id: "p9", code: "ATA-1", name: "پ", customer: null } } },
+  };
+  gR.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
+    const u = String(url);
+    if (init?.method === "POST") posts.push({ url: u, body: String(init.body ?? "") });
+    const body = u.includes("/api/referrals")
+      ? { success: true, rows: [refRow], total: 1, page: 1, pageSize: 200, totalPages: 1 }
+      : u.includes("/api/read-receipts") && init?.method !== "POST"
+        ? { success: true, read: [] }
+        : u.includes("/api/notifications") && init?.method !== "POST"
+          ? { success: true, rows: [{ id: "n1", module: "tasks", title: "ت", description: "د", isRead: false, createdAt: "2026-09-21T09:00:00.000Z" }], unread: 1, total: 1, page: 1, pageSize: 200, totalPages: 1 }
+          : { success: true, marked: 1 };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+  const hostR = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootR = createRoot(hostR);
+  const settleR = async () => { for (let i = 0; i < 14; i++) await act(async () => { await Promise.resolve(); }); };
+  await act(async () => {
+    rootR.render(React.createElement(ReferralsView, {
+      embedded: true, notificationsOnly: true, settings: DEFAULT_SETTINGS as never,
+      currentUser: { id: "u-1", fullName: "محمد مقدم" } as never,
+    } as never));
+  });
+  await settleR();
+  const btn = hostR.querySelector<HTMLButtonElement>("#notifications-mark-all-read");
+  ok("the button is drawn while something is unread", !!btn, hostR.textContent?.slice(0, 200));
+  await act(async () => { btn?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settleR();
+  ok("...and marks the module notices read", posts.some((p) => p.url.includes("/api/notifications/read-all")), posts);
+  ok("...and the unread replies with them", posts.some((p) => p.url.includes("/api/read-receipts") && p.body.includes("msg-9")), posts);
+  act(() => { rootR.unmount(); });
+  hostR.remove();
+  gR.fetch = realFetchR;
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {
