@@ -1125,6 +1125,8 @@ export interface ProjectCategoryGroup {
   id: string;
   projectId: string;
   categoryId: string;
+  /** Who opened it on this project — see `canDeleteCategoryGroup`. */
+  createdByUserId?: string | null;
   categoryName: string;
   status: 'جاری' | 'اتمام کار';
   startDate: string;

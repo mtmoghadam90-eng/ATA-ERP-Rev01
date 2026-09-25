@@ -153,7 +153,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
     if (!user) return;
     try {
       const outcome = await deleteCategoryGroup(req.params.id, user);
-      if (outcome === "forbidden") return denied(res);
+      if (outcome === "forbidden") return denied(res, "دسته‌بندی را فقط ایجادکننده آن یا مدیر سیستم می‌تواند حذف کند.");
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "دسته‌بندی پروژه یافت نشد." });
         return;

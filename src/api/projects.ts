@@ -347,6 +347,8 @@ export interface CategoryGroupRow {
   endDateJalali: string | null;
   /** `["userId", …]` as stored, or null when nobody follows this category. */
   memberUserIds: string | null;
+  /** Who opened it — see `canDeleteCategoryGroup`. */
+  createdByUserId?: string | null;
   createdAt: string;
   activities: ActivityRow[];
 }

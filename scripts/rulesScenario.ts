@@ -29,7 +29,7 @@ import {
   catalogueCodeRefusal, catalogueNameRefusal, describeProductSpec, newConfigId,
   catalogueRemovalRefusal, removeFromCatalogue, renameFeature, renameOption,
 } from "../src/utils/productConfig";
-import { canModifyActivity } from "../src/utils/activityAuthorship";
+import { canDeleteCategoryGroup, canModifyActivity } from "../src/utils/activityAuthorship";
 import {
   proformaCreatedSentence, sentDescription,
 } from "../src/server/services/proformaChanges";
@@ -21965,6 +21965,28 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     ["src/server/services/deliveryService.ts", /خدمات پس از فروش کالای[^`]*توسط \{actor\} حذف شد/],
   ] as const;
   for (const [file, re] of deletions) ok(`a deletion names who did it (${file.split("/").pop()})`, re.test(readFileSync(file, "utf8")));
+}
+
+{
+  console.log("\nActivity categories: deleted by whoever opened them, or an administrator");
+  const owner = { id: "u1", isSystemAdmin: false };
+  const other = { id: "u2", isSystemAdmin: false };
+  const admin = { id: "u9", isSystemAdmin: true };
+  const opened = { categoryId: "cat-1", createdByUserId: "u1" };
+  const system = { categoryId: "cat-fact-abc", createdByUserId: null };
+  const legacy = { categoryId: "cat-1", createdByUserId: null };
+  ok("the creator may delete their category", canDeleteCategoryGroup(opened, owner));
+  ok("...and a colleague may not", !canDeleteCategoryGroup(opened, other));
+  ok("a system administrator may delete any", canDeleteCategoryGroup(opened, admin) && canDeleteCategoryGroup(system, admin) && canDeleteCategoryGroup(legacy, admin));
+  ok("a category the application opened is the administrator's alone", !canDeleteCategoryGroup({ ...system, createdByUserId: "u1" }, owner));
+  ok("a category with no recorded creator is nobody's but the administrator's", !canDeleteCategoryGroup(legacy, owner));
+  const svc = readFileSync("src/server/services/activityService.ts", "utf8");
+  const del = svc.slice(svc.indexOf("export async function deleteCategoryGroup"));
+  ok("the delete asks the shared rule", /canDeleteCategoryGroup\(group, user\)/.test(del.slice(0, 900)));
+  ok("the creator is stamped from the session on create", /createdByUserId: user\.id/.test(svc));
+  const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("the button is drawn by the same rule", /canDeleteCategoryGroup\(group, currentUser\)/.test(view));
+  ok("the old prefix-only test is gone", !/group\.categoryId\.startsWith\('cat-fact-'\)/.test(view));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

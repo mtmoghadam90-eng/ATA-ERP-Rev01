@@ -1,7 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import type { ActivityJump } from '../utils/notificationJump';
-import { canModifyActivity } from '../utils/activityAuthorship';
+import { canDeleteCategoryGroup, canModifyActivity } from '../utils/activityAuthorship';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 
 /**
@@ -5811,8 +5811,13 @@ export default function ProjectsView({
                                       : 'اعضا'}
                                   </button>
 
-                                  {/* Delete Category Group Button (only for non-system) */}
-                                  {!group.categoryId.startsWith('cat-fact-') && (
+                                  {/*
+                                    Deleting a category deletes every message in
+                                    it, so it is offered to whoever opened it and
+                                    to a system administrator — and a category the
+                                    application opened, to the administrator alone.
+                                  */}
+                                  {canDeleteCategoryGroup(group, currentUser) && (
                                     <button
                                       type="button"
                                       onClick={(e) => {

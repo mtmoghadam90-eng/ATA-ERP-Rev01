@@ -1435,6 +1435,12 @@ model ProjectCategoryGroup {
   /// left alone. NULL means nobody has set one, which is not `[]`.
   memberUserIds String? @db.NVarChar(Max)
 
+  /// Who opened the category on this project — the one person besides a system
+  /// administrator who may delete it (`canDeleteCategoryGroup`). Null for a
+  /// group the application opened (`cat-fact-…`) and for every group written
+  /// before this column, both of which only an administrator deletes.
+  createdByUserId String? @db.NVarChar(36)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

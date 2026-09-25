@@ -30,3 +30,30 @@ export function canModifyActivity(
   if (activity.isSystem) return false;
   return !!activity.authorUserId && activity.authorUserId === user.id;
 }
+
+/**
+ * The id prefix of a category group the application opened by itself, when it
+ * recorded a fact on a project that had no group of that category yet.
+ */
+export const SYSTEM_GROUP_PREFIX = "cat-fact-";
+
+/**
+ * Who may delete a project's activity category — the same rule as an entry.
+ *
+ * A category somebody opened is theirs to delete; one the application opened
+ * (`SYSTEM_GROUP_PREFIX`) is nobody's but a system administrator's; and a
+ * system administrator may delete any. A group with **no recorded creator** —
+ * every one written before the column existed — is treated as nobody's, since
+ * guessing an owner would hand the delete of a whole conversation to whoever
+ * happened to be guessed. Deleting a category deletes every message in it,
+ * which is the whole reason this is asked at all.
+ */
+export function canDeleteCategoryGroup(
+  group: { categoryId?: string | null; createdByUserId?: string | null },
+  user: { id?: string | null; isSystemAdmin?: boolean | null } | null | undefined,
+): boolean {
+  if (!user?.id) return false;
+  if (user.isSystemAdmin === true) return true;
+  if (String(group.categoryId ?? "").startsWith(SYSTEM_GROUP_PREFIX)) return false;
+  return !!group.createdByUserId && group.createdByUserId === user.id;
+}
