@@ -62,6 +62,8 @@ import { detailToProject } from '../api/projectAdapter';
 import { projectsApi } from '../api/projects';
 import type { ProjectRow } from '../api/projects';
 import type { SupplierRow } from '../api/suppliers';
+import { suppliersApi, detailToSupplier, supplierToWriteInput } from '../api/suppliers';
+import QuickAddModal from './QuickAddModal';
 import type { ProductRow } from '../api/products';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
 import CostAccessNotice from './CostAccessNotice';
@@ -1336,6 +1338,8 @@ export default function SupplierInquiriesView({
 interface PickerHandle {
   setTerm: (value: string) => void;
   loading: boolean;
+  /** Pins a record created after the picker's matches were fetched. */
+  include?: (row: any) => void;
 }
 
 /**
@@ -1402,6 +1406,27 @@ function InquiryFormInner({
     return selectedProjectId === 'all' ? '' : selectedProjectId;
   });
   const [supplierId, setSupplierId] = useState<string>(editingInquiry?.supplierId || '');
+  /*
+   * «تعریف سریع تأمین‌کننده».
+   *
+   * A supplier asked for a price for the first time is by definition not in
+   * the list yet, and the form was a dead end for exactly that case: close it,
+   * add the supplier on its own screen, start the inquiry again. The quick-add
+   * form is the one the purchase order already uses, so a supplier is created
+   * one way wherever it is started. It is drawn **outside** this `<form>`: a
+   * nested form's submit bubbles through React's tree into this one and would
+   * save a half-filled inquiry the moment the supplier was saved.
+   */
+  const [quickAddSupplierOpen, setQuickAddSupplierOpen] = useState(false);
+  const [quickAddedSuppliers, setQuickAddedSuppliers] = useState<Supplier[]>([]);
+  const addSupplier = async (supplier: Partial<Supplier>) => {
+    try {
+      return detailToSupplier(await suppliersApi.create(supplierToWriteInput(supplier)));
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : 'ثبت تأمین‌کننده با خطا مواجه شد.');
+      return null;
+    }
+  };
   /*
     * A quotation is rarely one file.
     *
@@ -1750,6 +1775,7 @@ function InquiryFormInner({
   };
 
   return (
+    <>
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Fields */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1787,25 +1813,39 @@ function InquiryFormInner({
         {/* Supplier Selector */}
         <div className="space-y-1">
           <label className="text-xs font-bold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'supplierInquiries', 'supplierId', 'انتخاب تأمین‌کننده')}</label>
-          <SearchableSelect
-            value={supplierId}
-            onChange={setSupplierId}
-            onSearchChange={supplierPicker.setTerm}
-            loading={supplierPicker.loading}
-            placeholder="-- انتخاب تأمین‌کننده --"
-            required={isFieldRequired(settings, 'supplierInquiries', 'supplierId')}
-            disabled={editingInquiry !== null} // Lock supplier on edit
-            className="text-xs"
-            options={dedupeOptions([
-              ...(editingInquiry
-                ? [{ value: editingInquiry.supplierId, label: editingInquiry.supplierName }]
-                : []),
-              ...suppliers.map(s => ({
-                value: s.id,
-                label: `${s.name} (${s.country || 'بدون کشور'})`,
-              })),
-            ])}
-          />
+          <div className="flex gap-1.5 items-center">
+            <SearchableSelect wrapperClassName="flex-1 min-w-0"
+              value={supplierId}
+              onChange={setSupplierId}
+              onSearchChange={supplierPicker.setTerm}
+              loading={supplierPicker.loading}
+              placeholder="-- انتخاب تأمین‌کننده --"
+              required={isFieldRequired(settings, 'supplierInquiries', 'supplierId')}
+              disabled={editingInquiry !== null} // Lock supplier on edit
+              className="text-xs"
+              options={dedupeOptions([
+                ...(editingInquiry
+                  ? [{ value: editingInquiry.supplierId, label: editingInquiry.supplierName }]
+                  : []),
+                ...[...quickAddedSuppliers, ...suppliers].map(s => ({
+                  value: s.id,
+                  label: `${s.name} (${s.country || 'بدون کشور'})`,
+                })),
+              ])}
+            />
+            {/* The supplier is locked on edit, so there is nothing to add to. */}
+            {!editingInquiry && (
+              <button
+                type="button"
+                id="inquiry-quick-add-supplier"
+                onClick={() => setQuickAddSupplierOpen(true)}
+                className="px-2.5 py-2 text-sky-600 hover:text-sky-700 bg-sky-50 hover:bg-sky-100 rounded-lg border border-sky-200 hover:border-sky-300 transition shrink-0 flex items-center justify-center font-bold"
+                title="تعریف سریع تأمین‌کننده جدید"
+              >
+                <Plus size={16} />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Currency brief display */}
@@ -2301,6 +2341,25 @@ function InquiryFormInner({
         </button>
       </div>
     </form>
+    {quickAddSupplierOpen && (
+      <QuickAddModal
+        isOpen={quickAddSupplierOpen}
+        onClose={() => setQuickAddSupplierOpen(false)}
+        type="supplier"
+        settings={settings}
+        addSupplier={addSupplier}
+        onSuccess={(created) => {
+          if (!created?.id) return;
+          // The picker's matches were fetched before this record existed, so
+          // pin it — or the select holds an id it has no option for and
+          // renders its placeholder as though nothing was created.
+          supplierPicker.include?.(created);
+          setQuickAddedSuppliers((prev) => [...prev, created]);
+          setSupplierId(created.id);
+        }}
+      />
+    )}
+    </>
   );
 }
 
