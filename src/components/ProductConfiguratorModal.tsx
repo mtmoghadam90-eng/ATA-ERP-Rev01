@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Plus, Settings, X } from 'lucide-react';
+import { Pencil, Plus, Settings, Trash2, X } from 'lucide-react';
 import type { Product, ProductFeature } from '../types';
 import type { ConfigSelections } from '../utils/productConfig';
 import {
-  catalogueCodeRefusal, catalogueNameRefusal, newConfigId,
+  catalogueCodeRefusal, catalogueNameRefusal, catalogueRemovalRefusal, newConfigId,
+  removeFromCatalogue, renameFeature, renameOption,
 } from '../utils/productConfig';
 
 /**
@@ -59,25 +60,62 @@ export default function ProductConfiguratorModal({
    * start again. The write goes through the host's own product helper, so the
    * full record is loaded and changed rather than a picker row being sent back.
    */
-  const [adding, setAdding] = useState<null | { featureId: string } | { feature: true }>(null);
+  /*
+   * …and correcting or removing one, which is the other half of the same need:
+   * a value typed wrong in a hurry is as much a dead end as one never typed.
+   * One small form serves all four: adding a feature, adding an option, and
+   * editing either. A rename carries the SKUs' attributes and the rules with it
+   * (`renameFeature`/`renameOption`), and a removal is refused while a SKU uses
+   * the value (`catalogueRemovalRefusal`) — both decided against the **full**
+   * record the host loads, not against what this modal was handed.
+   */
+  type Target =
+    | { mode: 'add-feature' }
+    | { mode: 'add-option'; featureId: string }
+    | { mode: 'edit-feature'; featureId: string }
+    | { mode: 'edit-option'; featureId: string; optionId: string };
+  const [adding, setAdding] = useState<Target | null>(null);
+  const [removing, setRemoving] = useState<{ featureId: string; optionId?: string } | null>(null);
   const [draftName, setDraftName] = useState('');
   const [draftCode, setDraftCode] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const openAdd = (target: { featureId: string } | { feature: true }) => {
+  const openForm = (target: Target) => {
     setAdding(target);
-    setDraftName('');
-    setDraftCode('');
+    setRemoving(null);
+    const feature = 'featureId' in target ? features.find((f) => f.id === target.featureId) : undefined;
+    const option = target.mode === 'edit-option'
+      ? feature?.options.find((o) => o.id === target.optionId) : undefined;
+    setDraftName(target.mode === 'edit-feature' ? feature?.name ?? ''
+      : target.mode === 'edit-option' ? option?.value ?? '' : '');
+    setDraftCode(target.mode === 'edit-feature' ? feature?.code ?? ''
+      : target.mode === 'edit-option' ? option?.code ?? '' : '');
     setError(null);
+  };
+
+  /** The ticked values, kept in step with a rename or a removal. */
+  const followSelections = (featureId: string, from: string | null, to: string | null) => {
+    const current = selections[featureId];
+    if (!current) return;
+    const next = { ...selections };
+    if (from === null) delete next[featureId];
+    else next[featureId] = to === null
+      ? current.filter((v) => v !== from)
+      : current.map((v) => (v === from ? to : v));
+    onSelectionsChange(next);
   };
 
   const submitAdd = async () => {
     if (!adding || !onCatalogueEdit) return;
-    const isFeature = 'feature' in adding;
+    const target = adding;
+    const isFeature = target.mode === 'add-feature' || target.mode === 'edit-feature';
+    const feature = 'featureId' in target ? features.find((f) => f.id === target.featureId) : undefined;
     const siblings = isFeature
-      ? features.map((f) => f.name)
-      : (features.find((f) => f.id === adding.featureId)?.options ?? []).map((o) => o.value);
+      ? features.filter((f) => !(target.mode === 'edit-feature' && f.id === target.featureId)).map((f) => f.name)
+      : (feature?.options ?? [])
+        .filter((o) => !(target.mode === 'edit-option' && o.id === target.optionId))
+        .map((o) => o.value);
 
     const refusal = catalogueNameRefusal(draftName, siblings) ?? catalogueCodeRefusal(draftCode);
     if (refusal) { setError(refusal); return; }
@@ -89,17 +127,28 @@ export default function ProductConfiguratorModal({
     try {
       await onCatalogueEdit((full) => {
         const list = full.features ?? [];
-        if (isFeature) {
-          const feature: ProductFeature = { id: newConfigId('feat'), name, code, options: [] };
-          return { ...full, features: [...list, feature] };
+        switch (target.mode) {
+          case 'add-feature': {
+            const created: ProductFeature = { id: newConfigId('feat'), name, code, options: [] };
+            return { ...full, features: [...list, created] };
+          }
+          case 'add-option':
+            return {
+              ...full,
+              features: list.map((f) => (f.id === target.featureId
+                ? { ...f, options: [...f.options, { id: newConfigId('opt'), value: name, code }] }
+                : f)),
+            };
+          case 'edit-feature':
+            return renameFeature(full, target.featureId, name, code);
+          case 'edit-option':
+            return renameOption(full, target.featureId, target.optionId, name, code);
         }
-        return {
-          ...full,
-          features: list.map((f) => (f.id === adding.featureId
-            ? { ...f, options: [...f.options, { id: newConfigId('opt'), value: name, code }] }
-            : f)),
-        };
       });
+      if (target.mode === 'edit-option') {
+        const before = feature?.options.find((o) => o.id === target.optionId)?.value;
+        if (before && before !== name) followSelections(target.featureId, before, name);
+      }
       setAdding(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'ثبت در انبار با خطا مواجه شد.');
@@ -108,6 +157,73 @@ export default function ProductConfiguratorModal({
     }
   };
 
+  const submitRemove = async () => {
+    if (!removing || !onCatalogueEdit) return;
+    const { featureId, optionId } = removing;
+    const feature = features.find((f) => f.id === featureId);
+    const option = optionId ? feature?.options.find((o) => o.id === optionId) : undefined;
+    // Asked of what the modal holds first, so the common refusal costs no
+    // request; asked again of the full record inside the write.
+    const early = catalogueRemovalRefusal(product, featureId, optionId);
+    if (early) { setError(early); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      await onCatalogueEdit((full) => {
+        const refusal = catalogueRemovalRefusal(full, featureId, optionId);
+        if (refusal) throw new Error(refusal);
+        return removeFromCatalogue(full, featureId, optionId);
+      });
+      followSelections(featureId, option ? option.value : null, null);
+      setRemoving(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'حذف از انبار با خطا مواجه شد.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeConfirm = (
+    <div className="mt-2 border border-rose-200 bg-rose-50/60 rounded-lg p-2.5 space-y-2">
+      <p className="text-[11px] text-rose-700 font-bold">
+        {removing && !removing.optionId
+          ? 'این ویژگی و همهٔ مقادیرش از این کالا حذف شود؟ شروطی که به آن اشاره می‌کنند هم حذف می‌شوند.'
+          : 'این مقدار از این ویژگی حذف شود؟'}
+      </p>
+      {error && <p className="text-[10px] font-bold text-rose-600">{error}</p>}
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => { setRemoving(null); setError(null); }}
+          className="px-3 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition"
+        >
+          انصراف
+        </button>
+        <button
+          type="button"
+          onClick={() => void submitRemove()}
+          disabled={saving}
+          id="configurator-remove-submit"
+          className="px-3 py-1 text-[11px] font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-lg transition disabled:opacity-50"
+        >
+          {saving ? 'در حال حذف…' : 'حذف از انبار'}
+        </button>
+      </div>
+    </div>
+  );
+
+  const openRemove = (target: { featureId: string; optionId?: string }) => {
+    setRemoving(target);
+    setAdding(null);
+    setError(null);
+  };
+  const isRemoving = (featureId: string, optionId?: string) =>
+    !!removing && removing.featureId === featureId && removing.optionId === optionId;
+  const isEditing = (featureId: string, optionId?: string) => !!adding && (
+    optionId
+      ? adding.mode === 'edit-option' && adding.featureId === featureId && adding.optionId === optionId
+      : adding.mode === 'edit-feature' && adding.featureId === featureId);
+
   const addForm = (
     <div className="mt-2 border border-sky-200 bg-sky-50/60 rounded-lg p-2.5 space-y-2">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -115,7 +231,7 @@ export default function ProductConfiguratorModal({
           type="text"
           value={draftName}
           onChange={(e) => setDraftName(e.target.value)}
-          placeholder={adding && 'feature' in adding ? 'نام ویژگی جدید' : 'مقدار جدید'}
+          placeholder={adding?.mode === 'add-feature' || adding?.mode === 'edit-feature' ? 'نام ویژگی' : 'مقدار'}
           className="sm:col-span-2 w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs bg-white outline-none focus:border-sky-400"
           id="configurator-new-name"
           autoFocus
@@ -132,6 +248,7 @@ export default function ProductConfiguratorModal({
       {/* The code goes straight into the SKU, which is why it is restricted. */}
       <p className="text-[10px] text-slate-500">
         کد در ساخت SKU استفاده می‌شود؛ در صورت خالی بودن، شماره ردیف جایگزین می‌شود.
+        {adding?.mode.startsWith('edit') && ' تغییر نام به SKUها و شروط موجود هم اعمال می‌شود؛ تغییر کد فقط روی SKUهای جدید اثر دارد.'}
       </p>
       {error && <p className="text-[10px] font-bold text-rose-600">{error}</p>}
       <div className="flex justify-end gap-2">
@@ -149,7 +266,7 @@ export default function ProductConfiguratorModal({
           id="configurator-new-submit"
           className="px-3 py-1 text-[11px] font-bold bg-sky-600 hover:bg-sky-700 text-white rounded-lg transition disabled:opacity-50"
         >
-          {saving ? 'در حال ثبت…' : 'افزودن به انبار'}
+          {saving ? 'در حال ثبت…' : adding?.mode.startsWith('edit') ? 'ذخیره تغییر' : 'افزودن به انبار'}
         </button>
       </div>
     </div>
@@ -242,17 +359,39 @@ export default function ProductConfiguratorModal({
               <div className="flex items-center justify-between gap-2">
                 <label className="text-sm font-bold text-slate-700">{feature.name}</label>
                 {onCatalogueEdit && (
-                  <button
-                    type="button"
-                    onClick={() => openAdd({ featureId: feature.id })}
-                    id={`configurator-add-option-${feature.id}`}
-                    className="text-[10px] font-bold text-sky-600 hover:bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-lg transition flex items-center gap-1"
-                  >
-                    <Plus size={11} />
-                    مقدار جدید
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => openForm({ mode: 'edit-feature', featureId: feature.id })}
+                      id={`configurator-edit-feature-${feature.id}`}
+                      title="ویرایش ویژگی"
+                      className="p-1 text-slate-500 hover:text-sky-600 hover:bg-sky-50 rounded-lg transition"
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openRemove({ featureId: feature.id })}
+                      id={`configurator-remove-feature-${feature.id}`}
+                      title="حذف ویژگی"
+                      className="p-1 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openForm({ mode: 'add-option', featureId: feature.id })}
+                      id={`configurator-add-option-${feature.id}`}
+                      className="text-[10px] font-bold text-sky-600 hover:bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-lg transition flex items-center gap-1"
+                    >
+                      <Plus size={11} />
+                      مقدار جدید
+                    </button>
+                  </div>
                 )}
               </div>
+              {isEditing(feature.id) && addForm}
+              {isRemoving(feature.id) && removeConfirm}
               {/* One column on a phone, two once there is room: a feature with
                   a dozen sizes was a very long list. */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 mt-2">
@@ -260,9 +399,13 @@ export default function ProductConfiguratorModal({
                   const excluded = isExcluded(feature.name, opt.value);
                   const selected = (selections[feature.id] || []).includes(opt.value);
                   return (
-                    <label
+                    <div
                       key={opt.id}
-                      className={`flex items-center gap-2 select-none ${
+                      className={`min-w-0 ${isEditing(feature.id, opt.id) || isRemoving(feature.id, opt.id) ? 'sm:col-span-2' : ''}`}
+                    >
+                    <div className="flex items-center gap-1 group/opt">
+                    <label
+                      className={`flex-1 min-w-0 flex items-center gap-2 select-none ${
                         excluded ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer group'
                       }`}
                     >
@@ -295,10 +438,38 @@ export default function ProductConfiguratorModal({
                         </span>
                       )}
                     </label>
+                    {/* Beside the label, never inside it: a press inside a
+                        <label> toggles its checkbox as well. */}
+                    {onCatalogueEdit && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => openForm({ mode: 'edit-option', featureId: feature.id, optionId: opt.id })}
+                          id={`configurator-edit-option-${opt.id}`}
+                          title="ویرایش مقدار"
+                          className="p-0.5 text-slate-400 hover:text-sky-600 rounded transition shrink-0"
+                        >
+                          <Pencil size={11} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openRemove({ featureId: feature.id, optionId: opt.id })}
+                          id={`configurator-remove-option-${opt.id}`}
+                          title="حذف مقدار"
+                          className="p-0.5 text-slate-400 hover:text-rose-600 rounded transition shrink-0"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      </>
+                    )}
+                    </div>
+                    {isEditing(feature.id, opt.id) && addForm}
+                    {isRemoving(feature.id, opt.id) && removeConfirm}
+                    </div>
                   );
                 })}
               </div>
-              {adding && 'featureId' in adding && adding.featureId === feature.id && addForm}
+              {adding?.mode === 'add-option' && adding.featureId === feature.id && addForm}
             </div>
           ))}
 
@@ -307,10 +478,10 @@ export default function ProductConfiguratorModal({
               quotation and start again from the products screen. */}
           {onCatalogueEdit && (
             <div className="pt-1">
-              {adding && 'feature' in adding ? addForm : (
+              {adding?.mode === 'add-feature' ? addForm : (
                 <button
                   type="button"
-                  onClick={() => openAdd({ feature: true })}
+                  onClick={() => openForm({ mode: 'add-feature' })}
                   id="configurator-add-feature"
                   className="text-[11px] font-bold text-slate-600 hover:bg-slate-100 border border-dashed border-slate-300 px-3 py-1.5 rounded-lg transition flex items-center gap-1"
                 >

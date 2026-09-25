@@ -1,4 +1,4 @@
-import type { ProductFeature } from "../types";
+import type { Product, ProductConfigRule, ProductFeature } from "../types";
 import { stripRichMarks } from "./richText";
 
 /**
@@ -223,4 +223,152 @@ export function catalogueCodeRefusal(code: string): string | null {
 /** A fresh id for a feature or an option, in the shape the catalogue uses. */
 export function newConfigId(prefix: "feat" | "opt"): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/*
+ * Correcting and removing a feature or an option.
+ *
+ * A name is not a label here, it is a key: a SKU's `attributes` are keyed by
+ * the feature's name and hold the option's value, and a `configRules` entry
+ * names both. So a rename has to carry every one of those with it, or the SKU
+ * the configurator created last week stops being found (`findVariantByAttributes`
+ * compares names) and a rule quietly stops applying to the value it was written
+ * for. A code is different — it is baked into the SKU string when the SKU is
+ * made — so changing one leaves existing SKUs as they are (`decodeSku` matches
+ * a stored SKU exactly first) and only shapes the ones made from now on.
+ *
+ * Removal is **refused** while a SKU uses the thing: a SKU is referenced by
+ * quotation lines, purchase orders and the stock ledger, and a SKU whose
+ * attribute names a feature that no longer exists is one nobody can select
+ * again. The SKU is deleted on the products screen first, where its stock is
+ * visible, and then the value goes.
+ */
+
+/** Rules with a feature (or one of its values) renamed. */
+function renameInRules(
+  rules: ProductConfigRule[],
+  featureName: string,
+  change: { name?: string; value?: { from: string; to: string } },
+): ProductConfigRule[] {
+  const fix = (entry: { featureName: string; values: string[] }) => {
+    if (entry.featureName !== featureName) return entry;
+    return {
+      featureName: change.name ?? entry.featureName,
+      values: change.value
+        ? entry.values.map((v) => (v === change.value!.from ? change.value!.to : v))
+        : entry.values,
+    };
+  };
+  return rules.map((rule) => ({
+    ...rule,
+    conditions: rule.conditions.map(fix),
+    actions: rule.actions.map(fix),
+  }));
+}
+
+/**
+ * Rules with a feature (or one of its values) taken out. A condition or an
+ * action left with no values says nothing and is dropped, and a rule left with
+ * no condition or no action is dropped with it — a rule whose condition is gone
+ * would otherwise read as «always», which is not what anybody wrote.
+ */
+function removeFromRules(
+  rules: ProductConfigRule[],
+  featureName: string,
+  value?: string,
+): ProductConfigRule[] {
+  const strip = (entries: { featureName: string; values: string[] }[]) => entries
+    .map((entry) => (entry.featureName !== featureName ? entry
+      : value === undefined ? null
+        : { ...entry, values: entry.values.filter((v) => v !== value) }))
+    .filter((entry): entry is { featureName: string; values: string[] } =>
+      !!entry && entry.values.length > 0);
+  return rules
+    .map((rule) => ({ ...rule, conditions: strip(rule.conditions), actions: strip(rule.actions) }))
+    .filter((rule) => rule.conditions.length > 0 && rule.actions.length > 0);
+}
+
+/** Why this feature (or option) cannot be removed, or null. */
+export function catalogueRemovalRefusal(
+  product: Pick<Product, "features" | "variants">,
+  featureId: string,
+  optionId?: string,
+): string | null {
+  const feature = (product.features ?? []).find((f) => f.id === featureId);
+  if (!feature) return null;
+  const option = optionId ? feature.options.find((o) => o.id === optionId) : undefined;
+  if (optionId && !option) return null;
+  const users = (product.variants ?? []).filter((v) => {
+    const held = v.attributes?.[feature.name];
+    if (held === undefined) return false;
+    return option ? held === option.value : true;
+  });
+  if (users.length === 0) return null;
+  const what = option ? `مقدار «${option.value}»` : `ویژگی «${feature.name}»`;
+  return `${what} در ${users.length.toLocaleString("fa-IR")} SKU استفاده شده (${
+    users.slice(0, 3).map((v) => v.sku).join("، ")}${users.length > 3 ? "، …" : ""}) و حذف نمی‌شود. `
+    + "ابتدا آن SKUها را از صفحه کالاها حذف کنید.";
+}
+
+/** A feature renamed (and recoded), with its SKUs and rules following. */
+export function renameFeature<P extends Pick<Product, "features" | "variants" | "configRules">>(
+  product: P, featureId: string, name: string, code?: string,
+): P {
+  const feature = (product.features ?? []).find((f) => f.id === featureId);
+  if (!feature) return product;
+  const from = feature.name;
+  const nameChanged = from !== name;
+  return {
+    ...product,
+    features: (product.features ?? []).map((f) => (f.id === featureId ? { ...f, name, code } : f)),
+    variants: nameChanged
+      ? (product.variants ?? []).map((v) => {
+        if (!v.attributes || !(from in v.attributes)) return v;
+        const { [from]: held, ...rest } = v.attributes;
+        return { ...v, attributes: { ...rest, [name]: held } };
+      })
+      : product.variants,
+    configRules: nameChanged
+      ? renameInRules(product.configRules ?? [], from, { name })
+      : product.configRules,
+  };
+}
+
+/** An option renamed (and recoded), with its SKUs and rules following. */
+export function renameOption<P extends Pick<Product, "features" | "variants" | "configRules">>(
+  product: P, featureId: string, optionId: string, value: string, code?: string,
+): P {
+  const feature = (product.features ?? []).find((f) => f.id === featureId);
+  const option = feature?.options.find((o) => o.id === optionId);
+  if (!feature || !option) return product;
+  const from = option.value;
+  return {
+    ...product,
+    features: (product.features ?? []).map((f) => (f.id !== featureId ? f : {
+      ...f,
+      options: f.options.map((o) => (o.id === optionId ? { ...o, value, code } : o)),
+    })),
+    variants: (product.variants ?? []).map((v) => (v.attributes?.[feature.name] === from
+      ? { ...v, attributes: { ...v.attributes, [feature.name]: value } }
+      : v)),
+    configRules: renameInRules(product.configRules ?? [], feature.name, { value: { from, to: value } }),
+  };
+}
+
+/** A feature (or one of its options) removed, with the rules that named it. */
+export function removeFromCatalogue<P extends Pick<Product, "features" | "variants" | "configRules">>(
+  product: P, featureId: string, optionId?: string,
+): P {
+  const feature = (product.features ?? []).find((f) => f.id === featureId);
+  if (!feature) return product;
+  const option = optionId ? feature.options.find((o) => o.id === optionId) : undefined;
+  if (optionId && !option) return product;
+  return {
+    ...product,
+    features: option
+      ? (product.features ?? []).map((f) => (f.id !== featureId ? f
+        : { ...f, options: f.options.filter((o) => o.id !== optionId) }))
+      : (product.features ?? []).filter((f) => f.id !== featureId),
+    configRules: removeFromRules(product.configRules ?? [], feature.name, option?.value),
+  };
 }

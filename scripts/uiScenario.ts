@@ -3626,6 +3626,57 @@ head("The work board: the project line opens the project");
   hostG.remove();
 }
 
+/*
+ * Correcting the catalogue from inside the configurator.
+ *
+ * The rules are covered by `test:rules`; what a render can see is that the
+ * pencil opens a form seeded with the stored value, that saving hands the host
+ * a mutation that renames (not adds), that a removal is asked twice before it
+ * writes, and that a value a SKU uses is refused without a write at all.
+ */
+head("Configurator: an option is edited and removed in place");
+{
+  const productC = {
+    id: "p1", displayName: "فلومتر", code: "FM",
+    features: [{ id: "f1", name: "جنس", options: [{ id: "o1", value: "316" }, { id: "o2", value: "304" }] }],
+    variants: [{ id: "v1", sku: "FM-A1", attributes: { "جنس": "316" }, stockLevel: 0, minStockLevel: 0 }],
+    configRules: [],
+  } as unknown as Product;
+  const writes: Product[] = [];
+  const hostC = document.createElement("div");
+  document.body.appendChild(hostC);
+  const rootC = createRoot(hostC);
+  act(() => {
+    rootC.render(React.createElement(ProductConfiguratorModal, {
+      product: productC, selections: {}, onSelectionsChange: () => undefined,
+      onCancel: () => undefined, onConfirm: () => undefined, confirmLabel: "تایید", intro: "",
+      onCatalogueEdit: async (mutate: (full: Product) => Product) => { writes.push(mutate(productC)); },
+    }));
+  });
+  const byId = (id: string) => hostC.querySelector(`#${id}`) as HTMLElement | null;
+  act(() => { byId("configurator-edit-option-o2")!.click(); });
+  const nameBox = byId("configurator-new-name") as HTMLInputElement;
+  ok("the pencil opens the form on the stored value", nameBox?.value === "304", nameBox?.value);
+  act(() => { handlers(nameBox).onChange?.({ target: { value: "استیل 304" } }); });
+  await act(async () => { byId("configurator-new-submit")!.click(); });
+  ok("saving renames the option rather than adding one",
+    writes.length === 1 && writes[0].features![0].options.length === 2
+      && writes[0].features![0].options[1].value === "استیل 304", writes[0]?.features);
+
+  act(() => { byId("configurator-remove-option-o1")!.click(); });
+  ok("the bin asks before it writes", writes.length === 1 && !!byId("configurator-remove-submit"));
+  await act(async () => { byId("configurator-remove-submit")!.click(); });
+  ok("a value a SKU uses is refused without a write", writes.length === 1, writes.length);
+  ok("...and the refusal is said", /SKU/.test(hostC.textContent ?? ""));
+
+  act(() => { byId("configurator-remove-option-o2")!.click(); });
+  await act(async () => { byId("configurator-remove-submit")!.click(); });
+  ok("an unused value is removed",
+    writes.length === 2 && writes[1].features![0].options.map((o) => o.id).join(",") === "o1", writes[1]?.features);
+  act(() => { rootC.unmount(); });
+  hostC.remove();
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {

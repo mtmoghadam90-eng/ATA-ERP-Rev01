@@ -27,6 +27,7 @@ import { getProformaOutcomeStatus } from "../src/useERPStore";
 import { computeInquiryTotals, inquiryTotalRiyal } from "../src/utils/inquirySteps";
 import {
   catalogueCodeRefusal, catalogueNameRefusal, describeProductSpec, newConfigId,
+  catalogueRemovalRefusal, removeFromCatalogue, renameFeature, renameOption,
 } from "../src/utils/productConfig";
 import {
   discountKeepFraction, netUnitPrice, summarizeHistory,
@@ -21864,6 +21865,56 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("both list rows draw it too", (tasksSrc.match(/<CardProjectLink/g) ?? []).length === 2);
   ok("no card prints the code as a bare span again",
     !/<span className="font-mono font-bold">\{(card\.context|task\.relatedProject)\.code\}<\/span>/.test(tasksSrc + boardSrc));
+}
+
+{
+  console.log("\nConfigurator: a feature or an option corrected or removed");
+  const cat = {
+    features: [
+      { id: "f1", name: "جنس", options: [{ id: "o1", value: "316" }, { id: "o2", value: "304" }] },
+      { id: "f2", name: "سایز", options: [{ id: "o3", value: "1" }, { id: "o4", value: "8" }] },
+    ],
+    variants: [{ id: "v1", sku: "FM-A1-B1", attributes: { "جنس": "316", "سایز": "1" }, stockLevel: 0, minStockLevel: 0 }],
+    configRules: [{ id: "r1", active: true,
+      conditions: [{ featureName: "جنس", values: ["316"] }],
+      actions: [{ featureName: "سایز", values: ["8"] }] }],
+  } as any;
+  const rf = renameFeature(cat, "f1", "جنس بدنه", "MAT");
+  eq("a renamed feature carries its SKU's attribute key", rf.variants[0].attributes["جنس بدنه"], "316");
+  ok("...and drops the old key", !("جنس" in rf.variants[0].attributes));
+  eq("...and its rules", rf.configRules[0].conditions[0].featureName, "جنس بدنه");
+  eq("...and records the new code", rf.features[0].code, "MAT");
+  eq("the SKU string itself is left alone", rf.variants[0].sku, "FM-A1-B1");
+  const ro = renameOption(cat, "f1", "o1", "استیل 316");
+  eq("a renamed option carries its SKU's value", ro.variants[0].attributes["جنس"], "استیل 316");
+  eq("...and its rules", ro.configRules[0].conditions[0].values[0], "استیل 316");
+  eq("the original is not mutated", cat.variants[0].attributes["جنس"], "316");
+  ok("removing an option a SKU uses is refused", catalogueRemovalRefusal(cat, "f1", "o1") !== null);
+  ok("...and removing a feature a SKU uses", catalogueRemovalRefusal(cat, "f2") !== null);
+  eq("an unused option may go", catalogueRemovalRefusal(cat, "f1", "o2"), null);
+  const noSku = { ...cat, variants: [] };
+  const rmOpt = removeFromCatalogue(noSku, "f2", "o4");
+  eq("removing the option removes it", rmOpt.features[1].options.length, 1);
+  eq("...and a rule left with no action goes with it", rmOpt.configRules.length, 0);
+  const rmFeat = removeFromCatalogue(noSku, "f1");
+  eq("removing a feature removes it", rmFeat.features.length, 1);
+  eq("...and the rule whose condition named it", rmFeat.configRules.length, 0);
+  const keep = removeFromCatalogue(noSku, "f1", "o2");
+  eq("an option no rule names leaves the rules alone", keep.configRules.length, 1);
+}
+
+{
+  console.log("\nSupplier inquiry: a supplier can be defined from the form");
+  const src = readFileSync("src/components/SupplierInquiriesView.tsx", "utf8");
+  const inner = src.slice(src.indexOf("function InquiryFormInner("));
+  const formEnd = inner.indexOf("</form>");
+  const modalAt = inner.indexOf("<QuickAddModal");
+  ok("the form offers a quick-add beside the supplier", /id="inquiry-quick-add-supplier"/.test(inner));
+  ok("it creates through the suppliers API", /suppliersApi\.create\(supplierToWriteInput/.test(inner));
+  ok("the quick-add is drawn outside the inquiry's <form>, whose submit it would otherwise trigger",
+    formEnd > 0 && modalAt > formEnd, { formEnd, modalAt });
+  ok("the created supplier is selected and pinned",
+    /supplierPicker\.include\?\.\(created\)[\s\S]{0,160}setSupplierId\(created\.id\)/.test(inner));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
