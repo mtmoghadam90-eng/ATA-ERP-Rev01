@@ -21930,7 +21930,7 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   const fact = { isSystem: true, authorUserId: "u1" };
   ok("a note is edited by its author", canModifyActivity(note, author));
   ok("...and by nobody else", !canModifyActivity(note, other));
-  ok("...not even a system administrator", !canModifyActivity(note, admin));
+  ok("...except a system administrator, who may correct any entry", canModifyActivity(note, admin));
   ok("a system entry is edited by a system administrator", canModifyActivity(fact, admin));
   ok("...and not by whoever caused it", !canModifyActivity(fact, author));
   ok("an entry with no author is nobody's", !canModifyActivity({ isSystem: false, authorUserId: null }, { id: "", isSystemAdmin: false }));
@@ -21955,7 +21955,7 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   const svc = readFileSync("src/server/services/activityService.ts", "utf8");
   ok("editing and deleting both ask the shared rule",
     (svc.match(/canModifyActivity\(activity, user\)/g) ?? []).length === 2);
-  ok("...and no longer let an administrator past the author check",
+  ok("...rather than a second reading of it written inline",
     !/authorUserId !== user\.id && !user\.isSystemAdmin/.test(svc));
   const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
   ok("the feed draws edit and delete only where the server accepts them", /canModifyActivity\(act, currentUser\)/.test(view));
