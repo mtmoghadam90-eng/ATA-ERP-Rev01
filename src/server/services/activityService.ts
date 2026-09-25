@@ -22,6 +22,7 @@ import { applyCategoryMilestoneTriggers } from "./milestoneAutomation";
 import { processWorkflowRules } from "./workflowService";
 import { notifyUser } from "./notificationService";
 import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
+import { canModifyActivity } from "../../utils/activityAuthorship";
 import { afterCommit } from "../afterCommit";
 import { capacityRefusalMessage } from "../../utils/workLimits";
 import { canDeleteNote, noteHasContent, noteSummary } from "../../utils/moduleNotes";
@@ -805,10 +806,10 @@ export async function updateActivity(
 
   const activity = await db.projectActivity.findUnique({
     where: { id },
-    select: { id: true, authorUserId: true, text: true },
+    select: { id: true, authorUserId: true, text: true, isSystem: true },
   });
   if (!activity) return "not-found";
-  if (activity.authorUserId !== user.id && !user.isSystemAdmin) return "forbidden";
+  if (!canModifyActivity(activity, user)) return "forbidden";
 
   await db.projectActivity.update({
     where: { id },
@@ -860,13 +861,13 @@ export async function deleteActivity(
   const activity = await db.projectActivity.findUnique({
     where: { id },
     select: {
-      id: true, authorUserId: true,
+      id: true, authorUserId: true, isSystem: true,
       referrals: { select: { id: true, _count: { select: { messages: true } } } },
       _count: { select: { replies: true } },
     },
   });
   if (!activity) return "not-found";
-  if (activity.authorUserId !== user.id && !user.isSystemAdmin) return "forbidden";
+  if (!canModifyActivity(activity, user)) return "forbidden";
   // Any answered referral, or any reply to the message itself. `replyToId` is
   // NoAction precisely so the database cannot quietly take the answers too.
   if (activity.referrals.some((r) => r._count.messages > 0)) return "has-replies";

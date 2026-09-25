@@ -750,9 +750,9 @@ export async function createPurchaseOrder(
         sourceType: "PURCHASE_ORDER",
         sourceId: po.id,
         text:
-          `صدور سفارش خرید شماره ${po.poNumber} به تأمین‌کننده` +
+          `سفارش خرید شماره ${po.poNumber} توسط {actor} برای تأمین‌کننده` +
           ` «${await supplierNameOf(po.supplierId)}»` +
-          ` برای تأمین ${po.items?.length ?? 0} قلم کالای پروژه.`,
+          ` صادر شد تا ${po.items?.length ?? 0} قلم کالای پروژه تأمین شود.`,
       },
       user,
       todayJalali,
@@ -999,7 +999,7 @@ export async function updatePurchaseOrder(
           text:
             `وضعیت سفارش خرید شماره ${po.poNumber} (تأمین‌کننده` +
             ` «${await supplierNameOf(po.supplierId)}») از «${before.status}»` +
-            ` به «${po.status}» تغییر کرد.`,
+            ` به «${po.status}» تغییر کرد (توسط {actor}).`,
         },
         user,
         todayJalali,
@@ -1095,7 +1095,7 @@ export async function deletePurchaseOrder(
       {
         projectId: po.projectId,
         categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
-        text: `سفارش خرید شماره ${po.poNumber} از سیستم حذف شد.`,
+        text: `سفارش خرید شماره ${po.poNumber} توسط {actor} از سیستم حذف شد.`,
       },
       user,
       todayJalali,

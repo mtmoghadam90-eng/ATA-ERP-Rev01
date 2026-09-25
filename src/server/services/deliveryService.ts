@@ -511,7 +511,7 @@ export async function updateDelivery(id: string, input: DeliveryInput, user: Aut
         sourceType: "DELIVERY",
         sourceId: delivery.id,
         text:
-          `وضعیت پکینگ‌لیست شماره ${delivery.packingListNumber} به «${newStatus}» تغییر کرد` +
+          `وضعیت پکینگ‌لیست شماره ${delivery.packingListNumber} توسط {actor} به «${newStatus}» تغییر کرد` +
           (delivery.actualDeliveryDateJalali
             ? `؛ تاریخ تحویل قطعی به کارفرما: ${delivery.actualDeliveryDateJalali}.`
             : "؛ محموله هنوز تحویل کارفرما نشده است.")
@@ -1093,7 +1093,7 @@ export async function updateService(id: string, input: ServiceInput, user: AuthU
         sourceId: service.id,
         text:
           `وضعیت رسیدگی به درخواست خدمات پس از فروش کالای «${service.itemName || "نامشخص"}»` +
-          ` به «${service.status}» تغییر کرد.` +
+          ` توسط {actor} به «${service.status}» تغییر کرد.` +
           ` اقدامات انجام‌شده: ${service.actionsTaken || "تاکنون اقدامی ثبت نشده است"}.`,
       },
       user,
@@ -1144,7 +1144,7 @@ export async function deleteService(
     {
       projectId: existing.projectId,
       categoryName: ACTIVITY_CATEGORY.AFTER_SALES,
-      text: `درخواست خدمات پس از فروش مربوط به کالای ${existing.itemName} حذف گردید.`,
+      text: `درخواست خدمات پس از فروش کالای «${existing.itemName || "نامشخص"}» توسط {actor} حذف شد.`,
     },
     user,
     todayJalali,

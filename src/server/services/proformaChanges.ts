@@ -1,6 +1,7 @@
 import { toPersianDigits } from "../../numUtils";
 import { formatMoney } from "../../numUtils";
 import { getProformaOutcome } from "../proformaStatus";
+import { PROFORMA_SENT_STATUS } from "../../utils/moduleStatuses";
 
 /**
  * What actually changed in a proforma, written out for the project timeline.
@@ -45,6 +46,38 @@ export interface ChangeSnapshot {
   projectId?: string | null;
   notes?: string | null;
   items?: ChangeItem[] | null;
+  /** How and to whom it went, once sent — see `sentDescription`. */
+  sentMethod?: string | null;
+  /** The names it was sent to: an array, or the JSON column as stored. */
+  sentRecipients?: unknown;
+  sentDateJalali?: string | null;
+}
+
+/** The recipients as a list of names, whether stored as JSON or already parsed. */
+function recipientNames(value: unknown): string[] {
+  let list: unknown = value;
+  if (typeof value === "string") {
+    try { list = JSON.parse(value); } catch { list = value.trim() ? [value] : []; }
+  }
+  if (!Array.isArray(list)) return [];
+  return list.map((n) => text(n)).filter(Boolean);
+}
+
+/**
+ * «از طریق ایمیل برای «رضایی» و «احمدی» در تاریخ …» — how the document went
+ * out, which is what a reader of the timeline needs and what «وضعیت ارسال … به
+ * ارسال شده تغییر کرد» never said. Each part drops on its own when it is not
+ * recorded, rather than printing «نامشخص» for a question nobody was asked.
+ */
+export function sentDescription(snapshot: ChangeSnapshot): string {
+  const parts: string[] = [];
+  const method = text(snapshot.sentMethod);
+  if (method) parts.push(`از طریق «${method}»`);
+  const names = recipientNames(snapshot.sentRecipients);
+  if (names.length) parts.push(`برای ${names.map((n) => `«${n}»`).join("، ")}`);
+  const date = text(snapshot.sentDateJalali);
+  if (date) parts.push(`در تاریخ ${date}`);
+  return parts.join(" ");
 }
 
 /** Names the ids cannot carry, resolved by the caller that has the database. */
@@ -140,12 +173,24 @@ export function describeProformaChanges(
   if (!before.isCancelled && after.isCancelled) clauses.push("سند لغو شد");
   if (before.isCancelled && !after.isCancelled) clauses.push("لغو سند برداشته شد");
 
-  // The send status: a workflow step on the document itself.
-  if (text(before.status) !== text(after.status)) {
+  // The send status: a workflow step on the document itself. Being sent is
+  // the one worth telling in full — how, and to whom.
+  const wasSent = text(before.status) === PROFORMA_SENT_STATUS;
+  const isSent = text(after.status) === PROFORMA_SENT_STATUS;
+  if (!wasSent && isSent) {
+    const how = sentDescription(after);
+    clauses.push(how ? `پیش‌فاکتور ${how} برای مشتری ارسال شد` : "پیش‌فاکتور برای مشتری ارسال شد");
+  } else if (text(before.status) !== text(after.status)) {
     clauses.push(
       `وضعیت ارسال پیش‌فاکتور از «${text(before.status) || "نامشخص"}»`
       + ` به «${text(after.status) || "نامشخص"}» تغییر کرد`,
     );
+  } else if (isSent && (
+    text(before.sentMethod) !== text(after.sentMethod)
+    || recipientNames(before.sentRecipients).join("|") !== recipientNames(after.sentRecipients).join("|")
+  )) {
+    const how = sentDescription({ ...after, sentDateJalali: null });
+    clauses.push(`مشخصات ارسال اصلاح شد${how ? `: ${how}` : ""}`);
   }
 
   // The lines first, then the conclusion they add up to: what happened, and
@@ -228,4 +273,30 @@ export function proformaChangeSentence(
     return `${head} (بدون تغییر در اطلاعات اصلی سند).`;
   }
   return `${head}: ${changes.join("؛ ")}.`;
+}
+
+/**
+ * The sentence for a newly issued proforma. Each detail drops on its own when
+ * it is not recorded — it used to open a bracket with «(» and then find
+ * nothing to put in it — and a document created already sent says how and to
+ * whom, exactly as the edit does.
+ */
+export function proformaCreatedSentence(p: ChangeSnapshot & {
+  proformaNumber: string;
+  itemCount: number;
+  customerName?: string | null;
+}): string {
+  const head = `پیش‌فاکتور شماره ${p.proformaNumber} شامل ${count(p.itemCount)} قلم کالا`
+    + (text(p.customerName) ? ` برای «${text(p.customerName)}»` : "")
+    + " توسط {actor} صادر شد";
+  const details: string[] = [];
+  if (text(p.issueDateJalali)) details.push(`تاریخ صدور: ${text(p.issueDateJalali)}`);
+  if (text(p.expiryDateJalali)) details.push(`اعتبار تا ${text(p.expiryDateJalali)}`);
+  if (num(p.finalAmount) > 0) details.push(`مبلغ نهایی: ${formatMoney(num(p.finalAmount))} ${text(p.currency) || "ریال"}`);
+  const sentence = head + (details.length ? ` (${details.join("، ")})` : "");
+  if (text(p.status) === PROFORMA_SENT_STATUS) {
+    const how = sentDescription(p);
+    return `${sentence} و ${how ? `${how} ` : ""}برای مشتری ارسال شد.`;
+  }
+  return `${sentence}؛ وضعیت سند: ${text(p.status) || "پیش‌نویس"}.`;
 }

@@ -289,6 +289,8 @@ export interface ActivityRow {
   text: string;
   authorUserId: string | null;
   authorName: string | null;
+  /** Written by the application rather than typed — see `canModifyActivity`. */
+  isSystem?: boolean;
   /**
    * The author's account, joined for the one field the feed draws.
    *

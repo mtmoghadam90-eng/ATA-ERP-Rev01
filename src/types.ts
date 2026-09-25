@@ -1073,6 +1073,10 @@ export interface ProjectActivity {
   text: string;
   createdAt: string;
   createdBy?: string;
+  /** The account that wrote it (or, for a system entry, whoever caused it). */
+  authorUserId?: string | null;
+  /** Written by the application rather than typed — see `canModifyActivity`. */
+  isSystem?: boolean;
   /**
    * The author's picture, joined from their account rather than stored here.
    *

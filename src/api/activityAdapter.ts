@@ -83,6 +83,8 @@ function activityToView(act: ActivityRow): ProjectActivity {
     text: act.text,
     createdAt: act.createdAt,
     createdBy: act.authorName ?? undefined,
+    authorUserId: act.authorUserId ?? null,
+    isSystem: !!act.isSystem,
     createdByAvatarUrl: act.author?.avatarUrl ?? null,
     attachment: toAttachment(act.attachmentName, act.attachmentSize, act.attachmentUrl),
     attachments,

@@ -29,6 +29,10 @@ import {
   catalogueCodeRefusal, catalogueNameRefusal, describeProductSpec, newConfigId,
   catalogueRemovalRefusal, removeFromCatalogue, renameFeature, renameOption,
 } from "../src/utils/productConfig";
+import { canModifyActivity } from "../src/utils/activityAuthorship";
+import {
+  proformaCreatedSentence, sentDescription,
+} from "../src/server/services/proformaChanges";
 import {
   discountKeepFraction, netUnitPrice, summarizeHistory,
 } from "../src/utils/inquiryPriceHistory";
@@ -1788,8 +1792,8 @@ head("Project timeline: what an edit changed");
     projectStatusBefore: "ارائه پیش‌فاکتور", projectStatusAfter: "ارائه پیش‌فاکتور",
   });
   eq("sending the document is one clause, about sending", sent.length, 1);
-  ok("named as the send status, not as a result",
-    sent[0].startsWith("وضعیت ارسال پیش‌فاکتور از «پیش‌نویس» به «ارسال شده»"), sent[0]);
+  ok("named as sending, not as a result",
+    sent[0].startsWith("پیش‌فاکتور برای مشتری ارسال شد"), sent[0]);
   ok("and no project recalculation is claimed",
     !sent.some((c) => c.includes("پروژه")), sent);
 
@@ -21915,6 +21919,52 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     formEnd > 0 && modalAt > formEnd, { formEnd, modalAt });
   ok("the created supplier is selected and pinned",
     /supplierPicker\.include\?\.\(created\)[\s\S]{0,160}setSupplierId\(created\.id\)/.test(inner));
+}
+
+{
+  console.log("\nActivity feed: who may correct an entry, and what a system entry says");
+  const author = { id: "u1", isSystemAdmin: false };
+  const other = { id: "u2", isSystemAdmin: false };
+  const admin = { id: "u9", isSystemAdmin: true };
+  const note = { isSystem: false, authorUserId: "u1" };
+  const fact = { isSystem: true, authorUserId: "u1" };
+  ok("a note is edited by its author", canModifyActivity(note, author));
+  ok("...and by nobody else", !canModifyActivity(note, other));
+  ok("...not even a system administrator", !canModifyActivity(note, admin));
+  ok("a system entry is edited by a system administrator", canModifyActivity(fact, admin));
+  ok("...and not by whoever caused it", !canModifyActivity(fact, author));
+  ok("an entry with no author is nobody's", !canModifyActivity({ isSystem: false, authorUserId: null }, { id: "", isSystemAdmin: false }));
+
+  const how = sentDescription({ sentMethod: "ایمیل", sentRecipients: JSON.stringify(["رضایی", "احمدی"]), sentDateJalali: "1405/07/01" });
+  ok("sending names the channel, the people and the date",
+    how.includes("«ایمیل»") && how.includes("«رضایی»") && how.includes("«احمدی»") && how.includes("1405/07/01"), how);
+  eq("an unrecorded send says nothing rather than «نامشخص»", sentDescription({}), "");
+  const base = { status: "پیش‌نویس", items: [] as never[] };
+  const sent = describeProformaChanges(base, { ...base, status: "ارسال شده", sentMethod: "واتس‌اپ", sentRecipients: ["رضایی"] });
+  ok("marking it sent says how and to whom", sent[0].includes("«واتس‌اپ»") && sent[0].includes("«رضایی»"), sent);
+  const resent = describeProformaChanges(
+    { ...base, status: "ارسال شده", sentMethod: "ایمیل", sentRecipients: ["رضایی"] },
+    { ...base, status: "ارسال شده", sentMethod: "ایمیل", sentRecipients: ["احمدی"] });
+  ok("correcting the recipients of a sent document is reported", resent.some((c) => c.includes("مشخصات ارسال اصلاح شد") && c.includes("«احمدی»")), resent);
+  const created = proformaCreatedSentence({ proformaNumber: "P1", itemCount: 2, status: "ارسال شده", sentMethod: "ایمیل", sentRecipients: ["رضایی"], customerName: "فراسو" });
+  ok("a document created sent says how and to whom", created.includes("«ایمیل»") && created.includes("«رضایی»") && created.includes("«فراسو»"), created);
+  ok("a document with no dates opens no empty bracket", !/\(\s*[،)]/.test(created) && !created.includes("()"), created);
+
+  const log = readFileSync("src/server/services/projectActivityLog.ts", "utf8");
+  ok("every system entry is written as one", /isSystem: true/.test(log));
+  const svc = readFileSync("src/server/services/activityService.ts", "utf8");
+  ok("editing and deleting both ask the shared rule",
+    (svc.match(/canModifyActivity\(activity, user\)/g) ?? []).length === 2);
+  ok("...and no longer let an administrator past the author check",
+    !/authorUserId !== user\.id && !user\.isSystemAdmin/.test(svc));
+  const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("the feed draws edit and delete only where the server accepts them", /canModifyActivity\(act, currentUser\)/.test(view));
+  const deletions = [
+    ["src/server/services/transactionService.ts", /توسط \{actor\} از سیستم حذف شد و مانده/],
+    ["src/server/services/purchaseOrderService.ts", /توسط \{actor\} از سیستم حذف شد\./],
+    ["src/server/services/deliveryService.ts", /خدمات پس از فروش کالای[^`]*توسط \{actor\} حذف شد/],
+  ] as const;
+  for (const [file, re] of deletions) ok(`a deletion names who did it (${file.split("/").pop()})`, re.test(readFileSync(file, "utf8")));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

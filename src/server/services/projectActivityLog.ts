@@ -116,6 +116,9 @@ export async function logProjectFact(
       groupId,
       sourceType: toNullableString(fact.sourceType, 30),
       sourceId: toNullableString(fact.sourceId, 36),
+      // What makes it editable by a system administrator only — its author is
+      // merely whoever caused it. See `canModifyActivity`.
+      isSystem: true,
       // Several of these sentences name whoever did the thing. `AuthUser`
       // carries only an id, so the placeholder is filled from the lookup the
       // entry needs anyway rather than every caller querying for a name.

@@ -756,18 +756,20 @@ export function followUpActivityText(entry: {
   deferredUntilJalali?: string | null;
   decision: FollowUpDecision;
 }): string {
-  const head = `پیگیری پیش‌فاکتور ${entry.proformaNumber}${
-    entry.followUpResult ? ` — ${entry.followUpResult}` : ""
+  // Who made the call and what the customer said, in one line: «— result»
+  // alone read as a heading with nobody behind it.
+  const head = `پیگیری پیش‌فاکتور ${entry.proformaNumber} توسط {actor} ثبت شد${
+    entry.followUpResult ? `؛ نتیجه: ${entry.followUpResult}` : ""
   }`;
 
   const lines = [head];
   const note = String(entry.completionNote ?? "").trim();
-  if (note) lines.push(note);
+  if (note) lines.push(`شرح: ${note}`);
 
   if (entry.decision === "NEXT_ACTION" && entry.nextTitle) {
     lines.push(
-      `اقدام بعدی: ${entry.nextTitle}${
-        entry.nextDueDateJalali ? ` در ${entry.nextDueDateJalali}` : ""
+      `اقدام بعدی: «${entry.nextTitle}»${
+        entry.nextDueDateJalali ? ` تا ${entry.nextDueDateJalali}` : ""
       }`,
     );
   } else if (entry.decision === "DEFER" && entry.deferredUntilJalali) {
