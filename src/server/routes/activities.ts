@@ -255,7 +255,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
         user,
         "attachments" in body ? normalizeAttachments(body.attachments) : undefined,
       );
-      if (outcome === "forbidden") return denied(res, "یادداشت را فقط نویسنده آن و شرح سیستمی را فقط مدیر سیستم می‌تواند ویرایش کند.");
+      if (outcome === "forbidden") return denied(res, "یادداشت را فقط نویسنده آن یا مدیر سیستم، و شرح سیستمی را فقط مدیر سیستم می‌تواند ویرایش کند.");
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "فعالیت یافت نشد." });
         return;
@@ -275,7 +275,7 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
     if (!user) return;
     try {
       const outcome = await deleteActivity(req.params.id, user);
-      if (outcome === "forbidden") return denied(res, "یادداشت را فقط نویسنده آن و شرح سیستمی را فقط مدیر سیستم می‌تواند حذف کند.");
+      if (outcome === "forbidden") return denied(res, "یادداشت را فقط نویسنده آن یا مدیر سیستم، و شرح سیستمی را فقط مدیر سیستم می‌تواند حذف کند.");
       if (outcome === "not-found") {
         res.status(404).json({ success: false, error: "فعالیت یافت نشد." });
         return;
