@@ -353,7 +353,7 @@ export function describeTransaction(
   // withholds everywhere else. The entry names the document; the document
   // carries the number.
   return (
-    `${verb} سند ${incoming ? "دریافت" : "پرداخت"} شماره ${t.documentNumber || "-"}:` +
+    `سند ${incoming ? "دریافت" : "پرداخت"} شماره ${t.documentNumber || "-"} توسط {actor} ${verb === "ثبت" ? "ثبت شد" : "ویرایش شد"}:` +
     ` ${direction}` +
     ` از طریق ${t.paymentType || "نامشخص"} در تاریخ ${t.occurredAtJalali || "-"}` +
     ` — وضعیت سند: ${t.status || "-"}.` +
@@ -567,7 +567,7 @@ export async function deleteTransaction(
         text:
           `سند ${transaction.type === "دریافت" ? "دریافت" : "پرداخت"} شماره` +
           ` ${transaction.documentNumber || "-"}` +
-          ` (تاریخ ${transaction.occurredAtJalali || "-"}) از سیستم حذف شد و مانده پروژه بازمحاسبه گردید.`,
+          ` (تاریخ ${transaction.occurredAtJalali || "-"}) توسط {actor} از سیستم حذف شد و مانده پروژه بازمحاسبه گردید.`,
       },
       user,
       todayJalali,

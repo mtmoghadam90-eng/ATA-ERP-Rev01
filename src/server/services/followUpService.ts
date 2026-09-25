@@ -691,7 +691,7 @@ export async function reactivateFollowUp(
         categoryName: ACTIVITY_CATEGORY.PROFORMAS,
         sourceType: "PROFORMA",
         sourceId: proforma.id,
-        text: `پیگیری پیش‌فاکتور ${proforma.proformaNumber} دوباره فعال شد؛ اقدام بعدی: ${title} در ${dueDate}`,
+        text: `پیگیری پیش‌فاکتور ${proforma.proformaNumber} توسط {actor} دوباره فعال شد؛ اقدام بعدی: «${title}» تا ${dueDate}.`,
       },
       user,
       todayJalali,

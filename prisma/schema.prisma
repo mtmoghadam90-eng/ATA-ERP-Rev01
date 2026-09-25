@@ -1474,6 +1474,12 @@ model ProjectActivity {
   sourceType String? @db.NVarChar(30)
   sourceId   String? @db.NVarChar(36)
 
+  /// Written by the application (`logProjectFact`) rather than typed. Its
+  /// author is whoever caused it, so the author cannot answer this; a system
+  /// entry is edited or deleted by a system administrator only, a typed one by
+  /// its author only (`canModifyActivity`).
+  isSystem Boolean @default(false)
+
   /// The message this one answers, when it is a reply.
   ///
   /// NoAction: deleting a message must not silently take every answer to it

@@ -13,7 +13,7 @@ import { afterCommit } from "../afterCommit";
 import { closeFollowUpTasks } from "./followUpService";
 import { isTerminalOutcome, versionRefusalReason } from "../../utils/salesFollowUp";
 import { deriveProjectCompetitor } from "../../utils/competitors";
-import { describeProformaChanges, proformaChangeSentence } from "./proformaChanges";
+import { describeProformaChanges, proformaChangeSentence, proformaCreatedSentence } from "./proformaChanges";
 import {
   ProformaOutcome, commercialProformas, decidingProformas, deriveProjectLossReason,
   deriveProjectStatus, getProformaOutcome, getWonItems, isWonStatus, outcomeWhere,
@@ -939,12 +939,12 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
         categoryName: ACTIVITY_CATEGORY.PROFORMAS,
         sourceType: "PROFORMA",
         sourceId: proforma.id,
-        text:
-          `پیش‌فاکتور شماره ${proforma.proformaNumber} شامل ${(input.items ?? []).length} قلم کالا` +
-          ` توسط {actor} صادر شد` +
-          (proforma.issueDateJalali ? ` (تاریخ صدور: ${proforma.issueDateJalali}` : " (")
-          + (proforma.expiryDateJalali ? `، اعتبار تا ${proforma.expiryDateJalali}` : "")
-          + `، وضعیت سند: ${proforma.status}).`,
+        text: proformaCreatedSentence({
+          ...(proforma as never as Record<string, unknown>),
+          proformaNumber: proforma.proformaNumber,
+          itemCount: (input.items ?? []).length,
+          customerName: (await readLabels(getDb(), proforma.customerId, null)).customerName,
+        }),
       },
       user,
       todayJalali,
@@ -1411,7 +1411,7 @@ export async function cancelSupersededVersion(
         categoryName: ACTIVITY_CATEGORY.PROFORMAS,
         sourceType: "PROFORMA",
         sourceId: previous.id,
-        text: `نسخه قبلی پیش‌فاکتور ${previous.proformaNumber} به علت صدور نسخه جدید ${revision.proformaNumber} لغو شد.`,
+        text: `پیش‌فاکتور ${previous.proformaNumber} به علت صدور نسخه جدید ${revision.proformaNumber} توسط {actor} لغو شد؛ از این پس نسخه جدید ملاک است.`,
       },
       user,
       todayJalali,

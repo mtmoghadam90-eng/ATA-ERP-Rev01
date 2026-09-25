@@ -659,7 +659,7 @@ export async function updateInquiry(
         sourceType: "SUPPLIER_INQUIRY",
         sourceId: inquiry.id,
         text:
-          `استعلام قیمت تأمین‌کننده «${await inquirySupplierName(inquiry.supplierId)}» بروزرسانی شد` +
+          `استعلام قیمت تأمین‌کننده «${await inquirySupplierName(inquiry.supplierId)}» توسط {actor} به‌روزرسانی شد` +
           ` — مرحله فعلی: ${summary.status}.` +
           (inquiry.isWinner
             ? ` این آفر به عنوان یکی از پیشنهادهای برنده پروژه انتخاب شده است` +

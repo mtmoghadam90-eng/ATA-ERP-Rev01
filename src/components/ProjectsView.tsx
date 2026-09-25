@@ -1,6 +1,7 @@
 
 import React, { useState, useRef } from 'react';
 import type { ActivityJump } from '../utils/notificationJump';
+import { canModifyActivity } from '../utils/activityAuthorship';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 
 /**
@@ -5960,6 +5961,13 @@ export default function ProjectsView({
                                               >
                                                 <ListChecks size={10} />
                                               </button>
+                                              {/*
+                                                Drawn only where the server will
+                                                accept it: a note by its author, a
+                                                system entry by a system
+                                                administrator (`canModifyActivity`).
+                                              */}
+                                              {canModifyActivity(act, currentUser) && (<>
                                               <button
                                                 type="button"
                                                 onClick={() => {
@@ -5983,6 +5991,7 @@ export default function ProjectsView({
                                               >
                                                 <Trash2 size={10} />
                                               </button>
+                                              </>)}
                                             </div>
                                           </div>
                                         </div>
