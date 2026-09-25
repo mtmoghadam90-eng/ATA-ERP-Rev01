@@ -433,6 +433,34 @@ export default function ReferralsView({
     }
   };
 
+  /*
+   * «خواندن همه» — both kinds at once, because the badge counts both.
+   *
+   * A reply on a referral is read per message (`markItemsRead`) and a module
+   * notice per row, and the server's `read-all` knows only the second — so a
+   * button that called it alone would leave the badge counting every unread
+   * reply and read as a control that half works. The replies sent are the
+   * unread ones on this screen, which is what the badge counts.
+   */
+  const [markingAll, setMarkingAll] = useState(false);
+  const markAllAsRead = async () => {
+    const replyIds = groupedNotifications
+      .flatMap(g => g.items.map(i => i.message.id))
+      .filter(id => !readItemsSet.has(id));
+    setMarkingAll(true);
+    try {
+      await Promise.all([
+        replyIds.length ? markItemsAsRead(replyIds) : Promise.resolve(),
+        notificationsUnread > 0 ? inboxApi.markAllNotificationsRead() : Promise.resolve(),
+      ]);
+      refresh();
+    } catch (err) {
+      reportError(err, 'ثبت خوانده‌شدن اعلان‌ها با خطا مواجه شد.');
+    } finally {
+      setMarkingAll(false);
+    }
+  };
+
   const markModuleNotificationAsRead = async (id: string) => {
     try {
       await inboxApi.markNotificationRead(id);
@@ -612,6 +640,19 @@ export default function ReferralsView({
             </div>
           ) : (
             <>
+            {unreadCount > 0 && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  id="notifications-mark-all-read"
+                  onClick={() => { void markAllAsRead(); }}
+                  disabled={markingAll}
+                  className="px-3 py-1.5 text-xs font-bold text-sky-700 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition disabled:opacity-50"
+                >
+                  {markingAll ? 'در حال ثبت…' : `خواندن همه (${unreadCount.toLocaleString('fa-IR')})`}
+                </button>
+              </div>
+            )}
             {myModuleNotifications.map((notif) => (
               <div 
                 key={`mnotif-${notif.id}`} 
