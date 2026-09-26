@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ERPSettings, Proforma, User } from "./types";
 import { ApiError, setUnauthenticatedHandler } from "./api/client";
 import { settingsApi } from "./api/settings";
+import { diffSettings, isEmptyDelta } from "./utils/settingsDelta";
 import { DEFAULT_SETTINGS } from "./seedData";
 
 /**
@@ -336,10 +337,23 @@ export function useERPStore() {
     updateSettings: (newSettings: ERPSettings) => {
       const previous = settings;
       setSettings(newSettings);
-      settingsApi.save(newSettings).catch((err: unknown) => {
-        setSettings(previous);
-        alert(err instanceof ApiError ? err.message : "ذخیره تنظیمات با خطا مواجه شد.");
-      });
+      /*
+       * Only what this screen changed goes to the server — never the whole
+       * document this tab loaded, which would write back every value another
+       * tab or device changed since (`src/utils/settingsDelta.ts`). Afterwards
+       * the document is read back, so this tab also sees those other changes.
+       */
+      const delta = diffSettings(previous, newSettings);
+      if (isEmptyDelta(delta)) return;
+      settingsApi.saveDelta(delta)
+        .then(() => {
+          // A failed read-back says nothing about the save, which succeeded.
+          settingsApi.load().then((loaded) => setSettings(mergeSettings(loaded))).catch(() => {});
+        })
+        .catch((err: unknown) => {
+          setSettings(previous);
+          alert(err instanceof ApiError ? err.message : "ذخیره تنظیمات با خطا مواجه شد.");
+        });
     },
 
     /**
