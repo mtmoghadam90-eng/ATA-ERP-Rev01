@@ -251,7 +251,7 @@ import { importStageDurations } from "../src/utils/importTimeline";
 import { parseMilestoneRules } from "../src/server/services/milestoneAutomation";
 import { FRESH_FOR_MS, refreshDecision, type RateRefreshState } from "../src/server/services/rateRefresh";
 import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
-import { REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
+import { DEFAULT_REQUIRED_FIELDS, REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
 import {
   COST_DRIFT_THRESHOLD_PERCENT, COST_SOURCES, convertCost, costDrift, landedUnitCostOf,
   lineMargin, lineNeedsCost, linesMissingCost, sellingPriceFor,
@@ -22020,6 +22020,22 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     hung.ok === false && typeof hung.error === "string" && hung.error.length > 0);
   const fine = await withSendTimeout(Promise.resolve({ ok: true, providerMessageId: "p1" }), 1000);
   eq("queue: a send that settles is passed through untouched", fine.providerMessageId, "p1");
+}
+
+
+// ── A supplier inquiry for the warehouse is a choice on the form ─────────
+{
+  const src = readFileSync("src/components/SupplierInquiriesView.tsx", "utf8");
+  ok("inquiry: the form offers «خرید انبار (بدون پروژه)» as its own control",
+    /id="inquiry-kind-warehouse"/.test(src) && /chooseWarehouse\(true\)/.test(src));
+  ok("inquiry: a warehouse inquiry is posted with no project",
+    /projectId: forWarehouse \? null :/.test(src));
+  ok("inquiry: a required project does not block a warehouse inquiry",
+    /!forWarehouse && isFieldRequired\(settings, 'supplierInquiries', 'projectId'\) && !projectId/.test(src));
+  ok("inquiry: the card names the project from the row, not the picker's matches",
+    !/projects\.find\(p => p\.id === inq\.projectId\)/.test(src));
+  eq("inquiry: the project stays optional by default",
+    DEFAULT_REQUIRED_FIELDS.supplierInquiries.projectId, false);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
