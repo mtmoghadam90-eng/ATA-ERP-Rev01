@@ -12,7 +12,7 @@ import {
   isCustomerFacing, nextSendableTime, renderTemplate, resolveRecipient, retryDelayMs,
   shouldRetry,
 } from "../../../utils/messaging";
-import { BaleChatsResult, BaleConfig, baleRecentChats, sendThrough } from "./drivers";
+import { BaleChatsResult, BaleConfig, baleRecentChats, SendResult, sendThrough } from "./drivers";
 import { addresseeOf, namePrefixFor } from "../../../utils/honorific";
 import { WHATSAPP_PER_PASS, whatsappGapMs } from "../../../utils/whatsapp";
 import { TELEGRAM_PER_PASS, telegramGapMs } from "../../../utils/telegram";
@@ -719,6 +719,28 @@ export function channelPassLimit(channel: Channel): number {
 export const channelIsPaced = (channel: Channel): boolean =>
   channelPassLimit(channel) < BATCH_SIZE;
 
+/**
+ * The longest one send may hold the worker.
+ *
+ * `processQueue` refuses to overlap with itself, so a send that never settles —
+ * a local messenger socket that went half-open, a panel that accepts the
+ * connection and never answers — would hold the lock for ever and stop every
+ * channel, not only its own. Two minutes is past any honest answer (the relay's
+ * own send timeout is shorter) and the row is retried like any other failure.
+ */
+export const SEND_TIMEOUT_MS = 2 * 60 * 1000;
+
+export function withSendTimeout(pending: Promise<SendResult>, ms = SEND_TIMEOUT_MS): Promise<SendResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<SendResult>((resolve) => {
+    timer = setTimeout(
+      () => resolve({ ok: false, error: "پاسخی از درگاه ارسال نیامد (مهلت تمام شد)." }),
+      ms,
+    );
+  });
+  return Promise.race([pending, timeout]).finally(() => clearTimeout(timer));
+}
+
 /** Waits, so two WhatsApp messages are not sent in the same breath. */
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -734,11 +756,21 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
   running = true;
 
   const db = getDb();
-  const settings = await loadMessagingSettings();
   let sent = 0;
   let failed = 0;
 
   try {
+    /*
+     * **Inside the `try`, so the lock is always released.** This read used to
+     * sit between `running = true` and the `try`, where a single failed query —
+     * a dropped connection overnight on a SQL Server shared with Report Server
+     * is the ordinary case — threw past the `finally`, left `running` true for
+     * the life of the process, and every later tick returned at the first line.
+     * Nothing logged it and nothing on any screen said so: the outbox simply
+     * went on filling with QUEUED rows whose time had come, which is exactly
+     * how «پیام بعد از ساعات سکوت ارسال نشد» was reported.
+     */
+    const settings = await loadMessagingSettings();
     /*
      * Read **per channel**, each with its own limit.
      *
@@ -870,14 +902,14 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
       const config = channel === CHANNELS.BALE && message.baleMode
         ? { ...(provider.config as Record<string, unknown>), mode: message.baleMode }
         : provider.config;
-      const result = await sendThrough(channel, config, {
+      const result = await withSendTimeout(sendThrough(channel, config, {
         recipient: message.recipient,
         subject: message.subject,
         body: message.body,
         // The same on every attempt, so a provider that deduplicates (Safir)
         // sends a retried message once.
         requestId: message.id,
-      });
+      }));
 
       if (result.ok) {
         await db.message.update({
