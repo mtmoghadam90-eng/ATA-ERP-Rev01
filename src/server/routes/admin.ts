@@ -3,11 +3,12 @@ import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
 import { getTodayShamsi } from "../../dateUtils";
 import { brandLogoUrl } from "../../utils/brand";
+import { readSettingsDelta } from "../../utils/settingsDelta";
 import { RATE_NAMES, scrapeRates } from "../rateSource";
 import {
   AUDIT_FILTERABLE, AUDIT_SORTABLE,
   getAuditLog, getSettings, listAuditLogs, listExchangeRates,
-  purgeAuditLogs, purgeBusinessData, recordAudit, saveSettings, trimAuditLogs, upsertExchangeRate,
+  purgeAuditLogs, purgeBusinessData, recordAudit, saveSettings, saveSettingsDelta, trimAuditLogs, upsertExchangeRate,
 } from "../services/adminService";
 import { ensureRatesFresh, rateRefreshReport } from "../services/rateRefresh";
 import {
@@ -59,6 +60,15 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
     const user = await deps.requireKeyAccess(req, res, "erp_settings", "write");
     if (!user) return;
     try {
+      // What one screen changed, merged into the document as it stands now.
+      // The whole-document form stays for integrations written before.
+      const delta = readSettingsDelta(req.body);
+      if (delta) {
+        const done = await saveSettingsDelta(delta, user, getTodayShamsi());
+        if (done === "forbidden") return denied(res, "شما اجازه تغییر تنظیمات سامانه را ندارید.");
+        res.json({ success: true });
+        return;
+      }
       const outcome = await saveSettings(
         (req.body as { settings?: unknown })?.settings ?? req.body,
         user,

@@ -6,6 +6,7 @@ import { logAction } from "./auditService";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { toNullableString, toNumber } from "../childSync";
 import { ensureSettingsPatches, invalidateSettingsCache, loadSettings } from "../settings";
+import { applySettingsDelta, type SettingsDelta } from "../../utils/settingsDelta";
 
 /**
  * Settings, exchange rates and the audit log.
@@ -19,6 +20,45 @@ import { ensureSettingsPatches, invalidateSettingsCache, loadSettings } from "..
 /** Any authenticated user reads settings; only `settings` holders write them. */
 export async function getSettings(): Promise<unknown> {
   return (await loadSettings()) ?? null;
+}
+
+/**
+ * Applies what one screen changed to the document as it stands **now**.
+ *
+ * Read fresh inside the transaction, never through the 30-second cache: the
+ * point is that a change another tab saved a moment ago survives this one
+ * (`src/utils/settingsDelta.ts`).
+ */
+export async function saveSettingsDelta(
+  delta: SettingsDelta,
+  user: AuthUser,
+  todayJalali: string,
+): Promise<"forbidden" | "ok"> {
+  if (!hasPermission(user, "settings")) return "forbidden";
+  await getDb().$transaction(async (tx) => {
+    const row = await tx.appSetting.findUnique({ where: { id: "singleton" } });
+    let stored: unknown = {};
+    try { stored = row?.data ? JSON.parse(row.data) : {}; } catch { stored = {}; }
+    const serialized = JSON.stringify(applySettingsDelta(stored, delta));
+    await tx.appSetting.upsert({
+      where: { id: "singleton" },
+      create: { id: "singleton", data: serialized },
+      update: { data: serialized },
+    });
+  });
+  invalidateSettingsCache();
+  await ensureSettingsPatches();
+  await logAction(
+    {
+      action: "UPDATE",
+      module: "سیستم",
+      entityId: "settings",
+      description: `تنظیمات نرم‌افزار بروزرسانی شد (${[...Object.keys(delta.set), ...delta.removed].join("، ")}).`,
+    },
+    user,
+    todayJalali,
+  );
+  return "ok";
 }
 
 export async function saveSettings(

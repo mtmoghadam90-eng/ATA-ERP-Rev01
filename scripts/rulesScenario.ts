@@ -254,6 +254,7 @@ import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../sr
 import { purchaseOrderLandedCost, resolveShippingTerms, shippingRateRefusal } from "../src/utils/purchaseOrderCost";
 import { DEFAULT_REQUIRED_FIELDS, REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
 import { itemCategoryFromText, projectItemCategory } from "../src/utils/productCategories";
+import { applySettingsDelta, diffSettings, isEmptyDelta, readSettingsDelta } from "../src/utils/settingsDelta";
 import {
   COST_DRIFT_THRESHOLD_PERCENT, COST_SOURCES, convertCost, costDrift, landedUnitCostOf,
   lineMargin, lineNeedsCost, linesMissingCost, sellingPriceFor,
@@ -22126,6 +22127,50 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("item category: the form reads settings.dropdownItems.categories, not four hardcoded codes",
     /itemCategories = settings\?\.dropdownItems\?\.categories/.test(view)
       && !/<option value="FLOW">/.test(view) && !/"FLOW"/.test(view));
+}
+
+
+// ── A settings save cannot overwrite what another tab changed ────────────
+{
+  const loaded = {
+    messaging: { quietHours: { from: "21:00", to: "08:00" }, staffSms: { enabled: true, channel: "WHATSAPP" } },
+    dropdownItems: { categories: ["فشار", "دما"], units: ["عدد"] },
+    theme: "light",
+  };
+  const mine = { ...loaded, messaging: { ...loaded.messaging, staffSms: { enabled: true, channel: "TELEGRAM" } } };
+  const delta = diffSettings(loaded, mine);
+  eq("settings delta: only the changed sub-key travels", JSON.stringify(Object.keys(delta.set)), JSON.stringify(["messaging"]));
+  ok("settings delta: an unchanged sibling is not sent",
+    !("quietHours" in (delta.set.messaging as Record<string, unknown>)));
+  eq("settings delta: applied to the same document it gives this screen's document",
+    JSON.stringify(applySettingsDelta(loaded, delta)), JSON.stringify(mine));
+
+  // Another tab, holding the old copy, changes something else afterwards.
+  const otherTab = { ...loaded, dropdownItems: { ...loaded.dropdownItems, categories: ["فشار", "دما", "سطح"] } };
+  const afterMine = applySettingsDelta(loaded, delta);
+  const afterOther = applySettingsDelta(afterMine, diffSettings(loaded, otherTab));
+  eq("settings delta: a stale tab's save keeps the channel another tab set",
+    (afterOther.messaging as { staffSms: { channel: string } }).staffSms.channel, "TELEGRAM");
+  eq("settings delta: and still lands its own change",
+    JSON.stringify((afterOther.dropdownItems as { categories: string[] }).categories), JSON.stringify(["فشار", "دما", "سطح"]));
+  // Two screens editing one group do not clobber each other either.
+  const otherQuiet = { ...loaded, messaging: { ...loaded.messaging, quietHours: { from: "22:00", to: "07:00" } } };
+  const bothInGroup = applySettingsDelta(afterMine, diffSettings(loaded, otherQuiet));
+  eq("settings delta: a sibling sub-key saved from a stale copy leaves this one alone",
+    (bothInGroup.messaging as { staffSms: { channel: string } }).staffSms.channel, "TELEGRAM");
+
+  const withoutTheme = { messaging: loaded.messaging, dropdownItems: loaded.dropdownItems };
+  const removal = diffSettings(loaded, withoutTheme);
+  ok("settings delta: a removed key is removed", !("theme" in applySettingsDelta(loaded, removal)));
+  ok("settings delta: no change is no request", isEmptyDelta(diffSettings(loaded, JSON.parse(JSON.stringify(loaded)))));
+  eq("settings delta: an array is replaced whole, never merged",
+    JSON.stringify((applySettingsDelta(loaded, diffSettings(loaded, { ...loaded, dropdownItems: { ...loaded.dropdownItems, units: [] } })).dropdownItems as { units: string[] }).units), "[]");
+  ok("settings delta: the request shape is read back", !!readSettingsDelta({ delta }) && readSettingsDelta({ settings: loaded }) === null);
+  const store = readFileSync("src/useERPStore.ts", "utf8");
+  ok("settings delta: the store saves a delta, never the whole document",
+    /settingsApi\.saveDelta\(delta\)/.test(store) && !/settingsApi\.save\(newSettings\)/.test(store));
+  ok("settings delta: the server merges into a fresh read, not the cache",
+    /tx\.appSetting\.findUnique/.test(readFileSync("src/server/services/adminService.ts", "utf8")));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

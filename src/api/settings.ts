@@ -1,5 +1,6 @@
 import { api } from "./client";
 import type { ERPSettings } from "../types";
+import type { SettingsDelta } from "../utils/settingsDelta";
 
 /**
  * System settings.
@@ -14,4 +15,8 @@ export const settingsApi = {
 
   save: (settings: ERPSettings) =>
     api.put<Record<string, never>>("/api/settings", { settings }),
+
+  /** What this screen changed, merged server-side into the document as it stands. */
+  saveDelta: (delta: SettingsDelta) =>
+    api.put<Record<string, never>>("/api/settings", { delta }),
 };
