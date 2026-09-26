@@ -119,6 +119,12 @@ export default function ShamsiDatePicker({
    * the field when there is not enough room below, and clamped so neither edge
    * can leave the screen. Recomputed on scroll and resize while open, because
    * fixed coordinates taken once would drift as the form scrolls under it.
+   *
+   * **Its layer is above every modal**, because it is only ever opened from the
+   * topmost one. It sat at `z-[100]` while the supplier-inquiry form is a
+   * `z-[1000]` overlay, so the calendar opened *behind* the form it was pressed
+   * in and the icon read as doing nothing; `test:rules` holds it above every
+   * `z-[…]` a component uses.
    */
   const PANEL_WIDTH = 280;
   const PANEL_HEIGHT = 320;
@@ -288,7 +294,7 @@ export default function ShamsiDatePicker({
           ref={popoverRef}
           dir="rtl"
           style={{ position: 'fixed', top: popoverPos.top, left: popoverPos.left, width: PANEL_WIDTH }}
-          className="bg-white border border-slate-200 rounded-xl shadow-xl z-[100] p-3 animate-in fade-in-50 slide-in-from-top-1 duration-150"
+          className="bg-white border border-slate-200 rounded-xl shadow-xl z-[10000] p-3 animate-in fade-in-50 slide-in-from-top-1 duration-150"
           id="shamsi-datepicker-popover"
         >
           {/* Header selectors */}

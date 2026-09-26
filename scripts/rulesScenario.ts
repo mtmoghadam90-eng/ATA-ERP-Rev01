@@ -22038,6 +22038,23 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     DEFAULT_REQUIRED_FIELDS.supplierInquiries.projectId, false);
 }
 
+
+// ── The date picker's calendar opens above every modal ──────────────────
+{
+  const pickerSrc = readFileSync("src/components/ShamsiDatePicker.tsx", "utf8");
+  const popover = /className="[^"]*z-\[(\d+)\][^"]*"\s*id="shamsi-datepicker-popover"/.exec(pickerSrc);
+  const layer = popover ? Number(popover[1]) : 0;
+  let highest = 0, where = "";
+  for (const f of readdirSync("src/components")) {
+    if (!f.endsWith(".tsx") || f === "ShamsiDatePicker.tsx") continue;
+    for (const m of readFileSync(`src/components/${f}`, "utf8").matchAll(/z-\[(\d+)\]/g)) {
+      if (Number(m[1]) > highest) { highest = Number(m[1]); where = f; }
+    }
+  }
+  ok(`date picker: the calendar (z ${layer}) is above every modal layer (z ${highest} in ${where})`,
+    layer > 0 && layer > highest);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
