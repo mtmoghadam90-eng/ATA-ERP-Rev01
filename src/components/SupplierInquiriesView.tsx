@@ -2004,9 +2004,17 @@ function InquiryFormInner({
           </button>
         </div>
 
-        <div className="border border-slate-150 rounded-xl overflow-x-auto">
-          <table className="w-full text-right text-xs min-w-[950px]">
-            <thead className="bg-slate-50 text-slate-500 font-bold sticky top-0 border-b border-slate-150 z-10">
+        {/*
+          No scroll box of its own. `overflow-x-auto` computes the other axis to
+          `auto` as well, so the product picker's dropdown — absolutely placed
+          inside a row — grew a *vertical* scrollbar on this box the moment it
+          opened, and was clipped by it: a second scrollbar inside a form that
+          already scrolls. The table fits the form's width instead, and on a
+          narrow screen the form's own body is what scrolls sideways.
+        */}
+        <div className="border border-slate-150 rounded-xl" id="inquiry-offer-items">
+          <table className="w-full text-right text-xs table-fixed">
+            <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-150">
               <tr>
                 <th className="p-2.5 w-[28%]">کالا و شرح دقیق آفر</th>
                 <th className="p-2.5 w-20 text-center">تعداد</th>

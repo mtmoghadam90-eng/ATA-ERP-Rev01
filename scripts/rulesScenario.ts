@@ -10829,11 +10829,13 @@ head("A document's notes: files, a Shamsi clock, and a delete that is offered ho
     eq(`${name} has no inner scroll inside its form`, inner.length, 0);
     if (outer) ok(`${name} still scrolls as a whole`, outer.test(src));
   }
-  // The one the user named. Horizontal stays: the goods table is 950px wide and
-  // that is a different axis from the complaint.
+  // The one the user named — and then its horizontal box too: `overflow-x-auto`
+  // makes the other axis `auto`, so the product dropdown opening inside a row
+  // gave the box a vertical scrollbar of its own. The table fits the form now.
   const inquiry = readFileSync("src/components/SupplierInquiriesView.tsx", "utf8");
-  ok("the inquiry's goods table scrolls sideways and not down",
-    /rounded-xl overflow-x-auto">/.test(inquiry));
+  const offerBox = /<div className="([^"]*)" id="inquiry-offer-items">\s*<table className="([^"]*)"/.exec(inquiry);
+  ok("the inquiry's offer items are in no scroll box of their own",
+    !!offerBox && !/overflow|max-h-/.test(offerBox[1]) && !/min-w-/.test(offerBox[2]));
 
   /* -- and the list that got long once the scrollbar went -- */
   /*
