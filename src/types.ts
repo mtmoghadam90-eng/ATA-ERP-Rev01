@@ -477,7 +477,11 @@ export interface PurchaseOrder {
   shippingCostRIYAL: number; // Cost of freight (هزینه حمل)
   customsDutyRIYAL: number; // Cost of customs clearances (هزینه ترخیص)
   remittanceFeeRIYAL: number; // Cost of money transfer/remittance (هزینه حواله پول)
-  shippingCostForeign?: number; // هزینه حمل به ارز
+  shippingCostForeign?: number; // هزینه حمل، به ارزِ حمل (shippingCurrency)
+  /** ارز صورتحساب حمل؛ خالی = همان ارز سفارش. */
+  shippingCurrency?: string;
+  /** نرخ تسعیر حمل؛ خالی = همان نرخ سفارش (وقتی ارز یکی است). */
+  shippingExchangeRate?: number;
   remittanceFeeForeign?: number; // هزینه حواله صرافی به ارز
   calculatedLandedCostRIYAL: number; // (TotalForeign * ExchangeRate) + remittance + shipping + customs
   calculatedLandedCostForeign?: number; // بهای تمام شده به ارز فاکتور

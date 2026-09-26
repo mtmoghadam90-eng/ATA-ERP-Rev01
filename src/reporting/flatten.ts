@@ -467,6 +467,8 @@ export const flattenPurchaseOrders = (orders: any[]): Row[] =>
     remittance_fee_riyal: n(po.remittanceFeeRIYAL),
     shipping_cost_foreign: n(po.shippingCostForeign),
     remittance_fee_foreign: n(po.remittanceFeeForeign),
+    shipping_currency: s(po.shippingCurrency),
+    shipping_exchange_rate: n(po.shippingExchangeRate),
     landed_cost_riyal: n(po.calculatedLandedCostRIYAL),
     landed_cost_foreign: n(po.calculatedLandedCostForeign),
     item_count: arr(po.items).length,

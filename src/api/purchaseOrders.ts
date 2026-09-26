@@ -64,6 +64,8 @@ export interface PurchaseOrderDetail extends Omit<PurchaseOrderRow, "_count"> {
   remittanceFeeRial: string;
   shippingCostForeign: string;
   remittanceFeeForeign: string;
+  shippingCurrency: string | null;
+  shippingExchangeRate: string | null;
   notes: string | null;
   items: PurchaseOrderItemRow[];
 }
@@ -93,6 +95,8 @@ export interface PurchaseOrderWriteInput {
   remittanceFeeRial?: unknown;
   shippingCostForeign?: unknown;
   remittanceFeeForeign?: unknown;
+  shippingCurrency?: string | null;
+  shippingExchangeRate?: unknown;
   notes?: string | null;
   customValues?: unknown;
   items?: Record<string, unknown>[];
@@ -212,6 +216,8 @@ export function detailToPurchaseOrder(detail: PurchaseOrderDetail): PurchaseOrde
     remittanceFeeRIYAL: money(detail.remittanceFeeRial),
     shippingCostForeign: money(detail.shippingCostForeign),
     remittanceFeeForeign: money(detail.remittanceFeeForeign),
+    shippingCurrency: detail.shippingCurrency ?? undefined,
+    shippingExchangeRate: detail.shippingExchangeRate != null ? money(detail.shippingExchangeRate) : undefined,
     notes: detail.notes ?? "",
     items: (detail.items ?? []).map((item) => ({
       id: item.id,
@@ -271,6 +277,8 @@ export function purchaseOrderToWriteInput(po: Partial<PurchaseOrder>): PurchaseO
     remittanceFeeRial: p.remittanceFeeRIYAL,
     shippingCostForeign: p.shippingCostForeign,
     remittanceFeeForeign: p.remittanceFeeForeign,
+    shippingCurrency: po.shippingCurrency ?? null,
+    shippingExchangeRate: po.shippingExchangeRate ?? null,
     notes: po.notes ?? null,
     customValues: p.customValues,
     items: ((po.items ?? []) as unknown as Record<string, unknown>[]).map((item) => ({

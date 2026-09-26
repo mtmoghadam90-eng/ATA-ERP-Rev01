@@ -251,6 +251,7 @@ import { importStageDurations } from "../src/utils/importTimeline";
 import { parseMilestoneRules } from "../src/server/services/milestoneAutomation";
 import { FRESH_FOR_MS, refreshDecision, type RateRefreshState } from "../src/server/services/rateRefresh";
 import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
+import { purchaseOrderLandedCost, resolveShippingTerms, shippingRateRefusal } from "../src/utils/purchaseOrderCost";
 import { DEFAULT_REQUIRED_FIELDS, REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
 import {
   COST_DRIFT_THRESHOLD_PERCENT, COST_SOURCES, convertCost, costDrift, landedUnitCostOf,
@@ -22055,6 +22056,57 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   }
   ok(`date picker: the calendar (z ${layer}) is above every modal layer (z ${highest} in ${where})`,
     layer > 0 && layer > highest);
+}
+
+
+// ── Freight has its own currency and its own rate ───────────────────────
+{
+  const lineOf = (qty: number, price: number) => ({ productName: "x", quantity: qty, unitPriceForeign: price });
+  eq("po freight: absent terms are the order's", JSON.stringify(resolveShippingTerms("یورو", 900_000)),
+    JSON.stringify({ currency: "یورو", rate: 900_000 }));
+  eq("po freight: a typed rate wins in the order's own currency",
+    resolveShippingTerms("یورو", 900_000, null, 950_000).rate, 950_000);
+  eq("po freight: rial freight is converted at 1 whatever was typed",
+    resolveShippingTerms("یورو", 900_000, "ریال", 123).rate, 1);
+  eq("po freight: another currency with no rate is unknown, not the order's",
+    resolveShippingTerms("یورو", 900_000, "درهم").rate, 0);
+  ok("po freight: an unknown rate is refused while freight is charged",
+    !!shippingRateRefusal(500, resolveShippingTerms("یورو", 900_000, "درهم")));
+  eq("po freight: no freight, nothing to refuse",
+    shippingRateRefusal(0, resolveShippingTerms("یورو", 900_000, "درهم")), null);
+
+  const order = computeTotals([lineOf(10, 1000)], {
+    currency: "یورو", exchangeRate: 900_000, remittanceFeeForeign: 100,
+    shippingCostForeign: 2_000, shippingCurrency: "درهم", shippingExchangeRate: 240_000,
+    customsDutyRial: 450_000_000,
+  });
+  eq("po freight: goods and fee at the exchange rate, freight at its own, customs in rial",
+    order.landedCostRial, (10_000 + 100) * 900_000 + 2_000 * 240_000 + 450_000_000);
+  eq("po freight: the foreign figure is the same money at the order's rate",
+    order.landedCostForeign, Number((order.landedCostRial / 900_000).toFixed(2)));
+  eq("po freight: the freight currency is stored", order.shippingCurrency, "درهم");
+  eq("po freight: the order's own currency is stored as «as the order»",
+    computeTotals([lineOf(1, 1)], { currency: "یورو", exchangeRate: 900_000, shippingCurrency: "یورو" }).shippingCurrency, null);
+  let refused = "";
+  try {
+    computeTotals([lineOf(1, 1)], { currency: "یورو", exchangeRate: 900_000, shippingCostForeign: 50, shippingCurrency: "درهم" });
+  } catch (e) { refused = (e as Error).message; }
+  ok("po freight: the server refuses freight in another currency with no rate", /نرخ تسعیر حمل/.test(refused));
+  eq("po freight: a pure landed cost with no order rate carries only goods and fee",
+    purchaseOrderLandedCost({ goodsForeign: 10, remittanceFeeForeign: 2, orderRate: 0, shippingCost: 5,
+      shipping: { currency: "ریال", rate: 1 }, rialCosts: 100 }).foreign, 12);
+
+  const view = readFileSync("src/components/PurchaseOrdersView.tsx", "utf8");
+  ok("po freight: the form previews through the shared rule, not its own arithmetic",
+    /purchaseOrderLandedCost\(/.test(view) && !/\(subTotalForeign \+ remittanceFeeForeign \+ shippingCostForeign\) \* exchangeRateInput/.test(view));
+  ok("po freight: the form offers the freight's currency and rate",
+    /id="po-shipping-currency"/.test(view) && /id="po-shipping-rate"/.test(view));
+  const svc = readFileSync("src/server/services/purchaseOrderService.ts", "utf8");
+  ok("po freight: a partial update recomputes from the stored cost inputs",
+    /const costInput: PurchaseOrderInput = \{[\s\S]*?shippingExchangeRate: before\.shippingExchangeRate[\s\S]*?\.\.\.input,/.test(svc));
+  ok("po freight: both fields are writable and redacted as costs",
+    /"shippingCurrency", "shippingExchangeRate"/.test(readFileSync("src/server/routes/purchaseOrders.ts", "utf8"))
+      && /"shippingCurrency", "shippingExchangeRate"/.test(readFileSync("src/server/costs.ts", "utf8")));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

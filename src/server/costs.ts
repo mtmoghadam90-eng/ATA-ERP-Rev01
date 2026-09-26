@@ -81,6 +81,8 @@ const PRODUCT_COST_FIELDS = [
 const PURCHASE_ORDER_COST_FIELDS = [
   "totalForeignAmount",
   "shippingCostRial", "shippingCostForeign",
+  // What the freight was billed in and paid at: the rate values the cost.
+  "shippingCurrency", "shippingExchangeRate",
   "customsDutyRial",
   "remittanceFeeRial", "remittanceFeeForeign",
   "landedCostRial", "landedCostForeign",
