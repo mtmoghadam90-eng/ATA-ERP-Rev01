@@ -1064,7 +1064,7 @@ export default function SupplierInquiriesView({
                                   <span>{inq.supplierName}</span>
                                   {selectedProjectId === 'all' && (
                                     <span className="text-[10px] text-sky-600 block">
-                                      پروژه: {inq.projectId ? (projects.find(p => p.id === inq.projectId)?.name || 'نامشخص') : 'خرید انباری (بدون پروژه)'}
+                                      پروژه: {inq.projectId ? (inq.projectName || 'نامشخص') : 'خرید انباری (بدون پروژه)'}
                                     </span>
                                   )}
                                   {inq.isWinner && <span className="text-[9px] text-amber-600 block">★ انتخاب شده</span>}
@@ -1405,6 +1405,24 @@ function InquiryFormInner({
     if (editingInquiry) return editingInquiry.projectId || '';
     return selectedProjectId === 'all' ? '' : selectedProjectId;
   });
+  /*
+   * «خرید انبار» is a choice of its own, not the absence of one.
+   *
+   * The option used to be the first entry of the project dropdown, which is
+   * where nobody looks for it — and a company that switched «پروژه مرتبط» to
+   * required could not record a warehouse purchase at all. So the form asks
+   * which kind of inquiry this is first: for a project, the picker is drawn
+   * (and required if the settings say so); for the warehouse, the project is
+   * cleared and nothing is asked, because «no project» is then the answer
+   * somebody gave rather than a blank they left.
+   */
+  const [forWarehouse, setForWarehouse] = useState<boolean>(
+    () => !!editingInquiry && !editingInquiry.projectId,
+  );
+  const chooseWarehouse = (warehouse: boolean) => {
+    setForWarehouse(warehouse);
+    if (warehouse) setProjectId('');
+  };
   const [supplierId, setSupplierId] = useState<string>(editingInquiry?.supplierId || '');
   /*
    * «تعریف سریع تأمین‌کننده».
@@ -1732,8 +1750,8 @@ function InquiryFormInner({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (isFieldRequired(settings, 'supplierInquiries', 'projectId') && !projectId) {
-      alert('فیلد "پروژه" الزامی است.');
+    if (!forWarehouse && isFieldRequired(settings, 'supplierInquiries', 'projectId') && !projectId) {
+      alert('فیلد "پروژه" الزامی است؛ برای خرید انبار گزینهٔ «خرید انبار (بدون پروژه)» را بزنید.');
       return;
     }
     if (isFieldRequired(settings, 'supplierInquiries', 'supplierId') && !supplierId) {
@@ -1751,7 +1769,7 @@ function InquiryFormInner({
 
     onSubmit(
       {
-        projectId: projectId || null,
+        projectId: forWarehouse ? null : (projectId || null),
         supplierId: supplierId,
         items: items.map(item => ({
           ...item,
@@ -1781,7 +1799,36 @@ function InquiryFormInner({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Project Selector */}
         <div className="space-y-1">
-          <label className="text-xs font-bold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'supplierInquiries', 'projectId', 'انتخاب پروژه')}</label>
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-xs font-bold text-slate-500">
+              {forWarehouse ? 'نوع استعلام' : renderFieldLabelWithAsterisk(settings, 'supplierInquiries', 'projectId', 'انتخاب پروژه')}
+            </label>
+            {editingInquiry === null && (
+              <div className="flex rounded-lg border border-slate-200 overflow-hidden text-[10px] font-bold" id="inquiry-kind">
+                <button
+                  type="button"
+                  id="inquiry-kind-project"
+                  onClick={() => chooseWarehouse(false)}
+                  className={`px-2 py-1 transition ${!forWarehouse ? 'bg-sky-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                >
+                  برای پروژه
+                </button>
+                <button
+                  type="button"
+                  id="inquiry-kind-warehouse"
+                  onClick={() => chooseWarehouse(true)}
+                  className={`px-2 py-1 transition ${forWarehouse ? 'bg-sky-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+                >
+                  خرید انبار (بدون پروژه)
+                </button>
+              </div>
+            )}
+          </div>
+          {forWarehouse ? (
+            <div className="px-3 py-2.5 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-xs text-slate-600" id="inquiry-warehouse-note">
+              استعلام برای خرید انبار ثبت می‌شود و به هیچ پروژه‌ای وصل نیست.
+            </div>
+          ) : (
           <SearchableSelect
             value={projectId}
             onChange={(val) => {
@@ -1791,7 +1838,7 @@ function InquiryFormInner({
             onSearchChange={projectPicker.setTerm}
             loading={projectPicker.loading}
             placeholder="-- انتخاب پروژه --"
-            required={isFieldRequired(settings, 'supplierInquiries', 'projectId')}
+            required={!forWarehouse && isFieldRequired(settings, 'supplierInquiries', 'projectId')}
             disabled={editingInquiry !== null} // Lock project on edit
             className="text-xs"
             // The current value has to be an option or the locked field renders
@@ -1808,6 +1855,7 @@ function InquiryFormInner({
               ...projects.map(p => ({ value: p.id, label: `${p.name} (${p.code})` })),
             ])}
           />
+          )}
         </div>
 
         {/* Supplier Selector */}
