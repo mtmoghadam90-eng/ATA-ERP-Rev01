@@ -171,7 +171,7 @@ import {
   relayConfigRefusal, whatsappCanSend, whatsappFailureKind, whatsappGapMs, whatsappJid,
   whatsappSendRefusal, credsArePaired,
 } from "../src/utils/whatsapp";
-import { channelIsPaced, channelPassLimit } from "../src/server/services/messaging/messageService";
+import { channelIsPaced, channelPassLimit, withSendTimeout } from "../src/server/services/messaging/messageService";
 import { telegramCredentialsFrom } from "../src/server/services/messaging/telegramClient";
 import { pickTelegramCredentials } from "../src/server/services/messaging/telegramCredentials";
 import { canDeleteNote, noteHasContent, noteSummary } from "../src/utils/moduleNotes";
@@ -22000,6 +22000,26 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   const src = readFileSync("src/server/services/messaging/telegramTransport.ts", "utf8");
   const i404 = src.indexOf("response.status === 404"), iOk = src.indexOf("if (!response.ok)");
   ok("tg relay 404: answered before the generic non-2xx relay of «not found»", i404 > 0 && i404 < iOk);
+}
+
+
+// ── The outbox worker's lock is always released ─────────────────────────
+{
+  const src = readFileSync("src/server/services/messaging/messageService.ts", "utf8");
+  const start = src.indexOf("export async function processQueue");
+  const region = src.slice(start, src.indexOf("\nfunction messageAudience", start));
+  const iLock = region.indexOf("running = true"), iTry = region.indexOf("try {");
+  const iSettings = region.indexOf("await loadMessagingSettings()");
+  ok("queue: every await after the lock is inside the try (a thrown read cannot keep the lock)",
+    iLock > 0 && iTry > iLock && iSettings > iTry
+      && !/await /.test(region.slice(iLock, iTry)));
+  ok("queue: the finally releases the lock", /finally\s*\{\s*running = false;/.test(region));
+  ok("queue: a send is bounded by a timeout", /withSendTimeout\(sendThrough\(/.test(region));
+  const hung = await withSendTimeout(new Promise(() => {}), 20);
+  ok("queue: a send that never settles answers a failure instead of holding the worker",
+    hung.ok === false && typeof hung.error === "string" && hung.error.length > 0);
+  const fine = await withSendTimeout(Promise.resolve({ ok: true, providerMessageId: "p1" }), 1000);
+  eq("queue: a send that settles is passed through untouched", fine.providerMessageId, "p1");
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
