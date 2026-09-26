@@ -14,6 +14,7 @@ import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
 import { syncProjectStage } from "./projectService";
 import { statusChangeColumns } from "../../utils/statusDwell";
+import { purchaseOrderLandedCost, resolveShippingTerms, shippingRateRefusal } from "../../utils/purchaseOrderCost";
 import { ACTIVITY_CATEGORY, logProjectFact, settleRecordHistory } from "./projectActivityLog";
 
 /**
@@ -349,6 +350,10 @@ export interface PurchaseOrderInput {
   remittanceFeeRial?: unknown;
   shippingCostForeign?: unknown;
   remittanceFeeForeign?: unknown;
+  /** The freight's own currency; absent/blank = the order's. */
+  shippingCurrency?: string | null;
+  /** The freight's own rate; absent/blank = the order's (when same currency). */
+  shippingExchangeRate?: unknown;
   notes?: string | null;
   customValues?: unknown;
   items?: PurchaseOrderItemInput[];
@@ -387,10 +392,18 @@ function mapItem(row: PurchaseOrderItemInput): Record<string, unknown> | null {
  * fees. It is stored because the rate moves and a historical order must keep the
  * figure it was costed at.
  */
+export interface PurchaseOrderTotals {
+  totalForeignAmount: number; exchangeRate: number;
+  shippingCostRial: number; customsDutyRial: number; remittanceFeeRial: number;
+  shippingCostForeign: number; remittanceFeeForeign: number;
+  shippingCurrency: string | null; shippingExchangeRate: number | null;
+  landedCostForeign: number; landedCostRial: number;
+}
+
 export function computeTotals(
   items: PurchaseOrderItemInput[],
   input: PurchaseOrderInput,
-): Record<string, number> {
+): PurchaseOrderTotals {
   const lines = (items ?? []).map(mapItem).filter(Boolean) as Record<string, unknown>[];
   const totalForeignAmount = lines.reduce((sum, l) => sum + Number(l.totalPriceForeign ?? 0), 0);
 
@@ -418,21 +431,37 @@ export function computeTotals(
    * Deriving one from the other makes the two figures the same money by
    * construction, and there is nothing left for a client to recompute.
    */
-  const landedCostRial =
-    (totalForeignAmount + shippingCostForeign + remittanceFeeForeign) * exchangeRate
-    + shippingCostRial + customsDutyRial + remittanceFeeRial;
+  /*
+   * Freight at its own rate, and possibly in its own currency — never at the
+   * exchange house's rate by default (`src/utils/purchaseOrderCost.ts`). The
+   * stored columns keep what was typed (NULL = «as the order»), so a later
+   * change to the order's rate still carries a freight that follows it.
+   */
+  const orderCurrency = String(input.currency ?? "").trim() || "دلار";
+  const shippingCurrency = toNullableString(input.shippingCurrency, 20);
+  const shippingExchangeRate = toNumber(input.shippingExchangeRate, 0) > 0
+    ? toNumber(input.shippingExchangeRate, 0)
+    : null;
+  const shipping = resolveShippingTerms(orderCurrency, exchangeRate, shippingCurrency, shippingExchangeRate);
+  const refusal = shippingRateRefusal(shippingCostForeign, shipping);
+  if (refusal) throw new Error(refusal);
 
-  const landedCostForeign = exchangeRate > 0
-    ? Number((landedCostRial / exchangeRate).toFixed(2))
-    // No rate to convert at — the rial-quoted costs cannot be expressed in the
-    // order's currency, so the foreign figure carries only what was foreign.
-    : totalForeignAmount + shippingCostForeign + remittanceFeeForeign;
+  const landed = purchaseOrderLandedCost({
+    goodsForeign: totalForeignAmount,
+    remittanceFeeForeign,
+    orderRate: exchangeRate,
+    shippingCost: shippingCostForeign,
+    shipping,
+    rialCosts: shippingCostRial + customsDutyRial + remittanceFeeRial,
+  });
 
   return {
     totalForeignAmount, exchangeRate,
     shippingCostRial, customsDutyRial, remittanceFeeRial,
     shippingCostForeign, remittanceFeeForeign,
-    landedCostForeign, landedCostRial,
+    shippingCurrency: shippingCurrency && shippingCurrency !== orderCurrency ? shippingCurrency : null,
+    shippingExchangeRate,
+    landedCostForeign: landed.foreign, landedCostRial: landed.rial,
   };
 }
 
@@ -662,7 +691,7 @@ export async function createPurchaseOrder(
   const po = await db.$transaction(async (tx) => {
     // A line naming a product or SKU that is gone loses the link, not the order.
     const items = (await scrubProductRefs(tx, input.items)) ?? [];
-    const data = { ...scalarData(input), ...computeTotals(items, input) };
+    const data: Record<string, unknown> = { ...scalarData(input), ...computeTotals(items, input) };
     // An order can be entered already arrived, e.g. when recording history.
     receivedDateImpliesStatus(data);
     /*
@@ -897,12 +926,30 @@ export async function updatePurchaseOrder(
       data,
       statusChangeColumns(before.status, data.status as string | undefined, todayJalali) ?? {},
     );
+    /*
+     * The cost inputs this write did not name are the stored ones. Without
+     * this a partial write naming only the freight recomputed the landed cost
+     * at a rate of 1 and in no currency at all.
+     */
+    const costInput: PurchaseOrderInput = {
+      currency: before.currency,
+      exchangeRate: before.exchangeRate?.toString(),
+      shippingCostRial: before.shippingCostRial?.toString(),
+      customsDutyRial: before.customsDutyRial?.toString(),
+      remittanceFeeRial: before.remittanceFeeRial?.toString(),
+      shippingCostForeign: before.shippingCostForeign?.toString(),
+      remittanceFeeForeign: before.remittanceFeeForeign?.toString(),
+      shippingCurrency: before.shippingCurrency,
+      shippingExchangeRate: before.shippingExchangeRate?.toString() ?? null,
+      ...input,
+    };
     if (input.items !== undefined) {
-      Object.assign(data, computeTotals(input.items, input));
+      Object.assign(data, computeTotals(input.items, costInput));
     } else if (
       // The cost inputs feed the landed cost even when the lines are untouched.
-      ["exchangeRate", "shippingCostRial", "customsDutyRial", "remittanceFeeRial",
-        "shippingCostForeign", "remittanceFeeForeign"].some((k) => k in input)
+      ["currency", "exchangeRate", "shippingCostRial", "customsDutyRial", "remittanceFeeRial",
+        "shippingCostForeign", "remittanceFeeForeign",
+        "shippingCurrency", "shippingExchangeRate"].some((k) => k in input)
     ) {
       const current = await tx.purchaseOrderItem.findMany({
         where: { purchaseOrderId: id },
@@ -913,7 +960,7 @@ export async function updatePurchaseOrder(
         quantity: Number(l.quantity),
         unitPriceForeign: Number(l.unitPriceForeign),
       }));
-      Object.assign(data, computeTotals(asInput, input));
+      Object.assign(data, computeTotals(asInput, costInput));
     }
 
     // Filling in the arrival date is how people say the goods came in; the

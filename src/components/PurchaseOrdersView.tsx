@@ -1,3 +1,4 @@
+import { purchaseOrderLandedCost, resolveShippingTerms, RIAL, shippingRateRefusal } from '../utils/purchaseOrderCost';
 import React, { useEffect, useState } from 'react';
 import { useExchangeRates } from '../api/exchangeRates';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
@@ -500,6 +501,13 @@ export default function PurchaseOrdersView({
   const [remittanceFeeRIYAL, setRemittanceFeeRIYAL] = useState<number>(0);
   const [shippingCostForeign, setShippingCostForeign] = useState<number>(0);
   const [remittanceFeeForeign, setRemittanceFeeForeign] = useState<number>(0);
+  /*
+   * Freight has its own currency and its own rate — the forwarder is paid
+   * separately from the exchange house. '' / 0 mean «as the order», which is
+   * how every order entered before these two boxes was costed.
+   */
+  const [shippingCurrency, setShippingCurrency] = useState<string>('');
+  const [shippingExchangeRate, setShippingExchangeRate] = useState<number>(0);
   
   // Timings
   const [paymentDate, setPaymentDate] = useState('');
@@ -585,6 +593,8 @@ export default function PurchaseOrdersView({
     setRemittanceFeeRIYAL(0);
     setShippingCostForeign(0);
     setRemittanceFeeForeign(0);
+    setShippingCurrency('');
+    setShippingExchangeRate(0);
     setPaymentDate('');
     setGoodsReadyDate('');
     setShipmentDate('');
@@ -642,6 +652,8 @@ export default function PurchaseOrdersView({
     setRemittanceFeeRIYAL(po.remittanceFeeRIYAL || 0);
     setShippingCostForeign(po.shippingCostForeign !== undefined ? po.shippingCostForeign : (po.shippingCostRIYAL && po.exchangeRate ? Number((po.shippingCostRIYAL / po.exchangeRate).toFixed(2)) : 0));
     setRemittanceFeeForeign(po.remittanceFeeForeign !== undefined ? po.remittanceFeeForeign : (po.remittanceFeeRIYAL && po.exchangeRate ? Number((po.remittanceFeeRIYAL / po.exchangeRate).toFixed(2)) : 0));
+    setShippingCurrency(po.shippingCurrency || '');
+    setShippingExchangeRate(po.shippingExchangeRate || 0);
     setPaymentDate(po.paymentDate || '');
     setGoodsReadyDate(po.goodsReadyDate || '');
     setShipmentDate(po.shipmentDate || '');
@@ -810,13 +822,19 @@ export default function PurchaseOrdersView({
    * about this; there is one rule now, and the two figures cannot drift apart.
    */
   const subTotalForeign = items.reduce((sum, item) => sum + (item.quantity * item.unitPriceForeignCurrency), 0);
-  const calculatedLandedCost = Math.round(
-    (subTotalForeign + remittanceFeeForeign + shippingCostForeign) * exchangeRateInput
-    + shippingCostRIYAL + customsDutyRIYAL + remittanceFeeRIYAL,
-  );
-  const calculatedLandedCostForeign = exchangeRateInput > 0
-    ? Number((calculatedLandedCost / exchangeRateInput).toFixed(2))
-    : Number((subTotalForeign + remittanceFeeForeign + shippingCostForeign).toFixed(2));
+  // The server's own rule (`purchaseOrderLandedCost`), so the preview is the figure stored.
+  const shippingTerms = resolveShippingTerms(currency, exchangeRateInput, shippingCurrency, shippingExchangeRate);
+  const shippingRefusal = shippingRateRefusal(shippingCostForeign, shippingTerms);
+  const landedPreview = purchaseOrderLandedCost({
+    goodsForeign: subTotalForeign,
+    remittanceFeeForeign,
+    orderRate: exchangeRateInput,
+    shippingCost: shippingCostForeign,
+    shipping: shippingTerms,
+    rialCosts: shippingCostRIYAL + customsDutyRIYAL + remittanceFeeRIYAL,
+  });
+  const calculatedLandedCost = Math.round(landedPreview.rial);
+  const calculatedLandedCostForeign = landedPreview.foreign;
 
   // Handle Save
   const nextAction = useNextAction();
@@ -827,6 +845,8 @@ export default function PurchaseOrdersView({
     // a flag left set would arm the next one instead.
     const wantsNextAction = nextAction.takeArmed();
     if (!supplierId) return;
+    // The server refuses this too; saying so here names the box.
+    if (shippingRefusal) { alert(shippingRefusal); return; }
 
     // Custom Fields Validation
     const moduleFields = (settings?.customFields || []).filter(f => f.module === 'purchaseOrders');
@@ -907,6 +927,8 @@ export default function PurchaseOrdersView({
         remittanceFeeRIYAL: 0,
         shippingCostForeign,
         remittanceFeeForeign,
+        shippingCurrency: shippingCurrency && shippingCurrency !== currency ? shippingCurrency : undefined,
+        shippingExchangeRate: shippingTerms.currency !== RIAL && shippingExchangeRate > 0 ? shippingExchangeRate : undefined,
         calculatedLandedCostRIYAL: calculatedLandedCost,
         calculatedLandedCostForeign,
         status,
@@ -951,6 +973,8 @@ export default function PurchaseOrdersView({
         remittanceFeeRIYAL: 0,
         shippingCostForeign,
         remittanceFeeForeign,
+        shippingCurrency: shippingCurrency && shippingCurrency !== currency ? shippingCurrency : undefined,
+        shippingExchangeRate: shippingTerms.currency !== RIAL && shippingExchangeRate > 0 ? shippingExchangeRate : undefined,
         calculatedLandedCostRIYAL: calculatedLandedCost,
         calculatedLandedCostForeign,
         status,
@@ -1237,7 +1261,7 @@ export default function PurchaseOrdersView({
                     <span className="font-bold text-slate-800">{po.totalForeignAmount.toLocaleString()} {po.currency}</span>
                   </div>
                   <div className="flex justify-between items-center text-slate-400 text-[11px]">
-                    <span>نرخ تسعیر ارز:</span>
+                    <span>نرخ حواله صرافی:</span>
                     <span>{po.exchangeRate.toLocaleString()} ریال</span>
                   </div>
                   
@@ -1465,6 +1489,9 @@ export default function PurchaseOrdersView({
         const selShippingCostForeign = selectedPO.shippingCostForeign !== undefined 
           ? selectedPO.shippingCostForeign 
           : (selectedPO.shippingCostRIYAL && selectedPO.exchangeRate ? Number((selectedPO.shippingCostRIYAL / selectedPO.exchangeRate).toFixed(2)) : 0);
+        const selShipping = resolveShippingTerms(
+          selectedPO.currency, selectedPO.exchangeRate, selectedPO.shippingCurrency, selectedPO.shippingExchangeRate,
+        );
         // The stored figure, same as everywhere else on this screen.
         const selLandedCostForeign = selectedPO.calculatedLandedCostForeign;
         
@@ -1535,17 +1562,23 @@ export default function PurchaseOrdersView({
                     <span className="text-blue-600">+{selRemittanceFeeForeign.toLocaleString()} {selectedPO.currency}</span>
                   </div>
                   <div className="flex justify-between items-center text-slate-500">
-                    <span>۳. هزینه ترابری / حمل بین‌الملل (ارزی):</span>
-                    <span className="text-sky-600">+{selShippingCostForeign.toLocaleString()} {selectedPO.currency}</span>
+                    <span>۳. هزینه ترابری / حمل بین‌الملل ({selShipping.currency}):</span>
+                    <span className="text-sky-600">+{selShippingCostForeign.toLocaleString()} {selShipping.currency}</span>
                   </div>
                   <div className="flex justify-between items-center text-slate-500">
                     <span>۴. تعرفه ترخیص گمرکی و عوارض (ریالی):</span>
                     <span className="text-purple-600">+{selectedPO.customsDutyRIYAL.toLocaleString()} ریال</span>
                   </div>
                   <div className="flex justify-between items-center text-slate-400 text-[11px] border-t border-dashed border-slate-200 pt-2">
-                    <span>نرخ تسعیر ارز:</span>
+                    <span>نرخ حواله صرافی:</span>
                     <span>{selectedPO.exchangeRate.toLocaleString()} ریال</span>
                   </div>
+                  {selShipping.currency !== RIAL && (
+                    <div className="flex justify-between items-center text-slate-400 text-[11px]">
+                      <span>نرخ تسعیر حمل:</span>
+                      <span>{selShipping.rate ? `${selShipping.rate.toLocaleString()} ریال` : 'نامشخص'}</span>
+                    </div>
+                  )}
                   <div className="pt-2 flex justify-between items-center text-sm font-bold text-sky-800 border-t border-slate-200">
                     <span>بهای تمام‌شده ارزی (Landed):</span>
                     <span>{Number(selLandedCostForeign.toFixed(2)).toLocaleString()} {selectedPO.currency}</span>
@@ -2192,15 +2225,16 @@ export default function PurchaseOrdersView({
                       />
                     </div>
 
-                    {/* Shipping */}
+                    {/* Shipping — its own currency and its own rate */}
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-500">هزینه ترابری/حمل ({currency})</label>
+                      <label className="text-[10px] font-bold text-slate-500">هزینه ترابری/حمل ({shippingTerms.currency})</label>
                       <input
                         type="number"
                         value={shippingCostForeign || ''}
                         onChange={(e) => setShippingCostForeign(Number(e.target.value))}
                         placeholder="0"
                         className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-left bg-white"
+                        id="po-shipping-cost"
                       />
                     </div>
 
@@ -2215,6 +2249,44 @@ export default function PurchaseOrdersView({
                         className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-left bg-white"
                       />
                     </div>
+
+                    {/* Shipping currency */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500">ارز صورتحساب حمل</label>
+                      <select
+                        value={shippingCurrency || currency}
+                        onChange={(e) => {
+                          const next = e.target.value;
+                          setShippingCurrency(next === currency ? '' : next);
+                          if (next === RIAL) setShippingExchangeRate(0);
+                        }}
+                        className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                        id="po-shipping-currency"
+                      >
+                        {Array.from(new Set([currency, ...(settings.dropdownItems?.currencies || ['دلار', 'یورو', 'درهم', 'ریال'])])).map((cur) => (
+                          <option key={cur} value={cur}>{cur === currency ? `${cur} (همان ارز سفارش)` : cur}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Shipping rate */}
+                    {shippingTerms.currency !== RIAL && (
+                      <div className="space-y-1.5 md:col-span-2">
+                        <label className="text-[10px] font-bold text-slate-500">نرخ تسعیر حمل (ریال به {shippingTerms.currency})</label>
+                        <input
+                          type="number"
+                          value={shippingExchangeRate || ''}
+                          onChange={(e) => setShippingExchangeRate(Number(e.target.value))}
+                          placeholder={shippingTerms.currency === currency && exchangeRateInput > 0
+                            ? `خالی = نرخ حواله (${exchangeRateInput.toLocaleString()})`
+                            : 'نرخ را وارد کنید'}
+                          className={`w-full border rounded-lg px-2 py-1.5 text-xs font-mono text-left bg-white ${shippingRefusal ? 'border-rose-300' : 'border-slate-200'}`}
+                          id="po-shipping-rate"
+                        />
+                        {shippingRefusal && <p className="text-[10px] text-rose-600">{shippingRefusal}</p>}
+                      </div>
+                    )}
+
 
                   </div>
                 </div>
@@ -2231,16 +2303,22 @@ export default function PurchaseOrdersView({
                   </div>
                   <div className="flex justify-between items-center text-slate-500">
                     <span>هزینه ترابری و حمل:</span>
-                    <span className="font-mono text-sky-600">+{shippingCostForeign.toLocaleString()} {currency}</span>
+                    <span className="font-mono text-sky-600">+{shippingCostForeign.toLocaleString()} {shippingTerms.currency}</span>
                   </div>
                   <div className="flex justify-between items-center text-slate-500">
                     <span>هزینه ترخیص گمرک:</span>
                     <span className="font-mono text-purple-600">+{customsDutyRIYAL.toLocaleString()} ریال</span>
                   </div>
                   <div className="flex justify-between items-center text-slate-400 text-[10px]">
-                    <span>نرخ تسعیر ارز:</span>
+                    <span>نرخ حواله صرافی:</span>
                     <span className="font-mono">{exchangeRateInput.toLocaleString()} ریال</span>
                   </div>
+                  {shippingTerms.currency !== RIAL && (
+                    <div className="flex justify-between items-center text-slate-400 text-[10px]">
+                      <span>نرخ تسعیر حمل:</span>
+                      <span className="font-mono">{shippingTerms.rate ? `${shippingTerms.rate.toLocaleString()} ریال` : 'نامشخص'}</span>
+                    </div>
+                  )}
                   <div className="border-t border-dashed border-slate-300 pt-2 flex justify-between items-center text-sm font-bold text-sky-800">
                     <span>بهای تمام‌شده ارزی (Landed):</span>
                     <span className="font-mono">{calculatedLandedCostForeign.toLocaleString()} {currency}</span>

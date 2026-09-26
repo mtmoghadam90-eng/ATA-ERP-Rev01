@@ -988,6 +988,10 @@ model PurchaseOrder {
   remittanceFeeRial    Decimal @default(0) @db.Decimal(19, 2)
   shippingCostForeign  Decimal @default(0) @db.Decimal(19, 4)
   remittanceFeeForeign Decimal @default(0) @db.Decimal(19, 4)
+  /// What the freight is billed in and converted at; NULL = as the order.
+  /// `shippingCostForeign` is in this currency (`resolveShippingTerms`).
+  shippingCurrency     String?  @db.NVarChar(20)
+  shippingExchangeRate Decimal? @db.Decimal(19, 4)
   landedCostRial       Decimal @default(0) @db.Decimal(19, 2)
   landedCostForeign    Decimal @default(0) @db.Decimal(19, 4)
 

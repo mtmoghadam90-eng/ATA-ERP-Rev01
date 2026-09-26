@@ -375,6 +375,8 @@ export async function readSqlCollections(): Promise<StoreCollections> {
       remittanceFeeRIYAL: num(po.remittanceFeeRial),
       shippingCostForeign: num(po.shippingCostForeign),
       remittanceFeeForeign: num(po.remittanceFeeForeign),
+      shippingCurrency: po.shippingCurrency ?? po.currency,
+      shippingExchangeRate: po.shippingExchangeRate != null ? num(po.shippingExchangeRate) : null,
       calculatedLandedCostRIYAL: num(po.landedCostRial),
       calculatedLandedCostForeign: num(po.landedCostForeign),
       notes: po.notes,

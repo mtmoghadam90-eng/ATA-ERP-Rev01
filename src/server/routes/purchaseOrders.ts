@@ -25,6 +25,7 @@ const WRITABLE: (keyof PurchaseOrderInput)[] = [
   "shipmentDate", "clearanceDate", "receivedDate",
   "shippingCostRial", "customsDutyRial", "remittanceFeeRial",
   "shippingCostForeign", "remittanceFeeForeign",
+  "shippingCurrency", "shippingExchangeRate",
   "notes", "customValues", "items",
 ];
 
