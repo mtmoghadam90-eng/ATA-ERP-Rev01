@@ -1,4 +1,5 @@
 
+import { itemCategoryFromText, projectItemCategory } from '../utils/productCategories';
 import React, { useState, useRef } from 'react';
 import type { ActivityJump } from '../utils/notificationJump';
 import { canDeleteCategoryGroup, canModifyActivity } from '../utils/activityAuthorship';
@@ -783,10 +784,10 @@ export default function ProjectsView({
       ...itemsNeeded,
       {
         productId: "generic",
-        name: "فلو - تجهیز درخواستی",
+        name: buildGenericItemName(itemCategories[0] ?? "", "", ""),
         quantity: 1,
         supplyMethod: "ORDER",
-        category: "FLOW",
+        category: itemCategories[0] ?? "",
         equipmentType: "",
         size: ""
       }
@@ -799,17 +800,10 @@ export default function ProjectsView({
   // --- Excel import for generic "مشخصات کلی" items ---
   const itemsExcelInputRef = useRef<HTMLInputElement>(null);
 
-  const CATEGORY_LABELS: Record<string, string> = { FLOW: 'فلو', TEMPERATURE: 'دما', PRESSURE: 'فشار', LEVEL: 'سطح' };
-
-  const normalizeItemCategory = (raw: any): 'FLOW' | 'TEMPERATURE' | 'PRESSURE' | 'LEVEL' => {
-    const s = String(raw ?? '').trim().toLowerCase();
-    if (!s) return 'FLOW';
-    if (s.includes('دما') || s.includes('حرارت') || s.includes('temp')) return 'TEMPERATURE';
-    if (s.includes('فشار') || s.includes('press')) return 'PRESSURE';
-    if (s.includes('سطح') || s.includes('لول') || s.includes('level')) return 'LEVEL';
-    if (s.includes('فلو') || s.includes('جریان') || s.includes('flow')) return 'FLOW';
-    return 'FLOW';
-  };
+  // The company's own category list — the one the products screen and every
+  // report group by — rather than four hardcoded codes.
+  const itemCategories = settings?.dropdownItems?.categories ?? [];
+  const normalizeItemCategory = (raw: any): string => itemCategoryFromText(raw, itemCategories);
 
   const faToEnDigitsLocal = (str: any): string => {
     return String(str ?? '')
@@ -818,7 +812,7 @@ export default function ProjectsView({
   };
 
   const buildGenericItemName = (category: string, equipmentType: string, size: string): string => {
-    const catLabel = CATEGORY_LABELS[category] || 'فلو';
+    const catLabel = projectItemCategory(category, itemCategories) || 'تجهیز';
     const sizeStr = size ? ` (سایز: ${size})` : '';
     return `${catLabel} - ${equipmentType || 'تجهیز درخواستی'}${sizeStr}`;
   };
@@ -838,13 +832,18 @@ export default function ProjectsView({
       worksheet.getRow(1).font = { bold: true };
       worksheet.addRow({ category: 'فلو', equipmentType: 'فلومتر کوریولیس', size: '2 اینچ', tagNumber: 'FIT-101', quantity: 2 });
       worksheet.addRow({ category: 'فشار', equipmentType: 'ترانسمیتر فشار', size: 'G1/2', tagNumber: 'PIT-201', quantity: 5 });
-      // Category dropdown validation
-      for (let i = 2; i <= 300; i++) {
-        worksheet.getCell(`A${i}`).dataValidation = {
-          type: 'list',
-          allowBlank: true,
-          formulae: ['"فلو,دما,فشار,سطح"'],
-        };
+      // Category dropdown validation, from the company's own list. Excel caps a
+      // literal list at 255 characters; past that the column is left free and
+      // the import matches whatever is typed against the list anyway.
+      const categoryList = itemCategories.join(',');
+      if (categoryList && categoryList.length <= 255) {
+        for (let i = 2; i <= 300; i++) {
+          worksheet.getCell(`A${i}`).dataValidation = {
+            type: 'list',
+            allowBlank: true,
+            formulae: [`"${categoryList}"`],
+          };
+        }
       }
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -914,9 +913,9 @@ export default function ProjectsView({
           (item, i) => i === index ? {
             ...item,
             productId: "generic",
-            name: "فلو - تجهیز درخواستی",
+            name: buildGenericItemName(itemCategories[0] ?? "", "", ""),
             supplyMethod: "ORDER",
-            category: "FLOW",
+            category: itemCategories[0] ?? "",
             equipmentType: "",
             size: ""
           } : item
@@ -945,10 +944,7 @@ export default function ProjectsView({
     setItemsNeeded(
       itemsNeeded.map((item, i) => {
         if (i !== index) return item;
-        const eqType = item.equipmentType || "";
-        const sizeStr = item.size ? ` (سایز: ${item.size})` : "";
-        const catLabel = cat === "FLOW" ? "فلو" : cat === "TEMPERATURE" ? "دما" : cat === "PRESSURE" ? "فشار" : "سطح";
-        const updatedName = `${catLabel} - ${eqType || "تجهیز درخواستی"}${sizeStr}`;
+        const updatedName = buildGenericItemName(cat, item.equipmentType || "", item.size || "");
         return {
           ...item,
           category: cat,
@@ -961,10 +957,7 @@ export default function ProjectsView({
     setItemsNeeded(
       itemsNeeded.map((item, i) => {
         if (i !== index) return item;
-        const cat = item.category || "FLOW";
-        const sizeStr = item.size ? ` (سایز: ${item.size})` : "";
-        const catLabel = cat === "FLOW" ? "فلو" : cat === "TEMPERATURE" ? "دما" : cat === "PRESSURE" ? "فشار" : "سطح";
-        const updatedName = `${catLabel} - ${eqType || "تجهیز درخواستی"}${sizeStr}`;
+        const updatedName = buildGenericItemName(item.category || "", eqType, item.size || "");
         return {
           ...item,
           equipmentType: eqType,
@@ -977,11 +970,7 @@ export default function ProjectsView({
     setItemsNeeded(
       itemsNeeded.map((item, i) => {
         if (i !== index) return item;
-        const cat = item.category || "FLOW";
-        const eqType = item.equipmentType || "";
-        const sizeStr = sz ? ` (سایز: ${sz})` : "";
-        const catLabel = cat === "FLOW" ? "فلو" : cat === "TEMPERATURE" ? "دما" : cat === "PRESSURE" ? "فشار" : "سطح";
-        const updatedName = `${catLabel} - ${eqType || "تجهیز درخواستی"}${sizeStr}`;
+        const updatedName = buildGenericItemName(item.category || "", item.equipmentType || "", sz);
         return {
           ...item,
           size: sz,
@@ -4721,16 +4710,26 @@ export default function ProjectsView({
                                   {/* Category selection */}
                                   <div className="col-span-3 space-y-1">
                                     <label className="text-[10px] font-bold text-slate-500 block">دسته کالا *</label>
-                                    <select
-                                      value={item.category || 'FLOW'}
-                                      onChange={(e) => handleItemCategoryChange(index, e.target.value as any)}
-                                      className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white text-right outline-none focus:ring-1 focus:ring-sky-500 font-bold text-slate-700"
-                                    >
-                                      <option value="FLOW">فلو (جریان)</option>
-                                      <option value="TEMPERATURE">دما</option>
-                                      <option value="PRESSURE">فشار</option>
-                                      <option value="LEVEL">سطح (لول)</option>
-                                    </select>
+                                    {(() => {
+                                      const current = projectItemCategory(item.category, itemCategories);
+                                      return (
+                                        <select
+                                          value={current}
+                                          onChange={(e) => handleItemCategoryChange(index, e.target.value)}
+                                          className="w-full border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white text-right outline-none focus:ring-1 focus:ring-sky-500 font-bold text-slate-700"
+                                          data-project-item-category
+                                        >
+                                          {!current && <option value="">-- انتخاب دسته --</option>}
+                                          {/* A value no longer in the list is drawn, not rewritten to the first option. */}
+                                          {current && !itemCategories.includes(current) && (
+                                            <option value={current} disabled>{current}</option>
+                                          )}
+                                          {itemCategories.map((cat) => (
+                                            <option key={cat} value={cat}>{cat}</option>
+                                          ))}
+                                        </select>
+                                      );
+                                    })()}
                                   </div>
 
                                   {/* Equipment Type select */}
@@ -5325,7 +5324,7 @@ export default function ProjectsView({
                                         <td className="p-2 text-center space-y-1">
                                           {item.category && (
                                             <span className="inline-block px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 text-[9px] ml-1 font-semibold">
-                                              دسته: {item.category}
+                                              دسته: {projectItemCategory(item.category, settings?.dropdownItems?.categories ?? [])}
                                             </span>
                                           )}
                                           {item.equipmentType && (

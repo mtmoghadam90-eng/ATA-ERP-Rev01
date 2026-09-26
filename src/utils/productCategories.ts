@@ -143,3 +143,60 @@ export function manualLineCategoryOptions(known: readonly string[]): { value: st
   }
   return options;
 }
+
+/* ------------------- a project's «اقلام مورد نیاز» category ------------------- */
+
+/**
+ * The four codes a project's generic line used to store.
+ *
+ * The line's «دسته کالا» was a hardcoded four-option `<select>` — فلو، دما،
+ * فشار، سطح — while every other category control in the application reads
+ * `settings.dropdownItems.categories`, so a category the company added in
+ * Settings never appeared here and the two vocabularies could not be grouped
+ * together. The line now stores a name from that list; these codes stay only
+ * so the rows written before are still read as what they meant.
+ */
+export const LEGACY_ITEM_CATEGORIES: Record<string, { label: string; words: string[] }> = {
+  FLOW: { label: "فلو", words: ["فلو", "جریان", "flow"] },
+  TEMPERATURE: { label: "دما", words: ["دما", "حرارت", "temp"] },
+  PRESSURE: { label: "فشار", words: ["فشار", "press"] },
+  LEVEL: { label: "سطح", words: ["سطح", "لول", "level"] },
+};
+
+function byWords(text: string, known: readonly string[]): string | null {
+  const key = categoryKey(text);
+  for (const legacy of Object.values(LEGACY_ITEM_CATEGORIES)) {
+    if (!legacy.words.some((w) => key.includes(w))) continue;
+    return known.find((entry) => legacy.words.some((w) => categoryKey(entry).includes(w))) ?? legacy.label;
+  }
+  return null;
+}
+
+/**
+ * The category a project line is drawn and saved under.
+ *
+ * A name in the list is itself; a legacy code is the list entry meaning the
+ * same thing (by its words — «ابزار دقیق - جریان (فلو)» for FLOW), or its bare
+ * label when the list has none; anything else — a category since removed from
+ * the list — is kept exactly as stored, because the form draws it as a
+ * disabled option rather than silently rewriting it to the first one.
+ */
+export function projectItemCategory(stored: unknown, known: readonly string[]): string {
+  const raw = String(stored ?? "").trim();
+  if (!raw) return "";
+  const inList = matchKnownCategory(raw, known);
+  if (inList) return inList;
+  const legacy = LEGACY_ITEM_CATEGORIES[raw.toUpperCase()];
+  if (legacy) return known.find((e) => legacy.words.some((w) => categoryKey(e).includes(w))) ?? legacy.label;
+  return raw;
+}
+
+/**
+ * A spreadsheet cell's category: the list entry it names, else the entry its
+ * words point at («فشار» → «ابزار دقیق - فشار»), else the text as typed.
+ */
+export function itemCategoryFromText(raw: unknown, known: readonly string[]): string {
+  const text = String(raw ?? "").trim();
+  if (!text) return known[0] ?? "";
+  return matchKnownCategory(text, known) ?? byWords(text, known) ?? text;
+}

@@ -533,7 +533,8 @@ export interface Project {
     name: string;
     quantity: number;
     supplyMethod?: 'INVENTORY' | 'ORDER' | 'NONE';
-    category?: 'FLOW' | 'TEMPERATURE' | 'PRESSURE' | 'LEVEL';
+    /** A name from `settings.dropdownItems.categories`; rows written before hold FLOW/TEMPERATURE/PRESSURE/LEVEL (`projectItemCategory`). */
+    category?: string;
     equipmentType?: string;
     size?: string;
     tagNumber?: string;

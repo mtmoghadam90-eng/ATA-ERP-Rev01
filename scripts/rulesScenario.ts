@@ -253,6 +253,7 @@ import { FRESH_FOR_MS, refreshDecision, type RateRefreshState } from "../src/ser
 import { receivedDateImpliesStatus, computeTotals, RECEIVED_STATUS } from "../src/server/services/purchaseOrderService";
 import { purchaseOrderLandedCost, resolveShippingTerms, shippingRateRefusal } from "../src/utils/purchaseOrderCost";
 import { DEFAULT_REQUIRED_FIELDS, REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
+import { itemCategoryFromText, projectItemCategory } from "../src/utils/productCategories";
 import {
   COST_DRIFT_THRESHOLD_PERCENT, COST_SOURCES, convertCost, costDrift, landedUnitCostOf,
   lineMargin, lineNeedsCost, linesMissingCost, sellingPriceFor,
@@ -22107,6 +22108,24 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("po freight: both fields are writable and redacted as costs",
     /"shippingCurrency", "shippingExchangeRate"/.test(readFileSync("src/server/routes/purchaseOrders.ts", "utf8"))
       && /"shippingCurrency", "shippingExchangeRate"/.test(readFileSync("src/server/costs.ts", "utf8")));
+}
+
+
+// ── A project line's «دسته کالا» is the company's own category list ──────
+{
+  const list = ["ابزار دقیق - فشار", "ابزار دقیق - دما", "ابزار دقیق - جریان (فلو)", "ابزار دقیق - سطح (لول)", "آنالایزر"];
+  eq("item category: a legacy code reads as the list entry meaning it", projectItemCategory("FLOW", list), "ابزار دقیق - جریان (فلو)");
+  eq("item category: every legacy code finds its entry", projectItemCategory("LEVEL", list), "ابزار دقیق - سطح (لول)");
+  eq("item category: a legacy code with no entry keeps its label", projectItemCategory("PRESSURE", ["آنالایزر"]), "فشار");
+  eq("item category: a list name is itself, folded to the list's spelling", projectItemCategory("آنالايزر", list), "آنالایزر");
+  eq("item category: a removed name is kept, not rewritten", projectItemCategory("شیر", list), "شیر");
+  eq("item category: a sheet's short word finds the entry", itemCategoryFromText("فشار", list), "ابزار دقیق - فشار");
+  eq("item category: a sheet naming an entry exactly gets it", itemCategoryFromText("آنالایزر", list), "آنالایزر");
+  eq("item category: a blank cell is the first entry", itemCategoryFromText("", list), list[0]);
+  const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("item category: the form reads settings.dropdownItems.categories, not four hardcoded codes",
+    /itemCategories = settings\?\.dropdownItems\?\.categories/.test(view)
+      && !/<option value="FLOW">/.test(view) && !/"FLOW"/.test(view));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
