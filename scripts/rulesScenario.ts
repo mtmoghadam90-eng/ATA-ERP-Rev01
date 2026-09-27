@@ -256,6 +256,8 @@ import { DEFAULT_REQUIRED_FIELDS, REQUIRED_FIELDS_METADATA } from "../src/utils/
 import { itemCategoryFromText, projectItemCategory } from "../src/utils/productCategories";
 import { applySettingsDelta, diffSettings, isEmptyDelta, readSettingsDelta } from "../src/utils/settingsDelta";
 import { quietHoursFor } from "../src/utils/messaging";
+import { calcFreightRefusal, calculateSellingPrice as sellingPriceOf } from "../src/utils/priceCalculator";
+import { landedUnitCostOf as landedCostOfCalc } from "../src/utils/costOfGoods";
 import {
   COST_DRIFT_THRESHOLD_PERCENT, COST_SOURCES, convertCost, costDrift, landedUnitCostOf,
   lineMargin, lineNeedsCost, linesMissingCost, sellingPriceFor,
@@ -22196,6 +22198,39 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   const svc = readFileSync("src/server/services/messaging/messageService.ts", "utf8");
   eq("staff quiet: both retry paths choose the window by the row's audience",
     (svc.match(/quietHoursFor\(messageAudience\(message\.audience\), settings\.quietHours, settings\.staffQuietHours\)/g) ?? []).length, 2);
+}
+
+
+// ── The price calculator's freight has its own currency and rate ─────────
+{
+  const base = { priceForeign: 1000, exchangeRate: 900_000, remittanceFee: 10, remittancePct: 0,
+    shippingCost: 200, otherCostsForeign: 0, customsDutyRIYAL: 50_000_000, otherCostsRIYAL: 0,
+    profitPct: 0, profitRIYAL: 0, marginType: "PERCENT" as const };
+  eq("calc freight: no freight currency is the old rule, freight at the goods' rate",
+    sellingPriceOf(base).landedRial, (1000 + 10 + 200) * 900_000 + 50_000_000);
+  eq("calc freight: another currency converts at its own rate",
+    sellingPriceOf({ ...base, shippingCurrency: "درهم", shippingExchangeRate: 240_000 }).landedRial,
+    (1000 + 10) * 900_000 + 200 * 240_000 + 50_000_000);
+  eq("calc freight: rial freight is added as it stands",
+    sellingPriceOf({ ...base, shippingCost: 30_000_000, shippingCurrency: "ریال" }).landedRial,
+    (1000 + 10) * 900_000 + 30_000_000 + 50_000_000);
+  const sep = sellingPriceOf({ ...base, shippingCurrency: "درهم", shippingExchangeRate: 240_000 });
+  eq("calc freight: the foreign landed cost is the same money at the goods' rate",
+    Math.round(sep.landedForeign * 900_000), Math.round(sep.landedRial));
+  ok("calc freight: a foreign freight currency with no rate is refused",
+    !!calcFreightRefusal({ shippingCost: 200, shippingCurrency: "درهم" }));
+  eq("calc freight: rial or no freight needs no rate",
+    [calcFreightRefusal({ shippingCost: 5, shippingCurrency: "ریال" }), calcFreightRefusal({ shippingCost: 0, shippingCurrency: "درهم" })].join("|"), "|");
+  eq("calc freight: a stored calculator's freight terms reach the landed cost",
+    landedCostOfCalc({ calcPriceForeign: 1000, calcExchangeRate: 900_000, calcShippingCost: 200,
+      calcShippingCurrency: "درهم", calcShippingExchangeRate: 240_000 } as never),
+    1000 * 900_000 + 200 * 240_000);
+  ok("calc freight: both fields are persisted with the calculator",
+    /"calcShippingCurrency", "calcShippingExchangeRate"/.test(readFileSync("src/api/productAdapter.ts", "utf8")));
+  const header = readFileSync("src/components/HeaderPriceCalculator.tsx", "utf8");
+  const app = readFileSync("src/App.tsx", "utf8");
+  ok("header calculator: opened from the header, standalone, with no apply handler",
+    /id="header-price-calculator"/.test(app) && /\bstandalone\b/.test(header) && !/onApply/.test(header));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

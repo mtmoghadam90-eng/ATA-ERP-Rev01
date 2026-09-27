@@ -144,6 +144,32 @@ if (priceInput) {
 act(() => { root.unmount(); });
 
 /*
+ * The header's scratch calculator saves nothing: in standalone mode there is
+ * no apply button at all, and the freight gets its own currency and rate box.
+ */
+{
+  const hostS = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootS = createRoot(hostS);
+  act(() => {
+    rootS.render(React.createElement(PriceCalculatorModal, {
+      open: true, standalone: true, onClose: () => {},
+      initialPriceForeign: 0, currency: "یورو", exchangeRates: RATES,
+    }));
+  });
+  const labels = [...hostS.querySelectorAll("button")].map((b) => b.textContent ?? "");
+  ok("standalone calculator: no «اعمال» button, so nothing can be saved",
+    !labels.some((t) => t.includes("اعمال")) && labels.some((t) => t.includes("بستن")), labels.join(" | "));
+  const freightSelect = hostS.querySelector("#calc-shipping-currency") as HTMLSelectElement | null;
+  ok("standalone calculator: the freight currency is its own choice", !!freightSelect);
+  ok("...with no rate box while it follows the goods", !hostS.querySelector("#calc-shipping-rate"));
+  if (freightSelect) {
+    act(() => { freightSelect.value = "درهم"; handlers(freightSelect).onChange?.({ target: freightSelect }); });
+  }
+  ok("...and a rate box once another currency is chosen", !!hostS.querySelector("#calc-shipping-rate"));
+  act(() => { rootS.unmount(); });
+}
+
+/*
  * A screen that loads its own data, under a parent that re-renders.
  *
  * The second bug of the same family, and the more expensive one. The messaging

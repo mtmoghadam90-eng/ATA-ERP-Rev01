@@ -149,6 +149,10 @@ export interface ProductVariant {
   calcRemittanceFee?: number;
   calcRemittancePct?: number;
   calcShippingCost?: number;
+  /** Freight's own currency; blank = the item's (`calculateSellingPrice`). */
+  calcShippingCurrency?: string;
+  /** Freight's own rate; 0/absent = the item's. */
+  calcShippingExchangeRate?: number;
   calcCustomsDutyRIYAL?: number;
   calcOtherCostsForeign?: number;
   calcOtherCostsRIYAL?: number;
@@ -237,6 +241,10 @@ export interface Product {
   calcRemittanceFee?: number;
   calcRemittancePct?: number;
   calcShippingCost?: number;
+  /** Freight's own currency; blank = the item's (`calculateSellingPrice`). */
+  calcShippingCurrency?: string;
+  /** Freight's own rate; 0/absent = the item's. */
+  calcShippingExchangeRate?: number;
   calcCustomsDutyRIYAL?: number;
   calcOtherCostsForeign?: number;
   calcOtherCostsRIYAL?: number;

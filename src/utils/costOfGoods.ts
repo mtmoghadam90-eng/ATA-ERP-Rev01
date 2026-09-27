@@ -179,6 +179,8 @@ function landedFromOne(calc: CalcFields | null | undefined): number | null {
     remittanceFee: num(calc, "remittanceFee"),
     remittancePct: num(calc, "remittancePct"),
     shippingCost: num(calc, "shippingCost"),
+    shippingCurrency: String(pick(calc, "shippingCurrency") ?? ""),
+    shippingExchangeRate: num(calc, "shippingExchangeRate"),
     otherCostsForeign: num(calc, "otherCostsForeign"),
     customsDutyRIYAL: num(calc, "customsDutyRIYAL"),
     otherCostsRIYAL: num(calc, "otherCostsRIYAL"),

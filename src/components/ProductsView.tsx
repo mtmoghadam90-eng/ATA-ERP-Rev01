@@ -480,19 +480,8 @@ export default function ProductsView({
     setSimplePriceForeign(full.priceForeign !== undefined ? String(full.priceForeign) : '');
     setSimpleCurrencyForeign(full.currencyForeign || 'یورو');
     setSimplePriceRIYAL(full.basePriceRIYAL !== undefined ? String(full.basePriceRIYAL) : '');
-    setSimpleCalcDetails({
-      calcPriceForeign: full.calcPriceForeign,
-      calcExchangeRate: full.calcExchangeRate,
-      calcRemittanceFee: full.calcRemittanceFee,
-      calcRemittancePct: full.calcRemittancePct,
-      calcShippingCost: full.calcShippingCost,
-      calcCustomsDutyRIYAL: full.calcCustomsDutyRIYAL,
-      calcOtherCostsForeign: full.calcOtherCostsForeign,
-      calcOtherCostsRIYAL: full.calcOtherCostsRIYAL,
-      calcProfitPct: full.calcProfitPct,
-      calcProfitRIYAL: full.calcProfitRIYAL,
-      calcMarginType: full.calcMarginType
-    });
+    // Every calculator field, from the one list that decides what is saved.
+    setSimpleCalcDetails(calcSeedOf(full));
     setNewSkuSelections({});
     setNewSkuError('');
     setShowModal(true);
@@ -554,19 +543,8 @@ export default function ProductsView({
     setSimplePriceForeign(prod.priceForeign !== undefined ? String(prod.priceForeign) : '');
     setSimpleCurrencyForeign(prod.currencyForeign || 'یورو');
     setSimplePriceRIYAL(prod.basePriceRIYAL !== undefined ? String(prod.basePriceRIYAL) : '');
-    setSimpleCalcDetails({
-      calcPriceForeign: prod.calcPriceForeign,
-      calcExchangeRate: prod.calcExchangeRate,
-      calcRemittanceFee: prod.calcRemittanceFee,
-      calcRemittancePct: prod.calcRemittancePct,
-      calcShippingCost: prod.calcShippingCost,
-      calcCustomsDutyRIYAL: prod.calcCustomsDutyRIYAL,
-      calcOtherCostsForeign: prod.calcOtherCostsForeign,
-      calcOtherCostsRIYAL: prod.calcOtherCostsRIYAL,
-      calcProfitPct: prod.calcProfitPct,
-      calcProfitRIYAL: prod.calcProfitRIYAL,
-      calcMarginType: prod.calcMarginType
-    });
+    // Every calculator field, from the one list that decides what is saved.
+    setSimpleCalcDetails(calcSeedOf(prod));
     setNewSkuSelections({});
     setNewSkuError('');
     setShowModal(true);

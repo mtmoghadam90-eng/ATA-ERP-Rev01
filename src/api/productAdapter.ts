@@ -130,7 +130,7 @@ export function detailToProduct(detail: ProductDetail): Product {
  */
 const PRICE_CALC_KEYS = [
   "calcPriceForeign", "calcExchangeRate", "calcRemittanceFee", "calcRemittancePct",
-  "calcShippingCost", "calcCustomsDutyRIYAL", "calcOtherCostsForeign",
+  "calcShippingCost", "calcShippingCurrency", "calcShippingExchangeRate", "calcCustomsDutyRIYAL", "calcOtherCostsForeign",
   "calcOtherCostsRIYAL", "calcProfitPct", "calcProfitRIYAL", "calcMarginType",
   "calcMode", "calcManualLandedForeign", "calcManualSellingForeign",
 ] as const;

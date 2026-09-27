@@ -9,7 +9,7 @@ import {
   X,
 } from "lucide-react";
 import { ExchangeRate, ProductVariant } from "../types";
-import { calculateSellingPrice } from "../utils/priceCalculator";
+import { calcFreightRefusal, calculateSellingPrice } from "../utils/priceCalculator";
 import { formatMoney } from '../numUtils';
 
 interface Props {
@@ -28,7 +28,12 @@ interface Props {
    */
   seedKey?: string | number | null;
   exchangeRates: ExchangeRate[];
-  onApply: (
+  /**
+   * A scratch calculation: nothing is applied or saved, and the footer offers
+   * only «بستن». The header's calculator opens it this way.
+   */
+  standalone?: boolean;
+  onApply?: (
     sellingForeign: number,
     sellingRial: number,
     details: Partial<ProductVariant>,
@@ -66,6 +71,7 @@ export default function PriceCalculatorModal({
   initialValues,
   seedKey = null,
   exchangeRates,
+  standalone = false,
   onApply,
 }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -75,6 +81,9 @@ export default function PriceCalculatorModal({
   const [calcRemittanceFee, setCalcRemittanceFee] = useState<string>("0");
   const [calcRemittancePct, setCalcRemittancePct] = useState<string>("0");
   const [calcShippingCost, setCalcShippingCost] = useState<string>("0");
+  // Freight's own currency and rate; '' / "" = as the goods (`calculateSellingPrice`).
+  const [calcShippingCurrency, setCalcShippingCurrency] = useState<string>("");
+  const [calcShippingRate, setCalcShippingRate] = useState<string>("");
   const [calcCustomsDutyRIYAL, setCalcCustomsDutyRIYAL] = useState<string>("0");
   const [calcOtherCostsForeign, setCalcOtherCostsForeign] =
     useState<string>("0");
@@ -146,6 +155,10 @@ export default function PriceCalculatorModal({
         ? String(initialValues.calcShippingCost)
         : "0",
     );
+    setCalcShippingCurrency(initialValues?.calcShippingCurrency ?? "");
+    setCalcShippingRate(
+      Number(initialValues?.calcShippingExchangeRate) > 0 ? String(initialValues?.calcShippingExchangeRate) : "",
+    );
     setCalcCustomsDutyRIYAL(
       initialValues?.calcCustomsDutyRIYAL !== undefined
         ? String(initialValues.calcCustomsDutyRIYAL)
@@ -199,6 +212,8 @@ export default function PriceCalculatorModal({
     remittanceFee: Number(calcRemittanceFee) || 0,
     remittancePct: Number(calcRemittancePct) || 0,
     shippingCost: Number(calcShippingCost) || 0,
+    shippingCurrency: calcShippingCurrency,
+    shippingExchangeRate: Number(calcShippingRate) || 0,
     otherCostsForeign: Number(calcOtherCostsForeign) || 0,
     customsDutyRIYAL: Number(calcCustomsDutyRIYAL) || 0,
     otherCostsRIYAL: Number(calcOtherCostsRIYAL) || 0,
@@ -220,7 +235,16 @@ export default function PriceCalculatorModal({
     onClose();
   };
 
+  const freightCurrency = calcShippingCurrency || calcCurrency;
+  const freightRefusal = calcFreightRefusal({
+    shippingCost: Number(calcShippingCost) || 0,
+    shippingCurrency: calcShippingCurrency,
+    shippingExchangeRate: Number(calcShippingRate) || 0,
+  });
+
   const handleConfirm = () => {
+    if (!onApply) return;
+    if (freightRefusal) { alert(freightRefusal); return; }
     onApply(
       Number(result.sellingForeign.toFixed(2)),
       result.sellingRial,
@@ -230,6 +254,10 @@ export default function PriceCalculatorModal({
         calcRemittanceFee: Number(calcRemittanceFee) || 0,
         calcRemittancePct: Number(calcRemittancePct) || 0,
         calcShippingCost: shipCost,
+        calcShippingCurrency: calcShippingCurrency || undefined,
+        calcShippingExchangeRate: calcShippingCurrency && calcShippingCurrency !== "ریال"
+          ? Number(calcShippingRate) || undefined
+          : undefined,
         calcCustomsDutyRIYAL: customsDuty,
         calcOtherCostsForeign: otherCostForeign,
         calcOtherCostsRIYAL: otherCostRial,
@@ -519,7 +547,7 @@ export default function PriceCalculatorModal({
               <div className="grid grid-cols-2 gap-2.5">
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-500">
-                    هزینه حمل ارزی ({calcCurrency})
+                    هزینه حمل ({freightCurrency})
                   </label>
                   <input
                     type="number"
@@ -528,6 +556,39 @@ export default function PriceCalculatorModal({
                     className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-mono text-center outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 bg-white"
                   />
                 </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500">ارز صورتحساب حمل</label>
+                  <select
+                    value={calcShippingCurrency}
+                    onChange={(e) => {
+                      setCalcShippingCurrency(e.target.value);
+                      if (!e.target.value || e.target.value === "ریال") setCalcShippingRate("");
+                    }}
+                    className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white"
+                    id="calc-shipping-currency"
+                  >
+                    <option value="">{`همان ارز کالا (${calcCurrency})`}</option>
+                    {["دلار", "یورو", "درهم", "یوان", "ریال"].map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+                {calcShippingCurrency && calcShippingCurrency !== "ریال" && (
+                  <div className="space-y-1 col-span-2">
+                    <label className="text-[10px] font-bold text-slate-500">
+                      نرخ تسعیر حمل (ریال به {calcShippingCurrency})
+                    </label>
+                    <input
+                      type="number"
+                      value={calcShippingRate}
+                      onChange={(e) => setCalcShippingRate(e.target.value)}
+                      placeholder="نرخ را وارد کنید"
+                      className={`w-full border rounded-lg px-2 py-1.5 text-xs font-mono text-center outline-none bg-white ${freightRefusal ? "border-rose-300" : "border-slate-200"}`}
+                      id="calc-shipping-rate"
+                    />
+                    {freightRefusal && <p className="text-[10px] text-rose-600">{freightRefusal}</p>}
+                  </div>
+                )}
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-slate-500">
                     سایر هزینه‌های ارزی ({calcCurrency})
@@ -720,8 +781,9 @@ export default function PriceCalculatorModal({
             onClick={handleClose}
             className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-xl text-xs font-medium transition"
           >
-            انصراف
+            {standalone ? "بستن" : "انصراف"}
           </button>
+          {!standalone && (
           <button
             type="button"
             onClick={handleConfirm}
@@ -730,6 +792,7 @@ export default function PriceCalculatorModal({
             <Calculator size={14} />
             اعمال در ردیف کالا و ذخیره
           </button>
+          )}
         </div>
       </div>
     </div>
