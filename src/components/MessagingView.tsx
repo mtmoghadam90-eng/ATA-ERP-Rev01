@@ -844,7 +844,7 @@ function SendingBehaviour({
             همان روز می‌رود. پیام نگه داشته می‌شود تا اولین روز کاری، نه حذف.
             <span className="block mt-0.5">
               اعلان ارجاع کار به همکاران از این قاعده مستثناست و در روز تعطیل هم
-              می‌رود؛ ساعت سکوت برای آن هم برقرار است.
+              می‌رود؛ ساعت سکوت برای آن هم برقرار است (ساعات سکوت جداگانهٔ همکاران در بخش «اعلان ارجاع کار» تنظیم می‌شود).
             </span>
           </span>
         </span>
@@ -938,6 +938,17 @@ function StaffNotifications({
     onNotice(notice);
   };
 
+  const writeStaffQuiet = (
+    next: NonNullable<ERPSettings['messaging']>['staffQuietHours'] | undefined,
+    notice: string,
+  ) => {
+    if (!onUpdateSettings) return;
+    const { staffQuietHours: _drop, ...rest } = messaging;
+    void _drop;
+    onUpdateSettings({ ...settings, messaging: next ? { ...rest, staffQuietHours: next } : rest });
+    onNotice(notice);
+  };
+
   const bodyFor = (kind: StaffNotificationKind) => staffTemplateFor(kind, staff);
   const channel = staffChannelChoice(staff);
   const fallback = staffFallsBackToSms(staff);
@@ -1007,6 +1018,60 @@ function StaffNotifications({
           ))}
         </div>
         <p className="text-[10px] text-slate-500 leading-5">{STAFF_CHANNEL_HINTS[channel]}</p>
+      </div>
+
+      {/*
+        Colleagues' own quiet window. Off = the company's window above (the
+        rule every installation had); on with both boxes blank = no quiet hours
+        for colleagues at all (`quietHoursFor`).
+      */}
+      <div className="space-y-2 rounded-xl border border-slate-150 bg-slate-50/60 p-3" id="staff-quiet-hours">
+        <label className="flex items-center gap-2 text-[11px] font-bold text-slate-700 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!messaging.staffQuietHours}
+            disabled={!onUpdateSettings}
+            onChange={(e) => writeStaffQuiet(
+              e.target.checked
+                ? { from: messaging.quietHours?.from ?? null, to: messaging.quietHours?.to ?? null }
+                : undefined,
+              e.target.checked ? 'ساعات سکوت جداگانه برای همکاران فعال شد.' : 'پیام همکاران از ساعات سکوت عمومی پیروی می‌کند.',
+            )}
+            className="accent-sky-500"
+            id="staff-quiet-enabled"
+          />
+          ساعات سکوت جداگانه برای همکاران
+        </label>
+        {messaging.staffQuietHours ? (
+          <div className="grid grid-cols-2 gap-3">
+            {(['from', 'to'] as const).map((edge) => (
+              <div key={edge} className="space-y-1">
+                <label className="text-[11px] font-bold text-slate-600">
+                  {edge === 'from' ? 'شروع سکوت همکاران' : 'پایان سکوت همکاران'}
+                </label>
+                <input
+                  type="time"
+                  value={messaging.staffQuietHours?.[edge] ?? ''}
+                  disabled={!onUpdateSettings}
+                  onChange={(e) => writeStaffQuiet(
+                    { ...messaging.staffQuietHours, [edge]: e.target.value || null },
+                    'ساعات سکوت همکاران ذخیره شد.',
+                  )}
+                  dir="ltr"
+                  data-staff-quiet={edge}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-center bg-white"
+                />
+              </div>
+            ))}
+            <p className="col-span-2 text-[10px] text-slate-500 leading-5">
+              اعلان‌های ارجاع کار در این بازه نگه داشته می‌شوند و بعد از پایان آن ارسال می‌شوند. هر دو خانه خالی یعنی برای همکاران ساعت سکوتی نیست.
+            </p>
+          </div>
+        ) : (
+          <p className="text-[10px] text-slate-500 leading-5">
+            خاموش: پیام همکاران همان ساعات سکوت عمومی بالا را رعایت می‌کند.
+          </p>
+        )}
       </div>
 
       {/*

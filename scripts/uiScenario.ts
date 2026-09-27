@@ -420,6 +420,37 @@ head("WhatsApp: the link button is unreachable while a code is on the screen");
   } | null)?.messaging?.staffSms?.channel) ?? null;
   ok("pressing تلگرام writes Telegram, not the first chip", tgChannel === "TELEGRAM", tgChannel);
 
+  /* Colleagues' own quiet hours: a switch, then two boxes that really write. */
+  staffSettings = { customFields: [], messaging: { quietHours: { from: "21:00", to: "08:00" } } };
+  await renderStaff();
+  const quietSwitch = host4.querySelector("#staff-quiet-enabled") as HTMLInputElement | null;
+  ok("staff quiet hours: off by default, so colleagues follow the company window",
+    !!quietSwitch && quietSwitch.checked === false && !host4.querySelector('[data-staff-quiet="from"]'));
+  await act(async () => { quietSwitch?.click(); });
+  await settle();
+  const seeded = (lastSaved as never as { messaging?: { staffQuietHours?: { from?: string; to?: string } } } | null)
+    ?.messaging?.staffQuietHours;
+  ok("staff quiet hours: switching on starts from the company window",
+    seeded?.from === "21:00" && seeded?.to === "08:00", JSON.stringify(seeded));
+  await renderStaff();
+  const toBox = host4.querySelector('[data-staff-quiet="to"]') as HTMLInputElement | null;
+  ok("staff quiet hours: the boxes appear once it is on", !!toBox);
+  if (toBox) {
+    await act(async () => {
+      toBox.value = "07:00";
+      handlers(toBox).onChange?.({ target: toBox, currentTarget: toBox });
+    });
+    await settle();
+  }
+  const edited = (lastSaved as never as { messaging?: { staffQuietHours?: { from?: string; to?: string }; quietHours?: { to?: string } } } | null)?.messaging;
+  ok("staff quiet hours: editing writes the colleagues' window and leaves the company's alone",
+    edited?.staffQuietHours?.to === "07:00" && edited?.quietHours?.to === "08:00", JSON.stringify(edited));
+  await renderStaff();
+  await act(async () => { (host4.querySelector("#staff-quiet-enabled") as HTMLInputElement | null)?.click(); });
+  await settle();
+  ok("staff quiet hours: switching off removes the key, back to the company window",
+    !("staffQuietHours" in ((lastSaved as never as { messaging?: object } | null)?.messaging ?? {})));
+
   act(() => { root4.unmount(); });
 
   act(() => { root3.unmount(); });

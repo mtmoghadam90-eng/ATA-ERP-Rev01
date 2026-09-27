@@ -855,6 +855,11 @@ export interface ERPSettings {
      */
     quietHours?: { from?: string | null; to?: string | null };
     /**
+     * Colleagues' own quiet window (`quietHoursFor`). Absent = the window
+     * above; present with both blank = no quiet hours for colleagues.
+     */
+    staffQuietHours?: { from?: string | null; to?: string | null };
+    /**
      * Days no message is delivered on: Friday and the official holidays.
      *
      * Not a list of weekday numbers — it reads the **holiday calendar**, which

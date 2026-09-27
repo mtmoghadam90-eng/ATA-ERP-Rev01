@@ -589,6 +589,29 @@ export function isCustomerFacing(audience: MessageAudience | null | undefined): 
   return audience !== "STAFF";
 }
 
+/**
+ * The quiet window a message is held to.
+ *
+ * Colleagues may keep different hours from customers — a handover at 20:00 is
+ * fine for a colleague and not for a customer, or the other way round — so a
+ * staff notice has its **own** window when one is configured. Absent (not
+ * set up) means the company's window, which is every installation until
+ * somebody configures it; present with both boxes blank means «no quiet hours
+ * for colleagues», which is a real answer and not the same as absent. A
+ * customer message always takes the company's window.
+ *
+ * Every message still goes through *a* window: this chooses which one, it
+ * never skips the hours (the reason the queue hands them over unconditionally).
+ */
+export function quietHoursFor(
+  audience: MessageAudience | null | undefined,
+  company: QuietHours | null | undefined,
+  staff: QuietHours | null | undefined,
+): QuietHours | null | undefined {
+  if (isCustomerFacing(audience)) return company;
+  return staff ? staff : company;
+}
+
 /* -------------------------------- retries -------------------------------- */
 
 /** Attempts before a message is given up on and marked failed. */

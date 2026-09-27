@@ -9,7 +9,7 @@ import {
   ALL_CHANNELS, ALL_SMS_CONFIG_FIELDS, ALL_SMS_SECRET_FIELDS, BALE_MODES, baleModeOf,
   CHANNELS, Channel, MAX_SEND_ATTEMPTS, MESSAGE_STATUS, MessageAudience, QuietHours,
   isChannel,
-  isCustomerFacing, nextSendableTime, renderTemplate, resolveRecipient, retryDelayMs,
+  isCustomerFacing, nextSendableTime, quietHoursFor, renderTemplate, resolveRecipient, retryDelayMs,
   shouldRetry,
 } from "../../../utils/messaging";
 import { BaleChatsResult, BaleConfig, baleRecentChats, SendResult, sendThrough } from "./drivers";
@@ -373,6 +373,8 @@ export async function deleteTemplate(id: string): Promise<void> {
 
 export interface MessagingSettings {
   quietHours: QuietHours;
+  /** Colleagues' own window; null = the company's (`quietHoursFor`). */
+  staffQuietHours: QuietHours | null;
   /** No message on a Friday or an official holiday. Absent = off. */
   quietDays: boolean;
   /** Write the queue rows but never call a provider. For trying rules out. */
@@ -388,6 +390,9 @@ export async function loadMessagingSettings(): Promise<MessagingSettings> {
       from: stored.quietHours?.from ?? null,
       to: stored.quietHours?.to ?? null,
     },
+    staffQuietHours: stored.staffQuietHours
+      ? { from: stored.staffQuietHours.from ?? null, to: stored.staffQuietHours.to ?? null }
+      : null,
     quietDays: stored.quietDays === true,
     dryRun: stored.dryRun === true,
     maxAttempts: Number(stored.maxAttempts) > 0 ? Number(stored.maxAttempts) : MAX_SEND_ATTEMPTS,
@@ -467,7 +472,7 @@ export async function queueMessage(input: QueueMessageInput) {
    */
   const scheduledAt = nextSendableTime(
     requested,
-    settings.quietHours,
+    quietHoursFor(input.audience, settings.quietHours, settings.staffQuietHours),
     settings.quietDays && isCustomerFacing(input.audience)
       ? (day) => isOfficialHoliday(toShamsiStr(day))
       : null,
@@ -968,7 +973,7 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
         const waitMs = Math.min(askedToWait, MAX_PROVIDER_WAIT_MS);
         const waitUntil = nextSendableTime(
           new Date(now.getTime() + waitMs),
-          settings.quietHours,
+          quietHoursFor(messageAudience(message.audience), settings.quietHours, settings.staffQuietHours),
           settings.quietDays && isCustomerFacing(messageAudience(message.audience))
             ? (day) => isOfficialHoliday(toShamsiStr(day))
             : null,
@@ -987,7 +992,7 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
       if (shouldRetry(attempts, settings.maxAttempts)) {
         const retryAt = nextSendableTime(
           new Date(now.getTime() + retryDelayMs(attempts)),
-          settings.quietHours,
+          quietHoursFor(messageAudience(message.audience), settings.quietHours, settings.staffQuietHours),
           settings.quietDays && isCustomerFacing(messageAudience(message.audience))
             ? (day) => isOfficialHoliday(toShamsiStr(day))
             : null,

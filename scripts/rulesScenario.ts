@@ -255,6 +255,7 @@ import { purchaseOrderLandedCost, resolveShippingTerms, shippingRateRefusal } fr
 import { DEFAULT_REQUIRED_FIELDS, REQUIRED_FIELDS_METADATA } from "../src/utils/requiredFields";
 import { itemCategoryFromText, projectItemCategory } from "../src/utils/productCategories";
 import { applySettingsDelta, diffSettings, isEmptyDelta, readSettingsDelta } from "../src/utils/settingsDelta";
+import { quietHoursFor } from "../src/utils/messaging";
 import {
   COST_DRIFT_THRESHOLD_PERCENT, COST_SOURCES, convertCost, costDrift, landedUnitCostOf,
   lineMargin, lineNeedsCost, linesMissingCost, sellingPriceFor,
@@ -12324,7 +12325,7 @@ head("A document's notes: files, a Shamsi clock, and a delete that is offered ho
      * somebody's phone.
      */
     ok("...because the queue hands the hours over whatever the audience is",
-      /nextSendableTime\(\s*\n\s*requested,\s*\n\s*settings\.quietHours,/.test(svc));
+      /nextSendableTime\(\s*\n\s*requested,\s*\n\s*quietHoursFor\(input\.audience, settings\.quietHours, settings\.staffQuietHours\),/.test(svc));
 
     /*
      * And the sender has to *say* so. A rule nothing passes is a rule that
@@ -22171,6 +22172,30 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     /settingsApi\.saveDelta\(delta\)/.test(store) && !/settingsApi\.save\(newSettings\)/.test(store));
   ok("settings delta: the server merges into a fresh read, not the cache",
     /tx\.appSetting\.findUnique/.test(readFileSync("src/server/services/adminService.ts", "utf8")));
+}
+
+
+// ── Colleagues can keep their own quiet hours ────────────────────────────
+{
+  const company = { from: "21:00", to: "08:00" };
+  const staff = { from: "23:00", to: "07:00" };
+  eq("staff quiet: a customer message takes the company window",
+    JSON.stringify(quietHoursFor("CUSTOMER", company, staff)), JSON.stringify(company));
+  eq("staff quiet: a staff notice takes its own window when set",
+    JSON.stringify(quietHoursFor("STAFF", company, staff)), JSON.stringify(staff));
+  eq("staff quiet: not set up means the company window",
+    JSON.stringify(quietHoursFor("STAFF", company, null)), JSON.stringify(company));
+  eq("staff quiet: set up with both blank means no quiet hours for colleagues",
+    JSON.stringify(quietHoursFor("STAFF", company, { from: null, to: null })), JSON.stringify({ from: null, to: null }));
+  eq("staff quiet: an unknown audience is a customer (the safe direction)",
+    JSON.stringify(quietHoursFor(undefined, company, staff)), JSON.stringify(company));
+  const at = new Date(2026, 6, 25, 22, 0);
+  eq("staff quiet: 22:00 holds a customer message and not a colleague's under 23:00–07:00",
+    [nextSendableTime(at, quietHoursFor("CUSTOMER", company, staff)).getHours(),
+      nextSendableTime(at, quietHoursFor("STAFF", company, staff)).getHours()].join(","), "8,22");
+  const svc = readFileSync("src/server/services/messaging/messageService.ts", "utf8");
+  eq("staff quiet: both retry paths choose the window by the row's audience",
+    (svc.match(/quietHoursFor\(messageAudience\(message\.audience\), settings\.quietHours, settings\.staffQuietHours\)/g) ?? []).length, 2);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
