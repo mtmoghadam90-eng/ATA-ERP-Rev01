@@ -22229,6 +22229,8 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     /"calcShippingCurrency", "calcShippingExchangeRate"/.test(readFileSync("src/api/productAdapter.ts", "utf8")));
   const header = readFileSync("src/components/HeaderPriceCalculator.tsx", "utf8");
   const app = readFileSync("src/App.tsx", "utf8");
+  ok("po freight: choosing another freight currency prefills today's stored rate",
+    /setShippingExchangeRate\(stored \|\| 0\)/.test(readFileSync("src/components/PurchaseOrdersView.tsx", "utf8")));
   ok("header calculator: opened from the header, standalone, with no apply handler",
     /id="header-price-calculator"/.test(app) && /\bstandalone\b/.test(header) && !/onApply/.test(header));
 }

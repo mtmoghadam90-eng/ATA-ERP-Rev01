@@ -153,7 +153,8 @@ act(() => { root.unmount(); });
   act(() => {
     rootS.render(React.createElement(PriceCalculatorModal, {
       open: true, standalone: true, onClose: () => {},
-      initialPriceForeign: 0, currency: "یورو", exchangeRates: RATES,
+      initialPriceForeign: 0, currency: "یورو",
+      exchangeRates: [...RATES, { id: "r-aed", currency: "AED", name: "درهم", rateToRIYAL: 245_000, lastUpdated: "" }] as never,
     }));
   });
   const labels = [...hostS.querySelectorAll("button")].map((b) => b.textContent ?? "");
@@ -166,6 +167,10 @@ act(() => { root.unmount(); });
     act(() => { freightSelect.value = "درهم"; handlers(freightSelect).onChange?.({ target: freightSelect }); });
   }
   ok("...and a rate box once another currency is chosen", !!hostS.querySelector("#calc-shipping-rate"));
+  ok("...filled in from today's stored rate for that currency, still editable",
+    (hostS.querySelector("#calc-shipping-rate") as HTMLInputElement | null)?.value === "245000"
+      && !(hostS.querySelector("#calc-shipping-rate") as HTMLInputElement | null)?.disabled,
+    (hostS.querySelector("#calc-shipping-rate") as HTMLInputElement | null)?.value);
   act(() => { rootS.unmount(); });
 }
 
