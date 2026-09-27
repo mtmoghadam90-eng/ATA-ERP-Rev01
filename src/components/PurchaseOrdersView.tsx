@@ -2258,7 +2258,11 @@ export default function PurchaseOrdersView({
                         onChange={(e) => {
                           const next = e.target.value;
                           setShippingCurrency(next === currency ? '' : next);
-                          if (next === RIAL) setShippingExchangeRate(0);
+                          if (next === RIAL || next === currency) { setShippingExchangeRate(0); return; }
+                          // Start from today's stored rate for that currency; the box stays editable.
+                          const code = mapCurrencyToEnglish(next);
+                          const stored = exchangeRates.find(r => r.currency === code)?.rateToRIYAL;
+                          setShippingExchangeRate(stored || 0);
                         }}
                         className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white"
                         id="po-shipping-currency"

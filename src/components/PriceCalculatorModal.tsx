@@ -561,8 +561,13 @@ export default function PriceCalculatorModal({
                   <select
                     value={calcShippingCurrency}
                     onChange={(e) => {
-                      setCalcShippingCurrency(e.target.value);
-                      if (!e.target.value || e.target.value === "ریال") setCalcShippingRate("");
+                      const next = e.target.value;
+                      setCalcShippingCurrency(next);
+                      if (!next || next === "ریال") { setCalcShippingRate(""); return; }
+                      // Start from today's stored rate for that currency; the box stays editable.
+                      const code = mapCurrencyToEng(next);
+                      const stored = code ? exchangeRates.find((r) => r.currency === code)?.rateToRIYAL : undefined;
+                      setCalcShippingRate(stored ? String(stored) : "");
                     }}
                     className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white"
                     id="calc-shipping-currency"
