@@ -20,9 +20,10 @@ import LoginView from './components/LoginView';
 import { brandLogoUrl } from './utils/brand';
 import { useERPStore, onSessionExpired } from './useERPStore';
 import { ensureHolidayCalendar } from './api/holidays';
-import { ShieldAlert, Bell, Inbox, Menu, Calendar, CheckCircle2, Clock, User, Sun, Moon } from 'lucide-react';
+import { ShieldAlert, Bell, Inbox, Menu, Calendar, CheckCircle2, Clock, User, Sun, Moon, Calculator } from 'lucide-react';
 import type { ActivityJump } from './utils/notificationJump';
 import TaskCalendarModal from './components/TaskCalendarModal';
+import HeaderPriceCalculator from './components/HeaderPriceCalculator';
 import { getTodayShamsi, toShamsiStr } from './dateUtils';
 import { describeReminder } from './utils/reminderRepeat';
 import ShamsiDatePicker from './components/ShamsiDatePicker';
@@ -138,6 +139,8 @@ export default function App() {
   const tabFor = (view: string) => (tabJump?.view === view ? tabJump.tab : undefined);
   const clearTabJump = () => setTabJump(null);
   const [calendarOpen, setCalendarOpen] = useState<boolean>(false);
+  // The header's scratch price calculator — nothing it computes is saved.
+  const [calculatorOpen, setCalculatorOpen] = useState<boolean>(false);
   const [triggeredReminders, setTriggeredReminders] = useState<string[]>([]);
   const [activeReminderTask, setActiveReminderTask] = useState<any>(null);
   const [printDocumentRequest, setPrintDocumentRequest] = useState<{ module: string, docId: string } | null>(() => {
@@ -738,6 +741,14 @@ export default function App() {
                  */}
                  <Calendar size={22} />
                </button>
+               <button
+                 className="relative text-slate-500 hover:text-emerald-600 transition p-1"
+                 onClick={() => setCalculatorOpen(true)}
+                 title="ماشین حساب قیمت (فقط محاسبه، چیزی ثبت نمی‌شود)"
+                 id="header-price-calculator"
+               >
+                 <Calculator size={22} />
+               </button>
                <button 
                  className="relative text-slate-500 hover:text-rose-600 transition p-1"
                  onClick={() => openViewTab('tasks', 'inbox')}
@@ -785,6 +796,8 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {calculatorOpen && <HeaderPriceCalculator onClose={() => setCalculatorOpen(false)} />}
 
       {/* Task Calendar Modal */}
       <TaskCalendarModal

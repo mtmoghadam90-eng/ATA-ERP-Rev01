@@ -27,6 +27,14 @@ export interface PriceCalcInputs {
   remittanceFee: number;
   remittancePct: number;
   shippingCost: number;
+  /**
+   * The freight's own currency and rate, apart from the goods' and the
+   * exchange house's (the purchase order's rule, `purchaseOrderCost.ts`).
+   * Blank currency and no rate = freight in the goods' currency at their rate,
+   * which is every calculator saved before these existed. «ریال» is ×1.
+   */
+  shippingCurrency?: string;
+  shippingExchangeRate?: number;
   otherCostsForeign: number;
   customsDutyRIYAL: number;
   otherCostsRIYAL: number;
@@ -43,6 +51,13 @@ export interface PriceCalcOutputs {
   sellingRial: number;
   sellingForeign: number;
   profitAmountRial: number;
+}
+
+/** Why the freight cannot be costed (a foreign currency with no rate), or null. */
+export function calcFreightRefusal(i: Pick<PriceCalcInputs, 'shippingCost' | 'shippingCurrency' | 'shippingExchangeRate'>): string | null {
+  const cur = String(i.shippingCurrency ?? "").trim();
+  if (!cur || cur === "ریال" || !(Number(i.shippingCost) > 0)) return null;
+  return Number(i.shippingExchangeRate) > 0 ? null : `نرخ تسعیر حمل (${cur}) را وارد کنید؛ بدون آن هزینهٔ حمل حساب نمی‌شود.`;
 }
 
 export function calculateSellingPrice(i: PriceCalcInputs): PriceCalcOutputs {
@@ -84,10 +99,19 @@ export function calculateSellingPrice(i: PriceCalcInputs): PriceCalcOutputs {
   const profitRial = Number(i.profitRIYAL) || 0;
 
   const remittanceForeign = remitFee + (baseOrig * remitPct) / 100;
-  const totalForeignCost = baseOrig + remittanceForeign + shipCost + otherCostForeign;
+  /*
+   * Freight at its own rate when one is set — the forwarder is paid apart from
+   * the exchange house. Otherwise it is part of the goods' foreign sum, exactly
+   * as before.
+   */
+  const freightCurrency = String(i.shippingCurrency ?? "").trim();
+  const freightRate = freightCurrency === "ریال" ? 1 : Number(i.shippingExchangeRate) || 0;
+  const freightSeparate = freightCurrency !== "" || freightRate > 0;
+  const freightRial = freightSeparate ? shipCost * freightRate : 0;
+  const totalForeignCost = baseOrig + remittanceForeign + otherCostForeign + (freightSeparate ? 0 : shipCost);
   const rawRialCost = totalForeignCost * rate;
-  const landedRial = rawRialCost + customsDuty + otherCostRial;
-  const landedForeign = totalForeignCost + (rate > 0 ? (customsDuty + otherCostRial) / rate : 0);
+  const landedRial = rawRialCost + freightRial + customsDuty + otherCostRial;
+  const landedForeign = totalForeignCost + (rate > 0 ? (freightRial + customsDuty + otherCostRial) / rate : 0);
 
   let sellingRial = 0;
   let profitAmountRial = 0;
