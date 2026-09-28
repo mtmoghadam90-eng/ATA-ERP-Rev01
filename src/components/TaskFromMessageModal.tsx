@@ -1,3 +1,4 @@
+import { DETAIL_LABELS } from '../utils/cardSummary';
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, ListChecks, X } from 'lucide-react';
 import ShamsiDatePicker from './ShamsiDatePicker';
@@ -125,7 +126,7 @@ export default function TaskFromMessageModal({
           </div>
 
           <div>
-            <label className="block text-[11px] font-bold text-slate-600 mb-1">شرح</label>
+            <label className="block text-[11px] font-bold text-slate-600 mb-1">{DETAIL_LABELS.description}</label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}

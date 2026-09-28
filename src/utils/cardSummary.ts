@@ -38,13 +38,13 @@ export const SUMMARY_LIMIT = 90;
 /** The headings, written once. Both the board and the list print these. */
 export const DETAIL_LABELS = {
   /** An ordinary task: what it is for. */
-  description: 'شرح',
+  description: 'شرح کار',
   /** The same column on a chase, where it means the *next* call, not the last. */
-  followUpDescription: 'شرح اقدام بعدی',
+  followUpDescription: 'شرح کار',
   /** What the customer said. */
   followUpResult: 'نتیجه پیگیری',
   /** The note about the call that closed it. */
-  completionNote: 'شرح اقدام انجام‌شده',
+  completionNote: 'یادداشت انجام کار',
 } as const;
 
 export interface CardDetailBlock {

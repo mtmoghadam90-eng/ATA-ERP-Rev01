@@ -1,3 +1,4 @@
+import { DETAIL_LABELS } from '../utils/cardSummary';
 import React, { useEffect, useRef, useState } from "react";
 import { CalendarPlus, CheckCircle2, X } from "lucide-react";
 
@@ -106,7 +107,7 @@ export default function TaskCompletionModal({
           <p className="text-xs text-secondary break-words">{task.title}</p>
           <div>
             <label htmlFor="task-completion-note" className="block text-xs font-medium text-slate-700 mb-1">
-              شرح اقدام <span className="text-faint">(اختیاری)</span>
+              {DETAIL_LABELS.completionNote} <span className="text-faint">(اختیاری)</span>
             </label>
             <textarea
               id="task-completion-note"

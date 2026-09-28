@@ -103,7 +103,7 @@ export const REQUIRED_FIELDS_METADATA: ModuleConfig[] = [
     name: 'وظایف و پیگیری',
     fields: [
       { key: 'title', label: 'عنوان پیگیری' },
-      { key: 'description', label: 'توضیحات وظیفه' },
+      { key: 'description', label: 'شرح کار' },
       { key: 'assignedTo', label: 'منتسب به' },
       { key: 'dueDate', label: 'تاریخ سررسید' },
       { key: 'priority', label: 'اولویت' },

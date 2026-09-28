@@ -1,3 +1,4 @@
+import { DETAIL_LABELS } from '../utils/cardSummary';
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CalendarClock, CheckCircle2, PhoneOff, X } from 'lucide-react';
 
@@ -463,7 +464,7 @@ export default function FollowUpCompletionModal({
                 />
               </div>
               <div className="md:col-span-3">
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">شرح اقدام</label>
+                <label className="block text-[11px] font-bold text-slate-600 mb-1">{DETAIL_LABELS.description}</label>
                 <textarea
                   value={actionDescription}
                   onChange={(e) => setActionDescription(e.target.value)}
@@ -655,7 +656,7 @@ export default function FollowUpCompletionModal({
 
           {!isEditingAction && (
           <div>
-            <label className="block text-[11px] font-bold text-slate-600 mb-1">یادداشت</label>
+            <label className="block text-[11px] font-bold text-slate-600 mb-1">{DETAIL_LABELS.completionNote}</label>
             <textarea
               value={completionNote}
               onChange={(e) => setCompletionNote(e.target.value)}
@@ -681,7 +682,7 @@ export default function FollowUpCompletionModal({
                   + ' اینجا قابل اصلاح‌اند. تنها چیزی که دوباره پرسیده نمی‌شود «تعیین وضعیت تجاری پیش‌فاکتور»'
                   + ' است، چون تاریخ فروشی را که رتبه‌بندی ارزش مشتری از رویش حساب می‌کند جابه‌جا می‌کند.'
                 : 'نتیجه تجاری این پیش‌فاکتور نهایی شده است، پس تصمیم پیگیری قابل تغییر نیست؛'
-                  + ' نتیجه و یادداشت ثبت‌شده قابل اصلاح‌اند.'}
+                  + ' نتیجه و یادداشت انجام کار قابل اصلاح‌اند.'}
             </p>
           )}
 
@@ -778,7 +779,7 @@ export default function FollowUpCompletionModal({
               </div>
               <div className="md:col-span-3">
                 <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                  شرح اقدام بعدی
+                  {DETAIL_LABELS.followUpDescription}
                 </label>
                 <textarea
                   value={nextDescription}
