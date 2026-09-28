@@ -565,6 +565,10 @@ export interface Project {
   // New Requested Fields:
   salesExpert?: string;            // کارشناس فروش
   marketingChannel?: string;        // کانال بازاریابی
+  /** کمپین تبلیغاتی‌ای که این فرصت از آن آمد («اثربخشی تبلیغات»). */
+  adCampaignId?: string;
+  /** Joined for the form's picker; never written back. */
+  adCampaignLabel?: string;
   leadQuality?: string;             // کیفیت لید
   referrerName?: string;            // نام معرف
   financialContact?: string;        // فرد کلیدی مالی

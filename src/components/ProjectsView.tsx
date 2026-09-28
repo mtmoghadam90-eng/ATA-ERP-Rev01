@@ -1,4 +1,5 @@
 
+import { adCampaignsApi, type AdCampaignOption } from '../api/adCampaigns';
 import { itemCategoryFromText, projectItemCategory } from '../utils/productCategories';
 import React, { useState, useRef } from 'react';
 import type { ActivityJump } from '../utils/notificationJump';
@@ -622,6 +623,22 @@ export default function ProjectsView({
   const [messagingChannelLocked, setMessagingChannelLocked] = useState(false);
   const [suppressAutoMessages, setSuppressAutoMessages] = useState(false);
   const [marketingChannel, setMarketingChannel] = useState("");
+  /*
+   * The advertising campaign this opportunity came from. The options are the
+   * campaigns' code and topic only, read with the projects permission — the
+   * campaign's costs and results stay in «اثربخشی تبلیغات».
+   */
+  const [adCampaignId, setAdCampaignId] = useState("");
+  const [adCampaignLabel, setAdCampaignLabel] = useState("");
+  const [adCampaignOptions, setAdCampaignOptions] = useState<AdCampaignOption[]>([]);
+  React.useEffect(() => {
+    if (!showModal) return;
+    let cancelled = false;
+    adCampaignsApi.options()
+      .then((r) => { if (!cancelled) setAdCampaignOptions(r.options); })
+      .catch(() => { if (!cancelled) setAdCampaignOptions([]); });
+    return () => { cancelled = true; };
+  }, [showModal]);
   const [leadQuality, setLeadQuality] = useState("متوسط");
   const [referrerName, setReferrerName] = useState("");
   const [financialContact, setFinancialContact] = useState("");
@@ -1025,6 +1042,8 @@ export default function ProjectsView({
     // offer makes the select show its first option while the form saves the
     // literal — the value shown and the value stored then disagree.
     setMarketingChannel(firstOption(settings.dropdownItems?.marketingChannels, "تماس مستقیم"));
+    setAdCampaignId("");
+    setAdCampaignLabel("");
     setLeadQuality(firstOption(settings.dropdownItems?.leadQualities, "متوسط"));
     setReferrerName("");
     // Both halves of each contact: the id that links it and the name that
@@ -1089,6 +1108,8 @@ export default function ProjectsView({
     setMessagingChannel(proj.messagingChannel || "");
     setMessagingChannelLocked(!!proj.messagingChannel);
     setMarketingChannel(proj.marketingChannel || "تماس مستقیم");
+    setAdCampaignId(proj.adCampaignId || "");
+    setAdCampaignLabel(proj.adCampaignLabel || "");
     setLeadQuality(proj.leadQuality || "متوسط");
     setReferrerName(proj.referrerName || "");
     setFinancialContact(proj.financialContact || "");
@@ -1173,6 +1194,8 @@ export default function ProjectsView({
       suppressAutoMessages,
       messagingChannel: (messagingChannel || undefined) as Project["messagingChannel"],
       marketingChannel,
+      // Sent on every save, so choosing «بدون کمپین» really clears the link.
+      adCampaignId: adCampaignId || null,
       leadQuality,
       referrerName,
       financialContact,
@@ -4332,6 +4355,28 @@ export default function ProjectsView({
                     >
                       {withStoredOption(settings.dropdownItems?.marketingChannels || ['تماس مستقیم', 'نمایشگاه تجاری', 'وب‌سایت / آنلاین', 'معرفی', 'مناقصه رسمی', 'سایر'], marketingChannel).map((ch, idx) => (
                         <option key={idx} value={ch}>{ch}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Advertising campaign — optional attribution */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-500">کمپین تبلیغاتی (منبع سرنخ)</label>
+                    <select
+                      value={adCampaignId}
+                      onChange={(e) => setAdCampaignId(e.target.value)}
+                      id="project-ad-campaign"
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right bg-white"
+                    >
+                      <option value="">بدون کمپین</option>
+                      {/* The stored campaign is always an option, or the select would render its placeholder. */}
+                      {adCampaignId && !adCampaignOptions.some((o) => o.id === adCampaignId) && (
+                        <option value={adCampaignId}>{adCampaignLabel || adCampaignId}</option>
+                      )}
+                      {adCampaignOptions.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.code} — {o.topic} ({o.channel}{o.runDateJalali ? `، ${o.runDateJalali}` : ''})
+                        </option>
                       ))}
                     </select>
                   </div>

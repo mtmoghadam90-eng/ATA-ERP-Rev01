@@ -294,6 +294,9 @@ async function getProjectRecord(id: string, user: AuthUser) {
       },
       customer: { select: { id: true, companyName: true, customerType: true } },
       owner: { select: { id: true, fullName: true } },
+      // Named on the form's campaign picker even when the campaign is outside
+      // the picker's recent list.
+      adCampaign: { select: { id: true, code: true, topic: true } },
       // The two key people are individuals, whose name lives in first/last —
       // selecting only `companyName` gave the panel a blank to render.
       endUserCustomer: { select: { id: true, companyName: true, firstName: true, lastName: true } },
@@ -573,6 +576,8 @@ export interface ProjectScalarInput {
   estimatedValueRial?: unknown;
   probabilityPercent?: unknown;
   marketingChannel?: string | null;
+  /** The advertising campaign it came from; null clears the link. */
+  adCampaignId?: string | null;
   leadQuality?: string | null;
   referrerName?: string | null;
   communicationMethod?: string | null;
@@ -638,6 +643,7 @@ function scalarData(input: ProjectInput): Record<string, unknown> {
       ? null : Math.round(toNumber(input.probabilityPercent)));
   }
   if ("marketingChannel" in input) set("marketingChannel", toNullableString(input.marketingChannel, 150));
+  if ("adCampaignId" in input) set("adCampaignId", toNullableString(input.adCampaignId, 36));
   if ("leadQuality" in input) set("leadQuality", toNullableString(input.leadQuality, 100));
   if ("referrerName" in input) set("referrerName", toNullableString(input.referrerName, 200));
   if ("communicationMethod" in input) set("communicationMethod", toNullableString(input.communicationMethod, 100));

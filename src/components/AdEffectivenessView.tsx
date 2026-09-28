@@ -323,14 +323,14 @@ export default function AdEffectivenessView({ settings }: Props) {
             <thead className="bg-slate-50 text-slate-500">
               <tr>
                 {['کد', 'تاریخ', 'کانال', 'موضوع', 'مخاطب', 'تعداد مخاطب', 'هزینه (ریال)', 'بازخورد', 'سرنخ', 'فروش', 'درآمد (ریال)',
-                  'نرخ سرنخ', 'CPL', 'ROI', 'کیفیت', ''].map((h) => (
+                  'نرخ سرنخ', 'CPL', 'ROI', 'پروژه‌های مرتبط', 'کیفیت', ''].map((h) => (
                   <th key={h} className="px-3 py-2.5 font-bold whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {rows.length === 0 && (
-                <tr><td colSpan={16} className="px-3 py-6 text-center text-slate-400">کمپینی ثبت نشده است.</td></tr>
+                <tr><td colSpan={17} className="px-3 py-6 text-center text-slate-400">کمپینی ثبت نشده است.</td></tr>
               )}
               {rows.map((c) => {
                 const m = adMetricsOf(c);
@@ -350,6 +350,9 @@ export default function AdEffectivenessView({ settings }: Props) {
                     <td className="px-3 py-2 font-mono">{pct(m.leadRate)}</td>
                     <td className="px-3 py-2 font-mono">{money(m.costPerLead)}</td>
                     <td className={`px-3 py-2 font-mono ${m.roi !== null && m.roi < 0 ? 'text-rose-600' : ''}`}>{pct(m.roi)}</td>
+                    <td className="px-3 py-2 font-mono whitespace-nowrap" data-ad-linked={c.code}>
+                      {c.linkedProjects > 0 ? `${c.linkedProjects} (برنده ${c.linkedWon})` : '—'}
+                    </td>
                     <td className="px-3 py-2">{c.quality ? '★'.repeat(c.quality) : '—'}</td>
                     <td className="px-3 py-2">
                       <div className="flex gap-1">
@@ -415,6 +418,20 @@ export default function AdEffectivenessView({ settings }: Props) {
                   </select>
                 </Field>
               </div>
+              {editing !== 'new' && (
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-sky-50 border border-sky-100 rounded-xl px-3 py-2 text-[11px] text-sky-800" id="ad-linked-summary">
+                  <span>
+                    از صفحه پروژه‌ها: <b>{editing.linkedProjects}</b> پروژه به این کمپین وصل شده و <b>{editing.linkedWon}</b> تا برنده شده‌اند.
+                  </span>
+                  {editing.linkedProjects > 0 && (
+                    <button type="button" id="ad-fill-from-projects"
+                      onClick={() => setForm({ ...form, leads: String(editing.linkedProjects), sales: String(editing.linkedWon) })}
+                      className="px-2.5 py-1 bg-white border border-sky-200 rounded-lg font-bold hover:bg-sky-100">
+                      پر کردن سرنخ و فروش از پروژه‌ها
+                    </button>
+                  )}
+                </div>
+              )}
               <p className="text-[11px] text-slate-500 leading-5">
                 خانه‌ای که هنوز نتیجه‌اش معلوم نیست را خالی بگذارید، نه صفر: کمپینی که سرنخش هنوز ثبت نشده
                 در محاسبه CPL کانال وارد نمی‌شود، ولی «صفر» یعنی واقعاً هیچ سرنخی نیامده.
@@ -474,6 +491,7 @@ function ReportPanel({ total, groups, groupBy, onGroupBy }: {
     ['بازگشت سرمایه (ROI)', pct(m.roi)],
     ['ROAS', times(m.roas)],
     ['نرخ تبدیل سرنخ به فروش', pct(m.leadToSaleRate)],
+    ['پروژه‌های مرتبط (برنده)', `${formatMoney(total.linkedProjects)} (${formatMoney(total.linkedWon)})`],
   ];
   const funnel: [string, number][] = [
     ['مخاطب', total.audienceSize],
@@ -528,7 +546,7 @@ function ReportPanel({ total, groups, groupBy, onGroupBy }: {
             <thead className="text-slate-500 bg-slate-50">
               <tr>
                 {['', 'کمپین', 'هزینه (ریال)', 'مخاطب', 'بازخورد', 'سرنخ', 'فروش', 'درآمد',
-                  'نرخ بازخورد', 'نرخ سرنخ', 'سرنخ به فروش', 'CPL', 'هزینه هر فروش', 'ROI', 'ROAS'].map((h, i) => (
+                  'نرخ بازخورد', 'نرخ سرنخ', 'سرنخ به فروش', 'CPL', 'هزینه هر فروش', 'ROI', 'ROAS', 'پروژه (برنده)'].map((h, i) => (
                   <th key={`${h}-${i}`} className="px-2 py-2 font-bold whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -573,6 +591,7 @@ function GroupRow({ g, maxCost }: { g: AdAggregate & { key: string }; maxCost: n
       <td className="px-2 py-2 font-mono">{money(m.costPerSale)}</td>
       <td className={`px-2 py-2 font-mono ${m.roi !== null && m.roi < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>{pct(m.roi)}</td>
       <td className="px-2 py-2 font-mono">{times(m.roas)}</td>
+      <td className="px-2 py-2 font-mono whitespace-nowrap">{g.linkedProjects > 0 ? `${g.linkedProjects} (${g.linkedWon})` : '—'}</td>
     </tr>
   );
 }

@@ -614,6 +614,11 @@ model Project {
   /// and the loss reason — never typed a second time on this form.
   competitorId String?     @db.NVarChar(36)
   competitor   Competitor? @relation(fields: [competitorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  /// The advertising campaign this opportunity came from (`اثربخشی تبلیغات`).
+  /// Optional; a campaign's linked and won projects are counted from here.
+  adCampaignId String?     @db.NVarChar(36)
+  adCampaign   AdCampaign? @relation(fields: [adCampaignId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   description  String?     @db.NVarChar(Max)
 
   creationDate             DateTime  @db.Date
@@ -2474,6 +2479,8 @@ model AdCampaign {
   createdByName   String?  @db.NVarChar(200)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @default(now()) @updatedAt
+
+  projects Project[]
 
   @@index([runDate])
   @@index([channel])
