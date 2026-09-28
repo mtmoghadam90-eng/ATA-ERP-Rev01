@@ -82,6 +82,8 @@ export function detailToProject(detail: ProjectDetail): Project {
   return markComplete({
     ...rowToProject(detail),
     description: detail.description ?? "",
+    adCampaignId: detail.adCampaignId ?? undefined,
+    adCampaignLabel: detail.adCampaign ? `${detail.adCampaign.code} — ${detail.adCampaign.topic}` : undefined,
     lossReason: detail.lossReason ?? undefined,
     closingDate: detail.closingDateJalali ?? undefined,
     communicationMethod: detail.communicationMethod ?? undefined,
@@ -169,6 +171,7 @@ export function projectToWriteInput(
     estimatedValueRial: project.estimatedValueRIYAL ?? null,
     probabilityPercent: project.probabilityPercent ?? null,
     marketingChannel: project.marketingChannel ?? null,
+    adCampaignId: project.adCampaignId ?? null,
     leadQuality: project.leadQuality ?? null,
     referrerName: project.referrerName ?? null,
     communicationMethod: project.communicationMethod ?? null,

@@ -30,7 +30,7 @@ function safeEntryName(name: string): string {
 
 const WRITABLE: (keyof ProjectInput)[] = [
   "code", "name", "customerId", "status", "lossReason", "description",
-  "estimatedValueRial", "probabilityPercent", "marketingChannel", "leadQuality",
+  "estimatedValueRial", "probabilityPercent", "marketingChannel", "adCampaignId", "leadQuality",
   "referrerName", "communicationMethod", "customerInquiryNumber",
   "salesExpert", "financialContact", "technicalContact", "endUser",
   "ownerUserId", "endUserCustomerId", "financialContactId", "technicalContactId",

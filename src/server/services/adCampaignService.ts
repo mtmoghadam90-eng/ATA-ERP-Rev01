@@ -5,6 +5,7 @@ import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { toNullableString, toNumber } from "../childSync";
 import { logAction } from "./auditService";
 import { adQuality, nextAdCampaignCode } from "../../utils/adEffectiveness";
+import { isWonStatus } from "../proformaStatus";
 
 /**
  * «اثربخشی تبلیغات» — recording campaigns and reading them back.
@@ -45,6 +46,9 @@ export interface AdCampaignRow {
   quality: number | null;
   notes: string | null;
   createdByName: string | null;
+  /** Projects attributed to this campaign, and how many of them were won. */
+  linkedProjects: number;
+  linkedWon: number;
 }
 
 function toRow(r: Prisma.AdCampaignGetPayload<{ select: typeof SELECT }>): AdCampaignRow {
@@ -64,7 +68,59 @@ function toRow(r: Prisma.AdCampaignGetPayload<{ select: typeof SELECT }>): AdCam
     quality: r.quality,
     notes: r.notes,
     createdByName: r.createdByName,
+    linkedProjects: 0,
+    linkedWon: 0,
   };
+}
+
+/**
+ * The projects attributed to each campaign, and the won ones among them —
+ * one read for the whole set, and **every** project regardless of who may see
+ * it: a campaign's results are a fact about the campaign, and this module is
+ * already restricted to the people who may read them.
+ */
+async function withLinkedProjects(rows: AdCampaignRow[]): Promise<AdCampaignRow[]> {
+  if (rows.length === 0) return rows;
+  const linked = await getDb().project.findMany({
+    where: { adCampaignId: { in: rows.map((r) => r.id) } },
+    select: { adCampaignId: true, status: true },
+  });
+  const counts = new Map<string, { all: number; won: number }>();
+  for (const p of linked) {
+    const c = counts.get(p.adCampaignId!) ?? { all: 0, won: 0 };
+    c.all++;
+    if (isWonStatus(p.status)) c.won++;
+    counts.set(p.adCampaignId!, c);
+  }
+  return rows.map((r) => ({
+    ...r,
+    linkedProjects: counts.get(r.id)?.all ?? 0,
+    linkedWon: counts.get(r.id)?.won ?? 0,
+  }));
+}
+
+export interface AdCampaignOption {
+  id: string;
+  code: string;
+  topic: string;
+  channel: string;
+  runDateJalali: string | null;
+}
+
+export const AD_OPTION_LIMIT = 300;
+
+/**
+ * The picker on the project form: code, topic, channel and date, nothing else.
+ * Readable by anybody who may edit projects — attributing a lead is part of
+ * recording it — while the costs and results stay behind this module's own
+ * permission.
+ */
+export async function listAdCampaignOptions(): Promise<AdCampaignOption[]> {
+  return getDb().adCampaign.findMany({
+    select: { id: true, code: true, topic: true, channel: true, runDateJalali: true },
+    orderBy: [{ runDate: "desc" }, { createdAt: "desc" }],
+    take: AD_OPTION_LIMIT,
+  });
 }
 
 const allowed = (user: AuthUser) => hasPermission(user, AD_PERMISSION);
@@ -96,7 +152,7 @@ export async function listAdCampaigns(
     take: AD_SCAN_LIMIT + 1,
   });
   return {
-    campaigns: rows.slice(0, AD_SCAN_LIMIT).map(toRow),
+    campaigns: await withLinkedProjects(rows.slice(0, AD_SCAN_LIMIT).map(toRow)),
     truncated: rows.length > AD_SCAN_LIMIT,
   };
 }
@@ -235,7 +291,12 @@ export async function deleteAdCampaign(
   const db = getDb();
   const before = await db.adCampaign.findUnique({ where: { id }, select: SELECT });
   if (!before) return false;
-  await db.adCampaign.delete({ where: { id } });
+  // The projects keep existing and simply stop being attributed: the link is a
+  // NO ACTION foreign key, and a lead does not vanish with its campaign.
+  await db.$transaction([
+    db.project.updateMany({ where: { adCampaignId: id }, data: { adCampaignId: null } }),
+    db.adCampaign.delete({ where: { id } }),
+  ]);
   await logAction(
     { action: "DELETE", module: "اثربخشی تبلیغات", entityId: id,
       description: `حذف کمپین ${before.code}`, beforeState: before },

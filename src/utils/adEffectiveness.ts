@@ -30,6 +30,9 @@ export interface AdCampaignFigures {
   sales: number | null;
   /** «درآمد حاصله» in rial. */
   revenue: number | null;
+  /** Projects attributed to the campaign on the projects screen, and the won ones. */
+  linkedProjects?: number;
+  linkedWon?: number;
 }
 
 export interface AdMetrics {
@@ -83,6 +86,9 @@ export interface AdAggregate {
   leads: number;
   sales: number;
   revenue: number;
+  /** Counted from the projects that name the campaign — beside the typed figures, never mixed into them. */
+  linkedProjects: number;
+  linkedWon: number;
   metrics: AdMetrics;
 }
 
@@ -129,6 +135,8 @@ export function aggregateAdCampaigns(list: readonly AdCampaignFigures[]): AdAggr
     leads: sum(l),
     sales: sum(s),
     revenue: sum(rev),
+    linkedProjects: sum((c) => c.linkedProjects ?? 0),
+    linkedWon: sum((c) => c.linkedWon ?? 0),
     metrics: {
       responseRate: over(hasR, r, audience),
       leadRate: over(hasL, l, audience),

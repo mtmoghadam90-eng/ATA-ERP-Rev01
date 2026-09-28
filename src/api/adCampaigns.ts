@@ -21,6 +21,17 @@ export interface AdCampaignRow {
   quality: number | null;
   notes: string | null;
   createdByName: string | null;
+  /** Projects attributed to this campaign, and the won ones among them. */
+  linkedProjects: number;
+  linkedWon: number;
+}
+
+export interface AdCampaignOption {
+  id: string;
+  code: string;
+  topic: string;
+  channel: string;
+  runDateJalali: string | null;
 }
 
 export interface AdCampaignInput {
@@ -56,6 +67,8 @@ const clean = (f: AdCampaignFilters) =>
   Object.fromEntries(Object.entries(f).filter(([, v]) => v)) as Record<string, string>;
 
 export const adCampaignsApi = {
+  /** The project form's picker — code and topic only, readable with the projects permission. */
+  options: () => api.get<{ options: AdCampaignOption[] }>("/api/ad-campaigns/options"),
   list: (filters: AdCampaignFilters = {}) =>
     api.get<{ campaigns: AdCampaignRow[]; truncated: boolean }>("/api/ad-campaigns", clean(filters)),
   create: (input: AdCampaignInput) =>

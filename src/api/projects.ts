@@ -179,6 +179,8 @@ export interface LinkedCustomer {
 
 export interface ProjectDetail extends ProjectRow {
   description: string | null;
+  adCampaignId?: string | null;
+  adCampaign?: { id: string; code: string; topic: string } | null;
   endUserCustomerId: string | null;
   financialContactId: string | null;
   technicalContactId: string | null;
@@ -224,6 +226,7 @@ export interface ProjectWriteInput {
   estimatedValueRial?: unknown;
   probabilityPercent?: unknown;
   marketingChannel?: string | null;
+  adCampaignId?: string | null;
   leadQuality?: string | null;
   referrerName?: string | null;
   communicationMethod?: string | null;

@@ -3,7 +3,7 @@ import { RouteDeps, sendError } from "./types";
 import { getTodayShamsi } from "../../dateUtils";
 import {
   AdCampaignInput, createAdCampaign, deleteAdCampaign, importAdCampaigns,
-  listAdCampaigns, updateAdCampaign,
+  listAdCampaignOptions, listAdCampaigns, updateAdCampaign,
 } from "../services/adCampaignService";
 
 /**
@@ -37,6 +37,21 @@ export function registerAdCampaignRoutes(app: express.Express, deps: RouteDeps):
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "GET /api/ad-campaigns");
+    }
+  });
+
+  /*
+   * The project form's picker. Gated by the **projects** key rather than this
+   * module's: whoever records a lead may say which campaign it came from, and
+   * sees only a code and a topic — never a cost or a result.
+   */
+  app.get("/api/ad-campaigns/options", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, "erp_projects", "read");
+    if (!user) return;
+    try {
+      res.json({ success: true, options: await listAdCampaignOptions() });
+    } catch (err) {
+      sendError(res, err, "GET /api/ad-campaigns/options");
     }
   });
 

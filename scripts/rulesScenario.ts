@@ -22372,6 +22372,21 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("ads routes: import is registered before /:id",
     routes.indexOf('"/api/ad-campaigns/import"') > 0
       && routes.indexOf('"/api/ad-campaigns/import"') < routes.indexOf('"/api/ad-campaigns/:id"'));
+
+  // Projects attributed to a campaign.
+  const linked = aggregateAdCampaigns([{ ...a, linkedProjects: 3, linkedWon: 1 }, { ...b, linkedProjects: 2, linkedWon: 2 }, cp3]);
+  eq("ads link: linked and won projects are summed per group", `${linked.linkedProjects}/${linked.linkedWon}`, "5/3");
+  const optIdx = routes.indexOf('"/api/ad-campaigns/options"');
+  ok("ads link: the picker route is registered before /:id", optIdx > 0 && optIdx < routes.indexOf('"/api/ad-campaigns/:id"'));
+  ok("ads link: the picker is gated by the projects key, not the module's",
+    /"\/api\/ad-campaigns\/options"[\s\S]{0,200}"erp_projects"/.test(routes));
+  const adSvc = readFileSync("src/server/services/adCampaignService.ts", "utf8");
+  ok("ads link: deleting a campaign detaches its projects in the same transaction",
+    /\$transaction\(\[[\s\S]{0,200}project\.updateMany\([\s\S]{0,120}adCampaignId: null/.test(adSvc));
+  const projRoute = readFileSync("src/server/routes/projects.ts", "utf8");
+  ok("ads link: the project route accepts adCampaignId", projRoute.includes('"adCampaignId"'));
+  ok("ads link: the migration adds the column",
+    readFileSync("prisma/migrations/20260930001300_project_ad_campaign/migration.sql", "utf8").includes("adCampaignId"));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
