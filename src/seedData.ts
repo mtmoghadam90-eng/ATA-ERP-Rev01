@@ -1,3 +1,4 @@
+import { DEFAULT_AD_AUDIENCES, DEFAULT_AD_CHANNELS } from "./utils/adEffectiveness";
 import { DEFAULT_FOLLOW_UP_RESULTS } from './utils/salesFollowUp';
 import { DEFAULT_NEXT_ACTION_KINDS } from './utils/nextAction';
 import { DEFAULT_MODULE_ORDER } from './appModules';
@@ -197,6 +198,8 @@ export const DEFAULT_SETTINGS: ERPSettings = {
     returnReasons: ['خرابی قطعه', 'مغایرت با درخواست', 'اشکال در نصب', 'تعمیر و نگهداری دوره‌ای', 'ارتقا سیستم', 'سایر'],
     proformaSentMethods: ['ایمیل', 'واتس‌اپ', 'تلگرام', 'پست', 'حضوری', 'سایر'],
     followUpResults: [...DEFAULT_FOLLOW_UP_RESULTS],
+    adChannels: [...DEFAULT_AD_CHANNELS],
+    adAudiences: [...DEFAULT_AD_AUDIENCES],
     nextActionKinds: [...DEFAULT_NEXT_ACTION_KINDS],
     equipmentTypes: [
       'فلومتر کوریولیس',

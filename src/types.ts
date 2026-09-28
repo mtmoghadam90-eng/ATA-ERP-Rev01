@@ -1005,6 +1005,10 @@ export interface ERPSettings {
      * not a lost sale.
      */
     followUpResults?: string[];
+    /** «اثربخشی تبلیغات»: the channel types a campaign is recorded under. */
+    adChannels?: string[];
+    /** «اثربخشی تبلیغات»: the audiences (lists, segments) a campaign went to. */
+    adAudiences?: string[];
     /**
      * «نوع اقدام بعدی» — what the shared next-action modal offers.
      *
@@ -1252,6 +1256,12 @@ export interface User {
     stuckWork?: boolean;
     /** The messaging module: templates, the outbox, and sending by hand. */
     messaging?: boolean;
+    /**
+     * «اثربخشی تبلیغات». Read **strictly** (`STRICT_MODULES`): absent denies,
+     * so the module opens to system administrators by default and to anybody
+     * else only when it is ticked for them.
+     */
+    adEffectiveness?: boolean;
     /**
      * The assistant on the dashboard.
      *

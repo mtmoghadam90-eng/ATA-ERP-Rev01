@@ -2446,3 +2446,36 @@ model WebRfqImport {
   @@index([status])
   @@map("web_rfq_imports")
 }
+
+/// «اثربخشی تبلیغات»: one advertising campaign and what came of it.
+///
+/// Only the typed figures are stored; every rate, CPL and ROI is derived by
+/// `src/utils/adEffectiveness.ts`. The four outcome counts are nullable on
+/// purpose — NULL is «not measured yet», which is not zero leads.
+model AdCampaign {
+  id            String    @id @default(uuid()) @db.NVarChar(36)
+  code          String    @unique @db.NVarChar(40)
+  runDate       DateTime? @db.Date
+  runDateJalali String?   @db.NVarChar(10)
+  channel       String    @db.NVarChar(100)
+  topic         String    @db.NVarChar(400)
+  audience      String?   @db.NVarChar(200)
+  audienceSize  Int       @default(0)
+  directCost    Decimal   @default(0) @db.Decimal(19, 2)
+  responses     Int?
+  leads         Int?
+  sales         Int?
+  revenue       Decimal?  @db.Decimal(19, 2)
+  /// 1–5; NULL = not rated.
+  quality       Int?
+  notes         String?   @db.NVarChar(Max)
+
+  createdByUserId String?  @db.NVarChar(36)
+  createdByName   String?  @db.NVarChar(200)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now()) @updatedAt
+
+  @@index([runDate])
+  @@index([channel])
+  @@map("ad_campaigns")
+}

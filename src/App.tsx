@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import MessagingView from './components/MessagingView';
+import AdEffectivenessView from './components/AdEffectivenessView';
 import StuckWorkView from './components/StuckWorkView';
 import DashboardView from './components/DashboardView';
 import CustomersView from './components/CustomersView';
@@ -32,7 +33,8 @@ import ProjectConfirmationUploadModal from './components/ProjectConfirmationUplo
 import { projectsApi } from './api/projects';
 import { useWonProjectWatch } from './api/useWonProjectWatch';
 import { detailToProject, projectToWriteInput } from './api/projectAdapter';
-import { Project, SCREEN_PERMISSION_ALIAS } from './types';
+import { Project } from './types';
+import { screenPermitted } from './utils/permissions';
 import { APP_MODULES } from './appModules';
 import { useSidebarBadges } from './api/useSidebarBadges';
 import { tasksApi, taskToWriteInput } from './api/tasks';
@@ -438,8 +440,7 @@ export default function App() {
   const renderActiveView = () => {
     // Granular Module Permission Check — some screens have no flag of their
     // own and defer to another module's (see SCREEN_PERMISSION_ALIAS).
-    const permissionKey = (SCREEN_PERMISSION_ALIAS[activeView] ?? activeView) as keyof typeof store.currentUser.permissions;
-    const hasPermission = store.currentUser && (!store.currentUser.permissions || store.currentUser.permissions[permissionKey] !== false);
+    const hasPermission = screenPermitted(store.currentUser, activeView);
     if (!hasPermission) {
       return (
         <div className="bg-white rounded-2xl border border-slate-100 p-8 text-center max-w-lg mx-auto my-12 shadow-sm space-y-4 text-right" dir="rtl">
@@ -592,6 +593,8 @@ export default function App() {
             currentUser={store.currentUser}
           />
         );
+      case 'adEffectiveness':
+        return <AdEffectivenessView settings={store.settings} />;
       case 'packagingDelivery':
         return (
           <PackagingDeliveryView

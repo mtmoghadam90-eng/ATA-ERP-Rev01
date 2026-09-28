@@ -3,7 +3,8 @@ import { APP_MODULES } from '../appModules';
 import { MODULE_ICONS } from './moduleIcons';
 import BrandMark from './BrandMark';
 import Avatar from './Avatar';
-import { User, SCREEN_PERMISSION_ALIAS } from '../types';
+import { User } from '../types';
+import { screenPermitted } from '../utils/permissions';
 
 interface SidebarProps {
   activeTab: string;
@@ -89,11 +90,7 @@ export default function Sidebar({
     if (!currentUser) return true;
     // Some screens (after-sales, supplier inquiries) have no flag of their
     // own and defer to another module's — see SCREEN_PERMISSION_ALIAS.
-    const permissionKey = SCREEN_PERMISSION_ALIAS[item.id] ?? item.id;
-    if (currentUser.permissions && currentUser.permissions[permissionKey as keyof typeof currentUser.permissions] === false) {
-      return false;
-    }
-    return true;
+    return screenPermitted(currentUser, item.id);
   });
 
   return (

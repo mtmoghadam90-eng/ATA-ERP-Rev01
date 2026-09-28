@@ -256,6 +256,12 @@ import { DEFAULT_REQUIRED_FIELDS, REQUIRED_FIELDS_METADATA } from "../src/utils/
 import { itemCategoryFromText, projectItemCategory } from "../src/utils/productCategories";
 import { applySettingsDelta, diffSettings, isEmptyDelta, readSettingsDelta } from "../src/utils/settingsDelta";
 import { quietHoursFor } from "../src/utils/messaging";
+import {
+  adMetricsOf, aggregateAdCampaigns, groupAdCampaigns, nextAdCampaignCode, parseAdSheetRow,
+  sheetDate, adMonthOf,
+} from "../src/utils/adEffectiveness";
+import { hasPermission as serverHasPermission } from "../src/server/auth";
+import { screenPermitted } from "../src/utils/permissions";
 import { calcFreightRefusal, calculateSellingPrice as sellingPriceOf } from "../src/utils/priceCalculator";
 import { landedUnitCostOf as landedCostOfCalc } from "../src/utils/costOfGoods";
 import {
@@ -22288,6 +22294,84 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     ok(`labels: ${f} reads the shared labels, not its own wording`,
       /DETAIL_LABELS\./.test(src) && !/>\s*شرح اقدام(?: بعدی)?\s*</.test(src) && !/>یادداشت<\/label>/.test(src));
   }
+}
+
+
+// ── «اثربخشی تبلیغات»: the figures, the sheet, and who may open it ─────────
+{
+  // cp1 from the company's own sheet: 314 contacts, 2,100,000 rial, 5 responses, 1 lead, 0 sales, 0 revenue.
+  const cp1 = { audienceSize: 314, directCost: 2_100_000, responses: 5, leads: 1, sales: 0, revenue: 0 };
+  const m1 = adMetricsOf(cp1);
+  eq("ads: response rate is responses over audience", m1.responseRate, 5 / 314);
+  eq("ads: CPL is cost over leads", m1.costPerLead, 2_100_000);
+  eq("ads: a recorded zero revenue is an ROI of −100%", m1.roi, -1);
+  eq("ads: no sale means no cost per sale, not infinity", m1.costPerSale, null);
+  // cp3: leads, sales and revenue blank in the sheet.
+  const cp3 = { audienceSize: 2784, directCost: 4_176_000, responses: 21, leads: null, sales: null, revenue: null };
+  const m3 = adMetricsOf(cp3);
+  eq("ads: an unrecorded lead count has no CPL", m3.costPerLead, null);
+  eq("ads: an unrecorded revenue has no ROI (not −100%)", m3.roi, null);
+
+  // Weighted, and over the measured campaigns only.
+  const a = { audienceSize: 100, directCost: 100, responses: 10, leads: 1, sales: 0, revenue: 0 };
+  const b = { audienceSize: 1000, directCost: 1000, responses: 50, leads: 20, sales: 2, revenue: 5000 };
+  const agg = aggregateAdCampaigns([a, b, cp3]);
+  eq("ads: a channel's CPL is total cost ÷ total leads, not an average of CPLs",
+    Number(agg.metrics.costPerLead!.toFixed(4)), Number((1100 / 21).toFixed(4)));
+  eq("ads: a campaign with no leads yet stays out of the CPL", agg.leads, 21);
+  eq("ads: ROI over the campaigns whose revenue is recorded", agg.metrics.roi, (5000 - 1100) / 1100);
+  eq("ads: ROAS beside it", agg.metrics.roas, 5000 / 1100);
+  eq("ads: the response rate still counts the third campaign", agg.metrics.responseRate, 81 / 3884);
+  eq("ads: nothing recorded is null, not zero", aggregateAdCampaigns([cp3]).metrics.costPerLead, null);
+
+  const grouped = groupAdCampaigns(
+    [{ ...a, channel: "پیامک" }, { ...b, channel: "ایمیل" }, { ...cp3, channel: "پیامک" }], (c) => c.channel,
+  );
+  eq("ads: grouped by channel, largest spend first", grouped.map((g) => g.key).join("|"), "پیامک|ایمیل");
+  eq("ads: a month is the Shamsi year and month", adMonthOf("1404/11/12"), "1404/11");
+
+  eq("ads: the next code continues the sheet's series", nextAdCampaignCode(["cp1", "cp9", "misc"]), "cp10");
+  eq("ads: an Excel serial date becomes Shamsi (46055 = 2026-02-02)", sheetDate(46055, (d) => toShamsiStr(d)), "1404/11/13");
+  const row = parseAdSheetRow({
+    "کد کمپین": "cp3", "تاریخ اجرا": 46111, "نوع کانال": "پیام بله", "موضوع": "ارسال کتابچه فشار",
+    "مخاطب": "دیتابیس مشتریان ابزار کنترل", "تعداد مخاطب": 2784, "هزینه مستقیم": 4176000,
+    "تعداد بازخورد اولیه": 21, "تعداد سرنخ واقعی": "", "تعداد فروش نهایی": "", "درآمد حاصله": "",
+    "نرخ تبدیل به بازخورد اولیه": 0.0075, "هزینه جذب هر سرنخ (CPL)": "", "کیفیت کانال": "",
+  }, (d) => toShamsiStr(d));
+  ok("ads: a sheet row keeps its blanks as «not recorded»",
+    !!row && row.leads === null && row.sales === null && row.revenue === null && row.responses === 21);
+  ok("ads: the sheet's calculated columns are not read back", !!row && !("responseRate" in row));
+  eq("ads: a row with no channel and no topic is skipped", parseAdSheetRow({ "کد کمپین": "cp99" }, (d) => toShamsiStr(d)), null);
+
+  // Strict: open to the system administrator, and to others only when ticked.
+  const plain = { id: "u", username: "u", fullName: "u", role: "user", permissions: {} } as never;
+  const admin = { id: "a", username: "a", fullName: "a", role: "admin", isSystemAdmin: true, permissions: {} } as never;
+  const granted = { id: "g", username: "g", fullName: "g", role: "user", permissions: { adEffectiveness: true } } as never;
+  eq("ads access: an account with no flag is refused by the server", serverHasPermission(plain, "adEffectiveness"), false);
+  eq("ads access: a legacy account with no permissions at all is refused too",
+    serverHasPermission({ id: "l", role: "user" } as never, "adEffectiveness"), false);
+  eq("ads access: the system administrator is let in", serverHasPermission(admin, "adEffectiveness"), true);
+  eq("ads access: an explicit tick opens it", serverHasPermission(granted, "adEffectiveness"), true);
+  eq("ads access: the sidebar and route guard read the same", [screenPermitted(plain, "adEffectiveness"),
+    screenPermitted(admin, "adEffectiveness"), screenPermitted(granted, "adEffectiveness")].join(","), "false,true,true");
+  eq("ads access: an ordinary module still reads absent as granted", screenPermitted(plain, "customers"), true);
+  eq("ads access: the users screen shows it unticked when absent", effectivePermissions({}).adEffectiveness, false);
+  eq("ads access: a new ordinary account starts without it", defaultPermissions("user").adEffectiveness, false);
+  eq("ads access: a new admin account starts with it", defaultPermissions("admin").adEffectiveness, true);
+  eq("ads access: the endpoint key names the strict flag", KEY_PERMISSION.erp_ad_campaigns, "adEffectiveness");
+
+  const patched = applySettingsPatches({ dropdownItems: {} } as never);
+  ok("ads settings: the channel and audience lists reach a live document",
+    !!patched && (patched.next.dropdownItems?.adChannels ?? []).includes("پیام بله")
+      && (patched.next.dropdownItems?.adAudiences ?? []).includes("خبرنامه"));
+  const own = applySettingsPatches({ dropdownItems: { adChannels: ["فقط ما"], adAudiences: [] } } as never);
+  ok("ads settings: a company's own lists are not replaced",
+    !own || JSON.stringify(own.next.dropdownItems?.adChannels) === JSON.stringify(["فقط ما"]));
+
+  const routes = readFileSync("src/server/routes/adCampaigns.ts", "utf8");
+  ok("ads routes: import is registered before /:id",
+    routes.indexOf('"/api/ad-campaigns/import"') > 0
+      && routes.indexOf('"/api/ad-campaigns/import"') < routes.indexOf('"/api/ad-campaigns/:id"'));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

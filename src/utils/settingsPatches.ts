@@ -36,6 +36,7 @@
 
 import type { ERPSettings } from "../types";
 import { DEFAULT_NEXT_ACTION_KINDS } from "./nextAction";
+import { DEFAULT_AD_AUDIENCES, DEFAULT_AD_CHANNELS } from "./adEffectiveness";
 import { PROJECT_TECHNICAL_APPROVED, PROJECT_TECHNICAL_OFFERED } from "./moduleStatuses";
 import { STAGE_OFFER_REVIEW, STAGE_OFFER_REVIEW_WAS } from "./projectStage";
 import {
@@ -67,6 +68,26 @@ function appendMissing(list: string[] | undefined, wanted: string[]): string[] |
 }
 
 export const SETTINGS_PATCHES: SettingsPatch[] = [
+  {
+    id: "ad-effectiveness-lists-1",
+    describe: "فهرست کانال‌ها و مخاطبان «اثربخشی تبلیغات»، از اکسل خود شرکت",
+    apply: (settings) => {
+      // Only where the list has never existed: a company that has already
+      // written its own is not handed a second copy.
+      const lists = settings.dropdownItems;
+      const adChannels = lists?.adChannels ? null : [...DEFAULT_AD_CHANNELS];
+      const adAudiences = lists?.adAudiences ? null : [...DEFAULT_AD_AUDIENCES];
+      if (!adChannels && !adAudiences) return null;
+      return {
+        ...settings,
+        dropdownItems: {
+          ...lists,
+          ...(adChannels ? { adChannels } : {}),
+          ...(adAudiences ? { adAudiences } : {}),
+        },
+      };
+    },
+  },
   {
     id: "follow-up-settlement-results-1",
     describe: "سه نتیجه پیگیری که وضعیت تجاری پیش‌فاکتور را تعیین می‌کنند",

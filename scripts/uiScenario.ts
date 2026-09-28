@@ -60,6 +60,7 @@ import ModuleNotesSection from "../src/components/ModuleNotesSection";
 import AfterSalesServicesView from "../src/components/AfterSalesServicesView";
 import ReferralsView from "../src/components/ReferralsView";
 import ProjectFollowUpTab from "../src/components/ProjectFollowUpTab";
+import AdEffectivenessView from "../src/components/AdEffectivenessView";
 import { LANE_LABELS } from "../src/utils/workBoard";
 import { DEFAULT_SETTINGS } from "../src/seedData";
 import { RelationPicker } from "../src/components/RelationPicker";
@@ -3806,6 +3807,60 @@ head("Notifications: «خواندن همه» marks replies and notices together"
   act(() => { rootR.unmount(); });
   hostR.remove();
   gR.fetch = realFetchR;
+}
+
+
+head("Ad effectiveness: the reports are derived from the rows, weighted");
+{
+  const gA = globalThis as unknown as Record<string, unknown>;
+  const realFetchA = gA.fetch;
+  const asked: string[] = [];
+  const posted: { url: string; body: string }[] = [];
+  const campaigns = [
+    { id: "a1", code: "cp1", runDateJalali: "1404/11/13", channel: "پیامک", topic: "معرفی کلی", audience: "خبرنامه",
+      audienceSize: 314, directCost: 2100000, responses: 5, leads: 1, sales: 0, revenue: 0, quality: null, notes: null, createdByName: null },
+    { id: "a2", code: "cp7", runDateJalali: "1405/01/23", channel: "پیامک", topic: "دعوت", audience: "خبرنامه",
+      audienceSize: 1875, directCost: 18400000, responses: 20, leads: null, sales: null, revenue: null, quality: 3, notes: null, createdByName: null },
+  ];
+  gA.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
+    const u = String(url);
+    asked.push(u);
+    if (init?.method === "POST") posted.push({ url: u, body: String(init.body ?? "") });
+    const body = init?.method === "POST"
+      ? { success: true, campaign: campaigns[0] }
+      : { success: true, campaigns, truncated: false };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+  const hostA = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootA = createRoot(hostA);
+  const settleA = async () => { for (let i = 0; i < 14; i++) await act(async () => { await Promise.resolve(); }); };
+  await act(async () => {
+    rootA.render(React.createElement(AdEffectivenessView, { settings: DEFAULT_SETTINGS as never }));
+  });
+  await settleA();
+  ok("ads screen: reads its own endpoint", asked.some((u) => u.includes("/api/ad-campaigns")), asked);
+  const row = hostA.querySelector('[data-ad-group-row="پیامک"]')?.textContent ?? "";
+  // Weighted over the campaign whose leads are recorded: 2,100,000 ÷ 1, not (2.1M + 18.4M) ÷ 1.
+  ok("ads screen: a channel's CPL counts only the campaigns whose leads are recorded",
+    row.includes("2,100,000") && !row.includes("20,500,000 ") , row);
+  ok("ads screen: both campaigns are in the channel's spend", row.includes("20,500,000"), row);
+
+  await act(async () => {
+    hostA.querySelector<HTMLButtonElement>("#ad-tab-data")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleA();
+  ok("ads screen: the data tab lists each campaign", !!hostA.querySelector('[data-ad-campaign="cp7"]'));
+  const cp7 = hostA.querySelector('[data-ad-campaign="cp7"]')?.textContent ?? "";
+  ok("ads screen: an unrecorded measure shows «—», not zero", cp7.includes("—"), cp7);
+
+  await act(async () => {
+    hostA.querySelector<HTMLButtonElement>("#ad-new")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleA();
+  ok("ads screen: «کمپین جدید» opens the form", !!hostA.querySelector("#ad-campaign-form"));
+  act(() => { rootA.unmount(); });
+  hostA.remove();
+  gA.fetch = realFetchA;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
