@@ -3381,7 +3381,7 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
       nextActionAssignee: null, nextActionTaskId: null,
       history: [{
         taskId: "h-1", title: "تماس پیگیری قیمت", completedAtJalali: "1405/06/10",
-        description: "بپرس آیا قیمت رقیب پایین‌تر است", result: "تأیید نهایی خرید",
+        result: "تأیید نهایی خرید",
         note: "مشتری سفارش را تأیید کرد", assignee: "مهندس رضایی",
       }],
     }],
@@ -3446,9 +3446,10 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
 
   const row = (id: string) => hostP.querySelector<HTMLElement>(`#project-task-${id}`);
   const historyText = hostP.querySelector<HTMLElement>('[data-follow-up-history="h-1"]')?.textContent ?? "";
-  ok("a recorded chase shows what it was for, not only its result",
-    historyText.includes("بپرس آیا قیمت رقیب") && historyText.includes("تأیید نهایی خرید")
+  ok("a recorded chase shows its result and the note written with it",
+    historyText.includes("تأیید نهایی خرید") && historyText.includes("یادداشت")
       && historyText.includes("مشتری سفارش را تأیید کرد") && historyText.includes("تماس پیگیری قیمت"), historyText);
+  ok("...and not the chase's «شرح اقدام بعدی»", !historyText.includes("شرح اقدام بعدی"));
   ok("the job's ordinary work is drawn on its follow-up tab", row("t-open") !== null);
   ok("...with what it is for, not only its title",
     (row("t-open")?.textContent ?? "").includes("قیمت نهایی را بگیر"));

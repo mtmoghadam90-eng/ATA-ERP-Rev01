@@ -494,25 +494,22 @@ export default function ProjectFollowUpTab({
                       {entry.title && <span className="mr-1.5 font-bold text-slate-700">{entry.title}</span>}
                       {entry.assignee && <span className="text-slate-400"> — {entry.assignee}</span>}
                     </div>
-                    {/* What the chase was for, what the customer said, and what was done — all three. */}
-                    {entry.description && (
-                      <p className="text-slate-500 leading-relaxed whitespace-pre-line break-words">
-                        <span className="font-bold text-slate-600">{DETAIL_LABELS.followUpDescription}: </span>
-                        {entry.description}
-                      </p>
-                    )}
+                    {/*
+                      What the customer said and the note written with it — the
+                      «یادداشت» box of the completion form. The chase's own
+                      «شرح اقدام بعدی» is not repeated here: it is what the call
+                      was *for*, and the history is what came of it.
+                    */}
                     {entry.result && (
                       <p className="text-slate-600">
                         <span className="font-bold">{DETAIL_LABELS.followUpResult}: </span>
                         {entry.result}
                       </p>
                     )}
-                    {entry.note && (
-                      <p className="text-slate-500 leading-relaxed whitespace-pre-line break-words">
-                        <span className="font-bold text-slate-600">{DETAIL_LABELS.completionNote}: </span>
-                        {entry.note}
-                      </p>
-                    )}
+                    <p className="text-slate-500 leading-relaxed whitespace-pre-line break-words" data-follow-up-note>
+                      <span className="font-bold text-slate-600">یادداشت: </span>
+                      {entry.note || <span className="text-slate-400">یادداشتی ثبت نشده است.</span>}
+                    </p>
                   </li>
                 ))}
               </ol>
