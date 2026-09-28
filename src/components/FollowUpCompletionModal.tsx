@@ -127,13 +127,7 @@ interface Props {
       nextAssignedToName?: string;
       nextPriority?: string;
     };
-    /*
-      The chase's own fields — sent only while editing an **open** chase. A
-      closed one is corrected by what came of it (the result, the note, the
-      decision and the next action): the form is the completion form again,
-      filled in, rather than a second block above it.
-    */
-    action?: {
+    action: {
       title: string; description: string; dueDate: string;
       assignedToName: string; priority: string;
     };
@@ -352,7 +346,7 @@ export default function FollowUpCompletionModal({
   const approvalRefusal = isEditingAction ? null
     : technicalApprovalRefusal(followUpResult, row.proformaType);
   const refusal = approvalRefusal ?? (isCorrecting
-    ? (correctionRefusalReason(
+    ? (actionRefusal ?? correctionRefusalReason(
       {
         followUpResult,
         decision,
@@ -396,15 +390,13 @@ export default function FollowUpCompletionModal({
                 ? nextPriority : undefined,
             }
             : undefined,
-          action: isEditingAction
-            ? {
-              title: actionTitle,
-              description: actionDescription,
-              dueDate: actionDueDate,
-              assignedToName: actionAssignee,
-              priority: actionPriority,
-            }
-            : undefined,
+          action: {
+            title: actionTitle,
+            description: actionDescription,
+            dueDate: actionDueDate,
+            assignedToName: actionAssignee,
+            priority: actionPriority,
+          },
           /*
             The replacement is **not** written from here any more. It used to be
             a separate `tasksApi.update`, which moved its due date and left the
@@ -453,11 +445,11 @@ export default function FollowUpCompletionModal({
             has nothing but this, and a closed one has this above what came of
             it.
           */}
-          {isEditingAction && (
+          {isEditing && (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-white border border-slate-200 rounded-xl p-3">
               <div className="md:col-span-3 flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
                 <CheckCircle2 size={12} className="text-sky-500" />
-                اقدام پیگیری
+                {isCorrecting ? 'اقدام انجام‌شده' : 'اقدام پیگیری'}
               </div>
               <div className="md:col-span-3">
                 <label className="block text-[11px] font-bold text-slate-600 mb-1">
@@ -686,7 +678,7 @@ export default function FollowUpCompletionModal({
           {isCorrecting && (
             <p className="text-[10px] text-slate-500 bg-slate-50 border border-slate-150 rounded-xl p-2.5 leading-relaxed">
               {decisionIsEditable
-                ? 'این پیگیری قبلاً ثبت شده است. نتیجه، یادداشت، تصمیم و تاریخ آن، و اقدام بعدی همگی'
+                ? 'این پیگیری قبلاً ثبت شده است. اقدام انجام‌شده، نتیجه، تصمیم و تاریخ آن، و اقدام بعدی همگی'
                   + ' اینجا قابل اصلاح‌اند. تنها چیزی که دوباره پرسیده نمی‌شود «تعیین وضعیت تجاری پیش‌فاکتور»'
                   + ' است، چون تاریخ فروشی را که رتبه‌بندی ارزش مشتری از رویش حساب می‌کند جابه‌جا می‌کند.'
                 : 'نتیجه تجاری این پیش‌فاکتور نهایی شده است، پس تصمیم پیگیری قابل تغییر نیست؛'
