@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { STRICT_MODULES } from "../utils/permissions";
 
 /**
  * Server-side authentication and authorization.
@@ -130,6 +131,8 @@ export const KEY_PERMISSION: Record<string, string | null> = {
    */
   erp_referrals: "tasks",
   erp_messaging: "messaging",
+  // «اثربخشی تبلیغات» — a strict flag (`STRICT_MODULES`): absent denies.
+  erp_ad_campaigns: "adEffectiveness",
   /*
    * «کارهای متوقف». Its own key, so denying the module on the users screen
    * actually closes the report rather than only hiding the menu item — the
@@ -241,6 +244,8 @@ export function hasPermission(user: AuthUser | null | undefined, permission: str
   const perms = user.permissions;
   // Absent permissions object = legacy user with full access (matches the client's
   // historical behaviour); an explicit `false` denies.
+  // A strict module opens only on an explicit grant: absent denies.
+  if (STRICT_MODULES.has(permission)) return perms?.[permission] === true;
   if (!perms) return true;
   return perms[permission] !== false;
 }

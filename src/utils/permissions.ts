@@ -30,13 +30,41 @@ export function canSeeCosts(user: User | null | undefined): boolean {
  * existed must not lose the module. Like `canSeeCosts`, this decides only what
  * is *drawn*; the route checks the same key on the way in.
  */
+/**
+ * Modules that open only on an explicit grant.
+ *
+ * Every other module flag reads absent as granted, so no account loses a screen
+ * the day a newer module ships. A module asked to be «for the system
+ * administrator by default» cannot work that way — every stored account lacks
+ * its key, and would therefore be granted it — so it is listed here and read
+ * like the field-level flags: `=== true`, with the system administrator always
+ * let in. The server's `hasPermission`, the sidebar, the route guard and the
+ * users screen all read this one set.
+ */
+export const STRICT_MODULES: ReadonlySet<string> = new Set(['adEffectiveness']);
+
 export function hasModulePermission(
   user: User | null | undefined,
   key: keyof NonNullable<User["permissions"]>,
 ): boolean {
   if (!user) return false;
   if (user.isSystemAdmin) return true;
+  if (STRICT_MODULES.has(String(key))) return user.permissions?.[key] === true;
   return user.permissions?.[key] !== false;
+}
+
+/**
+ * Whether a screen may be drawn for this account — the sidebar's and the route
+ * guard's one reading, with a screen that borrows another module's flag
+ * (`SCREEN_PERMISSION_ALIAS`) read through that flag.
+ */
+export function screenPermitted(user: User | null | undefined, screenId: string): boolean {
+  if (!user) return false;
+  const key = SCREEN_PERMISSION_ALIAS[screenId] ?? screenId;
+  if (user.isSystemAdmin) return true;
+  if (STRICT_MODULES.has(key)) return (user.permissions as Record<string, boolean> | undefined)?.[key] === true;
+  if (!user.permissions) return true;
+  return (user.permissions as Record<string, boolean>)[key] !== false;
 }
 
 
@@ -111,6 +139,9 @@ const PERMISSION_DESCRIPTIONS: Record<string, string> = {
   stuckWork:
     'گزارش هرچه در زنجیره روی زمین مانده. هر بخش از این گزارش جداگانه با دسترسی ماژول '
     + 'خودش کنترل می‌شود؛ بدون دسترسی «سفارشات خرید» آن بخش نمایش داده نمی‌شود.',
+  adEffectiveness:
+    'ثبت هزینه و نتیجه کمپین‌های تبلیغاتی و گزارش اثربخشی کانال‌ها. به‌صورت پیش‌فرض فقط '
+    + 'برای مدیر سیستم باز است؛ برای بقیه باید صریحاً تیک بخورد.',
   settings: 'تغییر الگوهای پیش‌فاکتور، فیلدهای دلخواه و تنظیمات عمومی',
   users: 'تعریف پرسنل، تغییر رمز عبور و تنظیم سطح دسترسی ماژول‌ها',
 };
@@ -191,7 +222,7 @@ export function defaultPermissions(role: 'admin' | 'user'): User['permissions'] 
   const on = role === 'admin';
   const derived: Record<string, boolean> = {};
   for (const flag of PERMISSION_FLAGS) {
-    derived[flag.id] = on ? true : !(flag.fieldLevel || OFF_BY_DEFAULT.has(flag.id));
+    derived[flag.id] = on ? true : !(flag.fieldLevel || OFF_BY_DEFAULT.has(flag.id) || STRICT_MODULES.has(flag.id));
   }
   /*
    * The base is spelled out and the catalogue is spread **over** it, rather
@@ -260,7 +291,7 @@ export function effectivePermissions(
   const resolved: Record<string, boolean> = {};
   for (const flag of PERMISSION_FLAGS) {
     const value = stored?.[flag.id];
-    resolved[flag.id] = flag.fieldLevel ? value === true : value !== false;
+    resolved[flag.id] = flag.fieldLevel || STRICT_MODULES.has(flag.id) ? value === true : value !== false;
   }
   return resolved;
 }

@@ -1,4 +1,5 @@
 import {
+  Megaphone,
   AlarmClock, ArrowDownLeft, ArrowLeftRight, Boxes, Briefcase, CheckSquare, FileText,
   LayoutDashboard, MessageSquare, Package, Settings, ShieldCheck, ShoppingCart,
   Truck, Users, Wrench,
@@ -29,6 +30,7 @@ export const MODULE_ICONS: Record<AppModuleId, typeof LayoutDashboard> = {
   tasks: CheckSquare,
   stuckWork: AlarmClock,
   messaging: MessageSquare,
+  adEffectiveness: Megaphone,
   users: ShieldCheck,
   settings: Settings,
 };

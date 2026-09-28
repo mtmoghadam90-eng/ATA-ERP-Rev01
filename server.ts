@@ -25,6 +25,7 @@ import { registerCustomerRoutes } from "./src/server/routes/customers";
 import { registerProjectRoutes } from "./src/server/routes/projects";
 import { registerProformaRoutes } from "./src/server/routes/proformas";
 import { registerCompetitorRoutes } from "./src/server/routes/competitors";
+import { registerAdCampaignRoutes } from "./src/server/routes/adCampaigns";
 import { registerStuckWorkRoutes } from "./src/server/routes/stuckWork";
 import { registerWebRfqRoutes } from "./src/server/routes/webRfq";
 import { WEB_RFQ_TICK_MS, tickWebRfqs } from "./src/server/services/webRfqService";
@@ -419,6 +420,7 @@ async function startServer() {
   registerProjectRoutes(app, routeDeps);
   registerProformaRoutes(app, routeDeps);
   registerCompetitorRoutes(app, routeDeps);
+  registerAdCampaignRoutes(app, routeDeps);
   registerStuckWorkRoutes(app, routeDeps);
   registerWebRfqRoutes(app, routeDeps);
   registerFollowUpRoutes(app, routeDeps);
