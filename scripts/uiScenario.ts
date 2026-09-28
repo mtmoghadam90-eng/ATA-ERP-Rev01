@@ -1729,13 +1729,13 @@ head("Follow-up editing: the form opens carrying the follow-up");
     ok("...carrying the note that was recorded",
       m.value("#follow-up-note") === "مشتری گفت تا هفته بعد", m.value("#follow-up-note"));
     /*
-      The completion form again, filled in — not a second «اقدام انجام‌شده»
-      block above it. A closed chase is corrected by what came of it; its own
-      title and description are what it was *for*, and are not asked again.
+      The whole record, in one form: a person filled the action, the result and
+      the next action in through this form and expects to correct them here.
     */
-    ok("...without a separate block for the chase's own fields",
-      !m.host.querySelector("#follow-up-action-title")
-      && !(m.host.textContent ?? "").includes("اقدام انجام‌شده"));
+    ok("...and the chase's own words",
+      m.value("#follow-up-action-title") === "تماس اول"
+      && m.value("#follow-up-action-description") === "قیمت را اعلام کن",
+      [m.value("#follow-up-action-title"), m.value("#follow-up-action-description")]);
     ok("...and the next action it raised",
       m.value("#next-action-title") === "تماس دوم"
       && m.value("#next-action-description") === "تخفیف پیشنهاد بده"

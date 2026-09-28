@@ -1895,17 +1895,13 @@ export default function TasksView({
               cancel the replacement) because deciding which of the three to do
               from here would be a second copy of that rule.
             */
-            // Only an open chase edits its own fields; a closed one is corrected
-            // through what came of it, below.
-            if (body.action) {
-              await tasksApi.update(followUpRow.taskId, {
-                title: body.action.title,
-                description: body.action.description,
-                dueDate: body.action.dueDate,
-                assignedToName: body.action.assignedToName,
-                priority: body.action.priority,
-              });
-            }
+            await tasksApi.update(followUpRow.taskId, {
+              title: body.action.title,
+              description: body.action.description,
+              dueDate: body.action.dueDate,
+              assignedToName: body.action.assignedToName,
+              priority: body.action.priority,
+            });
 
             if (followUpRow.editing?.closed) {
               await salesFollowUpApi.correct(followUpRow.taskId, {
