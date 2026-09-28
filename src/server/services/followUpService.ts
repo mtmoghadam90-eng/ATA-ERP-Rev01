@@ -1286,6 +1286,8 @@ export interface FollowUpHistoryEntry {
   taskId: string;
   title: string;
   completedAtJalali: string | null;
+  /** «شرح اقدام بعدی» the chase carried: what it was for. */
+  description: string | null;
   result: string | null;
   note: string | null;
   assignee: string | null;
@@ -1421,7 +1423,7 @@ export async function projectFollowUpReport(
         where: { taskKind: "SALES_FOLLOW_UP", relatedToType: "proforma", relatedToId: { in: ids } },
         select: {
           id: true, relatedToId: true, title: true, status: true,
-          dueDateJalali: true, assignedToName: true,
+          dueDateJalali: true, assignedToName: true, description: true,
           followUpResult: true, completionNote: true, completedAtJalali: true,
         },
         orderBy: { createdAt: "asc" },
@@ -1490,6 +1492,9 @@ export async function projectFollowUpReport(
         taskId: t.id,
         title: t.title,
         completedAtJalali: t.completedAtJalali,
+        // What the chase was for, beside what came of it — the history used
+        // to show the result alone.
+        description: t.description,
         result: t.followUpResult,
         note: t.completionNote,
         assignee: t.assignedToName,

@@ -1,3 +1,4 @@
+import { DETAIL_LABELS } from '../utils/cardSummary';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, CalendarClock, CheckCircle2, ClipboardList, History, Loader2, PhoneOff, Plus,
@@ -352,6 +353,7 @@ export default function ProjectFollowUpTab({
 
                   {task.description && (
                     <p className="text-[11px] text-slate-500 leading-relaxed whitespace-pre-line break-words">
+                      <span className="font-bold text-slate-600">{DETAIL_LABELS.description}: </span>
                       {task.description}
                     </p>
                   )}
@@ -381,8 +383,9 @@ export default function ProjectFollowUpTab({
                     {task.priority && <span className="text-slate-400">{task.priority}</span>}
                   </div>
 
-                  {task.lane === 'DONE' && task.completionNote && (
-                    <p className="text-[11px] text-slate-500 leading-relaxed whitespace-pre-line border-r-2 border-slate-200 pr-2">
+                  {task.completionNote && (
+                    <p className="text-[11px] text-slate-500 leading-relaxed whitespace-pre-line border-r-2 border-slate-200 pr-2" data-project-task-note>
+                      <span className="font-bold text-slate-600">{DETAIL_LABELS.completionNote}: </span>
                       {task.completionNote}
                     </p>
                   )}
@@ -485,14 +488,30 @@ export default function ProjectFollowUpTab({
             {quote.history.length > 0 ? (
               <ol className="space-y-1.5 border-r-2 border-slate-100 pr-3">
                 {quote.history.map((entry) => (
-                  <li key={entry.taskId} className="text-[11px] text-slate-600">
-                    <span className="font-mono text-slate-400">{entry.completedAtJalali ?? '—'}</span>
-                    {entry.result && (
-                      <span className="mr-1.5 font-bold text-slate-700">{entry.result}</span>
+                  <li key={entry.taskId} className="text-[11px] text-slate-600 space-y-0.5" data-follow-up-history={entry.taskId}>
+                    <div>
+                      <span className="font-mono text-slate-400">{entry.completedAtJalali ?? '—'}</span>
+                      {entry.title && <span className="mr-1.5 font-bold text-slate-700">{entry.title}</span>}
+                      {entry.assignee && <span className="text-slate-400"> — {entry.assignee}</span>}
+                    </div>
+                    {/* What the chase was for, what the customer said, and what was done — all three. */}
+                    {entry.description && (
+                      <p className="text-slate-500 leading-relaxed whitespace-pre-line break-words">
+                        <span className="font-bold text-slate-600">{DETAIL_LABELS.followUpDescription}: </span>
+                        {entry.description}
+                      </p>
                     )}
-                    {entry.assignee && <span className="text-slate-400"> — {entry.assignee}</span>}
+                    {entry.result && (
+                      <p className="text-slate-600">
+                        <span className="font-bold">{DETAIL_LABELS.followUpResult}: </span>
+                        {entry.result}
+                      </p>
+                    )}
                     {entry.note && (
-                      <p className="text-slate-500 leading-relaxed mt-0.5 whitespace-pre-line">{entry.note}</p>
+                      <p className="text-slate-500 leading-relaxed whitespace-pre-line break-words">
+                        <span className="font-bold text-slate-600">{DETAIL_LABELS.completionNote}: </span>
+                        {entry.note}
+                      </p>
                     )}
                   </li>
                 ))}
