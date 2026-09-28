@@ -23,26 +23,36 @@ export default function CardProjectLink({ code, name, jump, onOpen }: Props) {
   const nameText = String(name ?? '').trim();
   if (!codeText && !nameText) return null;
 
+  /*
+   * The name is written out in full and wraps, rather than being cut to one
+   * line: on a board column two hundred pixels wide «ترانسمیترهای پروژه ن…» was
+   * all anybody could read, and several jobs here share their first words. The
+   * code never wraps — «ATA-05-\n40» reads as two codes — and the whole line is
+   * also the hover text.
+   */
+  const full = [codeText, nameText].filter(Boolean).join(' | ');
   const body = (
     <>
-      {codeText && <span className="font-mono font-bold">{codeText}</span>}
+      {codeText && <span className="font-mono font-bold whitespace-nowrap" dir="ltr">{codeText}</span>}
       {codeText && nameText && <span className="text-sky-300">|</span>}
-      {nameText && <span className="truncate">{nameText}</span>}
+      {nameText && <span className="break-words min-w-0" data-card-project-name>{nameText}</span>}
     </>
   );
 
-  if (!jump || !onOpen) return <span className="inline-flex items-center gap-1 min-w-0">{body}</span>;
+  if (!jump || !onOpen) {
+    return <span className="inline-flex flex-wrap items-center gap-1 min-w-0" title={full}>{body}</span>;
+  }
 
   return (
     <button
       type="button"
       data-card-project={jump.projectId}
-      title={`باز کردن پروژه ${codeText || nameText}`}
+      title={`باز کردن پروژه: ${full}`}
       onClick={(e) => {
         e.stopPropagation();
         onOpen(jump);
       }}
-      className="inline-flex items-center gap-1 min-w-0 hover:text-sky-500 hover:underline transition text-right"
+      className="inline-flex flex-wrap items-center gap-1 min-w-0 hover:text-sky-500 hover:underline transition text-right"
     >
       <ExternalLink size={10} className="shrink-0 opacity-70" />
       {body}

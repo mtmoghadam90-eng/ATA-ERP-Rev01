@@ -22235,6 +22235,16 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     /id="header-price-calculator"/.test(app) && /\bstandalone\b/.test(header) && !/onApply/.test(header));
 }
 
+
+// ── A card's project name is shown in full ───────────────────────────────
+{
+  const link = readFileSync("src/components/CardProjectLink.tsx", "utf8");
+  ok("card project: the name wraps instead of being cut to one line",
+    /data-card-project-name/.test(link) && !/className="truncate"/.test(link));
+  ok("card project: the code never breaks across lines", /whitespace-nowrap/.test(link));
+  ok("card project: hovering shows the whole code and name", /title=\{`باز کردن پروژه: \$\{full\}`\}/.test(link) && /title=\{full\}/.test(link));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
