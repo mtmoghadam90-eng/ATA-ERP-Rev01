@@ -2050,7 +2050,7 @@ export default function TasksView({
 
                 {/* Description */}
                 <div className="space-y-1.5 sm:col-span-2">
-                  <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'tasks', 'description', 'شرح جزئیات اقدام درخواستی')}</label>
+                  <label className="text-xs font-semibold text-slate-500">{renderFieldLabelWithAsterisk(settings, 'tasks', 'description', DETAIL_LABELS.description)}</label>
                   <textarea
                     rows={2}
                     required={isFieldRequired(settings, 'tasks', 'description')}

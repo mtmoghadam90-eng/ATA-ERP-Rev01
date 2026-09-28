@@ -1,3 +1,4 @@
+import { DETAIL_LABELS } from '../utils/cardSummary';
 import { useEffect, useRef, useState } from 'react';
 import { CalendarPlus, Link2, X } from 'lucide-react';
 import ShamsiDatePicker from './ShamsiDatePicker';
@@ -138,7 +139,7 @@ export default function NextActionModal({
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-600">شرح اقدام بعدی</label>
+            <label className="text-xs font-semibold text-slate-600">{DETAIL_LABELS.description}</label>
             <textarea
               value={draft.description}
               onChange={(e) => setDraft({ ...draft, description: e.target.value })}

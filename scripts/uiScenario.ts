@@ -1605,7 +1605,7 @@ head("The work board: a card keeps its description behind one press");
     button("task:t1")!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
   });
   ok("pressing it reveals the description", text().includes("قیمت رقیب را بگیر و ۵٪ تخفیف پیشنهاد کن"));
-  ok("...under the name that column has on a chase", text().includes("شرح اقدام بعدی"));
+  ok("...under the name that column has on a chase", text().includes("شرح کار"));
   // In place: the record's own form is what the *title* opens, and a press
   // here must not be mistaken for that.
   ok("...and opens no record", opened.length === 0, opened);

@@ -22245,6 +22245,19 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("card project: hovering shows the whole code and name", /title=\{`باز کردن پروژه: \$\{full\}`\}/.test(link) && /title=\{full\}/.test(link));
 }
 
+
+// ── One name for each of the two texts, on every form and card ──────────
+{
+  eq("labels: what the work is for is «شرح کار», on a task and on a chase",
+    [DETAIL_LABELS.description, DETAIL_LABELS.followUpDescription].join("|"), "شرح کار|شرح کار");
+  eq("labels: what was done is «یادداشت انجام کار»", DETAIL_LABELS.completionNote, "یادداشت انجام کار");
+  for (const f of ["TaskCompletionModal", "FollowUpCompletionModal", "NextActionModal", "TaskFromMessageModal", "ProjectFollowUpTab"]) {
+    const src = readFileSync(`src/components/${f}.tsx`, "utf8");
+    ok(`labels: ${f} reads the shared labels, not its own wording`,
+      /DETAIL_LABELS\./.test(src) && !/>\s*شرح اقدام(?: بعدی)?\s*</.test(src) && !/>یادداشت<\/label>/.test(src));
+  }
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

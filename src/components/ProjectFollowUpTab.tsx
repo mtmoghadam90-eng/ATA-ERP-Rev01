@@ -507,7 +507,7 @@ export default function ProjectFollowUpTab({
                       </p>
                     )}
                     <p className="text-slate-500 leading-relaxed whitespace-pre-line break-words" data-follow-up-note>
-                      <span className="font-bold text-slate-600">یادداشت: </span>
+                      <span className="font-bold text-slate-600">{DETAIL_LABELS.completionNote}: </span>
                       {entry.note || <span className="text-slate-400">یادداشتی ثبت نشده است.</span>}
                     </p>
                   </li>
