@@ -86,6 +86,8 @@ export interface FollowUpHistoryEntry {
   taskId: string;
   title: string;
   completedAtJalali: string | null;
+  /** «شرح اقدام بعدی» the chase carried: what it was for. */
+  description?: string | null;
   result: string | null;
   note: string | null;
   assignee: string | null;
