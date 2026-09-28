@@ -3862,7 +3862,7 @@ export default function ProformasView({
             </div>
             <form
               onSubmit={handleSaveItemsStatus}
-              className={`p-6 space-y-4 overflow-y-auto ${isItemsModalFullscreen ? "max-h-[calc(100vh-140px)] flex-1" : ""}`}
+              className={`p-6 space-y-4 overflow-y-auto ${isItemsModalFullscreen ? "max-h-[calc(100vh-140px)] flex-1" : "max-h-[80vh]"}`}
             >
               <p className="text-slate-500 text-xs">
                 چنانچه بعضی از ردیف‌های پیش‌فاکتور برنده و بعضی دیگر بازنده
@@ -3896,63 +3896,86 @@ export default function ProformasView({
                   <XCircle size={14} />
                   همه بازنده
                 </button>
+                {/*
+                  «لغو شده» the way the per-row select writes it: a cancelled
+                  line carries no loss reason, since a withdrawn opportunity is
+                  not a lost one.
+                */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEditingItemsList((prev) =>
+                      prev.map((item) => ({
+                        ...item,
+                        status: "لغو شده",
+                        lossReason: undefined,
+                      })),
+                    )
+                  }
+                  className="px-3 py-1.5 bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100 rounded-lg text-xs font-bold transition flex items-center gap-1"
+                >
+                  <Ban size={14} />
+                  همه لغو
+                </button>
               </div>
-              <div className="border border-slate-150 rounded-xl overflow-x-auto">
-                <table className="w-full text-right border-collapse text-xs min-w-[750px]">
-                  <thead>
-                    <tr className="bg-slate-50 border-b border-slate-150 text-slate-500 font-bold">
-                      <th className="py-3 px-4">عنوان محصول</th>
-                      <th className="py-3 px-4 text-center">تعداد</th>
-                      <th className="py-3 px-4 text-left">
-                        مبلغ کل ({selectedProformaForItems.currency || "ریال"})
-                      </th>
-                      {/*
-                        The cost belongs here, not only on the edit form: this is
-                        the screen where a line becomes a sale, and a line marked
-                        won with no cost is the one that corrupts the customer
-                        ranking. Documents written before the cost existed get
-                        answered here rather than dead-ending on save.
-                      */}
-                      {showCosts && (
-                        <th className="py-3 px-4 text-center w-44">
-                          بهای تمام‌شده واحد
-                        </th>
-                      )}
-                      <th className="py-3 px-4 text-center w-48">
-                        وضعیت ردیف کالا
-                      </th>
-                      <th className="py-3 px-4 text-center w-56">
-                        علت باخت (در صورت باخت)
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {editingItemsList.map((item, idx) => (
-                      <tr key={item.id || idx} className="hover:bg-slate-50/40">
-                        <td className="py-3 px-4 font-semibold text-slate-800">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span>{item.productName}</span>
-                            {item.brand && (
-                              <span className="text-xs text-indigo-600 font-semibold">
-                                ({item.brand})
-                              </span>
-                            )}
-                            {item.tagNumber && (
-                              <span className="text-[10px] text-rose-600 font-mono font-bold bg-rose-50 border border-rose-100 px-1 py-0.2 rounded">
-                                تگ: {item.tagNumber}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-3 px-4 text-center font-mono font-bold">
+              {/*
+                One card per line, not a table. The table was 750px wide inside
+                a horizontal scroll box, so on anything narrower than a laptop
+                the status and the loss reason — the two things this modal is
+                for — sat off the edge of the card. A card stacks them under the
+                goods at every width.
+              */}
+              <div className="space-y-3" data-outcome-item-cards>
+                {editingItemsList.map((item, idx) => (
+                  <div
+                    key={item.id || idx}
+                    className="border border-slate-150 rounded-xl p-3 space-y-3 text-xs"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap min-w-0 font-semibold text-slate-800">
+                        <span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded px-1.5 py-0.5 shrink-0">
+                          ردیف {(idx + 1).toLocaleString("fa-IR")}
+                        </span>
+                        <span className="break-words">{item.productName}</span>
+                        {item.brand && (
+                          <span className="text-xs text-indigo-600 font-semibold">
+                            ({item.brand})
+                          </span>
+                        )}
+                        {item.tagNumber && (
+                          <span className="text-[10px] text-rose-600 font-mono font-bold bg-rose-50 border border-rose-100 px-1 py-0.2 rounded">
+                            تگ: {item.tagNumber}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="font-mono font-bold text-slate-700">
                           {item.quantity}
                           {item.unit ? <span className="text-slate-400 text-[10px] font-normal mr-1">{item.unit}</span> : null}
-                        </td>
-                        <td className="py-3 px-4 text-left font-mono text-slate-600">
-                          {formatMoney(item.quantity * item.unitPriceRIYAL)}
-                        </td>
+                        </span>
+                        <span className="font-mono text-slate-600" dir="ltr">
+                          {formatMoney(item.quantity * item.unitPriceRIYAL)}{" "}
+                          <span className="text-[10px] text-slate-400 font-sans">
+                            {selectedProformaForItems.currency || "ریال"}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                    <div
+                      className={`grid grid-cols-1 gap-3 ${showCosts ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}
+                    >
+                        {/*
+                          The cost belongs here, not only on the edit form: this is
+                          the screen where a line becomes a sale, and a line marked
+                          won with no cost is the one that corrupts the customer
+                          ranking. Documents written before the cost existed get
+                          answered here rather than dead-ending on save.
+                        */}
                         {showCosts && (
-                        <td className="py-3 px-4 text-center">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 block">
+                            بهای تمام‌شده واحد
+                          </label>
                           {(() => {
                             const noCost = item.costSource === COST_SOURCES.NONE;
                             return (
@@ -3978,7 +4001,7 @@ export default function ProformasView({
                                       : "border-slate-200"
                                   }`}
                                 />
-                                <label className="flex items-center justify-center gap-1 text-[10px] text-slate-500 cursor-pointer select-none">
+                                <label className="flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer select-none">
                                   <input
                                     type="checkbox"
                                     checked={noCost}
@@ -3994,9 +4017,12 @@ export default function ProformasView({
                               </div>
                             );
                           })()}
-                        </td>
+                        </div>
                         )}
-                        <td className="py-3 px-4 text-center">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 block">
+                            وضعیت ردیف کالا
+                          </label>
                           <select
                             value={item.status || "جاری"}
                             onChange={(e) =>
@@ -4012,8 +4038,11 @@ export default function ProformasView({
                             <option value="بازنده">بازنده شده (Lost)</option>
                             <option value="لغو شده">لغو شده (Cancelled)</option>
                           </select>
-                        </td>
-                        <td className="py-3 px-4 text-center">
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500 block">
+                            علت باخت (در صورت باخت)
+                          </label>
                           {item.status === "بازنده" ? (
                             <select
                               value={item.lossReason || ""}
@@ -4034,15 +4063,14 @@ export default function ProformasView({
                               ))}
                             </select>
                           ) : (
-                            <span className="text-slate-400 text-[10px]">
+                            <span className="block text-slate-400 text-[10px] py-1">
                               -
                             </span>
                           )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </div>
+                    </div>
+                  </div>
+                ))}
               </div>
               {/*
                 Who we were up against, asked on the screen that decides the

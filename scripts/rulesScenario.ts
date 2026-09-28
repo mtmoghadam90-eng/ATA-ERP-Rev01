@@ -21597,6 +21597,38 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     /<strong>\$\{buyer\.company\}<\/strong>/.test(doc) && /مخاطب:<\/span> \$\{buyer\.contact\}/.test(doc));
 }
 
+/*
+ * The line-outcome modal («مدیریت و ثبت علت باخت ردیف‌های پیش‌فاکتور») is
+ * cards, not a 750px table in a sideways scroll box — that table put the
+ * status and the loss reason off the edge of the card on a narrow screen.
+ * Read from its own region, so a table elsewhere in the file is not an answer.
+ */
+{
+  const strip = (src: string) =>
+    src.replace(/\{\/\*[\s\S]*?\*\/\}/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const view = strip(readFileSync("src/components/ProformasView.tsx", "utf8"));
+  const start = view.indexOf("{showItemsModal && selectedProformaForItems && (");
+  const end = view.indexOf("{showCreateModal && (", start);
+  ok("the line-outcome modal is found", start > 0 && end > start);
+  const modal = view.slice(start, end);
+  ok("the line-outcome modal draws no table", !/<table\b/.test(modal));
+  ok("...and no fixed minimum width", !/min-w-\[/.test(modal));
+  ok("...but one card per line", /data-outcome-item-cards/.test(modal)
+    && /editingItemsList\.map\(\(item, idx\) =>/.test(modal));
+  ok("...whose fields stack on a phone", /grid grid-cols-1 gap-3/.test(modal)
+    && /showCosts \? "sm:grid-cols-3" : "sm:grid-cols-2"/.test(modal));
+  ok("...with the per-line handlers unchanged",
+    /setEditingItemCost\(idx,/.test(modal)
+    && /handleItemStatusChangeInList\(\s*idx,/.test(modal)
+    && /handleItemLossReasonChangeInList\(\s*idx,/.test(modal));
+  ok("...and a lost line still demands its reason",
+    /item\.status === "بازنده" \? \(\s*<select[\s\S]*?required/.test(modal));
+  ok("the windowed form scrolls inside 80vh", /: "max-h-\[80vh\]"/.test(modal));
+  ok("a «همه لغو» button sits beside «همه برنده» and «همه بازنده»",
+    /همه برنده/.test(modal) && /همه بازنده/.test(modal)
+    && /status: "لغو شده",\s*lossReason: undefined,[\s\S]*?همه لغو/.test(modal));
+}
+
 // ── A referral reply carries a list of files, stored like an activity's
 {
   const svc = readFileSync("src/server/services/activityService.ts", "utf8");
