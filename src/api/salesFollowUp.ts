@@ -264,7 +264,10 @@ export const salesFollowUpApi = {
    * `closeStrandedNoResponse`.
    */
   closeStrandedNoResponse: (proformaIds: string[]) =>
-    api.post<{ closed: string[]; skipped: { id: string; reason: string }[] }>(
+    api.post<{
+      closed: { id: string; proformaNumber: string; projectId: string | null; settledOutcome: SettleOutcome }[];
+      skipped: { id: string; reason: string }[];
+    }>(
       '/api/sales-follow-up/no-response/close', { proformaIds },
     ),
   reactivate: (proformaId: string, body: {

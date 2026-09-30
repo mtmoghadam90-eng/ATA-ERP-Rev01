@@ -22589,6 +22589,14 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     /normalizeFollowUpState\(proforma\.followUpState\) !== "NO_RESPONSE"/.test(stranded)
     && /isTerminalOutcome\(getProformaOutcome\(/.test(stranded));
 
+  ok("no response: a stranded close reports the job and the outcome it wrote",
+    /out\.closed\.push\(\{[\s\S]{0,160}projectId: proforma\.projectId[\s\S]{0,80}settledOutcome: closing\.settleOutcome/.test(stranded));
+  const tab = readFileSync("src/components/SalesFollowUpTab.tsx", "utf8");
+  const afterClose = tab.slice(tab.indexOf("closeStrandedNoResponse(closingIds)"));
+  ok("no response: and the queue then asks to close the proforma category, once per project",
+    /for \(const doc of out\.closed\)[\s\S]{0,200}seen\.has\(doc\.projectId\)[\s\S]{0,200}settlementCategoryPrompt\(doc, ACTIVITY_CATEGORY\.PROFORMAS\)/.test(afterClose)
+    && /categoryCompletion\.promptCompletion\(pendingPrompts\[0\]\)/.test(tab));
+
   const route = readFileSync("src/server/routes/followUp.ts", "utf8");
   ok("no response: the close route is registered before the parameterised one",
     route.indexOf('"/api/sales-follow-up/no-response/close"') > 0
