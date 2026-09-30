@@ -1188,7 +1188,9 @@ export default function ProjectsView({
        * always sends: its reason is derived from the proforma lines, so the
        * form must not offer the server a second opinion it would refuse.
        */
-      lossReason: status === "باخته" && proformaCount === 0 ? lossReason : void 0,
+      // With no quotation the box is the answer: the typed reason while the
+      // project is lost, and cleared ("") once it is not.
+      lossReason: proformaCount > 0 ? void 0 : (status === "باخته" ? lossReason : ""),
       // New Fields
       salesExpert,
       messagingContactId: messagingContactId || undefined,

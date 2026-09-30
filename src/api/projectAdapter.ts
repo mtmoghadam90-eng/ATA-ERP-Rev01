@@ -166,7 +166,14 @@ export function projectToWriteInput(
     // in the route's allowlist, so sending it would be dropped anyway.
     manualStage: project.manualStage ?? null,
     manualStageLocked: project.manualStageLocked,
-    lossReason: project.lossReason ?? null,
+    /*
+     * Absent stays absent, and that is the whole of it. The project form sends
+     * `void 0` for a project whose reason comes from its quotations («not
+     * edited»), and `?? null` turned that into «clear it» — which the server
+     * rightly refuses on a lost project, so no lost project with a quotation
+     * could be saved at all, whatever field was being changed.
+     */
+    lossReason: project.lossReason === undefined ? undefined : project.lossReason,
     description: project.description ?? null,
     estimatedValueRial: project.estimatedValueRIYAL ?? null,
     probabilityPercent: project.probabilityPercent ?? null,
