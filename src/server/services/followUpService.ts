@@ -20,6 +20,7 @@ import {
   FollowUpCorrectionInput, FollowUpHealth, completionRefusalReason, correctionRefusalReason,
   followUpActivityText, followUpHealthOf, healthRank, isTerminalOutcome,
   normalizeFollowUpState, recordedDecision, stateAfterDecision,
+  noResponseSettlement, withNoResponseSettlement,
   type SettleOutcome,
 } from "../../utils/salesFollowUp";
 import { TASK_CANCELLED, TASK_TODO } from "../../utils/workBoard";
@@ -263,7 +264,7 @@ export async function resyncApprovalAfterFollowUpRemoved(
  */
 export async function completeFollowUp(
   taskId: string,
-  input: FollowUpCompletionInput,
+  rawInput: FollowUpCompletionInput,
   user: AuthUser,
   todayJalali: string,
 ): Promise<CompleteOutcome> {
@@ -287,15 +288,6 @@ export async function completeFollowUp(
   const proformaId = task.relatedToId;
   const outcome = await outcomeOf(db as unknown as Prisma.TransactionClient, proformaId);
 
-  // The same rule the modal runs, re-run here: the form must not be able to
-  // submit what the server would refuse, and the server must not trust that it
-  // did not.
-  const refusal = completionRefusalReason(input, {
-    todayJalali,
-    outcomeIsTerminal: isTerminalOutcome(outcome),
-  });
-  if (refusal) return { ok: false, reason: refusal, code: "invalid" };
-
   const proforma = await db.proforma.findUnique({
     where: { id: proformaId },
     select: {
@@ -304,6 +296,24 @@ export async function completeFollowUp(
     },
   });
   if (!proforma) return { ok: false, reason: "پیش‌فاکتور یافت نشد.", code: "not-found" };
+
+  /*
+   * «عدم پاسخ» closes the sale it was about, so it carries its settlement —
+   * filled in here as well as on the form, since a caller sending the decision
+   * alone must not leave the quotation undecided with nothing chasing it.
+   */
+  const input = withNoResponseSettlement(
+    rawInput, proforma.proformaType, isTerminalOutcome(outcome),
+  );
+
+  // The same rule the modal runs, re-run here: the form must not be able to
+  // submit what the server would refuse, and the server must not trust that it
+  // did not.
+  const refusal = completionRefusalReason(input, {
+    todayJalali,
+    outcomeIsTerminal: isTerminalOutcome(outcome),
+  });
+  if (refusal) return { ok: false, reason: refusal, code: "invalid" };
   const approvalRefusal = technicalApprovalRefusal(input.followUpResult, proforma.proformaType)
     ?? technicalSettlementRefusal(input.settleOutcome, proforma.proformaType);
   if (approvalRefusal) return { ok: false, reason: approvalRefusal, code: "invalid" };
@@ -575,6 +585,94 @@ export interface ReactivateInput {
    */
   description?: string | null;
   priority?: string | null;
+}
+
+/* ------------------ closing the quotations «عدم پاسخ» stranded ----------------- */
+
+export interface StrandedCloseOutcome {
+  closed: string[];
+  /** Ids that were not closed, each with the sentence saying why. */
+  skipped: { id: string; reason: string }[];
+}
+
+/**
+ * Settles the quotations the old «عدم پاسخ» left undecided.
+ *
+ * Before «عدم پاسخ» closed the sale, choosing it moved `followUpState` alone:
+ * the lines stayed «جاری», the project stayed «ارائه پیش‌فاکتور», and nothing
+ * chased the document. This gives each of those the answer the decision gives
+ * now — `noResponseSettlement`, the same rule — one transaction per document so
+ * a refusal on one does not undo the rest. A person presses the button; nothing
+ * here runs on its own.
+ *
+ * Only a document that is really stranded is touched: still NO_RESPONSE, and
+ * with no decided outcome. One reactivated or settled since the list was drawn
+ * is skipped and reported.
+ */
+export async function closeStrandedNoResponse(
+  proformaIds: string[],
+  user: AuthUser,
+  todayJalali: string,
+): Promise<StrandedCloseOutcome | null> {
+  if (!hasPermission(user, "proformas")) return null;
+  const db = getDb();
+  const ids = [...new Set(proformaIds.filter((id) => typeof id === "string" && id))].slice(0, 200);
+  const out: StrandedCloseOutcome = { closed: [], skipped: [] };
+
+  for (const id of ids) {
+    const proforma = await db.proforma.findUnique({
+      where: { id },
+      select: {
+        id: true, proformaNumber: true, projectId: true, proformaType: true,
+        followUpState: true, status: true, isCancelled: true,
+        items: { select: { status: true } },
+      },
+    });
+    if (!proforma) {
+      out.skipped.push({ id, reason: "پیش‌فاکتور یافت نشد." });
+      continue;
+    }
+    if (normalizeFollowUpState(proforma.followUpState) !== "NO_RESPONSE"
+      || isTerminalOutcome(getProformaOutcome(proforma as never))) {
+      out.skipped.push({ id, reason: `${proforma.proformaNumber} دیگر در وضعیت «بدون پاسخ» باز نیست.` });
+      continue;
+    }
+
+    const closing = noResponseSettlement(proforma.proformaType);
+    await db.$transaction(async (tx) => {
+      await tx.proformaItem.updateMany({
+        where: { proformaId: id },
+        data: {
+          status: closing.settleOutcome === "LOST" ? ITEM_LOST : ITEM_CANCELLED,
+          lossReason: closing.settleLossReason,
+        },
+      });
+      await tx.proforma.update({
+        where: { id },
+        data: closing.settleOutcome === "CANCELLED" ? { isCancelled: true } : {},
+      });
+      await closeFollowUpTasks(tx, id, todayJalali);
+      await syncProjectStatus(tx, proforma.projectId, todayJalali, user);
+    });
+    out.closed.push(id);
+
+    await afterCommit("stranded no-response close", () => logProjectFact(
+      {
+        projectId: proforma.projectId,
+        categoryName: ACTIVITY_CATEGORY.PROFORMAS,
+        sourceType: "PROFORMA",
+        sourceId: proforma.id,
+        text: closing.settleOutcome === "LOST"
+          ? `پیش‌فاکتور ${proforma.proformaNumber} به دلیل عدم پاسخ مشتری توسط {actor} «باخته» ثبت شد.`
+          : `پیشنهاد فنی ${proforma.proformaNumber} به دلیل عدم پاسخ مشتری توسط {actor} لغو شد.`,
+      },
+      user,
+      todayJalali,
+    ));
+  }
+
+  if (out.closed.length) scheduleCustomerValueRecalculation();
+  return out;
 }
 
 /**

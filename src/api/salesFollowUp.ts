@@ -258,6 +258,15 @@ export const salesFollowUpApi = {
    * nothing on a settled sale — lives behind this endpoint, so a second
    * creation path would be a second copy of all of it.
    */
+  /**
+   * Settles the quotations the old «عدم پاسخ» left undecided — lost for a
+   * priced quotation, cancelled for a technical proposal. See
+   * `closeStrandedNoResponse`.
+   */
+  closeStrandedNoResponse: (proformaIds: string[]) =>
+    api.post<{ closed: string[]; skipped: { id: string; reason: string }[] }>(
+      '/api/sales-follow-up/no-response/close', { proformaIds },
+    ),
   reactivate: (proformaId: string, body: {
     title?: string;
     dueDate: string;

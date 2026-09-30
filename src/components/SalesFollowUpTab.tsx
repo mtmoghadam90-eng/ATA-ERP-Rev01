@@ -13,7 +13,7 @@ import { formatMoney } from '../numUtils';
 import { getTodayShamsi, addDaysToShamsi } from '../dateUtils';
 import {
   FOLLOW_UP_HEALTH_LABELS, FOLLOW_UP_STATE_LABELS, FollowUpHealth,
-  isTerminalOutcome,
+  NO_RESPONSE_LOSS_REASON, isStrandedNoResponse, isTerminalOutcome,
 } from '../utils/salesFollowUp';
 import type { ERPSettings } from '../types';
 import { settlementCategoryPrompt } from '../utils/salesFollowUp';
@@ -90,6 +90,34 @@ export default function SalesFollowUpTab({ active, settings, categoryCompletion 
   const [error, setError] = useState<string | null>(null);
 
   const rows = queueList.rows;
+
+  /*
+    The quotations the old «عدم پاسخ» left undecided: closed for silence, with
+    every line still «جاری». Settling them is a person's press, one row or the
+    rows on screen, and asks once more before it writes.
+  */
+  const stranded = useMemo(() => rows.filter(isStrandedNoResponse), [rows]);
+  const [closingIds, setClosingIds] = useState<string[] | null>(null);
+  const [closingBusy, setClosingBusy] = useState(false);
+  const [closingNote, setClosingNote] = useState<string | null>(null);
+
+  const confirmStrandedClose = async () => {
+    if (!closingIds?.length) return;
+    setClosingBusy(true);
+    try {
+      const out = await salesFollowUpApi.closeStrandedNoResponse(closingIds);
+      setClosingNote(
+        `${out.closed.length.toLocaleString('fa-IR')} پیش‌فاکتور تعیین تکلیف شد.`
+        + (out.skipped.length ? ` ${out.skipped.map((x) => x.reason).join(' ')}` : ''),
+      );
+      setClosingIds(null);
+      queueList.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'بستن پیش‌فاکتورها با خطا مواجه شد.');
+    } finally {
+      setClosingBusy(false);
+    }
+  };
 
   const submitCompletion = async (body: Parameters<typeof salesFollowUpApi.complete>[1]) => {
     if (!completing?.nextActionTaskId) return;
@@ -178,6 +206,56 @@ export default function SalesFollowUpTab({ active, settings, categoryCompletion 
         <div className="bg-amber-50 border border-amber-100 text-amber-700 text-[11px] font-bold rounded-2xl p-3 flex items-center gap-1.5">
           <AlertTriangle size={13} />
           تعداد پیش‌فاکتورهای باز از حد نمایش بیشتر است؛ برای دیدن همه، جست‌وجو را محدودتر کنید.
+        </div>
+      )}
+
+      {stranded.length > 0 && (
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 flex flex-col md:flex-row md:items-center gap-2 text-[11px]"
+          data-stranded-no-response>
+          <span className="flex-1 font-bold text-slate-600 leading-relaxed">
+            {stranded.length.toLocaleString('fa-IR')} پیش‌فاکتور در این فهرست به دلیل عدم پاسخ بسته شده‌اند ولی هنوز تعیین تکلیف نشده‌اند
+            (مالی: «باخته» با دلیل «{NO_RESPONSE_LOSS_REASON}»، فنی: «لغو شده»).
+          </span>
+          <button
+            type="button"
+            onClick={() => { setClosingNote(null); setClosingIds(stranded.map((r) => r.id)); }}
+            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg font-bold transition whitespace-nowrap"
+            id="follow-up-close-stranded"
+          >
+            بستن همهٔ موارد نمایش‌داده‌شده
+          </button>
+        </div>
+      )}
+
+      {closingIds && (
+        <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3 flex flex-col md:flex-row md:items-center gap-2 text-[11px]"
+          data-stranded-confirm>
+          <span className="flex-1 font-bold text-rose-700">
+            {closingIds.length.toLocaleString('fa-IR')} پیش‌فاکتور تعیین تکلیف شود؟ وضعیت پروژه‌هایشان از روی پیش‌فاکتورها دوباره محاسبه می‌شود.
+          </span>
+          <button
+            type="button"
+            disabled={closingBusy}
+            onClick={confirmStrandedClose}
+            className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold transition disabled:opacity-50"
+            data-stranded-confirm-yes
+          >
+            بله، ثبت شود
+          </button>
+          <button
+            type="button"
+            disabled={closingBusy}
+            onClick={() => setClosingIds(null)}
+            className="px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 rounded-lg font-bold transition"
+          >
+            انصراف
+          </button>
+        </div>
+      )}
+
+      {closingNote && (
+        <div className="bg-emerald-50 border border-emerald-100 text-emerald-700 text-[11px] font-bold rounded-2xl p-3">
+          {closingNote}
         </div>
       )}
 
@@ -283,14 +361,24 @@ export default function SalesFollowUpTab({ active, settings, categoryCompletion 
                           ثبت نتیجه
                         </button>
                       ) : row.followUpState === 'NO_RESPONSE' ? (
-                        <button
-                          type="button"
-                          onClick={() => setReactivating(row)}
-                          className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-bold transition flex items-center gap-1"
-                        >
-                          <RotateCcw size={12} />
-                          فعال‌سازی مجدد پیگیری
-                        </button>
+                        <div className="flex flex-col gap-1">
+                          <button
+                            type="button"
+                            onClick={() => { setClosingNote(null); setClosingIds([row.id]); }}
+                            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-[11px] font-bold transition"
+                            data-stranded-close-row
+                          >
+                            {row.proformaType === 'TECHNICAL' ? 'لغو پیشنهاد فنی' : 'ثبت باخت (عدم پاسخ)'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setReactivating(row)}
+                            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-bold transition flex items-center gap-1"
+                          >
+                            <RotateCcw size={12} />
+                            فعال‌سازی مجدد پیگیری
+                          </button>
+                        </div>
                       ) : (
                         <button
                           type="button"

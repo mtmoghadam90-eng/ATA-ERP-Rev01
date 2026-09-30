@@ -258,6 +258,9 @@ export function technicalSettlementRefusal(
   proformaType: string | null | undefined,
 ): string | null {
   if (!settleOutcome || proformaType !== "TECHNICAL") return null;
+  // A cancellation is the one answer a proposal can take: it withdraws the
+  // offer (and with it any approval) without claiming a sale was won or lost.
+  if (settleOutcome === "CANCELLED") return null;
   return "پیش‌فاکتور فنی برنده یا بازنده نمی‌شود؛ مقصد آن «تأیید پیشنهاد فنی» است.";
 }
 
@@ -340,6 +343,72 @@ export function impliedSettlement(result: unknown): SettleOutcome | null {
   if (text === RESULT_PURCHASE_CANCELLED) return "CANCELLED";
   if (text === RESULT_LOST_TO_COMPETITOR) return "LOST";
   return null;
+}
+
+/* -------------------- «عدم پاسخ»: a silence closes the sale ------------------ */
+
+/**
+ * The loss reason a quotation closed for silence is filed under.
+ *
+ * «بستن پیگیری به دلیل عدم پاسخ» used to move only `followUpState`: every line
+ * stayed «جاری», so the project stayed «ارائه پیش‌فاکتور» with nothing chasing
+ * it — a bucket of quotations and projects nobody could say anything about.
+ * Now the decision **is** the close. A priced quotation becomes «باخته» —
+ * the sale was not won, which is what lost means — under this reason, so
+ * «چرا می‌بازیم» reads it apart from «قیمت» and «رقیب» and names no competitor.
+ * It is not «لغو شده»: that is a document withdrawn, which a customer who
+ * simply never answered has not done.
+ */
+export const NO_RESPONSE_LOSS_REASON = "عدم پاسخ مشتری";
+
+/**
+ * What «عدم پاسخ» writes onto the document.
+ *
+ * A technical proposal quotes no price and cannot be lost, so it is
+ * **cancelled** — the offer withdrawn. Absent kind is financial, the column's
+ * own default.
+ */
+export function noResponseSettlement(proformaType: string | null | undefined): {
+  settleOutcome: SettleOutcome;
+  settleLossReason: string | null;
+} {
+  return proformaType === "TECHNICAL"
+    ? { settleOutcome: "CANCELLED", settleLossReason: null }
+    : { settleOutcome: "LOST", settleLossReason: NO_RESPONSE_LOSS_REASON };
+}
+
+/**
+ * The completion as it will be written: a «عدم پاسخ» decision on a live
+ * document carries its settlement.
+ *
+ * Filled in on the server as well as by the form, because a caller that sends
+ * the decision alone (n8n drives this endpoint) must not recreate the bucket.
+ * An explicit loss reason the person chose is kept; a win is refused by
+ * `completionRefusalReason`. A document already decided is left alone — there
+ * is nothing to settle twice.
+ */
+export function withNoResponseSettlement(
+  input: FollowUpCompletionInput,
+  proformaType: string | null | undefined,
+  outcomeIsTerminal: boolean,
+): FollowUpCompletionInput {
+  if (input.decision !== "NO_RESPONSE" || outcomeIsTerminal) return input;
+  const closing = noResponseSettlement(proformaType);
+  return {
+    ...input,
+    settleOutcome: closing.settleOutcome,
+    settleLossReason: closing.settleOutcome === "LOST"
+      ? (String(input.settleLossReason ?? "").trim() || closing.settleLossReason)
+      : null,
+  };
+}
+
+/** Whether a row is one of the quotations the old «عدم پاسخ» left undecided. */
+export function isStrandedNoResponse(row: {
+  followUpState?: string | null;
+  outcome?: string | null;
+}): boolean {
+  return normalizeFollowUpState(row.followUpState) === "NO_RESPONSE" && !isTerminalOutcome(row.outcome);
 }
 
 /* --------------------------------- health --------------------------------- */
@@ -517,6 +586,10 @@ export function completionRefusalReason(
   if (input.decision === "NEXT_ACTION") {
     if (!String(input.nextTitle ?? "").trim()) return "عنوان اقدام بعدی الزامی است.";
     if (!String(input.nextDueDate ?? "").trim()) return "تاریخ اقدام بعدی الزامی است.";
+  }
+
+  if (input.decision === "NO_RESPONSE" && input.settleOutcome === "WON") {
+    return "پیش‌فاکتوری که مشتری به آن پاسخ نداده برنده ثبت نمی‌شود.";
   }
 
   if (input.decision === "DEFER") {
@@ -727,6 +800,15 @@ export function correctionRefusalReason(
   if (decision === "TERMINAL" && !ctx.outcomeIsTerminal) {
     return "تا وقتی نتیجه تجاری پیش‌فاکتور نهایی نشده، «بدون اقدام بعدی» انتخاب‌شدنی نیست.";
   }
+  /*
+   * «عدم پاسخ» now closes the sale, and a correction never settles one — so it
+   * cannot be *chosen* here on a live quotation, where it would recreate the
+   * undecided bucket it was changed to end. The open chase is completed with it
+   * instead, which asks the question properly.
+   */
+  if (decision === "NO_RESPONSE" && decision !== ctx.recorded && !ctx.outcomeIsTerminal) {
+    return "بستن به دلیل عدم پاسخ با ثبت نتیجهٔ پیگیری باز انجام می‌شود، نه با اصلاح پیگیری بسته‌شده.";
+  }
   if (decision === "DEFER" && !String(input.deferredUntil ?? "").trim()) {
     return "تاریخ پیگیری مجدد را وارد کنید.";
   }
@@ -775,7 +857,7 @@ export function followUpActivityText(entry: {
   } else if (entry.decision === "DEFER" && entry.deferredUntilJalali) {
     lines.push(`پیگیری تا ${entry.deferredUntilJalali} موکول شد.`);
   } else if (entry.decision === "NO_RESPONSE") {
-    lines.push("پیگیری به دلیل عدم پاسخ مشتری بسته شد.");
+    lines.push("پیگیری به دلیل عدم پاسخ مشتری بسته شد و پیش‌فاکتور تعیین تکلیف شد.");
   } else if (entry.decision === "TERMINAL") {
     lines.push("پیگیری بسته شد؛ نتیجه نهایی پیش‌فاکتور مشخص شده است.");
   }
