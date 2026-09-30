@@ -5,6 +5,7 @@ import {
   parseMentions,
 } from '../utils/mentions';
 import type { ActivityAttachment } from '../utils/attachments';
+import type { OpenReferralHit } from '../utils/openReferrals';
 import ShamsiDatePicker from './ShamsiDatePicker';
 
 /**
@@ -42,11 +43,19 @@ interface Props {
     text: string,
     due: { dueDate: string; dueDateByAssignee: boolean },
   ) => Promise<void>;
+  /**
+   * The open requests this writer has already raised, in this category, for
+   * the colleagues this message names — see `openReferralsTo`. When it answers
+   * anything the composer asks before sending rather than sending a second
+   * request on top of the first. Optional: a host with nothing to check sends
+   * straight away, as before.
+   */
+  openReferralsFor?: (namedUserIds: string[]) => OpenReferralHit[];
 }
 
 export default function ActivityComposer({
   users, replyTo, onCancelReply, attachments, onAttachmentsChange,
-  onPickFiles, uploading, onSend,
+  onPickFiles, uploading, onSend, openReferralsFor,
 }: Props) {
   const [text, setText] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -54,6 +63,12 @@ export default function ActivityComposer({
   const [caret, setCaret] = useState(0);
   const [busy, setBusy] = useState(false);
   const [highlight, setHighlight] = useState(0);
+  /*
+   * The open requests the writer was warned about, while the question stands.
+   * Cleared by any edit of the text, because the names — and so the answer —
+   * may have changed under it.
+   */
+  const [duplicates, setDuplicates] = useState<OpenReferralHit[] | null>(null);
   const box = useRef<HTMLTextAreaElement | null>(null);
 
   const query = mentionQuery(text, caret);
@@ -106,8 +121,16 @@ export default function ActivityComposer({
     setPendingCaret(next.caret);
   };
 
-  const send = async () => {
+  const send = async (confirmed = false) => {
     if (!text.trim() && attachments.length === 0) return;
+    if (!confirmed && named.length > 0 && openReferralsFor) {
+      const hits = openReferralsFor(named.map((u) => u.id));
+      if (hits.length > 0) {
+        setDuplicates(hits);
+        return;
+      }
+    }
+    setDuplicates(null);
     setBusy(true);
     try {
       /*
@@ -169,7 +192,11 @@ export default function ActivityComposer({
           ref={box}
           rows={2}
           value={text}
-          onChange={(e) => { setText(e.target.value); setCaret(e.target.selectionStart ?? 0); }}
+          onChange={(e) => {
+            setText(e.target.value);
+            setCaret(e.target.selectionStart ?? 0);
+            setDuplicates(null);
+          }}
           onKeyUp={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           onClick={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           onKeyDown={(e) => {
@@ -277,6 +304,45 @@ export default function ActivityComposer({
               />
               مهلت را ارجاع‌شونده تعیین کند
             </label>
+          </div>
+        </div>
+      )}
+
+      {/*
+        «قبلاً ارجاع باز داده‌ای؛ باز هم بفرستم؟» — asked in place rather than in
+        a browser dialog, so it names each colleague and what was asked of them
+        and is answered with one press either way.
+      */}
+      {duplicates && duplicates.length > 0 && (
+        <div
+          className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 space-y-1.5"
+          data-open-referral-warning
+        >
+          {duplicates.map((hit) => (
+            <p key={hit.userId}>
+              به <strong>{hit.name || 'این همکار'}</strong> در همین دسته‌بندی قبلاً ارجاعی داده‌اید که هنوز باز است
+              {hit.actionRequired ? <>: «{hit.actionRequired.length > 80 ? `${hit.actionRequired.slice(0, 80)}…` : hit.actionRequired}»</> : null}
+            </p>
+          ))}
+          <p className="font-bold">باز هم می‌خواهید ارجاع جدید ثبت شود؟</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void send(true)}
+              disabled={busy}
+              data-open-referral-confirm
+              className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-md font-bold disabled:opacity-40"
+            >
+              بله، ارجاع جدید ثبت شود
+            </button>
+            <button
+              type="button"
+              onClick={() => setDuplicates(null)}
+              data-open-referral-cancel
+              className="px-3 py-1 bg-white border border-slate-200 text-slate-600 rounded-md font-bold hover:bg-slate-50"
+            >
+              انصراف
+            </button>
           </div>
         </div>
       )}
