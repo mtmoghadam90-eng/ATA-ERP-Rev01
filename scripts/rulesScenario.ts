@@ -22498,6 +22498,37 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     readFileSync("prisma/migrations/20260930001400_proforma_item_deviation/migration.sql", "utf8").includes("[deviation] BIT NOT NULL"));
 }
 
+/*
+ * A deploy skips what the change cannot have affected, measured against the last
+ * commit that deployed successfully. The failure worth holding here is a skip
+ * that happens when it must not: an install skipped on a changed lockfile, a
+ * client not regenerated on a changed schema, or a marker written before the
+ * build passed — which would make the next deploy skip what this one never did.
+ */
+{
+  const ps = readFileSync("scripts/deploy.ps1", "utf8")
+    .split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+  ok("deploy speed: -Full is a parameter", /\[switch\]\$Full/.test(ps));
+  ok("deploy speed: -Full or no usable marker means every step runs",
+    /if \(-not \$Full -and \(Test-Path \$marker\)\)/.test(ps) && /if \(\$null -eq \$changed\) \{ return \$true \}|\$null -eq \$changed\) \{ return \$true/.test(ps.replace(/\s+/g, " ")));
+  ok("deploy speed: install is gated on the two package files and a missing node_modules",
+    ps.includes("(Changed '^package(-lock)?\\.json$') -or -not (Test-Path \"node_modules\")"));
+  ok("deploy speed: generate runs after an install, on a schema change, or with no client",
+    ps.includes("$installed -or (Changed '^prisma/schema\\.prisma$') -or -not (Test-Path \"node_modules\\.prisma\\client\")"));
+  const migrate = ps.indexOf("prisma migrate deploy");
+  ok("deploy speed: migrations are never skipped",
+    migrate > 0 && !/Changed[^\n]*\n[^\n]*prisma migrate deploy/.test(ps));
+  const marker = ps.indexOf("Set-Content -Path $marker");
+  const buildCheck = ps.indexOf("dist\\server.cjs missing");
+  ok("deploy speed: the marker is written only after the build is checked",
+    marker > buildCheck && buildCheck > ps.indexOf("run test:rules") && ps.indexOf("Set-Content -Path $marker", marker + 1) === -1);
+  ok("deploy speed: -Full discards the incremental type-check cache",
+    ps.includes("if ($Full) { Remove-Item \"node_modules\\.cache\\tsc-lint.tsbuildinfo\""));
+  const lint = JSON.parse(readFileSync("package.json", "utf8")).scripts.lint as string;
+  ok("deploy speed: lint is incremental, with its cache where -Full removes it",
+    lint.includes("--incremental") && lint.includes("node_modules/.cache/tsc-lint.tsbuildinfo") && lint.includes("--noEmit"));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
