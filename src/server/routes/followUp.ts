@@ -5,7 +5,7 @@ import { getTodayShamsi } from "../../dateUtils";
 import {
   FOLLOW_UP_FILTERABLE, FOLLOW_UP_SORTABLE,
   completeFollowUp, followUpRowForTask, followUpSummary, listFollowUpQueue, projectFollowUpReport,
-  reactivateFollowUp, correctFollowUp,
+  reactivateFollowUp, correctFollowUp, closeStrandedNoResponse,
 } from "../services/followUpService";
 import {
   FOLLOW_UP_DECISIONS, SETTLE_OUTCOMES, type FollowUpCompletionInput,
@@ -217,6 +217,33 @@ export function registerFollowUpRoutes(app: express.Express, deps: RouteDeps): v
       res.json({ success: true, ...outcome });
     } catch (err) {
       sendError(res, err, "PUT /api/sales-follow-up/tasks/:taskId/result");
+    }
+  });
+
+  /*
+   * Settling the quotations the old «عدم پاسخ» stranded. Registered before
+   * `/:proformaId/reactivate` like every static segment here.
+   */
+  app.post("/api/sales-follow-up/no-response/close", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const raw = (req.body ?? {}) as { proformaIds?: unknown };
+      const ids = Array.isArray(raw.proformaIds)
+        ? raw.proformaIds.filter((x): x is string => typeof x === "string")
+        : [];
+      if (ids.length === 0) {
+        res.status(400).json({ success: false, error: "هیچ پیش‌فاکتوری برای بستن انتخاب نشده است." });
+        return;
+      }
+      const result = await closeStrandedNoResponse(ids, user, getTodayShamsi());
+      if (!result) {
+        res.status(403).json({ success: false, error: "شما اجازه دسترسی به این بخش را ندارید." });
+        return;
+      }
+      res.json({ success: true, ...result });
+    } catch (err) {
+      sendError(res, err, "POST /api/sales-follow-up/no-response/close");
     }
   });
 

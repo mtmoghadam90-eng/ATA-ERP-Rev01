@@ -44,7 +44,7 @@ import {
 } from "./webRfq";
 import {
   RESULT_LOST_TO_COMPETITOR, RESULT_PURCHASE_CANCELLED, RESULT_PURCHASE_CONFIRMED,
-  RESULT_TECHNICAL_APPROVED, resultKey,
+  NO_RESPONSE_LOSS_REASON, RESULT_TECHNICAL_APPROVED, resultKey,
 } from "./salesFollowUp";
 import {
   DEFAULT_STAFF_TEMPLATES, STAFF_NOTIFICATION_KINDS, SUPERSEDED_STAFF_TEMPLATES,
@@ -351,6 +351,22 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
           ...(nextStatuses ? { projectStatuses: nextStatuses } : {}),
         },
       };
+    },
+  },
+  {
+    id: "no-response-loss-reason-1",
+    describe: "دلیل باخت «عدم پاسخ مشتری» برای پیش‌فاکتورهایی که به دلیل عدم پاسخ بسته می‌شوند",
+    apply: (settings) => {
+      /*
+       * «عدم پاسخ» now settles a quotation as lost under this reason, and the
+       * outcome modal's reason control is a `<select>` over this list — without
+       * the entry, a later correction of such a document would open on a value
+       * the list does not hold. Folded, so a company that already typed it is
+       * not handed a second copy.
+       */
+      const reasons = settings.lossReasons ?? [];
+      if (reasons.some((r) => resultKey(r) === resultKey(NO_RESPONSE_LOSS_REASON))) return null;
+      return { ...settings, lossReasons: [...reasons, NO_RESPONSE_LOSS_REASON] };
     },
   },
 ];

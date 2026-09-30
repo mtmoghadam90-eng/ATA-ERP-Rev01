@@ -22529,6 +22529,86 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     lint.includes("--incremental") && lint.includes("node_modules/.cache/tsc-lint.tsbuildinfo") && lint.includes("--noEmit"));
 }
 
+/*
+ * «عدم پاسخ» closes the sale it was about. Choosing it used to move only the
+ * follow-up state, so the lines stayed «جاری», the project stayed «ارائه
+ * پیش‌فاکتور», and nothing chased the document — a bucket nobody could name.
+ */
+{
+  const sf = await import("../src/utils/salesFollowUp");
+  const fin = sf.noResponseSettlement("FINANCIAL");
+  ok("no response: a priced quotation is lost, under its own reason",
+    fin.settleOutcome === "LOST" && fin.settleLossReason === sf.NO_RESPONSE_LOSS_REASON);
+  ok("no response: absent kind is financial", sf.noResponseSettlement(null).settleOutcome === "LOST");
+  const tech = sf.noResponseSettlement("TECHNICAL");
+  ok("no response: a technical proposal is cancelled, never lost",
+    tech.settleOutcome === "CANCELLED" && tech.settleLossReason === null);
+  ok("no response: and cancelling a technical proposal is not refused",
+    sf.technicalSettlementRefusal("CANCELLED", "TECHNICAL") === null
+    && !!sf.technicalSettlementRefusal("LOST", "TECHNICAL"));
+
+  const base = { decision: "NO_RESPONSE" as const, followUpResult: "عدم پاسخ" };
+  const filled = sf.withNoResponseSettlement(base, "FINANCIAL", false);
+  ok("no response: the completion carries its settlement",
+    filled.settleOutcome === "LOST" && filled.settleLossReason === sf.NO_RESPONSE_LOSS_REASON);
+  ok("no response: and passes the completion's own rule",
+    sf.completionRefusalReason(filled, { todayJalali: "1405/06/10", outcomeIsTerminal: false }) === null);
+  ok("no response: a reason the person chose is kept",
+    sf.withNoResponseSettlement({ ...base, settleLossReason: "قیمت" }, "FINANCIAL", false).settleLossReason === "قیمت");
+  ok("no response: a document already decided is left alone",
+    sf.withNoResponseSettlement(base, "FINANCIAL", true).settleOutcome === undefined);
+  ok("no response: every other decision is untouched",
+    sf.withNoResponseSettlement({ decision: "DEFER", followUpResult: "x" }, "FINANCIAL", false).settleOutcome === undefined);
+  ok("no response: a silence is never a win",
+    !!sf.completionRefusalReason({ ...base, settleOutcome: "WON" },
+      { todayJalali: "1405/06/10", outcomeIsTerminal: false }));
+
+  ok("no response: a correction cannot choose it on a live quotation",
+    !!sf.correctionRefusalReason({ followUpResult: "عدم پاسخ", decision: "NO_RESPONSE" },
+      { recorded: "NEXT_ACTION", outcomeIsTerminal: false }));
+  ok("no response: while a recorded one still corrects in its words",
+    sf.correctionRefusalReason({ followUpResult: "عدم پاسخ" },
+      { recorded: "NO_RESPONSE", outcomeIsTerminal: false }) === null);
+
+  ok("no response: a stranded row is one still open under that state",
+    sf.isStrandedNoResponse({ followUpState: "NO_RESPONSE", outcome: "جاری" })
+    && !sf.isStrandedNoResponse({ followUpState: "NO_RESPONSE", outcome: "باخته" })
+    && !sf.isStrandedNoResponse({ followUpState: "OPEN", outcome: "جاری" }));
+
+  const svc = readFileSync("src/server/services/followUpService.ts", "utf8");
+  const complete = svc.slice(svc.indexOf("export async function completeFollowUp("),
+    svc.indexOf("/* ------------------------------- reactivation"));
+  ok("no response: the server fills the settlement before it runs the rule",
+    complete.indexOf("withNoResponseSettlement(") > 0
+    && complete.indexOf("withNoResponseSettlement(") < complete.indexOf("completionRefusalReason(input"));
+  const stranded = svc.slice(svc.indexOf("export async function closeStrandedNoResponse("));
+  ok("no response: the stranded close reads the one rule and re-derives the project",
+    /noResponseSettlement\(proforma\.proformaType\)/.test(stranded)
+    && stranded.indexOf("syncProjectStatus(tx") > 0 && stranded.indexOf("closeFollowUpTasks(tx") > 0);
+  ok("no response: and touches only a document still stranded",
+    /normalizeFollowUpState\(proforma\.followUpState\) !== "NO_RESPONSE"/.test(stranded)
+    && /isTerminalOutcome\(getProformaOutcome\(/.test(stranded));
+
+  const route = readFileSync("src/server/routes/followUp.ts", "utf8");
+  ok("no response: the close route is registered before the parameterised one",
+    route.indexOf('"/api/sales-follow-up/no-response/close"') > 0
+    && route.indexOf('"/api/sales-follow-up/no-response/close"') < route.indexOf('"/api/sales-follow-up/:proformaId/reactivate"'));
+
+  const modal = readFileSync("src/components/FollowUpCompletionModal.tsx", "utf8");
+  ok("no response: the form submits the same settlement the server writes",
+    /decision === 'NO_RESPONSE' && !isEditing && !outcomeIsTerminal[\s\S]{0,120}noResponseSettlement\(row\.proformaType\)/.test(modal));
+
+  const settings0 = { lossReasons: ["قیمت"], appliedPatches: [] } as never;
+  const patched = applySettingsPatches(settings0);
+  ok("no response: the loss reason reaches a live settings document",
+    !!patched && (patched.next.lossReasons ?? []).includes(sf.NO_RESPONSE_LOSS_REASON));
+  const typed = applySettingsPatches({ lossReasons: ["عدم  پاسخ مشتري"], appliedPatches: [] } as never);
+  ok("no response: and is not added twice beside a spelling that folds to it",
+    (typed?.next.lossReasons ?? []).filter((r: string) => r.includes("پاسخ")).length === 1);
+  ok("no response: a fresh installation has it too",
+    readFileSync("src/seedData.ts", "utf8").includes("'عدم پاسخ مشتری'"));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

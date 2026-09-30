@@ -8,6 +8,7 @@ import {
   DEFAULT_FOLLOW_UP_RESULTS, FollowUpDecision, SETTLE_OUTCOMES, SETTLE_OUTCOME_LABELS,
   SettleOutcome, completionRefusalReason, correctionRefusalReason, impliedSettlement,
   impliesTechnicalApproval, recordedDecision, technicalApprovalRefusal,
+  NO_RESPONSE_LOSS_REASON, noResponseSettlement,
 } from '../utils/salesFollowUp';
 import { PROJECT_TECHNICAL_APPROVED } from '../utils/moduleStatuses';
 import { getTodayShamsi, addDaysToShamsi } from '../dateUtils';
@@ -146,8 +147,8 @@ const DECISIONS: { value: FollowUpDecision; label: string; hint: string; icon: t
     icon: CalendarClock,
   },
   {
-    value: 'NO_RESPONSE', label: 'بستن پیگیری به دلیل عدم پاسخ',
-    hint: 'پیگیری بسته می‌شود؛ وضعیت تجاری پیش‌فاکتور تغییری نمی‌کند و بعداً قابل فعال‌سازی مجدد است.',
+    value: 'NO_RESPONSE', label: 'بستن به دلیل عدم پاسخ',
+    hint: 'پیگیری بسته می‌شود و پیش‌فاکتور تعیین تکلیف می‌شود: پیش‌فاکتور مالی «باخته» (دلیل: عدم پاسخ مشتری) و پیشنهاد فنی «لغو شده». اگر مشتری برگشت، از نتیجهٔ پیش‌فاکتور دوباره «جاری» می‌شود.',
     icon: PhoneOff,
   },
   {
@@ -315,6 +316,23 @@ export default function FollowUpCompletionModal({
     deferredUntil: decision === 'DEFER' ? deferredUntil : undefined,
     settleOutcome: settleOutcome ?? undefined,
     settleLossReason: settleOutcome === 'LOST' ? (settleLossReason || undefined) : undefined,
+    /*
+      «عدم پاسخ» carries its own settlement — the same rule the server applies,
+      so the form submits exactly what will be written and the undecided bucket
+      cannot be recreated from here.
+    */
+    ...(decision === 'NO_RESPONSE' && !isEditing && !outcomeIsTerminal
+      ? (() => {
+        const closing = noResponseSettlement(row.proformaType);
+        return {
+          settleOutcome: closing.settleOutcome,
+          // A reason somebody picked in the settle block above is theirs.
+          settleLossReason: closing.settleOutcome === 'LOST'
+            ? ((settleOutcome === 'LOST' && settleLossReason) || closing.settleLossReason || undefined)
+            : undefined,
+        };
+      })()
+      : {}),
   };
 
   /** What this result implies, if anything. A suggestion — see the block below. */
@@ -728,10 +746,13 @@ export default function FollowUpCompletionModal({
                 // the same reason (`correctionRefusalReason`).
                 const approvedNow = !approvalRefusal
                   && impliesTechnicalApproval(followUpResult);
-                const disabled = d.value === 'TERMINAL'
+                const disabled = (d.value === 'TERMINAL'
                   && !outcomeIsTerminal
                   && !approvedNow
-                  && !(isCorrecting ? false : settleOutcome);
+                  && !(isCorrecting ? false : settleOutcome))
+                  // «عدم پاسخ» settles the sale, which a correction never does.
+                  || (d.value === 'NO_RESPONSE' && isCorrecting && recorded !== 'NO_RESPONSE'
+                    && !outcomeIsTerminal);
                 return (
                   <button
                     key={d.value}
@@ -754,6 +775,14 @@ export default function FollowUpCompletionModal({
                 );
               })}
             </div>
+            {decision === 'NO_RESPONSE' && !isEditing && !outcomeIsTerminal && (
+              <div className="mt-2 bg-rose-50 border border-rose-100 text-rose-700 rounded-xl p-3 text-[11px] font-bold leading-relaxed"
+                data-no-response-settlement>
+                {row.proformaType === 'TECHNICAL'
+                  ? 'با ثبت، این پیشنهاد فنی «لغو شده» می‌شود.'
+                  : `با ثبت، همهٔ ردیف‌های این پیش‌فاکتور «باخته» با دلیل «${NO_RESPONSE_LOSS_REASON}» ثبت می‌شوند و وضعیت پروژه از روی پیش‌فاکتورهایش دوباره محاسبه می‌شود.`}
+              </div>
+            )}
           </div>
           )}
 
