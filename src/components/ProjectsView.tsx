@@ -48,6 +48,7 @@ import { tasksApi } from '../api/tasks';
 import MessageReactions from './MessageReactions';
 import ProjectFollowUpTab from './ProjectFollowUpTab';
 import ActivityComposer from './ActivityComposer';
+import { openReferralsTo } from '../utils/openReferrals';
 import CategoryMembersModal from './CategoryMembersModal';
 import TaskFromMessageModal, { TaskDraft } from './TaskFromMessageModal';
 import { renderWithMentions } from './MentionText';
@@ -6301,6 +6302,8 @@ export default function ProjectsView({
                                       users={(users || []).map((u) => ({ id: u.id, fullName: u.fullName }))}
                                       replyTo={replyTo?.groupId === group.id ? replyTo : null}
                                       onCancelReply={() => setReplyTo(null)}
+                                      openReferralsFor={(namedIds) =>
+                                        openReferralsTo(group.activities, currentUser?.id, namedIds)}
                                       attachments={newActivityAttachment[group.id] ?? []}
                                       onAttachmentsChange={(next) => setNewActivityAttachment(
                                         (prev: any) => ({ ...prev, [group.id]: next }),

@@ -111,6 +111,7 @@ import {
   BOARD_LANES, LANE_FILTERS, MOVABLE_LANES, isMovableLane, rankForTopUp, taskBoardLane,
   CARD_PRESSES, CARD_TARGETS, cardPressTarget,
 } from "../src/utils/workBoard";
+import { openReferralsTo } from "../src/utils/openReferrals";
 import {
   normalizeLimit, remainingCapacity, topUpShortfall, workLimitRefusalReason,
 } from "../src/utils/workLimits";
@@ -22387,6 +22388,32 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("ads link: the project route accepts adCampaignId", projRoute.includes('"adCampaignId"'));
   ok("ads link: the migration adds the column",
     readFileSync("prisma/migrations/20260930001300_project_ad_campaign/migration.sql", "utf8").includes("adCampaignId"));
+}
+
+// ── the composer asks before a second open referral to the same person ──
+{
+  const feed = [
+    { createdAt: "2026-09-01T08:00:00Z", referrals: [
+      { assignedToUserId: "u1", assignedByUserId: "me", assignedTo: "علی", actionRequired: "اول", status: "در انتظار اقدام", createdAt: "2026-09-01T08:00:00Z" },
+      { assignedToUserId: "u2", assignedByUserId: "me", assignedTo: "رضا", actionRequired: "تمام", status: "انجام شده", createdAt: "2026-09-01T08:00:00Z" },
+      { assignedToUserId: "u3", assignedByUserId: "other", assignedTo: "مریم", actionRequired: "دیگری", status: "در انتظار اقدام", createdAt: "2026-09-01T08:00:00Z" },
+    ] },
+    { createdAt: "2026-09-05T08:00:00Z", referrals: [
+      { assignedToUserId: "u1", assignedByUserId: "me", assignedTo: "علی", actionRequired: "دوم", status: "در حال اقدام", createdAt: "2026-09-05T08:00:00Z" },
+    ] },
+  ];
+  eq("open referrals: an open one from me to a named colleague is found, latest first",
+    openReferralsTo(feed, "me", ["u1"]).map((h) => h.actionRequired).join(","), "دوم");
+  eq("open referrals: a finished one is not a duplicate", openReferralsTo(feed, "me", ["u2"]).length, 0);
+  eq("open referrals: one somebody else raised is not mine to be warned about",
+    openReferralsTo(feed, "me", ["u3"]).length, 0);
+  eq("open referrals: hits follow the order the colleagues were named",
+    openReferralsTo([...feed, { referrals: [{ assignedToUserId: "u3", assignedByUserId: "me", status: "در انتظار اقدام", createdAt: "2026-09-06" }] }],
+      "me", ["u3", "u1"]).map((h) => h.userId).join(","), "u3,u1");
+  eq("open referrals: no author, no warning", openReferralsTo(feed, null, ["u1"]).length, 0);
+  const pv = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("open referrals: the feed hands the composer the check over this category's own activities",
+    /openReferralsFor=\{\(namedIds\) =>\s*openReferralsTo\(group\.activities, currentUser\?\.id, namedIds\)\}/.test(pv));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

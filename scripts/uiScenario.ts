@@ -1286,6 +1286,81 @@ head("Activity composer: an ordinary message asks about no deadline");
 }
 
 
+head("Activity composer: asks before a second open referral to the same person");
+{
+  const settle = async () => {
+    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  };
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  const sends: string[] = [];
+  let asked: string[] | null = null;
+  await act(async () => {
+    root.render(React.createElement(ActivityComposer, {
+      users: [{ id: "u1", fullName: "علی رضایی" }, { id: "u3", fullName: "مریم کاظمی" }],
+      replyTo: null,
+      onCancelReply: () => {},
+      attachments: [],
+      onAttachmentsChange: () => {},
+      onPickFiles: () => {},
+      uploading: false,
+      onSend: async (text: string) => { sends.push(text); },
+      openReferralsFor: (ids: string[]) => {
+        asked = ids;
+        return ids.includes("u1")
+          ? [{ userId: "u1", name: "علی رضایی", actionRequired: "دیتاشیت را چک کن", createdAt: "2026-09-01" }]
+          : [];
+      },
+    }));
+  });
+  await settle();
+  const box = host.querySelector("#activity-composer-text") as HTMLTextAreaElement;
+  const type = async (value: string) => {
+    await act(async () => {
+      box.value = value;
+      box.selectionStart = value.length;
+      box.selectionEnd = value.length;
+      handlers(box).onChange?.({ target: box, currentTarget: box });
+    });
+    await settle();
+  };
+  const pressSend = async () => {
+    const btn = host.querySelector("#activity-composer-send") as HTMLButtonElement;
+    await act(async () => { await (handlers(btn) as { onClick?: (e: unknown) => unknown }).onClick?.({}); });
+    await settle();
+  };
+
+  await type("@علی رضایی لطفاً قیمت را هم بفرست");
+  await pressSend();
+  ok("a second open referral to the same person is not sent straight away", sends.length === 0);
+  ok("the check is asked with the named colleague's id",
+    JSON.stringify(asked) === JSON.stringify(["u1"]));
+  const warning = host.querySelector("[data-open-referral-warning]");
+  ok("the warning names the colleague and what the open request asked",
+    !!warning && (warning.textContent ?? "").includes("علی رضایی")
+      && (warning.textContent ?? "").includes("دیتاشیت را چک کن"));
+
+  const cancel = host.querySelector("[data-open-referral-cancel]") as HTMLButtonElement;
+  await act(async () => { (handlers(cancel) as { onClick?: (e: unknown) => unknown }).onClick?.({}); });
+  await settle();
+  ok("«انصراف» sends nothing and closes the question",
+    sends.length === 0 && !host.querySelector("[data-open-referral-warning]"));
+
+  await pressSend();
+  const confirm = host.querySelector("[data-open-referral-confirm]") as HTMLButtonElement;
+  await act(async () => { await (handlers(confirm) as { onClick?: (e: unknown) => unknown }).onClick?.({}); });
+  await settle();
+  ok("«بله» sends the message once", sends.length === 1);
+
+  await type("@مریم کاظمی لطفاً بررسی کن");
+  await pressSend();
+  ok("naming somebody with no open referral sends without asking",
+    sends.length === 2 && !host.querySelector("[data-open-referral-warning]"));
+
+  act(() => { root.unmount(); });
+  host.remove();
+}
+
 head("Message reactions: the eye asks nobody until it is pressed");
 {
   /*
