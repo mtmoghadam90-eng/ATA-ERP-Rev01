@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
+import { GROUP_CLOSED } from "../../utils/workBoard";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } from "../dates";
@@ -99,6 +100,24 @@ export function quotationWhere(value: unknown): Record<string, unknown> | null {
   return null;
 }
 
+/**
+ * «پروژه‌هایی که حداقل یک دسته‌بندی باز دارند» — work still in hand somewhere
+ * on the job.
+ *
+ * Open is **not closed**, written as an exclusion on «اتمام کار» rather than
+ * as equality on «جاری»: a status this build does not know counts as open and
+ * keeps the project in the list, which puts a job in front of somebody rather
+ * than hiding it — `laneWhere`'s rule. The column is NOT NULL with a default,
+ * so a plain `not` has no null branch to remember.
+ *
+ * Null for anything but the one value, so an unrecognised parameter widens
+ * nothing.
+ */
+export function openCategoryWhere(value: unknown): Record<string, unknown> | null {
+  if (value === "open") return { categoryGroups: { some: { status: { not: GROUP_CLOSED } } } };
+  return null;
+}
+
 const SEARCH_FIELDS = [
   "code", "name", "description", "customerInquiryNumber", "referrerName",
 ] as const;
@@ -125,6 +144,7 @@ export function buildProjectWhere(
   user: AuthUser,
   extra: {
     dateFrom?: unknown; dateTo?: unknown; customField?: unknown; quotation?: unknown;
+    openCategory?: unknown;
   } = {},
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [];
@@ -166,6 +186,11 @@ export function buildProjectWhere(
   // projects and print the unfiltered total beside them.
   const quotation = quotationWhere(extra.quotation);
   if (quotation) and.push(quotation);
+
+  // At least one activity category still open — on the server for the same
+  // reason as the one above.
+  const openCategory = openCategoryWhere(extra.openCategory);
+  if (openCategory) and.push(openCategory);
 
   // Date range comes from Shamsi inputs but filters the real DATE column, so a
   // range works correctly across month and year boundaries.
@@ -237,7 +262,7 @@ export async function listProjects(
   user: AuthUser,
   extra: {
     dateFrom?: unknown; dateTo?: unknown; withSummary?: boolean;
-    customField?: unknown; quotation?: unknown;
+    customField?: unknown; quotation?: unknown; openCategory?: unknown;
   } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();

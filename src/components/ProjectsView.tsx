@@ -3419,6 +3419,23 @@ export default function ProjectsView({
             <option value="unsent">پیش‌فاکتور ارسال‌نشده (شامل پیش‌نویس‌ها)</option>
           </select>
         </div>
+
+        {/*
+          «کدام پروژه‌ها هنوز کاری باز دارند» — at least one activity category
+          not yet closed, filtered on the server (`openCategoryWhere`).
+        */}
+        <div className="relative w-full md:w-60 flex items-center gap-2">
+          <Filter size={16} className="text-slate-400 flex-shrink-0" />
+          <select
+            value={list.filters.openCategory}
+            onChange={(e) => list.setFilter('openCategory', e.target.value)}
+            id="project-open-category-filter"
+            className="w-full border border-slate-200 rounded-lg text-sm py-2 px-3 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition appearance-none text-right bg-white"
+          >
+            <option value="all">دسته‌بندی فعالیت: همه</option>
+            <option value="open">حداقل یک دسته‌بندی باز</option>
+          </select>
+        </div>
       </div>
 
       {/* Custom Fields Filter Panel */}

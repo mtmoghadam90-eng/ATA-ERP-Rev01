@@ -29,6 +29,8 @@ export interface ProjectListFilters {
    * stage, which is exactly the job this answers.
    */
   quotation: string;
+  /** "all", or "open": at least one activity category not yet closed. */
+  openCategory: string;
   customFields: Record<string, string>;
 }
 
@@ -42,6 +44,7 @@ const EMPTY_FILTERS: ProjectListFilters = {
   dateFrom: "",
   dateTo: "",
   quotation: "all",
+  openCategory: "all",
   customFields: {},
 };
 
@@ -62,6 +65,7 @@ export function useProjectList(initialSearch = "") {
       // that is not one of its two values as «no clause» either way and an
       // absent parameter says so at the one place a person can read it.
       quotation: filters.quotation === "all" ? undefined : filters.quotation,
+      openCategory: filters.openCategory === "all" ? undefined : filters.openCategory,
     };
 
     const custom = Object.entries(filters.customFields)
@@ -102,7 +106,7 @@ export function useProjectList(initialSearch = "") {
   // filtered to one stage read as unfiltered.
   const hasActiveFilters =
     filters.status !== "all" || filters.stage !== "all" || filters.quotation !== "all"
-    || filters.customerId !== "all" || filters.ownerUserId !== "all"
+    || filters.openCategory !== "all" || filters.customerId !== "all" || filters.ownerUserId !== "all"
     || filters.marketingChannel !== "all" || filters.leadQuality !== "all"
     || !!filters.dateFrom || !!filters.dateTo
     || Object.values(filters.customFields).some(Boolean);
