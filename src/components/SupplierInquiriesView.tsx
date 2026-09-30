@@ -402,6 +402,13 @@ export default function SupplierInquiriesView({
         : await supplierInquiriesApi.create({ ...inquiryToWriteInput(data), initialStep });
       setIsInquiryModalOpen(false);
       list.refresh();
+      if (!editingInquiry) {
+        void categoryCompletion?.promptReopen({
+          projectId: saved.projectId,
+          categoryName: ACTIVITY_CATEGORY.INQUIRIES,
+          reason: 'استعلام قیمت تازه‌ای برای این پروژه ثبت شد.',
+        });
+      }
       void nextAction.ask(wantsNextAction, saved, (inquiry) => ({
         relatedToType: 'استعلام تامین‌کننده',
         relatedToId: inquiry.id,

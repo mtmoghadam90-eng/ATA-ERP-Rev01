@@ -224,6 +224,13 @@ export default function PurchaseOrdersView({
       // the fact, or filling the whole timeline in one go. That used to produce
       // no prompt at all: only an *update* was ever examined.
       offerCategoryClose(saved);
+      // A new order in a category this project already closed asks to reopen
+      // it — after the close question above, which it never replaces.
+      void categoryCompletion?.promptReopen({
+        projectId: saved.projectId,
+        categoryName: ACTIVITY_CATEGORY.PURCHASE_ORDERS,
+        reason: `سفارش خرید ${saved.poNumber ?? ''} برای این پروژه ثبت شد.`,
+      });
       // Returned so «ذخیره و اقدام بعدی» can name the order that was really
       // written — a new one has no id until the server has answered.
       return saved;

@@ -1155,6 +1155,13 @@ ${sheets}
         ? await deliveriesApi.update(editingDeliveryId, payload)
         : await deliveriesApi.create(payload);
       list.refresh();
+      if (!editingDeliveryId) {
+        void categoryCompletion?.promptReopen({
+          projectId: saved.projectId,
+          categoryName: ACTIVITY_CATEGORY.DELIVERIES,
+          reason: `پکینگ‌لیست ${saved.packingListNumber || ''} برای این پروژه ثبت شد.`,
+        });
+      }
       void nextAction.ask(wantsNextAction, saved, (delivery) => ({
         relatedToType: 'بسته‌بندی و تحویل',
         relatedToId: delivery.id,

@@ -80,3 +80,16 @@ export function sameCategory(a: string, b: string): boolean {
   return normalizeCategoryName(canonicalCategoryName(a))
     === normalizeCategoryName(canonicalCategoryName(b));
 }
+
+/**
+ * The question asked when a record lands in a category this project has
+ * already closed — «پیش‌فاکتور لغو شد و دسته بسته شد، حالا نسخهٔ بعدی زده
+ * می‌شود». It says what reopening does to the dates, because that is the half
+ * nobody would guess: the finished date goes, and the next close stamps a new one.
+ */
+export function reopenCategoryMessage(categoryName: string, reason: string): string {
+  const why = reason.trim() ? `${reason.trim()} ` : "";
+  return `${why}دسته‌بندی «${categoryName}» در این پروژه پیش از این بسته شده است. `
+    + "آیا دوباره باز شود؟ با باز شدن، تاریخ پایان قبلی پاک می‌شود و هر وقت کار "
+    + "دوباره تمام شد، تاریخ پایان تازه ثبت خواهد شد.";
+}

@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { projectsApi } from "./projects";
-import { sameCategory } from "../utils/activityCategories";
+import { reopenCategoryMessage, sameCategory } from "../utils/activityCategories";
+import { GROUP_CLOSED, GROUP_OPEN } from "../utils/workBoard";
 
 /**
  * Category completion prompt hook.
@@ -20,6 +21,11 @@ export interface CategoryCompletionPrompt {
   projectId: string;
   categoryName: string;
   message: string;
+  /**
+   * Which question this is. Absent is «close», which is every prompt written
+   * before reopening existed.
+   */
+  mode?: "close" | "reopen";
 }
 
 export function useCategoryCompletion() {
@@ -29,8 +35,70 @@ export function useCategoryCompletion() {
     setPrompt(p);
   }, []);
 
+  /**
+   * «این دسته‌بندی بسته شده؛ دوباره باز شود؟»
+   *
+   * Called after a record is written into a category — a new quotation, a new
+   * order — and asks only when that project's group for it is **closed**. A
+   * group that does not exist yet or is still open needs no answer, and asking
+   * would be a dialog after every save.
+   *
+   * It never replaces a question already on the screen (`prev ?? next`): a
+   * record saved already finished asks to *close* its category, synchronously,
+   * while this one waits on a read — and asking to reopen a category the next
+   * dialog offers to close is the one answer nobody can give.
+   */
+  const promptReopen = useCallback(async (p: {
+    projectId?: string | null; categoryName: string; reason: string;
+  }) => {
+    if (!p.projectId) return;
+    try {
+      const groups = await projectsApi.categoryGroups(p.projectId);
+      const group = groups.find((g) => sameCategory(g.categoryName, p.categoryName));
+      if (!group || group.status !== GROUP_CLOSED) return;
+      const projectId = p.projectId;
+      setPrompt((prev) => prev ?? {
+        projectId,
+        categoryName: group.categoryName,
+        message: reopenCategoryMessage(group.categoryName, p.reason),
+        mode: "reopen",
+      });
+    } catch {
+      // Asking is a courtesy; a failed read must not turn a good save into an error.
+    }
+  }, []);
+
   const confirmCompletion = useCallback(async () => {
     if (!prompt) return;
+
+    if (prompt.mode === "reopen") {
+      try {
+        const groups = await projectsApi.categoryGroups(prompt.projectId);
+        const group = groups.find((g) => sameCategory(g.categoryName, prompt.categoryName));
+        if (group && group.status === GROUP_CLOSED) {
+          await projectsApi.upsertCategoryGroup(prompt.projectId, {
+            categoryId: group.categoryId,
+            categoryName: group.categoryName,
+            status: GROUP_OPEN,
+            startDate: group.startDate || undefined,
+            /*
+             * No end date, on purpose: the server writes an absent one as NULL,
+             * so the finished date goes and the next close stamps its own —
+             * which is exactly «تاریخ پایان بعدی».
+             */
+          });
+          await projectsApi.addActivity({
+            groupId: group.id,
+            text: `دسته‌بندی «${group.categoryName}» دوباره باز شد و تاریخ پایان قبلی آن پاک شد.`,
+          });
+        }
+        setPrompt(null);
+      } catch (err) {
+        console.error("Failed to reopen category:", err);
+        alert("باز کردن دوبارهٔ دسته‌بندی با خطا مواجه شد.");
+      }
+      return;
+    }
 
     try {
       // Fetch the category groups for this project
@@ -88,6 +156,7 @@ export function useCategoryCompletion() {
   return {
     prompt,
     promptCompletion,
+    promptReopen,
     confirmCompletion,
     dismissPrompt,
   };
