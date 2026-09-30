@@ -4,7 +4,8 @@
 
 .DESCRIPTION
     Pulls from git, installs dependencies, type-checks, runs the rule checks,
-    builds, and only then restarts the app. If any stage fails the running
+    builds, and only then restarts the app. Steps the change cannot have
+    affected are skipped (see "what this deploy has to redo"); -Full redoes all. If any stage fails the running
     application is left alone and the previous build is restored, so a bad
     commit cannot take the app down.
 
@@ -20,7 +21,11 @@ param(
     [string]$NodeDir  = "E:\nodejs",
     [string]$TaskName = "ATA-ERP",
     [int]   $Port     = 3000,
-    [switch]$SkipBackup
+    [switch]$SkipBackup,
+    # Redo every step from scratch: reinstall, regenerate, full type-check,
+    # rebuild. The default skips what the change since the last successful
+    # deploy cannot have affected; -Full is for when something looks wrong.
+    [switch]$Full
 )
 
 $ErrorActionPreference = "Stop"
@@ -141,11 +146,42 @@ try {
     exit 3
 }
 
+# ------------------------------------------------ what this deploy has to redo
+# Most deploys change code and nothing else, and reinstalling every package and
+# regenerating the database client on each of them is most of the wait. What is
+# compared is the last commit that deployed *successfully* - written into dist
+# only after a build passes, and restored with dist when one fails - never the
+# commit before this fetch: a deploy that failed half way has already reset the
+# tree, and comparing against that would skip the very install it never ran.
+# No marker, a marker git does not know, or -Full: everything runs, as before.
+$marker = Join-Path $AppDir "dist\.deployed-commit"
+$changed = $null
+if (-not $Full -and (Test-Path $marker)) {
+    $deployedFrom = (Get-Content $marker -Raw).Trim()
+    $list = git diff --name-only $deployedFrom HEAD 2>$null
+    if ($LASTEXITCODE -eq 0) { $changed = @($list | Where-Object { $_ }) }
+}
+function Changed($pattern) {
+    if ($null -eq $changed) { return $true }
+    return [bool]($changed | Where-Object { $_ -match $pattern })
+}
+if ($null -eq $changed) {
+    Write-Host "    (full deploy - every step runs)" -ForegroundColor DarkGray
+} else {
+    Write-Host "    ($($changed.Count) file(s) changed since the last successful deploy)" -ForegroundColor DarkGray
+}
+
 # ------------------------------------------------------------ 4. dependencies
 Step 4 "Installing dependencies"
-& $npm install --no-audit --no-fund
-if ($LASTEXITCODE -ne 0) { Fail "npm install failed"; Restore-Dist; exit 4 }
-Ok "dependencies ready"
+$installed = $false
+if ((Changed '^package(-lock)?\.json$') -or -not (Test-Path "node_modules")) {
+    & $npm install --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { Fail "npm install failed"; Restore-Dist; exit 4 }
+    $installed = $true
+    Ok "dependencies ready"
+} else {
+    Ok "skipped - package.json and package-lock.json are unchanged"
+}
 
 # ------------------------------------------------------------ 5. database migration
 Step 5 "Applying database migrations"
@@ -164,16 +200,24 @@ Ok "database schema is up to date"
 # to do it: Prisma regenerates from an install script, and install scripts are
 # blocked here.
 Step 6 "Regenerating the database client"
-& $npx prisma generate
-if ($LASTEXITCODE -ne 0) {
-    Fail "prisma generate failed - NOT deploying"
-    Restore-Dist
-    exit 6
+if ($installed -or (Changed '^prisma/schema\.prisma$') -or -not (Test-Path "node_modules\.prisma\client")) {
+    & $npx prisma generate
+    if ($LASTEXITCODE -ne 0) {
+        Fail "prisma generate failed - NOT deploying"
+        Restore-Dist
+        exit 6
+    }
+    Ok "database client matches the schema"
+} else {
+    Ok "skipped - prisma/schema.prisma is unchanged"
 }
-Ok "database client matches the schema"
 
 # ------------------------------------------------------------- 7. type-check
 Step 7 "Type-checking"
+#   Incremental: `npm run lint` keeps what it learned in node_modules\.cache and
+#   re-checks only what changed, which is the same full check done once. -Full
+#   throws that cache away, for the rare time the cache itself is the suspect.
+if ($Full) { Remove-Item "node_modules\.cache\tsc-lint.tsbuildinfo" -Force -ErrorAction SilentlyContinue }
 & $npm run lint
 if ($LASTEXITCODE -ne 0) { Fail "type-check failed - NOT deploying"; Restore-Dist; exit 7 }
 Ok "no type errors"
@@ -202,6 +246,10 @@ Step 9 "Building production bundle"
 & $npm run build
 if ($LASTEXITCODE -ne 0) { Fail "build failed - NOT deploying"; Restore-Dist; exit 9 }
 if (-not (Test-Path "dist\server.cjs")) { Fail "dist\server.cjs missing"; Restore-Dist; exit 9 }
+# What the next deploy compares against - see "what this deploy has to redo".
+# Written only here, after everything that can fail the build has passed.
+$deployedCommit = (git rev-parse HEAD).Trim()
+if ($LASTEXITCODE -eq 0) { Set-Content -Path $marker -Value $deployedCommit -Encoding ASCII }
 Ok "build produced dist\server.cjs"
 
 # --------------------------------------------------------------- 10. restart

@@ -129,6 +129,21 @@ git log -1 --oneline
 git ls-remote origin HEAD    # آخرین کامیت روی GitHub
 ```
 
+### چرا معمولاً سریع است، و `-Full`
+
+اسکریپت فهرست فایل‌هایی را که از **آخرین استقرار موفق** عوض شده‌اند می‌خواند (کامیتش در `dist\.deployed-commit` نوشته می‌شود، فقط بعد از اینکه build موفق شد):
+
+- `npm install` فقط وقتی اجرا می‌شود که `package.json` یا `package-lock.json` عوض شده باشد (یا `node_modules` نباشد)؛
+- `prisma generate` فقط بعد از نصب، یا وقتی `prisma/schema.prisma` عوض شده باشد؛
+- type-check افزایشی است و فقط فایل‌های تغییرکرده را دوباره بررسی می‌کند؛
+- migration، rule checks و build **همیشه** اجرا می‌شوند.
+
+اگر استقراری وسط راه شکست بخورد، نشانه‌ی قبلی سر جایش می‌ماند و دفعه‌ی بعد همان مراحل دوباره اجرا می‌شوند. برای اجرای کامل همه‌چیز (مثلاً وقتی به cache شک داری):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File E:\Apps\ATA-ERP-Rev01\scripts\deploy.ps1 -Full
+```
+
 ### خروجی موفق
 
 ```

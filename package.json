@@ -9,7 +9,7 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit",
+    "lint": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc-lint.tsbuildinfo",
     "sync:report": "tsx scripts/sync-reporting.ts",
     "seed:db": "tsx scripts/seedDb.ts",
     "fix:project-loss-reasons": "tsx scripts/backfillProjectLossReasons.ts",
