@@ -134,7 +134,7 @@ import {
 import { TASK_SORTABLE, laneTimestamps } from "../src/server/services/taskService";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
 import {
-  PROJECT_QUOTATION_FILTERS, buildProjectWhere, lossReasonRefusal, quotationWhere,
+  PROJECT_QUOTATION_FILTERS, buildProjectWhere, lossReasonRefusal, quotationWhere, openCategoryWhere,
 } from "../src/server/services/projectService";
 import { PROFORMA_SENT_STATUS, afterSalesClosingReached } from "../src/utils/moduleStatuses";
 import type { ERPSettings, WorkflowRule } from "../src/types";
@@ -22615,6 +22615,32 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     (typed?.next.lossReasons ?? []).filter((r: string) => r.includes("پاسخ")).length === 1);
   ok("no response: a fresh installation has it too",
     readFileSync("src/seedData.ts", "utf8").includes("'عدم پاسخ مشتری'"));
+}
+
+/*
+ * «پروژه‌هایی که حداقل یک دسته‌بندی باز دارند», filtered on the server and
+ * reaching both list endpoints — a control whose value never arrives is a
+ * filter that does nothing.
+ */
+{
+  eq("open category: the clause is an exclusion on the closed status",
+    JSON.stringify(openCategoryWhere("open")),
+    JSON.stringify({ categoryGroups: { some: { status: { not: "اتمام کار" } } } }));
+  ok("open category: anything else adds no clause",
+    openCategoryWhere("all") === null && openCategoryWhere(undefined) === null && openCategoryWhere("x") === null);
+  const w = JSON.stringify(buildProjectWhere({ search: "", filters: {} } as never, { permissions: { projects: true } } as never, { openCategory: "open" }));
+  ok("open category: the grid's query carries it", w.includes('"categoryGroups":{"some"'));
+  const route = readFileSync("src/server/routes/projects.ts", "utf8");
+  eq("open category: both list endpoints read it",
+    (route.match(/openCategory: req\.query\.openCategory/g) ?? []).length, 2);
+  const hook = readFileSync("src/api/useProjectList.ts", "utf8");
+  ok("open category: the hook sends it and counts it as a filter",
+    /openCategory: filters\.openCategory === "all" \? undefined : filters\.openCategory/.test(hook)
+    && /filters\.openCategory !== "all"/.test(hook));
+  const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("open category: the screen's control writes the filter",
+    /value=\{list\.filters\.openCategory\}[\s\S]{0,120}list\.setFilter\('openCategory'/.test(view)
+    && view.includes('<option value="open">'));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

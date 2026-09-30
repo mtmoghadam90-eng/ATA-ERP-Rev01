@@ -72,6 +72,8 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
         // «هنوز پیش‌فاکتور صادر نشده» — see `quotationWhere`; an unrecognised
         // value adds no clause rather than narrowing the grid.
         quotation: req.query.quotation,
+        // «حداقل یک دسته‌بندی باز» — see `openCategoryWhere`.
+        openCategory: req.query.openCategory,
         // The derived figures are the grid's columns, but a picker listing
         // projects does not need them and they cost three extra queries.
         withSummary: req.query.withSummary !== "false",
@@ -99,6 +101,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
         dateTo: req.query.dateTo,
         customField: req.query.customField,
         quotation: req.query.quotation,
+        openCategory: req.query.openCategory,
         withSummary: false,
       });
 
