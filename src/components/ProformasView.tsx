@@ -340,15 +340,30 @@ export default function ProformasView({
    * one it replaced, and that question names both documents — so the caller
    * needs the number the server issued, not just to know the save worked.
    */
-  const addProforma = async (data: Partial<Proforma>): Promise<ProformaDetail | null> => {
+  const addProforma = async (
+    data: Partial<Proforma>,
+    { askReopen = true }: { askReopen?: boolean } = {},
+  ): Promise<ProformaDetail | null> => {
     try {
       const created = await proformasApi.create(proformaToWriteInput(data));
       list.refresh();
+      // A quotation written into a category this project has already closed —
+      // the next version after a cancelled one — asks whether to reopen it.
+      if (askReopen) offerCategoryReopen(created.projectId ?? data.projectId, created.proformaNumber);
       return created;
     } catch (err) {
       reportError(err, 'ثبت پیش‌فاکتور با خطا مواجه شد.');
       return null;
     }
+  };
+
+  /** See `useCategoryCompletion.promptReopen` — it asks only when the group is closed. */
+  const offerCategoryReopen = (projectId: string | null | undefined, proformaNumber: string) => {
+    void categoryCompletion?.promptReopen({
+      projectId,
+      categoryName: ACTIVITY_CATEGORY.PROFORMAS,
+      reason: `پیش‌فاکتور ${proformaNumber} برای این پروژه ثبت شد.`,
+    });
   };
 
   const updateProforma = async (pf: Proforma) => {
@@ -712,7 +727,15 @@ export default function ProformasView({
   const [copyTarget, setCopyTarget] = useState<Proforma | null>(null);
   const [versionQuestion, setVersionQuestion] = useState<{
     newId: string; newNumber: string; previousNumber: string;
+    /** Asked about the category once this question is answered, never beside it. */
+    projectId?: string | null;
   } | null>(null);
+  /** Closes the version question, then asks the category one it held back. */
+  const closeVersionQuestion = () => {
+    const q = versionQuestion;
+    setVersionQuestion(null);
+    if (q) offerCategoryReopen(q.projectId, q.newNumber);
+  };
 
   // Delete confirm state
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
@@ -2620,6 +2643,8 @@ export default function ProformasView({
       status: "جاری",
       lossReason: undefined,
     }));
+    const previousStillOpen = !isTerminalOutcome(full.outcomeStatus ?? full.status);
+    const willAskVersion = mode === 'NEW_VERSION' && previousStillOpen;
     const created = await addProforma({
       // A revision names what it revises; an independent copy names nothing.
       ...(mode === 'NEW_VERSION' ? { previousVersionId: full.id } : {}),
@@ -2654,7 +2679,7 @@ export default function ProformasView({
       historicalExchangeRate: full.historicalExchangeRate,
       notes: full.notes,
       customValues: full.customValues ? { ...full.customValues } : undefined,
-    });
+    }, { askReopen: !willAskVersion });
 
     /*
      * The revision is saved; now the question the person actually has.
@@ -2665,15 +2690,13 @@ export default function ProformasView({
      * is deliberately not one of the answers: issuing a revision is not losing
      * a sale.
      */
-    if (created && mode === 'NEW_VERSION') {
-      const previousStillOpen = !isTerminalOutcome(full.outcomeStatus ?? full.status);
-      if (previousStillOpen) {
-        setVersionQuestion({
-          newId: created.id,
-          newNumber: created.proformaNumber,
-          previousNumber: full.proformaNumber,
-        });
-      }
+    if (created && willAskVersion) {
+      setVersionQuestion({
+        newId: created.id,
+        newNumber: created.proformaNumber,
+        previousNumber: full.proformaNumber,
+        projectId: created.projectId ?? full.projectId,
+      });
     }
   };
 
@@ -2686,7 +2709,7 @@ export default function ProformasView({
     } catch (err) {
       reportError(err, 'لغو نسخه قبلی با خطا مواجه شد.');
     } finally {
-      setVersionQuestion(null);
+      closeVersionQuestion();
     }
   };
   // Filter proformas
@@ -6163,7 +6186,7 @@ export default function ProformasView({
               <button
                 type="button"
                 id="keep-previous-version"
-                onClick={() => setVersionQuestion(null)}
+                onClick={closeVersionQuestion}
                 className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition"
               >
                 بدون تغییر باقی بماند

@@ -466,6 +466,13 @@ export default function AfterSalesServicesView({
         ? await afterSalesApi.update(editingService.id, payload)
         : await afterSalesApi.create(payload);
       list.refresh();
+      if (!editingService) {
+        void categoryCompletion?.promptReopen({
+          projectId: saved.projectId,
+          categoryName: ACTIVITY_CATEGORY.AFTER_SALES,
+          reason: 'پروندهٔ خدمات پس از فروش تازه‌ای برای این پروژه ثبت شد.',
+        });
+      }
       void nextAction.ask(wantsNextAction, saved, (service) => ({
         relatedToType: 'خدمات پس از فروش',
         relatedToId: service.id,

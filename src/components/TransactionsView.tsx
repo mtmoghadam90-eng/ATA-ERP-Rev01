@@ -246,6 +246,11 @@ export default function TransactionsView({
       list.refresh();
       finance.refresh();
       await promptCloseFinanceCategory(tx);
+      void categoryCompletion?.promptReopen({
+        projectId: created.projectId,
+        categoryName: ACTIVITY_CATEGORY.TRANSACTIONS,
+        reason: 'تراکنش مالی تازه‌ای برای این پروژه ثبت شد.',
+      });
       // Returned so «ذخیره و اقدام بعدی» can name the document that was really
       // written — a new one has no id until the server has answered.
       return created;

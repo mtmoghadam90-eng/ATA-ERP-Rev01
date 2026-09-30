@@ -1005,9 +1005,9 @@ export default function App() {
         onConfirm={async () => {
           await categoryCompletion.confirmCompletion();
         }}
-        title="اتمام کار فعالیت"
+        title={categoryCompletion.prompt?.mode === 'reopen' ? 'بازگشایی دسته‌بندی' : 'اتمام کار فعالیت'}
         message={categoryCompletion.prompt?.message || ''}
-        confirmText="بله، تغییر یابد"
+        confirmText={categoryCompletion.prompt?.mode === 'reopen' ? 'بله، دوباره باز شود' : 'بله، تغییر یابد'}
         cancelText="انصراف"
       />
 

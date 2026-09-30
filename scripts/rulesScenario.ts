@@ -112,6 +112,7 @@ import {
   CARD_PRESSES, CARD_TARGETS, cardPressTarget,
 } from "../src/utils/workBoard";
 import { openReferralsTo } from "../src/utils/openReferrals";
+import { reopenCategoryMessage } from "../src/utils/activityCategories";
 import {
   normalizeLimit, remainingCapacity, topUpShortfall, workLimitRefusalReason,
 } from "../src/utils/workLimits";
@@ -22414,6 +22415,30 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   const pv = readFileSync("src/components/ProjectsView.tsx", "utf8");
   ok("open referrals: the feed hands the composer the check over this category's own activities",
     /openReferralsFor=\{\(namedIds\) =>\s*openReferralsTo\(group\.activities, currentUser\?\.id, namedIds\)\}/.test(pv));
+}
+
+// ── a closed category asks to reopen when new work lands in it ──
+{
+  const msg = reopenCategoryMessage("پیش‌فاکتورها و مهندسی فروش", "پیش‌فاکتور P2 ثبت شد.");
+  ok("reopen: the question names the category and why", msg.includes("پیش‌فاکتورها و مهندسی فروش") && msg.includes("P2"));
+  ok("reopen: and says the old end date goes", msg.includes("تاریخ پایان قبلی پاک می‌شود"));
+  const pv = readFileSync("src/components/ProformasView.tsx", "utf8");
+  ok("reopen: a new quotation asks about its category",
+    /if \(askReopen\) offerCategoryReopen\(/.test(pv));
+  ok("reopen: a new version waits until its own «cancel the previous?» question is answered",
+    pv.includes("{ askReopen: !willAskVersion }") && /closeVersionQuestion = \(\) => \{[\s\S]{0,200}offerCategoryReopen/.test(pv));
+  for (const [file, cat] of [
+    ["src/components/PurchaseOrdersView.tsx", "PURCHASE_ORDERS"],
+    ["src/components/SupplierInquiriesView.tsx", "INQUIRIES"],
+    ["src/components/PackagingDeliveryView.tsx", "DELIVERIES"],
+    ["src/components/AfterSalesServicesView.tsx", "AFTER_SALES"],
+    ["src/components/TransactionsView.tsx", "TRANSACTIONS"],
+  ] as const) {
+    ok(`reopen: ${file.split("/").pop()} asks on a new record`,
+      new RegExp(`promptReopen\\(\\{[\\s\\S]{0,120}ACTIVITY_CATEGORY\\.${cat}`).test(readFileSync(file, "utf8")));
+  }
+  const hookSrc = readFileSync("src/api/useCategoryCompletion.ts", "utf8");
+  ok("reopen: never replaces a question already on screen", hookSrc.includes("setPrompt((prev) => prev ?? {"));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

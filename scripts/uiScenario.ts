@@ -70,6 +70,7 @@ import type { NextActionDraft } from "../src/utils/nextAction";
 import { resizeColumns } from "../src/utils/columnWidths";
 import type { Product } from "../src/types";
 import type { ExchangeRate } from "../src/types";
+import { useCategoryCompletion } from "../src/api/useCategoryCompletion";
 
 let pass = 0;
 const fails: string[] = [];
@@ -1359,6 +1360,75 @@ head("Activity composer: asks before a second open referral to the same person")
 
   act(() => { root.unmount(); });
   host.remove();
+}
+
+head("Category reopen: a closed category asks, and reopening clears its end date");
+{
+  const g = globalThis as unknown as Record<string, unknown>;
+  const realFetch = g.fetch;
+  let status = "اتمام کار";
+  const puts: Record<string, unknown>[] = [];
+  const posts: Record<string, unknown>[] = [];
+  g.fetch = async (url: unknown, init?: { method?: string; body?: string }) => {
+    const u = String(url);
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(init.body) : {};
+    if (u.includes("/category-groups") && method === "GET") {
+      return { ok: true, status: 200, json: async () => ({ success: true, groups: [{
+        id: "g1", projectId: "p1", categoryId: "c1", categoryName: "پیش‌فاکتورها و مهندسی فروش",
+        status, startDate: "2026-09-01", endDate: "2026-09-20",
+      }] }), text: async () => "{}" } as unknown as Response;
+    }
+    if (method === "PUT") puts.push(body);
+    if (method === "POST") posts.push(body);
+    return { ok: true, status: 200, json: async () => ({ success: true, group: {}, activity: {} }), text: async () => "{}" } as unknown as Response;
+  };
+  const settle = async () => {
+    for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+  };
+  let hook: ReturnType<typeof useCategoryCompletion> | null = null;
+  function Probe() { hook = useCategoryCompletion(); return null; }
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  await act(async () => { root.render(React.createElement(Probe)); });
+
+  await act(async () => {
+    await hook!.promptReopen({ projectId: "p1", categoryName: "پیش‌فاکتورها و مهندسی فروش", reason: "پیش‌فاکتور P2 ثبت شد." });
+  });
+  await settle();
+  ok("a record landing in a closed category asks to reopen it",
+    hook!.prompt?.mode === "reopen" && (hook!.prompt?.message ?? "").includes("P2"));
+
+  await act(async () => { await hook!.confirmCompletion(); });
+  await settle();
+  const put = puts[0] ?? {};
+  ok("answering yes reopens it", put.status === "جاری");
+  ok("and sends no end date, so the old one is cleared and the next close stamps its own",
+    !("endDate" in put) || put.endDate === undefined);
+  ok("and the feed says it was reopened", posts.some((b) => String(b.text ?? "").includes("دوباره باز شد")));
+  ok("the question is gone afterwards", hook!.prompt === null);
+
+  status = "جاری";
+  await act(async () => {
+    await hook!.promptReopen({ projectId: "p1", categoryName: "پیش‌فاکتورها و مهندسی فروش", reason: "x" });
+  });
+  await settle();
+  ok("an open category asks nothing", hook!.prompt === null);
+
+  status = "اتمام کار";
+  await act(async () => {
+    hook!.promptCompletion({ projectId: "p1", categoryName: "پیش‌فاکتورها و مهندسی فروش", message: "ببندم؟" });
+  });
+  await act(async () => {
+    await hook!.promptReopen({ projectId: "p1", categoryName: "پیش‌فاکتورها و مهندسی فروش", reason: "x" });
+  });
+  await settle();
+  ok("a close question already on screen is never replaced by a reopen one",
+    hook!.prompt?.mode !== "reopen" && hook!.prompt?.message === "ببندم؟");
+
+  act(() => { root.unmount(); });
+  host.remove();
+  g.fetch = realFetch;
 }
 
 head("Message reactions: the eye asks nobody until it is pressed");
