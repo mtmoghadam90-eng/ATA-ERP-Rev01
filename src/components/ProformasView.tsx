@@ -101,6 +101,8 @@ import ProductAdvisorModal from "./ProductAdvisorModal";
 import NumberField from "./NumberField";
 import type { SuggestedItem } from "../api/assistant";
 import { suggestionSpecText } from "../utils/advisorSuggestion";
+import ProformaDeviationFields from './ProformaDeviationFields';
+import { deviationRefusal } from '../utils/deviations';
 import RichTextField from "./RichTextField";
 import {
   DELIVERY_READY_UNIT, getDeliverySummary, updateNotesForItems,
@@ -1447,6 +1449,12 @@ export default function ProformasView({
       // Spelled out like every key above: this list is what the form edits and
       // posts, so a field left out of it is erased on the next save.
       category: item.category,
+      // The deviation, spelled out for the same reason.
+      deviation: item.deviation === true,
+      deviationReference: item.deviationReference,
+      deviationRequested: item.deviationRequested,
+      deviationOffered: item.deviationOffered,
+      deviationRemark: item.deviationRemark,
     }));
     setItems(loadedItems);
     const allEqual =
@@ -2440,6 +2448,13 @@ export default function ProformasView({
         );
         return;
       }
+    }
+
+    // A deviation with nothing to say what is offered cannot go to a customer.
+    const deviationProblem = deviationRefusal(formattedItems);
+    if (deviationProblem) {
+      alert(deviationProblem);
+      return;
     }
 
     if (editingProforma) {
@@ -5692,6 +5707,15 @@ export default function ProformasView({
                           }
                           placeholder="مثال: سایز: ۲ اینچ، کلاس فشاری: PN16، متریال بدنه: WCB، خروجی: 4-20mA..."
                           className="w-full border border-slate-200 rounded-lg px-3 py-1.5 text-xs focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none text-left [direction:ltr] bg-white leading-relaxed"
+                        />
+                        {/* Deviation from the customer's request — printed on
+                            the Technical Deviation List when ticked. */}
+                        <ProformaDeviationFields
+                          rowIndex={idx}
+                          value={item}
+                          onChange={(next) => setItems((prev) => prev.map((row, i) => (
+                            i === idx ? { ...row, ...next } : row
+                          )))}
                         />
                       </div>
                       {/* Product Image Selection */}

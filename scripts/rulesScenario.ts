@@ -112,6 +112,7 @@ import {
   CARD_PRESSES, CARD_TARGETS, cardPressTarget,
 } from "../src/utils/workBoard";
 import { openReferralsTo } from "../src/utils/openReferrals";
+import { deviationRefusal, normalizeDeviation, NO_DEVIATION_STATEMENT } from "../src/utils/deviations";
 import { projectToWriteInput } from "../src/api/projectAdapter";
 import { reopenCategoryMessage } from "../src/utils/activityCategories";
 import {
@@ -21504,7 +21505,7 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("the manual line offers the category box",
     /data-manual-line-category/.test(manual) && /manualCategoryOptions\.map/.test(manual));
   ok("...and loading a document keeps what was chosen",
-    /category: item\.category,\s*\}\)\);\s*setItems\(loadedItems\)/.test(view));
+    /category: item\.category,[\s\S]{0,500}?\}\)\);\s*setItems\(loadedItems\)/.test(view));
   const schema = readFileSync("prisma/schema.prisma", "utf8");
   const itemModel = schema.slice(schema.indexOf("model ProformaItem {"), schema.indexOf('@@map("proforma_items")'));
   ok("the column is on the proforma line", /\n\s*category\s+String\?/.test(itemModel));
@@ -22450,6 +22451,51 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   }
   const hookSrc = readFileSync("src/api/useCategoryCompletion.ts", "utf8");
   ok("reopen: never replaces a question already on screen", hookSrc.includes("setPrompt((prev) => prev ?? {"));
+}
+
+// ── Technical Deviation List ──
+{
+  eq("deviation: a line complies unless ticked, and keeps no text then",
+    JSON.stringify(normalizeDeviation({ deviation: false, deviationOffered: "x" })),
+    JSON.stringify({ deviation: false, deviationReference: null, deviationRequested: null, deviationOffered: null, deviationRemark: null }));
+  eq("deviation: a ticked line keeps its words", normalizeDeviation({ deviation: true, deviationOffered: " SS304 " }).deviationOffered, "SS304");
+  ok("deviation: a ticked line without the offered spec is refused, naming the row",
+    (deviationRefusal([{ productName: "a" }, { productName: "b", deviation: true, deviationRequested: "SS316" }]) ?? "").includes("ردیف 2"));
+  eq("deviation: a complete one is not", deviationRefusal([{ productName: "b", deviation: true, deviationRequested: "SS316", deviationOffered: "SS304" }]), null);
+
+  const tpl = { companyName: "ATA", showLogo: false, showSignatures: false } as never;
+  const base = {
+    id: "p", proformaNumber: "QT-1", issueDate: "1405/07/08", expiryDate: "1405/08/08",
+    currency: "ریال", notes: "شرایط پرداخت", totalAmount: 0, discountPercent: 0, discountAmount: 0,
+    taxPercent: 0, taxAmount: 0, finalAmount: 0, projectInquiryNumber: "RFQ-9",
+  };
+  const clean = renderProformaDocument({
+    proforma: { ...base, items: [{ productName: "Flow meter", quantity: 1, unitPriceRIYAL: 0 }] } as never,
+    template: tpl, products: [], showBrand: false,
+  });
+  ok("deviation: with none, no deviation page is printed", !clean.includes("TECHNICAL DEVIATION LIST"));
+  ok("deviation: and the compliance statement opens the terms, before the writer's own text",
+    clean.indexOf(NO_DEVIATION_STATEMENT) > 0 && clean.indexOf(NO_DEVIATION_STATEMENT) < clean.indexOf("شرایط پرداخت"));
+  const dev = renderProformaDocument({
+    proforma: { ...base, items: [
+      { productName: "Gauge", quantity: 1, unitPriceRIYAL: 0 },
+      { productName: "Flow <meter>", tagNumber: "FT-101", quantity: 1, unitPriceRIYAL: 0, deviation: true,
+        deviationRequested: "Body SS316", deviationOffered: "Body SS304", deviationReference: "DS Rev.2 Item 7" },
+    ] } as never,
+    template: tpl, products: [], showBrand: false,
+  });
+  ok("deviation: a deviating line prints the English page", dev.includes("TECHNICAL DEVIATION LIST"));
+  ok("deviation: and no compliance statement", !dev.includes(NO_DEVIATION_STATEMENT));
+  ok("deviation: the row keeps its quotation row number, tag and both specs",
+    /<td[^>]*>2<\/td>\s*<td>Flow &lt;meter&gt;\nTag: FT-101<\/td>\s*<td>DS Rev.2 Item 7<\/td>\s*<td>Body SS316<\/td>\s*<td>Body SS304<\/td>/.test(dev));
+  ok("deviation: only deviating lines are listed", !/<td>Gauge<\/td>/.test(dev));
+  ok("deviation: the customer's inquiry number heads it", dev.includes("Customer Inquiry No.:</strong> RFQ-9"));
+  ok("deviation: the page starts on a sheet of its own", /\.deviation-page \{[^}]*break-before: page/.test(dev));
+  const svc = readFileSync("src/server/services/proformaService.ts", "utf8");
+  ok("deviation: the server stores it through the one rule and refuses an incomplete one",
+    svc.includes("...normalizeDeviation(row)") && (svc.match(/assertDeviationsComplete\(/g) ?? []).length >= 3);
+  ok("deviation: the migration adds the column",
+    readFileSync("prisma/migrations/20260930001400_proforma_item_deviation/migration.sql", "utf8").includes("[deviation] BIT NOT NULL"));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

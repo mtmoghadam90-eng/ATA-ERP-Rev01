@@ -48,6 +48,7 @@ import MessageReactions from "../src/components/MessageReactions";
 import WorkBoard from "../src/components/WorkBoard";
 import FollowUpCompletionModal from "../src/components/FollowUpCompletionModal";
 import ActivityComposer from "../src/components/ActivityComposer";
+import ProformaDeviationFields from "../src/components/ProformaDeviationFields";
 import StuckThresholdsPanel from "../src/components/StuckThresholdsPanel";
 import ColumnResizeHandle from "../src/components/ColumnResizeHandle";
 import NextActionModal from "../src/components/NextActionModal";
@@ -1429,6 +1430,46 @@ head("Category reopen: a closed category asks, and reopening clears its end date
   act(() => { root.unmount(); });
   host.remove();
   g.fetch = realFetch;
+}
+
+head("Proforma line: the deviation boxes appear on the tick and reach the form");
+{
+  const settle = async () => {
+    for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
+  };
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  let value: Record<string, unknown> = { deviation: false };
+  const render = async () => {
+    await act(async () => {
+      root.render(React.createElement(ProformaDeviationFields, {
+        rowIndex: 0, value: value as never,
+        onChange: (next: Record<string, unknown>) => { value = next; void render(); },
+      }));
+    });
+    await settle();
+  };
+  await render();
+  ok("a complying line shows only the tick", !host.querySelector("[data-deviation-offered]"));
+  const toggle = host.querySelector("[data-deviation-toggle]") as HTMLInputElement;
+  await act(async () => {
+    toggle.checked = true;
+    handlers(toggle).onChange?.({ target: toggle, currentTarget: toggle });
+  });
+  await settle();
+  ok("ticking it reaches the form", value.deviation === true);
+  const offered = host.querySelector("[data-deviation-offered]") as HTMLTextAreaElement | null;
+  ok("and opens the boxes", !!offered && !!host.querySelector("[data-deviation-requested]"));
+  if (offered) {
+    await act(async () => {
+      offered.value = "SS304";
+      handlers(offered).onChange?.({ target: offered, currentTarget: offered });
+    });
+    await settle();
+  }
+  ok("what is typed reaches the form, keeping the tick", value.deviationOffered === "SS304" && value.deviation === true);
+  act(() => { root.unmount(); });
+  host.remove();
 }
 
 head("Message reactions: the eye asks nobody until it is pressed");
