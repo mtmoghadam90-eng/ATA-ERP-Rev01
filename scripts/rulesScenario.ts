@@ -112,6 +112,7 @@ import {
   CARD_PRESSES, CARD_TARGETS, cardPressTarget,
 } from "../src/utils/workBoard";
 import { openReferralsTo } from "../src/utils/openReferrals";
+import { projectToWriteInput } from "../src/api/projectAdapter";
 import { reopenCategoryMessage } from "../src/utils/activityCategories";
 import {
   normalizeLimit, remainingCapacity, topUpShortfall, workLimitRefusalReason,
@@ -9387,7 +9388,17 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
   ok("the form shows the derived value read-only once a quotation exists",
     /project-loss-reason-derived/.test(view));
-  ok("and sends nothing for it", /proformaCount === 0 \? lossReason : void 0/.test(view));
+  ok("and sends nothing for it", /lossReason: proformaCount > 0 \? void 0 :/.test(view));
+  /*
+   * «Nothing» has to survive the adapter too. It used to write `?? null`, so the
+   * form's `void 0` reached the server as «clear it» — refused on every lost
+   * project with a quotation, whatever field was being edited (reported on the
+   * lead quality).
+   */
+  const lossWrite = JSON.parse(JSON.stringify(projectToWriteInput({ lossReason: undefined } as never)));
+  ok("and the write adapter keeps it absent rather than null", !("lossReason" in lossWrite));
+  eq("while a real reason still travels",
+    (projectToWriteInput({ lossReason: "قیمت" } as never) as { lossReason?: unknown }).lossReason, "قیمت");
 
   const route = readFileSync("src/server/routes/proformas.ts", "utf8");
   ok("the outcome endpoint refuses a lost line with no reason",
