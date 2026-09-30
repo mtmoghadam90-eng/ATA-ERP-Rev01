@@ -364,6 +364,15 @@ export interface ProformaItem {
    */
   category?: string;
   tagNumber?: string;
+  /**
+   * Where this line departs from the customer's request — see
+   * `src/utils/deviations.ts`. Absent/false is «complies».
+   */
+  deviation?: boolean;
+  deviationReference?: string;
+  deviationRequested?: string;
+  deviationOffered?: string;
+  deviationRemark?: string;
 }
 
 export interface Proforma {

@@ -941,6 +941,16 @@ model ProformaItem {
   /// category. See `lineCategory` in `src/utils/productCategories.ts`.
   category String? @db.NVarChar(150)
 
+  /// Where this line departs from what the customer asked for. Absent/false is
+  /// «complies», which is every line written before this and the default on a
+  /// new one; a deviating line prints on the «Technical Deviation List» page.
+  /// See `src/utils/deviations.ts`.
+  deviation          Boolean @default(false)
+  deviationReference String? @db.NVarChar(200)
+  deviationRequested String? @db.NVarChar(1000)
+  deviationOffered   String? @db.NVarChar(1000)
+  deviationRemark    String? @db.NVarChar(1000)
+
   selectedFeatures String? @db.NVarChar(Max)
   selectedImage    String? @db.NVarChar(500)
 

@@ -1,3 +1,4 @@
+import { deviationRefusal, normalizeDeviation } from "../../utils/deviations";
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { formatMoney } from "../../numUtils";
@@ -322,6 +323,11 @@ export interface ProformaItemInput {
   deliveryPostfix?: string | null;
   paymentTerm?: string | null;
   category?: string | null;
+  deviation?: boolean | null;
+  deviationReference?: string | null;
+  deviationRequested?: string | null;
+  deviationOffered?: string | null;
+  deviationRemark?: string | null;
   selectedFeatures?: unknown;
   selectedImage?: string | null;
 }
@@ -494,6 +500,12 @@ export function assertLinesCosted(
   );
 }
 
+/** A deviating line must say what was asked and what is offered — see `deviationRefusal`. */
+export function assertDeviationsComplete(items: ProformaItemInput[]): void {
+  const refusal = deviationRefusal(items);
+  if (refusal) throw new Error(refusal);
+}
+
 /**
  * Builds the line mapper for one document.
  *
@@ -547,6 +559,8 @@ function mapItem(row: ProformaItemInput, currency: string): Record<string, unkno
     // A catalogue line's category is its product's, never a copy on the line:
     // see `lineCategory`. Only a free-text line stores one.
     category: productId ? null : toNullableString(row.category, 150),
+    // Complies unless ticked; a complying line keeps no deviation text.
+    ...normalizeDeviation(row),
     selectedFeatures: toJsonColumn(row.selectedFeatures),
     selectedImage: toNullableString(row.selectedImage, 500),
   };
@@ -821,6 +835,7 @@ export async function createProforma(input: ProformaInput, user: AuthUser, today
 
     const createCurrency = String(input.currency ?? "ریال");
     if (canSeeCosts(user)) assertLinesCosted(items, createCurrency, input.proformaType);
+    assertDeviationsComplete(items);
     // A revision names the document it revises, and a document may have one.
     await assertVersionChain(tx, input.previousVersionId);
 
@@ -1002,6 +1017,7 @@ export async function updateProforma(
     if (items !== undefined && canSeeCosts(user)) {
       assertLinesCosted(items, documentCurrency, input.proformaType ?? before?.proformaType);
     }
+    if (items !== undefined) assertDeviationsComplete(items as ProformaItemInput[]);
 
     // Totals depend on the lines, so they can only be recomputed when the lines
     // are part of this request. Otherwise the stored totals already match the

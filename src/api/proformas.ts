@@ -36,6 +36,11 @@ export interface ProformaItemRow {
   deliveryPostfix: string | null;
   paymentTerm: string | null;
   category: string | null;
+  deviation: boolean | null;
+  deviationReference: string | null;
+  deviationRequested: string | null;
+  deviationOffered: string | null;
+  deviationRemark: string | null;
   selectedFeatures: string | null;
   selectedImage: string | null;
 }

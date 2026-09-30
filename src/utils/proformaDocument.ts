@@ -4,6 +4,7 @@ import { escapeHtml, renderRichText } from "./richText";
 import { familyNameOnly } from "./customerLabel";
 import { namePrefixFor } from "./honorific";
 import { proformaDocumentTitle } from "./moduleStatuses";
+import { hasDeviations, NO_DEVIATION_STATEMENT } from "./deviations";
 
 /**
  * The proforma, as a standalone A4 document.
@@ -202,6 +203,17 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
                       <div><span style="color: #64748b;">${escapeHtml(String(label))}:</span> ${escapeHtml(String(value))}</div>
                       `).join("")}
                   </div>`;
+
+  /*
+   * «Technical Deviation List» — printed only when a line deviates. With none,
+   * no page goes with the proforma and the compliance statement opens the
+   * terms instead. English, left to right: it is a technical document read
+   * beside the customer's own datasheets. See `src/utils/deviations.ts`.
+   */
+  const deviating = hasDeviations(pf.items);
+  const noDeviationLine = deviating ? "" :
+    `<div class="no-deviation">${escapeHtml(NO_DEVIATION_STATEMENT)}</div>`;
+  const deviationPage = deviating ? renderDeviationPage(pf) : "";
 
   const itemsRows = pf.items
     .map((item, index) => {
@@ -614,6 +626,54 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
           page-break-inside: avoid;
           break-inside: avoid;
       }
+      /* The compliance statement opens the terms when nothing deviates. */
+      .no-deviation {
+          font-weight: bold;
+          color: #047857;
+          margin-bottom: 6px;
+          line-height: 1.6;
+      }
+      /*
+       * The deviation list starts on a sheet of its own and may run to several:
+       * rows are kept whole and the table's own header repeats, but the table
+       * as a whole is breakable — the goods table's lesson.
+       */
+      .deviation-page {
+          break-before: page;
+          page-break-before: always;
+          direction: ltr;
+          text-align: left;
+          font-size: 11px;
+          color: #1e293b;
+      }
+      .deviation-page h2 {
+          text-align: center;
+          font-size: 15px;
+          letter-spacing: 1px;
+          margin: 4px 0 10px;
+      }
+      .deviation-meta {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px 24px;
+          margin-bottom: 10px;
+      }
+      .deviation-table {
+          width: 100%;
+          border-collapse: collapse;
+          page-break-inside: auto;
+          direction: ltr;
+      }
+      .deviation-table th, .deviation-table td {
+          border: 1px solid #cbd5e1;
+          padding: 5px 6px;
+          text-align: left;
+          vertical-align: top;
+          white-space: pre-line;
+      }
+      .deviation-table th { background-color: #f1f5f9; font-weight: bold; }
+      .deviation-table tr { page-break-inside: avoid; break-inside: avoid; }
+      .deviation-note { margin-top: 10px; font-style: italic; }
       .totals-card {
           border: 1px solid #e2e8f0;
           border-radius: 8px;
@@ -1035,6 +1095,7 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
               <div class="${pf.proformaType === "TECHNICAL" ? "" : "financial-grid"}">
                   <div class="notes-card" style="${pf.proformaType === "TECHNICAL" ? "width: 100%;" : ""}">
                       <div style="font-weight: bold; color: #334155; margin-bottom: 8px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px;">توضیحات و شرایط فروش</div>
+                      ${noDeviationLine}
                       <div style="white-space: pre-line; line-height: 1.6; font-size: 12px;">${renderRichText(pf.notes)}</div>
                   </div>
                   ${
@@ -1108,6 +1169,7 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
               `
                   : ""
               }
+              ${deviationPage}
           </td></tr>
       </tbody>
   </table>
@@ -1126,4 +1188,55 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
 </html>
   `;
   return htmlContent;
+}
+
+/**
+ * The «Technical Deviation List» page — one row per deviating line, numbered
+ * by its own row on the quotation so the two documents can be read together.
+ * Every value is escaped: all of it was typed into a form.
+ */
+export function renderDeviationPage(pf: Proforma): string {
+  const rows = pf.items
+    .map((item, index) => ({ item, no: index + 1 }))
+    .filter(({ item }) => item.deviation === true)
+    .map(({ item, no }) => {
+      const tag = item.tagNumber ? `\nTag: ${item.tagNumber}` : "";
+      return `
+                  <tr>
+                      <td style="width: 34px; text-align: center;">${no}</td>
+                      <td>${escapeHtml(`${item.productName}${tag}`)}</td>
+                      <td>${escapeHtml(item.deviationReference ?? "-")}</td>
+                      <td>${escapeHtml(item.deviationRequested ?? "")}</td>
+                      <td>${escapeHtml(item.deviationOffered ?? "")}</td>
+                      <td>${escapeHtml(item.deviationRemark ?? "-")}</td>
+                  </tr>`;
+    }).join("");
+  const meta = [
+    ["Quotation No.", pf.proformaNumber],
+    ["Date", pf.issueDate],
+    ["Customer Inquiry No.", pf.projectInquiryNumber],
+    ["Project", pf.projectName],
+  ].filter(([, value]) => String(value ?? "").trim() !== "")
+    .map(([label, value]) => `<div><strong>${label}:</strong> ${escapeHtml(String(value))}</div>`)
+    .join("");
+  return `
+              <div class="deviation-page">
+                  <h2>TECHNICAL DEVIATION LIST</h2>
+                  <div class="deviation-meta">${meta}</div>
+                  <table class="deviation-table">
+                      <thead>
+                          <tr>
+                              <th style="width: 34px;">Item</th>
+                              <th>Description / Tag</th>
+                              <th>Customer Ref.</th>
+                              <th>Required</th>
+                              <th>Offered</th>
+                              <th>Remarks</th>
+                          </tr>
+                      </thead>
+                      <tbody>${rows}
+                      </tbody>
+                  </table>
+                  <p class="deviation-note">All other items and specifications comply with the customer's inquiry.</p>
+              </div>`;
 }
