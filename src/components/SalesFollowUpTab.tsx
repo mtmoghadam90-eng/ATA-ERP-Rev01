@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   AlertTriangle, CalendarClock, CalendarDays, PhoneOff, RotateCcw, Search, Target,
@@ -18,7 +18,7 @@ import {
 import type { ERPSettings } from '../types';
 import { settlementCategoryPrompt } from '../utils/salesFollowUp';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
-import type { useCategoryCompletion } from '../api/useCategoryCompletion';
+import type { CategoryCompletionPrompt, useCategoryCompletion } from '../api/useCategoryCompletion';
 
 /**
  * «پیگیری فروش» — the quotations somebody should be chasing, in the order they
@@ -100,6 +100,17 @@ export default function SalesFollowUpTab({ active, settings, categoryCompletion 
   const [closingIds, setClosingIds] = useState<string[] | null>(null);
   const [closingBusy, setClosingBusy] = useState(false);
   const [closingNote, setClosingNote] = useState<string | null>(null);
+  /*
+    The dialog holds one question at a time, so the rest wait here and the next
+    is asked once the one on screen has been answered either way.
+  */
+  const [pendingPrompts, setPendingPrompts] = useState<CategoryCompletionPrompt[]>([]);
+  const promptOnScreen = categoryCompletion?.prompt ?? null;
+  useEffect(() => {
+    if (!categoryCompletion || promptOnScreen || pendingPrompts.length === 0) return;
+    categoryCompletion.promptCompletion(pendingPrompts[0]);
+    setPendingPrompts((prev) => prev.slice(1));
+  }, [categoryCompletion, promptOnScreen, pendingPrompts]);
 
   const confirmStrandedClose = async () => {
     if (!closingIds?.length) return;
@@ -112,6 +123,19 @@ export default function SalesFollowUpTab({ active, settings, categoryCompletion 
       );
       setClosingIds(null);
       queueList.refresh();
+      /*
+        The same question every other settlement asks — one per project, since
+        several quotations of one job closed together close one category.
+      */
+      const seen = new Set<string>();
+      const prompts: CategoryCompletionPrompt[] = [];
+      for (const doc of out.closed) {
+        if (!doc.projectId || seen.has(doc.projectId)) continue;
+        seen.add(doc.projectId);
+        const p = settlementCategoryPrompt(doc, ACTIVITY_CATEGORY.PROFORMAS);
+        if (p) prompts.push(p);
+      }
+      setPendingPrompts((prev) => [...prev, ...prompts]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'بستن پیش‌فاکتورها با خطا مواجه شد.');
     } finally {

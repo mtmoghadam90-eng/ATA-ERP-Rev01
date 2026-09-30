@@ -590,7 +590,17 @@ export interface ReactivateInput {
 /* ------------------ closing the quotations «عدم پاسخ» stranded ----------------- */
 
 export interface StrandedCloseOutcome {
-  closed: string[];
+  /**
+   * What was settled, with the job it belongs to — so the screen can ask the
+   * question every other settlement asks: is the project's «پیش‌فاکتور»
+   * activity category finished with?
+   */
+  closed: {
+    id: string;
+    proformaNumber: string;
+    projectId: string | null;
+    settledOutcome: SettleOutcome;
+  }[];
   /** Ids that were not closed, each with the sentence saying why. */
   skipped: { id: string; reason: string }[];
 }
@@ -654,7 +664,12 @@ export async function closeStrandedNoResponse(
       await closeFollowUpTasks(tx, id, todayJalali);
       await syncProjectStatus(tx, proforma.projectId, todayJalali, user);
     });
-    out.closed.push(id);
+    out.closed.push({
+      id,
+      proformaNumber: proforma.proformaNumber,
+      projectId: proforma.projectId ?? null,
+      settledOutcome: closing.settleOutcome,
+    });
 
     await afterCommit("stranded no-response close", () => logProjectFact(
       {
