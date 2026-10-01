@@ -1373,6 +1373,7 @@ export default function ProjectsView({
       { id: "packaging_delivery", name: "بسته‌بندی و تحویل کالا", desc: "پکینگ لیست‌های صادر شده، عکس‌های بسته‌بندی و اسناد بارنامه", iconBg: "bg-emerald-50 text-emerald-600 border-emerald-100", icon: CheckCircle2 },
       { id: "financial_transactions", name: "تراکنش‌های مالی و پرداخت‌ها", desc: "فیش‌های پیش‌پرداخت، فاکتورهای رسمی و اسناد مالی پروژه", iconBg: "bg-purple-50 text-purple-600 border-purple-100", icon: TrendingUp },
       { id: "after_sales", name: "خدمات پس از فروش", desc: "اسناد خدمات گارانتی، برگه ترخیص کالا برای تعمیر و گزارشات خرابی", iconBg: "bg-teal-50 text-teal-600 border-teal-100", icon: Sliders },
+      { id: "meetings", name: "صورتجلسات", desc: "صورتجلسات جلسات این پروژه، قابل چاپ و ذخیره به‌صورت PDF", iconBg: "bg-amber-50 text-amber-700 border-amber-100", icon: ClipboardList },
       { id: "manual_other", name: "سایر مدارک و فایل‌های دستی", desc: "مدارک متفرقه و فایل‌هایی که به طور مستقیم در بالا طبقه‌بندی نشده‌اند", iconBg: "bg-slate-50 text-slate-600 border-slate-150", icon: Folder }
     ];
 
@@ -6409,6 +6410,7 @@ export default function ProjectsView({
                 selectedProjectForActivities ? (
                   <MeetingsView
                     currentUser={currentUser}
+                    settings={settings}
                     projectId={selectedProjectForActivities.id}
                     projectLabel={`${selectedProjectForActivities.code} — ${selectedProjectForActivities.name}`}
                   />
