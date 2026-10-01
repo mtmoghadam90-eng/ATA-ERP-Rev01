@@ -4139,6 +4139,19 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
   ok("meetings screen: the person writing it is an attendee by default",
     draft?.attendees?.some((a: { userId?: string }) => a.userId === "u1"), draft?.attendees);
 
+  /* -- the saved minutes print from the form -- */
+  // jsdom has no layout, so no ResizeObserver; the preview only uses it to scale.
+  const gR = globalThis as unknown as Record<string, unknown>;
+  if (!gR.ResizeObserver) {
+    gR.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+    (dom.window as unknown as Record<string, unknown>).ResizeObserver = gR.ResizeObserver;
+  }
+  await click(hostM.querySelector("#meeting-print"));
+  ok("meetings screen: «چاپ / PDF» opens the preview of the saved minutes",
+    !!hostM.querySelector("[data-meeting-print]") && !!hostM.querySelector("[data-meeting-print] iframe"));
+  await click(hostM.querySelector('[aria-label="بستن پیش‌نمایش"]'));
+  ok("meetings screen: ...and the preview closes", !hostM.querySelector("[data-meeting-print]"));
+
   /* -- the actions of every meeting, in a tab of their own -- */
   await click(hostM.querySelector('[aria-label="بستن"]'));
   await click(hostM.querySelector("#meeting-view-actions"));

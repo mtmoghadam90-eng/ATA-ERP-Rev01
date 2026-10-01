@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   CalendarDays, CheckCircle2, ClipboardList, Clock, FileText, Loader2, MapPin, Paperclip,
-  Plus, Search, Trash2, Users, X, AlertTriangle, Lock,
+  Plus, Search, Trash2, Users, X, AlertTriangle, Lock, Printer,
 } from 'lucide-react';
-import type { User } from '../types';
+import type { ERPSettings, User } from '../types';
+import { DocumentPreview } from './DocumentPreview';
+import { inlineDocumentAssets } from '../utils/inlineAssets';
+import { printHtmlDocument } from '../utils/printDocument';
+import { meetingDocumentTitle, renderMeetingDocument } from '../utils/meetingDocument';
+import { activeTemplateOf } from '../utils/brand';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { SearchableSelect } from './SearchableSelect';
 import { getTodayShamsi } from '../dateUtils';
@@ -39,6 +44,72 @@ interface Props {
   projectId?: string;
   projectLabel?: string;
   onOpenProject?: (code: string) => void;
+  /** The letterhead the printed minutes carry — the active proforma template. */
+  settings?: ERPSettings;
+  /** A `?printModule=meetings&printId=…` link: open straight on its printable view. */
+  initialPrintDocId?: string;
+  onClearInitialPrintDocId?: () => void;
+}
+
+/**
+ * The printed minutes for a meeting, as one HTML string — what the preview
+ * shows and what the browser prints into a PDF. The letterhead is the active
+ * proforma template's, so the company prints one way on every document.
+ */
+export function meetingDocumentHtml(meeting: MeetingRow, settings?: ERPSettings): string {
+  return renderMeetingDocument({
+    meeting: {
+      ...meeting,
+      items: (meeting.items ?? []).map((i) => ({
+        lineNo: i.lineNo, text: i.text, kind: i.kind, assignees: i.assignees,
+        dueDateJalali: i.dueDateJalali, state: i.state,
+      })),
+    },
+    template: (activeTemplateOf(settings) ?? null) as never,
+  });
+}
+
+/**
+ * Preview and print, in one modal. Printing goes through the browser's own
+ * engine (where «Save as PDF» lives), never a screenshot, exactly as the
+ * proforma does — the PDF carries real text.
+ */
+export function MeetingPrintModal({ meeting, settings, onClose }: {
+  meeting: MeetingRow;
+  settings?: ERPSettings;
+  onClose: () => void;
+}) {
+  const html = useMemo(() => meetingDocumentHtml(meeting, settings), [meeting, settings]);
+  const [busy, setBusy] = useState(false);
+  const print = async () => {
+    setBusy(true);
+    try {
+      // The logo is a `/uploads/…` path that resolves to nothing inside the
+      // print frame's own document, so it is inlined first.
+      const standalone = await inlineDocumentAssets(html);
+      await printHtmlDocument(standalone, meetingDocumentTitle(meeting));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" dir="rtl" data-meeting-print>
+      <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-4xl max-h-[94vh] flex flex-col shadow-xl">
+        <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-700">
+          <h3 className="font-bold text-slate-800 dark:text-slate-100">پیش‌نمایش صورتجلسه {meeting.code}</h3>
+          <div className="flex gap-2">
+            <button type="button" id="meeting-print-now" disabled={busy} onClick={() => void print()} className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-bold flex items-center gap-1.5">
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />} چاپ / ذخیره PDF
+            </button>
+            <button type="button" onClick={onClose} aria-label="بستن پیش‌نمایش" className="px-3 py-2 border border-slate-200 rounded-lg text-sm">بستن</button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 bg-slate-100 dark:bg-slate-800">
+          <DocumentPreview html={html} />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 const STATE_TONE: Record<MeetingItemState, string> = {
@@ -56,7 +127,23 @@ const KIND_TONE: Record<MeetingItemKind, string> = {
   INFO: 'bg-slate-100 text-slate-600',
 };
 
-export default function MeetingsView({ currentUser, projectId, projectLabel, onOpenProject }: Props) {
+export default function MeetingsView({
+  currentUser, projectId, projectLabel, onOpenProject, settings, initialPrintDocId, onClearInitialPrintDocId,
+}: Props) {
+  /*
+   * A printable link opened in its own tab: the record is read and the
+   * preview shown, the way every other module answers `?printModule=`.
+   */
+  const [printing, setPrinting] = useState<MeetingRow | null>(null);
+  useEffect(() => {
+    if (!initialPrintDocId) return;
+    let live = true;
+    meetingsApi.get(initialPrintDocId)
+      .then(({ meeting }) => { if (live) setPrinting(meeting); })
+      .catch(() => { /* a meeting that is gone, or not this person's, simply does not open */ });
+    return () => { live = false; };
+  }, [initialPrintDocId]);
+
   const [projectFilter, setProjectFilter] = useState<string>('all');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -310,6 +397,14 @@ export default function MeetingsView({ currentUser, projectId, projectLabel, onO
           fixedProjectLabel={projectLabel}
           onClose={() => setEditing(null)}
           onSaved={() => { list.refresh(); actions.refresh(); }}
+          onPrint={setPrinting}
+        />
+      )}
+      {printing && (
+        <MeetingPrintModal
+          meeting={printing}
+          settings={settings}
+          onClose={() => { setPrinting(null); if (initialPrintDocId) onClearInitialPrintDocId?.(); }}
         />
       )}
     </div>
@@ -389,6 +484,8 @@ interface FormProps {
   fixedProjectLabel?: string;
   onClose: () => void;
   onSaved: (meeting: MeetingRow) => void;
+  /** Opens the printed minutes — the saved record, never the unsaved form. */
+  onPrint?: (meeting: MeetingRow) => void;
 }
 
 interface ItemDraft extends MeetingItemInput {
@@ -400,7 +497,7 @@ interface ItemDraft extends MeetingItemInput {
 let keySeq = 0;
 const newKey = () => `item-${++keySeq}`;
 
-export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedProjectLabel, onClose, onSaved }: FormProps) {
+export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedProjectLabel, onClose, onSaved, onPrint }: FormProps) {
   const { users } = useUserDirectory();
   const activeUsers = useMemo(() => users.filter((u) => u.isActive !== false), [users]);
 
@@ -576,7 +673,14 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
             )}
             {readOnly && <span className="text-[11px] text-slate-500 flex items-center gap-1"><Lock size={11} /> فقط مشاهده</span>}
           </div>
-          <button type="button" onClick={onClose} aria-label="بستن" className="p-1.5 rounded-lg hover:bg-slate-100"><X size={18} /></button>
+          <div className="flex items-center gap-1">
+            {loaded && onPrint && (
+              <button type="button" id="meeting-print" onClick={() => onPrint(loaded)} className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm flex items-center gap-1.5 hover:bg-slate-50">
+                <Printer size={14} /> چاپ / PDF
+              </button>
+            )}
+            <button type="button" onClick={onClose} aria-label="بستن" className="p-1.5 rounded-lg hover:bg-slate-100"><X size={18} /></button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">

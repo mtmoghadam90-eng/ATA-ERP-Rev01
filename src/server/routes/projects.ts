@@ -308,7 +308,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
       res.json({
         success: true,
         folders: DOCUMENT_FOLDERS,
-        documents: await listProjectDocuments(req.params.id),
+        documents: await listProjectDocuments(req.params.id, user),
       });
     } catch (err) {
       sendError(res, err, "GET /api/projects/:id/documents");

@@ -588,7 +588,10 @@ export default function App() {
         return (
           <MeetingsView
             currentUser={store.currentUser}
+            settings={store.settings}
             onOpenProject={(code) => openProjectIn('projects', code)}
+            initialPrintDocId={printDocumentRequest?.module === 'meetings' ? printDocumentRequest.docId : undefined}
+            onClearInitialPrintDocId={handleClearPrintDoc}
           />
         );
       case 'stuckWork':

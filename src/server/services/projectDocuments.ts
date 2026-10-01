@@ -1,5 +1,8 @@
 import { getDb } from "../db";
 import { fromJsonColumn } from "../childSync";
+import type { AuthUser } from "../auth";
+import { visibilityClause as meetingVisibility } from "./meetingService";
+import { MEETING_STATUS_LABELS, meetingStatus } from "../../utils/meetingMinutes";
 
 /**
  * Every document attached to a project, grouped into the folders the UI shows.
@@ -23,6 +26,7 @@ export const DOCUMENT_FOLDERS = [
   { id: "financial_transactions", name: "تراکنش‌های مالی و پرداخت‌ها" },
   { id: "after_sales", name: "خدمات پس از فروش" },
   { id: "satisfaction_letters", name: "رضایت‌نامه‌ها" },
+  { id: "meetings", name: "صورتجلسات" },
   { id: "manual_other", name: "سایر مدارک و فایل‌های دستی" },
 ] as const;
 
@@ -71,13 +75,22 @@ function attachmentsOf(raw: string | null): Attachment[] {
   return Array.isArray(parsed) ? (parsed as Attachment[]) : [];
 }
 
-export async function listProjectDocuments(projectId: string): Promise<ProjectDocuments> {
+export const MEETINGS_FOLDER = "صورتجلسات";
+
+/**
+ * `user` decides which of the project's meetings are listed: a meeting has its
+ * own visibility (the people it concerns, or `meetingsAll`), and naming one in
+ * a project's folder to somebody who could not open it would leak its title.
+ * Without a user no meeting is listed — the safe direction.
+ */
+export async function listProjectDocuments(projectId: string, user?: AuthUser): Promise<ProjectDocuments> {
   const db = getDb();
 
   const folders: ProjectDocuments = {};
   for (const folder of DOCUMENT_FOLDERS) folders[folder.name] = [];
 
-  const [project, proformas, inquiries, purchaseOrders, deliveries, transactions, services] =
+  const visibleMeetings = user ? meetingVisibility(user) : null;
+  const [project, proformas, inquiries, purchaseOrders, deliveries, transactions, services, meetings] =
     await Promise.all([
       db.project.findUnique({
         where: { id: projectId },
@@ -110,6 +123,13 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
         where: { projectId },
         select: { id: true, itemName: true, status: true, startDateJalali: true },
       }),
+      user
+        ? db.meeting.findMany({
+            where: visibleMeetings ? { AND: [{ projectId }, visibleMeetings] } : { projectId },
+            select: { id: true, code: true, title: true, status: true, meetingDateJalali: true },
+            orderBy: { meetingDate: "desc" },
+          })
+        : Promise.resolve([]),
     ]);
 
   if (!project) return folders;
@@ -222,6 +242,21 @@ export async function listProjectDocuments(projectId: string): Promise<ProjectDo
       size: "سند خدمات",
       date: service.startDateJalali ?? fallbackDate,
       type: "service",
+      generated: true,
+    });
+  }
+
+  // The minutes of the project's meetings, each opened in its printable view
+  // like a proforma — a generated document, not a stored file.
+  for (const meeting of meetings) {
+    const status = meetingStatus(meeting.status);
+    folders[MEETINGS_FOLDER].push({
+      id: `meeting-${meeting.id}`,
+      name: `صورتجلسه ${meeting.code} - ${meeting.title}${status === "DRAFT" ? ` (${MEETING_STATUS_LABELS.DRAFT})` : ""}`,
+      url: `?printModule=meetings&printId=${meeting.id}`,
+      size: "سند سیستمی",
+      date: meeting.meetingDateJalali ?? fallbackDate,
+      type: "meeting",
       generated: true,
     });
   }

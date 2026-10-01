@@ -22782,6 +22782,56 @@ head("Meeting minutes");
     /modalTab === 'meetings' \?[\s\S]{0,200}<MeetingsView[\s\S]{0,120}projectId=\{selectedProjectForActivities\.id\}/.test(pv));
 }
 
+/*
+ * The printed minutes: a standalone page the browser prints into a PDF, and a
+ * «صورتجلسات» folder in the project's documents that opens it.
+ */
+head("Meeting minutes: the printed document and the project folder");
+{
+  const md = await import("../src/utils/meetingDocument");
+  const base = {
+    code: "MOM-0507-001", title: "جلسه <b>فنی</b>", meetingDateJalali: "1405/07/09", startTime: "09:00",
+    endTime: null, place: null, summary: null, projectCode: null, projectName: null, customerName: null,
+    status: "FINAL" as const, nextMeetingDateJalali: null, createdByName: null,
+    attendees: [{ kind: "user" as const, userId: "u1", name: "علی" }, { kind: "contact" as const, name: "مهمان", organization: "شرکت" }],
+    absentees: [{ kind: "user" as const, userId: "u2", name: "غایب" }],
+    items: [
+      { lineNo: 1, text: "تصمیم", kind: "DECISION" as const, assignees: [], dueDateJalali: null, state: "NONE" as const },
+      { lineNo: 2, text: "کار", kind: "ACTION" as const, assignees: [{ userId: "u1", name: "علی" }], dueDateJalali: "1405/07/20", state: "OVERDUE" as const },
+    ],
+  };
+  const html = md.renderMeetingDocument({ meeting: base, template: { companyName: "ATA" } });
+  ok("minutes: the title is escaped, never interpolated raw", html.includes("&lt;b&gt;فنی&lt;/b&gt;") && !html.includes("<b>فنی</b>"));
+  eq("minutes: one table row per item", (html.match(/<td class="num">/g) ?? []).length, 2);
+  ok("minutes: an action prints its assignee, deadline and state",
+    html.includes("1405/07/20") && html.includes("عقب‌افتاده"));
+  eq("minutes: a signature box per attendee, none for the absent", (html.match(/class="sign-box"/g) ?? []).length, 2);
+  ok("minutes: an internal meeting says so rather than printing a blank project", html.includes("جلسه داخلی"));
+  ok("minutes: the letterhead repeats because it is the frame's thead",
+    /<table class="doc-frame">\s*<thead>/.test(html) && /thead \{ display: table-header-group; \}/.test(html));
+  ok("minutes: a row is kept whole, the table is not",
+    /\.items tr \{ break-inside: avoid/.test(html) && !/\.items \{[^}]*break-inside: avoid/.test(html));
+  ok("minutes: the signatures never start a page alone", /\.signatures \{[^}]*break-before: avoid/.test(html));
+  ok("minutes: an A4 page with its own margins and colours", /@page \{\s*size: A4;/.test(html) && html.includes("print-color-adjust: exact"));
+  eq("minutes: the PDF is named after the meeting", md.meetingDocumentTitle(base), "صورتجلسه MOM-0507-001");
+
+  const docs = readFileSync("src/server/services/projectDocuments.ts", "utf8");
+  ok("folder: «صورتجلسات» is one of the project's folders", docs.includes('{ id: "meetings", name: "صورتجلسات" }'));
+  ok("folder: each meeting opens its printable view",
+    docs.includes("url: `?printModule=meetings&printId=${meeting.id}`") && /type: "meeting",\s*generated: true/.test(docs));
+  ok("folder: the meetings listed go through the meeting's own visibility",
+    /where: visibleMeetings \? \{ AND: \[\{ projectId \}, visibleMeetings\] \}/.test(docs));
+  ok("folder: the route hands the caller over", readFileSync("src/server/routes/projects.ts", "utf8")
+    .includes("listProjectDocuments(req.params.id, user)"));
+  ok("folder: the documents tab draws it", readFileSync("src/components/ProjectsView.tsx", "utf8")
+    .includes('{ id: "meetings", name: "صورتجلسات"'));
+  ok("print link: the meetings screen answers `?printModule=meetings`", readFileSync("src/App.tsx", "utf8")
+    .includes("initialPrintDocId={printDocumentRequest?.module === 'meetings' ? printDocumentRequest.docId : undefined}"));
+  const mv = readFileSync("src/components/MeetingsView.tsx", "utf8");
+  ok("print: through the browser's own engine, assets inlined first",
+    /inlineDocumentAssets\(html\)[\s\S]{0,120}printHtmlDocument\(standalone, meetingDocumentTitle\(meeting\)\)/.test(mv));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
