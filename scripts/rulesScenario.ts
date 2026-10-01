@@ -22847,6 +22847,18 @@ head("Meeting minutes: the printed document and the project folder");
     /inlineDocumentAssets\(html\)[\s\S]{0,120}printHtmlDocument\(standalone, meetingDocumentTitle\(meeting\)\)/.test(mv));
 }
 
+head("Dark mode: the `dark:` variant follows the application's switch");
+{
+  const css = readFileSync("src/index.css", "utf8");
+  const declared = /@custom-variant\s+dark\s*\(\s*&:where\(\.dark,\s*\.dark \*\)\s*\)\s*;/.test(css);
+  ok("index.css declares a class-based `dark:` variant (not the OS media query)", declared);
+  // Without it, every `dark:` utility in a component answers the operating
+  // system, so a screen using them is dark in the application's light theme.
+  const users = ["src/components/MeetingsView.tsx", "src/components/ProductsView.tsx"]
+    .filter((f) => /\bdark:/.test(readFileSync(f, "utf8")));
+  ok("the check is not vacuous: a component really uses `dark:`", users.length > 0);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
