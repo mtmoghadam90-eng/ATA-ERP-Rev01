@@ -23,6 +23,7 @@ export const ACTIVITY_CATEGORY = {
   TRANSACTIONS: "تراکنش‌های مالی و پرداخت‌ها",
   DELIVERIES: "بسته‌بندی و تحویل کالا",
   AFTER_SALES: "خدمات پس از فروش",
+  MEETINGS: "صورتجلسات و جلسات",
 } as const;
 
 /** Spaces and ZWNJ carry no meaning in these names, so they are not compared. */

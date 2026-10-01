@@ -391,7 +391,7 @@ export function registerProjectRoutes(app: express.Express, deps: RouteDeps): vo
         res.status(409).json({
           success: false,
           code: "IN_USE",
-          error: "این پروژه اسناد وابسته دارد (پیش‌فاکتور، سفارش، تراکنش یا خدمات) و قابل حذف نیست.",
+          error: "این پروژه اسناد وابسته دارد (پیش‌فاکتور، سفارش، تراکنش، خدمات یا صورتجلسه) و قابل حذف نیست.",
           references: await countProjectReferences(req.params.id),
         });
         return;

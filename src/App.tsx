@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar';
 import MessagingView from './components/MessagingView';
 import AdEffectivenessView from './components/AdEffectivenessView';
 import StuckWorkView from './components/StuckWorkView';
+import MeetingsView from './components/MeetingsView';
 import DashboardView from './components/DashboardView';
 import CustomersView from './components/CustomersView';
 import ProductsView from './components/ProductsView';
@@ -581,6 +582,13 @@ export default function App() {
             onInitialTabApplied={clearTabJump}
             onOpenNotification={openActivityJump}
             onOpenProject={openActivityJump}
+          />
+        );
+      case 'meetings':
+        return (
+          <MeetingsView
+            currentUser={store.currentUser}
+            onOpenProject={(code) => openProjectIn('projects', code)}
           />
         );
       case 'stuckWork':
