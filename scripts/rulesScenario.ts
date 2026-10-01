@@ -22803,6 +22803,21 @@ head("Meeting minutes: the printed document and the project folder");
   const html = md.renderMeetingDocument({ meeting: base, template: { companyName: "ATA" } });
   ok("minutes: the title is escaped, never interpolated raw", html.includes("&lt;b&gt;فنی&lt;/b&gt;") && !html.includes("<b>فنی</b>"));
   eq("minutes: one table row per item", (html.match(/<td class="num">/g) ?? []).length, 2);
+  ok("minutes: decisions, actions and information print as sections, in that order, empty ones omitted",
+    html.indexOf('data-section="DECISION"') > 0
+    && html.indexOf('data-section="DECISION"') < html.indexOf('data-section="ACTION"')
+    && !html.includes('data-section="INFO"'));
+  ok("minutes: only the actions table has the assignee, deadline and state columns",
+    /items-ACTION"><thead><tr><th>ردیف<\/th><th>شرح اقدام<\/th><th>مسئول<\/th>/.test(html)
+    && /items-DECISION"><thead><tr><th>ردیف<\/th><th>شرح<\/th><\/tr>/.test(html));
+  ok("minutes: a section heading is never left at the foot of a sheet", /\.section-title \{ break-after: avoid/.test(html));
+  const bare = md.renderMeetingDocument({ meeting: base, template: null });
+  ok("minutes: no template still names the company, with the mark in place of a logo",
+    bare.includes(md.DEFAULT_COMPANY_NAME) && bare.includes('class="logo-mark"'));
+  ok("minutes: a template logo is drawn in the letterhead",
+    md.renderMeetingDocument({ meeting: base, template: { logoUrl: "/uploads/logo.png" } }).includes('<img src="/uploads/logo.png"'));
+  ok("minutes: the letterhead is the same template every proforma prints from",
+    readFileSync("src/components/MeetingsView.tsx", "utf8").includes("template: settings?.proformaTemplates?.[0] ?? null"));
   ok("minutes: an action prints its assignee, deadline and state",
     html.includes("1405/07/20") && html.includes("عقب‌افتاده"));
   eq("minutes: a signature box per attendee, none for the absent", (html.match(/class="sign-box"/g) ?? []).length, 2);

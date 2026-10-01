@@ -1,6 +1,6 @@
 import { escapeHtml } from "./richText";
 import {
-  MEETING_ITEM_KIND_LABELS, MEETING_ITEM_STATE_LABELS, MEETING_STATUS_LABELS,
+  MEETING_ITEM_STATE_LABELS, MEETING_STATUS_LABELS,
   type MeetingAssignee, type MeetingItemKind, type MeetingItemState, type MeetingParticipant,
   type MeetingStatus,
 } from "./meetingMinutes";
@@ -79,9 +79,20 @@ export function meetingDocumentTitle(meeting: { code: string; title: string }): 
   return `صورتجلسه ${meeting.code}`;
 }
 
+/** The order the sections print in, and their headings. */
+export const MEETING_DOCUMENT_SECTIONS: { kind: MeetingItemKind; heading: string }[] = [
+  { kind: "DECISION", heading: "مصوبات" },
+  { kind: "ACTION", heading: "اقدامات" },
+  { kind: "INFO", heading: "موارد اطلاع‌رسانی" },
+];
+
+/** The company the letterhead names when the template names none. */
+export const DEFAULT_COMPANY_NAME = "ابزار تامین ارشیا";
+
 export function renderMeetingDocument(input: MeetingDocumentInput): string {
   const m = input.meeting;
   const t = input.template ?? {};
+  const companyName = String(t.companyName ?? "").trim() || DEFAULT_COMPANY_NAME;
   const accent = /^#[0-9a-fA-F]{3,8}$/.test(String(t.titleColor ?? "")) ? t.titleColor! : "#0f172a";
 
   const when = [
@@ -102,16 +113,32 @@ export function renderMeetingDocument(input: MeetingDocumentInput): string {
   const people = (list: MeetingParticipant[]) =>
     list.length === 0 ? '<span class="muted">-</span>' : list.map(personLabel).join("، ");
 
-  const rows = m.items.map((item, idx) => {
-    const isAction = item.kind === "ACTION";
-    return `<tr>
+  /*
+   * Grouped by kind, one section under the other: what was decided, what
+   * somebody owes, and what was only reported. A single table interleaving
+   * the three read as a list to be searched rather than a record to be read,
+   * and only the actions have an assignee, a deadline and a state — so those
+   * columns stood empty on two rows in three. Each section is numbered from
+   * one, and a kind with no items prints no section at all.
+   */
+  const sections = MEETING_DOCUMENT_SECTIONS.map(({ kind, heading }) => {
+    const items = m.items.filter((i) => i.kind === kind);
+    if (items.length === 0) return "";
+    const isAction = kind === "ACTION";
+    const head = isAction
+      ? "<th>ردیف</th><th>شرح اقدام</th><th>مسئول</th><th>مهلت</th><th>وضعیت</th>"
+      : "<th>ردیف</th><th>شرح</th>";
+    const body = items.map((item, idx) => `<tr>
       <td class="num">${idx + 1}</td>
-      <td class="kind kind-${item.kind}">${text(MEETING_ITEM_KIND_LABELS[item.kind])}</td>
       <td class="desc">${multiline(item.text)}</td>
-      <td class="who">${isAction ? text(item.assignees.map((a) => a.name).join("، ")) || "-" : "-"}</td>
-      <td class="nowrap">${isAction ? text(item.dueDateJalali) || "-" : "-"}</td>
-      <td class="nowrap">${isAction ? text(MEETING_ITEM_STATE_LABELS[item.state]) || "-" : "-"}</td>
-    </tr>`;
+      ${isAction ? `<td class="who">${text(item.assignees.map((a) => a.name).join("، ")) || "-"}</td>
+      <td class="nowrap">${text(item.dueDateJalali) || "-"}</td>
+      <td class="nowrap">${text(MEETING_ITEM_STATE_LABELS[item.state]) || "-"}</td>` : ""}
+    </tr>`).join("");
+    return `<div class="items-section" data-section="${kind}">
+      <div class="section-title kind-${kind}">${heading} <span class="count">(${items.length})</span></div>
+      <table class="items items-${kind}"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
+    </div>`;
   }).join("");
 
   const signers = m.attendees;
@@ -137,8 +164,12 @@ export function renderMeetingDocument(input: MeetingDocumentInput): string {
     .doc-frame { width: 100%; max-width: 820px; margin: 0 auto; background: #ffffff; border-collapse: collapse; }
     .doc-frame > thead > tr > td, .doc-frame > tbody > tr > td { padding: 0 32px; }
     .letterhead { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 0 12px; border-bottom: 2px solid ${accent}; }
-    .letterhead img { max-height: 64px; max-width: 160px; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .letterhead img { height: 56px; width: 56px; object-fit: contain; border: 1px solid #cbd5e1; border-radius: 8px; background: #ffffff; }
+    .logo-mark { height: 56px; width: 56px; border-radius: 8px; background: ${accent}; color: #ffffff; font-weight: 700; display: flex; align-items: center; justify-content: center; }
     .company { font-weight: 700; font-size: 13pt; }
+    .subtitle { font-size: 9pt; color: #475569; }
+    .site { font-size: 8.5pt; color: #475569; direction: ltr; unicode-bidi: isolate; text-align: right; }
     .doc-title { text-align: left; }
     .doc-title .title { font-size: 15pt; font-weight: 700; color: ${accent}; }
     .doc-title .code { direction: ltr; unicode-bidi: isolate; font-size: 9.5pt; color: #475569; }
@@ -154,11 +185,15 @@ export function renderMeetingDocument(input: MeetingDocumentInput): string {
     .items th { background: #f1f5f9; border: 1px solid #94a3b8; padding: 5px 6px; font-size: 9.5pt; }
     .items td { border: 1px solid #94a3b8; padding: 5px 6px; vertical-align: top; font-size: 9.5pt; }
     .items .num { text-align: center; width: 34px; }
-    .items .kind { width: 58px; text-align: center; font-weight: 700; }
+    .items-section { margin-top: 6px; }
+    /* A heading left at the foot of a sheet with its table on the next reads as a stray line. */
+    .items-section .section-title { break-after: avoid; page-break-after: avoid; }
+    .items-section .section-title { border-right: 4px solid currentColor; padding-right: 8px; }
+    .count { font-weight: 400; font-size: 9pt; }
     .items .who { width: 110px; }
-    .kind-DECISION { color: #3730a3; }
-    .kind-ACTION { color: #92400e; }
-    .kind-INFO { color: #334155; }
+    .section-title.kind-DECISION { color: #3730a3; }
+    .section-title.kind-ACTION { color: #92400e; }
+    .section-title.kind-INFO { color: #334155; }
     .nowrap { white-space: nowrap; }
     .signatures { margin-top: 22px; break-before: avoid; page-break-before: avoid; break-inside: avoid; page-break-inside: avoid; }
     .sign-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 18px; }
@@ -191,9 +226,13 @@ export function renderMeetingDocument(input: MeetingDocumentInput): string {
   <table class="doc-frame">
     <thead><tr><td>
       <div class="letterhead">
-        <div>
-          ${t.logoUrl ? `<img src="${text(t.logoUrl)}" alt="">` : ""}
-          <div class="company">${text(t.companyName)}</div>
+        <div class="brand">
+          ${t.logoUrl ? `<img src="${text(t.logoUrl)}" alt="${text(companyName)}">` : '<div class="logo-mark">ATA</div>'}
+          <div>
+            <div class="company">${text(companyName)}</div>
+            <div class="subtitle">تامین تجهیزات اتوماسیون و ابزاردقیق</div>
+            ${t.website ? `<div class="site">${text(t.website)}</div>` : ""}
+          </div>
         </div>
         <div class="doc-title">
           <div class="title">صورتجلسه</div>
@@ -209,13 +248,9 @@ export function renderMeetingDocument(input: MeetingDocumentInput): string {
         <tr><th>غایبین</th><td>${people(m.absentees)}</td></tr>
       </table>
       ${m.summary ? `<div class="section-title">دستور جلسه / خلاصه مذاکرات</div><div class="summary">${multiline(m.summary)}</div>` : ""}
-      <div class="section-title">مصوبات و اقدامات</div>
       ${m.items.length === 0
-        ? '<div class="muted">بندی ثبت نشده است.</div>'
-        : `<table class="items">
-            <thead><tr><th>ردیف</th><th>نوع</th><th>شرح</th><th>مسئول</th><th>مهلت</th><th>وضعیت</th></tr></thead>
-            <tbody>${rows}</tbody>
-          </table>`}
+        ? '<div class="section-title">بندهای صورتجلسه</div><div class="muted">بندی ثبت نشده است.</div>'
+        : sections}
       ${signatures}
     </td></tr></tbody>
     <tfoot><tr><td>
