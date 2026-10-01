@@ -3,7 +3,7 @@ import { RouteDeps, sendError } from "./types";
 import { getTodayShamsi } from "../../dateUtils";
 import { parseListQuery } from "../listing";
 import {
-  MEETING_SORTABLE, MeetingInput, deleteMeeting, getMeeting, listMeetings,
+  MEETING_SORTABLE, MeetingInput, deleteMeeting, getMeeting, listMeetingActions, listMeetings,
   openActionsForProject, saveMeeting,
 } from "../services/meetingService";
 
@@ -39,6 +39,25 @@ export function registerMeetingRoutes(app: express.Express, deps: RouteDeps): vo
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "GET /api/meetings");
+    }
+  });
+
+  // Every action across the visible meetings. Before `/:id`, like the next one.
+  app.get("/api/meetings/actions", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, "erp_meetings", "read");
+    if (!user) return;
+    try {
+      const q = parseListQuery(req.query as Record<string, unknown>, []);
+      const result = await listMeetingActions(q, {
+        project: req.query.project,
+        from: req.query.from,
+        to: req.query.to,
+        state: req.query.state,
+        assignee: req.query.assignee,
+      }, user, getTodayShamsi());
+      res.json({ success: true, ...result });
+    } catch (err) {
+      sendError(res, err, "GET /api/meetings/actions");
     }
   });
 

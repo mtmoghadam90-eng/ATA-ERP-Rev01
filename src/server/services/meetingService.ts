@@ -387,6 +387,111 @@ export async function openActionsForProject(
   return out;
 }
 
+/**
+ * Every action item across the meetings this person may see — «what did all
+ * our meetings hand out, and where has each got to».
+ *
+ * The state is derived from the tasks, which SQL cannot see, so this is the
+ * rank-then-page shape: a bounded scan of the meetings (narrowed by the same
+ * project, date and search clauses as the meeting list), the states computed,
+ * the filters applied to the whole set, and only then a page cut — paging
+ * first would answer «open» from one page and print the unfiltered total
+ * beside it. Drafts are included as «در انتظار نهایی شدن», because an action
+ * written down and never handed out is exactly what somebody looking at this
+ * list needs to find.
+ */
+export const ACTION_STATE_FILTERS = ["open", "overdue", "done", "cancelled", "pending", "all"] as const;
+export type ActionStateFilter = (typeof ACTION_STATE_FILTERS)[number];
+
+export function actionMatchesState(state: MeetingItemState, filter: string): boolean {
+  switch (filter) {
+    case "all": return true;
+    case "open": return isOpenItemState(state);
+    case "overdue": return state === "OVERDUE";
+    case "done": return state === "DONE";
+    case "cancelled": return state === "CANCELLED";
+    case "pending": return state === "PENDING";
+    // An unknown value is read as the default rather than as «everything».
+    default: return isOpenItemState(state);
+  }
+}
+
+export interface MeetingActionRow {
+  itemId: string;
+  lineNo: number;
+  text: string;
+  dueDateJalali: string | null;
+  state: MeetingItemState;
+  assignees: MeetingAssignee[];
+  tasks: MeetingItemRow["tasks"];
+  meetingId: string;
+  meetingCode: string;
+  meetingTitle: string;
+  meetingDateJalali: string | null;
+  meetingStatus: MeetingStatus;
+  projectId: string | null;
+  projectCode: string | null;
+  projectName: string | null;
+}
+
+export interface MeetingActionFilters extends MeetingFilters {
+  state?: unknown;
+  assignee?: unknown;
+}
+
+export async function listMeetingActions(
+  q: ListQuery,
+  filters: MeetingActionFilters,
+  user: AuthUser,
+  todayJalali: string,
+) {
+  const where = buildMeetingWhere(q, { ...filters, openActions: undefined }, user);
+  const meetings = await getDb().meeting.findMany({
+    where: { AND: [where, { items: { some: { kind: "ACTION" } } }] },
+    select: ROW_SELECT,
+    orderBy: [{ meetingDate: "desc" }, { createdAt: "desc" }],
+    take: MEETING_SCAN_LIMIT,
+  });
+  const tasks = await taskStatuses(meetings);
+  const stateFilter = String(filters.state ?? "open") || "open";
+  const assignee = String(filters.assignee ?? "").trim();
+
+  const all: MeetingActionRow[] = [];
+  for (const m of meetings) {
+    const row = toRow(m, tasks, user, todayJalali, true);
+    for (const item of row.items ?? []) {
+      if (item.kind !== "ACTION") continue;
+      if (!actionMatchesState(item.state, stateFilter)) continue;
+      if (assignee && assignee !== "all" && !item.assignees.some((a) => a.userId === assignee)) continue;
+      all.push({
+        itemId: item.id, lineNo: item.lineNo, text: item.text, dueDateJalali: item.dueDateJalali,
+        state: item.state, assignees: item.assignees, tasks: item.tasks,
+        meetingId: row.id, meetingCode: row.code, meetingTitle: row.title,
+        meetingDateJalali: row.meetingDateJalali, meetingStatus: row.status,
+        projectId: row.projectId, projectCode: row.projectCode, projectName: row.projectName,
+      });
+    }
+  }
+
+  /*
+   * Overdue first, then the nearest deadline; an undated action last, never
+   * first — an empty Shamsi string sorts before every real date.
+   */
+  const rank = (r: MeetingActionRow) => (r.state === "OVERDUE" ? 0 : isOpenItemState(r.state) ? 1 : r.state === "PENDING" ? 2 : 3);
+  all.sort((a, b) =>
+    rank(a) - rank(b)
+    || (a.dueDateJalali ? 0 : 1) - (b.dueDateJalali ? 0 : 1)
+    || String(a.dueDateJalali ?? "").localeCompare(String(b.dueDateJalali ?? ""))
+    || String(b.meetingDateJalali ?? "").localeCompare(String(a.meetingDateJalali ?? ""))
+    || a.lineNo - b.lineNo);
+
+  const { skip, take } = paginationArgs(q);
+  return {
+    ...buildResult(all.slice(skip, skip + take), all.length, q),
+    truncated: meetings.length >= MEETING_SCAN_LIMIT,
+  };
+}
+
 /* --------------------------------- writing -------------------------------- */
 
 type Tx = Prisma.TransactionClient;

@@ -22755,6 +22755,28 @@ head("Meeting minutes");
     && auth.canSeeAllMeetings({ id: "u", isSystemAdmin: true } as never));
   ok("meetings: a project's meetings block its deletion by name",
     readFileSync("src/server/services/projectService.ts", "utf8").includes("db.meeting.count({ where: { projectId: id } })"));
+  /* -- every action across the meetings -- */
+  const msvc = await import("../src/server/services/meetingService");
+  ok("meetings: «باز» includes the overdue", msvc.actionMatchesState("OVERDUE", "open") && msvc.actionMatchesState("OPEN", "open"));
+  ok("meetings: ...and not the finished or the drafts",
+    !msvc.actionMatchesState("DONE", "open") && !msvc.actionMatchesState("CANCELLED", "open")
+    && !msvc.actionMatchesState("PENDING", "open"));
+  ok("meetings: each other filter names exactly its own state",
+    msvc.actionMatchesState("DONE", "done") && !msvc.actionMatchesState("OPEN", "done")
+    && msvc.actionMatchesState("PENDING", "pending") && msvc.actionMatchesState("CANCELLED", "cancelled")
+    && !msvc.actionMatchesState("OPEN", "overdue"));
+  ok("meetings: «همه» is everything, and an unknown filter reads as the default",
+    msvc.actionMatchesState("DONE", "all") && !msvc.actionMatchesState("DONE", "bogus")
+    && msvc.actionMatchesState("OPEN", "bogus"));
+  ok("meetings: «actions» is registered before `/:id`",
+    route.indexOf('"/api/meetings/actions"') > 0
+    && route.indexOf('"/api/meetings/actions"') < route.indexOf('"/api/meetings/:id"'));
+  const actionsFn = svc.slice(svc.indexOf("export async function listMeetingActions"), svc.indexOf("/* --------------------------------- writing"));
+  ok("meetings: the actions list filters the whole scan before it pages",
+    actionsFn.indexOf("actionMatchesState(") > 0
+    && actionsFn.indexOf("actionMatchesState(") < actionsFn.indexOf("all.slice(skip"));
+  ok("meetings: ...through the same visibility as the meeting list", /buildMeetingWhere\(q,/.test(actionsFn));
+
   const pv = readFileSync("src/components/ProjectsView.tsx", "utf8");
   ok("meetings: the project has a «صورتجلسات» tab drawing the module's own component",
     /modalTab === 'meetings' \?[\s\S]{0,200}<MeetingsView[\s\S]{0,120}projectId=\{selectedProjectForActivities\.id\}/.test(pv));
