@@ -88,6 +88,25 @@ export interface CarryOverItem {
   assignees: string[];
 }
 
+/** One action item, with the meeting it came from. */
+export interface MeetingActionRow {
+  itemId: string;
+  lineNo: number;
+  text: string;
+  dueDateJalali: string | null;
+  state: MeetingItemState;
+  assignees: MeetingAssignee[];
+  tasks: MeetingItemRow["tasks"];
+  meetingId: string;
+  meetingCode: string;
+  meetingTitle: string;
+  meetingDateJalali: string | null;
+  meetingStatus: MeetingStatus;
+  projectId: string | null;
+  projectCode: string | null;
+  projectName: string | null;
+}
+
 export const meetingsApi = {
   get: (id: string) => api.get<{ meeting: MeetingRow }>(`/api/meetings/${id}`),
   create: (input: MeetingInput) => api.post<MeetingSaveResult>("/api/meetings", input),

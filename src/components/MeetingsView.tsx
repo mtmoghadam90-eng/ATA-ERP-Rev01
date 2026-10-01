@@ -14,7 +14,8 @@ import { dataChanged } from '../api/liveData';
 import type { ProjectRow } from '../api/projects';
 import type { CustomerRow } from '../api/customers';
 import {
-  meetingsApi, type CarryOverItem, type MeetingInput, type MeetingItemInput, type MeetingRow,
+  meetingsApi, type CarryOverItem, type MeetingActionRow, type MeetingInput, type MeetingItemInput,
+  type MeetingRow,
 } from '../api/meetings';
 import {
   MEETING_ITEM_KINDS, MEETING_ITEM_KIND_LABELS, MEETING_ITEM_STATE_LABELS, MEETING_STATUS_LABELS,
@@ -62,6 +63,22 @@ export default function MeetingsView({ currentUser, projectId, projectLabel, onO
   const [openOnly, setOpenOnly] = useState(false);
   const [status, setStatus] = useState('all');
   const [editing, setEditing] = useState<MeetingRow | 'new' | null>(null);
+  /*
+   * Two views of one module: the meetings, and every action they handed out.
+   * The second is where «what is still open, and from which meeting» is asked
+   * across all of them, rather than by opening minutes one at a time.
+   */
+  const [view, setView] = useState<'meetings' | 'actions'>('meetings');
+  const { users: directory } = useUserDirectory();
+
+  const openMeeting = async (meetingId: string) => {
+    try {
+      const { meeting } = await meetingsApi.get(meetingId);
+      setEditing(meeting);
+    } catch {
+      // A meeting deleted since the list was read: nothing to open.
+    }
+  };
 
   const filterPicker = useEntitySearch<ProjectRow>({
     path: '/api/projects', limit: 25, params: { withSummary: 'false' },
@@ -81,6 +98,22 @@ export default function MeetingsView({ currentUser, projectId, projectLabel, onO
       openActions: openOnly ? 'true' : undefined,
       status: status === 'all' ? undefined : status,
     },
+    enabled: view === 'meetings',
+  });
+
+  const [actionState, setActionState] = useState('open');
+  const [actionAssignee, setActionAssignee] = useState('all');
+  const actions = useList<MeetingActionRow>({
+    path: '/api/meetings/actions',
+    pageSize: 50,
+    params: {
+      project: projectId ?? (projectFilter === 'all' ? undefined : projectFilter),
+      from: from || undefined,
+      to: to || undefined,
+      state: actionState,
+      assignee: actionAssignee === 'all' ? undefined : actionAssignee,
+    },
+    enabled: view === 'actions',
   });
 
   return (
@@ -104,13 +137,27 @@ export default function MeetingsView({ currentUser, projectId, projectLabel, onO
         </button>
       </div>
 
+      <div className="flex gap-1 border-b border-slate-200 dark:border-slate-700">
+        {([['meetings', 'جلسات'], ['actions', 'اقدامات همه جلسات']] as const).map(([key, label]) => (
+          <button
+            type="button"
+            key={key}
+            id={`meeting-view-${key}`}
+            onClick={() => setView(key)}
+            className={`px-4 py-2 text-sm font-bold border-b-2 ${view === key ? 'border-sky-500 text-sky-600' : 'border-transparent text-slate-500 hover:text-slate-800'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex flex-wrap items-end gap-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             id="meeting-search"
-            value={list.search}
-            onChange={(e) => list.setSearch(e.target.value)}
+            value={view === 'meetings' ? list.search : actions.search}
+            onChange={(e) => (view === 'meetings' ? list : actions).setSearch(e.target.value)}
             placeholder="جستجو در عنوان، بندها، حاضرین و پروژه..."
             className="w-full pr-9 pl-3 py-2 text-sm border border-slate-200 rounded-lg bg-white dark:bg-slate-900"
           />
@@ -133,6 +180,35 @@ export default function MeetingsView({ currentUser, projectId, projectLabel, onO
         )}
         <div className="w-36"><ShamsiDatePicker value={from} onChange={setFrom} placeholder="از تاریخ" compact /></div>
         <div className="w-36"><ShamsiDatePicker value={to} onChange={setTo} placeholder="تا تاریخ" compact /></div>
+        {view === 'actions' && (
+          <>
+            <select
+              id="meeting-action-state"
+              value={actionState}
+              onChange={(e) => setActionState(e.target.value)}
+              className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white dark:bg-slate-900"
+            >
+              <option value="open">باز (شامل عقب‌افتاده)</option>
+              <option value="overdue">فقط عقب‌افتاده</option>
+              <option value="done">انجام شده</option>
+              <option value="cancelled">لغو شده</option>
+              <option value="pending">در انتظار نهایی شدن</option>
+              <option value="all">همه اقدامات</option>
+            </select>
+            <select
+              id="meeting-action-assignee"
+              value={actionAssignee}
+              onChange={(e) => setActionAssignee(e.target.value)}
+              className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white dark:bg-slate-900"
+            >
+              <option value="all">مسئول: همه</option>
+              {directory.filter((u) => u.isActive !== false).map((u) => (
+                <option key={u.id} value={u.id}>{u.fullName}</option>
+              ))}
+            </select>
+          </>
+        )}
+        {view === 'meetings' && (<>
         <select
           id="meeting-status-filter"
           value={status}
@@ -152,10 +228,24 @@ export default function MeetingsView({ currentUser, projectId, projectLabel, onO
           />
           دارای اقدام باز
         </label>
+        </>)}
       </div>
 
-      {list.error && <div className="text-sm text-rose-600">{list.error}</div>}
-      {list.initialLoading ? (
+      {view === 'actions' && (
+        <MeetingActionsList
+          rows={actions.rows}
+          loading={actions.initialLoading}
+          error={actions.error}
+          page={actions.page}
+          totalPages={actions.totalPages}
+          count={actions.total}
+          onPage={actions.setPage}
+          onOpenMeeting={(id) => void openMeeting(id)}
+        />
+      )}
+
+      {view === 'meetings' && list.error && <div className="text-sm text-rose-600">{list.error}</div>}
+      {view !== 'meetings' ? null : list.initialLoading ? (
         <div className="flex justify-center py-10 text-slate-400"><Loader2 className="animate-spin" /></div>
       ) : list.rows.length === 0 ? (
         <div className="text-center text-sm text-slate-500 py-10 border border-dashed border-slate-200 rounded-xl">
@@ -219,8 +309,72 @@ export default function MeetingsView({ currentUser, projectId, projectLabel, onO
           fixedProjectId={projectId}
           fixedProjectLabel={projectLabel}
           onClose={() => setEditing(null)}
-          onSaved={() => { list.refresh(); }}
+          onSaved={() => { list.refresh(); actions.refresh(); }}
         />
+      )}
+    </div>
+  );
+}
+
+/* --------------------------- every action, listed --------------------------- */
+
+function MeetingActionsList({ rows, loading, error, page, totalPages, count, onPage, onOpenMeeting }: {
+  rows: MeetingActionRow[];
+  loading: boolean;
+  error: string | null;
+  page: number;
+  totalPages: number;
+  /** How many actions match — a count of items, not an amount. */
+  count: number;
+  onPage: (page: number) => void;
+  onOpenMeeting: (meetingId: string) => void;
+}) {
+  if (error) return <div className="text-sm text-rose-600">{error}</div>;
+  if (loading) return <div className="flex justify-center py-10 text-slate-400"><Loader2 className="animate-spin" /></div>;
+  if (rows.length === 0) {
+    return (
+      <div className="text-center text-sm text-slate-500 py-10 border border-dashed border-slate-200 rounded-xl">
+        اقدامی با این فیلترها یافت نشد.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2" data-meeting-actions>
+      <div className="text-xs text-slate-500">{count.toLocaleString('fa-IR')} اقدام</div>
+      {rows.map((a) => (
+        <div key={a.itemId} data-meeting-action={a.itemId} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-1.5">
+          <div className="flex flex-wrap items-start gap-2">
+            <span className={`text-[11px] px-2 py-0.5 rounded-full ${STATE_TONE[a.state]}`} data-action-state={a.state}>
+              {MEETING_ITEM_STATE_LABELS[a.state]}
+            </span>
+            <span className="flex-1 min-w-[200px] text-sm text-slate-800 dark:text-slate-100 whitespace-pre-line">{a.text}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500">
+            <span className="flex items-center gap-1"><Users size={12} /> {a.assignees.map((x) => x.name).join('، ') || '—'}</span>
+            <span className="flex items-center gap-1"><Clock size={12} /> مهلت: {a.dueDateJalali ?? '—'}</span>
+            {a.tasks.length > 1 && (
+              <span>{a.tasks.map((t) => `${t.assigneeName}: ${t.status ?? '—'}`).join(' | ')}</span>
+            )}
+          </div>
+          <button
+            type="button"
+            data-action-meeting={a.meetingId}
+            onClick={() => onOpenMeeting(a.meetingId)}
+            className="text-xs text-sky-700 hover:underline flex items-center gap-1"
+          >
+            <FileText size={12} />
+            <span dir="ltr" className="font-mono">{a.meetingCode}</span>
+            <span>— {a.meetingTitle} ({a.meetingDateJalali}) بند {a.lineNo.toLocaleString('fa-IR')}</span>
+            <span className="text-slate-500">{a.projectCode ? `· ${a.projectCode} — ${a.projectName}` : '· جلسه داخلی'}</span>
+          </button>
+        </div>
+      ))}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3 text-sm pt-2">
+          <button type="button" disabled={page <= 1} onClick={() => onPage(page - 1)} className="px-3 py-1 border rounded disabled:opacity-40">قبلی</button>
+          <span>{page.toLocaleString('fa-IR')} از {totalPages.toLocaleString('fa-IR')}</span>
+          <button type="button" disabled={page >= totalPages} onClick={() => onPage(page + 1)} className="px-3 py-1 border rounded disabled:opacity-40">بعدی</button>
+        </div>
       )}
     </div>
   );

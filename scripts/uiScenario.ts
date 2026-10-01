@@ -4064,11 +4064,23 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
     finalizedByName: null, createdAt: "2026-10-01", canEdit: true, itemCount: 1, actionCount: 1,
     openActionCount: 0, items: [],
   };
+  const askedM: string[] = [];
+  const actionRow = {
+    itemId: "it1", lineNo: 1, text: "ارسال دیتاشیت", dueDateJalali: "1405/07/20", state: "OPEN",
+    assignees: [{ userId: "u2", name: "رضا" }], tasks: [], meetingId: "m1", meetingCode: "MOM-0507-001",
+    meetingTitle: "جلسه هماهنگی", meetingDateJalali: "1405/07/09", meetingStatus: "FINAL",
+    projectId: null, projectCode: null, projectName: null,
+  };
   gM.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
-    const u = String(url);
+    const u = decodeURIComponent(String(url));
+    askedM.push(u);
     if (init?.method === "POST" || init?.method === "PUT") posted.push({ url: u, body: String(init.body ?? "") });
     let body: unknown = { success: true, rows: [], total: 0, page: 1, pageSize: 25, totalPages: 1 };
-    if (u.startsWith("/api/users")) {
+    if (u.startsWith("/api/meetings/actions")) {
+      body = { success: true, rows: [actionRow], total: 1, page: 1, pageSize: 50, totalPages: 1 };
+    } else if (u === "/api/meetings/m1") {
+      body = { success: true, meeting: saved };
+    } else if (u.startsWith("/api/users")) {
       body = { success: true, rows: [{ id: "u1", fullName: "علی" }, { id: "u2", fullName: "رضا" }], total: 2, page: 1, pageSize: 200, totalPages: 1 };
     } else if (init?.method === "POST") {
       body = { success: true, meeting: saved, createdTasks: 0, cancelledTasks: 0 };
@@ -4126,6 +4138,24 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
     draft?.items?.[0]?.kind === "ACTION" && draft.items[0].assignees?.[0]?.userId === "u2", draft?.items);
   ok("meetings screen: the person writing it is an attendee by default",
     draft?.attendees?.some((a: { userId?: string }) => a.userId === "u1"), draft?.attendees);
+
+  /* -- the actions of every meeting, in a tab of their own -- */
+  await click(hostM.querySelector('[aria-label="بستن"]'));
+  await click(hostM.querySelector("#meeting-view-actions"));
+  ok("meetings screen: the actions tab asks its own endpoint, open ones by default",
+    askedM.some((u) => u.startsWith("/api/meetings/actions") && u.includes("state=open")), askedM);
+  ok("meetings screen: each action names its meeting",
+    (hostM.querySelector('[data-meeting-action="it1"]')?.textContent ?? "").includes("MOM-0507-001"));
+  const stateBox = hostM.querySelector<HTMLSelectElement>("#meeting-action-state");
+  await act(async () => {
+    handlers(stateBox!).onChange?.({ target: { value: "done" }, currentTarget: { value: "done" } });
+  });
+  await settleM();
+  ok("meetings screen: the state filter reaches the query",
+    askedM.some((u) => u.startsWith("/api/meetings/actions") && u.includes("state=done")), askedM);
+  await click(hostM.querySelector('[data-action-meeting="m1"]'));
+  ok("meetings screen: pressing the meeting opens those minutes",
+    askedM.includes("/api/meetings/m1") && !!hostM.querySelector("#meeting-title"), askedM);
 
   act(() => { rootM.unmount(); });
   hostM.remove();
