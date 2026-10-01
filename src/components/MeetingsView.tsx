@@ -8,7 +8,6 @@ import { DocumentPreview } from './DocumentPreview';
 import { inlineDocumentAssets } from '../utils/inlineAssets';
 import { printHtmlDocument } from '../utils/printDocument';
 import { meetingDocumentTitle, renderMeetingDocument } from '../utils/meetingDocument';
-import { activeTemplateOf } from '../utils/brand';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { SearchableSelect } from './SearchableSelect';
 import { getTodayShamsi } from '../dateUtils';
@@ -65,7 +64,13 @@ export function meetingDocumentHtml(meeting: MeetingRow, settings?: ERPSettings)
         dueDateJalali: i.dueDateJalali, state: i.state,
       })),
     },
-    template: (activeTemplateOf(settings) ?? null) as never,
+    /*
+     * The first template, which is the one every printed proforma uses
+     * (`ProformasView`'s `activeTemplate`) — so the minutes carry the same
+     * company name and logo the quotations do, rather than whichever template
+     * a stale `activeTemplateId` happens to name.
+     */
+    template: settings?.proformaTemplates?.[0] ?? null,
   });
 }
 
