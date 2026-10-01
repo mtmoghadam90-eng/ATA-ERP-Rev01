@@ -1,5 +1,5 @@
 import {
-  Megaphone,
+  Megaphone, NotebookPen,
   AlarmClock, ArrowDownLeft, ArrowLeftRight, Boxes, Briefcase, CheckSquare, FileText,
   LayoutDashboard, MessageSquare, Package, Settings, ShieldCheck, ShoppingCart,
   Truck, Users, Wrench,
@@ -28,6 +28,7 @@ export const MODULE_ICONS: Record<AppModuleId, typeof LayoutDashboard> = {
   afterSalesServices: Wrench,
   transactions: ArrowDownLeft,
   tasks: CheckSquare,
+  meetings: NotebookPen,
   stuckWork: AlarmClock,
   messaging: MessageSquare,
   adEffectiveness: Megaphone,

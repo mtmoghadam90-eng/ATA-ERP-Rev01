@@ -1059,7 +1059,7 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
 /** Records that would block deleting a project, for the confirmation dialog. */
 export async function countProjectReferences(id: string) {
   const db = getDb();
-  const [proformas, purchaseOrders, transactions, inquiries, deliveries, services] =
+  const [proformas, purchaseOrders, transactions, inquiries, deliveries, services, meetings] =
     await Promise.all([
       db.proforma.count({ where: { projectId: id } }),
       db.purchaseOrder.count({ where: { projectId: id } }),
@@ -1067,9 +1067,11 @@ export async function countProjectReferences(id: string) {
       db.supplierInquiry.count({ where: { projectId: id } }),
       db.packagingDelivery.count({ where: { projectId: id } }),
       db.afterSalesService.count({ where: { projectId: id } }),
+      // A meeting is a document: its minutes are counted and named, not lost.
+      db.meeting.count({ where: { projectId: id } }),
     ]);
-  const total = proformas + purchaseOrders + transactions + inquiries + deliveries + services;
-  return { proformas, purchaseOrders, transactions, inquiries, deliveries, services, total };
+  const total = proformas + purchaseOrders + transactions + inquiries + deliveries + services + meetings;
+  return { proformas, purchaseOrders, transactions, inquiries, deliveries, services, meetings, total };
 }
 
 /**

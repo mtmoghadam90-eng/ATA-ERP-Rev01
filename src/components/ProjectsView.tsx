@@ -15,7 +15,7 @@ import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 const ACTIVITY_FOCUS_MS = 4000;
 import { formatMoney } from '../numUtils';
 import {
-  Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, AlertTriangle, TrendingUp, X,
+  ClipboardList, Plus, Search, Filter, Briefcase, Edit, Trash2, XCircle, AlertCircle, AlertTriangle, TrendingUp, X,
   CornerUpLeft, ListChecks, RefreshCcw, Inbox,
   FileSpreadsheet, FileText, Clock, Sliders, Paperclip, ChevronLeft, ChevronDown, ChevronUp,
  CheckCircle2, History, Check, Folder, FolderOpen, File, Download, Eye, Upload, Printer,
@@ -47,6 +47,7 @@ import { inboxApi } from '../api/inbox';
 import { tasksApi } from '../api/tasks';
 import MessageReactions from './MessageReactions';
 import ProjectFollowUpTab from './ProjectFollowUpTab';
+import MeetingsView from './MeetingsView';
 import ActivityComposer from './ActivityComposer';
 import { openReferralsTo } from '../utils/openReferrals';
 import CategoryMembersModal from './CategoryMembersModal';
@@ -5568,6 +5569,24 @@ export default function ProjectsView({
                   <Briefcase size={15} />
                   <span>وضعیت تامین کالاها (انبار / سفارش)</span>
                 </button>
+                {/*
+                  This job's meetings, opened in place. The same component the
+                  «صورتجلسات» module draws, with the project fixed — a second
+                  copy here would be a second answer to what minutes look like.
+                */}
+                <button
+                  type="button"
+                  onClick={() => setModalTab('meetings')}
+                  id="project-tab-meetings"
+                  className={`px-4 py-2 text-xs font-bold transition-all border-b-2 flex items-center gap-2 ${
+                    modalTab === 'meetings'
+                      ? 'border-sky-500 text-sky-600 font-extrabold'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  <ClipboardList size={15} />
+                  <span>صورتجلسات</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => setModalTab('milestones')}
@@ -6386,6 +6405,14 @@ export default function ProjectsView({
                 renderProjectDocuments(selectedProjectForActivities)
               ) : modalTab === 'milestones' ? (
                 renderProjectMilestones(selectedProjectForActivities)
+              ) : modalTab === 'meetings' ? (
+                selectedProjectForActivities ? (
+                  <MeetingsView
+                    currentUser={currentUser}
+                    projectId={selectedProjectForActivities.id}
+                    projectLabel={`${selectedProjectForActivities.code} — ${selectedProjectForActivities.name}`}
+                  />
+                ) : null
               ) : (
                 renderProjectSupplyStatus(selectedProjectForActivities)
               )}

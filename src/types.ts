@@ -709,7 +709,7 @@ export interface Task {
    * one of them or a `<select>` renders its placeholder over a perfectly
    * good value.
    */
-  relatedToType: 'مشتری' | 'پروژه' | 'پیش‌فاکتور' | 'سفارش خرید' | 'عمومی' | 'خدمات پس از فروش' | 'بسته‌بندی و تحویل' | 'استعلام تامین‌کننده' | 'تأمین‌کننده' | 'محصول' | 'تراکنش';
+  relatedToType: 'مشتری' | 'پروژه' | 'پیش‌فاکتور' | 'سفارش خرید' | 'عمومی' | 'خدمات پس از فروش' | 'بسته‌بندی و تحویل' | 'استعلام تامین‌کننده' | 'تأمین‌کننده' | 'محصول' | 'تراکنش' | 'صورتجلسه';
   /** Who raised it, kept beside the id so history survives a deactivated account. */
   createdByName?: string;
   /**
@@ -1304,6 +1304,13 @@ export interface User {
      * inheriting that default would reproduce the fault on the day it shipped.
      */
     tasksAll?: boolean;
+    /** «صورتجلسات» — a module flag, so absent grants the screen. */
+    meetings?: boolean;
+    /**
+     * Seeing every meeting rather than those one attended, created or owes an
+     * action from. Read **strictly**, like `tasksAll` and for the same reason.
+     */
+    meetingsAll?: boolean;
   };
 }
 

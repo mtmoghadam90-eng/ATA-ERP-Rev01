@@ -689,6 +689,9 @@ model Project {
   suppressAutoMessages Boolean                @default(false)
 
   messages Message[]
+  /// «صورتجلسات» held about this job. NoAction: a meeting is a document, so it
+  /// is counted by `countProjectReferences` and blocks the delete by name.
+  meetings Meeting[]
 
   @@index([customerId])
   @@index([status])
@@ -2495,4 +2498,72 @@ model AdCampaign {
   @@index([runDate])
   @@index([channel])
   @@map("ad_campaigns")
+}
+
+/// «صورتجلسات» — a meeting and what it decided.
+///
+/// A meeting is internal when `projectId` is null. Its items are referenced by
+/// the tasks finalising raises (`MeetingItem.taskLinks`), so they are
+/// reconciled by id and never rebuilt through `syncChildren`.
+model Meeting {
+  id                String    @id @default(uuid()) @db.NVarChar(36)
+  code              String    @unique @db.NVarChar(40)
+  title             String    @db.NVarChar(300)
+  meetingDate       DateTime? @db.Date
+  meetingDateJalali String?   @db.NVarChar(10)
+  startTime         String?   @db.NVarChar(5)
+  endTime           String?   @db.NVarChar(5)
+  place             String?   @db.NVarChar(200)
+  /// Free text: the agenda, or a short summary of the discussion.
+  summary           String?   @db.NVarChar(Max)
+
+  projectId String?  @db.NVarChar(36)
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  /// DRAFT | FINAL. Finalising is what raises the tasks.
+  status String @default("DRAFT") @db.NVarChar(20)
+
+  /// JSON `[{kind:"user"|"contact", userId?, customerId?, name, organization?}]`.
+  attendees String? @db.NVarChar(Max)
+  absentees String? @db.NVarChar(Max)
+  /// `,id1,id2,` — the creator, the attendees and every assignee, written on
+  /// every save so «may this person see it» is one exact `contains`.
+  memberIndex String? @db.NVarChar(Max)
+
+  nextMeetingDate       DateTime? @db.Date
+  nextMeetingDateJalali String?   @db.NVarChar(10)
+  attachments           String?   @db.NVarChar(Max)
+
+  createdByUserId String?   @db.NVarChar(36)
+  createdByName   String?   @db.NVarChar(200)
+  finalizedAt     DateTime?
+  finalizedByName String?   @db.NVarChar(200)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
+
+  items MeetingItem[]
+
+  @@index([projectId])
+  @@index([meetingDate])
+  @@index([status])
+  @@map("meetings")
+}
+
+model MeetingItem {
+  id        String  @id @default(uuid()) @db.NVarChar(36)
+  meetingId String  @db.NVarChar(36)
+  meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  lineNo    Int     @default(0)
+  text      String  @db.NVarChar(Max)
+  /// DECISION (مصوبه) | ACTION (اقدام) | INFO (اطلاع).
+  kind      String  @default("DECISION") @db.NVarChar(20)
+  /// JSON `[{userId, name}]` — only an ACTION item carries any.
+  assignees String? @db.NVarChar(Max)
+  dueDate       DateTime? @db.Date
+  dueDateJalali String?   @db.NVarChar(10)
+  /// JSON `[{userId, taskId}]` — the task raised for each assignee.
+  taskLinks String? @db.NVarChar(Max)
+
+  @@index([meetingId])
+  @@map("meeting_items")
 }

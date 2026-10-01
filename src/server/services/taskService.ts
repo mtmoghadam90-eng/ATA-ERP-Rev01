@@ -401,6 +401,7 @@ async function withProjectContext<T extends {
   const proformaIds = new Set<string>();
 
   const customerIds = new Set<string>();
+  const meetingIds = new Set<string>();
 
   /*
    * `taskRelationKind` reads both spellings.
@@ -417,8 +418,9 @@ async function withProjectContext<T extends {
     if (kind === "project") projectIds.add(row.relatedToId);
     else if (kind === "proforma") proformaIds.add(row.relatedToId);
     else if (kind === "customer") customerIds.add(row.relatedToId);
+    else if (kind === "meeting") meetingIds.add(row.relatedToId);
   }
-  if (projectIds.size === 0 && proformaIds.size === 0 && customerIds.size === 0) {
+  if (projectIds.size === 0 && proformaIds.size === 0 && customerIds.size === 0 && meetingIds.size === 0) {
     return rows.map((row) => ({ ...row, relatedProject: null }));
   }
 
@@ -427,7 +429,7 @@ async function withProjectContext<T extends {
     customer: { select: { companyName: true } },
   };
 
-  const [projects, proformas, customers] = await Promise.all([
+  const [projects, proformas, customers, meetings] = await Promise.all([
     projectIds.size > 0
       ? db.project.findMany({ where: { id: { in: [...projectIds] } }, select: projectSelect })
       : Promise.resolve([]),
@@ -443,6 +445,17 @@ async function withProjectContext<T extends {
       ? db.customer.findMany({
           where: { id: { in: [...customerIds] } },
           select: { id: true, companyName: true },
+        })
+      : Promise.resolve([]),
+    /*
+     * A meeting's action item. The card shows the job the meeting was about,
+     * so a task handed out in a project meeting reads like any other work on
+     * that project; an internal meeting has none and shows none.
+     */
+    meetingIds.size > 0
+      ? db.meeting.findMany({
+          where: { id: { in: [...meetingIds] } },
+          select: { id: true, project: { select: projectSelect } },
         })
       : Promise.resolve([]),
   ]);
@@ -467,12 +480,16 @@ async function withProjectContext<T extends {
     id: c.id, code: "", name: "", customerName: c.companyName,
   } as TaskProjectContext]));
 
+  const byMeeting = new Map(
+    meetings.filter((m) => m.project).map((m) => [m.id, toContext(m.project!)]));
+
   return rows.map((row) => {
     const kind = row.relatedToId ? taskRelationKind(row.relatedToType) : null;
     const source = kind === "project" ? byProject
       : kind === "proforma" ? byProforma
         : kind === "customer" ? byCustomer
-          : null;
+          : kind === "meeting" ? byMeeting
+            : null;
     return {
       ...row,
       relatedProject: source?.get(row.relatedToId!) ?? null,

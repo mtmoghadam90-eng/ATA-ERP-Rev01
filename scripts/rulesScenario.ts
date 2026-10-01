@@ -22643,6 +22643,123 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     && view.includes('<option value="open">'));
 }
 
+/*
+ * «صورتجلسات». An action item becomes one task per assignee when the minutes
+ * are finalised; the item's state is read off those tasks; and editing finalised
+ * minutes raises what is newly owed and cancels — never deletes — what is not.
+ */
+head("Meeting minutes");
+{
+  const mm = await import("../src/utils/meetingMinutes");
+  const wb = await import("../src/utils/workBoard");
+
+  /* -- an item's state is derived from its tasks -- */
+  eq("meetings: a decision owes nothing", mm.meetingItemState("DECISION", [wb.TASK_TODO], null, "1405/07/09"), "NONE");
+  eq("meetings: an action with no task yet is pending",
+    mm.meetingItemState("ACTION", [], "1405/07/20", "1405/07/09"), "PENDING");
+  eq("meetings: an action is done only when every assignee's task is",
+    mm.meetingItemState("ACTION", [wb.TASK_DONE, wb.TASK_TODO], "1405/07/20", "1405/07/09"), "OPEN");
+  eq("meetings: ...and done once they all are",
+    mm.meetingItemState("ACTION", [wb.TASK_DONE, wb.TASK_DONE], "1405/07/20", "1405/07/09"), "DONE");
+  eq("meetings: a cancelled share does not hold a finished action open",
+    mm.meetingItemState("ACTION", [wb.TASK_DONE, wb.TASK_CANCELLED], "1405/07/01", "1405/07/09"), "DONE");
+  eq("meetings: every task cancelled is a cancelled action",
+    mm.meetingItemState("ACTION", [wb.TASK_CANCELLED], null, "1405/07/09"), "CANCELLED");
+  eq("meetings: an open action past its date is overdue",
+    mm.meetingItemState("ACTION", [wb.TASK_DOING], "1405/07/01", "1405/07/09"), "OVERDUE");
+  eq("meetings: a status nobody anticipated still counts as open",
+    mm.meetingItemState("ACTION", ["در انتظار"], "1405/07/20", "1405/07/09"), "OPEN");
+  eq("meetings: a task that cannot be found is not evidence",
+    mm.meetingItemState("ACTION", [null, undefined], null, "1405/07/09"), "PENDING");
+
+  /* -- finalising asks more than a draft does -- */
+  const action = { text: "ارسال دیتاشیت", kind: "ACTION" as const, assignees: [], dueDateJalali: null };
+  eq("meetings: a draft may leave an action unassigned",
+    mm.meetingRefusal({ title: "t", meetingDateJalali: "1405/07/09", items: [action] }, false), null);
+  ok("meetings: finalising refuses an action with nobody on it",
+    /مسئول/.test(mm.meetingRefusal({ title: "t", meetingDateJalali: "1405/07/09", items: [action] }, true) ?? ""));
+  ok("meetings: ...and one with no deadline",
+    /مهلت/.test(mm.meetingRefusal({ title: "t", meetingDateJalali: "1405/07/09",
+      items: [{ ...action, assignees: [{ userId: "u1", name: "a" }] }] }, true) ?? ""));
+  ok("meetings: a title and a date are always required",
+    !!mm.meetingRefusal({ title: "", meetingDateJalali: "1405/07/09", items: [] }, false)
+    && !!mm.meetingRefusal({ title: "t", meetingDateJalali: "", items: [] }, false));
+
+  /* -- keeping the board in step -- */
+  const a1 = { userId: "u1", name: "علی" };
+  const a2 = { userId: "u2", name: "رضا" };
+  const first = mm.planTaskSync([], [
+    { id: "i1", kind: "ACTION", assignees: [a1, a2], taskLinks: [] },
+    { id: "i2", kind: "DECISION", assignees: [], taskLinks: [] },
+  ]);
+  eq("meetings: finalising raises one task per assignee per action", first.create.length, 2);
+  ok("meetings: ...and none for a decision", first.create.every((c) => c.itemId === "i1"));
+
+  const stored = [
+    { id: "i1", kind: "ACTION" as const, assignees: [a1, a2],
+      taskLinks: [{ userId: "u1", taskId: "t1" }, { userId: "u2", taskId: "t2" }] },
+    { id: "i3", kind: "ACTION" as const, assignees: [a1], taskLinks: [{ userId: "u1", taskId: "t3" }] },
+  ];
+  const again = mm.planTaskSync(stored, stored);
+  ok("meetings: re-saving plans nothing new", again.create.length === 0 && again.cancel.length === 0);
+  const edited = mm.planTaskSync(stored, [
+    { id: "i1", kind: "ACTION", assignees: [a1], taskLinks: [] },
+    { id: "i4", kind: "ACTION", assignees: [a2], taskLinks: [] },
+  ]);
+  eq("meetings: an assignee taken off and an item removed both cancel their tasks",
+    JSON.stringify([...edited.cancel].sort()), JSON.stringify(["t2", "t3"]));
+  eq("meetings: a new action raises its own task", JSON.stringify(edited.create),
+    JSON.stringify([{ itemId: "i4", userId: "u2", name: "رضا" }]));
+  eq("meetings: the assignee who stays keeps theirs", JSON.stringify(edited.keep),
+    JSON.stringify([{ itemId: "i1", userId: "u1", taskId: "t1" }]));
+  eq("meetings: an action turned into a decision cancels its tasks",
+    JSON.stringify(mm.planTaskSync(stored.slice(0, 1), [{ id: "i1", kind: "DECISION", assignees: [], taskLinks: [] }]).cancel),
+    JSON.stringify(["t1", "t2"]));
+
+  /* -- visibility is exact -- */
+  const index = mm.memberIndexOf("c1", [{ kind: "user", userId: "u1", name: "x" }, { kind: "contact", name: "مهمان" }], ["u2"]);
+  eq("meetings: the member index names the creator, colleagues and assignees", index, ",c1,u1,u2,");
+  const svc = readFileSync("src/server/services/meetingService.ts", "utf8");
+  ok("meetings: visibility is an exact, comma-wrapped match inside the query",
+    svc.includes("memberIndex: { contains: `,${user.id},` }"));
+  ok("meetings: every read goes through it",
+    (svc.match(/visibilityClause\(user\)/g) ?? []).length >= 5);
+  ok("meetings: removing an item cancels its tasks rather than deleting them",
+    /status: TASK_CANCELLED/.test(svc) && !/tx\.task\.delete/.test(svc) && !/db\.task\.delete/.test(svc));
+  ok("meetings: the cancel is conditional, so a finished task stays finished",
+    /where: \{ id: \{ in: plan\.cancel \}, \.\.\.OPEN_TASK \}/.test(svc));
+  ok("meetings: tasks are raised inside the minutes' own transaction",
+    /\$transaction\(async \(tx\)[\s\S]*syncTasks\(\s*tx,/.test(svc));
+  ok("meetings: items are reconciled by id, never rebuilt", !/syncChildren/.test(svc));
+  ok("meetings: the raised task points back at the meeting",
+    /relatedToType: MEETING_TASK_RELATION/.test(svc));
+
+  /* -- the task card resolves the link -- */
+  const tr = await import("../src/utils/taskRelations");
+  eq("meetings: both spellings of a meeting relation are read",
+    `${tr.taskRelationKind("meeting")}|${tr.taskRelationKind("صورتجلسه")}`, "meeting|meeting");
+  const taskSvc = readFileSync("src/server/services/taskService.ts", "utf8");
+  ok("meetings: a meeting task shows the meeting's project on its card", /kind === "meeting" \? byMeeting/.test(taskSvc));
+
+  /* -- routes, module, permission -- */
+  const route = readFileSync("src/server/routes/meetings.ts", "utf8");
+  ok("meetings: «open-actions» is registered before `/:id`",
+    route.indexOf('"/api/meetings/open-actions"') > 0
+    && route.indexOf('"/api/meetings/open-actions"') < route.indexOf('"/api/meetings/:id"'));
+  ok("meetings: the route is mounted", readFileSync("server.ts", "utf8").includes("registerMeetingRoutes(app, routeDeps)"));
+  const auth = await import("../src/server/auth");
+  ok("meetings: the module has its own key", auth.KEY_PERMISSION.erp_meetings === "meetings");
+  ok("meetings: «meetingsAll» is read strictly",
+    !auth.canSeeAllMeetings({ id: "u", permissions: {} } as never)
+    && auth.canSeeAllMeetings({ id: "u", permissions: { meetingsAll: true } } as never)
+    && auth.canSeeAllMeetings({ id: "u", isSystemAdmin: true } as never));
+  ok("meetings: a project's meetings block its deletion by name",
+    readFileSync("src/server/services/projectService.ts", "utf8").includes("db.meeting.count({ where: { projectId: id } })"));
+  const pv = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  ok("meetings: the project has a «صورتجلسات» tab drawing the module's own component",
+    /modalTab === 'meetings' \?[\s\S]{0,200}<MeetingsView[\s\S]{0,120}projectId=\{selectedProjectForActivities\.id\}/.test(pv));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

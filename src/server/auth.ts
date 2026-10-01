@@ -130,6 +130,12 @@ export const KEY_PERMISSION: Record<string, string | null> = {
    * `canSeeProjects` inside the service.
    */
   erp_referrals: "tasks",
+  /*
+   * «صورتجلسات». The module flag opens the screen; *which* meetings appear is
+   * decided inside the service (the creator, the people at it and the people
+   * owing an action see one — `meetingsAll` widens that to every meeting).
+   */
+  erp_meetings: "meetings",
   erp_messaging: "messaging",
   // «اثربخشی تبلیغات» — a strict flag (`STRICT_MODULES`): absent denies.
   erp_ad_campaigns: "adEffectiveness",
@@ -211,6 +217,18 @@ export function canSeeAllTasks(user: AuthUser | null | undefined): boolean {
   if (!user) return false;
   if (user.isSystemAdmin) return true;
   return user.permissions?.tasksAll === true;
+}
+
+/**
+ * May this user see every meeting rather than the ones they were part of?
+ *
+ * Strict for the reason `canSeeAllTasks` is: every account has the module, so
+ * a flag inheriting its default would show everybody every meeting.
+ */
+export function canSeeAllMeetings(user: AuthUser | null | undefined): boolean {
+  if (!user) return false;
+  if (user.isSystemAdmin) return true;
+  return user.permissions?.meetingsAll === true;
 }
 
 export interface AuthUser {

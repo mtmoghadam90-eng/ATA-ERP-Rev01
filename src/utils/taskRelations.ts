@@ -19,17 +19,20 @@
  */
 
 /** The kind of record a task points at, or null when it points at none. */
-export type TaskRelationKind = "project" | "proforma" | "customer";
+export type TaskRelationKind = "project" | "proforma" | "customer" | "meeting";
 
 const KINDS: Record<string, TaskRelationKind> = {
   // What the task form writes.
   "پروژه": "project",
   "پیش‌فاکتور": "proforma",
   "مشتری": "customer",
+  "صورتجلسه": "meeting",
   // What the automated writers write.
   project: "project",
   proforma: "proforma",
   customer: "customer",
+  // A task finalising a meeting's minutes raised for one of its action items.
+  meeting: "meeting",
 };
 
 export function taskRelationKind(relatedToType: unknown): TaskRelationKind | null {

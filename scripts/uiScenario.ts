@@ -62,6 +62,8 @@ import AfterSalesServicesView from "../src/components/AfterSalesServicesView";
 import ReferralsView from "../src/components/ReferralsView";
 import ProjectFollowUpTab from "../src/components/ProjectFollowUpTab";
 import AdEffectivenessView from "../src/components/AdEffectivenessView";
+import MeetingsView from "../src/components/MeetingsView";
+import { invalidateUserDirectory } from "../src/api/useUserDirectory";
 import { LANE_LABELS } from "../src/utils/workBoard";
 import { DEFAULT_SETTINGS } from "../src/seedData";
 import { RelationPicker } from "../src/components/RelationPicker";
@@ -4047,6 +4049,88 @@ head("Ad effectiveness: the reports are derived from the rows, weighted");
   act(() => { rootA.unmount(); });
   hostA.remove();
   gA.fetch = realFetchA;
+}
+
+head("Meeting minutes: an action carries its assignee, and finalising asks for a deadline");
+{
+  const gM = globalThis as unknown as Record<string, unknown>;
+  const realFetchM = gM.fetch;
+  const posted: { url: string; body: string }[] = [];
+  const saved = {
+    id: "m1", code: "MOM-0507-001", title: "جلسه هماهنگی", meetingDateJalali: "1405/07/09",
+    startTime: null, endTime: null, place: null, summary: null, projectId: null, projectCode: null,
+    projectName: null, customerName: null, status: "DRAFT", attendees: [], absentees: [],
+    nextMeetingDateJalali: null, attachments: [], createdByUserId: "u1", createdByName: "علی",
+    finalizedByName: null, createdAt: "2026-10-01", canEdit: true, itemCount: 1, actionCount: 1,
+    openActionCount: 0, items: [],
+  };
+  gM.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
+    const u = String(url);
+    if (init?.method === "POST" || init?.method === "PUT") posted.push({ url: u, body: String(init.body ?? "") });
+    let body: unknown = { success: true, rows: [], total: 0, page: 1, pageSize: 25, totalPages: 1 };
+    if (u.startsWith("/api/users")) {
+      body = { success: true, rows: [{ id: "u1", fullName: "علی" }, { id: "u2", fullName: "رضا" }], total: 2, page: 1, pageSize: 200, totalPages: 1 };
+    } else if (init?.method === "POST") {
+      body = { success: true, meeting: saved, createdTasks: 0, cancelledTasks: 0 };
+    }
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+  invalidateUserDirectory();
+
+  const hostM = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootM = createRoot(hostM);
+  const settleM = async () => { for (let i = 0; i < 14; i++) await act(async () => { await Promise.resolve(); }); };
+  const click = async (el: Element | null) => {
+    await act(async () => { el?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+    await settleM();
+  };
+  await act(async () => {
+    rootM.render(React.createElement(MeetingsView, {
+      currentUser: { id: "u1", fullName: "علی", permissions: {} } as never,
+    }));
+  });
+  await settleM();
+  await click(hostM.querySelector("#meeting-new"));
+  const titleBox = hostM.querySelector<HTMLInputElement>("#meeting-title");
+  ok("meetings screen: «صورتجلسه جدید» opens the form", !!titleBox);
+  await act(async () => {
+    titleBox!.value = "جلسه هماهنگی";
+    handlers(titleBox!).onChange?.({ target: titleBox, currentTarget: titleBox });
+  });
+  await click(hostM.querySelector("#meeting-add-item"));
+  const text = hostM.querySelector<HTMLTextAreaElement>('[data-meeting-item="1"] textarea');
+  await act(async () => {
+    text!.value = "ارسال دیتاشیت به مشتری";
+    handlers(text!).onChange?.({ target: text, currentTarget: text });
+  });
+  await click(hostM.querySelector('[data-meeting-item="1"] [data-item-kind="ACTION"]'));
+  const pick = hostM.querySelector<HTMLSelectElement>('[data-meeting-item="1"] [data-add-assignee]');
+  ok("meetings screen: an action offers its assignee picker", !!pick);
+  await act(async () => {
+    handlers(pick!).onChange?.({ target: { value: "u2" }, currentTarget: { value: "u2" } });
+  });
+  await settleM();
+  ok("meetings screen: the picked colleague is drawn on the item",
+    !!hostM.querySelector('[data-meeting-item="1"] [data-assignee="u2"]'));
+
+  await click(hostM.querySelector("#meeting-finalize"));
+  ok("meetings screen: finalising an action with no deadline is refused before any request",
+    posted.length === 0 && /مهلت/.test(hostM.querySelector("[data-meeting-error]")?.textContent ?? ""),
+    posted);
+
+  await click(hostM.querySelector("#meeting-save-draft"));
+  const draft = posted[0] ? JSON.parse(posted[0].body) : null;
+  ok("meetings screen: a draft is posted to the module's own endpoint", posted[0]?.url === "/api/meetings", posted);
+  ok("meetings screen: ...not finalised", draft?.finalize === false);
+  ok("meetings screen: ...with the action and its assignee",
+    draft?.items?.[0]?.kind === "ACTION" && draft.items[0].assignees?.[0]?.userId === "u2", draft?.items);
+  ok("meetings screen: the person writing it is an attendee by default",
+    draft?.attendees?.some((a: { userId?: string }) => a.userId === "u1"), draft?.attendees);
+
+  act(() => { rootM.unmount(); });
+  hostM.remove();
+  gM.fetch = realFetchM;
+  invalidateUserDirectory();
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
