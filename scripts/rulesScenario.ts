@@ -392,7 +392,8 @@ import {
 } from "../src/utils/dueReminders";
 
 import {
-  ADVISOR_THRESHOLDS, askedNeverBought, bottlenecksByState, countSignals,
+  ADVISOR_THRESHOLDS, ADVISOR_THRESHOLD_FIELDS, DEFAULT_ADVISOR_THRESHOLDS, resolveAdvisorThresholds,
+  askedNeverBought, bottlenecksByState, countSignals,
   customerOpportunityHints, median, overdueSeverity, quoteExpirySignal, rankSignals,
   tallyReasons, UNSTATED_REASON, type Signal,
 } from "../src/utils/businessAdvisor";
@@ -22935,7 +22936,24 @@ head("Business adviser: the evidence behind every recommendation");
   eq("hints: a brand-new customer gets a first-sale suggestion",
     customerOpportunityHints({ ...base, everPurchased: false, rank: "PROSPECT" })[0]?.kind, "FIRST_SALE");
 
+  // The thresholds are the company's own, set on the assistant's settings tab.
+  eq("thresholds: nothing stored is the defaults", JSON.stringify(resolveAdvisorThresholds(undefined)), JSON.stringify(DEFAULT_ADVISOR_THRESHOLDS));
+  eq("thresholds: a stored value wins", resolveAdvisorThresholds({ quietProjectDays: 10 }).quietProjectDays, 10);
+  eq("thresholds: the rest keep their defaults", resolveAdvisorThresholds({ quietProjectDays: 10 }).dormantCustomerDays, DEFAULT_ADVISOR_THRESHOLDS.dormantCustomerDays);
+  eq("thresholds: zero is clamped up, never «flag everything»", resolveAdvisorThresholds({ staleReferralDays: 0 }).staleReferralDays, 1);
+  eq("thresholds: junk takes the default", resolveAdvisorThresholds({ expiringQuoteDays: "abc" }).expiringQuoteDays, DEFAULT_ADVISOR_THRESHOLDS.expiringQuoteDays);
+  eq("thresholds: every key has a settings row",
+    JSON.stringify(ADVISOR_THRESHOLD_FIELDS.map((f) => f.key).sort()), JSON.stringify(Object.keys(DEFAULT_ADVISOR_THRESHOLDS).sort()));
+  ok("thresholds: every default sits inside its own bounds",
+    ADVISOR_THRESHOLD_FIELDS.every((f) => DEFAULT_ADVISOR_THRESHOLDS[f.key] >= f.min && DEFAULT_ADVISOR_THRESHOLDS[f.key] <= f.max));
+  eq("thresholds: a configured expiry window moves the signal", quoteExpirySignal(10, { ...DEFAULT_ADVISOR_THRESHOLDS, expiringQuoteDays: 14 })?.kind, "EXPIRING_QUOTE");
+  eq("thresholds: a configured dormancy moves the hint",
+    customerOpportunityHints({ ...base, daysSinceLastPurchase: 40 }, { ...DEFAULT_ADVISOR_THRESHOLDS, dormantCustomerDays: 30 })[0]?.kind, "REACTIVATE");
   const svc = readFileSync("src/server/services/advisorService.ts", "utf8");
+  ok("service: reads the thresholds from settings.assistant", svc.includes("resolveAdvisorThresholds(settings?.assistant?.advisorThresholds)"));
+  ok("service: no hardcoded default left in the readings", !svc.includes("ADVISOR_THRESHOLDS") && !/-180\)/.test(svc));
+  ok("service: the hints and the expiry signal are handed the thresholds in force",
+    svc.includes("quoteExpirySignal(toExpiry, t)") && /openProjects,\s*\}, t\);/.test(svc));
   ok("service: it writes nothing", !/\.(create|update|updateMany|delete|deleteMany|upsert)\(/.test(svc));
   for (const rule of ["taskVisibility(user)", "proformaVisibility(user)", "projectVisibility(user)", "customerVisibility(user)"]) {
     ok(`service: narrows inside the query with ${rule}`, svc.includes(rule));
@@ -22950,6 +22968,11 @@ head("Business adviser: the evidence behind every recommendation");
   ok("prompt: names all three adviser tools", ["business_health_check", "process_bottlenecks", "customer_opportunities"].every((n) => prompt.includes(n)));
   const panel = readFileSync("src/components/AssistantPanel.tsx", "utf8");
   ok("panel: the adviser prompts are drawn", panel.includes("ADVISOR_PROMPTS.map("));
+  const settingsPanel = readFileSync("src/components/AssistantSettingsPanel.tsx", "utf8");
+  ok("settings: the assistant tab draws every threshold from the one list", settingsPanel.includes("ADVISOR_THRESHOLD_FIELDS.map("));
+  ok("settings: the box shows the value in force, not a blank", settingsPanel.includes("value={advisorInForce[f.key]}"));
+  ok("settings: a box writes into settings.assistant.advisorThresholds",
+    settingsPanel.includes("advisorThresholds: { ...(assistant.advisorThresholds ?? {}), [f.key]: value }"));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

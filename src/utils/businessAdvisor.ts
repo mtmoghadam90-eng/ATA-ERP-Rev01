@@ -21,24 +21,81 @@
 /**
  * How long before something reads as forgotten.
  *
- * Named and exported rather than buried in a query, because the measured
- * sentence beside every answer has to say them — «فعالیتی ثبت نشده» means
- * nothing without «در ۲۱ روز گذشته».
+ * These are **defaults, not policy**: `settings.assistant.advisorThresholds`
+ * overrides any of them from the assistant's own settings tab, because «پروژه‌ی
+ * بدون فعالیت» means three weeks for one company and three days for another.
+ * Named rather than buried in a query, since the measured sentence beside every
+ * answer has to say them — «فعالیتی ثبت نشده» means nothing without «در ۲۱ روز
+ * گذشته».
  */
-export const ADVISOR_THRESHOLDS = {
+export interface AdvisorThresholds {
   /** An open sales-stage project with no write and no feed message for this long. */
-  quietProjectDays: 21,
+  quietProjectDays: number;
   /** An open referral raised this long ago. */
-  staleReferralDays: 7,
+  staleReferralDays: number;
   /** A live quotation whose validity ends within this many days. */
-  expiringQuoteDays: 7,
+  expiringQuoteDays: number;
   /** …or ended this recently and is still open (an offer that lapsed unnoticed). */
-  lapsedQuoteDays: 30,
+  lapsedQuoteDays: number;
   /** A valuable customer (A/B) with no purchase for this long. */
-  dormantCustomerDays: 180,
+  dormantCustomerDays: number;
   /** A lost quotation recent enough to be worth a second offer. */
+  recentLossDays: number;
+  /** How far back «why we lose» reads lost projects. */
+  lossWindowDays: number;
+}
+
+export type AdvisorThresholdKey = keyof AdvisorThresholds;
+
+export const DEFAULT_ADVISOR_THRESHOLDS: AdvisorThresholds = {
+  quietProjectDays: 21,
+  staleReferralDays: 7,
+  expiringQuoteDays: 7,
+  lapsedQuoteDays: 30,
+  dormantCustomerDays: 180,
   recentLossDays: 365,
-} as const;
+  lossWindowDays: 180,
+};
+
+/** Kept as the name the rest of the code reads the defaults by. */
+export const ADVISOR_THRESHOLDS = DEFAULT_ADVISOR_THRESHOLDS;
+
+/**
+ * The settings screen's rows, in the order they are drawn. One list, so the
+ * form and the resolver cannot disagree about which keys exist or their bounds.
+ * Every bound is at least 1: a zero would make «۰ روز بدون فعالیت» flag every
+ * project in the company, which is noise rather than a setting.
+ */
+export const ADVISOR_THRESHOLD_FIELDS: {
+  key: AdvisorThresholdKey; label: string; hint: string; min: number; max: number;
+}[] = [
+  { key: "quietProjectDays", label: "پروژه‌ی فروش بدون فعالیت", hint: "روز بدون ویرایش و بدون پیام در فعالیت‌ها", min: 1, max: 365 },
+  { key: "staleReferralDays", label: "ارجاع باز قدیمی", hint: "روز از ثبت ارجاعی که هنوز انجام نشده", min: 1, max: 180 },
+  { key: "expiringQuoteDays", label: "پیش‌فاکتور در آستانه‌ی انقضا", hint: "روز مانده تا پایان اعتبار", min: 1, max: 90 },
+  { key: "lapsedQuoteDays", label: "پیش‌فاکتور منقضی‌شده‌ی هنوز باز", hint: "تا چند روز پس از انقضا یادآوری شود", min: 1, max: 365 },
+  { key: "dormantCustomerDays", label: "مشتری ارزشمند بدون خرید", hint: "روز از آخرین خرید مشتری رتبه‌ی A/B", min: 1, max: 1825 },
+  { key: "recentLossDays", label: "باخت اخیر قابل پیشنهاد دوباره", hint: "باخت‌های چند روز گذشته بررسی شود", min: 1, max: 1825 },
+  { key: "lossWindowDays", label: "بازه‌ی تحلیل دلایل باخت", hint: "روزهای گذشته در گزارش گلوگاه‌ها", min: 7, max: 1825 },
+];
+
+/**
+ * The stored overrides filled in with the defaults and bounded.
+ *
+ * A key the document does not carry, or carries as something that is not a
+ * whole number, takes its default — a half-typed box must not blank a rule.
+ */
+export function resolveAdvisorThresholds(stored: unknown): AdvisorThresholds {
+  const raw = (stored && typeof stored === "object" ? stored : {}) as Record<string, unknown>;
+  const out = { ...DEFAULT_ADVISOR_THRESHOLDS };
+  for (const f of ADVISOR_THRESHOLD_FIELDS) {
+    const v = raw[f.key];
+    if (v === null || v === undefined || v === "") continue;
+    const n = Math.round(Number(v));
+    if (!Number.isFinite(n)) continue;
+    out[f.key] = Math.min(f.max, Math.max(f.min, n));
+  }
+  return out;
+}
 
 /* --------------------------------- signals -------------------------------- */
 
@@ -120,14 +177,17 @@ export function overdueSeverity(daysLate: number): Severity {
  * document has no expiry (blank means «does not lapse»), or it is far enough
  * either side that it is not news.
  */
-export function quoteExpirySignal(daysToExpiry: number | null): {
+export function quoteExpirySignal(
+  daysToExpiry: number | null,
+  t: AdvisorThresholds = DEFAULT_ADVISOR_THRESHOLDS,
+): {
   kind: "EXPIRING_QUOTE" | "LAPSED_QUOTE"; severity: Severity;
 } | null {
   if (daysToExpiry === null) return null;
-  if (daysToExpiry >= 0 && daysToExpiry <= ADVISOR_THRESHOLDS.expiringQuoteDays) {
+  if (daysToExpiry >= 0 && daysToExpiry <= t.expiringQuoteDays) {
     return { kind: "EXPIRING_QUOTE", severity: daysToExpiry <= 2 ? "HIGH" : "MEDIUM" };
   }
-  if (daysToExpiry < 0 && -daysToExpiry <= ADVISOR_THRESHOLDS.lapsedQuoteDays) {
+  if (daysToExpiry < 0 && -daysToExpiry <= t.lapsedQuoteDays) {
     return { kind: "LAPSED_QUOTE", severity: "MEDIUM" };
   }
   return null;
@@ -283,9 +343,11 @@ const isPriceLoss = (reason: string | null) =>
  * **a chase on a live quotation outranks a new idea**: an offer already on the
  * customer's desk is nearer to a sale than anything not yet written.
  */
-export function customerOpportunityHints(input: CustomerOpportunityInput): OpportunityHint[] {
+export function customerOpportunityHints(
+  input: CustomerOpportunityInput,
+  t: AdvisorThresholds = DEFAULT_ADVISOR_THRESHOLDS,
+): OpportunityHint[] {
   const hints: OpportunityHint[] = [];
-  const t = ADVISOR_THRESHOLDS;
 
   if (input.openAfterSales.length > 0) {
     hints.push({
@@ -299,7 +361,7 @@ export function customerOpportunityHints(input: CustomerOpportunityInput): Oppor
   }
 
   for (const q of input.quotes.filter((x) => !x.settled)) {
-    const expiry = quoteExpirySignal(q.daysToExpiry);
+    const expiry = quoteExpirySignal(q.daysToExpiry, t);
     if (expiry) {
       hints.push({
         kind: "RENEW_EXPIRING_QUOTE",
@@ -329,7 +391,7 @@ export function customerOpportunityHints(input: CustomerOpportunityInput): Oppor
     hints.push({
       kind: "REOFFER_LOST",
       severity: "MEDIUM",
-      basis: `${priceLosses.length} پیش‌فاکتور در سال گذشته به دلیل قیمت باخته شده`
+      basis: `${priceLosses.length} پیش‌فاکتور در ${t.recentLossDays} روز گذشته به دلیل قیمت باخته شده`
         + (rivals.length ? ` (رقیب: ${rivals.join("، ")}).` : "."),
       suggestion: "برای خرید بعدی گزینه‌ی اقتصادی‌تر یا برند جایگزین پیشنهاد دهید و زودتر از رقیب قیمت بدهید.",
       refs: priceLosses.map((q) => q.number),

@@ -1,4 +1,5 @@
 import { getDb } from "../db";
+import { loadSettings } from "../settings";
 import { AuthUser, hasPermission } from "../auth";
 import { addDaysToShamsi, getShamsiDaysDifference } from "../../dateUtils";
 import { jalaliToDate, dateToJalali } from "../dates";
@@ -7,7 +8,7 @@ import { isTerminalOutcome, FOLLOW_UP_KIND } from "../../utils/salesFollowUp";
 import { TASK_DONE, TASK_CANCELLED, REFERRAL_DONE } from "../../utils/workBoard";
 import { afterSalesIsOpen, PROJECT_STATUSES } from "../../utils/moduleStatuses";
 import {
-  ADVISOR_THRESHOLDS, SIGNAL_LABELS, Signal, askedNeverBought, bottlenecksByState,
+  AdvisorThresholds, resolveAdvisorThresholds, SIGNAL_LABELS, Signal, askedNeverBought, bottlenecksByState,
   countSignals, customerOpportunityHints, overdueSeverity, quoteExpirySignal,
   rankSignals, tallyByOwner, tallyReasons,
 } from "../../utils/businessAdvisor";
@@ -37,6 +38,16 @@ const OPEN_SALES_STATUSES: string[] = PROJECT_STATUSES.filter(
   (s) => !["برنده (موفق)", "باخته", "لغو شده", "نیمه برنده"].includes(s),
 );
 
+/**
+ * The thresholds in force: the company's own from the assistant's settings tab,
+ * filled in with the defaults. Read on every call so a change takes effect on
+ * the next question without a restart.
+ */
+async function loadThresholds(): Promise<AdvisorThresholds> {
+  const settings = await loadSettings() as { assistant?: { advisorThresholds?: unknown } } | undefined;
+  return resolveAdvisorThresholds(settings?.assistant?.advisorThresholds);
+}
+
 const and = (...parts: (Record<string, unknown> | undefined | null)[]) => {
   const list = parts.filter(Boolean) as Record<string, unknown>[];
   return list.length === 1 ? list[0] : { AND: list };
@@ -50,7 +61,7 @@ const daysFrom = (fromJalali: string | null | undefined, toJalali: string): numb
 export interface HealthCheck {
   measured: string;
   today: string;
-  thresholds: typeof ADVISOR_THRESHOLDS;
+  thresholds: AdvisorThresholds;
   counts: Record<string, number>;
   labels: typeof SIGNAL_LABELS;
   followUps: Awaited<ReturnType<typeof followUpSummary>> | null;
@@ -62,7 +73,7 @@ export interface HealthCheck {
 
 export async function businessHealthCheck(user: AuthUser, today: string): Promise<HealthCheck> {
   const db = getDb();
-  const t = ADVISOR_THRESHOLDS;
+  const t = await loadThresholds();
   const signals: Signal[] = [];
   const withheld: string[] = [];
   let truncated = false;
@@ -166,7 +177,7 @@ export async function businessHealthCheck(user: AuthUser, today: string): Promis
       const outcome = getProformaOutcome(q);
       if (isTerminalOutcome(outcome) || outcome === "پیش‌نویس") continue;
       const toExpiry = q.expiryDateJalali ? getShamsiDaysDifference(today, q.expiryDateJalali) : null;
-      const expiry = quoteExpirySignal(toExpiry);
+      const expiry = quoteExpirySignal(toExpiry, t);
       if (!expiry) continue;
       signals.push({
         kind: expiry.kind,
@@ -290,6 +301,7 @@ async function lastActivityByProject(projectIds: string[]): Promise<Map<string, 
 
 export async function processBottlenecks(user: AuthUser, today: string) {
   const db = getDb();
+  const t = await loadThresholds();
   const withheld: string[] = [];
 
   const stuck = await stuckWorkReport(user, { includeWarning: true, todayJalali: today });
@@ -318,7 +330,7 @@ export async function processBottlenecks(user: AuthUser, today: string) {
     const lost = await db.project.findMany({
       where: and(projectVisibility(user), {
         status: "باخته",
-        statusChangedAt: { gte: jalaliToDate(addDaysToShamsi(today, -180))! },
+        statusChangedAt: { gte: jalaliToDate(addDaysToShamsi(today, -t.lossWindowDays))! },
       }) as never,
       take: 1000,
       select: { lossReason: true },
@@ -329,7 +341,7 @@ export async function processBottlenecks(user: AuthUser, today: string) {
 
   return {
     measured: `مراحلی که کار در آن‌ها انباشته شده (بر اساس آستانه‌های «کارهای متوقف»، با میانه‌ی روزهای ماندن)،`
-      + ` وظایف عقب‌افتاده به تفکیک مسئول، و دلایل باخت پروژه‌ها در ۱۸۰ روز گذشته (${lostProjects} پروژه).`
+      + ` وظایف عقب‌افتاده به تفکیک مسئول، و دلایل باخت پروژه‌ها در ${t.lossWindowDays} روز گذشته (${lostProjects} پروژه).`
       + ` تا امروز ${today}.`,
     today,
     bottlenecks: states.slice(0, 15),
@@ -345,6 +357,7 @@ export async function processBottlenecks(user: AuthUser, today: string) {
 
 export async function customerOpportunities(customerId: string, user: AuthUser, today: string) {
   const db = getDb();
+  const t = await loadThresholds();
   if (!hasPermission(user, "customers")) return { error: "این کاربر اجازه دیدن مشتریان را ندارد." };
   const customer = await db.customer.findFirst({
     where: and({ id: customerId }, customerVisibility(user)) as never,
@@ -456,7 +469,7 @@ export async function customerOpportunities(customerId: string, user: AuthUser, 
     askedNeverBought: asked,
     openAfterSales: openServices.map((s) => ({ label: s.itemName, status: s.status, projectCode: s.project?.code ?? null })),
     openProjects,
-  });
+  }, t);
 
   return {
     measured: `پرونده‌ی مشتری «${customer.companyName}» تا امروز ${today}: آخرین ${docs.length} پیش‌فاکتور،`

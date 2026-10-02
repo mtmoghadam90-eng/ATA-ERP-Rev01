@@ -5,6 +5,7 @@ import { ApiError } from '../api/client';
 import { assistantApi } from '../api/assistant';
 import { PROPOSAL_TTL_MINUTES } from '../utils/assistantActions';
 import NumberField from './NumberField';
+import { ADVISOR_THRESHOLD_FIELDS, resolveAdvisorThresholds } from '../utils/businessAdvisor';
 
 /**
  * The assistant's settings.
@@ -47,6 +48,8 @@ export default function AssistantSettingsPanel({ settings, updateSettings }: Pro
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  const advisorInForce = resolveAdvisorThresholds(assistant.advisorThresholds);
 
   const patch = (change: Partial<Assistant>) => {
     updateSettings({ ...settings, assistant: { ...assistant, ...change } });
@@ -311,6 +314,46 @@ export default function AssistantSettingsPanel({ settings, updateSettings }: Pro
             )}
           </span>
         </label>
+      </div>
+
+      {/*
+        The adviser's thresholds. Saved with the rest of the settings, read by
+        the server on the next question; the boxes show what is in force, so an
+        untouched key reads as its default rather than as blank.
+      */}
+      <div className="bg-white rounded-2xl border border-slate-150 shadow-sm p-6 space-y-3" data-advisor-thresholds>
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="font-bold text-xs text-slate-700">آستانه‌های مشاور کسب‌وکار (روز)</h4>
+          <button
+            type="button"
+            onClick={() => patch({ advisorThresholds: undefined })}
+            className="text-[10px] font-bold text-slate-500 hover:text-indigo-700 border border-slate-200 rounded-lg px-2 py-1"
+          >
+            بازگشت به پیش‌فرض
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-400 leading-5">
+          مشاور بر اساس این عددها تشخیص می‌دهد چه چیزی عقب افتاده یا فراموش شده است.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {ADVISOR_THRESHOLD_FIELDS.map((f) => {
+            return (
+              <div key={f.key}>
+                <label className={label}>{f.label}</label>
+                <NumberField
+                  integer min={f.min} max={f.max}
+                  value={advisorInForce[f.key]}
+                  onChange={(value) => patch({
+                    advisorThresholds: { ...(assistant.advisorThresholds ?? {}), [f.key]: value },
+                  })}
+                  className={`${field} text-center font-mono`}
+                  id={`advisor-threshold-${f.key}`}
+                />
+                <p className="text-[10px] text-slate-400 mt-1">{f.hint}</p>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* What it can look at — so whoever writes the instructions knows. */}

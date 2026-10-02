@@ -860,6 +860,11 @@ export interface ERPSettings {
     timeoutSeconds?: number;
     /** Whether it may propose actions that change data. Nothing is written unconfirmed. */
     allowActions?: boolean;
+    /**
+     * The business adviser's thresholds, in days. Absent keys take the defaults
+     * in `DEFAULT_ADVISOR_THRESHOLDS`; `resolveAdvisorThresholds` bounds them.
+     */
+    advisorThresholds?: Partial<Record<import('./utils/businessAdvisor').AdvisorThresholdKey, number>>;
   };
   /**
    * How the messaging module behaves, as opposed to which providers it uses.
