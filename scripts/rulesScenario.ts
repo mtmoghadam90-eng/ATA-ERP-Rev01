@@ -386,6 +386,7 @@ import {
 } from "../src/utils/workflowNotice";
 import { deriveServiceHeader } from "../src/server/afterSalesStatus";
 import { RELAY_TOO_OLD_ERROR } from "../src/server/services/messaging/telegramTransport";
+import { shouldReloadForChunk, RELOAD_GUARD_MS } from "../src/utils/lazyView";
 import {
   DUE_SOON_DAYS, OVERDUE_WINDOW_DAYS,
   dueNoticeBody, dueNoticeRecipient, dueNoticeTitle, dueNoticesFor, dueScanRange,
@@ -22973,6 +22974,28 @@ head("Business adviser: the evidence behind every recommendation");
   ok("settings: the box shows the value in force, not a blank", settingsPanel.includes("value={advisorInForce[f.key]}"));
   ok("settings: a box writes into settings.assistant.advisorThresholds",
     settingsPanel.includes("advisorThresholds: { ...(assistant.advisorThresholds ?? {}), [f.key]: value }"));
+}
+
+head("Code-splitting: a screen loads when it is opened, and a stale tab survives a deploy");
+{
+  ok("never reloaded: a failed chunk reloads", shouldReloadForChunk(null, 1_000_000));
+  ok("a reload a moment ago: the second failure is real, not stale", !shouldReloadForChunk(1_000_000, 1_000_000 + 5_000));
+  ok("a reload long ago (the last deploy): reloads again", shouldReloadForChunk(1_000_000, 1_000_000 + RELOAD_GUARD_MS + 1));
+  ok("a junk stored value reads as never", shouldReloadForChunk(Number("x"), 5));
+  const app = readFileSync("src/App.tsx", "utf8");
+  const views = APP_MODULES.map((m) => m.id);
+  const staticViews = [...app.matchAll(/^import (\w+View) from '\.\/components\/\w+';/gm)].map((m) => m[1]);
+  ok("only the dashboard and the login screen are in the entry chunk",
+    staticViews.every((v) => v === "DashboardView" || v === "LoginView"), staticViews);
+  ok("every lazy screen goes through lazyView (the reload guard), never bare lazy()",
+    /lazyView\(\(\) => import\('\.\/components\/ProformasView'\)\)/.test(app) && !/\blazy\(\(\) =>/.test(app));
+  ok("the active view is inside Suspense and an error boundary keyed on it",
+    /<ViewErrorBoundary key=\{activeView\}>\s*<Suspense[\s\S]*?\{renderActiveView\(\)\}\s*<\/Suspense>\s*<\/ViewErrorBoundary>/.test(app));
+  ok("the catalogue still has a screen for every module", views.length > 10);
+  const server = readFileSync("server.ts", "utf8");
+  ok("server: a missing chunk is a 404, not index.html served as JavaScript", /app\.use\("\/assets", \(_req, res\) => \{ res\.status\(404\)/.test(server));
+  ok("server: index.html is never cached", (server.match(/"Cache-Control", "no-cache"/g) ?? []).length >= 2);
+  ok("server: the /assets mount precedes the catch-all", server.indexOf('app.use("/assets"') < server.indexOf("app.get('*'"));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

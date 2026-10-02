@@ -736,8 +736,20 @@ registerCampaignRoutes(app, routeDeps);
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+    // Hashed chunks never change under their name, so a browser may keep them
+    // for good; index.html must be asked for again every time, or a tab picks
+    // up yesterday's names after a deploy. A chunk that no longer exists is a
+    // 404 rather than index.html served as JavaScript, so the client's
+    // reload-once guard sees a plain failure.
+    app.use("/assets", express.static(path.join(distPath, "assets"), { immutable: true, maxAge: "1y" }));
+    app.use("/assets", (_req, res) => { res.status(404).end(); });
+    app.use(express.static(distPath, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith(".html")) res.setHeader("Cache-Control", "no-cache");
+      },
+    }));
     app.get('*', (req, res) => {
+      res.setHeader("Cache-Control", "no-cache");
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

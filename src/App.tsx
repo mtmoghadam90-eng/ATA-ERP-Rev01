@@ -1,23 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { lazyView } from './utils/lazyView';
+import ViewErrorBoundary from './components/ViewErrorBoundary';
 import Sidebar from './components/Sidebar';
-import MessagingView from './components/MessagingView';
-import AdEffectivenessView from './components/AdEffectivenessView';
-import StuckWorkView from './components/StuckWorkView';
-import MeetingsView from './components/MeetingsView';
 import DashboardView from './components/DashboardView';
-import CustomersView from './components/CustomersView';
-import ProductsView from './components/ProductsView';
-import ProformasView from './components/ProformasView';
-import PurchaseOrdersView from './components/PurchaseOrdersView';
-import SuppliersView from './components/SuppliersView';
-import ProjectsView from './components/ProjectsView';
-import TransactionsView from './components/TransactionsView';
-import TasksView from './components/TasksView';
-import SettingsView from './components/SettingsView';
-import UsersView from './components/UsersView';
-import AfterSalesServicesView from './components/AfterSalesServicesView';
-import PackagingDeliveryView from './components/PackagingDeliveryView';
-import SupplierInquiriesView from './components/SupplierInquiriesView';
 import LoginView from './components/LoginView';
 import { brandLogoUrl } from './utils/brand';
 import { useERPStore, onSessionExpired } from './useERPStore';
@@ -41,6 +26,28 @@ import { useSidebarBadges } from './api/useSidebarBadges';
 import { tasksApi, taskToWriteInput } from './api/tasks';
 import { useCategoryCompletion } from './api/useCategoryCompletion';
 import { useBrowserTab } from './api/useBrowserTab';
+
+// Each module is its own chunk, fetched the first time somebody opens it:
+// one bundle carried the whole ERP (4 MB) on every sign-in, for a person who
+// usually opens two screens. The dashboard, the sidebar and the login screen
+// stay in the entry chunk because every session draws them.
+const MessagingView = lazyView(() => import('./components/MessagingView'));
+const AdEffectivenessView = lazyView(() => import('./components/AdEffectivenessView'));
+const StuckWorkView = lazyView(() => import('./components/StuckWorkView'));
+const MeetingsView = lazyView(() => import('./components/MeetingsView'));
+const CustomersView = lazyView(() => import('./components/CustomersView'));
+const ProductsView = lazyView(() => import('./components/ProductsView'));
+const ProformasView = lazyView(() => import('./components/ProformasView'));
+const PurchaseOrdersView = lazyView(() => import('./components/PurchaseOrdersView'));
+const SuppliersView = lazyView(() => import('./components/SuppliersView'));
+const ProjectsView = lazyView(() => import('./components/ProjectsView'));
+const TransactionsView = lazyView(() => import('./components/TransactionsView'));
+const TasksView = lazyView(() => import('./components/TasksView'));
+const SettingsView = lazyView(() => import('./components/SettingsView'));
+const UsersView = lazyView(() => import('./components/UsersView'));
+const AfterSalesServicesView = lazyView(() => import('./components/AfterSalesServicesView'));
+const PackagingDeliveryView = lazyView(() => import('./components/PackagingDeliveryView'));
+const SupplierInquiriesView = lazyView(() => import('./components/SupplierInquiriesView'));
 
 export default function App() {
   const store = useERPStore();
@@ -780,7 +787,11 @@ export default function App() {
         )}
 
         <div className={`flex-1 overflow-y-auto ${isStandalone ? 'p-0 bg-white' : 'p-4 md:p-8 space-y-6'}`}>
-          {renderActiveView()}
+          <ViewErrorBoundary key={activeView}>
+            <Suspense fallback={<div className="flex items-center justify-center py-24 text-sm text-slate-500" dir="rtl">در حال بارگذاری…</div>}>
+              {renderActiveView()}
+            </Suspense>
+          </ViewErrorBoundary>
         </div>
       </main>
 
