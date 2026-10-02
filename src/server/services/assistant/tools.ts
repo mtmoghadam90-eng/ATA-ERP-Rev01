@@ -24,6 +24,7 @@ import { listCategoryGroups, REFERRAL_SORTABLE, listReferrals } from "../activit
 import { dashboardSummary } from "../dashboardService";
 import { productDemand } from "../demandService";
 import { summarizeProjectFinance } from "../projectFinance";
+import { businessHealthCheck, customerOpportunities, processBottlenecks } from "../advisorService";
 import { dateToJalali, jalaliToDate } from "../../dates";
 import type { ChatToolDefinition } from "./provider";
 
@@ -706,6 +707,49 @@ export function assistantTools(): AssistantTool[] {
           open: args.open === true,
         });
       },
+    },
+
+    /*
+     * The adviser's three readings.
+     *
+     * Each is answer-shaped for one kind of «چه توصیه‌ای داری» and does the
+     * reading of the evidence itself (`src/utils/businessAdvisor.ts`), so the
+     * model orders and words findings rather than inventing them.
+     */
+    {
+      definition: {
+        name: "business_health_check",
+        description:
+          "بررسی سلامت کار به‌عنوان مشاور: کارهای فراموش‌شده و عقب‌افتاده در کل سامانه —"
+          + " کارهای متوقف بیش از زمان مجاز، وظایف عقب‌افتاده، ارجاع‌های باز قدیمی، پیش‌فاکتورهای"
+          + " باز در آستانه‌ی انقضا یا منقضی، پروژه‌های فروش بدون فعالیت، و مشتریان ارزشمند بدون خرید."
+          + " هر مورد رکورد و عدد خودش را دارد. برای «چه چیزی عقب افتاده/فراموش شده» و «امروز روی چه تمرکز کنم».",
+        parameters: object({}),
+      },
+      run: async (_args, ctx) => businessHealthCheck(ctx.user, ctx.todayJalali),
+    },
+    {
+      definition: {
+        name: "process_bottlenecks",
+        description:
+          "گلوگاه‌های فرایند: مراحلی که کار در آن‌ها انباشته شده (تعداد، عقب‌افتاده، میانه‌ی روزهای ماندن)،"
+          + " وظایف عقب‌افتاده به تفکیک مسئول، دلایل باخت پروژه‌ها در شش ماه گذشته و سلامت پیگیری فروش."
+          + " برای «گلوگاه کار کجاست» و «چطور فرایند را بهتر کنیم».",
+        parameters: object({}),
+      },
+      run: async (_args, ctx) => processBottlenecks(ctx.user, ctx.todayJalali),
+    },
+    {
+      definition: {
+        name: "customer_opportunities",
+        description:
+          "پرونده‌ی فرصت‌های یک مشتری: پیش‌فاکتورهای باز و وضعیت پیگیری و انقضایشان، باخت‌های اخیر و"
+          + " دلیل و رقیب، کالاهایی که استعلام کرده ولی هرگز نخریده، پروژه‌های باز و روزهای بدون فعالیت،"
+          + " پرونده‌های خدمات پس از فروش باز، رتبه‌ی ارزش و روزهای بدون خرید، به‌همراه پیشنهادهای"
+          + " مبتنی بر داده (hints). اول شناسه‌ی مشتری را با search_customers پیدا کن.",
+        parameters: object({ customerId: { type: "string" } }, ["customerId"]),
+      },
+      run: async (args, ctx) => customerOpportunities(str(args.customerId), ctx.user, ctx.todayJalali),
     },
 
     {

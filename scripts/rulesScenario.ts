@@ -391,6 +391,12 @@ import {
   dueNoticeBody, dueNoticeRecipient, dueNoticeTitle, dueNoticesFor, dueScanRange,
 } from "../src/utils/dueReminders";
 
+import {
+  ADVISOR_THRESHOLDS, askedNeverBought, bottlenecksByState, countSignals,
+  customerOpportunityHints, median, overdueSeverity, quoteExpirySignal, rankSignals,
+  tallyReasons, UNSTATED_REASON, type Signal,
+} from "../src/utils/businessAdvisor";
+
 /**
  * Every check that reads a source file reads it through here, and the reason is
  * the server rather than tidiness.
@@ -22857,6 +22863,93 @@ head("Dark mode: the `dark:` variant follows the application's switch");
   const users = ["src/components/MeetingsView.tsx", "src/components/ProductsView.tsx"]
     .filter((f) => /\bdark:/.test(readFileSync(f, "utf8")));
   ok("the check is not vacuous: a component really uses `dark:`", users.length > 0);
+}
+
+head("Business adviser: the evidence behind every recommendation");
+{
+  const sig = (kind: Signal["kind"], severity: Signal["severity"], days: number | null, label: string): Signal =>
+    ({ kind, severity, fact: label, days, ref: { type: "project", id: label, label } });
+  const ranked = rankSignals([
+    sig("QUIET_PROJECT", "MEDIUM", 40, "b"), sig("OVERDUE_TASK", "HIGH", 3, "c"),
+    sig("STUCK", "HIGH", 30, "a"), sig("DORMANT_CUSTOMER", "LOW", 400, "d"),
+  ]);
+  eq("ranking: severity first, then the larger figure", JSON.stringify(ranked.map((r) => r.ref.label)), JSON.stringify(["a", "c", "b", "d"]));
+  eq("counts per kind", countSignals(ranked).STUCK, 1);
+  eq("overdue severity: a week late is high", overdueSeverity(7), "HIGH");
+  eq("overdue severity: one day is low", overdueSeverity(1), "LOW");
+
+  eq("expiry: no date is no question", quoteExpirySignal(null), null);
+  eq("expiry: two days left is high", quoteExpirySignal(2)?.severity, "HIGH");
+  eq("expiry: within the window is expiring", quoteExpirySignal(ADVISOR_THRESHOLDS.expiringQuoteDays)?.kind, "EXPIRING_QUOTE");
+  eq("expiry: past it but recent is lapsed", quoteExpirySignal(-5)?.kind, "LAPSED_QUOTE");
+  eq("expiry: long gone is history, not news", quoteExpirySignal(-(ADVISOR_THRESHOLDS.lapsedQuoteDays + 1)), null);
+  eq("expiry: far ahead is not news", quoteExpirySignal(60), null);
+
+  eq("median, not mean: one outlier does not move it", median([3, 4, 5, 400]), 4.5);
+  eq("median of nothing is null", median([]), null);
+  const bn = bottlenecksByState([
+    { section: "po", state: "ترخیص", dwellDays: 10, overdue: true },
+    { section: "po", state: "ترخیص", dwellDays: 12, overdue: true },
+    { section: "po", state: "ساخت", dwellDays: 30, overdue: false },
+    { section: "po", state: "ساخت", dwellDays: 40, overdue: false },
+    { section: "po", state: "ساخت", dwellDays: null, overdue: false },
+  ]);
+  eq("bottleneck: overdue leads, not the busiest state", bn[0].state, "ترخیص");
+  eq("bottleneck: the median ignores unmeasured records", bn[1].medianDays, 35);
+  const reasons = tallyReasons(["قیمت", "قیمت", null, "زمان تحویل"]);
+  eq("loss reasons: the commonest first", reasons[0].reason, "قیمت");
+  ok("loss reasons: a blank is counted as its own finding", reasons.some((r) => r.reason === UNSTATED_REASON && r.count === 1));
+  eq("loss reasons: share is a percentage", reasons[0].share, 50);
+
+  const asked = askedNeverBought([
+    { name: "فلومتر", status: "بازنده", settledDocument: true },
+    { name: "فلومتر ", status: "بازنده", settledDocument: true },
+    { name: "گیج فشار", status: "برنده", settledDocument: true },
+    { name: "گیج فشار", status: "بازنده", settledDocument: true },
+    { name: "ترانسمیتر", status: null, settledDocument: false },
+  ], "برنده");
+  eq("never bought: one product with two spellings counts twice", JSON.stringify(asked), JSON.stringify([{ name: "فلومتر", requests: 2 }]));
+
+  const base = {
+    customerName: "پالایش", rank: "A", daysSinceLastPurchase: 30, everPurchased: true,
+    quotes: [], askedNeverBought: [], openAfterSales: [], openProjects: [],
+  };
+  eq("hints: nothing to say about a healthy customer", customerOpportunityHints(base).length, 0);
+  const busy = customerOpportunityHints({
+    ...base,
+    daysSinceLastPurchase: ADVISOR_THRESHOLDS.dormantCustomerDays,
+    openAfterSales: [{ label: "گیج", status: "در حال بررسی", projectCode: "P1" }],
+    quotes: [
+      { id: "1", number: "Q1", outcome: "جاری", settled: false, ageDays: 20, daysToExpiry: 40,
+        hasNextAction: false, followUpState: "OPEN", lossReason: null, competitor: null, projectCode: "P1" },
+      { id: "2", number: "Q2", outcome: "باخته", settled: true, ageDays: 90, daysToExpiry: null,
+        hasNextAction: false, followUpState: "OPEN", lossReason: "قیمت بالا", competitor: "رقیب", projectCode: null },
+    ],
+  });
+  eq("hints: an open complaint comes first", busy[0].kind, "RESOLVE_COMPLAINT");
+  ok("hints: an unchased quotation is flagged", busy.some((h) => h.kind === "CHASE_OPEN_QUOTE" && h.refs.includes("Q1")));
+  ok("hints: a recent price loss suggests a second offer", busy.some((h) => h.kind === "REOFFER_LOST" && h.basis.includes("رقیب")));
+  ok("hints: a dormant A customer is to be reactivated", busy.some((h) => h.kind === "REACTIVATE"));
+  ok("hints: a settled quotation is never chased", !busy.some((h) => h.kind === "CHASE_OPEN_QUOTE" && h.refs.includes("Q2")));
+  ok("hints: every hint names its evidence", busy.every((h) => h.basis.length > 0 && h.refs.length > 0));
+  eq("hints: a brand-new customer gets a first-sale suggestion",
+    customerOpportunityHints({ ...base, everPurchased: false, rank: "PROSPECT" })[0]?.kind, "FIRST_SALE");
+
+  const svc = readFileSync("src/server/services/advisorService.ts", "utf8");
+  ok("service: it writes nothing", !/\.(create|update|updateMany|delete|deleteMany|upsert)\(/.test(svc));
+  for (const rule of ["taskVisibility(user)", "proformaVisibility(user)", "projectVisibility(user)", "customerVisibility(user)"]) {
+    ok(`service: narrows inside the query with ${rule}`, svc.includes(rule));
+  }
+  ok("service: a module it may not read is reported as withheld", (svc.match(/withheld\.push/g) ?? []).length >= 4);
+  const tools = readFileSync("src/server/services/assistant/tools.ts", "utf8");
+  for (const name of ["business_health_check", "process_bottlenecks", "customer_opportunities"]) {
+    ok(`tool ${name} is offered to the assistant`, tools.includes(`name: "${name}"`));
+  }
+  const prompt = readFileSync("src/utils/assistant.ts", "utf8");
+  ok("prompt: the adviser is told to rest every recommendation on a record", prompt.includes("هر توصیه باید به رکورد مشخص"));
+  ok("prompt: names all three adviser tools", ["business_health_check", "process_bottlenecks", "customer_opportunities"].every((n) => prompt.includes(n)));
+  const panel = readFileSync("src/components/AssistantPanel.tsx", "utf8");
+  ok("panel: the adviser prompts are drawn", panel.includes("ADVISOR_PROMPTS.map("));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
