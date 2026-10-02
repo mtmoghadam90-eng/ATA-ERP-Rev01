@@ -22996,6 +22996,11 @@ head("Code-splitting: a screen loads when it is opened, and a stale tab survives
   ok("server: a missing chunk is a 404, not index.html served as JavaScript", /app\.use\("\/assets", \(_req, res\) => \{ res\.status\(404\)/.test(server));
   ok("server: index.html is never cached", (server.match(/"Cache-Control", "no-cache"/g) ?? []).length >= 2);
   ok("server: the /assets mount precedes the catch-all", server.indexOf('app.use("/assets"') < server.indexOf("app.get('*'"));
+  const staticExcel = readdirSync("src/components").filter((f) => f.endsWith(".tsx"))
+    .filter((f) => /^import [^\n]* from ['"](xlsx|exceljs)['"]/m.test(readFileSync(`src/components/${f}`, "utf8")));
+  ok("no screen imports xlsx/exceljs at module scope (~1.3 MB, loaded on the press)", staticExcel.length === 0, staticExcel);
+  ok("the check is not vacuous: the import really happens on the press",
+    readFileSync("src/components/ProductsView.tsx", "utf8").includes("await import('exceljs')"));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

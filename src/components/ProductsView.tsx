@@ -38,8 +38,6 @@ import {
   ProductDocument, ProductDocumentKind, documentsByKind,
 } from '../utils/productDocuments';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
-import * as XLSX from 'xlsx';
-import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { ApiError } from '../api/client';
 import { productsApi, type InventoryMovementEdit, type InventoryMovementRow } from '../api/products';
@@ -553,6 +551,8 @@ export default function ProductsView({
   // Handle Save (Add / Edit)
 
   const handleDownloadTemplate = async () => {
+    // Loaded on the press: ~1.3 MB nobody opening the catalogue needs.
+    const { default: ExcelJS } = await import('exceljs');
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet("Inventory_Template");
 
@@ -643,6 +643,7 @@ export default function ProductsView({
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
+        const XLSX = await import('xlsx');
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array' });
         const firstSheet = workbook.SheetNames[0];
