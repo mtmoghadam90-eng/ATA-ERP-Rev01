@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as XLSX from 'xlsx';
 import {
   BarChart3, Download, Edit3, Megaphone, Plus, Table2, Trash2, Upload, X,
 } from 'lucide-react';
@@ -167,6 +166,7 @@ export default function AdEffectivenessView({ settings }: Props) {
     if (fileRef.current) fileRef.current.value = '';
     if (!file) return;
     try {
+      const XLSX = await import('xlsx');
       const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
       // The campaigns sheet by its own name, or the first sheet that has a
       // «نوع کانال» column — never the settings sheet beside it.
@@ -190,7 +190,8 @@ export default function AdEffectivenessView({ settings }: Props) {
     }
   };
 
-  const exportFile = () => {
+  const exportFile = async () => {
+    const XLSX = await import('xlsx');
     const data = rows.map((c) => {
       const m = adMetricsOf(c);
       const round = (v: number | null, d = 4) => (v === null ? '' : Number(v.toFixed(d)));

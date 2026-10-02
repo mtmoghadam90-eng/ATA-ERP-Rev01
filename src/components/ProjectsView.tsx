@@ -28,8 +28,6 @@ import ShamsiDatePicker from './ShamsiDatePicker';
 import CustomFieldsForm from './CustomFieldsForm';
 import { uploadFile, downloadFileFromServer } from '../imageUtils';
 import { exportToCSV } from '../excelUtils';
-import * as XLSX from 'xlsx';
-import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import { buildCustomerOptions, getCustomerName } from '../utils/customerLabel';
@@ -838,6 +836,9 @@ export default function ProjectsView({
 
   const handleDownloadItemsTemplate = async () => {
     try {
+      // Loaded when the button is pressed: these two libraries are ~1.3 MB, and
+      // a screen should not carry them for a person who never imports or exports.
+      const { default: ExcelJS } = await import('exceljs');
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('اقلام درخواستی');
       worksheet.views = [{ rightToLeft: true }];
@@ -876,8 +877,9 @@ export default function ProjectsView({
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
+        const XLSX = await import('xlsx');
         const data = new Uint8Array(ev.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array' });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
