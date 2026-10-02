@@ -23003,6 +23003,35 @@ head("Code-splitting: a screen loads when it is opened, and a stale tab survives
     readFileSync("src/components/ProductsView.tsx", "utf8").includes("await import('exceljs')"));
 }
 
+head("Database backup: the data is in a backup, and the deploy will not migrate without one");
+{
+  /*
+   * The databases live on C: and the server's nightly Windows backup covers D:
+   * and E: only, so the application's data was in no backup at all. These hold
+   * the script that writes a native, verified .bak onto E: and the deploy step
+   * that refuses to migrate without a fresh one. Comments are stripped first:
+   * they quote the very statements they explain.
+   */
+  const code = (f: string) => readFileSync(f, "utf8").split("\n").map((l) => l.replace(/(^|\s)#.*$/, "")).join("\n");
+  const bk = code("scripts/backup-db.ps1");
+  ok("backup: native BACKUP DATABASE, written WITH CHECKSUM", /BACKUP DATABASE @db TO DISK = @file WITH \$withOpts/.test(bk) && /"INIT, CHECKSUM"/.test(bk));
+  ok("backup: every file is read back with RESTORE VERIFYONLY", /RESTORE VERIFYONLY FROM DISK = @file WITH CHECKSUM/.test(bk));
+  ok("backup: the database name is a parameter, never spliced into the SQL", !/BACKUP DATABASE \[?\$/.test(bk) && /"@db" = \$db/.test(bk));
+  ok("backup: Express gets no COMPRESSION (it refuses the option)", /EngineEdition[\s\S]{0,80}-eq 4/.test(bk) && /if \(\$isExpress\) \{ "INIT, CHECKSUM" \}/.test(bk));
+  const verify = bk.indexOf("RESTORE VERIFYONLY"), prune = bk.indexOf("Remove-Item $f.FullName");
+  ok("backup: old files are removed only after the new one verified", verify > 0 && prune > verify);
+  ok("backup: and never below -KeepAtLeast", /Select-Object -Skip \$KeepAtLeast/.test(bk));
+  ok("backup: a failed file is deleted rather than left looking like a backup", /if \(Test-Path \$file\) \{ Remove-Item \$file/.test(bk));
+  ok("backup: a failure exits non-zero", /if \(\$failed -gt 0\) \{[^}]*exit 1 \}/.test(bk));
+  ok("backup: the disk is checked before the backup starts", bk.indexOf("$drive.Free -lt $sizeBytes") > 0 && bk.indexOf("$drive.Free -lt $sizeBytes") < bk.indexOf("BACKUP DATABASE"));
+  ok("backup: the script is ASCII (Windows PowerShell 5.1 misreads UTF-8 without a BOM)",
+    /^[\x00-\x7F]*$/.test(readFileSync("scripts/backup-db.ps1", "utf8")));
+  const dp = code("scripts/deploy.ps1");
+  const step1 = dp.indexOf('Step 1 "Backing up'), migrate = dp.indexOf("prisma migrate deploy");
+  ok("deploy: step 1 runs the backup, before the migrations", step1 > 0 && step1 < migrate && /backup-db\.ps1[\s\S]{0,200}-Tag predeploy/.test(dp));
+  ok("deploy: a failed backup stops the deploy", /Tag predeploy[\s\S]{0,120}if \(\$LASTEXITCODE -ne 0\) \{[\s\S]{0,260}exit 1/.test(dp));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

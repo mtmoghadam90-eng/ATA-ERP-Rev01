@@ -202,17 +202,63 @@ SELECT name, state_desc FROM sys.databases ORDER BY name;
 
 ### قبل از هر تغییر دستی، بکاپ بگیرید
 
-`deploy.ps1` از SQL Server بکاپ **نمی‌گیرد** — خودش هم همین را می‌گوید. تنها چیزی
-که بکاپ می‌کند `database.json` قدیمی است، که دیگر هیچ داده‌ای در آن نیست.
-
-```sql
-BACKUP DATABASE [ata_erp] TO DISK = N'E:\Backups\ata_erp_manual.bak'
-WITH INIT, COMPRESSION, NAME = N'manual before edit';
+```powershell
+powershell -ExecutionPolicy Bypass -File E:\Apps\ATA-ERP-Rev01\scripts\backup-db.ps1 -Tag manual
 ```
 
-### بازگرداندن
+(جزئیاتش در بخش «بکاپ دیتابیس» پایین‌تر.)
 
-برنامه باید متوقف باشد، وگرنه اتصال باز آن مانع بازگردانی می‌شود:
+## بکاپ دیتابیس
+
+فایل‌های `ata_erp` و `ata_erp_reporting` روی **C:** هستند
+(`C:\Program Files\Microsoft SQL Server\...\DATA`) و بکاپ شبانه‌ی ویندوز فقط
+**D: و E:** را برمی‌دارد — پس بدون کار زیر، داده‌های برنامه در هیچ بکاپی نیستند.
+کپی کردن فایل `.mdf` هم جواب نیست: فایلی که SQL Server در حال استفاده از آن است با
+کپی معمولی قابل بازگردانی نیست.
+
+`scripts\backup-db.ps1` از خود SQL Server یک بکاپ استاندارد (`.bak`) روی
+`E:\Backups\ATA-ERP` می‌گیرد، **همان لحظه آن را دوباره می‌خواند**
+(`RESTORE VERIFYONLY`) تا مطمئن شود سالم است، و بکاپ ویندوز ساعت ۸ شب آن را همراه
+بقیه‌ی E: به هارد بکاپ می‌برد. نام دیتابیس‌ها و سرور را از `.env` می‌خواند.
+
+**یک بار، راه‌اندازی زمان‌بندی** (هر شب ساعت ۱۹:۳۰، نیم ساعت قبل از بکاپ ویندوز —
+با همان حساب ادمینی که با آن SSMS را باز می‌کنید؛ رمز آن حساب را می‌پرسد):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File E:\Apps\ATA-ERP-Rev01\scripts\backup-db.ps1 -Register
+Start-ScheduledTask -TaskName ATA-ERP-DB-Backup     # یک بار همین حالا اجرا شود
+Get-Content E:\Backups\ATA-ERP\last-backup.json    # نتیجه: "ok": true
+```
+
+- **قبل از هر نصب** هم `deploy.ps1` (مرحله‌ی ۱) همین اسکریپت را با برچسب `predeploy`
+  اجرا می‌کند و اگر بکاپ نشود **نصب را ادامه نمی‌دهد** — چون migration لحظه‌ی
+  پرخطر است و بکاپ شبانه ممکن است چند ساعت قدیمی باشد. `-SkipBackup` فقط وقتی
+  که خودتان همین الان بکاپ گرفته‌اید.
+- **نگهداری:** بکاپ‌های شبانه ۳۰ روز (هیچ‌وقت کمتر از ۷ تا)، بکاپ‌های قبل از نصب
+  ۱۰ تای آخر. فایل قدیمی فقط **بعد از** اینکه فایل جدید سالم بودنش تأیید شد پاک
+  می‌شود، پس چند شب خطا پشت سر هم هیچ‌وقت آخرین بکاپ سالم را پاک نمی‌کند.
+- **گزارش:** `E:\Backups\ATA-ERP\backup.log` و `last-backup.json`. اگر `ok` در
+  آن `false` بود، علتش در `backup.log` نوشته شده.
+
+### تمرین بازگردانی (هر سه ماه یک بار)
+
+بکاپی که هیچ‌وقت بازگردانی نشده فقط یک امید است. آخرین فایل را با **نام دیگری**
+بازگردانی کنید — به دیتابیس اصلی دست نمی‌زند:
+
+```sql
+RESTORE FILELISTONLY FROM DISK = N'E:\Backups\ATA-ERP\ata_erp_nightly_<تاریخ>.bak';
+-- نام‌های منطقی (LogicalName) را از خروجی بالا بردارید:
+RESTORE DATABASE [ata_erp_restore_test]
+  FROM DISK = N'E:\Backups\ATA-ERP\ata_erp_nightly_<تاریخ>.bak'
+  WITH MOVE N'ata_erp'     TO N'E:\Backups\restore_test.mdf',
+       MOVE N'ata_erp_log' TO N'E:\Backups\restore_test.ldf';
+SELECT COUNT(*) FROM [ata_erp_restore_test].dbo.customers;   -- با برنامه مقایسه کنید
+DROP DATABASE [ata_erp_restore_test];
+```
+
+### بازگرداندن واقعی
+
+قبل از بازگرداندن، یک بکاپ از وضع فعلی بگیرید (`backup-db.ps1 -Tag manual`) تا اگر فایل اشتباهی انتخاب شد راه برگشت باشد. برنامه باید متوقف باشد، وگرنه اتصال باز آن مانع بازگردانی می‌شود:
 
 ```powershell
 Stop-ScheduledTask -TaskName "ATA-ERP"
@@ -220,7 +266,7 @@ Stop-ScheduledTask -TaskName "ATA-ERP"
 
 ```sql
 ALTER DATABASE [ata_erp] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
-RESTORE DATABASE [ata_erp] FROM DISK = N'E:\Backups\ata_erp_manual.bak' WITH REPLACE;
+RESTORE DATABASE [ata_erp] FROM DISK = N'E:\Backups\ATA-ERP\ata_erp_nightly_<تاریخ>.bak' WITH REPLACE;
 ALTER DATABASE [ata_erp] SET MULTI_USER;
 ```
 
