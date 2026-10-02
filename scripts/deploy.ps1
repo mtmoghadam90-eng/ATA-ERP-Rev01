@@ -10,8 +10,9 @@
     commit cannot take the app down.
 
     Configuration (.env), the session secret and uploads are never touched.
-    Business data lives in SQL Server and is NOT backed up by this script —
-    back the ata_erp database up separately before a risky deploy.
+    Before anything changes it backs the databases up through
+    scripts\backup-db.ps1 (a verified .bak in E:\Backups\ATA-ERP) and stops if
+    that fails; -SkipBackup skips it.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File E:\Apps\ATA-ERP-Rev01\scripts\deploy.ps1
@@ -56,25 +57,21 @@ function Fail($msg)     { Write-Host "    FAILED - $msg" -ForegroundColor Red }
 Set-Location $AppDir
 
 # ---------------------------------------------------------------- 1. backup
+# A migration that fails half way leaves the statements before the failure
+# applied, so the moment before `prisma migrate deploy` is the most dangerous
+# one this script has - and the nightly backup can be most of a working day
+# old by then. backup-db.ps1 writes a native .bak of every ATA-ERP database to
+# E:\Backups\ATA-ERP and reads it back; if it cannot, nothing has changed yet
+# and the deploy stops here rather than migrating with no way back.
 if (-not $SkipBackup) {
-    Step 1 "Backing up application data"
-    $backupDir = Join-Path $AppDir "backups"
-    New-Item -ItemType Directory -Force $backupDir | Out-Null
-    # The application's data is in SQL Server; this script cannot back that up.
-    # What it can preserve is the leftover document store on a server upgraded
-    # from an older build, so an upgrade never destroys the last copy of it.
-    if (Test-Path "database.json") {
-        $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-        Copy-Item "database.json" (Join-Path $backupDir "database-$stamp.json")
-        Ok "legacy database.json copied to backups\database-$stamp.json"
-        # Keep the 30 most recent backups
-        Get-ChildItem $backupDir -Filter "database-*.json" |
-            Sort-Object LastWriteTime -Descending | Select-Object -Skip 30 |
-            Remove-Item -Force -ErrorAction SilentlyContinue
-    } else {
-        Write-Host "    (no legacy database.json - business data is in SQL Server)" -ForegroundColor DarkGray
+    Step 1 "Backing up the databases before anything changes"
+    $backupScript = Join-Path $AppDir "scripts\backup-db.ps1"
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $backupScript -AppDir $AppDir -Tag predeploy -KeepAtLeast 10
+    if ($LASTEXITCODE -ne 0) {
+        Fail "database backup failed - NOT deploying (nothing was changed). Fix the backup, or rerun with -SkipBackup if you have just taken one yourself."
+        exit 1
     }
-    Write-Host "    NOTE: SQL Server data is not backed up here - back up 'ata_erp' separately." -ForegroundColor Yellow
+    Ok "databases backed up and verified"
 } else {
     Step 1 "Backup skipped (-SkipBackup)"
 }
