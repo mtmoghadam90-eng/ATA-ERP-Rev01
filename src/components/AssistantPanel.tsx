@@ -40,6 +40,34 @@ const SUGGESTIONS = [
   'کدام کالاها موجودی‌شان به حداقل رسیده؟',
 ];
 
+/**
+ * «مشاور کسب‌وکار» — the questions the adviser tools exist for, one press away.
+ *
+ * Always drawn, not only on an empty conversation: the adviser is asked at the
+ * start of a day and again after the first answer. The customer question cannot
+ * be sent as it stands — it needs a name — so it fills the box instead and
+ * leaves the cursor where the name goes.
+ */
+export const ADVISOR_PROMPTS: { label: string; text: string; fillOnly?: boolean }[] = [
+  {
+    label: 'کارهای عقب‌افتاده و فراموش‌شده',
+    text: 'به‌عنوان مشاور کسب‌وکار، چه کارهایی عقب افتاده یا به نظر می‌رسد فراموش شده؟ مهم‌ترین‌ها را با رکوردشان و کاری که امروز باید کرد بگو.',
+  },
+  {
+    label: 'گلوگاه‌های کار',
+    text: 'گلوگاه‌های کار کجاست؟ کار در کدام مراحل انباشته شده و روی دوش چه کسانی است؟',
+  },
+  {
+    label: 'پیشنهاد بهبود فرایند',
+    text: 'بر اساس داده‌های واقعی (گلوگاه‌ها، دلایل باخت، سلامت پیگیری فروش) چه بهبودهایی در فرایندها پیشنهاد می‌کنی؟',
+  },
+  {
+    label: 'برای یک مشتری چه کنم؟',
+    text: 'برای مشتری «» الان چه کارهایی می‌توانم انجام بدهم که مفید باشد و به فروش برسد؟',
+    fillOnly: true,
+  },
+];
+
 export default function AssistantPanel() {
   const [status, setStatus] = useState<{ enabled: boolean; configured: boolean } | null>(null);
   const [visible, setVisible] = useState(false);
@@ -50,6 +78,7 @@ export default function AssistantPanel() {
   const [showSteps, setShowSteps] = useState<number | null>(null);
   const [working, setWorking] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   /*
    * Asked once, on mount, with no dependencies.
@@ -318,8 +347,36 @@ export default function AssistantPanel() {
                 </div>
               )}
 
+              <div className="flex flex-wrap items-center gap-1.5 mb-2" data-advisor-prompts>
+                <span className="text-[10px] font-bold text-slate-500 flex items-center gap-1">
+                  <Sparkles size={11} className="text-indigo-500" />
+                  مشاور کسب‌وکار:
+                </span>
+                {ADVISOR_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt.label}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      if (!prompt.fillOnly) { void send(prompt.text); return; }
+                      setDraft(prompt.text);
+                      // Put the cursor between the quotes, where the name goes.
+                      const at = prompt.text.indexOf('»');
+                      requestAnimationFrame(() => {
+                        inputRef.current?.focus();
+                        inputRef.current?.setSelectionRange(at, at);
+                      });
+                    }}
+                    className="text-[11px] border border-indigo-200 bg-indigo-50/60 rounded-full px-2.5 py-1 text-indigo-700 hover:border-indigo-400 transition disabled:opacity-40"
+                  >
+                    {prompt.label}
+                  </button>
+                ))}
+              </div>
+
               <div className="flex items-end gap-2">
                 <textarea
+                  ref={inputRef}
                   rows={1}
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
