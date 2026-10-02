@@ -1,0 +1,32 @@
+# The same gates deploy.ps1 runs on the server, run on every pull request
+# first — so a type error, a broken rule or a failed build is seen on GitHub
+# rather than for the first time on the production machine. No database is
+# needed: test:rules and test:ui are written to run without one, and
+# `prisma generate` only reads the schema.
+name: checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run lint
+      - run: npm run test:rules
+      - run: npm run test:ui
+      - run: npm run build
