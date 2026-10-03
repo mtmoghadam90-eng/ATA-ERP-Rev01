@@ -2139,6 +2139,11 @@ model Message {
   /// out of step with the clock.
   scheduledAt       DateTime
   scheduledAtJalali String?   @db.NVarChar(10)
+  /// What was asked for before the quiet-time holds moved it — now, a chosen
+  /// time, a delay, a retry's backoff. Kept so `scheduledAt` can be re-derived
+  /// when the holds change (`replanQueuedMessages`); null on rows queued before
+  /// the column.
+  requestedAt       DateTime?
   sentAt            DateTime?
   sentAtJalali      String?   @db.NVarChar(10)
 

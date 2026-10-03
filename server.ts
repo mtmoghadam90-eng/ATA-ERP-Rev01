@@ -49,7 +49,7 @@ import { registerAssistantRoutes } from "./src/server/routes/assistant";
 import { registerApiTokenRoutes } from "./src/server/routes/apiTokens";
 import { authenticateToken } from "./src/server/services/apiTokenService";
 import { parseBearer, pathClosedToTokens, scopeAllowsMethod } from "./src/utils/apiTokens";
-import { processQueue } from "./src/server/services/messaging/messageService";
+import { processQueue, replanQueuedMessages } from "./src/server/services/messaging/messageService";
 import { ensureWhatsappRestored } from "./src/server/services/messaging/whatsappTransport";
 import { ensureTelegramSessionRestored } from "./src/server/services/messaging/telegramTransport";
 import { installTelegramCredentials } from "./src/server/services/messaging/telegramCredentials";
@@ -853,6 +853,9 @@ registerCampaignRoutes(app, routeDeps);
    * the batch rather than letting the next tick send the same rows twice.
    */
   const MESSAGE_TICK_MS = 60 * 1000;
+  // Rows queued before the rules last changed (or before the server knew how to
+  // re-plan them) are re-derived once at startup, so a deploy alone frees them.
+  void replanQueuedMessages().catch((err) => console.error("[messaging] startup re-plan failed:", err));
   const messageTimer = setInterval(() => { void processQueue(); }, MESSAGE_TICK_MS);
   messageTimer.unref?.();
 

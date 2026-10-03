@@ -387,6 +387,7 @@ import {
 import { deriveServiceHeader } from "../src/server/afterSalesStatus";
 import { RELAY_TOO_OLD_ERROR } from "../src/server/services/messaging/telegramTransport";
 import { shouldReloadForChunk, RELOAD_GUARD_MS } from "../src/utils/lazyView";
+import { replannedTime } from "../src/utils/messageReplan";
 import {
   DUE_SOON_DAYS, OVERDUE_WINDOW_DAYS,
   dueNoticeBody, dueNoticeRecipient, dueNoticeTitle, dueNoticesFor, dueScanRange,
@@ -12514,7 +12515,7 @@ head("A document's notes: files, a Shamsi clock, and a delete that is offered ho
     const queueSrc = readFileSync("src/server/services/messaging/messageService.ts", "utf8");
     const retry = queueSrc.slice(queueSrc.indexOf("shouldRetry(attempts, settings.maxAttempts)"));
     ok("a retry is scheduled through the same quiet-time rule",
-      /nextSendableTime\(\s*\n\s*new Date\(now\.getTime\(\) \+ retryDelayMs\(attempts\)\)/
+      /const backoff = new Date\(now\.getTime\(\) \+ retryDelayMs\(attempts\)\);\s*const retryAt = nextSendableTime\(\s*backoff,/
         .test(retry));
     ok("...with the quiet days still read per audience",
       /isCustomerFacing\(messageAudience\(message\.audience\)\)/.test(retry));
@@ -23030,6 +23031,53 @@ head("Database backup: the data is in a backup, and the deploy will not migrate 
   const step1 = dp.indexOf('Step 1 "Backing up'), migrate = dp.indexOf("prisma migrate deploy");
   ok("deploy: step 1 runs the backup, before the migrations", step1 > 0 && step1 < migrate && /backup-db\.ps1[\s\S]{0,200}-Tag predeploy/.test(dp));
   ok("deploy: a failed backup stops the deploy", /Tag predeploy[\s\S]{0,120}if \(\$LASTEXITCODE -ne 0\) \{[\s\S]{0,260}exit 1/.test(dp));
+}
+
+head("A queued message waits on the quiet hours as they stand, not as they stood");
+{
+  /*
+   * Reported: the colleagues' window was set back to front (quiet 08:30-19:30),
+   * a referral notice queued at 10:00 was given 19:30, the window was corrected
+   * to 19:30-08:30, and the notice went on waiting for 19:30.
+   */
+  const corrected = { from: "19:30", to: "08:30" };
+  const at = (h: number, m = 0) => new Date(2026, 9, 3, h, m, 0, 0);
+  const notice = { requestedAt: null, createdAt: at(10), scheduledAt: at(19, 30), audience: "STAFF" as const, attempts: 0 };
+  const moved = replannedTime(notice, corrected);
+  ok("the reported notice is re-derived from when it was raised, and is due now",
+    !!moved && moved.getTime() === at(10).getTime(), moved?.toString());
+  const fromStored = nextSendableTime(notice.scheduledAt, corrected);
+  ok("re-deriving from the stored time would have pushed it to tomorrow (why the base matters)",
+    fromStored.getTime() > at(23).getTime());
+  ok("a customer row queued before the column is left alone (its delay is not knowable)",
+    replannedTime({ ...notice, audience: "CUSTOMER" }, corrected) === null);
+  ok("a staff row already attempted is left alone (its backoff is not knowable)",
+    replannedTime({ ...notice, attempts: 1 }, corrected) === null);
+  const delayed = { requestedAt: new Date(2026, 9, 5, 10), createdAt: at(10), scheduledAt: new Date(2026, 9, 5, 10), audience: "CUSTOMER" as const, attempts: 0 };
+  ok("a stored request is honoured: a delayed message stays delayed", replannedTime(delayed, corrected) === null);
+  const lateRequest = { ...delayed, requestedAt: at(22), scheduledAt: at(22) };
+  const tightened = replannedTime(lateRequest, corrected);
+  ok("a stricter window moves a row later too", !!tightened && tightened.getTime() === new Date(2026, 9, 4, 8, 30).getTime(), tightened?.toString());
+  ok("an unchanged answer writes nothing", replannedTime({ ...notice, scheduledAt: at(10) }, corrected) === null);
+
+  const svc = readFileSync("src/server/services/messaging/messageService.ts", "utf8");
+  ok("queueMessage records what was asked for", /requestedAt: requested,/.test(svc));
+  ok("a retry records its backoff as the request", /requestedAt: backoff,/.test(svc));
+  ok("a provider's wait records its own time as the request", /requestedAt: asked,/.test(svc));
+  ok("a manual retry asks for now", /scheduledAt: now,[\s\S]{0,80}requestedAt: now,/.test(svc));
+  ok("the re-plan moves only a row still queued", /replannedTime\([\s\S]{0,600}updateMany\(\{\s*where: \{ id: row\.id, status: MESSAGE_STATUS\.QUEUED \}/.test(svc));
+  ok("the re-plan uses the audience's own window, like the insert", /export async function replanQueuedMessages[\s\S]{0,900}quietHoursFor\(audience, settings\.quietHours, settings\.staffQuietHours\)/.test(svc));
+  const admin = readFileSync("src/server/services/adminService.ts", "utf8");
+  ok("both settings saves re-plan the queue", (admin.match(/await replanQueue\(\);/g) ?? []).length === 2);
+  ok("and a failed re-plan cannot fail the save", /async function replanQueue[\s\S]{0,120}try \{[\s\S]{0,80}replanQueuedMessages\(\)[\s\S]{0,40}catch/.test(admin));
+  ok("the server re-plans once at startup, so a deploy alone frees a stuck row",
+    /void replanQueuedMessages\(\)\.catch/.test(readFileSync("server.ts", "utf8")));
+  ok("schema: messages.requestedAt is nullable", /requestedAt\s+DateTime\?/.test(readFileSync("prisma/schema.prisma", "utf8")));
+  ok("migration: adds the column, guarded, with no DML",
+    /IF COL_LENGTH\('dbo\.messages', 'requestedAt'\) IS NULL\s+ALTER TABLE \[dbo\]\.\[messages\] ADD \[requestedAt\] DATETIME2 NULL;/
+      .test(readFileSync("prisma/migrations/20261003000000_message_requested_at/migration.sql", "utf8")));
+  ok("the screen says until when a queued message waits",
+    /data-queued-until[\s\S]{0,120}scheduledLabel\(row\.scheduledAt\)/.test(readFileSync("src/components/MessagingView.tsx", "utf8")));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

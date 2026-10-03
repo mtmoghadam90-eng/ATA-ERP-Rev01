@@ -16,6 +16,7 @@ import { BaleChatsResult, BaleConfig, baleRecentChats, SendResult, sendThrough }
 import { addresseeOf, namePrefixFor } from "../../../utils/honorific";
 import { WHATSAPP_PER_PASS, whatsappGapMs } from "../../../utils/whatsapp";
 import { TELEGRAM_PER_PASS, telegramGapMs } from "../../../utils/telegram";
+import { replannedTime } from "../../../utils/messageReplan";
 
 /**
  * Sending a customer a message: the queue, and everything around it.
@@ -493,6 +494,8 @@ export async function queueMessage(input: QueueMessageInput) {
       status: MESSAGE_STATUS.QUEUED,
       scheduledAt,
       scheduledAtJalali: toShamsiStr(scheduledAt),
+      // What was asked for, so the holds can be applied again if they change.
+      requestedAt: requested,
       /*
        * Stamped on the row rather than asked of the settings when it is sent, so
        * the row itself says what will happen to it — exactly as `scheduledAt`
@@ -971,8 +974,9 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
       const askedToWait = Number(result.retryAfterMs);
       if (Number.isFinite(askedToWait) && askedToWait > 0) {
         const waitMs = Math.min(askedToWait, MAX_PROVIDER_WAIT_MS);
+        const asked = new Date(now.getTime() + waitMs);
         const waitUntil = nextSendableTime(
-          new Date(now.getTime() + waitMs),
+          asked,
           quietHoursFor(messageAudience(message.audience), settings.quietHours, settings.staffQuietHours),
           settings.quietDays && isCustomerFacing(messageAudience(message.audience))
             ? (day) => isOfficialHoliday(toShamsiStr(day))
@@ -984,14 +988,16 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
             lastError: result.error ?? null,
             scheduledAt: waitUntil,
             scheduledAtJalali: toShamsiStr(waitUntil),
+            requestedAt: asked,
           },
         });
         continue;
       }
 
       if (shouldRetry(attempts, settings.maxAttempts)) {
+        const backoff = new Date(now.getTime() + retryDelayMs(attempts));
         const retryAt = nextSendableTime(
-          new Date(now.getTime() + retryDelayMs(attempts)),
+          backoff,
           quietHoursFor(messageAudience(message.audience), settings.quietHours, settings.staffQuietHours),
           settings.quietDays && isCustomerFacing(messageAudience(message.audience))
             ? (day) => isOfficialHoliday(toShamsiStr(day))
@@ -1004,6 +1010,7 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
             lastError: result.error ?? null,
             scheduledAt: retryAt,
             scheduledAtJalali: toShamsiStr(retryAt),
+            requestedAt: backoff,
           },
         });
         continue;
@@ -1031,6 +1038,45 @@ export async function processQueue(now: Date = new Date()): Promise<{ sent: numb
  */
 function messageAudience(stored: string | null | undefined): MessageAudience {
   return stored === "STAFF" ? "STAFF" : "CUSTOMER";
+}
+
+/**
+ * Re-derives every queued row's time under the quiet-time rules now in force —
+ * see `src/utils/messageReplan.ts` for why the stored time cannot simply stand.
+ * Called after a settings save and once at startup; it moves only rows whose
+ * answer changed, writes nothing for a row it cannot derive, and is bounded,
+ * since a settings save must not turn into a scan of a large outbox.
+ */
+export const REPLAN_LIMIT = 2000;
+
+export async function replanQueuedMessages(): Promise<number> {
+  const db = getDb();
+  const settings = await loadMessagingSettings();
+  const rows = await db.message.findMany({
+    where: { status: MESSAGE_STATUS.QUEUED },
+    select: { id: true, requestedAt: true, createdAt: true, scheduledAt: true, audience: true, attempts: true },
+    orderBy: { scheduledAt: "asc" },
+    take: REPLAN_LIMIT,
+  });
+  let moved = 0;
+  for (const row of rows) {
+    const audience = messageAudience(row.audience);
+    const next = replannedTime(
+      { ...row, audience },
+      quietHoursFor(audience, settings.quietHours, settings.staffQuietHours),
+      settings.quietDays && isCustomerFacing(audience)
+        ? (day) => isOfficialHoliday(toShamsiStr(day))
+        : null,
+    );
+    if (!next) continue;
+    // Conditional, so a row the worker sent in the meantime is left alone.
+    const result = await db.message.updateMany({
+      where: { id: row.id, status: MESSAGE_STATUS.QUEUED },
+      data: { scheduledAt: next, scheduledAtJalali: toShamsiStr(next) },
+    });
+    moved += result.count;
+  }
+  return moved;
 }
 
 /* --------------------------------- reads --------------------------------- */
@@ -1095,13 +1141,16 @@ export async function cancelMessage(id: string): Promise<boolean> {
 
 /** Puts a failed message back in the queue, with its attempts reset. */
 export async function retryMessage(id: string): Promise<boolean> {
+  const now = new Date();
   const result = await getDb().message.updateMany({
     where: { id, status: MESSAGE_STATUS.FAILED },
     data: {
       status: MESSAGE_STATUS.QUEUED,
       attempts: 0,
       lastError: null,
-      scheduledAt: new Date(),
+      scheduledAt: now,
+      scheduledAtJalali: toShamsiStr(now),
+      requestedAt: now,
     },
   });
   return result.count > 0;
