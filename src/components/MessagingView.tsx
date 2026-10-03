@@ -12,6 +12,12 @@ import {
   staffFallsBackToSms, staffTemplateFor,
 } from '../utils/staffNotifications';
 import { ApiError } from '../api/client';
+import { formatDateTimeToShamsi } from '../dateUtils';
+
+/** «1405/07/11 ساعت 19:30» — the seconds say nothing about when a message goes. */
+function scheduledLabel(at: string): string {
+  return formatDateTimeToShamsi(at).replace(/:\d{2}$/, '');
+}
 import CampaignsTab from './CampaignsTab';
 import {
   BaleChatRow, MessageRow, MessageTemplateRow, ProviderSummary, messagingApi,
@@ -424,9 +430,20 @@ function Outbox({
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-400">
                 {row.customer && <span>{row.customer.companyName}</span>}
                 {row.project && <span>پروژه {row.project.code}</span>}
-                <span className="font-mono" dir="ltr">
-                  {row.sentAtJalali || row.scheduledAtJalali || ''}
-                </span>
+                {row.status === MESSAGE_STATUS.QUEUED ? (
+                  /*
+                   * A queued row is waiting for a moment, and the date alone
+                   * hid it: a notice held until 19:30 by a quiet window set
+                   * back to front read as «stuck» with nothing saying until when.
+                   */
+                  <span data-queued-until>
+                    زمان ارسال: {scheduledLabel(row.scheduledAt)}
+                  </span>
+                ) : (
+                  <span className="font-mono" dir="ltr">
+                    {row.sentAtJalali || row.scheduledAtJalali || ''}
+                  </span>
+                )}
                 {row.workflowRuleName
                   ? <span>قاعده: {row.workflowRuleName}</span>
                   : row.createdByName && <span>{row.createdByName}</span>}

@@ -6,6 +6,16 @@ import { logAction } from "./auditService";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
 import { toNullableString, toNumber } from "../childSync";
 import { ensureSettingsPatches, invalidateSettingsCache, loadSettings } from "../settings";
+import { replanQueuedMessages } from "./messaging/messageService";
+
+/** A settings save must not fail because the outbox could not be re-planned. */
+async function replanQueue(): Promise<void> {
+  try {
+    await replanQueuedMessages();
+  } catch (err) {
+    console.error("[messaging] could not re-plan the queue after a settings save:", err);
+  }
+}
 import { applySettingsDelta, type SettingsDelta } from "../../utils/settingsDelta";
 
 /**
@@ -48,6 +58,7 @@ export async function saveSettingsDelta(
   });
   invalidateSettingsCache();
   await ensureSettingsPatches();
+  await replanQueue();
   await logAction(
     {
       action: "UPDATE",
@@ -86,6 +97,10 @@ export async function saveSettings(
    * deliberately removed stays removed.
    */
   await ensureSettingsPatches();
+
+  // The quiet hours and days may have moved; a queued message keeps the time
+  // the old ones gave it until somebody asks again.
+  await replanQueue();
 
   // The client used to record this, into an audit log that lived in the
   // document store. Nothing read that log any more, so a settings change went
