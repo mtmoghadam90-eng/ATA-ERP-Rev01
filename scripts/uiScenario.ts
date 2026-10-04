@@ -3878,8 +3878,11 @@ head("The work board: the project line opens the project");
       onOpenProject: (jump: unknown) => { jumpsG.push(jump); },
     }));
   });
-  const links = [...hostG.querySelectorAll("[data-card-project]")] as HTMLButtonElement[];
-  ok("each card naming a project draws its line as a button", links.length === 2, links.length);
+  const links = [...hostG.querySelectorAll("[data-card-project]")] as HTMLAnchorElement[];
+  ok("each card naming a project draws its line as a link", links.length === 2, links.length);
+  ok("...with an address a new tab can open",
+    links.every((el) => el.tagName === "A" && /[?&]view=projects&projectId=/.test(el.getAttribute("href") ?? "")),
+    links.map((el) => el.getAttribute("href")));
   const link44 = links.find((el) => el.getAttribute("data-card-project") === "p-44");
   act(() => { link44!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
   ok("pressing it hands over that project's id",
@@ -3889,6 +3892,10 @@ head("The work board: the project line opens the project");
   act(() => { link45!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
   ok("a referral's line opens the conversation it came from",
     JSON.stringify(jumpsG[1]) === JSON.stringify({ projectId: "p-45", groupId: "g1", activityId: "a1" }), jumpsG);
+  const ctrlClick = new dom.window.MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true });
+  act(() => { link44!.dispatchEvent(ctrlClick); });
+  ok("a ctrl-click is left to the browser: no in-app jump, default not prevented",
+    jumpsG.length === 2 && !ctrlClick.defaultPrevented, { jumps: jumpsG.length, prevented: ctrlClick.defaultPrevented });
   act(() => { rootG.unmount(); });
   hostG.remove();
 }

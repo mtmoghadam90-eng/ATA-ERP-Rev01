@@ -26,6 +26,7 @@ import { useSidebarBadges } from './api/useSidebarBadges';
 import { tasksApi, taskToWriteInput } from './api/tasks';
 import { useCategoryCompletion } from './api/useCategoryCompletion';
 import { useBrowserTab } from './api/useBrowserTab';
+import { addressForView, readUrlRequest } from './utils/appLinks';
 
 // Each module is its own chunk, fetched the first time somebody opens it:
 // one bundle carried the whole ERP (4 MB) on every sign-in, for a person who
@@ -75,9 +76,26 @@ export default function App() {
     if (printModule) {
       return printModule;
     }
-    return 'dashboard';
+    // A tab opened on one of the application's own links (`appLinks.ts`).
+    return readUrlRequest(window.location.search).view;
   });
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
+  /*
+   * The address bar says which screen is open, so a refresh stays on it and a
+   * copied address opens it. `replaceState` rather than `pushState`: the back
+   * button leaving the application after one module change is what it has
+   * always done, and a history entry per menu press would change that for
+   * everybody. A print request owns the address (`?printModule=`), so it is
+   * left alone. Above every early return — a hook below one is a white page.
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (new URLSearchParams(window.location.search).get('printModule')) return;
+    const next = addressForView(window.location.search, activeView);
+    if (next !== window.location.search) {
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}${next}${window.location.hash}`);
+    }
+  }, [activeView]);
   /*
    * Where a notification leads.
    *
@@ -96,7 +114,9 @@ export default function App() {
    * existed, which is a switch that does nothing wearing the quietest disguise
    * the codebase has.
    */
-  const [activityJump, setActivityJump] = useState<ActivityJump | null>(null);
+  const [activityJump, setActivityJump] = useState<ActivityJump | null>(
+    () => (typeof window !== 'undefined' ? readUrlRequest(window.location.search).activityJump : null),
+  );
   const openActivityJump = (jump: ActivityJump) => {
     setActivityJump(jump);
     setActiveView('projects');
@@ -117,7 +137,9 @@ export default function App() {
    * consumed it so that going back to the module later does not silently
    * re-apply a filter nobody asked for.
    */
-  const [projectJump, setProjectJump] = useState<{ view: string; term: string } | null>(null);
+  const [projectJump, setProjectJump] = useState<{ view: string; term: string } | null>(
+    () => (typeof window !== 'undefined' ? readUrlRequest(window.location.search).projectJump : null),
+  );
   const openProjectIn = (view: string, term: string) => {
     if (!term) return;
     setProjectJump({ view, term });

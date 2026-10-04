@@ -5,6 +5,7 @@ import BrandMark from './BrandMark';
 import Avatar from './Avatar';
 import { User } from '../types';
 import { screenPermitted } from '../utils/permissions';
+import { isPlainLeftClick, viewHref } from '../utils/appLinks';
 
 interface SidebarProps {
   activeTab: string;
@@ -165,8 +166,16 @@ export default function Sidebar({
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (
-              <button
+              /*
+               * A link, not a button: a button has no address, so a right-click
+               * offered no «باز کردن در زبانه جدید» and ctrl-click did nothing
+               * different. An ordinary click still switches the screen in place;
+               * a modified or middle click is left to the browser (`appLinks.ts`).
+               */
+              <a
                 key={item.id}
+                href={viewHref(item.id)}
+                data-nav-link={item.id}
                 /*
                  * The name of the icon, when the icon is all there is.
                  *
@@ -179,7 +188,9 @@ export default function Sidebar({
                  * which is the whole reason to prefer it here.
                  */
                 title={isOpen ? undefined : item.name}
-                onClick={() => {
+                onClick={(e) => {
+                  if (!isPlainLeftClick(e)) return;
+                  e.preventDefault();
                   setActiveTab(item.id);
                   if (window.innerWidth < 1024) setIsOpen(false); // Auto close on mobile click
                 }}
@@ -210,7 +221,7 @@ export default function Sidebar({
                     <span className={`absolute top-1.5 left-1.5 w-2 h-2 rounded-full ${item.badgeColor}`} />
                   )
                 )}
-              </button>
+              </a>
             );
           })}
         </nav>

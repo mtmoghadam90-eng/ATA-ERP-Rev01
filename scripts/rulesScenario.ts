@@ -388,6 +388,7 @@ import { deriveServiceHeader } from "../src/server/afterSalesStatus";
 import { RELAY_TOO_OLD_ERROR } from "../src/server/services/messaging/telegramTransport";
 import { shouldReloadForChunk, RELOAD_GUARD_MS } from "../src/utils/lazyView";
 import { replannedTime } from "../src/utils/messageReplan";
+import { addressForView, isPlainLeftClick, projectCodeHref, readUrlRequest, viewHref, activityHref } from "../src/utils/appLinks";
 import {
   DUE_SOON_DAYS, OVERDUE_WINDOW_DAYS,
   dueNoticeBody, dueNoticeRecipient, dueNoticeTitle, dueNoticesFor, dueScanRange,
@@ -23078,6 +23079,41 @@ head("A queued message waits on the quiet hours as they stand, not as they stood
       .test(readFileSync("prisma/migrations/20261003000000_message_requested_at/migration.sql", "utf8")));
   ok("the screen says until when a queued message waits",
     /data-queued-until[\s\S]{0,120}scheduledLabel\(row\.scheduledAt\)/.test(readFileSync("src/components/MessagingView.tsx", "utf8")));
+}
+
+head("Links open in a new tab: real addresses, read back on load");
+{
+  ok("a menu item has an address", viewHref("projects") === "?view=projects");
+  ok("the dashboard is the bare address", viewHref("dashboard") === "?");
+  ok("a project code's address carries the code", projectCodeHref("ATA-05-38") === "?view=projects&q=ATA-05-38");
+  ok("a card's address carries the record", activityHref({ projectId: "p1", groupId: "g1" }) === "?view=projects&projectId=p1&groupId=g1");
+  const unknown = readUrlRequest("?view=nonsense&q=X");
+  ok("an unknown view opens the dashboard and jumps nowhere", unknown.view === "dashboard" && !unknown.projectJump && !unknown.activityJump);
+  const code = readUrlRequest(projectCodeHref("ATA-05-38"));
+  ok("a code link opens the projects screen filtered to it",
+    code.view === "projects" && code.projectJump?.term === "ATA-05-38" && code.projectJump?.view === "projects");
+  const rec = readUrlRequest(activityHref({ projectId: "p1", groupId: "g1", activityId: "a1" }));
+  ok("a card link opens that record", JSON.stringify(rec.activityJump) === JSON.stringify({ projectId: "p1", groupId: "g1", activityId: "a1" }));
+  ok("a record id is only honoured on the projects screen", readUrlRequest("?view=tasks&projectId=p1").activityJump === null);
+  ok("the shown address drops the one-shot keys and keeps the rest",
+    addressForView("?view=projects&q=X&projectId=p&standalone=1", "projects") === "?standalone=1&view=projects");
+  ok("the dashboard shows no view key", addressForView("?view=tasks&q=X", "dashboard") === "");
+  ok("a plain left click stays in the tab", isPlainLeftClick({ button: 0 }));
+  ok("ctrl, meta, shift and the middle button are the browser's",
+    !isPlainLeftClick({ button: 0, ctrlKey: true }) && !isPlainLeftClick({ button: 0, metaKey: true })
+    && !isPlainLeftClick({ button: 0, shiftKey: true }) && !isPlainLeftClick({ button: 1 }));
+  const sidebar = readFileSync("src/components/Sidebar.tsx", "utf8");
+  ok("the menu items are links with addresses", /<a\s+key=\{item\.id\}[\s\S]{0,80}href=\{viewHref\(item\.id\)\}/.test(sidebar));
+  ok("...and a plain click is handled in place", /isPlainLeftClick\(e\)\) return;\s*e\.preventDefault\(\);\s*setActiveTab\(item\.id\)/.test(sidebar));
+  ok("a project code is a link", /<a\s[\s\S]{0,40}href=\{projectCodeHref\(/.test(readFileSync("src/components/ProjectCodeLink.tsx", "utf8")));
+  ok("a card's project line is a link", /<a\s[\s\S]{0,40}href=\{activityHref\(/.test(readFileSync("src/components/CardProjectLink.tsx", "utf8")));
+  const app = readFileSync("src/App.tsx", "utf8");
+  ok("App reads the address on load for the view and both jumps", (app.match(/readUrlRequest\(window\.location\.search\)/g) ?? []).length >= 3);
+  const sync = app.indexOf("addressForView(window.location.search, activeView)");
+  const firstReturn = app.search(/\n\s{2}if \([^)]*\)\s*\{?\s*\n?\s*return\s*\(/);
+  ok("the address is kept in step by replaceState, never pushState",
+    sync > 0 && /history\.replaceState/.test(app.slice(sync, sync + 300)) && !/history\.pushState/.test(app));
+  ok("...from a hook above App's early returns", firstReturn > 0 && sync > 0 && sync < firstReturn, { sync, firstReturn });
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
