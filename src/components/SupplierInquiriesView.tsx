@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useExchangeRates } from '../api/exchangeRates';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
-import { computeInquiryTotals } from '../utils/inquirySteps';
+import { computeInquiryTotals, sentStepNotesForForm } from '../utils/inquirySteps';
 import { formatMoney } from '../numUtils';
 import {
   ActivityAttachment, MAX_ACTIVITY_ATTACHMENTS, normalizeAttachments,
@@ -398,7 +398,7 @@ export default function SupplierInquiriesView({
     const wantsNextAction = nextAction.takeArmed();
     try {
       const saved = editingInquiry
-        ? await supplierInquiriesApi.update(editingInquiry.id, inquiryToWriteInput({ ...editingInquiry, ...data }))
+        ? await supplierInquiriesApi.update(editingInquiry.id, { ...inquiryToWriteInput({ ...editingInquiry, ...data }), initialStep })
         : await supplierInquiriesApi.create({ ...inquiryToWriteInput(data), initialStep });
       setIsInquiryModalOpen(false);
       list.refresh();
@@ -1480,7 +1480,7 @@ function InquiryFormInner({
   const [initialStepDate, setInitialStepDate] = useState(getTodayShamsi());
   const [initialStepMethod, setInitialStepMethod] = useState('ایمیل');
   const [initialStepRecipientName, setInitialStepRecipientName] = useState('');
-  const [initialStepNotes, setInitialStepNotes] = useState('');
+  const [initialStepNotes, setInitialStepNotes] = useState(() => sentStepNotesForForm(editingInquiry?.steps));
 
   /*
    * The currency the supplier quoted in — one per offer, not one per line.
@@ -1790,7 +1790,9 @@ function InquiryFormInner({
         discountAmount: Number(discountAmount) || 0,
         creationDate: editingInquiry?.creationDate || initialStepDate,
       },
-      editingInquiry ? undefined : {
+      // Editing sends the description alone: the date, the method and the
+      // recipient are the sent event's own and stay on its card.
+      editingInquiry ? { notes: initialStepNotes } : {
         occurredAt: initialStepDate,
         method: initialStepMethod || null,
         recipientName: initialStepRecipientName || null,
@@ -1968,7 +1970,7 @@ function InquiryFormInner({
 
           {/* Step Notes */}
           <div className="space-y-1">
-            <label className="text-xs font-bold text-slate-500">توضیحات ارسال</label>
+            <label className="text-xs font-bold text-slate-500">توضیحات</label>
             <textarea
               value={initialStepNotes}
               onChange={(e) => setInitialStepNotes(e.target.value)}
@@ -1977,6 +1979,21 @@ function InquiryFormInner({
               className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-right"
             />
           </div>
+        </div>
+      )}
+
+      {/* The same «توضیحات» on edit — it was asked on creation only, so a
+          description could never be read back or corrected here. */}
+      {editingInquiry && (
+        <div className="space-y-1" data-inquiry-notes="edit">
+          <label className="text-xs font-bold text-slate-500">توضیحات</label>
+          <textarea
+            value={initialStepNotes}
+            onChange={(e) => setInitialStepNotes(e.target.value)}
+            rows={2}
+            placeholder="مثال: ارسال استعلام قیمت از طریق ایمیل برای فلانی انجام شد و منتظر پاسخ تا انتهای هفته هستیم."
+            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-right"
+          />
         </div>
       )}
 

@@ -10,7 +10,7 @@ import { scrubProductRefs } from "../refIntegrity";
 import { loadSettings } from "../settings";
 import {
   INQUIRY_STEP_KEYS, InquiryStepKey, resolveStepTitle,
-  describeInquiryStatus, inquiryTotalRiyal,
+  describeInquiryStatus, inquiryTotalRiyal, sentStepNotesToStore,
 } from "../../utils/inquirySteps";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
@@ -109,6 +109,8 @@ const LIST_SELECT = {
     select: {
       id: true, title: true, occurredAtJalali: true,
       method: true, recipientName: true, notes: true, isAuto: true,
+      // The form reads its «توضیحات» back off the SENT step, found by key.
+      autoKey: true,
     },
   },
   _count: { select: { items: true, steps: true } },
@@ -455,7 +457,7 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
         ),
         method: toNullableString(first.method, 50),
         recipientName: toNullableString(first.recipientName, 200),
-        notes: toNullableString(first.notes) ?? "ثبت خودکار: استعلام قیمت ایجاد شد.",
+        notes: sentStepNotesToStore(toNullableString(first.notes)),
         isAuto: true,
         autoKey: INQUIRY_STEP_KEYS.SENT,
       } as Prisma.SupplierInquiryStepUncheckedCreateInput,
@@ -579,6 +581,16 @@ export async function updateInquiry(
       await syncChildren({
         delegate: tx.supplierInquiryItem, parentWhere: { inquiryId: id },
         rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapItem,
+      });
+    }
+
+    // The form's «توضیحات» is the first step's notes, and editing the form
+    // edits them. Absent means «not edited» — an integration that never sends
+    // the key must not reset somebody's description to the automatic one.
+    if (input.initialStep && "notes" in input.initialStep) {
+      await tx.supplierInquiryStep.updateMany({
+        where: { inquiryId: id, autoKey: INQUIRY_STEP_KEYS.SENT },
+        data: { notes: sentStepNotesToStore(toNullableString(input.initialStep.notes)) },
       });
     }
 

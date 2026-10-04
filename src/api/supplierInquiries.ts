@@ -41,6 +41,7 @@ export interface InquiryStepRow {
   recipientName: string | null;
   notes: string | null;
   isAuto: boolean;
+  autoKey?: string | null;
 }
 
 export interface InquiryRow {
@@ -128,7 +129,11 @@ export interface InquiryWriteInput {
   discountPercent?: number;
   discountAmount?: number;
   items?: Record<string, unknown>[];
-  /** How the inquiry was sent. Enriches the derived first step; create only. */
+  /**
+   * How the inquiry was sent. Enriches the derived first step on create; on
+   * update only `notes` is read — the form's «توضیحات», which is that step's
+   * notes — and its absence leaves them as they are.
+   */
   initialStep?: {
     occurredAt?: string | null;
     method?: string | null;
@@ -217,6 +222,7 @@ function rowToStep(step: InquiryStepRow): InquiryStep {
     recipientName: step.recipientName ?? undefined,
     notes: step.notes ?? undefined,
     auto: step.isAuto,
+    autoKey: step.autoKey ?? undefined,
   };
 }
 
