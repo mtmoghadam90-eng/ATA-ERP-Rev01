@@ -18,35 +18,6 @@ export const INQUIRY_STEP_KEYS = {
   CANCELLED: 'CANCELLED',
 } as const;
 
-/**
- * The inquiry form's «توضیحات» box is the notes of its first step — the
- * «ارسال استعلام» event every inquiry is created with. There is no second
- * column for it: the description and the record of how the inquiry went out
- * are one sentence, written once.
- *
- * It used to be asked on creation only, so a description could never be read
- * back or corrected from the form it was typed into. These two rules are what
- * the form and the server share: what an empty box stores (the step must say
- * something, so the automatic sentence stands in), and what the box shows on
- * opening (that sentence is the system's, not the writer's, so it reads as
- * empty rather than as text somebody has to delete first).
- */
-export const SENT_STEP_DEFAULT_NOTE = 'ثبت خودکار: استعلام قیمت ایجاد شد.';
-
-export function sentStepNotesToStore(text: string | null | undefined): string {
-  const trimmed = String(text ?? '').trim();
-  return trimmed || SENT_STEP_DEFAULT_NOTE;
-}
-
-/** The first step's notes as the form should show them. */
-export function sentStepNotesForForm(
-  steps: { autoKey?: string; notes?: string }[] | undefined,
-): string {
-  const sent = (steps ?? []).find((s) => s.autoKey === INQUIRY_STEP_KEYS.SENT);
-  const notes = String(sent?.notes ?? '').trim();
-  return notes === SENT_STEP_DEFAULT_NOTE ? '' : notes;
-}
-
 export type InquiryStepKey = (typeof INQUIRY_STEP_KEYS)[keyof typeof INQUIRY_STEP_KEYS];
 
 /**

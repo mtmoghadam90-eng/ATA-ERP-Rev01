@@ -388,7 +388,6 @@ import { deriveServiceHeader } from "../src/server/afterSalesStatus";
 import { RELAY_TOO_OLD_ERROR } from "../src/server/services/messaging/telegramTransport";
 import { shouldReloadForChunk, RELOAD_GUARD_MS } from "../src/utils/lazyView";
 import { replannedTime } from "../src/utils/messageReplan";
-import { SENT_STEP_DEFAULT_NOTE, sentStepNotesForForm, sentStepNotesToStore } from "../src/utils/inquirySteps";
 import { addressForView, isPlainLeftClick, projectCodeHref, readUrlRequest, viewHref, activityHref } from "../src/utils/appLinks";
 import {
   DUE_SOON_DAYS, OVERDUE_WINDOW_DAYS,
@@ -23115,28 +23114,6 @@ head("Links open in a new tab: real addresses, read back on load");
   ok("the address is kept in step by replaceState, never pushState",
     sync > 0 && /history\.replaceState/.test(app.slice(sync, sync + 300)) && !/history\.pushState/.test(app));
   ok("...from a hook above App's early returns", firstReturn > 0 && sync > 0 && sync < firstReturn, { sync, firstReturn });
-}
-
-head("An inquiry's «توضیحات» is its first step's notes, on create and on edit alike");
-{
-  ok("an empty box stores the automatic sentence", sentStepNotesToStore("  ") === SENT_STEP_DEFAULT_NOTE && sentStepNotesToStore(null) === SENT_STEP_DEFAULT_NOTE);
-  ok("a typed description is stored trimmed", sentStepNotesToStore(" ارسال با ایمیل ") === "ارسال با ایمیل");
-  ok("the form reads the SENT step's notes back",
-    sentStepNotesForForm([{ autoKey: "INITIAL_OFFER", notes: "x" }, { autoKey: "SENT", notes: "ارسال با ایمیل" }]) === "ارسال با ایمیل");
-  ok("...and shows the automatic sentence as an empty box", sentStepNotesForForm([{ autoKey: "SENT", notes: SENT_STEP_DEFAULT_NOTE }]) === "");
-  ok("no SENT step reads as empty", sentStepNotesForForm([{ notes: "x" }]) === "" && sentStepNotesForForm(undefined) === "");
-  const svc = readFileSync("src/server/services/inquiryService.ts", "utf8");
-  ok("create stores the box through the shared rule", /notes: sentStepNotesToStore\(toNullableString\(first\.notes\)\)/.test(svc));
-  ok("update writes the SENT step's notes, and only when the key was sent",
-    /"notes" in input\.initialStep[\s\S]{0,200}autoKey: INQUIRY_STEP_KEYS\.SENT[\s\S]{0,120}sentStepNotesToStore/.test(svc));
-  ok("the list carries the step key the form finds it by", /notes: true, isAuto: true,[\s\S]{0,120}autoKey: true/.test(svc));
-  ok("the client keeps the key", /autoKey: step\.autoKey \?\? undefined/.test(readFileSync("src/api/supplierInquiries.ts", "utf8")));
-  const view = readFileSync("src/components/SupplierInquiriesView.tsx", "utf8");
-  ok("the field is labelled «توضیحات», not «توضیحات ارسال»", !/توضیحات ارسال/.test(view));
-  ok("the form seeds the box from the stored step", /useState\(\(\) => sentStepNotesForForm\(editingInquiry\?\.steps\)\)/.test(view));
-  ok("the box is drawn on edit too", /\{editingInquiry && \([\s\S]{0,120}data-inquiry-notes="edit"[\s\S]{0,200}value=\{initialStepNotes\}/.test(view));
-  ok("editing sends the description", /editingInquiry \? \{ notes: initialStepNotes \}/.test(view));
-  ok("...and the update call carries it", /supplierInquiriesApi\.update\(editingInquiry\.id, \{ \.\.\.inquiryToWriteInput\([^)]*\), initialStep \}\)/.test(view));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
