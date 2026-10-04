@@ -1,4 +1,5 @@
 import { ExternalLink } from 'lucide-react';
+import { isPlainLeftClick, projectCodeHref } from '../utils/appLinks';
 
 /**
  * A project code, as a link to the project.
@@ -28,12 +29,16 @@ export default function ProjectCodeLink({ code, onOpen, className, showIcon = tr
   if (!onOpen) return <span className={className}>{text}</span>;
 
   return (
-    <button
-      type="button"
+    // A link with an address, so it can be opened in a new tab; an ordinary
+    // click still opens the project here (`appLinks.ts`).
+    <a
+      href={projectCodeHref(text)}
       onClick={(e) => {
         // Codes sit inside rows that open their own record; following the
         // project is a different intent and must not do both.
         e.stopPropagation();
+        if (!isPlainLeftClick(e)) return;
+        e.preventDefault();
         onOpen(text);
       }}
       title={`رفتن به پروژه ${text}`}
@@ -42,6 +47,6 @@ export default function ProjectCodeLink({ code, onOpen, className, showIcon = tr
     >
       {showIcon && <ExternalLink size={10} className="shrink-0 opacity-70" />}
       <span>{text}</span>
-    </button>
+    </a>
   );
 }

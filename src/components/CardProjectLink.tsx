@@ -1,5 +1,6 @@
 import { ExternalLink } from 'lucide-react';
 import type { ActivityJump } from '../utils/notificationJump';
+import { activityHref, isPlainLeftClick } from '../utils/appLinks';
 
 /**
  * The project's code and name on a work card, as one press into the project.
@@ -44,18 +45,22 @@ export default function CardProjectLink({ code, name, jump, onOpen }: Props) {
   }
 
   return (
-    <button
-      type="button"
+    // A link with an address, so the project can be opened in a new tab; an
+    // ordinary click still opens it here (`appLinks.ts`).
+    <a
+      href={activityHref(jump)}
       data-card-project={jump.projectId}
       title={`باز کردن پروژه: ${full}`}
       onClick={(e) => {
         e.stopPropagation();
+        if (!isPlainLeftClick(e)) return;
+        e.preventDefault();
         onOpen(jump);
       }}
       className="inline-flex flex-wrap items-center gap-1 min-w-0 hover:text-sky-500 hover:underline transition text-right"
     >
       <ExternalLink size={10} className="shrink-0 opacity-70" />
       {body}
-    </button>
+    </a>
   );
 }
