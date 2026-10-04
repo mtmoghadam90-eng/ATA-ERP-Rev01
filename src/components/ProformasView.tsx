@@ -102,10 +102,10 @@ import NumberField from "./NumberField";
 import type { SuggestedItem } from "../api/assistant";
 import { suggestionSpecText } from "../utils/advisorSuggestion";
 import ProformaDeviationFields from './ProformaDeviationFields';
-import { deviationRefusal } from '../utils/deviations';
+import { deviationRefusal, hasDeviations } from '../utils/deviations';
 import RichTextField from "./RichTextField";
 import {
-  DELIVERY_READY_UNIT, getDeliverySummary, updateNotesForItems,
+  DELIVERY_READY_UNIT, getDeliverySummary, setNoDeviationStatement, updateNotesForItems,
 } from "../utils/deliveryNotes";
 import { copiedProformaDates } from "../utils/proformaCopy";
 import {
@@ -1339,7 +1339,9 @@ export default function ProformasView({
     setTaxPercent(10);
     const initialNotes =
       settings?.proformaTemplates?.[0]?.termsAndConditions || "";
-    setNotes(updateNotesForItems(initialNotes, defaultItems, true));
+    // A new quotation complies until somebody ticks a deviation, so it opens
+    // with the compliance sentence in the box — where it can be deleted.
+    setNotes(setNoDeviationStatement(updateNotesForItems(initialNotes, defaultItems, true), true));
     setDeliveryDate(getDeliverySummary(defaultItems));
     setShowCreateModal(true);
   };
@@ -1833,9 +1835,12 @@ export default function ProformasView({
     if (items.length === 1) return;
     const newItems = items.filter((_, i) => i !== index);
     setItems(newItems);
-    setNotes((prevNotes) =>
-      updateNotesForItems(prevNotes, newItems, isEqualDelivery),
-    );
+    // Removing the only deviating line makes the document comply again.
+    const complianceChanged = hasDeviations(items) !== hasDeviations(newItems);
+    setNotes((prevNotes) => {
+      const next = updateNotesForItems(prevNotes, newItems, isEqualDelivery);
+      return complianceChanged ? setNoDeviationStatement(next, !hasDeviations(newItems)) : next;
+    });
     setDeliveryDate(getDeliverySummary(newItems));
   };
   // Handle Item delivery fields change
@@ -5713,9 +5718,15 @@ export default function ProformasView({
                         <ProformaDeviationFields
                           rowIndex={idx}
                           value={item}
-                          onChange={(next) => setItems((prev) => prev.map((row, i) => (
-                            i === idx ? { ...row, ...next } : row
-                          )))}
+                          onChange={(next) => {
+                            const newItems = items.map((row, i) => (i === idx ? { ...row, ...next } : row));
+                            setItems(newItems);
+                            // The compliance sentence follows the answer, and only
+                            // when it changes — so a deleted one stays deleted.
+                            if (hasDeviations(items) !== hasDeviations(newItems)) {
+                              setNotes((prev) => setNoDeviationStatement(prev, !hasDeviations(newItems)));
+                            }
+                          }}
                         />
                       </div>
                       {/* Product Image Selection */}

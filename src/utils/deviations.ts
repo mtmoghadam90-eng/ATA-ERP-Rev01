@@ -11,8 +11,9 @@
  * What is printed follows from that and nothing else:
  *  - some line deviates → an English «Technical Deviation List» page is printed
  *    with the proforma, one row per deviating line;
- *  - nothing deviates → no page, and `NO_DEVIATION_STATEMENT` opens the terms
- *    section instead.
+ *  - nothing deviates → no page. `NO_DEVIATION_STATEMENT` is then a line the
+ *    form writes into the terms box (`setNoDeviationStatement`), where it can
+ *    be deleted; the printout prints whatever the box says and adds nothing.
  *
  * Pure so the form, the server and the printed document read one rule.
  */

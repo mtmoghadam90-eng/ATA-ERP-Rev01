@@ -20,6 +20,7 @@
 
 import { toPersianDigits } from "../numUtils";
 import { stripRichMarks } from "./richText";
+import { NO_DEVIATION_STATEMENT } from "./deviations";
 
 /** Anything with the delivery and payment fields on it — a proforma line. */
 export interface DeliveryBearing {
@@ -304,6 +305,52 @@ export function updateNotesForItems(
 
   const remainder = rest.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   return remainder ? `${managed}\n\n${remainder}` : managed;
+}
+
+/* ------------------------- the compliance statement ------------------------ */
+
+/**
+ * «No Deviation» is a sentence in the notes, not something the printout adds.
+ *
+ * It used to be inserted when the document was *printed*, so the person
+ * writing the quotation could neither see it on the form nor take it out —
+ * reported as «بنویسه توی باکس که اگر خواستم بتونم پاکش کنم». Now it is an
+ * ordinary line of the terms, placed right under the two managed sections, and
+ * the box is the only thing that decides whether it prints.
+ *
+ * It moves **only on a change of answer**, never on every edit: the form calls
+ * this when the document goes from «some line deviates» to «none does» or back
+ * (and once for a new document). Re-adding it on every keystroke would undo
+ * the deletion this exists to allow. When a line *starts* deviating the
+ * sentence is false, so it is taken out — matched by its exact words with the
+ * formatting read past, so a sentence somebody rewrote in their own words is
+ * theirs and stays.
+ */
+function isStatementLine(line: string): boolean {
+  return stripRichMarks(line).trim() === NO_DEVIATION_STATEMENT;
+}
+
+export function setNoDeviationStatement(currentNotes: string, present: boolean): string {
+  const lines = (currentNotes || "").split("\n");
+  const without = lines.filter((line) => !isStatementLine(line));
+  if (!present) {
+    return without.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+  if (without.length !== lines.length) return currentNotes;
+
+  // Under the managed sections: past every line that belongs to delivery or
+  // payment at the top, the one blank line after them, and then the sentence.
+  const plain = without.map((line) => stripRichMarks(line).trim());
+  let end = 0;
+  for (const heading of [DELIVERY_HEADING, PAYMENT_HEADING]) {
+    const section = findSection(plain, heading);
+    if (section && section.start <= end + 1) end = Math.max(end, section.end);
+  }
+  const managed = without.slice(0, end).join("\n").trim();
+  const rest = without.slice(end).join("\n").trim();
+  return [managed, [NO_DEVIATION_STATEMENT, rest].filter(Boolean).join("\n")]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /* ------------------------------- the summary ------------------------------ */
