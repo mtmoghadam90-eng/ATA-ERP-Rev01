@@ -912,6 +912,10 @@ model ProformaItem {
   /// figure was arrived at, so "100% costed" can be told apart from "100%
   /// guessed".
   costSource   String?  @db.NVarChar(20)
+  /// JSON: the price calculator's inputs as applied to this line, in the
+  /// calculator's own currency (`calcCurrency`). What reopening the calculator
+  /// is seeded from; a cost, redacted with `unitCost`.
+  priceCalc    String?  @db.NVarChar(Max)
 
   supplyMethod String? @db.NVarChar(20)
   /// Per-line outcome: جاری | برنده | بازنده | لغو شده

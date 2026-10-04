@@ -313,6 +313,7 @@ export interface ProformaItemInput {
   unitCost?: unknown;
   costCurrency?: string | null;
   costSource?: string | null;
+  priceCalc?: unknown;
   supplyMethod?: string | null;
   status?: string | null;
   lossReason?: string | null;
@@ -547,6 +548,11 @@ function mapItem(row: ProformaItemInput, currency: string): Record<string, unkno
     unitCost: cost.unitCost,
     costCurrency: cost.costCurrency,
     costSource: cost.costSource,
+    // The calculator's working for this line. Stored as sent (an object or a
+    // JSON string) — it is what the modal reopens on, and nothing on the
+    // server reads a figure out of it: the line's price and cost are their
+    // own columns.
+    priceCalc: toJsonColumn(row.priceCalc),
     supplyMethod: toNullableString(row.supplyMethod, 20),
     status: toNullableString(row.status, 30),
     lossReason: toNullableString(row.lossReason, 300),

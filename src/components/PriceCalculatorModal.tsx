@@ -120,7 +120,10 @@ export default function PriceCalculatorModal({
   useEffect(() => {
     if (!open) return;
     const { currency, initialPriceForeign, initialValues, exchangeRates } = latest.current;
-    const curr = currency || "یورو";
+    // The currency the figures were worked out in, when they were saved with
+    // one: a yuan purchase priced onto a dollar line comes back in yuan, or
+    // every number below would be read under the wrong label.
+    const curr = initialValues?.calcCurrency || currency || "یورو";
     setCalcCurrency(curr);
 
     const priceForeign =
@@ -267,6 +270,7 @@ export default function PriceCalculatorModal({
         calcMode,
         calcManualLandedForeign: Number(manualLanded) || 0,
         calcManualSellingForeign: Number(manualSelling) || 0,
+        calcCurrency,
       },
       calcCurrency,
       {

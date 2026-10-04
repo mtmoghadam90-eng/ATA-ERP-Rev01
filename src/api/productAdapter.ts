@@ -132,7 +132,7 @@ const PRICE_CALC_KEYS = [
   "calcPriceForeign", "calcExchangeRate", "calcRemittanceFee", "calcRemittancePct",
   "calcShippingCost", "calcShippingCurrency", "calcShippingExchangeRate", "calcCustomsDutyRIYAL", "calcOtherCostsForeign",
   "calcOtherCostsRIYAL", "calcProfitPct", "calcProfitRIYAL", "calcMarginType",
-  "calcMode", "calcManualLandedForeign", "calcManualSellingForeign",
+  "calcMode", "calcManualLandedForeign", "calcManualSellingForeign", "calcCurrency",
 ] as const;
 
 /**

@@ -26,6 +26,8 @@ export interface ProformaItemRow {
   unitCost: string | null;
   costCurrency: string | null;
   costSource: string | null;
+  /** JSON: the price calculator's inputs applied to this line. */
+  priceCalc: string | null;
   supplyMethod: string | null;
   status: string | null;
   lossReason: string | null;

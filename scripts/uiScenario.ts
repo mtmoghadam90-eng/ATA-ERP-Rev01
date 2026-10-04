@@ -180,6 +180,61 @@ act(() => { root.unmount(); });
 }
 
 /*
+ * A calculation done in yuan for a dollar line comes back in yuan.
+ *
+ * The calculator runs in whichever currency it is opened in, and the user may
+ * switch it — a Chinese supplier's price behind a dollar quotation. Its
+ * currency was saved nowhere, so reopening showed dollar labels over yuan
+ * figures, and a free-text line saved none of its inputs at all. The applied
+ * details now carry `calcCurrency`, and seeding reads it back.
+ */
+{
+  head("Price calculator: a yuan working behind a dollar line is reopened in yuan");
+  const RATES_CNY = [...RATES, { id: "r-cny", currency: "CNY", name: "یوان", rateToRIYAL: 14_000, lastUpdated: "" }] as never;
+  let applied: { details: Record<string, unknown>; currency: string } | null = null;
+  const hostY = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootY = createRoot(hostY);
+  act(() => {
+    rootY.render(React.createElement(PriceCalculatorModal, {
+      open: true, onClose: () => {}, initialPriceForeign: 0, currency: "دلار",
+      seedKey: 0, exchangeRates: RATES_CNY,
+      onApply: (_f: number, _r: number, details: Record<string, unknown>, currency: string) => { applied = { details, currency }; },
+    }));
+  });
+  const currencySelect = [...hostY.querySelectorAll("select")]
+    .find((sel) => [...sel.options].some((o) => o.value === "یوان")) as HTMLSelectElement | undefined;
+  ok("the calculator offers its own currency", !!currencySelect);
+  if (currencySelect) {
+    act(() => { currencySelect.value = "یوان"; handlers(currencySelect).onChange?.({ target: currencySelect }); });
+  }
+  const priceBox = ([...hostY.querySelectorAll("input")] as HTMLInputElement[]).find((i) => i.value === "0");
+  if (priceBox) act(() => { handlers(priceBox).onChange?.({ target: { value: "700" } }); });
+  const applyButton = [...hostY.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes("اعمال"));
+  act(() => { applyButton?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  const got = applied as { details: Record<string, unknown>; currency: string } | null;
+  ok("applying reports the yuan working, currency included",
+    got?.currency === "یوان" && got.details.calcCurrency === "یوان" && got.details.calcPriceForeign === 700,
+    JSON.stringify(got));
+  act(() => { rootY.unmount(); });
+
+  // Reopened on the same dollar line, seeded from what was applied.
+  const hostR = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootR = createRoot(hostR);
+  act(() => {
+    rootR.render(React.createElement(PriceCalculatorModal, {
+      open: true, onClose: () => {}, initialPriceForeign: 0, currency: "دلار",
+      initialValues: got?.details as never, seedKey: 1, exchangeRates: RATES_CNY, onApply: () => {},
+    }));
+  });
+  const reopenedSelect = [...hostR.querySelectorAll("select")]
+    .find((sel) => [...sel.options].some((o) => o.value === "یوان")) as HTMLSelectElement | undefined;
+  ok("reopened, the calculator is in yuan rather than the line's dollar", reopenedSelect?.value === "یوان", reopenedSelect?.value);
+  ok("and the yuan purchase price is back in its box",
+    ([...hostR.querySelectorAll("input")] as HTMLInputElement[]).some((i) => i.value === "700"));
+  act(() => { rootR.unmount(); });
+}
+
+/*
  * A screen that loads its own data, under a parent that re-renders.
  *
  * The second bug of the same family, and the more expensive one. The messaging

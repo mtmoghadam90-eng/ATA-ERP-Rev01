@@ -114,7 +114,7 @@ const INQUIRY_ITEM_COST_FIELDS = ["priceForeign", "priceRial"] as const;
  * «از سفارش خرید» beside a blank, which tells a warehouse account that a
  * purchase order exists and what kind of evidence it holds.
  */
-const PROFORMA_ITEM_COST_FIELDS = ["unitCost", "costCurrency", "costSource"] as const;
+const PROFORMA_ITEM_COST_FIELDS = ["unitCost", "costCurrency", "costSource", "priceCalc"] as const;
 
 /**
  * Customer value columns computed from cost.
@@ -305,7 +305,7 @@ export function redactProformas<T>(rows: T[], user: AuthUser): T[] {
 export function preserveLineCosts<T extends object>(
   items: T[] | undefined,
   user: AuthUser,
-  stored: { id: string; unitCost: unknown; costCurrency: unknown; costSource: unknown }[],
+  stored: { id: string; unitCost: unknown; costCurrency: unknown; costSource: unknown; priceCalc?: unknown }[],
 ): T[] | undefined {
   if (items === undefined || canSeeCosts(user)) return items;
 
@@ -324,6 +324,8 @@ export function preserveLineCosts<T extends object>(
       unitCost: previous?.unitCost ?? null,
       costCurrency: previous?.costCurrency ?? null,
       costSource: previous?.costSource ?? null,
+      // The calculator's working is the cost's breakdown: put back with it.
+      priceCalc: previous?.priceCalc ?? null,
     };
   });
 }
