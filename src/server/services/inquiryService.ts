@@ -90,7 +90,7 @@ const LIST_SELECT = {
   creationDate: true, creationDateJalali: true,
   technicalOfferUrl: true, financialOfferUrl: true,
   technicalOfferFiles: true, financialOfferFiles: true,
-  discountPercent: true, discountAmount: true, createdAt: true,
+  discountPercent: true, discountAmount: true, notes: true, createdAt: true,
   supplier: { select: { id: true, name: true } },
   project: { select: { id: true, code: true, name: true } },
   items: {
@@ -206,6 +206,8 @@ export interface InquiryInput {
   financialOfferFiles?: unknown;
   discountPercent?: unknown;
   discountAmount?: unknown;
+  /** The inquiry's general description; the first step's notes are `initialStep.notes`. */
+  notes?: string | null;
   items?: InquiryItemInput[];
   initialStep?: InquiryInitialStepInput;
 }
@@ -258,6 +260,7 @@ function scalarData(input: InquiryInput): Record<string, unknown> {
     const pct = Number(input.discountPercent) || 0;
     set("discountPercent", Math.min(Math.max(pct, 0), 100));
   }
+  if ("notes" in input) set("notes", toNullableString(input.notes));
   // A negative amount would add to the offer rather than take off it.
   if ("discountAmount" in input) {
     set("discountAmount", Math.max(Number(input.discountAmount) || 0, 0));

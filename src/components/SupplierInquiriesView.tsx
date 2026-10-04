@@ -904,6 +904,11 @@ export default function SupplierInquiriesView({
 
                               {/* Items List */}
                               <div className="space-y-1.5">
+                                {inq.notes && (
+                                  <div className="p-2 bg-slate-50/50 border border-slate-100 rounded-xl text-[11px] text-slate-600 leading-relaxed whitespace-pre-line" data-inquiry-notes-card>
+                                    <span className="font-bold text-slate-500">توضیحات: </span>{inq.notes}
+                                  </div>
+                                )}
                                 <span className="text-[10px] font-bold text-slate-400 block border-b border-slate-100 pb-1">اقلام پیشنهاد شده</span>
                                 <div className="space-y-2 pr-1">
                                   {inq.items.map((item, index) => (
@@ -1469,6 +1474,9 @@ function InquiryFormInner({
       ?? normalizeAttachments([{ url: editingInquiry?.financialOfferUrl }]));
   const [discountPercent, setDiscountPercent] = useState<number>(editingInquiry?.discountPercent || 0);
   const [discountAmount, setDiscountAmount] = useState<number>(editingInquiry?.discountAmount || 0);
+  // The inquiry's own description, asked on create *and* edit. Not the
+  // «توضیحات ارسال» box below, which is the first step's notes.
+  const [inquiryNotes, setInquiryNotes] = useState<string>(editingInquiry?.notes || '');
   
   const [uploadingTechnical, setUploadingTechnical] = useState(false);
   const [uploadingFinancial, setUploadingFinancial] = useState(false);
@@ -1788,6 +1796,7 @@ function InquiryFormInner({
         financialOfferFiles: financialFiles,
         discountPercent: Number(discountPercent) || 0,
         discountAmount: Number(discountAmount) || 0,
+        notes: inquiryNotes,
         creationDate: editingInquiry?.creationDate || initialStepDate,
       },
       editingInquiry ? undefined : {
@@ -1915,6 +1924,18 @@ function InquiryFormInner({
           </div>
           <Coins size={20} className="text-slate-400 shrink-0" />
         </div>
+      </div>
+
+      {/* General description of the inquiry — what it is about. */}
+      <div className="space-y-1" data-inquiry-notes>
+        <label className="text-xs font-bold text-slate-500">توضیحات کلی استعلام</label>
+        <textarea
+          value={inquiryNotes}
+          onChange={(e) => setInquiryNotes(e.target.value)}
+          rows={2}
+          placeholder="مثال: استعلام برای فاز دوم پروژه؛ مشخصات فنی طبق دیتاشیت پیوست مشتری."
+          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 text-right"
+        />
       </div>
 
       {!editingInquiry && (

@@ -23116,6 +23116,29 @@ head("Links open in a new tab: real addresses, read back on load");
   ok("...from a hook above App's early returns", firstReturn > 0 && sync > 0 && sync < firstReturn, { sync, firstReturn });
 }
 
+head("A supplier inquiry has its own general description, apart from «توضیحات ارسال»");
+{
+  ok("schema: supplier_inquiries.notes is a nullable column", /discountAmount  Decimal[\s\S]{0,200}notes String\? @db\.NVarChar\(Max\)/.test(readFileSync("prisma/schema.prisma", "utf8")));
+  ok("migration: adds it, guarded, with no DML",
+    /IF COL_LENGTH\('dbo\.supplier_inquiries', 'notes'\) IS NULL\s+ALTER TABLE \[dbo\]\.\[supplier_inquiries\] ADD \[notes\] NVARCHAR\(MAX\) NULL;/
+      .test(readFileSync("prisma/migrations/20261004000000_supplier_inquiry_notes/migration.sql", "utf8")));
+  const svc = readFileSync("src/server/services/inquiryService.ts", "utf8");
+  ok("the service writes it and the list reads it",
+    /if \("notes" in input\) set\("notes", toNullableString\(input\.notes\)\)/.test(svc) && /discountAmount: true, notes: true/.test(svc));
+  ok("the route lets it through", /"discountAmount", "notes",/.test(readFileSync("src/server/routes/inquiries.ts", "utf8")));
+  const api = readFileSync("src/api/supplierInquiries.ts", "utf8");
+  ok("the client reads it and writes it back", /notes: row\.notes \?\? undefined/.test(api) && /notes: inquiry\.notes\?\.trim\(\) \|\| null/.test(api));
+  const view = readFileSync("src/components/SupplierInquiriesView.tsx", "utf8");
+  ok("the form seeds it from the record and sends it", /useState<string>\(editingInquiry\?\.notes \|\| ''\)/.test(view) && /notes: inquiryNotes,/.test(view));
+  const notesAt = view.indexOf("data-inquiry-notes>");
+  ok("the field is drawn before, and outside, the create-only block — so edit shows it",
+    notesAt > 0 && view.indexOf("{!editingInquiry && (", notesAt) - notesAt < 900
+      && view.slice(view.lastIndexOf("\n", notesAt), notesAt).trim().startsWith("<div"));
+  ok("«توضیحات ارسال» is still the first step's box, create only",
+    /\{!editingInquiry && \([\s\S]{0,4000}توضیحات ارسال[\s\S]{0,200}value=\{initialStepNotes\}/.test(view));
+  ok("the card shows the description", /\{inq\.notes && \([\s\S]{0,200}data-inquiry-notes-card/.test(view));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

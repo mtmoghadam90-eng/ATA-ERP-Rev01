@@ -1177,6 +1177,10 @@ model SupplierInquiry {
   discountPercent Decimal @default(0) @db.Decimal(5, 2)
   discountAmount  Decimal @default(0) @db.Decimal(19, 4)
 
+  /// The inquiry's own general description — what it is about. Not the
+  /// first step's notes, which say how it was sent.
+  notes String? @db.NVarChar(Max)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
