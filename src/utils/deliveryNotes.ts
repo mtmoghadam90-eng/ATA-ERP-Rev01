@@ -130,6 +130,22 @@ export function allReadyForDelivery(itemsList: DeliveryBearing[]): boolean {
 /* ------------------------------ the sections ------------------------------ */
 
 /**
+ * How a section is written: the heading **bold**, and its text on the same
+ * line — «**زمان تحویل:** ۱۰ روز کاری پس از تایید» — rather than on the next.
+ * A per-row block is the one exception, because several rows cannot share the
+ * heading's line: the heading stands alone and the rows follow beneath it.
+ *
+ * The heading is bolded by the `**` mark, which `findSection` reads past with
+ * `stripRichMarks`, so a section written this way is found again on the next
+ * change exactly as the old two-line shape is.
+ */
+function writeSection(heading: string, body: string): string {
+  const text = body.trim();
+  const bold = `**${heading}**`;
+  return text.includes("\n") ? `${bold}\n${text}` : `${bold} ${text}`;
+}
+
+/**
  * A heading and its lines, built the same way for both sections.
  *
  * One phrase covering every line is written once; anything else is listed per
@@ -147,7 +163,7 @@ function buildSection(
 
   const first = phrases[0];
   const allEqual = first !== "" && phrases.every((phrase) => phrase === first);
-  if (isEqual && allEqual) return `${heading}\n${first}`;
+  if (isEqual && allEqual) return writeSection(heading, first);
 
   /*
    * The row number is written in Persian digits; the phrase is not touched.
@@ -161,17 +177,17 @@ function buildSection(
       phrase === "" ? null : `${toPersianDigits(`ردیف ${index + 1}`)} : ${phrase}`)
     .filter((line): line is string => line !== null);
 
-  return `${heading}\n${lines.join("\n")}`;
+  return writeSection(heading, lines.join("\n"));
 }
 
 export const generateDeliveryNotes = (
   itemsList: DeliveryBearing[],
   isEqualDelivery: boolean = true,
 ) => {
-  if (!itemsList || itemsList.length === 0) return `${DELIVERY_HEADING}\nفوری`;
+  if (!itemsList || itemsList.length === 0) return writeSection(DELIVERY_HEADING, "فوری");
   return toPersianDigits(
     buildSection(DELIVERY_HEADING, itemsList.map(deliveryPhrase), isEqualDelivery)
-      ?? `${DELIVERY_HEADING}\nفوری`,
+      ?? writeSection(DELIVERY_HEADING, "فوری"),
   );
 };
 
@@ -200,6 +216,11 @@ function findSection(
 ): { start: number; end: number; body: string } | null {
   const start = plain.findIndex((line) => line.startsWith(heading));
   if (start === -1) return null;
+
+  // Written on one line — «زمان تحویل: ۱۰ روز» — the section is that line and
+  // nothing below it, so the writer's own next line is never swallowed.
+  const sameLine = plain[start].slice(heading.length).trim();
+  if (sameLine) return { start, end: start + 1, body: sameLine };
 
   let end = start + 1;
   let hasRows = false;
@@ -273,11 +294,13 @@ export function updateNotesForItems(
 
   const carried = payment && !isGeneratedPaymentBody(payment.body) ? payment.body : null;
   const paymentSection = generatePaymentNotes(itemsList, isEqualDelivery)
-    ?? (carried ? `${PAYMENT_HEADING}\n${carried}` : null);
+    ?? (carried ? writeSection(PAYMENT_HEADING, carried) : null);
 
+  // The two managed lines sit together with no blank line between them; one
+  // blank line follows them, and the writer's own terms start below it.
   const managed = [generateDeliveryNotes(itemsList, isEqualDelivery), paymentSection]
     .filter((section): section is string => section !== null)
-    .join("\n\n");
+    .join("\n");
 
   const remainder = rest.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   return remainder ? `${managed}\n\n${remainder}` : managed;
