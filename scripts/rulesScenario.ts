@@ -5006,7 +5006,7 @@ head("Delivery section inside a formattable notes block");
   const items = [{ deliveryRange: "3-4", deliveryUnit: "هفته", deliveryType: "کاری", deliveryPostfix: "پس از تایید" }];
   const section = generateDeliveryNotes(items);
 
-  ok("the section names itself", section.startsWith("زمان تحویل:"));
+  ok("the section names itself, bold", section.startsWith("**زمان تحویل:**"));
   eq("empty notes become the section alone", updateNotesForItems("", items), section);
 
   /*
@@ -5015,7 +5015,7 @@ head("Delivery section inside a formattable notes block");
    * first at the bottom of the block.
    */
   const withNotes = updateNotesForItems("اعتبار: ۳۰ روز", items);
-  ok("the delivery section comes first", withNotes.startsWith("زمان تحویل:"));
+  ok("the delivery section comes first", withNotes.startsWith("**زمان تحویل:**"));
   ok("and the writer's own text follows it", withNotes.endsWith("اعتبار: ۳۰ روز"));
   eq("only one section exists", withNotes.split("زمان تحویل:").length - 1, 1);
 
@@ -5027,7 +5027,7 @@ head("Delivery section inside a formattable notes block");
   const below = updateNotesForItems("اعتبار: ۳۰ روز\n\nزمان تحویل:\n۲ هفته کاری پس از تایید", items);
   eq("a section found below is lifted, not copied",
     below.split("زمان تحویل:").length - 1, 1);
-  ok("...to the top", below.startsWith("زمان تحویل:"));
+  ok("...to the top", below.startsWith("**زمان تحویل:**"));
   ok("...with the old figures gone", !below.includes("۲ هفته کاری"));
   ok("...and the writer's text kept", below.includes("اعتبار: ۳۰ روز"));
 
@@ -15527,7 +15527,7 @@ head("The corrections batch: uploads, the board, the feed and the front page");
     DELIVERY_READY_TEXT);
   eq("...and the printed section says exactly that",
     generateDeliveryNotes([{ deliveryUnit: DELIVERY_READY_UNIT }], true),
-    `زمان تحویل:\n${DELIVERY_READY_TEXT}`);
+    `**زمان تحویل:** ${DELIVERY_READY_TEXT}`);
 
   /* ---------------------- and paid for on the shelf ---------------------- */
 
@@ -15535,7 +15535,7 @@ head("The corrections batch: uploads, the board, the feed and the front page");
   const ordered = [{ deliveryUnit: "هفته" }];
   const written = updateNotesForItems("گارانتی ۱۲ ماه.", ready);
   ok("ready stock is paid for in full on delivery",
-    written.includes(`${PAYMENT_HEADING}\n${READY_PAYMENT_TEXT}`), written);
+    written.includes(`**${PAYMENT_HEADING}** ${READY_PAYMENT_TEXT}`), written);
   ok("...and the section is not appended twice when nothing changed",
     updateNotesForItems(written, ready) === written);
   /*
@@ -15557,7 +15557,7 @@ head("The corrections batch: uploads, the board, the feed and the front page");
   ok("...and says nothing about the other", !mixedPayment.includes("ردیف ۲"));
   ok("...so no claim is made over the whole document",
     !updateNotesForItems("گارانتی ۱۲ ماه.", [...ready, ...ordered])
-      .includes(`${PAYMENT_HEADING}\n${READY_PAYMENT_TEXT}`));
+      .includes(`**${PAYMENT_HEADING}** ${READY_PAYMENT_TEXT}`));
   ok("an ordinary document still gets no payment section at all",
     !updateNotesForItems("گارانتی ۱۲ ماه.", ordered).includes(PAYMENT_HEADING));
   // Written, then the goods change: the rule takes back what it wrote.
@@ -15606,7 +15606,7 @@ head("The corrections batch: uploads, the board, the feed and the front page");
    */
   eq("one term across every line is written once",
     generatePaymentNotes([{ paymentTerm: "نقدی" }, { paymentTerm: "نقدی" }], true),
-    `${PAYMENT_HEADING}\nنقدی`);
+    `**${PAYMENT_HEADING}** نقدی`);
   const mixedTerms = generatePaymentNotes(
     [{ paymentTerm: "نقدی" }, { paymentTerm: "۶۰ روزه" }], true) ?? "";
   ok("differing terms are listed per row", mixedTerms.includes("ردیف ۱ : نقدی"));
@@ -15627,7 +15627,7 @@ head("The corrections batch: uploads, the board, the feed and the front page");
   const both = updateNotesForItems("گارانتی ۱۲ ماه.", [
     { deliveryUnit: "هفته", paymentTerm: "۳۰ روزه" },
   ]);
-  ok("delivery leads", both.indexOf(DELIVERY_HEADING) === 0);
+  ok("delivery leads", both.startsWith(`**${DELIVERY_HEADING}**`));
   ok("payment comes under it",
     both.indexOf(PAYMENT_HEADING) > both.indexOf(DELIVERY_HEADING));
   ok("and the writer's own text is last",
@@ -15636,12 +15636,28 @@ head("The corrections batch: uploads, the board, the feed and the front page");
     updateNotesForItems(both, [{ deliveryUnit: "هفته", paymentTerm: "۳۰ روزه" }]), both);
 
   /*
+   * Reported: «بدون اینتر اضافه، متن در ادامه‌ی عنوان، بولد، و بعد از نحوه
+   * پرداخت یک سطر خالی». The whole shape, held exactly.
+   */
+  const tenDays = [{ deliveryRange: "10", deliveryUnit: "روز", deliveryType: "کاری", deliveryPostfix: "پس از تایید", paymentTerm: "نقدی" }];
+  const shaped = updateNotesForItems("گارانتی ۱۲ ماه.", tenDays);
+  eq("delivery and payment are bold, inline, on adjacent lines, then one blank line",
+    shaped, "**زمان تحویل:** ۱۰ روز کاری پس از تایید\n**نحوه پرداخت:** نقدی\n\nگارانتی ۱۲ ماه.");
+  eq("a document still in the old two-line shape is rewritten into the new one",
+    updateNotesForItems("زمان تحویل:\n۲ هفته کاری\n\nنحوه پرداخت:\nنقدی\n\nگارانتی ۱۲ ماه.", tenDays), shaped);
+  ok("a one-line section does not swallow the writer's next line",
+    updateNotesForItems("**زمان تحویل:** ۲ هفته\nگارانتی ۱۲ ماه.", tenDays).includes("گارانتی ۱۲ ماه."));
+  const perRowShape = generatePaymentNotes([{ paymentTerm: "نقدی" }, { paymentTerm: "۶۰ روزه" }], true) ?? "";
+  ok("a per-row block keeps its heading on a line of its own",
+    perRowShape.startsWith(`**${PAYMENT_HEADING}**\n`));
+
+  /*
    * A term chosen on ordinary goods overrides the «no section» rule — that
    * rule existed because nothing could be *said*, not because nothing should be.
    */
   ok("a term on ordinary goods does print a section",
     updateNotesForItems("", [{ deliveryUnit: "هفته", paymentTerm: "نقدی" }])
-      .includes(`${PAYMENT_HEADING}\nنقدی`));
+      .includes(`**${PAYMENT_HEADING}** نقدی`));
   /* And the field wins over the text somebody typed under the heading before it existed. */
   ok("choosing a term replaces a hand-written condition",
     updateNotesForItems(edited, [{ deliveryUnit: "هفته", paymentTerm: "نقدی" }])
