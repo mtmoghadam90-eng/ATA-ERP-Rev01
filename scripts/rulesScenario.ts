@@ -129,7 +129,7 @@ import {
 } from "../src/utils/uploadLimits";
 import {
   DELIVERY_READY_TEXT, DELIVERY_READY_UNIT, PAYMENT_HEADING, READY_PAYMENT_TEXT,
-  deliveryPhrase, updateNotesForItems,
+  deliveryPhrase, setNoDeviationStatement, updateNotesForItems,
 } from "../src/utils/deliveryNotes";
 import { TASK_SORTABLE, laneTimestamps } from "../src/server/services/taskService";
 import { deriveProjectLossReason, lostLineWithoutReason } from "../src/server/proformaStatus";
@@ -22500,8 +22500,34 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     template: tpl, products: [], showBrand: false,
   });
   ok("deviation: with none, no deviation page is printed", !clean.includes("TECHNICAL DEVIATION LIST"));
-  ok("deviation: and the compliance statement opens the terms, before the writer's own text",
-    clean.indexOf(NO_DEVIATION_STATEMENT) > 0 && clean.indexOf(NO_DEVIATION_STATEMENT) < clean.indexOf("شرایط پرداخت"));
+  ok("deviation: the printout adds no compliance sentence of its own — the box decides",
+    !clean.includes(NO_DEVIATION_STATEMENT));
+  const withSentence = renderProformaDocument({
+    proforma: { ...base, notes: `${NO_DEVIATION_STATEMENT}\nشرایط پرداخت`, items: [{ productName: "Flow meter", quantity: 1, unitPriceRIYAL: 0 }] } as never,
+    template: tpl, products: [], showBrand: false,
+  });
+  ok("deviation: a sentence left in the box prints, once", withSentence.split(NO_DEVIATION_STATEMENT).length - 1 === 1);
+
+  /* The sentence lives in the notes, and moves only when the answer changes. */
+  const managedOnly = "**زمان تحویل:** ۱۰ روز\n**نحوه پرداخت:** نقدی\n\nگارانتی ۱۲ ماه.";
+  eq("deviation: the sentence goes right under the managed lines, before the writer's text",
+    setNoDeviationStatement(managedOnly, true),
+    `**زمان تحویل:** ۱۰ روز\n**نحوه پرداخت:** نقدی\n\n${NO_DEVIATION_STATEMENT}\nگارانتی ۱۲ ماه.`);
+  const withIt = setNoDeviationStatement(managedOnly, true);
+  eq("deviation: adding it twice adds it once", setNoDeviationStatement(withIt, true), withIt);
+  eq("deviation: a deviation ticked takes the sentence out again", setNoDeviationStatement(withIt, false), managedOnly);
+  ok("deviation: a bolded copy is still recognised and removed",
+    !setNoDeviationStatement(`**${NO_DEVIATION_STATEMENT}**\nگارانتی`, false).includes(NO_DEVIATION_STATEMENT));
+  eq("deviation: an empty box gets the sentence alone", setNoDeviationStatement("", true), NO_DEVIATION_STATEMENT);
+  ok("deviation: the delivery/payment rebuild leaves the sentence where it is",
+    updateNotesForItems(withIt, [{ deliveryRange: "10", deliveryUnit: "روز", paymentTerm: "نقدی" }]).includes(`\n\n${NO_DEVIATION_STATEMENT}\n`));
+  const pv = readFileSync("src/components/ProformasView.tsx", "utf8");
+  ok("deviation: a new quotation opens with the sentence in the box",
+    /setNotes\(setNoDeviationStatement\(updateNotesForItems\(initialNotes, defaultItems, true\), true\)\)/.test(pv));
+  ok("deviation: ticking moves it only when the answer changes, so a deleted one stays deleted",
+    /if \(hasDeviations\(items\) !== hasDeviations\(newItems\)\) \{\s*setNotes\(\(prev\) => setNoDeviationStatement\(prev, !hasDeviations\(newItems\)\)\)/.test(pv));
+  ok("deviation: removing the only deviating row brings it back",
+    /handleRemoveItemLine[\s\S]{0,500}complianceChanged \? setNoDeviationStatement\(next, !hasDeviations\(newItems\)\)/.test(pv));
   const dev = renderProformaDocument({
     proforma: { ...base, items: [
       { productName: "Gauge", quantity: 1, unitPriceRIYAL: 0 },

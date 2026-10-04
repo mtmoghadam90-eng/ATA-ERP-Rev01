@@ -4,7 +4,7 @@ import { escapeHtml, renderRichText } from "./richText";
 import { familyNameOnly } from "./customerLabel";
 import { namePrefixFor } from "./honorific";
 import { proformaDocumentTitle } from "./moduleStatuses";
-import { hasDeviations, NO_DEVIATION_STATEMENT } from "./deviations";
+import { hasDeviations } from "./deviations";
 
 /**
  * The proforma, as a standalone A4 document.
@@ -210,9 +210,10 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
    * terms instead. English, left to right: it is a technical document read
    * beside the customer's own datasheets. See `src/utils/deviations.ts`.
    */
+  // The compliance sentence is not added here any more: it is a line in the
+  // notes the form writes (`setNoDeviationStatement`), so the person writing
+  // the quotation can see it and delete it, and the box alone decides.
   const deviating = hasDeviations(pf.items);
-  const noDeviationLine = deviating ? "" :
-    `<div class="no-deviation">${escapeHtml(NO_DEVIATION_STATEMENT)}</div>`;
   const deviationPage = deviating ? renderDeviationPage(pf) : "";
 
   const itemsRows = pf.items
@@ -625,13 +626,6 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
       .notes-card tr {
           page-break-inside: avoid;
           break-inside: avoid;
-      }
-      /* The compliance statement opens the terms when nothing deviates. */
-      .no-deviation {
-          font-weight: bold;
-          color: #047857;
-          margin-bottom: 6px;
-          line-height: 1.6;
       }
       /*
        * The deviation list starts on a sheet of its own and may run to several:
@@ -1095,7 +1089,6 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
               <div class="${pf.proformaType === "TECHNICAL" ? "" : "financial-grid"}">
                   <div class="notes-card" style="${pf.proformaType === "TECHNICAL" ? "width: 100%;" : ""}">
                       <div style="font-weight: bold; color: #334155; margin-bottom: 8px; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px;">توضیحات و شرایط فروش</div>
-                      ${noDeviationLine}
                       <div style="white-space: pre-line; line-height: 1.6; font-size: 12px;">${renderRichText(pf.notes)}</div>
                   </div>
                   ${
