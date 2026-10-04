@@ -10,7 +10,7 @@ import { scrubProductRefs } from "../refIntegrity";
 import { loadSettings } from "../settings";
 import {
   INQUIRY_STEP_KEYS, InquiryStepKey, resolveStepTitle,
-  describeInquiryStatus, inquiryTotalRiyal, sentStepNotesToStore,
+  describeInquiryStatus, inquiryTotalRiyal,
 } from "../../utils/inquirySteps";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
@@ -90,7 +90,7 @@ const LIST_SELECT = {
   creationDate: true, creationDateJalali: true,
   technicalOfferUrl: true, financialOfferUrl: true,
   technicalOfferFiles: true, financialOfferFiles: true,
-  discountPercent: true, discountAmount: true, createdAt: true,
+  discountPercent: true, discountAmount: true, notes: true, createdAt: true,
   supplier: { select: { id: true, name: true } },
   project: { select: { id: true, code: true, name: true } },
   items: {
@@ -109,8 +109,6 @@ const LIST_SELECT = {
     select: {
       id: true, title: true, occurredAtJalali: true,
       method: true, recipientName: true, notes: true, isAuto: true,
-      // The form reads its «توضیحات» back off the SENT step, found by key.
-      autoKey: true,
     },
   },
   _count: { select: { items: true, steps: true } },
@@ -208,6 +206,8 @@ export interface InquiryInput {
   financialOfferFiles?: unknown;
   discountPercent?: unknown;
   discountAmount?: unknown;
+  /** The inquiry's general description; the first step's notes are `initialStep.notes`. */
+  notes?: string | null;
   items?: InquiryItemInput[];
   initialStep?: InquiryInitialStepInput;
 }
@@ -260,6 +260,7 @@ function scalarData(input: InquiryInput): Record<string, unknown> {
     const pct = Number(input.discountPercent) || 0;
     set("discountPercent", Math.min(Math.max(pct, 0), 100));
   }
+  if ("notes" in input) set("notes", toNullableString(input.notes));
   // A negative amount would add to the offer rather than take off it.
   if ("discountAmount" in input) {
     set("discountAmount", Math.max(Number(input.discountAmount) || 0, 0));
@@ -457,7 +458,7 @@ export async function createInquiry(input: InquiryInput, user: AuthUser, todayJa
         ),
         method: toNullableString(first.method, 50),
         recipientName: toNullableString(first.recipientName, 200),
-        notes: sentStepNotesToStore(toNullableString(first.notes)),
+        notes: toNullableString(first.notes) ?? "ثبت خودکار: استعلام قیمت ایجاد شد.",
         isAuto: true,
         autoKey: INQUIRY_STEP_KEYS.SENT,
       } as Prisma.SupplierInquiryStepUncheckedCreateInput,
@@ -581,16 +582,6 @@ export async function updateInquiry(
       await syncChildren({
         delegate: tx.supplierInquiryItem, parentWhere: { inquiryId: id },
         rows: (await scrubProductRefs(tx, input.items)) ?? [], map: mapItem,
-      });
-    }
-
-    // The form's «توضیحات» is the first step's notes, and editing the form
-    // edits them. Absent means «not edited» — an integration that never sends
-    // the key must not reset somebody's description to the automatic one.
-    if (input.initialStep && "notes" in input.initialStep) {
-      await tx.supplierInquiryStep.updateMany({
-        where: { inquiryId: id, autoKey: INQUIRY_STEP_KEYS.SENT },
-        data: { notes: sentStepNotesToStore(toNullableString(input.initialStep.notes)) },
       });
     }
 

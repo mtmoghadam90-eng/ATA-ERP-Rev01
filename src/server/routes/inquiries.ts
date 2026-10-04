@@ -23,7 +23,7 @@ const WRITABLE: (keyof InquiryInput)[] = [
   "creationDate", "winnerDate", "offerConfirmedDate",
   "technicalOfferUrl", "financialOfferUrl",
   "technicalOfferFiles", "financialOfferFiles",
-  "discountPercent", "discountAmount",
+  "discountPercent", "discountAmount", "notes",
   "items", "initialStep",
 ];
 

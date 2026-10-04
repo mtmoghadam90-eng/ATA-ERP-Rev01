@@ -41,7 +41,6 @@ export interface InquiryStepRow {
   recipientName: string | null;
   notes: string | null;
   isAuto: boolean;
-  autoKey?: string | null;
 }
 
 export interface InquiryRow {
@@ -60,6 +59,7 @@ export interface InquiryRow {
   financialOfferFiles: string | null;
   discountPercent: string | null;
   discountAmount: string | null;
+  notes?: string | null;
   createdAt: string;
   supplier: { id: string; name: string } | null;
   project: { id: string; code: string; name: string } | null;
@@ -128,12 +128,9 @@ export interface InquiryWriteInput {
   financialOfferFiles?: unknown;
   discountPercent?: number;
   discountAmount?: number;
+  notes?: string | null;
   items?: Record<string, unknown>[];
-  /**
-   * How the inquiry was sent. Enriches the derived first step on create; on
-   * update only `notes` is read — the form's «توضیحات», which is that step's
-   * notes — and its absence leaves them as they are.
-   */
+  /** How the inquiry was sent. Enriches the derived first step; create only. */
   initialStep?: {
     occurredAt?: string | null;
     method?: string | null;
@@ -222,7 +219,6 @@ function rowToStep(step: InquiryStepRow): InquiryStep {
     recipientName: step.recipientName ?? undefined,
     notes: step.notes ?? undefined,
     auto: step.isAuto,
-    autoKey: step.autoKey ?? undefined,
   };
 }
 
@@ -250,6 +246,7 @@ export function rowToInquiry(row: InquiryRow): SupplierInquiry {
     financialOfferFiles: parseOfferFiles(row.financialOfferFiles, row.financialOfferUrl),
     discountPercent: Number(row.discountPercent ?? 0),
     discountAmount: Number(row.discountAmount ?? 0),
+    notes: row.notes ?? undefined,
     isWinner: row.isWinner,
     winnerDate: row.winnerDateJalali ?? undefined,
     offerConfirmed: row.offerConfirmed,
@@ -278,6 +275,7 @@ export function inquiryToWriteInput(inquiry: Partial<SupplierInquiry>): InquiryW
     financialOfferFiles: inquiry.financialOfferFiles ?? [],
     discountPercent: Number(inquiry.discountPercent) || 0,
     discountAmount: Number(inquiry.discountAmount) || 0,
+    notes: inquiry.notes?.trim() || null,
     items: (inquiry.items ?? []).map((item) => ({
       // Sent back, so an offer stays tied to the thing that was quoted; blank
       // means the line names no catalogue item, which is normal.

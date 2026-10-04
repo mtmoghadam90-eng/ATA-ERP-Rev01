@@ -1742,6 +1742,8 @@ export interface SupplierInquiry {
   discountPercent?: number;
   /** تخفیف مبلغی، به ارز خودِ آفر. پس از تخفیف درصدی اعمال می‌شود. */
   discountAmount?: number;
+  /** توضیحات کلی استعلام — جدا از توضیحات ارسال، که یادداشتِ رویداد «ارسال استعلام» است. */
+  notes?: string;
 }
 
 
