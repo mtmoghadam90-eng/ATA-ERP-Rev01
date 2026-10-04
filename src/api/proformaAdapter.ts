@@ -24,6 +24,18 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
 }
 
 /**
+ * A line's saved calculator, or null. Anything that is not an object — a
+ * hand-edited row, a value from a newer build — is no calculator at all,
+ * rather than a set of fields the modal would seed half of.
+ */
+function parseLinePriceCalc(raw: string | null | undefined): ProformaItem["priceCalc"] {
+  const parsed = parseJson<unknown>(raw, null);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as ProformaItem["priceCalc"])
+    : null;
+}
+
+/**
  * Money arrives as a decimal string, because a SQL DECIMAL does not fit a JS
  * number without losing precision at the top of the range. The view does
  * arithmetic on numbers, so it is converted here — the authoritative figure
@@ -137,6 +149,7 @@ export function detailToProforma(detail: ProformaDetail): Proforma {
         ? null : money(item.unitCost),
       costCurrency: item.costCurrency ?? null,
       costSource: (item.costSource ?? null) as ProformaItem["costSource"],
+      priceCalc: parseLinePriceCalc(item.priceCalc),
       supplyMethod: (item.supplyMethod ?? undefined) as ProformaItem["supplyMethod"],
       status: (item.status ?? undefined) as ProformaItem["status"],
       lossReason: item.lossReason ?? undefined,
@@ -218,6 +231,7 @@ export function proformaToWriteInput(proforma: Partial<Proforma>): ProformaWrite
       unitPriceRial: item.unitPriceRIYAL,
       unitCost: item.unitCost ?? null,
       costSource: item.costSource ?? null,
+      priceCalc: item.priceCalc ?? null,
       supplyMethod: item.supplyMethod ?? null,
       status: item.status ?? null,
       lossReason: item.lossReason ?? null,

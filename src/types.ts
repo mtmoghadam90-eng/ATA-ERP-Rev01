@@ -174,6 +174,12 @@ export interface ProductVariant {
   /** MANUAL only: the stated selling price, in `currencyForeign`. */
   calcManualSellingForeign?: number;
   /**
+   * The currency the calculator figures above are in — which need not be the
+   * item's own (a yuan purchase priced for a dollar quotation). Absent = the
+   * item's currency, which is every calculator saved before this existed.
+   */
+  calcCurrency?: string;
+  /**
    * What this item last actually cost to land, from a received purchase order.
    *
    * Read-only here: written only by a purchase-order receipt, never by the
@@ -266,6 +272,12 @@ export interface Product {
   /** MANUAL only: the stated selling price, in `currencyForeign`. */
   calcManualSellingForeign?: number;
   /**
+   * The currency the calculator figures above are in — which need not be the
+   * item's own (a yuan purchase priced for a dollar quotation). Absent = the
+   * item's currency, which is every calculator saved before this existed.
+   */
+  calcCurrency?: string;
+  /**
    * What this item last actually cost to land, from a received purchase order.
    *
    * Read-only here: written only by a purchase-order receipt, never by the
@@ -323,6 +335,15 @@ export interface ProformaItem {
   unitCost?: number | null;
   costCurrency?: string | null;
   costSource?: CostSource | null;
+  /**
+   * The price calculator's inputs as they were applied to this line — in
+   * `calcCurrency`, which is the calculator's own currency and need not be the
+   * document's. Kept on the line so reopening the calculator shows the working
+   * that produced the price: a free-text line has no product to keep it on,
+   * and a catalogue product's copy is the standard, not this deal's. A cost,
+   * so it is redacted with `unitCost` for an account without `costs`.
+   */
+  priceCalc?: Partial<ProductVariant> | null;
   supplyMethod?: 'INVENTORY' | 'ORDER' | 'NONE';
   status?: 'جاری' | 'برنده' | 'بازنده' | 'لغو شده';
   lossReason?: string;

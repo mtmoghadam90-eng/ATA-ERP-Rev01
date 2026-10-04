@@ -1424,6 +1424,9 @@ export default function ProformasView({
       unitCost: item.unitCost ?? null,
       costCurrency: item.costCurrency ?? null,
       costSource: item.costSource ?? null,
+      // The calculator's working for this line, or the next save erases it and
+      // reopening the calculator shows nothing of how the price was reached.
+      priceCalc: item.priceCalc ?? null,
       /*
        * The line's own outcome, and how it is to be supplied.
        *
@@ -2235,6 +2238,9 @@ export default function ProformasView({
       supplyMethod: effectiveSupplyType === "ORDER" ? "ORDER" : "INVENTORY",
       unitPriceRIYAL: variantPrice || item.unitPriceRIYAL,
       ...costPatchFor(prod, variant),
+      // The previous SKU's working priced a different item: the new one's
+      // price came from the catalogue, so the calculator reopens on that.
+      priceCalc: null,
       techSpecs: newTechSpecs,
     };
     setItems(newItems);
@@ -6326,9 +6332,19 @@ export default function ProformasView({
         // saved.
         // A manual line has no stored calculator, so it opens on empty boxes —
         // which is the honest starting point rather than another item's figures.
+        /*
+         * The line's own working first.
+         *
+         * What was applied to *this* line is what reopening it should show —
+         * the yuan purchase price and its rate behind a dollar quotation, or a
+         * free-text line's whole breakdown, which has no product to live on.
+         * The catalogue's copy is only the fallback for a line never priced
+         * here: it is the standard, not this deal's figures.
+         */
         const calcSource = variant ?? prod;
-        const initialValues: Partial<ProductVariant> =
-          calcSource ? calcSeedOf(calcSource) : {};
+        const initialValues: Partial<ProductVariant> = item.priceCalc
+          ? calcSeedOf(item.priceCalc)
+          : calcSource ? calcSeedOf(calcSource) : {};
 
         const subtitle = variant
           ? `SKU: ${variant.sku} — ${Object.entries(variant.attributes).map(([k, v]) => `${k}: ${v}`).join(" ، ")}`
@@ -6376,6 +6392,9 @@ export default function ProformasView({
                 costSource: details.calcMode === "MANUAL"
                   ? COST_SOURCES.MANUAL
                   : COST_SOURCES.PRICE_CALCULATOR,
+                // Kept with the line, in the calculator's own currency, so the
+                // working comes back the next time this line is opened.
+                priceCalc: { ...details, calcCurrency: appliedCurrency },
               };
               setItems(newItems);
 

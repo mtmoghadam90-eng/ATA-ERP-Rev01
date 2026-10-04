@@ -23181,6 +23181,30 @@ head("A supplier inquiry has its own general description, apart from «توضی�
   ok("the card shows the description", /\{inq\.notes && \([\s\S]{0,200}data-inquiry-notes-card/.test(view));
 }
 
+{
+  head("A proforma line keeps its calculator working, in the calculator's currency");
+  const adapter = readFileSync("src/api/productAdapter.ts", "utf8");
+  ok("the calculator's currency is a persisted calculator field", /"calcManualSellingForeign", "calcCurrency",/.test(adapter));
+  const modal = readFileSync("src/components/PriceCalculatorModal.tsx", "utf8");
+  ok("the modal seeds its currency from the saved working before the line's",
+    /const curr = initialValues\?\.calcCurrency \|\| currency \|\| "یورو";/.test(modal));
+  ok("and applying reports the currency with the figures", /calcManualSellingForeign: Number\(manualSelling\) \|\| 0,\s*calcCurrency,\s*\}/.test(modal));
+  const view = readFileSync("src/components/ProformasView.tsx", "utf8");
+  ok("the line's own working seeds the calculator first, the catalogue's is the fallback",
+    /initialValues: Partial<ProductVariant> = item\.priceCalc\s*\? calcSeedOf\(item\.priceCalc\)\s*: calcSource \? calcSeedOf\(calcSource\) : \{\};/.test(view));
+  ok("applying stores the working on the line", /priceCalc: \{ \.\.\.details, calcCurrency: appliedCurrency \},/.test(view));
+  ok("the edit form carries it, or the next save erases it", /priceCalc: item\.priceCalc \?\? null,/.test(view));
+  ok("changing the SKU drops the previous SKU's working", /\.\.\.costPatchFor\(prod, variant\),[\s\S]{0,200}priceCalc: null,/.test(view));
+  const svc = readFileSync("src/server/services/proformaService.ts", "utf8");
+  ok("the server stores it", /priceCalc: toJsonColumn\(row\.priceCalc\),/.test(svc));
+  ok("the column exists", /priceCalc    String\?  @db\.NVarChar\(Max\)/.test(readFileSync("prisma/schema.prisma", "utf8")));
+  // It is the cost's breakdown, so it travels with the cost both ways.
+  const calcRow = { id: "pc1", unitCost: "10", costCurrency: "دلار", costSource: "PRICE_CALCULATOR", priceCalc: '{"calcCurrency":"یوان"}' };
+  const back = preserveLineCosts([{ id: "pc1", priceCalc: null }], storeman, [calcRow])!;
+  eq("a redacted save puts the working back with the cost", back[0].priceCalc, calcRow.priceCalc);
+  eq("and redaction blanks it", (redactProforma({ items: [calcRow] } as never, storeman) as { items: { priceCalc: unknown }[] }).items[0].priceCalc, null);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
