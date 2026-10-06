@@ -497,6 +497,8 @@ export default function TasksView({
   const [followUpRow, setFollowUpRow] = useState<{
     taskId: string;
     row: FollowUpRow;
+    /** The pressed card's title and «شرح کار», shown on the completing form. */
+    action?: { title: string; description: string } | null;
     /*
       Set when a *closed* chase is being corrected rather than an open one
       completed. A follow-up and an ordinary task are different things, so
@@ -1049,9 +1051,12 @@ export default function TasksView({
       // built on the server rather than assembled out of what a card carries,
       // which is how two screens come to disagree about a quotation.
       const row = await salesFollowUpApi.rowForTask(taskId);
+      // The card that was pressed: its own words are what this chase asked for.
+      const pressed = tasks.find((t) => t.id === taskId);
       setFollowUpRow({
         taskId,
         row,
+        action: pressed ? { title: pressed.title ?? '', description: pressed.description ?? '' } : null,
         editing: editing
           ? {
               taskId,
@@ -1860,6 +1865,7 @@ export default function TasksView({
           lossReasons={settings.lossReasons ?? []}
           onClose={() => setFollowUpRow(null)}
           editing={followUpRow.editing ?? null}
+          pendingAction={followUpRow.action ?? null}
           /*
             Editing writes fields; it never re-runs the completion.
 

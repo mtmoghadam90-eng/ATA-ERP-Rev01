@@ -1173,6 +1173,34 @@ head("Follow-up completion: the button will not close a live quote with nothing 
 
   act(() => { root8.unmount(); });
   host8.remove();
+
+  /*
+   * The completing form says what the chase asked for. Pressing a follow-up's
+   * title opened «ثبت نتیجه پیگیری» with no word of the task being answered,
+   * which the card showed only behind its «شرح» button.
+   */
+  const host9 = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root9 = createRoot(host9);
+  await act(async () => {
+    root9.render(React.createElement(FollowUpCompletionModal, {
+      row: ROW as never,
+      resultOptions: ["در حال بررسی فنی"],
+      userNames: ["کارشناس فروش"],
+      outcomeIsTerminal: false,
+      lossReasons: [],
+      onClose: () => {},
+      onSubmit: async () => {},
+      pendingAction: { title: "تماس با خریدار", description: "قیمت رقیب را بگیر\nو ۵٪ تخفیف پیشنهاد کن" },
+    }));
+  });
+  await settle();
+  const pendingBlock = host9.querySelector("[data-pending-action]");
+  ok("the completing form names the task being answered",
+    !!pendingBlock && (pendingBlock.textContent ?? "").includes("تماس با خریدار"));
+  ok("and its «شرح کار», line breaks kept",
+    host9.querySelector("[data-pending-action-description]")?.textContent === "قیمت رقیب را بگیر\nو ۵٪ تخفیف پیشنهاد کن");
+  act(() => { root9.unmount(); });
+  host9.remove();
 }
 
 /*

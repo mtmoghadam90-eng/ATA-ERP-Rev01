@@ -28,6 +28,7 @@ import { parseAttachments } from '../utils/attachments';
 import { useRevalidate } from '../api/liveData';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { REFERRAL_DONE, REFERRAL_PENDING, referralIsOpen } from '../utils/workBoard';
+import { unreadNoticeCount } from '../utils/notificationCount';
 
 /**
  * The inbox: referrals to and from the signed-in user, plus their notices.
@@ -395,15 +396,27 @@ export default function ReferralsView({
     () => notifications.map(n => ({
       id: n.id, module: n.module, title: n.title, description: n.description,
       projectId: n.projectId,
-      timestamp: new Date(n.createdAt).getTime(), read: n.isRead, responsibleName: currentUserName,
+      // A notice announcing a reply is read once that reply is.
+      timestamp: new Date(n.createdAt).getTime(),
+      read: n.isRead || (!!n.itemId && readItemsSet.has(n.itemId)),
+      responsibleName: currentUserName,
     })),
-    [notifications, currentUserName],
+    [notifications, currentUserName, readItemsSet],
   );
 
-  const unreadCount =
-    groupedNotifications.reduce(
-      (acc, g) => acc + g.items.filter(item => !readItemsSet.has(item.message.id)).length, 0,
-    ) + notificationsUnread;
+  /*
+   * One reply is one piece of news, and it is announced twice: as an item on
+   * its referral's card and as a module notice («پاسخ جدید به ارجاع») naming it
+   * through `itemId`. Counted as both, reading either left «خواندن همه (۱)»
+   * standing over an inbox with nothing unread in it. A notice whose reply is
+   * on this panel is counted through the reply alone — `unreadNoticeCount`.
+   */
+  const unreadCount = unreadNoticeCount(
+    groupedNotifications.flatMap(g => g.items.map(i => i.message.id)),
+    readItemsSet,
+    notifications,
+    notificationsUnread,
+  );
 
   /* Which of the visible inbox items this user has already seen. Asked for by
      id, so it reflects this user only — the store's read list was shared. */

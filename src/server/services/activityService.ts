@@ -620,8 +620,9 @@ export async function addActivity(
      * اقدام» under a message that plainly answers them. `startedAt` is stamped
      * once and never cleared, the same rule `setReferralStatus` follows.
      */
+    const replyMessageIds = new Map<string, string>();
     for (const request of answering) {
-      await tx.referralMessage.create({
+      const reply = await tx.referralMessage.create({
         data: {
           referralId: request.id,
           text,
@@ -632,6 +633,7 @@ export async function addActivity(
           ...attachmentColumns(attachmentsOf(input)),
         } as Prisma.ReferralMessageUncheckedCreateInput,
       });
+      replyMessageIds.set(request.id, reply.id);
       if (request.assignedToUserId === user.id && request.status !== REFERRAL_DOING) {
         await tx.projectReferral.update({
           where: { id: request.id },
@@ -643,6 +645,7 @@ export async function addActivity(
     return {
       created,
       answered: answering,
+      replyMessageIds,
       activity: await tx.projectActivity.findUnique({
         where: { id: activity.id },
         include: ACTIVITY_INCLUDE,
@@ -687,6 +690,8 @@ export async function addActivity(
               group.project.code ?? ""} پاسخ داد: ` +
             (text.length > 160 ? `${text.slice(0, 160)}…` : text),
           projectId: group.project.id,
+          // The reply this announces — reading the notice reads the reply.
+          itemId: result.replyMessageIds.get(request.id) ?? null,
           actorUserId: user.id,
         });
       }
@@ -1744,6 +1749,8 @@ export async function addReferralMessage(
             ? (text.length > 160 ? `${text.slice(0, 160)}…` : text)
             : `${files.length} فایل پیوست`),
         projectId: project?.id ?? null,
+        // The reply this announces — reading the notice reads the reply.
+        itemId: message.id,
         actorUserId: user.id,
       });
     }
