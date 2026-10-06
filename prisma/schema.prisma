@@ -1888,6 +1888,12 @@ model ModuleNotification {
   /// Where it points, so the notice can open the thing it is about.
   projectId String? @db.NVarChar(36)
 
+  /// The inbox item this notice announces, when there is one — a referral
+  /// reply's `ReferralMessage` id. The same reply is also drawn as an item on
+  /// the notices panel with its own read receipt, so the two are one notice:
+  /// reading either marks both, and the panel counts it once.
+  itemId String? @db.NVarChar(36)
+
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
 

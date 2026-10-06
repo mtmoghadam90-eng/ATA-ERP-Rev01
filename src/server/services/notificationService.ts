@@ -20,7 +20,7 @@ export const NOTIFICATION_SORTABLE = ["createdAt", "isRead"] as const;
 
 const NOTIFICATION_SELECT = {
   id: true, module: true, title: true, description: true,
-  projectId: true, isRead: true, createdAt: true,
+  projectId: true, itemId: true, isRead: true, createdAt: true,
 } satisfies Prisma.ModuleNotificationSelect;
 
 export async function listNotifications(
@@ -54,18 +54,32 @@ export async function markNotificationRead(
   id: string,
   user: AuthUser,
 ): Promise<"ok" | "not-found"> {
-  const result = await getDb().moduleNotification.updateMany({
+  const db = getDb();
+  const notice = await db.moduleNotification.findFirst({
+    where: { id, userId: user.id },
+    select: { itemId: true },
+  });
+  if (!notice) return "not-found";
+  await db.moduleNotification.updateMany({
     where: { id, userId: user.id },
     data: { isRead: true },
   });
-  return result.count > 0 ? "ok" : "not-found";
+  // The reply it announces is the same news: read with it.
+  if (notice.itemId) await recordReceipts([notice.itemId], user);
+  return "ok";
 }
 
 export async function markAllNotificationsRead(user: AuthUser): Promise<number> {
-  const result = await getDb().moduleNotification.updateMany({
+  const db = getDb();
+  const announced = await db.moduleNotification.findMany({
+    where: { userId: user.id, isRead: false, itemId: { not: null } },
+    select: { itemId: true },
+  });
+  const result = await db.moduleNotification.updateMany({
     where: { userId: user.id, isRead: false },
     data: { isRead: true },
   });
+  await recordReceipts(announced.map((n) => n.itemId as string), user);
   return result.count;
 }
 
@@ -81,6 +95,8 @@ export async function notifyUser(input: {
   title: string;
   description: string;
   projectId?: string | null;
+  /** The inbox item this notice announces — see `ModuleNotification.itemId`. */
+  itemId?: string | null;
   actorUserId?: string | null;
 }): Promise<void> {
   if (!input.userId || input.userId === input.actorUserId) return;
@@ -92,6 +108,7 @@ export async function notifyUser(input: {
       title: toNullableString(input.title, 300) ?? "",
       description: toNullableString(input.description) ?? "",
       projectId: toNullableString(input.projectId, 36),
+      itemId: toNullableString(input.itemId, 36),
     },
   });
 }
@@ -201,6 +218,23 @@ export async function readItemsFor(itemIds: string[], user: AuthUser): Promise<s
 export async function markItemsRead(itemIds: string[], user: AuthUser): Promise<number> {
   const ids = [...new Set(itemIds.filter((id) => typeof id === "string" && id.trim()))]
     .map((id) => id.trim().slice(0, 36));
+  if (ids.length === 0) return 0;
+
+  /*
+   * A reply is announced twice — as this item and as a module notice naming it
+   * through `itemId` — and both are one piece of news. Reading the item reads
+   * the notice, or the panel goes on counting «۱» about a reply already read.
+   */
+  await getDb().moduleNotification.updateMany({
+    where: { userId: user.id, isRead: false, itemId: { in: ids } },
+    data: { isRead: true },
+  });
+  return recordReceipts(ids, user);
+}
+
+/** Writes the read receipts that are not there yet. */
+async function recordReceipts(itemIds: string[], user: AuthUser): Promise<number> {
+  const ids = [...new Set(itemIds.filter(Boolean))];
   if (ids.length === 0) return 0;
 
   const already = new Set(await readItemsFor(ids, user));

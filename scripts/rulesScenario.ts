@@ -23205,6 +23205,52 @@ head("A supplier inquiry has its own general description, apart from «توضی�
   eq("and redaction blanks it", (redactProforma({ items: [calcRow] } as never, storeman) as { items: { priceCalc: unknown }[] }).items[0].priceCalc, null);
 }
 
+{
+  head("A referral reply is one notice, however many doors announce it");
+  const { unreadNoticeCount } = await import("../src/utils/notificationCount");
+  const notices = [
+    { isRead: false, itemId: "m1" },   // announces the reply drawn on the panel
+    { isRead: false, itemId: null },   // an ordinary module notice
+  ];
+  eq("an unread reply and its unread notice count once, beside an ordinary notice",
+    unreadNoticeCount(["m1"], new Set(), notices, 2), 2);
+  eq("reading the reply leaves nothing of it in the count",
+    unreadNoticeCount(["m1"], new Set(["m1"]), notices, 2), 1);
+  eq("the reported shape — notice read, reply already read — is zero",
+    unreadNoticeCount(["m1"], new Set(["m1"]), [{ isRead: true, itemId: "m1" }], 0), 0);
+  eq("a notice whose reply is not on the panel still counts",
+    unreadNoticeCount([], new Set(), [{ isRead: false, itemId: "m9" }], 1), 1);
+  eq("the count never goes below the replies",
+    unreadNoticeCount(["m1"], new Set(), [{ isRead: false, itemId: "m1" }], 0), 1);
+  const ntf = readFileSync("src/server/services/notificationService.ts", "utf8");
+  ok("reading a reply reads the notice that names it",
+    /moduleNotification\.updateMany\(\{\s*where: \{ userId: user\.id, isRead: false, itemId: \{ in: ids \} \}/.test(ntf));
+  ok("reading the notice (one or all) writes the reply's receipt",
+    /if \(notice\.itemId\) await recordReceipts\(\[notice\.itemId\], user\)/.test(ntf)
+      && /recordReceipts\(announced\.map/.test(ntf));
+  ok("the list carries the link", /projectId: true, itemId: true, isRead: true/.test(ntf));
+  const act = readFileSync("src/server/services/activityService.ts", "utf8");
+  ok("both reply notices name their message",
+    /itemId: result\.replyMessageIds\.get\(request\.id\)/.test(act) && /itemId: message\.id,/.test(act));
+  const view = readFileSync("src/components/ReferralsView.tsx", "utf8");
+  ok("the panel counts through the shared rule, not by adding the two halves",
+    /const unreadCount = unreadNoticeCount\(/.test(view) && !/\) \+ notificationsUnread;/.test(view));
+  ok("the column exists", /itemId String\? @db\.NVarChar\(36\)/.test(readFileSync("prisma/schema.prisma", "utf8")));
+}
+
+{
+  head("The follow-up completion form says what the chase asked for");
+  const { pendingActionToShow } = await import("../src/components/FollowUpCompletionModal");
+  const row = { nextAction: "پیگیری پیش‌فاکتور", nextActionDescription: "شرح ردیف" };
+  eq("the pressed card wins", pendingActionToShow({ title: "تماس", description: "شرح کارت" }, row)?.description, "شرح کارت");
+  eq("absent, the row's open task stands in", pendingActionToShow(undefined, row)?.description, "شرح ردیف");
+  eq("a title alone still shows", pendingActionToShow({ title: "تماس", description: " " }, row)?.title, "تماس");
+  eq("two blanks show nothing", pendingActionToShow({ title: "", description: "" }, row), null);
+  const tv = readFileSync("src/components/TasksView.tsx", "utf8");
+  ok("the board hands over the pressed card's own words",
+    /action: pressed \? \{ title: pressed\.title/.test(tv) && /pendingAction=\{followUpRow\.action \?\? null\}/.test(tv));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

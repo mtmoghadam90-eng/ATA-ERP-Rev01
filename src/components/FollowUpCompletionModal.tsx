@@ -45,6 +45,16 @@ interface Props {
   /** «اولویت», from `settings.dropdownItems.taskPriorities`. */
   priorityOptions?: string[];
   /**
+   * The chase being completed — what it was raised to do.
+   *
+   * Recording a result is answering that task, so the form says what it asked
+   * for: the card shows «شرح کار» behind its own button, and the form it opens
+   * showed nothing of it. The screen passes the card that was pressed; absent,
+   * the row's own open task stands in, which is the same task whenever the
+   * pressed card is the open one (every caller but the board).
+   */
+  pendingAction?: { title: string; description: string } | null;
+  /**
    * Editing a follow-up that has already been recorded, rather than recording
    * one.
    *
@@ -158,9 +168,25 @@ const DECISIONS: { value: FollowUpDecision; label: string; hint: string; icon: t
   },
 ];
 
+/**
+ * What the completing form shows as the task being answered, or null when
+ * there is nothing to say. The pressed card wins; the row's open task stands
+ * in for a caller that names none. A title with no description still shows —
+ * it is what the chase was called — and two blanks show no block at all.
+ */
+export function pendingActionToShow(
+  pressed: { title: string; description: string } | null | undefined,
+  row: Pick<FollowUpRow, 'nextAction' | 'nextActionDescription'>,
+): { title: string; description: string } | null {
+  const source = pressed ?? { title: row.nextAction ?? '', description: row.nextActionDescription ?? '' };
+  const title = (source.title ?? '').trim();
+  const description = (source.description ?? '').trim();
+  return title || description ? { title, description } : null;
+}
+
 export default function FollowUpCompletionModal({
   row, resultOptions, userNames, outcomeIsTerminal, lossReasons, onClose, onSubmit,
-  priorityOptions, editing = null, onSaveEdits,
+  priorityOptions, editing = null, onSaveEdits, pendingAction,
 }: Props) {
   /** Editing what was recorded, rather than recording a completion. */
   const isEditing = !!editing;
@@ -457,6 +483,29 @@ export default function FollowUpCompletionModal({
         </div>
 
         <div className="p-5 space-y-4 overflow-y-auto">
+          {!isEditing && (() => {
+            const action = pendingActionToShow(pendingAction, row);
+            if (!action) return null;
+            return (
+              <div className="bg-sky-50 border border-sky-100 rounded-xl p-3 space-y-1.5" data-pending-action>
+                <div className="flex items-center gap-1.5 text-[11px] font-bold text-sky-800">
+                  <CheckCircle2 size={12} className="text-sky-500" />
+                  کاری که باید انجام شود
+                </div>
+                {action.title && (
+                  <div className="text-xs font-bold text-slate-800">{action.title}</div>
+                )}
+                {action.description && (
+                  <div>
+                    <div className="text-[10px] font-bold text-slate-500 mb-0.5">{DETAIL_LABELS.followUpDescription}</div>
+                    <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line" data-pending-action-description>
+                      {action.description}
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {/*
             The chase itself, first, because it is what the reader pressed
             «ویرایش» on. Shown whenever there is one to look at — an open chase

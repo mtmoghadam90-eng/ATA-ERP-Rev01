@@ -72,6 +72,8 @@ export interface NotificationRow {
   title: string;
   description: string;
   projectId: string | null;
+  /** The reply this notice announces, when it announces one. */
+  itemId?: string | null;
   isRead: boolean;
   createdAt: string;
 }
