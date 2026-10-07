@@ -10,7 +10,7 @@ import { nextProjectCode } from "../documentNumberSpecs";
 import {
   BASELINE_PROBE_LIMIT, DEFAULT_WEB_RFQ_SOURCE, MAX_IMPORT_ATTEMPTS,
   WEB_RFQ_SOURCES, WebRfq, WebRfqFeed, WebRfqSourceId,
-  customerFor, duplicateFeedRefusal, feedConfigRefusal, feedRequestUrl,
+  customerFor, duplicateFeedRefusal, feedConfigRefusal, feedFailureMessage, feedRequestUrl, webRfqSourceSpec,
   inquiryKeyFor, isBeforeLine, isWebRfqSource, parseFeed, parseFeedRow,
   projectDescriptionFor, projectItemsFor, projectNameFor, syncWindow, webEntryIn,
 } from "../../utils/webRfq";
@@ -265,9 +265,10 @@ async function fetchFeed(
       signal: controller.signal,
     });
     if (!res.ok) {
-      throw new Error(res.status === 401 || res.status === 403
-        ? "سایت توکن را نپذیرفت؛ توکن ERP و افزونه یکی نیست."
-        : `سایت با کد ${res.status} پاسخ داد.`);
+      // The body says *why* (WordPress's own error code), so it is read rather
+      // than reduced to the number — see `feedFailureMessage`.
+      const body = await res.text().catch(() => "");
+      throw new Error(feedFailureMessage(res.status, body, webRfqSourceSpec(source)));
     }
     return parseFeed(await res.json(), source);
   } finally {

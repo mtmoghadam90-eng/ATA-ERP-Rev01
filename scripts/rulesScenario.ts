@@ -23251,6 +23251,29 @@ head("A supplier inquiry has its own general description, apart from «توضی�
     /action: pressed \? \{ title: pressed\.title/.test(tv) && /pendingAction=\{followUpRow\.action \?\? null\}/.test(tv));
 }
 
+{
+  head("A refused website feed names what to fix, not only the code");
+  const { feedFailureMessage, webRfqSourceSpec } = await import("../src/utils/webRfq");
+  const form = webRfqSourceSpec("FORM");
+  const advisor = webRfqSourceSpec("ADVISOR");
+  const noRoute = JSON.stringify({ code: "rest_no_route", message: "No route was found", data: { status: 404 } });
+  const msg = feedFailureMessage(404, noRoute, form);
+  ok("WordPress's rest_no_route is read as the feed file not loaded", msg.includes("rest_no_route") && msg.includes("بارگذاری نشده"));
+  ok("and names this plugin's own folder and require line",
+    msg.includes("wp-content/plugins/ata-smart-rfq/includes/erp-feed.php")
+      && msg.includes("require_once ATA_RFQ_DIR . 'includes/erp-feed.php';"));
+  ok("the advisor's card names the advisor's", feedFailureMessage(404, noRoute, advisor).includes("require_once ATA_DIR ."));
+  ok("a 404 that is not WordPress's is a wrong address", feedFailureMessage(404, "<html>Not Found</html>", form).includes("نشانی واردشده"));
+  ok("erp_feed_off is the token missing from wp-config",
+    feedFailureMessage(503, JSON.stringify({ code: "erp_feed_off" }), form).includes("ATA_ERP_FEED_TOKEN"));
+  ok("a refused token still says so", feedFailureMessage(401, "", form).includes("توکن"));
+  eq("anything else keeps the bare code", feedFailureMessage(500, "", form), "سایت با کد 500 پاسخ داد.");
+  ok("every source names its plugin", ["ADVISOR", "FORM"].every((id) => !!webRfqSourceSpec(id).plugin.dir));
+  const svc = readFileSync("src/server/services/webRfqService.ts", "utf8");
+  ok("the poller reads the body and goes through the rule",
+    /const body = await res\.text\(\)[\s\S]{0,120}feedFailureMessage\(res\.status, body, webRfqSourceSpec\(source\)\)/.test(svc));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
