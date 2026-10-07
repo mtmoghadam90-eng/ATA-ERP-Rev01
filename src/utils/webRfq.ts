@@ -57,6 +57,11 @@ export interface WebRfqSourceSpec {
    * one, and one prefix would file two different enquiries under one key.
    */
   inquiryPrefix: string;
+  /**
+   * Where the feed file is installed on the site, and the line that loads it —
+   * named so a refusal can say exactly what to do rather than «۴۰۴».
+   */
+  plugin: { dir: string; dirConstant: string; feedFile: string };
 }
 
 /**
@@ -73,6 +78,7 @@ export const WEB_RFQ_SOURCES = [
     hint: "افزونهٔ «ata-advisor» — گفتگوی مشاور با بازدیدکننده؛ یک تجهیز در هر درخواست.",
     samplePath: "https://example.com/wp-json/ata/v1/rfq/erp-feed",
     inquiryPrefix: WEB_RFQ_INQUIRY_PREFIX,
+    plugin: { dir: "ata-advisor", dirConstant: "ATA_DIR", feedFile: "website/ata-advisor-erp-feed.php" },
   },
   {
     id: "FORM",
@@ -80,6 +86,7 @@ export const WEB_RFQ_SOURCES = [
     hint: "افزونهٔ «ata-smart-rfq» — فرم فنی و پیوست؛ چند قلم در هر درخواست.",
     samplePath: "https://example.com/wp-json/ata-rfq/v1/erp-feed",
     inquiryPrefix: "WEB-FORM-",
+    plugin: { dir: "ata-smart-rfq", dirConstant: "ATA_RFQ_DIR", feedFile: "website/ata-smart-rfq-erp-feed.php" },
   },
 ] as const satisfies readonly WebRfqSourceSpec[];
 
@@ -477,6 +484,40 @@ export function duplicateFeedRefusal(
 }
 
 /** The address a poll asks, with the window it wants. */
+/**
+ * What a refused feed request means, in a sentence somebody can act on.
+ *
+ * «سایت با کد ۴۰۴ پاسخ داد» was all the panel ever said, and a 404 here is
+ * almost always one specific thing: WordPress answering `rest_no_route` because
+ * the feed file was never loaded — not copied into the plugin, or the
+ * `require_once` line not added — which no amount of checking the address on
+ * this side can fix. WordPress says so in the body, so the body is read and the
+ * fix is named, with the plugin's own folder and constant. A 404 that is *not*
+ * WordPress's (a host's error page) is a wrong address. `erp_feed_off` (503) is
+ * the feed file installed and the token missing from `wp-config.php`.
+ * Anything else keeps the bare code, which is the honest answer when there is
+ * nothing more to say.
+ */
+export function feedFailureMessage(status: number, body: string, spec: WebRfqSourceSpec): string {
+  if (status === 401 || status === 403) return "سایت توکن را نپذیرفت؛ توکن ERP و افزونه یکی نیست.";
+  let code = "";
+  try {
+    const parsed = JSON.parse(body) as { code?: unknown };
+    if (typeof parsed?.code === "string") code = parsed.code;
+  } catch { /* not WordPress's JSON */ }
+  const { dir, dirConstant, feedFile } = spec.plugin;
+  if (status === 404 && code === "rest_no_route") {
+    return `سایت این مسیر را نمی‌شناسد (rest_no_route): فایل فید روی سایت بارگذاری نشده است. `
+      + `فایل ${feedFile} را در wp-content/plugins/${dir}/includes/erp-feed.php بگذارید و در ${dir}.php `
+      + `این خط را اضافه کنید: require_once ${dirConstant} . 'includes/erp-feed.php';`;
+  }
+  if (status === 404) return "نشانی فید روی سایت پیدا نشد (۴۰۴)؛ نشانی واردشده را بررسی کنید.";
+  if (code === "erp_feed_off") {
+    return "فید روی سایت خاموش است: ATA_ERP_FEED_TOKEN در wp-config.php تعریف نشده یا کوتاه‌تر از ۲۴ نویسه است.";
+  }
+  return `سایت با کد ${status} پاسخ داد.`;
+}
+
 export function feedRequestUrl(base: string, sinceId: number, limit: number): string {
   const url = new URL(String(base).trim());
   url.searchParams.set("since_id", String(Math.max(0, Math.trunc(sinceId))));
