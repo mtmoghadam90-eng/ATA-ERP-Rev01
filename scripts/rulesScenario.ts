@@ -23263,6 +23263,8 @@ head("A supplier inquiry has its own general description, apart from «توضی�
     msg.includes("wp-content/plugins/ata-smart-rfq/includes/erp-feed.php")
       && msg.includes("require_once ATA_RFQ_DIR . 'includes/erp-feed.php';"));
   ok("the advisor's card names the advisor's", feedFailureMessage(404, noRoute, advisor).includes("require_once ATA_DIR ."));
+  ok("the form card names the plugin version that ships the feed", msg.includes("1.1.3"));
+  ok("the advisor's card names no bundled version", !feedFailureMessage(404, noRoute, advisor).includes("از نسخهٔ"));
   ok("a 404 that is not WordPress's is a wrong address", feedFailureMessage(404, "<html>Not Found</html>", form).includes("نشانی واردشده"));
   ok("erp_feed_off is the token missing from wp-config",
     feedFailureMessage(503, JSON.stringify({ code: "erp_feed_off" }), form).includes("ATA_ERP_FEED_TOKEN"));

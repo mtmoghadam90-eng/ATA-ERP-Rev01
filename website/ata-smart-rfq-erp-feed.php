@@ -2,10 +2,15 @@
 /**
  * فید فرم استعلام قیمت برای ERP
  *
- * این فایل را در `wp-content/plugins/ata-smart-rfq/includes/erp-feed.php` بگذارید
- * و در `ata-smart-rfq.php` کنار بقیهٔ requireها یک خط اضافه کنید:
+ * از نسخهٔ 1.1.3 این فایل **جزو خود افزونه** است (`includes/erp-feed.php`) و
+ * `ata-smart-rfq.php` آن را بارگذاری می‌کند، چون به‌روزرسانی افزونه کل پوشه را
+ * جایگزین می‌کند و فایلی که دستی اضافه شده بود هر بار پاک می‌شد. این فایل منبع
+ * آن است: نسخهٔ بعدی افزونه باید همین را در `includes/erp-feed.php` و این خط را
+ * در `ata-smart-rfq.php` داشته باشد:
  *
- *     require_once ATA_RFQ_DIR . 'includes/erp-feed.php';
+ *     if ( file_exists( ATA_RFQ_DIR . 'includes/erp-feed.php' ) ) {
+ *         require_once ATA_RFQ_DIR . 'includes/erp-feed.php';
+ *     }
  *
  * توکن **همان** `ATA_ERP_FEED_TOKEN` در `wp-config.php` است که افزونهٔ مشاور
  * هم از آن استفاده می‌کند؛ یک سایت، یک اعتبارنامه.
