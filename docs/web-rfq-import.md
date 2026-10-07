@@ -84,7 +84,13 @@ curl -H "X-ATA-Token: <توکن>" "https://<دامنه>/wp-json/ata/v1/rfq/erp-f
 
 #### ب) افزونهٔ فرم استعلام (`ata-smart-rfq`)
 
-فایل `website/ata-smart-rfq-erp-feed.php` این مخزن را در
+**از نسخهٔ 1.1.3 فید جزو خود افزونه است** و کاری لازم نیست جز نصب همان نسخه.
+به‌روزرسانی افزونه کل پوشه را جایگزین می‌کند، پس فایلی که دستی به نسخهٔ قدیمی‌تر
+اضافه شده بود با هر به‌روزرسانی پاک می‌شد و فید ۴۰۴ (`rest_no_route`) می‌داد.
+هر نسخهٔ بعدی باید `includes/erp-feed.php` (همین `website/ata-smart-rfq-erp-feed.php`)
+و خط بارگذاری آن را نگه دارد.
+
+برای نسخه‌های قدیمی‌تر از 1.1.3: فایل `website/ata-smart-rfq-erp-feed.php` این مخزن را در
 `wp-content/plugins/ata-smart-rfq/includes/erp-feed.php` بگذارید و در
 `ata-smart-rfq.php` کنار بقیهٔ `require_once`ها یک خط اضافه کنید:
 

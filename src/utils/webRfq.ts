@@ -61,7 +61,7 @@ export interface WebRfqSourceSpec {
    * Where the feed file is installed on the site, and the line that loads it —
    * named so a refusal can say exactly what to do rather than «۴۰۴».
    */
-  plugin: { dir: string; dirConstant: string; feedFile: string };
+  plugin: { dir: string; dirConstant: string; feedFile: string; bundledSince?: string };
 }
 
 /**
@@ -86,7 +86,7 @@ export const WEB_RFQ_SOURCES = [
     hint: "افزونهٔ «ata-smart-rfq» — فرم فنی و پیوست؛ چند قلم در هر درخواست.",
     samplePath: "https://example.com/wp-json/ata-rfq/v1/erp-feed",
     inquiryPrefix: "WEB-FORM-",
-    plugin: { dir: "ata-smart-rfq", dirConstant: "ATA_RFQ_DIR", feedFile: "website/ata-smart-rfq-erp-feed.php" },
+    plugin: { dir: "ata-smart-rfq", dirConstant: "ATA_RFQ_DIR", feedFile: "website/ata-smart-rfq-erp-feed.php", bundledSince: "1.1.3" },
   },
 ] as const satisfies readonly WebRfqSourceSpec[];
 
@@ -490,7 +490,10 @@ export function duplicateFeedRefusal(
  * «سایت با کد ۴۰۴ پاسخ داد» was all the panel ever said, and a 404 here is
  * almost always one specific thing: WordPress answering `rest_no_route` because
  * the feed file was never loaded — not copied into the plugin, or the
- * `require_once` line not added — which no amount of checking the address on
+ * `require_once` line not added, or (the usual case) the plugin updated to a
+ * build that does not carry them, since an update replaces the whole folder.
+ * Where the plugin ships the feed itself (`bundledSince`), the version is named
+ * first, because installing it is the fix that survives the next update — which no amount of checking the address on
  * this side can fix. WordPress says so in the body, so the body is read and the
  * fix is named, with the plugin's own folder and constant. A 404 that is *not*
  * WordPress's (a host's error page) is a wrong address. `erp_feed_off` (503) is
@@ -506,8 +509,12 @@ export function feedFailureMessage(status: number, body: string, spec: WebRfqSou
     if (typeof parsed?.code === "string") code = parsed.code;
   } catch { /* not WordPress's JSON */ }
   const { dir, dirConstant, feedFile } = spec.plugin;
+  const bundledSince = "bundledSince" in spec.plugin ? spec.plugin.bundledSince : undefined;
   if (status === 404 && code === "rest_no_route") {
     return `سایت این مسیر را نمی‌شناسد (rest_no_route): فایل فید روی سایت بارگذاری نشده است. `
+      + (bundledSince
+        ? `از نسخهٔ ${bundledSince} فید جزو خود افزونهٔ ${dir} است؛ اگر افزونه با نسخه‌ای قدیمی‌تر یا بدون فید به‌روزرسانی شده، نسخهٔ ${bundledSince} یا بالاتر را نصب کنید. یا دستی: `
+        : "")
       + `فایل ${feedFile} را در wp-content/plugins/${dir}/includes/erp-feed.php بگذارید و در ${dir}.php `
       + `این خط را اضافه کنید: require_once ${dirConstant} . 'includes/erp-feed.php';`;
   }
