@@ -13,9 +13,12 @@ import {
   Paperclip,
   ChevronDown,
   ChevronUp,
-
+  ListChecks,
   Bell
 } from 'lucide-react';
+import TaskFromMessageModal, { TaskDraft } from './TaskFromMessageModal';
+import { tasksApi } from '../api/tasks';
+import { projectsApi } from '../api/projects';
 import { referralJump, moduleNotificationJump } from '../utils/notificationJump';
 import type { ActivityJump } from '../utils/notificationJump';
 import { ERPSettings } from '../types';
@@ -474,6 +477,61 @@ export default function ReferralsView({
     }
   };
 
+  /*
+   * A task on your own list, made from a notice.
+   *
+   * A notice says something happened on a job; what somebody does about it is
+   * very often «I'll deal with that tomorrow», and that had nowhere to go but
+   * memory. The same modal the feed offers beside a message is opened here,
+   * seeded with the notice's words and the job it is about, and assigned to
+   * the reader only — handing work to somebody else is a referral, not this.
+   */
+  const [taskFromNotice, setTaskFromNotice] = useState<{
+    id: string;
+    text: string;
+    projectId: string | null;
+    project: { id: string; code: string; name: string } | null;
+    /** A module notice is marked read once it has become a task. */
+    noticeId?: string;
+  } | null>(null);
+
+  const openTaskFromNotice = (notice: NonNullable<typeof taskFromNotice>) => {
+    setTaskFromNotice(notice);
+    /*
+     * A module notice carries the project's id and nothing else, so its name
+     * and code are read for the modal's own label. A failure (no projects
+     * permission) only loses the label: the task is still related by id.
+     */
+    if (notice.projectId && !notice.project) {
+      projectsApi.get(notice.projectId)
+        .then((p) => setTaskFromNotice((cur) => (cur && cur.id === notice.id
+          ? { ...cur, project: { id: p.id, code: p.code ?? '', name: p.name ?? '' } }
+          : cur)))
+        .catch(() => {});
+    }
+  };
+
+  const submitTaskFromNotice = async (draft: TaskDraft) => {
+    if (!taskFromNotice) return;
+    const projectId = taskFromNotice.projectId;
+    await tasksApi.create({
+      title: draft.title,
+      description: draft.description,
+      priority: draft.priority,
+      // No status: `createTask` writes «برای انجام», the one rule for where a
+      // new task starts.
+      dueDate: draft.dueDate,
+      assignedToUserId: currentUser?.id ?? null,
+      assignedToName: currentUser?.fullName ?? null,
+      relatedToType: projectId ? 'پروژه' : 'عمومی',
+      relatedToId: projectId,
+      relatedToName: taskFromNotice.project?.name ?? null,
+    });
+    const noticeId = taskFromNotice.noticeId;
+    setTaskFromNotice(null);
+    if (noticeId) void markModuleNotificationAsRead(noticeId);
+  };
+
   const markModuleNotificationAsRead = async (id: string) => {
     try {
       await inboxApi.markNotificationRead(id);
@@ -705,6 +763,28 @@ export default function ReferralsView({
                     </div>
                   </div>
                   
+                  <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openTaskFromNotice({
+                        id: `mnotif-${notif.id}`,
+                        // The description is the news; the title is the kind of notice
+                        // («پاسخ جدید به ارجاع»), which names nothing as a task title.
+                        text: notif.description || notif.title,
+                        projectId: notif.projectId ?? null,
+                        project: null,
+                        noticeId: notif.read ? undefined : notif.id,
+                      });
+                    }}
+                    data-task-from-notice={notif.id}
+                    className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-100 text-xs font-bold rounded-lg transition flex items-center gap-1"
+                    title="ثبت وظیفه برای خودم از این اعلان"
+                  >
+                    <ListChecks size={13} />
+                    ثبت وظیفه
+                  </button>
                   {!notif.read && (
                     <button
                       onClick={(e) => { e.stopPropagation(); markModuleNotificationAsRead(notif.id); }}
@@ -713,6 +793,7 @@ export default function ReferralsView({
                       علامت خوانده شده
                     </button>
                   )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -826,10 +907,36 @@ export default function ReferralsView({
                               </div>
                             )}
                           </div>
+                          <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              // The row opens the referral; making a task of it is another intent.
+                              e.stopPropagation();
+                              const said = item.type === 'message' ? item.message.text : item.activity.text;
+                              openTaskFromNotice({
+                                id: `notif-${group.id}-${i}`,
+                                text: item.type === 'message' && item.activity.text
+                                  ? `${said}\n\n(ارجاع اصلی: ${item.activity.text})`
+                                  : said,
+                                projectId: group.projectId || null,
+                                project: project
+                                  ? { id: project.id, code: project.code ?? '', name: project.name ?? '' }
+                                  : null,
+                              });
+                            }}
+                            data-task-from-reply={`${group.id}-${i}`}
+                            className="flex items-center gap-1 px-2 py-1 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-100 text-[10px] font-bold transition"
+                            title="ثبت وظیفه برای خودم از این اعلان"
+                          >
+                            <ListChecks size={12} />
+                            ثبت وظیفه
+                          </button>
                           <span className="text-slate-400 font-mono flex items-center gap-1 bg-slate-50 px-2 py-1 rounded border border-slate-100 text-[10px]">
                             <Calendar size={12} />
                             {shamsi(item.type === "message" ? item.message.createdAt : item.activity.createdAt)}
                           </span>
+                          </div>
                         </div>
 
                         <div className="text-sm text-slate-700 font-medium whitespace-pre-wrap leading-relaxed px-1">
@@ -1100,6 +1207,15 @@ export default function ReferralsView({
         )}
       </div>
 
+      {taskFromNotice && (
+        <TaskFromMessageModal
+          message={{ id: taskFromNotice.id, text: taskFromNotice.text }}
+          project={taskFromNotice.project}
+          assigneeName={currentUser?.fullName ?? ''}
+          onClose={() => setTaskFromNotice(null)}
+          onSubmit={submitTaskFromNotice}
+        />
+      )}
     </div>
   );
 }
