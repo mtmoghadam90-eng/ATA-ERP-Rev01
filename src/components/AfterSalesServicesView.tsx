@@ -480,6 +480,8 @@ export default function AfterSalesServicesView({
         // project it belongs to, which is what the card needs to print.
         relatedToName: [service.itemName, service.project?.code].filter(Boolean).join(' — '),
         assignedTo: currentUser?.fullName,
+        projectId: service.projectId ?? null,
+        module: 'afterSalesServices',
       }));
 
       /*
@@ -1398,7 +1400,7 @@ export default function AfterSalesServicesView({
 
 
       {/* Asked only once the job is really on the server, with its id. */}
-      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 
     </div>
   );

@@ -17351,6 +17351,114 @@ head("Competitors: who we lose to, and by how much");
 }
 
 /* ==========================================================================
+ * «ارجاع به همکار» beside the next action: the same record, the same project,
+ * one of its activity categories — and the feed's own write path.
+ * ========================================================================== */
+{
+  head("Next action: a referral to a colleague is a message in the project's feed");
+
+  const {
+    referralCategoryChoices, defaultReferralCategory, referralMessageText,
+    referralDraftRefusal, referralDueFields, EMPTY_REFERRAL_DRAFT,
+  } = await import("../src/utils/nextActionReferral");
+  const { parseMentions } = await import("../src/utils/mentions");
+  const { nextActionFromTask } = await import("../src/utils/nextAction");
+
+  const groups = [{ id: "g-buy", categoryId: "act-buy", categoryName: "خرید خارجی" }];
+  const cats = [
+    { id: "act-buy", name: "خرید خارجی (نام قدیم)" },
+    { id: "act-ship", name: "ارسال و تحویل" },
+    { id: "act-call", name: "پیگیری تماس" },
+  ];
+  const choices = referralCategoryChoices(groups, cats);
+  // Matched by id, never by the group's denormalised name — or a renamed
+  // category is offered twice.
+  eq("an opened category is offered once, as its group",
+    choices.map((c) => `${c.categoryId}:${c.groupId}`).join(),
+    "act-buy:g-buy,act-ship:null,act-call:null");
+
+  eq("the module's own category is the default — an opened group first",
+    defaultReferralCategory(choices, "purchaseOrders", "p-1", null), "act-buy");
+  eq("...an unopened one when the project has not opened it",
+    defaultReferralCategory(choices, "packagingDelivery", "p-1", null), "act-ship");
+  eq("...and nothing when no category names the module",
+    defaultReferralCategory(choices, "transactions", "p-1", null), "");
+  eq("the category the form was opened from wins",
+    defaultReferralCategory(choices, "purchaseOrders", "p-1",
+      { module: "purchaseOrders", projectId: "p-1", categoryId: "act-call" }), "act-call");
+  eq("...but only for the same project",
+    defaultReferralCategory(choices, "purchaseOrders", "p-2",
+      { module: "purchaseOrders", projectId: "p-1", categoryId: "act-call" }), "act-buy");
+  eq("...and the same module",
+    defaultReferralCategory(choices, "packagingDelivery", "p-1",
+      { module: "purchaseOrders", projectId: "p-1", categoryId: "act-call" }), "act-ship");
+
+  /*
+   * The message must name the colleagues in the shape `addActivity` reads, or
+   * it would post a note and raise no referral at all — the fault would be
+   * invisible on the feed, where the names still print.
+   */
+  const directory = [
+    { id: "u-1", fullName: "مریم احمدی" },
+    { id: "u-2", fullName: "علی" },
+    { id: "u-3", fullName: "علی رضایی" },
+  ];
+  const message = referralMessageText(["مریم احمدی", "علی رضایی"], " دیتاشیت را تأیید کنید ",
+    { relatedToType: "سفارش خرید", relatedToName: "PO-12" });
+  eq("the message names every colleague as a mention the feed reads",
+    parseMentions(message, directory).map((u) => u.id).join(), "u-1,u-3");
+  ok("...and says which record it is about", message.includes("سفارش خرید: PO-12"), message);
+
+  eq("a referral names somebody", referralDraftRefusal({ ...EMPTY_REFERRAL_DRAFT, categoryId: "c", text: "x" }),
+    "همکاری را برای ارجاع انتخاب کنید.");
+  eq("...under a category", referralDraftRefusal({ ...EMPTY_REFERRAL_DRAFT, userIds: ["u"], text: "x" }),
+    "دسته‌بندی فعالیت ارجاع را انتخاب کنید.");
+  eq("...and says something", referralDraftRefusal({ ...EMPTY_REFERRAL_DRAFT, userIds: ["u"], categoryId: "c" }),
+    "متن ارجاع را بنویسید.");
+  eq("a dated one has its date",
+    referralDraftRefusal({ ...EMPTY_REFERRAL_DRAFT, userIds: ["u"], categoryId: "c", text: "x", dueMode: "date" }),
+    "مهلت ارجاع را وارد کنید.");
+  eq("«بدون مهلت» sends no deadline keys at all",
+    JSON.stringify(referralDueFields(EMPTY_REFERRAL_DRAFT)), "{}");
+  eq("«تعیین با ارجاع‌شونده» is the composer's own shape",
+    JSON.stringify(referralDueFields({ ...EMPTY_REFERRAL_DRAFT, dueMode: "assignee" })),
+    JSON.stringify({ dueDate: "", dueDateByAssignee: true }));
+
+  eq("a task about a project carries the job, in either spelling",
+    [nextActionFromTask({ relatedToType: "پروژه", relatedToId: "p-1" }).projectId,
+     nextActionFromTask({ relatedToType: "project", relatedToId: "p-2" }).projectId,
+     nextActionFromTask({ relatedToType: "مشتری", relatedToId: "c-1" }).projectId].join(),
+    "p-1,p-2,");
+
+  /*
+   * The write: no second path into referrals, a category opened only when the
+   * project has not opened it, and a retry after a failed referral that does
+   * not raise the next action a second time.
+   */
+  const hook = readFileSync("src/utils/useNextAction.ts", "utf-8");
+  ok("the referral is posted through the feed's own endpoint",
+    /projectsApi\.addActivity\(/.test(hook) && !/\/api\/referrals/.test(hook));
+  ok("...opening the category only when there is no group for it",
+    /referral\.choice\.groupId\s*\?\?\s*\(await projectsApi\.upsertCategoryGroup/.test(hook));
+  ok("...and a retry does not create the next action twice",
+    /taskCreatedFor\.current !== sourceKey/.test(hook));
+
+  // Every form whose record belongs to a project hands the project on, or the
+  // section never appears on it and nothing says why.
+  for (const [file, key] of [
+    ["PurchaseOrdersView", "po.projectId"], ["PackagingDeliveryView", "delivery.projectId"],
+    ["SupplierInquiriesView", "inquiry.projectId"], ["TransactionsView", "tx.projectId"],
+    ["AfterSalesServicesView", "service.projectId"], ["ProjectsView", "projectId: project.id"],
+  ] as const) {
+    ok(`${file} hands its project to the next action`,
+      readFileSync(`src/components/${file}.tsx`, "utf-8").includes(key));
+  }
+  ok("the category link remembers where the form was opened from",
+    /rememberCategoryContext\(\{[\s\S]{0,200}categoryId: group\.categoryId/.test(
+      readFileSync("src/components/ProjectsView.tsx", "utf-8")));
+}
+
+/* ==========================================================================
  * «ذخیره و اقدام بعدی»: the question beside the button that was going to be
  * pressed anyway.
  * ========================================================================== */

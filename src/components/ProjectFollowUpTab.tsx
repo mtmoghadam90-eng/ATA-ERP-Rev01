@@ -194,7 +194,9 @@ export default function ProjectFollowUpTab({
     await nextAction.ask(
       withNextAction,
       done,
-      (row) => nextActionFromTask(row, currentUser?.fullName),
+      // This tab is the project's own, so the job is known whatever the task is
+      // related to — a quotation's task still belongs to this project.
+      (row) => ({ ...nextActionFromTask(row, currentUser?.fullName), projectId, module: 'projects' }),
     );
   };
 
@@ -556,7 +558,7 @@ export default function ProjectFollowUpTab({
         />
       )}
 
-      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 
       {scheduling && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">

@@ -24,6 +24,7 @@
  */
 
 import { addWorkingDaysToShamsi } from "../dateUtils";
+import { taskRelationKind } from "./taskRelations";
 
 /**
  * How far ahead a next action is proposed, in **working** days.
@@ -81,6 +82,19 @@ export interface NextActionSource {
   /** Whoever pressed save; the next action starts with them. */
   assignedTo?: string | null;
   priority?: string | null;
+  /**
+   * The project the record belongs to, when it belongs to one.
+   *
+   * What makes «ارجاع به همکار» possible at all: a referral is a message in a
+   * project's activity feed, so a record with no project has nowhere to file
+   * one and the form does not offer it.
+   */
+  projectId?: string | null;
+  /**
+   * The module the form belongs to (`AppModuleId`), which is what picks the
+   * referral's starting category — see `defaultReferralCategory`.
+   */
+  module?: string;
 }
 
 /**
@@ -121,6 +135,10 @@ export function nextActionFromTask(
     relatedToName: task.relatedToName || task.title || "",
     assignedTo,
     priority: task.priority,
+    // A task about a project carries the job on, so a colleague can be
+    // referred under it; either spelling of the relation (`taskRelationKind`).
+    projectId: taskRelationKind(task.relatedToType) === "project" ? task.relatedToId || null : null,
+    module: "tasks",
   };
 }
 

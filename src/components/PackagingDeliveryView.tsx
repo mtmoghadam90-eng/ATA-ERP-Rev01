@@ -1167,6 +1167,8 @@ ${sheets}
         relatedToId: delivery.id,
         relatedToName: delivery.packingListNumber || '',
         assignedTo: currentUser?.fullName,
+        projectId: delivery.projectId ?? null,
+        module: 'packagingDelivery',
       }));
 
       /*
@@ -2531,7 +2533,7 @@ ${sheets}
       `}</style>
 
       {/* Asked only once the packing list is really on the server, with its id. */}
-      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 
     </div>
   );

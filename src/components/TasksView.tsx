@@ -2405,7 +2405,7 @@ export default function TasksView({
 
 
       {/* Asked only once the task is really on the server, with its id. */}
-      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 
     </div>
   );

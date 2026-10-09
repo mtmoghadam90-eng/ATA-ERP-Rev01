@@ -70,6 +70,8 @@ import { RelationPicker } from "../src/components/RelationPicker";
 import { ConditionValueField } from "../src/components/ConditionValueField";
 import TaskCalendarModal from "../src/components/TaskCalendarModal";
 import type { NextActionDraft } from "../src/utils/nextAction";
+import type { NextActionReferralSubmit } from "../src/utils/useNextAction";
+import { rememberCategoryContext } from "../src/utils/categoryContext";
 import { resizeColumns } from "../src/utils/columnWidths";
 import type { Product } from "../src/types";
 import type { ExchangeRate } from "../src/types";
@@ -2437,6 +2439,94 @@ head("Next action: the form survives the screen carrying on underneath it");
 
   act(() => { nRoot.unmount(); });
   nHost.remove();
+}
+
+head("Next action: a referral to a colleague under the project's own category");
+
+/*
+ * The second half of the form. Three things a rule test cannot see: that the
+ * section is absent for a record with no project (a referral has no feed to
+ * live in), that the starting category is the one the form was opened from,
+ * and that the two halves are handed over independently — a referral alone
+ * reaches the caller with no next action beside it.
+ */
+{
+  const noProject = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const npRoot = createRoot(noProject);
+  act(() => {
+    npRoot.render(React.createElement(NextActionModal, {
+      source: { relatedToType: 'مشتری', relatedToId: 'c-1', relatedToName: 'فولاد', assignedTo: 'علی رضایی' },
+      kinds: ["تماس تلفنی"], people: ["علی رضایی"],
+      onSubmit: () => {}, onClose: () => {},
+    }));
+  });
+  ok("a record with no project offers no referral",
+    !noProject.querySelector("[data-next-action-with-referral]"));
+  act(() => { npRoot.unmount(); });
+  noProject.remove();
+
+  const loaded: string[] = [];
+  const submitted: { draft: NextActionDraft | null; referral: NextActionReferralSubmit | null }[] = [];
+  rememberCategoryContext({ module: 'purchaseOrders', projectId: 'p-1', categoryId: 'act-call' });
+
+  const rHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rRoot = createRoot(rHost);
+  act(() => {
+    rRoot.render(React.createElement(NextActionModal, {
+      source: {
+        relatedToType: 'سفارش خرید', relatedToId: 'po-1', relatedToName: 'PO-12',
+        assignedTo: 'علی رضایی', projectId: 'p-1', module: 'purchaseOrders',
+      },
+      kinds: ["تماس تلفنی"], people: ["علی رضایی", "مریم احمدی"],
+      colleagues: [{ id: 'u-ali', fullName: 'علی رضایی' }, { id: 'u-maryam', fullName: 'مریم احمدی' }],
+      categories: [{ id: 'act-buy', name: 'خرید خارجی' }, { id: 'act-call', name: 'پیگیری تماس' }],
+      loadGroups: async (projectId: string) => {
+        loaded.push(projectId);
+        return [{ id: 'g-buy', categoryId: 'act-buy', categoryName: 'خرید خارجی' }];
+      },
+      onSubmit: (draft: NextActionDraft | null, referral: NextActionReferralSubmit | null) => {
+        submitted.push({ draft, referral });
+      },
+      onClose: () => {},
+    }));
+  });
+
+  ok("the project's categories are not read until a referral is asked for", loaded.length === 0, loaded);
+  const toggle = rHost.querySelector("[data-next-action-with-referral]") as HTMLInputElement | null;
+  ok("a record on a project offers the referral", !!toggle);
+  await act(async () => { handlers(toggle!).onChange?.({ target: { checked: true } }); });
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  ok("...and reads that project's categories once it is", loaded.join() === "p-1", loaded);
+
+  const category = rHost.querySelector("[data-referral-category]") as HTMLSelectElement | null;
+  ok("the category the form was opened from is the starting one",
+    category?.value === "act-call", category?.value);
+  ok("...a category not yet opened says it will be",
+    rHost.textContent?.includes("روی پروژه باز می‌شود") === true);
+  ok("whoever pressed save is not offered as a colleague",
+    !rHost.querySelector('[data-referral-colleague="u-ali"]')
+    && !!rHost.querySelector('[data-referral-colleague="u-maryam"]'));
+
+  const withTask = rHost.querySelector("[data-next-action-with-task]") as HTMLInputElement | null;
+  act(() => { handlers(withTask!).onChange?.({ target: { checked: false } }); });
+  const save = rHost.querySelector("[data-next-action-save]") as HTMLButtonElement | null;
+  act(() => { save?.click(); });
+  ok("a referral with nobody named is refused", submitted.length === 0, submitted.length);
+
+  act(() => { (rHost.querySelector('[data-referral-colleague="u-maryam"]') as HTMLButtonElement).click(); });
+  const text = rHost.querySelector("[data-referral-text]") as HTMLTextAreaElement | null;
+  act(() => { handlers(text!).onChange?.({ target: { value: "دیتاشیت را تأیید کنید" } }); });
+  act(() => { save?.click(); });
+  ok("a referral alone is handed over with no next action beside it",
+    submitted.length === 1 && submitted[0].draft === null, submitted.length);
+  const r = submitted[0]?.referral;
+  ok("...naming the colleague, the category and whether it must be opened",
+    r?.names.join() === "مریم احمدی" && r?.choice.categoryId === "act-call"
+    && r?.choice.groupId === null && r?.draft.text === "دیتاشیت را تأیید کنید",
+    r);
+
+  act(() => { rRoot.unmount(); });
+  rHost.remove();
 }
 
 /*

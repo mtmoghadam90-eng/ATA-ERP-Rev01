@@ -73,6 +73,7 @@ import { productToWriteInput, detailToProduct } from '../api/productAdapter';
 import SatisfactionLettersModal from './SatisfactionLettersModal';
 import { useProjectJump } from "../api/useProjectJump";
 import { moduleForCategory } from "../utils/projectLinks";
+import { rememberCategoryContext } from "../utils/categoryContext";
 import { APP_MODULES } from "../appModules";
 import { oversizedUploadReason } from '../utils/uploadLimits';
 import { readViewPreferences, writeViewPreferences } from '../utils/viewPreferences';
@@ -1237,6 +1238,8 @@ export default function ProjectsView({
           relatedToId: project.id,
           relatedToName: project.name || project.code || '',
           assignedTo: currentUser?.fullName,
+          projectId: project.id,
+          module: 'projects',
         }));
       } catch (err) {
         reportError(err, 'ذخیره پروژه با خطا مواجه شد.');
@@ -5786,6 +5789,13 @@ export default function ProjectsView({
                                           // The header toggles the category open; going to
                                           // another module is a different intent.
                                           e.stopPropagation();
+                                          // So «ذخیره و ثبت اقدام بعدی» there offers to refer
+                                          // the work under this very category.
+                                          rememberCategoryContext({
+                                            module: target,
+                                            projectId: selectedProjectForActivities.id,
+                                            categoryId: group.categoryId,
+                                          });
                                           onOpenModuleForProject(target, code);
                                         }}
                                         title={`رفتن به «${MODULE_NAMES[target] ?? target}» برای پروژه ${code}`}
@@ -6681,7 +6691,7 @@ export default function ProjectsView({
       />
 
       {/* Asked only once the project is really on the server, with its id. */}
-      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 </div>
   );
 }

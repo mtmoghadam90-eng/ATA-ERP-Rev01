@@ -3695,7 +3695,7 @@ export default function ProductsView({
 
 
       {/* Asked only once the product is really on the server, with its id. */}
-      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 
     </div>
   );

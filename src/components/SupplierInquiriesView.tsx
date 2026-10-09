@@ -416,6 +416,8 @@ export default function SupplierInquiriesView({
         // asked and the job it was asked for, which is what the card prints.
         relatedToName: [inquiry.supplier?.name, inquiry.project?.code].filter(Boolean).join(' — '),
         assignedTo: currentUser?.fullName,
+        projectId: inquiry.projectId ?? null,
+        module: 'supplierInquiries',
       }));
     } catch (err) {
       reportError(err, 'ثبت استعلام با خطا مواجه شد.');
@@ -1338,7 +1340,7 @@ export default function SupplierInquiriesView({
       </ConfirmModal>
 
       {/* Asked only once the inquiry is really on the server, with its id. */}
-      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 
     </div>
   );

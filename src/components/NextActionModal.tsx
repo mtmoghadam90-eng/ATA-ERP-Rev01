@@ -1,12 +1,22 @@
 import { DETAIL_LABELS } from '../utils/cardSummary';
 import { useEffect, useRef, useState } from 'react';
-import { CalendarPlus, Link2, X } from 'lucide-react';
+import { AtSign, CalendarPlus, Link2, X } from 'lucide-react';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { useUserDirectory } from '../api/useUserDirectory';
+import { projectsApi } from '../api/projects';
 import { getTodayShamsi } from '../dateUtils';
 import {
   NextActionDraft, NextActionSource, nextActionDraft, nextActionRefusal,
 } from '../utils/nextAction';
+import {
+  EMPTY_REFERRAL_DRAFT, NextActionReferralDraft, ReferralCategoryChoice,
+  defaultReferralCategory, referralCategoryChoices, referralDraftRefusal,
+} from '../utils/nextActionReferral';
+import { categoryContext } from '../utils/categoryContext';
+import type { NextActionReferralSubmit } from '../utils/useNextAction';
+
+/** A project's category groups, as the referral half needs to see them. */
+type GroupRow = { id: string; categoryId: string; categoryName: string };
 
 /**
  * «اقدام بعدی» — one form, opened after a save on whichever screen made it.
@@ -28,6 +38,9 @@ export default function NextActionModal({
   error,
   onSubmit,
   onClose,
+  colleagues = [],
+  categories = [],
+  loadGroups,
 }: {
   /** The record just saved. Null means the question is not being asked. */
   source: NextActionSource | null;
@@ -38,14 +51,36 @@ export default function NextActionModal({
   saving?: boolean;
   /** Reported by the host, because the host is what writes. */
   error?: string | null;
-  onSubmit: (draft: NextActionDraft) => void;
+  /**
+   * Either half may be null: the person may raise only their own next action,
+   * only a referral, or both.
+   */
+  onSubmit: (draft: NextActionDraft | null, referral: NextActionReferralSubmit | null) => void;
   onClose: () => void;
+  /** Who can be referred to; ids, because the referral belongs to an account. */
+  colleagues?: readonly { id: string; fullName: string }[];
+  /** `settings.activityCategories` — what a category not yet opened can be. */
+  categories?: readonly { id: string; name: string }[];
+  /** The project's opened categories. Injected so a render test needs no server. */
+  loadGroups?: (projectId: string) => Promise<GroupRow[]>;
 }) {
   const [draft, setDraft] = useState<NextActionDraft>(
     () => nextActionDraft(
       source ?? { relatedToType: '', relatedToId: '', relatedToName: '' },
       getTodayShamsi()));
   const [refusal, setRefusal] = useState<string | null>(null);
+  /*
+   * The two halves are each switched on separately.
+   *
+   * The next action starts on, because that is what the button is called; the
+   * referral starts off, because handing work to somebody else is a decision
+   * and not a default.
+   */
+  const [withTask, setWithTask] = useState(true);
+  const [withReferral, setWithReferral] = useState(false);
+  const [referral, setReferral] = useState<NextActionReferralDraft>(EMPTY_REFERRAL_DRAFT);
+  const [groups, setGroups] = useState<GroupRow[] | null>(null);
+  const [groupsError, setGroupsError] = useState<string | null>(null);
 
   /*
    * Seeded on the record it is about, and never on the object prop itself.
@@ -63,15 +98,82 @@ export default function NextActionModal({
     if (!sourceRef.current) return;
     setDraft(nextActionDraft(sourceRef.current, getTodayShamsi()));
     setRefusal(null);
+    setWithTask(true);
+    setWithReferral(false);
+    setReferral(EMPTY_REFERRAL_DRAFT);
+    setGroups(null);
+    setGroupsError(null);
   }, [key]);
+
+  /*
+   * The project's categories are read only once a referral is asked for: most
+   * next actions never refer anybody, and the read needs the projects
+   * permission, which a refusal here must not turn into a broken form.
+   */
+  const projectId = source?.projectId || '';
+  const loadRef = useRef(loadGroups);
+  loadRef.current = loadGroups;
+  const categoriesRef = useRef(categories);
+  categoriesRef.current = categories;
+  useEffect(() => {
+    if (!withReferral || !projectId || groups !== null) return;
+    let cancelled = false;
+    const load = loadRef.current
+      ?? ((id: string) => projectsApi.categoryGroups(id) as Promise<GroupRow[]>);
+    load(projectId)
+      .then((rows) => {
+        if (cancelled) return;
+        setGroups(rows);
+        const choices = referralCategoryChoices(rows, categoriesRef.current);
+        const chosen = defaultReferralCategory(
+          choices, sourceRef.current?.module, projectId, categoryContext());
+        setReferral((r) => (r.categoryId ? r : { ...r, categoryId: chosen }));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setGroups([]);
+        setGroupsError(err instanceof Error ? err.message : 'دسته‌بندی‌های پروژه خوانده نشد.');
+      });
+    return () => { cancelled = true; };
+  }, [withReferral, projectId, groups]);
 
   if (!source) return null;
 
+  const choices: ReferralCategoryChoice[] = referralCategoryChoices(groups ?? [], categories);
+  const canRefer = Boolean(projectId);
+  // Whoever pressed save is not offered: a referral to yourself is what the
+  // next action above already is.
+  const self = String(source.assignedTo ?? '').trim();
+  const offered = colleagues.filter((c) => c.fullName !== self);
+
   const submit = () => {
-    const why = nextActionRefusal(draft);
+    const referring = canRefer && withReferral;
+    let why: string | null = null;
+    if (!withTask && !referring) why = 'اقدام بعدی یا ارجاع به همکار را انتخاب کنید.';
+    if (!why && withTask) why = nextActionRefusal(draft);
+    if (!why && referring) why = groupsError ?? referralDraftRefusal(referral);
+    const choice = choices.find((c) => c.categoryId === referral.categoryId);
+    if (!why && referring && !choice) why = 'دسته‌بندی فعالیت ارجاع را انتخاب کنید.';
     setRefusal(why);
-    if (!why) onSubmit(draft);
+    if (why) return;
+    onSubmit(
+      withTask ? draft : null,
+      referring && choice
+        ? {
+            draft: referral,
+            choice,
+            names: referral.userIds
+              .map((id) => colleagues.find((c) => c.id === id)?.fullName)
+              .filter((n): n is string => Boolean(n)),
+          }
+        : null,
+    );
   };
+
+  const toggleColleague = (id: string) => setReferral((r) => ({
+    ...r,
+    userIds: r.userIds.includes(id) ? r.userIds.filter((u) => u !== id) : [...r.userIds, id],
+  }));
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-[1200]" dir="rtl">
@@ -84,7 +186,7 @@ export default function NextActionModal({
             <div className="text-right">
               <span className="text-sm font-bold text-slate-800 block">ثبت اقدام بعدی</span>
               <span className="text-[10px] text-slate-500 block">
-                رکورد ذخیره شد؛ حالا کار بعدی روی آن را تعریف کنید.
+                رکورد ذخیره شد؛ کار بعدی خودتان یا ارجاع به همکار را ثبت کنید.
               </span>
             </div>
           </div>
@@ -114,6 +216,17 @@ export default function NextActionModal({
             </span>
           </div>
 
+          <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={withTask}
+              onChange={(e) => setWithTask(e.target.checked)}
+              data-next-action-with-task
+            />
+            اقدام بعدی برای خودم
+          </label>
+
+          {withTask && (<>
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-600">
               نوع اقدام <span className="text-rose-500">*</span>
@@ -189,6 +302,135 @@ export default function NextActionModal({
               {people.map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
           </div>
+          </>)}
+
+          {/*
+            «ارجاع به همکار» — the same project, under one of its activity
+            categories, landing on the colleague's own board.
+
+            Drawn only for a record that belongs to a project: a referral is a
+            message in a project's feed, so a customer or a product has nowhere
+            to file one, and a section that could only ever be refused is worse
+            than none.
+          */}
+          {canRefer && (
+            <div className="border-t border-slate-100 pt-4 space-y-3">
+              <label className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={withReferral}
+                  onChange={(e) => setWithReferral(e.target.checked)}
+                  data-next-action-with-referral
+                />
+                <AtSign size={13} className="text-sky-600" />
+                ارجاع به همکار درباره‌ی همین فعالیت
+              </label>
+
+              {withReferral && (
+                <div className="space-y-3" data-next-action-referral>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-600">
+                      همکار <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {offered.map((c) => {
+                        const on = referral.userIds.includes(c.id);
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => toggleColleague(c.id)}
+                            data-referral-colleague={c.id}
+                            aria-pressed={on}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition ${
+                              on
+                                ? 'bg-sky-600 text-white border-sky-600'
+                                : 'bg-white text-slate-600 border-slate-200 hover:border-sky-400'
+                            }`}
+                          >
+                            {c.fullName}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-600">
+                      دسته‌بندی فعالیت پروژه <span className="text-rose-500">*</span>
+                    </label>
+                    {groups === null ? (
+                      <p className="text-[11px] text-slate-500">در حال خواندن دسته‌بندی‌های پروژه…</p>
+                    ) : groupsError ? (
+                      <p className="text-[11px] text-rose-700">{groupsError}</p>
+                    ) : (
+                      <select
+                        value={referral.categoryId}
+                        onChange={(e) => setReferral({ ...referral, categoryId: e.target.value })}
+                        data-referral-category
+                        className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500"
+                      >
+                        <option value="">انتخاب کنید…</option>
+                        {choices.map((c) => (
+                          <option key={c.categoryId} value={c.categoryId}>
+                            {c.groupId ? c.categoryName : `${c.categoryName} (روی پروژه باز می‌شود)`}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-600">
+                      متن ارجاع <span className="text-rose-500">*</span>
+                    </label>
+                    <textarea
+                      value={referral.text}
+                      onChange={(e) => setReferral({ ...referral, text: e.target.value })}
+                      rows={3}
+                      data-referral-text
+                      placeholder="مثلاً: لطفاً دیتاشیت سازنده را بررسی و تأیید کنید"
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 resize-none"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-600">مهلت</label>
+                    <div className="flex flex-wrap gap-3 text-[11px] text-slate-700">
+                      {([
+                        ['none', 'بدون مهلت'],
+                        ['date', 'تا تاریخ'],
+                        ['assignee', 'مهلت را ارجاع‌شونده تعیین کند'],
+                      ] as const).map(([mode, label]) => (
+                        <label key={mode} className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="referral-due"
+                            checked={referral.dueMode === mode}
+                            onChange={() => setReferral({ ...referral, dueMode: mode })}
+                            data-referral-due={mode}
+                          />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                    {referral.dueMode === 'date' && (
+                      <ShamsiDatePicker
+                        label="مهلت ارجاع"
+                        required
+                        value={referral.dueDate}
+                        onChange={(v) => setReferral({ ...referral, dueDate: v })}
+                      />
+                    )}
+                  </div>
+
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    به‌صورت یک پیام در فعالیت‌های پروژه ثبت می‌شود و در «وظایف و پیگیری» همکار می‌نشیند.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
 
           {(refusal || error) && (
             <p className="text-[11px] text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
@@ -205,7 +447,7 @@ export default function NextActionModal({
             data-next-action-save
             className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition"
           >
-            {saving ? 'در حال ثبت…' : 'ثبت اقدام بعدی'}
+            {saving ? 'در حال ثبت…' : 'ثبت'}
           </button>
           {/*
             «Not now» and not «cancel»: the record is already saved, so closing
@@ -238,26 +480,32 @@ export default function NextActionModal({
 export function NextActionPrompt({
   next,
   kinds,
+  categories,
 }: {
   next: {
     source: NextActionSource | null;
     saving: boolean;
     error: string | null;
     close: () => void;
-    submit: (draft: NextActionDraft) => Promise<void>;
+    submit: (draft: NextActionDraft | null, referral?: NextActionReferralSubmit | null) => Promise<void>;
   };
   /** `settings.dropdownItems.nextActionKinds`. */
   kinds: readonly string[] | undefined;
+  /** `settings.activityCategories`, for a referral under a category not yet opened. */
+  categories?: readonly { id: string; name: string }[];
 }) {
   const { users } = useUserDirectory();
+  const active = users.filter((u) => u.isActive !== false);
   return (
     <NextActionModal
       source={next.source}
       kinds={kinds ?? []}
-      people={users.map((u) => u.fullName)}
+      people={active.map((u) => u.fullName)}
+      colleagues={active}
+      categories={categories ?? []}
       saving={next.saving}
       error={next.error}
-      onSubmit={(draft) => { void next.submit(draft); }}
+      onSubmit={(draft, referral) => { void next.submit(draft, referral); }}
       onClose={next.close}
     />
   );
