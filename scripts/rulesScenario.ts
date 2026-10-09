@@ -10872,6 +10872,19 @@ head("A document's notes: files, a Shamsi clock, and a delete that is offered ho
   const offerBox = /<div className="([^"]*)" id="inquiry-offer-items">\s*<table className="([^"]*)"/.exec(inquiry);
   ok("the inquiry's offer items are in no scroll box of their own",
     !!offerBox && !/overflow|max-h-/.test(offerBox[1]) && !/min-w-/.test(offerBox[2]));
+  /*
+   * And on a phone each line is a card, not a seven-column row. A table that
+   * fits the form's width at 356px gives the goods column fifty pixels and
+   * pushes the rest off the card's edge; the same markup stacks instead, with
+   * the header hidden and each cell carrying its own label.
+   */
+  const offerSeg = inquiry.slice(inquiry.indexOf('id="inquiry-offer-items"'),
+    inquiry.indexOf("</table>", inquiry.indexOf('id="inquiry-offer-items"')));
+  ok("on a phone the inquiry's goods table hides its header and stacks each line",
+    /<thead className="[^"]*max-md:hidden/.test(offerSeg)
+    && /<tr key=\{item\.id\} className="[^"]*max-md:grid/.test(offerSeg));
+  eq("...each cell but the delete carrying its own label on a phone",
+    (offerSeg.match(/<span className="md:hidden block text-\[10px\]/g) ?? []).length, 6);
 
   /* -- and the list that got long once the scrollbar went -- */
   /*

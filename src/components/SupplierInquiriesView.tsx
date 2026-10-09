@@ -1239,7 +1239,7 @@ export default function SupplierInquiriesView({
               id="inquiry-modal-content"
             >
               {/* Header */}
-              <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 bg-slate-50">
+              <div className="flex items-center justify-between border-b border-slate-100 px-4 sm:px-6 py-4 bg-slate-50">
                 <h3 className="text-sm font-extrabold text-slate-800">
                   {editingInquiry ? `ویرایش استعلام قیمت تأمین‌کننده: ${editingInquiry.supplierName}` : 'ثبت استعلام قیمت تأمین‌کننده جدید'}
                 </h3>
@@ -1259,7 +1259,7 @@ export default function SupplierInquiriesView({
               </div>
 
               {/* Form implementation */}
-              <div className={`p-6 overflow-y-auto ${isInquiryModalFullscreen ? 'max-h-[calc(100vh-80px)] flex-1' : 'max-h-[75vh]'}`}>
+              <div className={`p-4 sm:p-6 overflow-y-auto ${isInquiryModalFullscreen ? 'max-h-[calc(100vh-80px)] flex-1' : 'max-h-[75vh]'}`}>
                 <InquiryFormInner
                   editingInquiry={editingInquiry}
                   selectedProjectId={selectedProjectId}
@@ -2043,8 +2043,8 @@ function InquiryFormInner({
           narrow screen the form's own body is what scrolls sideways.
         */}
         <div className="border border-slate-150 rounded-xl" id="inquiry-offer-items">
-          <table className="w-full text-right text-xs table-fixed">
-            <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-150">
+          <table className="w-full text-right text-xs table-fixed max-md:block">
+            <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-150 max-md:hidden">
               <tr>
                 <th className="p-2.5 w-[28%]">کالا و شرح دقیق آفر</th>
                 <th className="p-2.5 w-20 text-center">تعداد</th>
@@ -2055,10 +2055,11 @@ function InquiryFormInner({
                 <th className="p-2.5 w-12 text-center">حذف</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-slate-100 max-md:block">
               {items.map((item, index) => (
-                <tr key={item.id} className="hover:bg-slate-50/50">
-                  <td className="p-2">
+                <tr key={item.id} className="hover:bg-slate-50/50 max-md:grid max-md:grid-cols-2 max-md:gap-x-2 max-md:p-2" data-inquiry-item-row>
+                  <td className="p-2 max-md:col-span-2">
+                    <span className="md:hidden block text-[10px] font-bold text-slate-500 mb-0.5">کالا و شرح دقیق آفر</span>
                     {/*
                       Optional on purpose. An inquiry is often the first time a
                       part is mentioned — priced before anyone decides to carry
@@ -2142,6 +2143,7 @@ function InquiryFormInner({
                     </div>
                   </td>
                   <td className="p-2">
+                    <span className="md:hidden block text-[10px] font-bold text-slate-500 mb-0.5">تعداد</span>
                     <input
                       type="number"
                       min="1"
@@ -2152,6 +2154,7 @@ function InquiryFormInner({
                     />
                   </td>
                   <td className="p-2">
+                    <span className="md:hidden block text-[10px] font-bold text-slate-500 mb-0.5">مبلغ ارزی واحد</span>
                     <input
                       type="number"
                       step="any"
@@ -2164,6 +2167,7 @@ function InquiryFormInner({
                     />
                   </td>
                   <td className="p-2">
+                    <span className="md:hidden block text-[10px] font-bold text-slate-500 mb-0.5">معادل ریالی پیشنهادی</span>
                     <input
                       type="number"
                       step="any"
@@ -2176,6 +2180,7 @@ function InquiryFormInner({
                     />
                   </td>
                   <td className="p-2">
+                    <span className="md:hidden block text-[10px] font-bold text-slate-500 mb-0.5">زمان تحویل</span>
                     <input
                       type="text"
                       value={item.deliveryTime || ''}
@@ -2184,7 +2189,8 @@ function InquiryFormInner({
                       className="w-full px-2 py-1.5 border border-slate-200 rounded-lg focus:outline-none bg-white"
                     />
                   </td>
-                  <td className="p-2">
+                  <td className="p-2 max-md:col-span-2">
+                    <span className="md:hidden block text-[10px] font-bold text-slate-500 mb-0.5">توضیحات آفر</span>
                     <input
                       type="text"
                       value={item.notes || ''}
@@ -2193,14 +2199,15 @@ function InquiryFormInner({
                       className="w-full px-2 py-1.5 border border-slate-200 rounded-lg focus:outline-none bg-white"
                     />
                   </td>
-                  <td className="p-2 text-center">
+                  <td className="p-2 text-center max-md:col-span-2 max-md:text-left">
                     <button
                       type="button"
                       onClick={() => handleRemoveItemRow(index)}
                       title="حذف این ردیف کالا"
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors flex items-center justify-center mx-auto"
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors flex items-center justify-center gap-1 mx-auto max-md:mx-0 max-md:text-rose-600"
                     >
                       <Trash2 size={15} />
+                      <span className="md:hidden text-[11px] font-bold">حذف ردیف</span>
                     </button>
                   </td>
                 </tr>

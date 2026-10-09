@@ -3646,8 +3646,10 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
     },
   };
 
-  gN.fetch = (async (url: string) => {
+  const postedN: { url: string; body: unknown }[] = [];
+  gN.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
     askedN.push(String(url));
+    if (init?.method === "POST") postedN.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null });
     const body = String(url).includes("/api/referrals")
       ? { success: true, rows: [referralRow], total: 1, page: 1, pageSize: 200, totalPages: 1 }
       : { success: true, rows: [], unread: 0, total: 0, page: 1, pageSize: 200, totalPages: 1 };
@@ -3693,6 +3695,29 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
 
   const item = hostN.querySelector<HTMLElement>("[id^='notification-item-']");
   ok("...and opens to the reply", item !== null);
+
+  /*
+   * «ثبت وظیفه» on a notice makes a task for the reader about that job — and
+   * pressing it is not pressing the notice, which would jump to the feed.
+   */
+  const toTask = hostN.querySelector<HTMLElement>("[data-task-from-reply]");
+  ok("a reply offers to become a task", toTask !== null);
+  await act(async () => {
+    toTask?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleN();
+  ok("...without following the notice", jumps.length === 0, jumps);
+  ok("...seeded with the reply's own words",
+    hostN.textContent?.includes("ثبت وظیفه برای خودم") === true);
+  const saveTask = Array.from(hostN.querySelectorAll<HTMLButtonElement>("button"))
+    .filter((el) => (el.textContent ?? "").trim() === "ثبت وظیفه").pop();
+  await act(async () => { saveTask?.click(); });
+  await settleN();
+  const created = postedN.find((x) => /\/api\/tasks$/.test(x.url))?.body as Record<string, unknown> | undefined;
+  ok("...and creates it on the reader's own list, about that project",
+    created?.assignedToUserId === "u-1" && created?.relatedToId === "proj-1"
+    && created?.relatedToType === "پروژه" && created?.title === "بررسی شد، مشکلی ندارد",
+    created);
 
   await act(async () => {
     item?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
