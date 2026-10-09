@@ -1001,6 +1001,8 @@ export default function PurchaseOrdersView({
       relatedToId: po.id,
       relatedToName: po.poNumber || '',
       assignedTo: currentUser?.fullName,
+      projectId: po.projectId ?? null,
+      module: 'purchaseOrders',
     }));
   };
 
@@ -2775,7 +2777,7 @@ export default function PurchaseOrdersView({
 
 
       {/* Asked only once the order is really on the server, with its id. */}
-      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 
     </div>
   );

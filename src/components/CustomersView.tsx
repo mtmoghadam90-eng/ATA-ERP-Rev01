@@ -2356,7 +2356,7 @@ export default function CustomersView({
       )}
 
       {/* Asked only once the customer is really on the server, with its id. */}
-      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 
       {/* Confirm Delete Modal */}
       <ConfirmModal

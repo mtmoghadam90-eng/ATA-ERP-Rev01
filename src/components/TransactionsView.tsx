@@ -984,6 +984,8 @@ export default function TransactionsView({
       relatedToId: tx.id,
       relatedToName: tx.documentNumber || '',
       assignedTo: currentUser?.fullName,
+      projectId: tx.projectId ?? null,
+      module: 'transactions',
     }));
   };
 
@@ -2966,7 +2968,7 @@ export default function TransactionsView({
       )}
 
       {/* Asked only once the voucher is really on the server, with its id. */}
-      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 
       {/* Duplicate customer warning */}
       <DuplicateCustomerModal

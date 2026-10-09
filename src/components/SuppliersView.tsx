@@ -809,7 +809,7 @@ export default function SuppliersView({
         this save has no id until the server answers, and a next action naming
         nothing is a card nobody can trace back.
       */}
-      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} />
+      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 
       {/* Confirm Delete Modal */}
       <ConfirmModal
