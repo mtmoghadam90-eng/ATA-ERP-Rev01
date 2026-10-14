@@ -8,6 +8,7 @@ import type { ActivityAttachment } from "../utils/attachments";
 
 export interface MeetingItemRow {
   id: string;
+  topicId: string | null;
   lineNo: number;
   text: string;
   kind: MeetingItemKind;
@@ -26,10 +27,8 @@ export interface MeetingRow {
   endTime: string | null;
   place: string | null;
   summary: string | null;
-  projectId: string | null;
-  projectCode: string | null;
-  projectName: string | null;
-  customerName: string | null;
+  /** The distinct projects its topics name; empty for an internal meeting. */
+  projects: MeetingProjectRef[];
   status: MeetingStatus;
   attendees: MeetingParticipant[];
   absentees: MeetingParticipant[];
@@ -43,7 +42,30 @@ export interface MeetingRow {
   itemCount: number;
   actionCount: number;
   openActionCount: number;
-  items?: MeetingItemRow[];
+  topicCount: number;
+  topics: MeetingTopicRow[];
+}
+
+export interface MeetingProjectRef {
+  id: string;
+  code: string | null;
+  name: string | null;
+  customerName: string | null;
+}
+
+/** One subject on the agenda, with its project (null: internal) and its items. */
+export interface MeetingTopicRow {
+  /** Empty for the stand-in topic of a meeting stored before topics. */
+  id: string;
+  lineNo: number;
+  title: string;
+  projectId: string | null;
+  projectCode: string | null;
+  projectName: string | null;
+  customerName: string | null;
+  discussion: string | null;
+  conclusion: string | null;
+  items: MeetingItemRow[];
 }
 
 export interface MeetingItemInput {
@@ -54,6 +76,15 @@ export interface MeetingItemInput {
   dueDate?: string | null;
 }
 
+export interface MeetingTopicInput {
+  id?: string | null;
+  title: string;
+  projectId?: string | null;
+  discussion?: string | null;
+  conclusion?: string | null;
+  items: MeetingItemInput[];
+}
+
 export interface MeetingInput {
   title: string;
   meetingDate: string;
@@ -61,12 +92,11 @@ export interface MeetingInput {
   endTime?: string | null;
   place?: string | null;
   summary?: string | null;
-  projectId?: string | null;
   attendees: MeetingParticipant[];
   absentees: MeetingParticipant[];
   nextMeetingDate?: string | null;
   attachments: ActivityAttachment[];
-  items: MeetingItemInput[];
+  topics: MeetingTopicInput[];
   finalize?: boolean;
 }
 
@@ -81,6 +111,7 @@ export interface CarryOverItem {
   meetingCode: string;
   meetingTitle: string;
   meetingDateJalali: string | null;
+  topicTitle: string;
   itemId: string;
   text: string;
   dueDateJalali: string | null;
@@ -102,6 +133,7 @@ export interface MeetingActionRow {
   meetingTitle: string;
   meetingDateJalali: string | null;
   meetingStatus: MeetingStatus;
+  topicTitle: string;
   projectId: string | null;
   projectCode: string | null;
   projectName: string | null;

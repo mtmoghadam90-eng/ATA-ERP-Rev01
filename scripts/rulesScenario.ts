@@ -1640,7 +1640,10 @@ head("Deleting a project: every blocker is named or released");
 
   for (const m of blocking) {
     const a = accessor(m);
-    const isCounted = counted.includes(`db.${a}.count(`);
+    // A meeting topic is counted through the meeting it belongs to, so the
+    // refusal names meetings (what a person deletes) rather than topics.
+    const isCounted = counted.includes(`db.${a}.count(`)
+      || (m === "MeetingTopic" && counted.includes("db.meeting.count({ where: { topics: { some: { projectId: id } } } })"));
     const isReleased = new RegExp(`tx\\.${a}\\.updateMany\\(`).test(deleting);
     ok(`${m} is either counted or released`, isCounted || isReleased, { isCounted, isReleased });
   }
@@ -22940,16 +22943,36 @@ head("Meeting minutes");
 
   /* -- finalising asks more than a draft does -- */
   const action = { text: "ارسال دیتاشیت", kind: "ACTION" as const, assignees: [], dueDateJalali: null };
+  const topicOf = (items: typeof action[], title = "موضوع") => [{ title, projectId: null, items }];
   eq("meetings: a draft may leave an action unassigned",
-    mm.meetingRefusal({ title: "t", meetingDateJalali: "1405/07/09", items: [action] }, false), null);
+    mm.meetingRefusal({ title: "t", meetingDateJalali: "1405/07/09", topics: topicOf([action]) }, false), null);
   ok("meetings: finalising refuses an action with nobody on it",
-    /مسئول/.test(mm.meetingRefusal({ title: "t", meetingDateJalali: "1405/07/09", items: [action] }, true) ?? ""));
+    /مسئول/.test(mm.meetingRefusal({ title: "t", meetingDateJalali: "1405/07/09", topics: topicOf([action]) }, true) ?? ""));
   ok("meetings: ...and one with no deadline",
     /مهلت/.test(mm.meetingRefusal({ title: "t", meetingDateJalali: "1405/07/09",
-      items: [{ ...action, assignees: [{ userId: "u1", name: "a" }] }] }, true) ?? ""));
+      topics: topicOf([{ ...action, assignees: [{ userId: "u1", name: "a" }] }]) }, true) ?? ""));
   ok("meetings: a title and a date are always required",
-    !!mm.meetingRefusal({ title: "", meetingDateJalali: "1405/07/09", items: [] }, false)
-    && !!mm.meetingRefusal({ title: "t", meetingDateJalali: "", items: [] }, false));
+    !!mm.meetingRefusal({ title: "", meetingDateJalali: "1405/07/09", topics: [] }, false)
+    && !!mm.meetingRefusal({ title: "t", meetingDateJalali: "", topics: [] }, false));
+
+  /* -- a meeting is a list of topics, each a project's or internal -- */
+  ok("topics: every topic needs a title, named by its place",
+    /عنوان موضوع 2/.test(mm.meetingRefusal({ title: "t", meetingDateJalali: "1405/07/09",
+      topics: [...topicOf([]), ...topicOf([], "  ")] }, false) ?? ""));
+  ok("topics: an item is named by its topic and its place in it",
+    /موضوع 2، بند 1/.test(mm.meetingRefusal({ title: "t", meetingDateJalali: "1405/07/09",
+      topics: [...topicOf([]), ...topicOf([action])] }, true) ?? ""));
+  const mixed = [
+    { title: "الف", projectId: "p1" }, { title: "داخلی", projectId: null },
+    { title: "ب", projectId: "p2" }, { title: "الف ۲", projectId: "p1" },
+  ];
+  eq("topics: the distinct projects, in the order they appear",
+    mm.topicProjects(mixed).map((t) => t.projectId).join(","), "p1,p2");
+  eq("topics: a project's view is its own topics and no other",
+    mm.topicsForProject(mixed, "p1").map((t) => t.title).join(","), "الف,الف ۲");
+  eq("topics: ...never the internal ones", mm.topicsForProject(mixed, "p2").length, 1);
+  ok("topics: the task says which topic it came from",
+    mm.meetingTaskDescription({ code: "MOM-1", title: "هفتگی" }, "کار", "نقشه پروژه").includes("موضوع: نقشه پروژه"));
 
   /* -- keeping the board in step -- */
   const a1 = { userId: "u1", name: "علی" };
@@ -22986,6 +23009,7 @@ head("Meeting minutes");
   const index = mm.memberIndexOf("c1", [{ kind: "user", userId: "u1", name: "x" }, { kind: "contact", name: "مهمان" }], ["u2"]);
   eq("meetings: the member index names the creator, colleagues and assignees", index, ",c1,u1,u2,");
   const svc = readFileSync("src/server/services/meetingService.ts", "utf8");
+  const msvc0 = await import("../src/server/services/meetingService");
   ok("meetings: visibility is an exact, comma-wrapped match inside the query",
     svc.includes("memberIndex: { contains: `,${user.id},` }"));
   ok("meetings: every read goes through it",
@@ -23005,7 +23029,9 @@ head("Meeting minutes");
   eq("meetings: both spellings of a meeting relation are read",
     `${tr.taskRelationKind("meeting")}|${tr.taskRelationKind("صورتجلسه")}`, "meeting|meeting");
   const taskSvc = readFileSync("src/server/services/taskService.ts", "utf8");
-  ok("meetings: a meeting task shows the meeting's project on its card", /kind === "meeting" \? byMeeting/.test(taskSvc));
+  ok("meetings: a meeting task shows the project of its own topic on its card",
+    /byMeetingTask\.set\(link\.taskId, ctx\)/.test(taskSvc) && /byMeetingTask\.get\(row\.id\)/.test(taskSvc)
+    && !/m\.project\b/.test(taskSvc.slice(taskSvc.indexOf("async function withProjectContext"))));
 
   /* -- routes, module, permission -- */
   const route = readFileSync("src/server/routes/meetings.ts", "utf8");
@@ -23020,9 +23046,44 @@ head("Meeting minutes");
     && auth.canSeeAllMeetings({ id: "u", permissions: { meetingsAll: true } } as never)
     && auth.canSeeAllMeetings({ id: "u", isSystemAdmin: true } as never));
   ok("meetings: a project's meetings block its deletion by name",
-    readFileSync("src/server/services/projectService.ts", "utf8").includes("db.meeting.count({ where: { projectId: id } })"));
+    readFileSync("src/server/services/projectService.ts", "utf8").includes("db.meeting.count({ where: { topics: { some: { projectId: id } } } })"));
+
+  /* -- topics on the server -- */
+  const legacy = msvc0.parseTopics({ items: [{ text: "x", kind: "DECISION" }], projectId: "p1" }, "جلسه");
+  ok("topics: a caller that sends flat items gets one topic titled as the meeting, with its project",
+    legacy.length === 1 && legacy[0].title === "جلسه" && legacy[0].projectId === "p1" && legacy[0].items.length === 1);
+  eq("topics: ...and topics sent are read as topics", msvc0.parseTopics({
+    topics: [{ title: "a", projectId: "p2", items: [] }, { title: "b", items: [] }], items: [{ text: "ignored" }],
+  }, "جلسه").map((t) => `${t.title}:${t.projectId}`).join("|"), "a:p2|b:null");
+  ok("topics: an item-level project filter matches only its own topic",
+    msvc0.topicMatchesProject("p1", "p1") && !msvc0.topicMatchesProject(null, "p1")
+    && msvc0.topicMatchesProject(null, "internal") && !msvc0.topicMatchesProject("p1", "internal")
+    && msvc0.topicMatchesProject("p9", null));
+  const fact = msvc0.meetingFactText({ code: "MOM-1", title: "هفتگی", meetingDateJalali: "1405/07/09" }, "علی",
+    [{ title: "نقشه‌ها", projectId: "p1", conclusion: "طبق استاندارد ISA", items: [] }], 0);
+  ok("topics: a project's feed names its own topics and their conclusions", fact.includes("نقشه‌ها") && fact.includes("طبق استاندارد ISA"));
+  ok("topics: the feed line is written per project, from that project's topics alone",
+    /for \(const projectId of projectIds\)[\s\S]{0,120}topics\.filter\(\(t\) => t\.projectId === projectId\)/.test(svc));
+  ok("topics: the meeting's project filter reads its topics",
+    svc.includes("and.push({ topics: { some: { projectId: project } } })"));
+  ok("topics: a topic removed takes its items, and is reconciled by id",
+    /tx\.meetingTopic\.update\(\{ where: \{ id: topic\.id \}/.test(svc) && /tx\.meetingTopic\.deleteMany/.test(svc));
+  ok("topics: the meeting carries no project of its own any more",
+    !/model Meeting \{[^}]*projectId/.test(readFileSync("prisma/schema.prisma", "utf8")));
+  const mig = readFileSync("prisma/migrations/20261009000000_meeting_topics/migration.sql", "utf8");
+  ok("topics: every stored meeting gets one topic carrying its project before the column is dropped",
+    mig.indexOf("INSERT INTO [dbo].[meeting_topics]") > 0
+    && mig.indexOf("INSERT INTO [dbo].[meeting_topics]") < mig.indexOf("DROP COLUMN [projectId]")
+    && /m\.\[title\], m\.\[projectId\]/.test(mig));
+  ok("topics: ...and its items are moved under it", /UPDATE i SET \[topicId\] = t\.\[id\]/.test(mig));
+  const mvSrc = readFileSync("src/components/MeetingsView.tsx", "utf8");
+  ok("topics: seen from a project the form draws only that project's topics, and keeps the rest",
+    /const shown = fixedProjectId \? topics\.filter\(\(t\) => t\.projectId === fixedProjectId\) : topics;/.test(mvSrc)
+    && /topics: topics\.map\(/.test(mvSrc));
+  ok("topics: from a project the print is that project's part",
+    /onPrint\(loaded, fixedProjectId\)/.test(mvSrc) && /topicsForProject\(meeting\.topics, projectId\)/.test(mvSrc));
   /* -- every action across the meetings -- */
-  const msvc = await import("../src/server/services/meetingService");
+  const msvc = msvc0;
   ok("meetings: «باز» includes the overdue", msvc.actionMatchesState("OVERDUE", "open") && msvc.actionMatchesState("OPEN", "open"));
   ok("meetings: ...and not the finished or the drafts",
     !msvc.actionMatchesState("DONE", "open") && !msvc.actionMatchesState("CANCELLED", "open")
@@ -23057,14 +23118,17 @@ head("Meeting minutes: the printed document and the project folder");
   const md = await import("../src/utils/meetingDocument");
   const base = {
     code: "MOM-0507-001", title: "جلسه <b>فنی</b>", meetingDateJalali: "1405/07/09", startTime: "09:00",
-    endTime: null, place: null, summary: null, projectCode: null, projectName: null, customerName: null,
+    endTime: null, place: null, summary: null,
     status: "FINAL" as const, nextMeetingDateJalali: null, createdByName: null,
     attendees: [{ kind: "user" as const, userId: "u1", name: "علی" }, { kind: "contact" as const, name: "مهمان", organization: "شرکت" }],
     absentees: [{ kind: "user" as const, userId: "u2", name: "غایب" }],
-    items: [
-      { lineNo: 1, text: "تصمیم", kind: "DECISION" as const, assignees: [], dueDateJalali: null, state: "NONE" as const },
-      { lineNo: 2, text: "کار", kind: "ACTION" as const, assignees: [{ userId: "u1", name: "علی" }], dueDateJalali: "1405/07/20", state: "OVERDUE" as const },
-    ],
+    topics: [{
+      title: "هماهنگی", projectCode: null, projectName: null, customerName: null, discussion: null, conclusion: null,
+      items: [
+        { lineNo: 1, text: "تصمیم", kind: "DECISION" as const, assignees: [], dueDateJalali: null, state: "NONE" as const },
+        { lineNo: 2, text: "کار", kind: "ACTION" as const, assignees: [{ userId: "u1", name: "علی" }], dueDateJalali: "1405/07/20", state: "OVERDUE" as const },
+      ],
+    }],
   };
   const html = md.renderMeetingDocument({ meeting: base, template: { companyName: "ATA" } });
   ok("minutes: the title is escaped, never interpolated raw", html.includes("&lt;b&gt;فنی&lt;/b&gt;") && !html.includes("<b>فنی</b>"));
@@ -23096,12 +23160,40 @@ head("Meeting minutes: the printed document and the project folder");
   ok("minutes: an A4 page with its own margins and colours", /@page \{\s*size: A4;/.test(html) && html.includes("print-color-adjust: exact"));
   eq("minutes: the PDF is named after the meeting", md.meetingDocumentTitle(base), "صورتجلسه MOM-0507-001");
 
+  /* -- topic by topic, and a project's part on its own -- */
+  const twoTopics = {
+    ...base, summary: "خلاصه داخلی",
+    topics: [
+      { title: "نقشه پروژه", projectCode: "ATA-05-38", projectName: "پالایشگاه", customerName: "نفت آفتاب",
+        discussion: "دو روش مطرح شد", conclusion: "طبق ISA ترسیم شود", items: base.topics[0].items },
+      { title: "استراتژی داخلی", projectCode: null, projectName: null, customerName: null,
+        discussion: "محرمانه", conclusion: null, items: [] },
+    ],
+  };
+  const full = md.renderMeetingDocument({ meeting: twoTopics, template: null });
+  ok("minutes: each topic prints in order with its scope",
+    full.indexOf('data-topic="1"') > 0 && full.indexOf('data-topic="1"') < full.indexOf('data-topic="2"')
+    && full.includes("ATA-05-38 — پالایشگاه") && /موضوع 2: استراتژی داخلی <span class="scope">\(داخلی\)/.test(full));
+  ok("minutes: a topic prints what was discussed and what was concluded",
+    full.includes("دو روش مطرح شد") && full.includes('<div class="conclusion">طبق ISA ترسیم شود</div>'));
+  ok("minutes: the header names the projects discussed", /<th>پروژه‌ها<\/th><td>ATA-05-38/.test(full));
+  ok("minutes: a topic heading is kept with what follows", /\.topic-title \{[^}]*break-after: avoid/.test(full));
+  const part = md.renderMeetingDocument({
+    meeting: { ...twoTopics, topics: [twoTopics.topics[0]] },
+    projectScope: { code: "ATA-05-38", name: "پالایشگاه", customerName: "نفت آفتاب" }, template: null,
+  });
+  ok("minutes: a project's part says which part it is, and names the customer",
+    part.includes("data-project-scope") && part.includes("<th>کارفرما</th><td>نفت آفتاب</td>"));
+  ok("minutes: ...and leaves out the general summary and the internal topic",
+    !part.includes("خلاصه داخلی") && !part.includes("محرمانه") && !part.includes("استراتژی داخلی"));
+  eq("minutes: ...saved under the project's code", md.meetingDocumentTitle(base, "ATA-05-38"), "صورتجلسه MOM-0507-001 - ATA-05-38");
+
   const docs = readFileSync("src/server/services/projectDocuments.ts", "utf8");
   ok("folder: «صورتجلسات» is one of the project's folders", docs.includes('{ id: "meetings", name: "صورتجلسات" }'));
   ok("folder: each meeting opens its printable view",
     docs.includes("url: `?printModule=meetings&printId=${meeting.id}`") && /type: "meeting",\s*generated: true/.test(docs));
   ok("folder: the meetings listed go through the meeting's own visibility",
-    /where: visibleMeetings \? \{ AND: \[\{ projectId \}, visibleMeetings\] \}/.test(docs));
+    /\{ AND: \[\{ topics: \{ some: \{ projectId \} \} \}, visibleMeetings\] \}/.test(docs));
   ok("folder: the route hands the caller over", readFileSync("src/server/routes/projects.ts", "utf8")
     .includes("listProjectDocuments(req.params.id, user)"));
   ok("folder: the documents tab draws it", readFileSync("src/components/ProjectsView.tsx", "utf8")
@@ -23110,7 +23202,7 @@ head("Meeting minutes: the printed document and the project folder");
     .includes("initialPrintDocId={printDocumentRequest?.module === 'meetings' ? printDocumentRequest.docId : undefined}"));
   const mv = readFileSync("src/components/MeetingsView.tsx", "utf8");
   ok("print: through the browser's own engine, assets inlined first",
-    /inlineDocumentAssets\(html\)[\s\S]{0,120}printHtmlDocument\(standalone, meetingDocumentTitle\(meeting\)\)/.test(mv));
+    /inlineDocumentAssets\(html\)[\s\S]{0,120}printHtmlDocument\(standalone, meetingDocumentTitle\(meeting, scopeCode\)\)/.test(mv));
 }
 
 head("Dark mode: the `dark:` variant follows the application's switch");

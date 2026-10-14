@@ -13,9 +13,9 @@ import { TASK_CANCELLED, TASK_DONE, TASK_TODO } from "../../utils/workBoard";
 import { attachmentListColumn, parseAttachmentList, type ActivityAttachment } from "../../utils/attachments";
 import {
   MeetingAssignee, MeetingItemDraft, MeetingItemKind, MeetingItemState, MeetingParticipant,
-  MeetingStatus, StoredItem, isOpenItemState, meetingItemKind, meetingItemState, meetingRefusal,
+  MeetingStatus, MeetingTopicDraft, StoredItem, isOpenItemState, meetingItemKind, meetingItemState, meetingRefusal,
   meetingStatus, meetingTaskDescription, meetingTaskTitle, memberIndexOf, parseAssignees,
-  parseParticipants, parseTaskLinks, planTaskSync,
+  parseParticipants, parseTaskLinks, planTaskSync, topicProjects,
 } from "../../utils/meetingMinutes";
 
 /**
@@ -63,7 +63,14 @@ export interface MeetingInput {
   endTime?: unknown;
   place?: unknown;
   summary?: unknown;
+  /**
+   * Only read when `topics` is absent: a caller written before topics existed
+   * (n8n, an older tab) sends `projectId` and a flat `items`, and gets one
+   * topic titled as the meeting — exactly what every stored meeting became.
+   */
   projectId?: unknown;
+  /** `[{id?, title, projectId?, discussion?, conclusion?, items: [...]}]` */
+  topics?: unknown;
   attendees?: unknown;
   absentees?: unknown;
   nextMeetingDate?: unknown;
@@ -94,10 +101,35 @@ function parseItems(raw: unknown): MeetingItemDraft[] {
   });
 }
 
+/**
+ * The topics as posted, or — for a caller that sends none — the flat items
+ * wrapped in one topic titled as the meeting.
+ */
+export function parseTopics(input: MeetingInput, meetingTitle: string | null): MeetingTopicDraft[] {
+  if (Array.isArray(input.topics)) {
+    return input.topics.map((entry) => {
+      const e = (entry ?? {}) as Record<string, unknown>;
+      return {
+        id: e.id ? String(e.id) : null,
+        title: String(e.title ?? "").trim().slice(0, 300),
+        projectId: toNullableString(e.projectId, 36),
+        discussion: toNullableString(e.discussion),
+        conclusion: toNullableString(e.conclusion),
+        items: parseItems(e.items),
+      };
+    });
+  }
+  const items = parseItems(input.items);
+  const projectId = toNullableString(input.projectId, 36);
+  if (items.length === 0 && !projectId) return [];
+  return [{ id: null, title: meetingTitle ?? "", projectId, discussion: null, conclusion: null, items }];
+}
+
 /* --------------------------------- reading -------------------------------- */
 
 export interface MeetingItemRow {
   id: string;
+  topicId: string | null;
   lineNo: number;
   text: string;
   kind: MeetingItemKind;
@@ -106,6 +138,28 @@ export interface MeetingItemRow {
   state: MeetingItemState;
   /** One per assignee who has a task, with where that task has got to. */
   tasks: { userId: string; taskId: string; assigneeName: string; status: string | null }[];
+}
+
+export interface MeetingTopicRow {
+  /** Empty for the stand-in topic of a meeting stored with items and no topic. */
+  id: string;
+  lineNo: number;
+  title: string;
+  projectId: string | null;
+  projectCode: string | null;
+  projectName: string | null;
+  customerName: string | null;
+  discussion: string | null;
+  conclusion: string | null;
+  /** Present on a detail read and on every list row (the counts need them). */
+  items: MeetingItemRow[];
+}
+
+export interface MeetingProjectRef {
+  id: string;
+  code: string | null;
+  name: string | null;
+  customerName: string | null;
 }
 
 export interface MeetingRow {
@@ -117,10 +171,8 @@ export interface MeetingRow {
   endTime: string | null;
   place: string | null;
   summary: string | null;
-  projectId: string | null;
-  projectCode: string | null;
-  projectName: string | null;
-  customerName: string | null;
+  /** The distinct projects its topics name; empty for an internal meeting. */
+  projects: MeetingProjectRef[];
   status: MeetingStatus;
   attendees: MeetingParticipant[];
   absentees: MeetingParticipant[];
@@ -134,18 +186,29 @@ export interface MeetingRow {
   itemCount: number;
   actionCount: number;
   openActionCount: number;
-  items?: MeetingItemRow[];
+  topicCount: number;
+  topics: MeetingTopicRow[];
 }
+
+const TOPIC_PROJECT_SELECT = {
+  select: { id: true, code: true, name: true, customer: { select: { companyName: true } } },
+} as const;
 
 const ROW_SELECT = {
   id: true, code: true, title: true, meetingDateJalali: true, startTime: true, endTime: true,
-  place: true, summary: true, projectId: true, status: true, attendees: true, absentees: true,
+  place: true, summary: true, status: true, attendees: true, absentees: true,
   nextMeetingDateJalali: true, attachments: true, createdByUserId: true, createdByName: true,
   finalizedByName: true, createdAt: true,
-  project: { select: { code: true, name: true, customer: { select: { companyName: true } } } },
+  topics: {
+    select: {
+      id: true, lineNo: true, title: true, projectId: true, discussion: true, conclusion: true,
+      project: TOPIC_PROJECT_SELECT,
+    },
+    orderBy: { lineNo: "asc" as const },
+  },
   items: {
     select: {
-      id: true, lineNo: true, text: true, kind: true, assignees: true,
+      id: true, topicId: true, lineNo: true, text: true, kind: true, assignees: true,
       dueDateJalali: true, taskLinks: true,
     },
     orderBy: { lineNo: "asc" as const },
@@ -173,7 +236,6 @@ function toRow(
   tasks: Map<string, { status: string; name: string | null }>,
   user: AuthUser,
   todayJalali: string,
-  withItems: boolean,
 ): MeetingRow {
   const items: MeetingItemRow[] = m.items.map((item) => {
     const kind = meetingItemKind(item.kind);
@@ -188,6 +250,7 @@ function toRow(
     }));
     return {
       id: item.id,
+      topicId: item.topicId,
       lineNo: item.lineNo,
       text: item.text,
       kind,
@@ -197,6 +260,44 @@ function toRow(
       tasks: linked,
     };
   });
+
+  const topics: MeetingTopicRow[] = m.topics.map((t) => ({
+    id: t.id,
+    lineNo: t.lineNo,
+    title: t.title,
+    projectId: t.projectId,
+    projectCode: t.project?.code ?? null,
+    projectName: t.project?.name ?? null,
+    customerName: t.project?.customer?.companyName ?? null,
+    discussion: t.discussion,
+    conclusion: t.conclusion,
+    items: [],
+  }));
+  /*
+   * An item whose topic is not among the meeting's — never written by this
+   * build, but a row is not evidence of its own consistency — goes under the
+   * first topic, or under a stand-in titled as the meeting, rather than
+   * vanishing from minutes somebody is reading.
+   */
+  const byId = new Map(topics.map((t) => [t.id, t]));
+  for (const item of items) {
+    let home = item.topicId ? byId.get(item.topicId) : undefined;
+    if (!home) {
+      if (topics.length === 0) {
+        topics.push({
+          id: "", lineNo: 1, title: m.title, projectId: null, projectCode: null, projectName: null,
+          customerName: null, discussion: null, conclusion: null, items: [],
+        });
+      }
+      home = topics[0];
+    }
+    home.items.push(item);
+  }
+
+  const projects: MeetingProjectRef[] = topicProjects(topics).map((t) => ({
+    id: t.projectId!, code: t.projectCode, name: t.projectName, customerName: t.customerName,
+  }));
+
   return {
     id: m.id,
     code: m.code,
@@ -206,10 +307,7 @@ function toRow(
     endTime: m.endTime,
     place: m.place,
     summary: m.summary,
-    projectId: m.projectId,
-    projectCode: m.project?.code ?? null,
-    projectName: m.project?.name ?? null,
-    customerName: m.project?.customer?.companyName ?? null,
+    projects,
     status: meetingStatus(m.status),
     attendees: parseParticipants(m.attendees),
     absentees: parseParticipants(m.absentees),
@@ -223,12 +321,16 @@ function toRow(
     itemCount: items.length,
     actionCount: items.filter((i) => i.kind === "ACTION").length,
     openActionCount: items.filter((i) => isOpenItemState(i.state)).length,
-    ...(withItems ? { items } : {}),
+    topicCount: topics.length,
+    topics,
   };
 }
 
 export interface MeetingFilters {
-  /** A project id, «internal» for meetings belonging to none, or absent. */
+  /**
+   * A project id (a meeting with at least one topic of that project),
+   * «internal» (a meeting none of whose topics names a project), or absent.
+   */
   project?: unknown;
   from?: unknown;
   to?: unknown;
@@ -241,21 +343,37 @@ export const MEETING_SORTABLE = ["meetingDate", "createdAt", "code", "title"] as
 
 /**
  * The search, written once for the list and the carry-over: the meeting's own
- * words, the words of its items, the names of the people at it (they are in
- * the JSON as written, so a `contains` finds them), and the job it was about.
+ * words, the words of its topics and items, the names of the people at it
+ * (they are in the JSON as written, so a `contains` finds them), and the jobs
+ * its topics were about.
  */
 function searchWhere(term: string): Prisma.MeetingWhereInput | undefined {
   const own = searchClause(term, ["code", "title", "place", "summary", "attendees", "absentees"]);
   if (!own) return undefined;
   const items = searchClause(term, ["text", "assignees"]);
+  const topics = searchClause(term, ["title", "discussion", "conclusion"]);
   const project = searchClause(term, ["code", "name"]);
   return {
     OR: [
       ...(own.OR as Prisma.MeetingWhereInput[]),
       ...(items ? [{ items: { some: items as Prisma.MeetingItemWhereInput } }] : []),
-      ...(project ? [{ project: project as Prisma.ProjectWhereInput }] : []),
+      ...(topics ? [{ topics: { some: topics as Prisma.MeetingTopicWhereInput } }] : []),
+      ...(project ? [{ topics: { some: { project: project as Prisma.ProjectWhereInput } } }] : []),
     ],
   };
+}
+
+/** A project filter as a topic clause: «internal», a project id, or nothing. */
+function projectFilterOf(value: unknown): string | null {
+  const v = String(value ?? "").trim();
+  return v && v !== "all" ? v : null;
+}
+
+/** Does this topic answer the project filter? The item-level twin of the clause below. */
+export function topicMatchesProject(topicProjectId: string | null, filter: string | null): boolean {
+  if (!filter) return true;
+  if (filter === "internal") return !topicProjectId;
+  return topicProjectId === filter;
 }
 
 export function buildMeetingWhere(q: { search?: string }, filters: MeetingFilters, user: AuthUser): Prisma.MeetingWhereInput {
@@ -263,9 +381,15 @@ export function buildMeetingWhere(q: { search?: string }, filters: MeetingFilter
   const visibility = visibilityClause(user);
   if (visibility) and.push(visibility);
 
-  const project = String(filters.project ?? "").trim();
-  if (project === "internal") and.push({ projectId: null });
-  else if (project && project !== "all") and.push({ projectId: project });
+  /*
+   * A meeting walks through several jobs, so «this project's meetings» is any
+   * meeting with a topic of it; «internal» is one none of whose topics names a
+   * project. `{ not: null }` is the plain IS NOT NULL here, not a comparison
+   * against a value — there is no NULL branch to lose.
+   */
+  const project = projectFilterOf(filters.project);
+  if (project === "internal") and.push({ topics: { none: { projectId: { not: null } } } });
+  else if (project) and.push({ topics: { some: { projectId: project } } });
 
   const range = jalaliRangeFilter(filters.from, filters.to);
   if (range) and.push({ meetingDate: range });
@@ -304,7 +428,7 @@ export async function listMeetings(
     });
     const tasks = await taskStatuses(candidates);
     const open = candidates
-      .map((m) => toRow(m, tasks, user, todayJalali, false))
+      .map((m) => toRow(m, tasks, user, todayJalali))
       .filter((r) => r.openActionCount > 0)
       .map((r) => r.id);
     where = { id: { in: open } };
@@ -321,7 +445,7 @@ export async function listMeetings(
     db.meeting.count({ where }),
   ]);
   const tasks = await taskStatuses(rows);
-  return buildResult(rows.map((m) => toRow(m, tasks, user, todayJalali, true)), total, q);
+  return buildResult(rows.map((m) => toRow(m, tasks, user, todayJalali)), total, q);
 }
 
 export async function getMeeting(id: string, user: AuthUser, todayJalali: string): Promise<MeetingRow | null> {
@@ -331,7 +455,7 @@ export async function getMeeting(id: string, user: AuthUser, todayJalali: string
     select: ROW_SELECT,
   });
   if (!meeting) return null;
-  return toRow(meeting, await taskStatuses([meeting]), user, todayJalali, true);
+  return toRow(meeting, await taskStatuses([meeting]), user, todayJalali);
 }
 
 /**
@@ -351,7 +475,8 @@ export async function openActionsForProject(
   const meetings = await getDb().meeting.findMany({
     where: {
       AND: [
-        { projectId, status: "FINAL" },
+        { status: "FINAL" },
+        { topics: { some: { projectId } } },
         { items: { some: { kind: "ACTION" } } },
         ...(excludeMeetingId ? [{ id: { not: excludeMeetingId } }] : []),
         ...(visibility ? [visibility] : []),
@@ -364,24 +489,31 @@ export async function openActionsForProject(
   const tasks = await taskStatuses(meetings);
   const out: {
     meetingId: string; meetingCode: string; meetingTitle: string; meetingDateJalali: string | null;
+    topicTitle: string;
     itemId: string; text: string; dueDateJalali: string | null; state: MeetingItemState;
     assignees: string[];
   }[] = [];
   for (const m of meetings) {
-    const row = toRow(m, tasks, user, todayJalali, true);
-    for (const item of row.items ?? []) {
+    const row = toRow(m, tasks, user, todayJalali);
+    // Only this project's topics: an action from the internal half of the same
+    // meeting is not something this project's next meeting has to ask about.
+    for (const topic of row.topics) {
+      if (topic.projectId !== projectId) continue;
+      for (const item of topic.items) {
       if (!isOpenItemState(item.state)) continue;
       out.push({
         meetingId: row.id,
         meetingCode: row.code,
         meetingTitle: row.title,
         meetingDateJalali: row.meetingDateJalali,
+        topicTitle: topic.title,
         itemId: item.id,
         text: item.text,
         dueDateJalali: item.dueDateJalali,
         state: item.state,
         assignees: item.assignees.map((a) => a.name),
       });
+      }
     }
   }
   return out;
@@ -429,6 +561,8 @@ export interface MeetingActionRow {
   meetingTitle: string;
   meetingDateJalali: string | null;
   meetingStatus: MeetingStatus;
+  /** The topic it was raised under, and that topic's project (null: internal). */
+  topicTitle: string;
   projectId: string | null;
   projectCode: string | null;
   projectName: string | null;
@@ -445,9 +579,19 @@ export async function listMeetingActions(
   user: AuthUser,
   todayJalali: string,
 ) {
-  const where = buildMeetingWhere(q, { ...filters, openActions: undefined }, user);
+  /*
+   * The project clause is this list's own: «internal» here means an internal
+   * *topic*, wherever it sits — a mixed meeting's internal actions are exactly
+   * as internal as a purely internal meeting's — while the meeting list's
+   * «internal» means a meeting with no project at all.
+   */
+  const project = projectFilterOf(filters.project);
+  const where = buildMeetingWhere(q, { ...filters, project: undefined, openActions: undefined }, user);
+  const topicClause: Prisma.MeetingWhereInput | null = project === "internal"
+    ? { topics: { some: { projectId: null } } }
+    : project ? { topics: { some: { projectId: project } } } : null;
   const meetings = await getDb().meeting.findMany({
-    where: { AND: [where, { items: { some: { kind: "ACTION" } } }] },
+    where: { AND: [where, { items: { some: { kind: "ACTION" } } }, ...(topicClause ? [topicClause] : [])] },
     select: ROW_SELECT,
     orderBy: [{ meetingDate: "desc" }, { createdAt: "desc" }],
     take: MEETING_SCAN_LIMIT,
@@ -455,21 +599,28 @@ export async function listMeetingActions(
   const tasks = await taskStatuses(meetings);
   const stateFilter = String(filters.state ?? "open") || "open";
   const assignee = String(filters.assignee ?? "").trim();
+  // The meeting clause found meetings with a topic of the project; the items
+  // are narrowed to that topic too, or the internal half of a mixed meeting
+  // would be listed under a project it has nothing to do with.
 
   const all: MeetingActionRow[] = [];
   for (const m of meetings) {
-    const row = toRow(m, tasks, user, todayJalali, true);
-    for (const item of row.items ?? []) {
-      if (item.kind !== "ACTION") continue;
-      if (!actionMatchesState(item.state, stateFilter)) continue;
-      if (assignee && assignee !== "all" && !item.assignees.some((a) => a.userId === assignee)) continue;
-      all.push({
-        itemId: item.id, lineNo: item.lineNo, text: item.text, dueDateJalali: item.dueDateJalali,
-        state: item.state, assignees: item.assignees, tasks: item.tasks,
-        meetingId: row.id, meetingCode: row.code, meetingTitle: row.title,
-        meetingDateJalali: row.meetingDateJalali, meetingStatus: row.status,
-        projectId: row.projectId, projectCode: row.projectCode, projectName: row.projectName,
-      });
+    const row = toRow(m, tasks, user, todayJalali);
+    for (const topic of row.topics) {
+      if (!topicMatchesProject(topic.projectId, project)) continue;
+      for (const item of topic.items) {
+        if (item.kind !== "ACTION") continue;
+        if (!actionMatchesState(item.state, stateFilter)) continue;
+        if (assignee && assignee !== "all" && !item.assignees.some((a) => a.userId === assignee)) continue;
+        all.push({
+          itemId: item.id, lineNo: item.lineNo, text: item.text, dueDateJalali: item.dueDateJalali,
+          state: item.state, assignees: item.assignees, tasks: item.tasks,
+          meetingId: row.id, meetingCode: row.code, meetingTitle: row.title,
+          meetingDateJalali: row.meetingDateJalali, meetingStatus: row.status,
+          topicTitle: topic.title,
+          projectId: topic.projectId, projectCode: topic.projectCode, projectName: topic.projectName,
+        });
+      }
     }
   }
 
@@ -496,7 +647,19 @@ export async function listMeetingActions(
 
 type Tx = Prisma.TransactionClient;
 
-interface CreatedTask { id: string; userId: string; name: string; title: string; dueDateJalali: string | null }
+interface CreatedTask {
+  id: string; userId: string; name: string; title: string; dueDateJalali: string | null;
+  /** The project of the topic it was raised under — what the notice names. */
+  projectId: string | null;
+}
+
+/** An item as it will stand, with the topic it sits under. */
+type NextItem = StoredItem & {
+  text: string;
+  dueDateJalali: string | null;
+  topicTitle: string;
+  projectId: string | null;
+};
 
 /**
  * Brings the board into step with the items as they now stand.
@@ -511,7 +674,7 @@ async function syncTasks(
   tx: Tx,
   meeting: { id: string; code: string; title: string; meetingDateJalali: string | null },
   previous: StoredItem[],
-  next: (StoredItem & { text: string; dueDateJalali: string | null })[],
+  next: NextItem[],
   user: AuthUser,
   authorName: string | null,
   todayJalali: string,
@@ -535,7 +698,7 @@ async function syncTasks(
       where: { id: keep.taskId, ...OPEN_TASK },
       data: {
         title: meetingTaskTitle(item.text),
-        description: meetingTaskDescription(meeting, item.text),
+        description: meetingTaskDescription(meeting, item.text, item.topicTitle),
         ...expandDateFields({ dueDate: item.dueDateJalali }, ["dueDate"]),
       },
     });
@@ -548,7 +711,7 @@ async function syncTasks(
     const task = await tx.task.create({
       data: {
         title: meetingTaskTitle(item.text),
-        description: meetingTaskDescription(meeting, item.text),
+        description: meetingTaskDescription(meeting, item.text, item.topicTitle),
         relatedToType: MEETING_TASK_RELATION,
         relatedToId: meeting.id,
         relatedToName: `${meeting.code} — ${meeting.title}`.slice(0, 400),
@@ -566,7 +729,7 @@ async function syncTasks(
     newLinks.set(want.itemId, list);
     created.push({
       id: task.id, userId: want.userId, name: want.name, title: task.title,
-      dueDateJalali: item.dueDateJalali,
+      dueDateJalali: item.dueDateJalali, projectId: item.projectId,
     });
   }
 
@@ -629,7 +792,6 @@ export async function saveMeeting(
   todayJalali: string,
 ): Promise<MeetingWriteOutcome> {
   const db = getDb();
-  const items = parseItems(input.items);
   const attendees = parseParticipants(input.attendees);
   const absentees = parseParticipants(input.absentees);
 
@@ -650,24 +812,26 @@ export async function saveMeeting(
   const finalizing = wasFinal || input.finalize === true || input.finalize === "true";
   const meetingDate = toNullableString(input.meetingDate, 10);
   const title = toNullableString(input.title, 300);
-  const refusal = meetingRefusal({ title, meetingDateJalali: meetingDate, items }, finalizing);
+  const topics = parseTopics(input, title);
+  const refusal = meetingRefusal({ title, meetingDateJalali: meetingDate, topics }, finalizing);
   if (refusal) return refused(refusal, 400);
 
-  // The project must exist; an id from a browser is not evidence that it does.
-  const projectId = toNullableString(input.projectId, 36);
-  if (projectId) {
-    const found = await db.project.findUnique({ where: { id: projectId }, select: { id: true } });
-    if (!found) return refused("پروژه انتخاب‌شده یافت نشد.", 400);
+  // Each project must exist; an id from a browser is not evidence that it does.
+  const projectIds = [...new Set(topics.map((t) => t.projectId).filter((v): v is string => !!v))];
+  if (projectIds.length > 0) {
+    const found = await db.project.count({ where: { id: { in: projectIds } } });
+    if (found !== projectIds.length) return refused("یکی از پروژه‌های انتخاب‌شده یافت نشد.", 400);
   }
 
   const author = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
   const authorName = author?.fullName ?? null;
   const code = existing?.code ?? await nextMeetingCode();
   const creatorId = existing ? existing.createdByUserId : user.id;
+  const allItems = topics.flatMap((t) => t.items);
   const memberIndex = memberIndexOf(
     creatorId,
     [...attendees, ...absentees],
-    items.flatMap((i) => i.assignees.map((a) => a.userId)),
+    allItems.flatMap((i) => i.assignees.map((a) => a.userId)),
   );
 
   const scalars = {
@@ -678,7 +842,6 @@ export async function saveMeeting(
     endTime: timeOf(input.endTime),
     place: toNullableString(input.place, 200),
     summary: toNullableString(input.summary),
-    projectId,
     attendees: attendees.length > 0 ? JSON.stringify(attendees) : null,
     absentees: absentees.length > 0 ? JSON.stringify(absentees) : null,
     memberIndex: memberIndex || null,
@@ -709,45 +872,73 @@ export async function saveMeeting(
         });
 
     /*
-     * Items by id. A stored item the request no longer names was removed —
-     * its row goes (the cascade would take it with the meeting anyway), and
-     * the plan below cancels whatever it had raised.
+     * Topics by id, then items by id under them. An id the meeting never had
+     * is a new record, not somebody else's — so a topic or item id posted from
+     * another meeting cannot be pulled into this one.
      */
+    const prevTopicIds = new Set((existing?.topics ?? []).map((t) => t.id));
+    const keptTopicIds = new Set<string>();
     const previous: StoredItem[] = (existing?.items ?? []).map((i) => ({
       id: i.id,
       kind: meetingItemKind(i.kind),
       assignees: parseAssignees(i.assignees),
       taskLinks: parseTaskLinks(i.taskLinks),
     }));
-    const prevIds = new Set(previous.map((p) => p.id));
-    const next: (StoredItem & { text: string; dueDateJalali: string | null })[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      const data = {
-        lineNo: i + 1,
-        text: item.text,
-        kind: item.kind,
-        assignees: item.assignees.length > 0 ? JSON.stringify(item.assignees) : null,
-        ...expandDateFields({ dueDate: item.dueDateJalali ?? null }, ["dueDate"]),
+    const prevItemIds = new Set(previous.map((p) => p.id));
+    const next: NextItem[] = [];
+    let line = 0;
+    for (let t = 0; t < topics.length; t++) {
+      const topic = topics[t];
+      const topicData = {
+        lineNo: t + 1,
+        title: topic.title,
+        projectId: topic.projectId ?? null,
+        discussion: topic.discussion ?? null,
+        conclusion: topic.conclusion ?? null,
       };
-      let itemId: string;
-      if (item.id && prevIds.has(item.id)) {
-        await tx.meetingItem.update({ where: { id: item.id }, data });
-        itemId = item.id;
+      let topicId: string;
+      if (topic.id && prevTopicIds.has(topic.id)) {
+        await tx.meetingTopic.update({ where: { id: topic.id }, data: topicData });
+        topicId = topic.id;
       } else {
-        // An id the meeting never had is a new item, not somebody else's.
-        const created = await tx.meetingItem.create({ data: { ...data, meetingId: meeting.id } });
-        itemId = created.id;
+        topicId = (await tx.meetingTopic.create({ data: { ...topicData, meetingId: meeting.id } })).id;
       }
-      next.push({
-        id: itemId, kind: item.kind, assignees: item.assignees,
-        taskLinks: previous.find((p) => p.id === itemId)?.taskLinks ?? [],
-        text: item.text, dueDateJalali: item.dueDateJalali ?? null,
-      });
+      keptTopicIds.add(topicId);
+
+      for (const item of topic.items) {
+        line += 1;
+        const data = {
+          topicId,
+          lineNo: line,
+          text: item.text,
+          kind: item.kind,
+          assignees: item.assignees.length > 0 ? JSON.stringify(item.assignees) : null,
+          ...expandDateFields({ dueDate: item.dueDateJalali ?? null }, ["dueDate"]),
+        };
+        let itemId: string;
+        if (item.id && prevItemIds.has(item.id)) {
+          await tx.meetingItem.update({ where: { id: item.id }, data });
+          itemId = item.id;
+        } else {
+          itemId = (await tx.meetingItem.create({ data: { ...data, meetingId: meeting.id } })).id;
+        }
+        next.push({
+          id: itemId, kind: item.kind, assignees: item.assignees,
+          taskLinks: previous.find((p) => p.id === itemId)?.taskLinks ?? [],
+          text: item.text, dueDateJalali: item.dueDateJalali ?? null,
+          topicTitle: topic.title, projectId: topic.projectId ?? null,
+        });
+      }
     }
     const keptIds = new Set(next.map((n) => n.id));
     const removed = previous.filter((p) => !keptIds.has(p.id)).map((p) => p.id);
     if (removed.length > 0) await tx.meetingItem.deleteMany({ where: { id: { in: removed } } });
+    // The items first: a topic is only removed once nothing sits under it.
+    const removedTopics = [...prevTopicIds].filter((tid) => !keptTopicIds.has(tid));
+    if (removedTopics.length > 0) {
+      await tx.meetingItem.deleteMany({ where: { meetingId: meeting.id, topicId: { in: removedTopics } } });
+      await tx.meetingTopic.deleteMany({ where: { id: { in: removedTopics } } });
+    }
 
     if (!finalizing) return { meetingId: meeting.id, created: [] as CreatedTask[], cancelled: 0 };
     const synced = await syncTasks(
@@ -780,28 +971,32 @@ export async function saveMeeting(
         taskKind: "GENERAL",
         dueDate: task.dueDateJalali,
         priority: "متوسط",
-        projectId,
+        projectId: task.projectId,
         entityType: "task",
         entityId: task.id,
       });
     });
   }
 
-  // The project's own history, once — when the minutes become final.
-  if (finalizing && !wasFinal && projectId) {
-    await afterCommit("meeting finalised fact", async () => {
-      const actions = items.filter((i) => i.kind === "ACTION").length;
-      const decisions = items.filter((i) => i.kind === "DECISION").length;
-      await logProjectFact({
-        projectId,
-        categoryName: ACTIVITY_CATEGORY.MEETINGS,
-        text: `صورتجلسه ${code} «${title}» (${meetingDate}) توسط ${authorName ?? "کاربر"} نهایی شد`
-          + ` — ${decisions} مصوبه و ${actions} اقدام`
-          + (result.created.length > 0 ? `؛ ${result.created.length} وظیفه ارجاع شد.` : "."),
-        sourceType: "meeting",
-        sourceId: result.meetingId,
-      }, user, todayJalali);
-    });
+  /*
+   * Each project's own history, once — when the minutes become final — and
+   * only about its own topics: the line written on project A's feed names what
+   * was concluded for A, never the internal strategy discussed after it.
+   */
+  if (finalizing && !wasFinal) {
+    for (const projectId of projectIds) {
+      const own = topics.filter((t) => t.projectId === projectId);
+      await afterCommit("meeting finalised fact", async () => {
+        await logProjectFact({
+          projectId,
+          categoryName: ACTIVITY_CATEGORY.MEETINGS,
+          text: meetingFactText({ code, title: title!, meetingDateJalali: meetingDate }, authorName, own,
+            result.created.filter((c) => c.projectId === projectId).length),
+          sourceType: "meeting",
+          sourceId: result.meetingId,
+        }, user, todayJalali);
+      });
+    }
   }
 
   const meeting = await getMeeting(result.meetingId, user, todayJalali);
@@ -809,6 +1004,23 @@ export async function saveMeeting(
     ok: true, meeting, createdTasks: result.created.length, cancelledTasks: result.cancelled,
     error: null, status: 200,
   };
+}
+
+/** The line a project's feed gets when minutes discussing it are finalised. */
+export function meetingFactText(
+  meeting: { code: string; title: string; meetingDateJalali: string | null },
+  authorName: string | null,
+  topics: MeetingTopicDraft[],
+  raisedTasks: number,
+): string {
+  const items = topics.flatMap((t) => t.items);
+  const actions = items.filter((i) => i.kind === "ACTION").length;
+  const decisions = items.filter((i) => i.kind === "DECISION").length;
+  const lines = topics.map((t) => `• ${t.title}${t.conclusion ? ` — نتیجه: ${t.conclusion}` : ""}`);
+  return `صورتجلسه ${meeting.code} «${meeting.title}» (${meeting.meetingDateJalali}) توسط ${authorName ?? "کاربر"} نهایی شد`
+    + ` — ${decisions} مصوبه و ${actions} اقدام`
+    + (raisedTasks > 0 ? `؛ ${raisedTasks} وظیفه ارجاع شد.` : ".")
+    + (lines.length > 0 ? `\n${lines.join("\n")}` : "");
 }
 
 /**

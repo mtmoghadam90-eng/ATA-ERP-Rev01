@@ -4360,18 +4360,33 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
   const posted: { url: string; body: string }[] = [];
   const saved = {
     id: "m1", code: "MOM-0507-001", title: "جلسه هماهنگی", meetingDateJalali: "1405/07/09",
-    startTime: null, endTime: null, place: null, summary: null, projectId: null, projectCode: null,
-    projectName: null, customerName: null, status: "DRAFT", attendees: [], absentees: [],
+    startTime: null, endTime: null, place: null, summary: null, projects: [],
+    status: "DRAFT", attendees: [], absentees: [],
     nextMeetingDateJalali: null, attachments: [], createdByUserId: "u1", createdByName: "علی",
     finalizedByName: null, createdAt: "2026-10-01", canEdit: true, itemCount: 1, actionCount: 1,
-    openActionCount: 0, items: [],
+    openActionCount: 0, topicCount: 0, topics: [],
+  };
+  // A meeting that walked through a project and then an internal subject.
+  const topicItem = (id: string, text: string) => ({
+    id, topicId: null, lineNo: 1, text, kind: "DECISION", assignees: [], dueDateJalali: null, state: "NONE", tasks: [],
+  });
+  const mixed = {
+    ...saved, id: "m2", code: "MOM-0507-002", title: "جلسه هفتگی", summary: "خلاصه کلی جلسه",
+    projects: [{ id: "p1", code: "ATA-05-38", name: "پالایشگاه", customerName: "نفت آفتاب" }],
+    topicCount: 2, itemCount: 2, actionCount: 0,
+    topics: [
+      { id: "t1", lineNo: 1, title: "نقشه‌های پروژه", projectId: "p1", projectCode: "ATA-05-38", projectName: "پالایشگاه",
+        customerName: "نفت آفتاب", discussion: "دو روش مطرح شد", conclusion: "طبق ISA", items: [topicItem("i1", "نقشه‌ها با ISA")] },
+      { id: "t2", lineNo: 2, title: "استراتژی داخلی", projectId: null, projectCode: null, projectName: null,
+        customerName: null, discussion: "محرمانه", conclusion: null, items: [topicItem("i2", "بند داخلی")] },
+    ],
   };
   const askedM: string[] = [];
   const actionRow = {
     itemId: "it1", lineNo: 1, text: "ارسال دیتاشیت", dueDateJalali: "1405/07/20", state: "OPEN",
     assignees: [{ userId: "u2", name: "رضا" }], tasks: [], meetingId: "m1", meetingCode: "MOM-0507-001",
     meetingTitle: "جلسه هماهنگی", meetingDateJalali: "1405/07/09", meetingStatus: "FINAL",
-    projectId: null, projectCode: null, projectName: null,
+    topicTitle: "هماهنگی", projectId: null, projectCode: null, projectName: null,
   };
   gM.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
     const u = decodeURIComponent(String(url));
@@ -4382,6 +4397,14 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
       body = { success: true, rows: [actionRow], total: 1, page: 1, pageSize: 50, totalPages: 1 };
     } else if (u === "/api/meetings/m1") {
       body = { success: true, meeting: saved };
+    } else if (u === "/api/meetings/m2") {
+      body = { success: true, meeting: mixed };
+    } else if (u.startsWith("/api/meetings/open-actions")) {
+      body = { success: true, items: [] };
+    } else if (u.startsWith("/api/meetings?") && u.includes("project=p1")) {
+      body = { success: true, rows: [mixed], total: 1, page: 1, pageSize: 25, totalPages: 1 };
+    } else if (init?.method === "PUT") {
+      body = { success: true, meeting: mixed, createdTasks: 0, cancelledTasks: 0 };
     } else if (u.startsWith("/api/users")) {
       body = { success: true, rows: [{ id: "u1", fullName: "علی" }, { id: "u2", fullName: "رضا" }], total: 2, page: 1, pageSize: 200, totalPages: 1 };
     } else if (init?.method === "POST") {
@@ -4411,8 +4434,14 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
     titleBox!.value = "جلسه هماهنگی";
     handlers(titleBox!).onChange?.({ target: titleBox, currentTarget: titleBox });
   });
-  await click(hostM.querySelector("#meeting-add-item"));
-  const text = hostM.querySelector<HTMLTextAreaElement>('[data-meeting-item="1"] textarea');
+  ok("meetings screen: a new meeting opens on its first topic", !!hostM.querySelector('[data-topic-card="1"]'));
+  const topicTitle = hostM.querySelector<HTMLInputElement>('[data-topic-card="1"] [data-topic-title]');
+  await act(async () => {
+    topicTitle!.value = "ارسال مدارک";
+    handlers(topicTitle!).onChange?.({ target: topicTitle, currentTarget: topicTitle });
+  });
+  await click(hostM.querySelector('[data-topic-card="1"] [data-add-item]'));
+  const text = hostM.querySelector<HTMLTextAreaElement>('[data-topic-card="1"] [data-meeting-item="1"] textarea');
   await act(async () => {
     text!.value = "ارسال دیتاشیت به مشتری";
     handlers(text!).onChange?.({ target: text, currentTarget: text });
@@ -4436,8 +4465,10 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
   const draft = posted[0] ? JSON.parse(posted[0].body) : null;
   ok("meetings screen: a draft is posted to the module's own endpoint", posted[0]?.url === "/api/meetings", posted);
   ok("meetings screen: ...not finalised", draft?.finalize === false);
-  ok("meetings screen: ...with the action and its assignee",
-    draft?.items?.[0]?.kind === "ACTION" && draft.items[0].assignees?.[0]?.userId === "u2", draft?.items);
+  ok("meetings screen: ...with the topic, and the action and its assignee under it",
+    draft?.topics?.[0]?.title === "ارسال مدارک" && draft.topics[0].projectId === null
+    && draft.topics[0].items?.[0]?.kind === "ACTION" && draft.topics[0].items[0].assignees?.[0]?.userId === "u2", draft?.topics);
+  ok("meetings screen: ...and no meeting-level project any more", draft && !("projectId" in draft) && !("items" in draft));
   ok("meetings screen: the person writing it is an attendee by default",
     draft?.attendees?.some((a: { userId?: string }) => a.userId === "u1"), draft?.attendees);
 
@@ -4472,8 +4503,57 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
   ok("meetings screen: pressing the meeting opens those minutes",
     askedM.includes("/api/meetings/m1") && !!hostM.querySelector("#meeting-title"), askedM);
 
+  /* -- the next topic -- */
+  await click(hostM.querySelector('[aria-label="بستن"]'));
+  await click(hostM.querySelector("#meeting-view-meetings"));
+  await click(hostM.querySelector("#meeting-new"));
+  await click(hostM.querySelector("#meeting-add-topic"));
+  ok("meetings screen: «موضوع بعدی» adds a second topic", !!hostM.querySelector('[data-topic-card="2"]'));
+  ok("meetings screen: ...internal until a project is chosen",
+    (hostM.querySelector('[data-topic-card="2"] [data-topic-scope]')?.textContent ?? "") === "داخلی");
+  await click(hostM.querySelector('[aria-label="بستن"]'));
+
   act(() => { rootM.unmount(); });
   hostM.remove();
+
+  /* -- seen from a project: that project's topics only, the rest kept -- */
+  const hostP = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootP = createRoot(hostP);
+  await act(async () => {
+    rootP.render(React.createElement(MeetingsView, {
+      currentUser: { id: "u1", fullName: "علی", permissions: {} } as never,
+      projectId: "p1", projectLabel: "ATA-05-38 — پالایشگاه",
+    }));
+  });
+  await settleM();
+  const rowP = hostP.querySelector('[data-meeting-row="m2"]');
+  ok("project tab: the row names this project's topic, not the internal one",
+    (rowP?.textContent ?? "").includes("نقشه‌های پروژه") && !(rowP?.textContent ?? "").includes("استراتژی داخلی"));
+  await act(async () => { rowP?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settleM();
+  ok("project tab: the form draws one topic", hostP.querySelectorAll("[data-topic-card]").length === 1);
+  const formText = hostP.querySelector("[data-meeting-topics]")?.textContent ?? "";
+  ok("project tab: ...this project's, never the internal subject",
+    !formText.includes("استراتژی داخلی") && !hostP.textContent?.includes("محرمانه"));
+  ok("project tab: ...and says the others are kept", !!hostP.querySelector("[data-hidden-topics]"));
+  ok("project tab: the meeting's general summary is not drawn", !hostP.textContent?.includes("خلاصه کلی جلسه"));
+  posted.length = 0;
+  await act(async () => { hostP.querySelector("#meeting-save-draft")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settleM();
+  const putBody = posted[0] ? JSON.parse(posted[0].body) : null;
+  ok("project tab: saving sends every topic back, the hidden one unchanged",
+    posted[0]?.url === "/api/meetings/m2" && putBody?.topics?.length === 2
+    && putBody.topics[1].id === "t2" && putBody.topics[1].discussion === "محرمانه"
+    && putBody.summary === "خلاصه کلی جلسه", putBody?.topics);
+  ok("project tab: only «چاپ بخش این پروژه» is offered",
+    !!hostP.querySelector("#meeting-print-project") && !hostP.querySelector("#meeting-print"));
+  await act(async () => { hostP.querySelector("#meeting-print-project")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settleM();
+  ok("project tab: the preview is of this project's part",
+    (hostP.querySelector("[data-meeting-print] h3")?.textContent ?? "").includes("بخش پروژه ATA-05-38"));
+
+  act(() => { rootP.unmount(); });
+  hostP.remove();
   gM.fetch = realFetchM;
   invalidateUserDirectory();
 }

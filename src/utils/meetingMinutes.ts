@@ -205,27 +205,83 @@ export interface MeetingItemDraft {
 }
 
 /**
+ * One subject on the agenda.
+ *
+ * A meeting here routinely walks through several jobs and then something of
+ * the company's own — «what do we do about project A», «how do we draw B's
+ * drawings», «our strategy for next quarter» — so the meeting is a list of
+ * topics and each topic, not the meeting, belongs to a project or to none.
+ * What was discussed and what was concluded are the topic's; the decisions,
+ * actions and information items that came out of it sit under it.
+ */
+export interface MeetingTopicDraft {
+  id?: string | null;
+  title: string;
+  /** Null is an internal topic. */
+  projectId?: string | null;
+  discussion?: string | null;
+  conclusion?: string | null;
+  items: MeetingItemDraft[];
+}
+
+/** The label a topic's scope prints under. */
+export const INTERNAL_TOPIC_LABEL = "داخلی";
+
+/**
+ * The distinct projects a meeting's topics name, in the order they first
+ * appear — what the list row and the printed header say the meeting was about.
+ */
+export function topicProjects<T extends { projectId?: string | null }>(topics: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const t of topics) {
+    if (!t.projectId || seen.has(t.projectId)) continue;
+    seen.add(t.projectId);
+    out.push(t);
+  }
+  return out;
+}
+
+/**
+ * The topics a project's own view shows: those of that project and no other.
+ * Seen from a project, the internal topics and the other jobs discussed in the
+ * same meeting are not that project's business — and the printed «بخش این
+ * پروژه» is what is sent to a customer.
+ */
+export function topicsForProject<T extends { projectId?: string | null }>(topics: T[], projectId: string): T[] {
+  return topics.filter((t) => t.projectId === projectId);
+}
+
+/**
  * Why these minutes cannot be saved, or null.
  *
- * A draft may be half-written — it is a draft — so only the title, the date
- * and non-empty items are asked of it. Finalising asks more: an action with
- * nobody on it or no date is a promise made to nobody, and raising a task for
- * it would put a card on no board or an undated card at the bottom of one,
- * which is exactly the work that goes missing.
+ * A draft may be half-written — it is a draft — so only the title, the date,
+ * a title on every topic and non-empty items are asked of it. Finalising asks
+ * more: an action with nobody on it or no date is a promise made to nobody,
+ * and raising a task for it would put a card on no board or an undated card at
+ * the bottom of one, which is exactly the work that goes missing.
+ *
+ * Items are named by their topic and their place in it («موضوع ۲، بند ۱»),
+ * because that is how the form numbers them.
  */
 export function meetingRefusal(
-  input: { title?: string | null; meetingDateJalali?: string | null; items: MeetingItemDraft[] },
+  input: { title?: string | null; meetingDateJalali?: string | null; topics: MeetingTopicDraft[] },
   finalizing: boolean,
 ): string | null {
   if (!String(input.title ?? "").trim()) return "عنوان جلسه را وارد کنید.";
   if (!String(input.meetingDateJalali ?? "").trim()) return "تاریخ جلسه را وارد کنید.";
-  for (let i = 0; i < input.items.length; i++) {
-    const item = input.items[i];
-    const row = i + 1;
-    if (!String(item.text ?? "").trim()) return `متن بند ${row} خالی است.`;
-    if (!finalizing || item.kind !== "ACTION") continue;
-    if (item.assignees.length === 0) return `برای اقدام بند ${row} مسئولی انتخاب نشده است.`;
-    if (!String(item.dueDateJalali ?? "").trim()) return `برای اقدام بند ${row} مهلت انجام تعیین نشده است.`;
+  for (let t = 0; t < input.topics.length; t++) {
+    const topic = input.topics[t];
+    const at = `موضوع ${t + 1}`;
+    if (!String(topic.title ?? "").trim()) return `عنوان ${at} را وارد کنید.`;
+    for (let i = 0; i < topic.items.length; i++) {
+      const item = topic.items[i];
+      const row = `${at}، بند ${i + 1}`;
+      if (!String(item.text ?? "").trim()) return `متن ${row} خالی است.`;
+      if (!finalizing || item.kind !== "ACTION") continue;
+      if (item.assignees.length === 0) return `برای اقدام ${row} مسئولی انتخاب نشده است.`;
+      if (!String(item.dueDateJalali ?? "").trim()) return `برای اقدام ${row} مهلت انجام تعیین نشده است.`;
+    }
   }
   return null;
 }
@@ -295,11 +351,14 @@ export function meetingTaskTitle(itemText: string): string {
   return oneLine.length > 180 ? `${oneLine.slice(0, 177)}…` : oneLine;
 }
 
-/** And what it says about where it came from. */
+/** And what it says about where it came from — the meeting, and the topic it was raised under. */
 export function meetingTaskDescription(
   meeting: { code: string; title: string; meetingDateJalali?: string | null },
   itemText: string,
+  topicTitle?: string | null,
 ): string {
   const when = meeting.meetingDateJalali ? ` (${meeting.meetingDateJalali})` : "";
-  return `${String(itemText ?? "").trim()}\n\nمصوبه صورتجلسه ${meeting.code} — ${meeting.title}${when}`;
+  const topic = String(topicTitle ?? "").trim();
+  return `${String(itemText ?? "").trim()}\n\nمصوبه صورتجلسه ${meeting.code} — ${meeting.title}${when}`
+    + (topic ? `\nموضوع: ${topic}` : "");
 }

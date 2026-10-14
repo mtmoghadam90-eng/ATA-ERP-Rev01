@@ -23,7 +23,7 @@ import {
 } from '../api/meetings';
 import {
   MEETING_ITEM_KINDS, MEETING_ITEM_KIND_LABELS, MEETING_ITEM_STATE_LABELS, MEETING_STATUS_LABELS,
-  meetingRefusal, type MeetingAssignee, type MeetingItemKind, type MeetingItemState,
+  meetingRefusal, topicsForProject, type MeetingAssignee, type MeetingItemKind, type MeetingItemState,
   type MeetingParticipant,
 } from '../utils/meetingMinutes';
 import { formatFileSize, type ActivityAttachment } from '../utils/attachments';
@@ -55,15 +55,29 @@ interface Props {
  * shows and what the browser prints into a PDF. The letterhead is the active
  * proforma template's, so the company prints one way on every document.
  */
-export function meetingDocumentHtml(meeting: MeetingRow, settings?: ERPSettings): string {
+export function meetingDocumentHtml(meeting: MeetingRow, settings?: ERPSettings, projectId?: string | null): string {
+  /*
+   * «چاپ بخش این پروژه»: only that project's topics, and the page says which
+   * part of the minutes it is — the copy that can go to that project's
+   * customer without the internal subjects discussed the same morning.
+   */
+  const topics = projectId ? topicsForProject(meeting.topics, projectId) : meeting.topics;
+  const scopeTopic = projectId ? (topics[0] ?? null) : null;
   return renderMeetingDocument({
     meeting: {
       ...meeting,
-      items: (meeting.items ?? []).map((i) => ({
-        lineNo: i.lineNo, text: i.text, kind: i.kind, assignees: i.assignees,
-        dueDateJalali: i.dueDateJalali, state: i.state,
+      topics: topics.map((t) => ({
+        title: t.title, projectCode: t.projectCode, projectName: t.projectName,
+        customerName: t.customerName, discussion: t.discussion, conclusion: t.conclusion,
+        items: t.items.map((i) => ({
+          lineNo: i.lineNo, text: i.text, kind: i.kind, assignees: i.assignees,
+          dueDateJalali: i.dueDateJalali, state: i.state,
+        })),
       })),
     },
+    projectScope: projectId
+      ? { code: scopeTopic?.projectCode ?? null, name: scopeTopic?.projectName ?? null, customerName: scopeTopic?.customerName ?? null }
+      : null,
     /*
      * The first template, which is the one every printed proforma uses
      * (`ProformasView`'s `activeTemplate`) — so the minutes carry the same
@@ -79,12 +93,15 @@ export function meetingDocumentHtml(meeting: MeetingRow, settings?: ERPSettings)
  * engine (where «Save as PDF» lives), never a screenshot, exactly as the
  * proforma does — the PDF carries real text.
  */
-export function MeetingPrintModal({ meeting, settings, onClose }: {
+export function MeetingPrintModal({ meeting, settings, onClose, projectId }: {
   meeting: MeetingRow;
   settings?: ERPSettings;
   onClose: () => void;
+  /** Print only this project's part of the minutes. */
+  projectId?: string | null;
 }) {
-  const html = useMemo(() => meetingDocumentHtml(meeting, settings), [meeting, settings]);
+  const html = useMemo(() => meetingDocumentHtml(meeting, settings, projectId), [meeting, settings, projectId]);
+  const scopeCode = projectId ? (topicsForProject(meeting.topics, projectId)[0]?.projectCode ?? null) : null;
   const [busy, setBusy] = useState(false);
   const print = async () => {
     setBusy(true);
@@ -92,7 +109,7 @@ export function MeetingPrintModal({ meeting, settings, onClose }: {
       // The logo is a `/uploads/…` path that resolves to nothing inside the
       // print frame's own document, so it is inlined first.
       const standalone = await inlineDocumentAssets(html);
-      await printHtmlDocument(standalone, meetingDocumentTitle(meeting));
+      await printHtmlDocument(standalone, meetingDocumentTitle(meeting, scopeCode));
     } finally {
       setBusy(false);
     }
@@ -101,7 +118,9 @@ export function MeetingPrintModal({ meeting, settings, onClose }: {
     <div className="fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4" dir="rtl" data-meeting-print>
       <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-4xl max-h-[94vh] flex flex-col shadow-xl">
         <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-slate-200 dark:border-slate-700">
-          <h3 className="font-bold text-slate-800 dark:text-slate-100">پیش‌نمایش صورتجلسه {meeting.code}</h3>
+          <h3 className="font-bold text-slate-800 dark:text-slate-100">
+            پیش‌نمایش صورتجلسه {meeting.code}{projectId ? ` — بخش پروژه ${scopeCode ?? ''}` : ''}
+          </h3>
           <div className="flex gap-2">
             <button type="button" id="meeting-print-now" disabled={busy} onClick={() => void print()} className="px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-bold flex items-center gap-1.5">
               {busy ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />} چاپ / ذخیره PDF
@@ -139,12 +158,12 @@ export default function MeetingsView({
    * A printable link opened in its own tab: the record is read and the
    * preview shown, the way every other module answers `?printModule=`.
    */
-  const [printing, setPrinting] = useState<MeetingRow | null>(null);
+  const [printing, setPrinting] = useState<{ meeting: MeetingRow; projectId: string | null } | null>(null);
   useEffect(() => {
     if (!initialPrintDocId) return;
     let live = true;
     meetingsApi.get(initialPrintDocId)
-      .then(({ meeting }) => { if (live) setPrinting(meeting); })
+      .then(({ meeting }) => { if (live) setPrinting({ meeting, projectId: null }); })
       .catch(() => { /* a meeting that is gone, or not this person's, simply does not open */ });
     return () => { live = false; };
   }, [initialPrintDocId]);
@@ -263,7 +282,7 @@ export default function MeetingsView({
               loading={filterPicker.loading}
               options={[
                 { value: 'all', label: 'همه جلسات' },
-                { value: 'internal', label: 'فقط جلسات داخلی (بدون پروژه)' },
+                { value: 'internal', label: view === 'actions' ? 'فقط موضوعات داخلی' : 'فقط جلسات داخلی (بدون پروژه)' },
                 ...filterPicker.matches.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` })),
               ]}
               placeholder="پروژه"
@@ -368,19 +387,25 @@ export default function MeetingsView({
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-xs text-slate-500">
                 <span className="flex items-center gap-1"><CalendarDays size={12} /> {m.meetingDateJalali}{m.startTime ? ` ساعت ${m.startTime}` : ''}</span>
                 {m.place && <span className="flex items-center gap-1"><MapPin size={12} /> {m.place}</span>}
-                <span>
-                  {m.projectId ? (
-                    <span
-                      role="link"
-                      className="text-sky-700 hover:underline"
-                      onClick={(e) => { e.stopPropagation(); if (m.projectCode) onOpenProject?.(m.projectCode); }}
-                    >
-                      {m.projectCode} — {m.projectName}
-                    </span>
-                  ) : 'جلسه داخلی'}
+                <span className="flex flex-wrap items-center gap-1" data-meeting-projects>
+                  {projectId
+                    // Seen from a project, the row names that project's topics and nothing else.
+                    ? topicsForProject(m.topics, projectId).map((t) => (
+                      <span key={t.id || t.title} className="px-1.5 py-0.5 rounded bg-sky-50 text-sky-800">{t.title}</span>
+                    ))
+                    : m.projects.length === 0 ? 'جلسه داخلی' : m.projects.map((p) => (
+                      <span
+                        key={p.id}
+                        role="link"
+                        className="text-sky-700 hover:underline"
+                        onClick={(e) => { e.stopPropagation(); if (p.code) onOpenProject?.(p.code); }}
+                      >
+                        {p.code} — {p.name}
+                      </span>
+                    ))}
                 </span>
                 <span className="flex items-center gap-1"><Users size={12} /> {m.attendees.length.toLocaleString('fa-IR')} حاضر</span>
-                <span>{m.itemCount.toLocaleString('fa-IR')} بند، {m.actionCount.toLocaleString('fa-IR')} اقدام</span>
+                {!projectId && <span>{m.topicCount.toLocaleString('fa-IR')} موضوع، {m.itemCount.toLocaleString('fa-IR')} بند، {m.actionCount.toLocaleString('fa-IR')} اقدام</span>}
               </div>
             </button>
           ))}
@@ -402,12 +427,13 @@ export default function MeetingsView({
           fixedProjectLabel={projectLabel}
           onClose={() => setEditing(null)}
           onSaved={() => { list.refresh(); actions.refresh(); }}
-          onPrint={setPrinting}
+          onPrint={(meeting, scope) => setPrinting({ meeting, projectId: scope ?? null })}
         />
       )}
       {printing && (
         <MeetingPrintModal
-          meeting={printing}
+          meeting={printing.meeting}
+          projectId={printing.projectId}
           settings={settings}
           onClose={() => { setPrinting(null); if (initialPrintDocId) onClearInitialPrintDocId?.(); }}
         />
@@ -464,8 +490,8 @@ function MeetingActionsList({ rows, loading, error, page, totalPages, count, onP
           >
             <FileText size={12} />
             <span dir="ltr" className="font-mono">{a.meetingCode}</span>
-            <span>— {a.meetingTitle} ({a.meetingDateJalali}) بند {a.lineNo.toLocaleString('fa-IR')}</span>
-            <span className="text-slate-500">{a.projectCode ? `· ${a.projectCode} — ${a.projectName}` : '· جلسه داخلی'}</span>
+            <span>— {a.meetingTitle} ({a.meetingDateJalali})</span>
+            <span className="text-slate-500" data-action-topic>· موضوع «{a.topicTitle}» {a.projectCode ? `· ${a.projectCode} — ${a.projectName}` : '· داخلی'}</span>
           </button>
         </div>
       ))}
@@ -489,8 +515,11 @@ interface FormProps {
   fixedProjectLabel?: string;
   onClose: () => void;
   onSaved: (meeting: MeetingRow) => void;
-  /** Opens the printed minutes — the saved record, never the unsaved form. */
-  onPrint?: (meeting: MeetingRow) => void;
+  /**
+   * Opens the printed minutes — the saved record, never the unsaved form. A
+   * project id prints only that project's part.
+   */
+  onPrint?: (meeting: MeetingRow, projectId?: string | null) => void;
 }
 
 interface ItemDraft extends MeetingItemInput {
@@ -499,8 +528,44 @@ interface ItemDraft extends MeetingItemInput {
   tasks?: { assigneeName: string; status: string | null }[];
 }
 
+/** One subject on the agenda, as the form holds it. */
+interface TopicDraft {
+  key: string;
+  id: string | null;
+  title: string;
+  /** Empty is internal. */
+  projectId: string;
+  /** What the stored row said, so a picker that has not searched yet can still name it. */
+  projectLabel: string;
+  discussion: string;
+  conclusion: string;
+  items: ItemDraft[];
+}
+
 let keySeq = 0;
 const newKey = () => `item-${++keySeq}`;
+
+const newTopic = (projectId = '', projectLabel = ''): TopicDraft => ({
+  key: newKey(), id: null, title: '', projectId, projectLabel, discussion: '', conclusion: '', items: [],
+});
+
+function topicsFromRow(m: MeetingRow): TopicDraft[] {
+  return m.topics.map((t) => ({
+    key: newKey(),
+    // The stand-in topic of a meeting stored before topics has no id: saving creates it.
+    id: t.id || null,
+    title: t.title,
+    projectId: t.projectId ?? '',
+    projectLabel: t.projectCode ? `${t.projectCode} — ${t.projectName ?? ''}` : '',
+    discussion: t.discussion ?? '',
+    conclusion: t.conclusion ?? '',
+    items: t.items.map((i) => ({
+      key: newKey(), id: i.id, text: i.text, kind: i.kind, assignees: i.assignees,
+      dueDate: i.dueDateJalali, state: i.state,
+      tasks: i.tasks.map((x) => ({ assigneeName: x.assigneeName, status: x.status })),
+    })),
+  }));
+}
 
 export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedProjectLabel, onClose, onSaved, onPrint }: FormProps) {
   const { users } = useUserDirectory();
@@ -513,26 +578,23 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
   const [endTime, setEndTime] = useState(meeting?.endTime ?? '');
   const [place, setPlace] = useState(meeting?.place ?? '');
   const [summary, setSummary] = useState(meeting?.summary ?? '');
-  const [projectId, setProjectId] = useState<string>(meeting ? (meeting.projectId ?? '') : (fixedProjectId ?? ''));
   const [attendees, setAttendees] = useState<MeetingParticipant[]>(meeting?.attendees ?? (
     currentUser ? [{ kind: 'user', userId: currentUser.id, name: currentUser.fullName }] : []));
   const [absentees, setAbsentees] = useState<MeetingParticipant[]>(meeting?.absentees ?? []);
   const [nextMeetingDate, setNextMeetingDate] = useState(meeting?.nextMeetingDateJalali ?? '');
   const [attachments, setAttachments] = useState<ActivityAttachment[]>(meeting?.attachments ?? []);
-  const [items, setItems] = useState<ItemDraft[]>([]);
-  const [carryOver, setCarryOver] = useState<CarryOverItem[]>([]);
+  /*
+   * Every topic of the meeting, in order — including, on a project's own tab,
+   * the ones that tab does not draw. Those are kept and sent back unchanged:
+   * hiding a topic must never be the same thing as deleting it.
+   */
+  const [topics, setTopics] = useState<TopicDraft[]>(
+    meeting ? topicsFromRow(meeting) : [newTopic(fixedProjectId ?? '', fixedProjectLabel ?? '')]);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-
-  const projectPicker = useEntitySearch<ProjectRow>({
-    path: '/api/projects', limit: 25, params: { withSummary: 'false' },
-    selectedId: projectId || null,
-    getLabel: (row) => `${row.code} — ${row.name}`,
-    enabled: !fixedProjectId,
-  });
 
   /*
    * The detail record, read when the form opens — the list row carries the
@@ -543,54 +605,61 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
    */
   const meetingId = meeting?.id ?? null;
   useEffect(() => {
-    const fromRow = (m: MeetingRow) => setItems((m.items ?? []).map((i) => ({
-      key: newKey(), id: i.id, text: i.text, kind: i.kind, assignees: i.assignees,
-      dueDate: i.dueDateJalali, state: i.state,
-      tasks: i.tasks.map((t) => ({ assigneeName: t.assigneeName, status: t.status })),
-    })));
-    if (!meetingId) { setItems([]); return; }
-    if (meeting) fromRow(meeting);
+    if (!meetingId) return;
     let live = true;
     meetingsApi.get(meetingId).then(({ meeting: fresh }) => {
       if (!live) return;
       setLoaded(fresh);
-      fromRow(fresh);
+      setTopics(topicsFromRow(fresh));
     }).catch(() => undefined);
     return () => { live = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingId]);
-
-  // The open actions of this project's earlier meetings.
-  useEffect(() => {
-    if (!projectId) { setCarryOver([]); return; }
-    let live = true;
-    meetingsApi.openActions(projectId, meetingId).then(({ items: open }) => {
-      if (live) setCarryOver(open);
-    }).catch(() => { if (live) setCarryOver([]); });
-    return () => { live = false; };
-  }, [projectId, meetingId]);
 
   const isFinal = loaded?.status === 'FINAL';
   const readOnly = !!loaded && !loaded.canEdit;
 
-  const updateItem = (key: string, patch: Partial<ItemDraft>) =>
-    setItems((prev) => prev.map((i) => (i.key === key ? { ...i, ...patch } : i)));
+  /*
+   * Seen from a project, only that project's topics are drawn — the internal
+   * subjects and the other jobs discussed the same day are not this project's
+   * business — and a topic added here belongs to it.
+   */
+  const shown = fixedProjectId ? topics.filter((t) => t.projectId === fixedProjectId) : topics;
+  const hiddenCount = topics.length - shown.length;
 
-  const addItem = (kind: MeetingItemKind = 'DECISION', text = '') =>
-    setItems((prev) => [...prev, { key: newKey(), text, kind, assignees: [], dueDate: null }]);
+  const updateTopic = (key: string, patch: Partial<TopicDraft>) =>
+    setTopics((prev) => prev.map((t) => (t.key === key ? { ...t, ...patch } : t)));
+  const updateItems = (topicKey: string, fn: (items: ItemDraft[]) => ItemDraft[]) =>
+    setTopics((prev) => prev.map((t) => (t.key === topicKey ? { ...t, items: fn(t.items) } : t)));
+  const moveTopic = (key: string, step: -1 | 1) => setTopics((prev) => {
+    const at = prev.findIndex((t) => t.key === key);
+    // Moved past the neighbour that is drawn, so a hidden topic never swaps invisibly.
+    let to = at + step;
+    while (to >= 0 && to < prev.length && fixedProjectId && prev[to].projectId !== fixedProjectId) to += step;
+    if (at < 0 || to < 0 || to >= prev.length) return prev;
+    const next = [...prev];
+    [next[at], next[to]] = [next[to], next[at]];
+    return next;
+  });
+  const addTopic = () => setTopics((prev) => [...prev, newTopic(fixedProjectId ?? '', fixedProjectLabel ?? '')]);
 
   const toInput = (finalize: boolean): MeetingInput => ({
     title, meetingDate,
     startTime: startTime || null, endTime: endTime || null,
     place: place || null, summary: summary || null,
-    projectId: projectId || null,
     attendees, absentees,
     nextMeetingDate: nextMeetingDate || null,
     attachments,
-    items: items.map((i) => ({
-      id: i.id ?? null, text: i.text, kind: i.kind,
-      assignees: i.kind === 'ACTION' ? i.assignees : [],
-      dueDate: i.kind === 'ACTION' ? (i.dueDate ?? null) : null,
+    topics: topics.map((t) => ({
+      id: t.id,
+      title: t.title,
+      projectId: t.projectId || null,
+      discussion: t.discussion || null,
+      conclusion: t.conclusion || null,
+      items: t.items.map((i) => ({
+        id: i.id ?? null, text: i.text, kind: i.kind,
+        assignees: i.kind === 'ACTION' ? i.assignees : [],
+        dueDate: i.kind === 'ACTION' ? (i.dueDate ?? null) : null,
+      })),
     })),
     finalize,
   });
@@ -599,7 +668,9 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
     const input = toInput(finalize);
     const refusal = meetingRefusal({
       title: input.title, meetingDateJalali: input.meetingDate,
-      items: input.items.map((i) => ({ ...i, dueDateJalali: i.dueDate ?? null })),
+      topics: input.topics.map((t) => ({
+        ...t, items: t.items.map((i) => ({ ...i, dueDateJalali: i.dueDate ?? null })),
+      })),
     }, finalize || isFinal);
     if (refusal) { setError(refusal); return; }
     setBusy(true); setError(null);
@@ -610,11 +681,7 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
       if (result.createdTasks > 0 || result.cancelledTasks > 0) dataChanged('tasks');
       onSaved(result.meeting);
       setLoaded(result.meeting);
-      setItems((result.meeting.items ?? []).map((i) => ({
-        key: newKey(), id: i.id, text: i.text, kind: i.kind, assignees: i.assignees,
-        dueDate: i.dueDateJalali, state: i.state,
-        tasks: i.tasks.map((t) => ({ assigneeName: t.assigneeName, status: t.status })),
-      })));
+      setTopics(topicsFromRow(result.meeting));
       const parts: string[] = ['صورتجلسه ذخیره شد.'];
       if (result.createdTasks > 0) parts.push(`${result.createdTasks.toLocaleString('fa-IR')} وظیفه ارجاع شد.`);
       if (result.cancelledTasks > 0) parts.push(`${result.cancelledTasks.toLocaleString('fa-IR')} وظیفه لغو شد.`);
@@ -679,11 +746,19 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
             {readOnly && <span className="text-[11px] text-slate-500 flex items-center gap-1"><Lock size={11} /> فقط مشاهده</span>}
           </div>
           <div className="flex items-center gap-1">
-            {loaded && onPrint && (
+            {/*
+              From a project, the print is that project's part only — the whole
+              minutes would carry the internal subjects this view hides.
+            */}
+            {loaded && onPrint && (fixedProjectId ? (
+              <button type="button" id="meeting-print-project" onClick={() => onPrint(loaded, fixedProjectId)} className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm flex items-center gap-1.5 hover:bg-slate-50">
+                <Printer size={14} /> چاپ بخش این پروژه
+              </button>
+            ) : (
               <button type="button" id="meeting-print" onClick={() => onPrint(loaded)} className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm flex items-center gap-1.5 hover:bg-slate-50">
                 <Printer size={14} /> چاپ / PDF
               </button>
-            )}
+            ))}
             <button type="button" onClick={onClose} aria-label="بستن" className="p-1.5 rounded-lg hover:bg-slate-100"><X size={18} /></button>
           </div>
         </div>
@@ -707,31 +782,10 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
                   <input value={endTime} onChange={(e) => setEndTime(e.target.value)} placeholder="10:30" dir="ltr" className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg bg-white dark:bg-slate-800" />
                 </label>
               </div>
-              <label className="text-sm">
+              <label className="md:col-span-2 text-sm">
                 <span className="text-slate-600">مکان</span>
                 <input value={place} onChange={(e) => setPlace(e.target.value)} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg bg-white dark:bg-slate-800" />
               </label>
-              <div className="text-sm">
-                <span className="text-slate-600">پروژه</span>
-                {fixedProjectId ? (
-                  <div className="mt-1 px-3 py-2 border border-slate-200 rounded-lg bg-slate-50 dark:bg-slate-800">{fixedProjectLabel ?? projectPicker.selectedLabel}</div>
-                ) : (
-                  <SearchableSelect
-                    wrapperClassName="mt-1"
-                    value={projectId}
-                    onChange={setProjectId}
-                    onSearchChange={projectPicker.setTerm}
-                    loading={projectPicker.loading}
-                    options={[
-                      { value: '', label: 'جلسه داخلی (بدون پروژه)' },
-                      ...(projectPicker.selected && !projectPicker.matches.some((p) => p.id === projectPicker.selected!.id)
-                        ? [{ value: projectPicker.selected.id, label: projectPicker.selectedLabel }] : []),
-                      ...projectPicker.matches.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` })),
-                    ]}
-                    placeholder="پروژه..."
-                  />
-                )}
-              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -739,99 +793,43 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
               <ParticipantPicker title="غایبین" people={absentees} onChange={setAbsentees} userOptions={userOptions} idPrefix="absentee" />
             </div>
 
-            <label className="block text-sm">
-              <span className="text-slate-600">دستور جلسه / خلاصه مذاکرات</span>
-              <textarea value={summary} onChange={(e) => setSummary(e.target.value)} rows={3} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg bg-white dark:bg-slate-800" />
-            </label>
-
-            {carryOver.length > 0 && (
-              <div className="border border-amber-200 bg-amber-50/60 rounded-xl p-3" data-meeting-carry-over>
-                <div className="text-sm font-bold text-amber-800 mb-2 flex items-center gap-1.5">
-                  <AlertTriangle size={14} /> اقدام‌های باز جلسات قبلی این پروژه
-                </div>
-                <ul className="space-y-1.5">
-                  {carryOver.map((c) => (
-                    <li key={c.itemId} className="text-sm flex flex-wrap items-center gap-2">
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full ${STATE_TONE[c.state]}`}>{MEETING_ITEM_STATE_LABELS[c.state]}</span>
-                      <span className="text-slate-800 flex-1 min-w-[200px]">{c.text}</span>
-                      <span className="text-xs text-slate-500">{c.assignees.join('، ')}{c.dueDateJalali ? ` — مهلت ${c.dueDateJalali}` : ''} ({c.meetingCode})</span>
-                      {!readOnly && (
-                        <button
-                          type="button"
-                          className="text-xs text-sky-700 hover:underline"
-                          onClick={() => addItem('INFO', `پیگیری اقدام جلسه ${c.meetingCode}: ${c.text}`)}
-                        >
-                          درج در بندها
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
+            {/* The general summary may speak of anything discussed that day, so a project's view leaves it out. */}
+            {!fixedProjectId && (
+              <label className="block text-sm">
+                <span className="text-slate-600">دستور جلسه / خلاصه کلی</span>
+                <textarea value={summary} onChange={(e) => setSummary(e.target.value)} rows={2} className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg bg-white dark:bg-slate-800" />
+              </label>
             )}
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-bold text-slate-700 dark:text-slate-200">بندهای صورتجلسه</span>
-                {!readOnly && (
-                  <button type="button" id="meeting-add-item" onClick={() => addItem()} className="text-sm text-sky-700 flex items-center gap-1"><Plus size={14} /> افزودن بند</button>
-                )}
-              </div>
-              {items.length === 0 && <div className="text-xs text-slate-500">هنوز بندی ثبت نشده است.</div>}
-              {items.map((item, idx) => (
-                <div key={item.key} className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2" data-meeting-item={idx + 1}>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-bold text-slate-500">بند {(idx + 1).toLocaleString('fa-IR')}</span>
-                    <div className="flex gap-1">
-                      {MEETING_ITEM_KINDS.map((k) => (
-                        <button
-                          type="button"
-                          key={k}
-                          data-item-kind={k}
-                          onClick={() => updateItem(item.key, { kind: k })}
-                          className={`text-xs px-2.5 py-1 rounded-full border ${item.kind === k ? `${KIND_TONE[k]} border-transparent font-bold` : 'border-slate-200 text-slate-500'}`}
-                        >
-                          {MEETING_ITEM_KIND_LABELS[k]}
-                        </button>
-                      ))}
-                    </div>
-                    {item.state && item.state !== 'NONE' && (
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full ${STATE_TONE[item.state]}`} data-item-state={item.state}>
-                        {MEETING_ITEM_STATE_LABELS[item.state]}
-                      </span>
-                    )}
-                    {!readOnly && (
-                      <button type="button" onClick={() => setItems((prev) => prev.filter((i) => i.key !== item.key))} className="mr-auto text-slate-400 hover:text-rose-600" aria-label="حذف بند">
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </div>
-                  <textarea
-                    value={item.text}
-                    onChange={(e) => updateItem(item.key, { text: e.target.value })}
-                    rows={2}
-                    placeholder="متن بند..."
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white dark:bg-slate-800"
-                  />
-                  {item.kind === 'ACTION' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      <AssigneePicker
-                        value={item.assignees}
-                        onChange={(assignees) => updateItem(item.key, { assignees })}
-                        userOptions={userOptions}
-                      />
-                      <ShamsiDatePicker label="مهلت انجام" value={item.dueDate ?? ''} onChange={(v) => updateItem(item.key, { dueDate: v })} compact />
-                    </div>
-                  )}
-                  {item.tasks && item.tasks.length > 0 && (
-                    <div className="text-xs text-slate-500 flex flex-wrap gap-2">
-                      {item.tasks.map((t, i) => (
-                        <span key={i} className="flex items-center gap-1"><CheckCircle2 size={11} /> {t.assigneeName}: {t.status ?? 'وظیفه یافت نشد'}</span>
-                      ))}
-                    </div>
-                  )}
+            <div className="space-y-3" data-meeting-topics>
+              <div className="text-sm font-bold text-slate-700 dark:text-slate-200">موضوعات جلسه</div>
+              {hiddenCount > 0 && (
+                <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2" data-hidden-topics>
+                  {hiddenCount.toLocaleString('fa-IR')} موضوع دیگرِ این جلسه (داخلی یا مربوط به پروژه‌های دیگر) اینجا نمایش داده نمی‌شود و دست‌نخورده می‌ماند.
                 </div>
+              )}
+              {shown.length === 0 && <div className="text-xs text-slate-500">هنوز موضوعی ثبت نشده است.</div>}
+              {shown.map((topic, idx) => (
+                <TopicCard
+                  key={topic.key}
+                  topic={topic}
+                  index={idx + 1}
+                  count={shown.length}
+                  readOnly={readOnly}
+                  fixedProjectId={fixedProjectId}
+                  meetingId={meetingId}
+                  userOptions={userOptions}
+                  onChange={(patch) => updateTopic(topic.key, patch)}
+                  onItems={(fn) => updateItems(topic.key, fn)}
+                  onMove={(step) => moveTopic(topic.key, step)}
+                  onRemove={() => setTopics((prev) => prev.filter((t) => t.key !== topic.key))}
+                />
               ))}
+              {!readOnly && (
+                <button type="button" id="meeting-add-topic" onClick={addTopic} className="w-full py-2 border-2 border-dashed border-sky-200 rounded-xl text-sm font-bold text-sky-700 hover:bg-sky-50 flex items-center justify-center gap-1.5">
+                  <Plus size={14} /> موضوع بعدی
+                </button>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
@@ -895,6 +893,210 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------- a topic ---------------------------------- */
+
+/**
+ * One subject on the agenda: its title, the project it belongs to (or
+ * internal), what was discussed, what was concluded, and its items — plus, for
+ * a project, the actions still open from that project's earlier meetings.
+ *
+ * Its own component because each topic has its own project picker and its own
+ * carry-over read, and those are hooks.
+ */
+function TopicCard({
+  topic, index, count, readOnly, fixedProjectId, meetingId, userOptions, onChange, onItems, onMove, onRemove,
+}: {
+  topic: TopicDraft;
+  index: number;
+  count: number;
+  readOnly: boolean;
+  fixedProjectId?: string;
+  meetingId: string | null;
+  userOptions: { value: string; label: string }[];
+  onChange: (patch: Partial<TopicDraft>) => void;
+  onItems: (fn: (items: ItemDraft[]) => ItemDraft[]) => void;
+  onMove: (step: -1 | 1) => void;
+  onRemove: () => void;
+}) {
+  const picker = useEntitySearch<ProjectRow>({
+    path: '/api/projects', limit: 25, params: { withSummary: 'false' },
+    selectedId: topic.projectId || null,
+    getLabel: (row) => `${row.code} — ${row.name}`,
+    enabled: !fixedProjectId,
+  });
+
+  // The open actions of this project's earlier meetings: what this topic has to ask about.
+  const [carryOver, setCarryOver] = useState<CarryOverItem[]>([]);
+  useEffect(() => {
+    if (!topic.projectId) { setCarryOver([]); return; }
+    let live = true;
+    meetingsApi.openActions(topic.projectId, meetingId).then(({ items: open }) => {
+      if (live) setCarryOver(open);
+    }).catch(() => { if (live) setCarryOver([]); });
+    return () => { live = false; };
+  }, [topic.projectId, meetingId]);
+
+  const updateItem = (key: string, patch: Partial<ItemDraft>) =>
+    onItems((prev) => prev.map((i) => (i.key === key ? { ...i, ...patch } : i)));
+  const addItem = (kind: MeetingItemKind = 'DECISION', text = '') =>
+    onItems((prev) => [...prev, { key: newKey(), text, kind, assignees: [], dueDate: null }]);
+
+  const selectedLabel = picker.selectedLabel || topic.projectLabel;
+
+  return (
+    <div className="border border-sky-200 dark:border-slate-600 rounded-xl p-3 space-y-3 bg-sky-50/30 dark:bg-slate-800/40" data-topic-card={index}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-bold text-sky-800">موضوع {index.toLocaleString('fa-IR')}</span>
+        <span className={`text-[11px] px-2 py-0.5 rounded-full ${topic.projectId ? 'bg-sky-100 text-sky-800' : 'bg-slate-100 text-slate-600'}`} data-topic-scope>
+          {topic.projectId ? (selectedLabel || 'پروژه') : 'داخلی'}
+        </span>
+        {!readOnly && (
+          <span className="mr-auto flex items-center gap-1">
+            <button type="button" disabled={index <= 1} onClick={() => onMove(-1)} aria-label="انتقال به بالا" className="px-1.5 text-slate-500 disabled:opacity-30">▲</button>
+            <button type="button" disabled={index >= count} onClick={() => onMove(1)} aria-label="انتقال به پایین" className="px-1.5 text-slate-500 disabled:opacity-30">▼</button>
+            <button type="button" onClick={onRemove} aria-label="حذف موضوع" className="text-slate-400 hover:text-rose-600 p-1"><Trash2 size={14} /></button>
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <label className="text-sm">
+          <span className="text-slate-600">عنوان موضوع *</span>
+          <input
+            data-topic-title
+            value={topic.title}
+            onChange={(e) => onChange({ title: e.target.value })}
+            placeholder="مثلاً: نحوه ترسیم نقشه‌های پروژه"
+            className="mt-1 w-full px-3 py-2 border border-slate-200 rounded-lg bg-white dark:bg-slate-800"
+          />
+        </label>
+        <div className="text-sm">
+          <span className="text-slate-600">مربوط به</span>
+          {fixedProjectId ? (
+            <div className="mt-1 px-3 py-2 border border-slate-200 rounded-lg bg-slate-50 dark:bg-slate-800">{selectedLabel || 'این پروژه'}</div>
+          ) : (
+            <SearchableSelect
+              wrapperClassName="mt-1"
+              value={topic.projectId}
+              onChange={(value) => {
+                const row = picker.matches.find((p) => p.id === value);
+                onChange({ projectId: value, projectLabel: row ? `${row.code} — ${row.name}` : '' });
+              }}
+              onSearchChange={picker.setTerm}
+              loading={picker.loading}
+              options={[
+                { value: '', label: 'داخلی (بدون پروژه)' },
+                ...(topic.projectId && !picker.matches.some((p) => p.id === topic.projectId)
+                  ? [{ value: topic.projectId, label: selectedLabel || topic.projectId }] : []),
+                ...picker.matches.map((p) => ({ value: p.id, label: `${p.code} — ${p.name}` })),
+              ]}
+              placeholder="پروژه..."
+            />
+          )}
+        </div>
+      </div>
+
+      <label className="block text-sm">
+        <span className="text-slate-600">شرح بحث</span>
+        <textarea data-topic-discussion value={topic.discussion} onChange={(e) => onChange({ discussion: e.target.value })} rows={3} placeholder="چه گفته شد، چه گزینه‌هایی مطرح شد..." className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white dark:bg-slate-800" />
+      </label>
+      <label className="block text-sm">
+        <span className="text-slate-600">نتیجه‌گیری</span>
+        <textarea data-topic-conclusion value={topic.conclusion} onChange={(e) => onChange({ conclusion: e.target.value })} rows={2} placeholder="جمع‌بندی و تصمیم نهایی درباره این موضوع" className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white dark:bg-slate-800" />
+      </label>
+
+      {carryOver.length > 0 && (
+        <div className="border border-amber-200 bg-amber-50/60 rounded-xl p-3" data-meeting-carry-over>
+          <div className="text-sm font-bold text-amber-800 mb-2 flex items-center gap-1.5">
+            <AlertTriangle size={14} /> اقدام‌های باز جلسات قبلی این پروژه
+          </div>
+          <ul className="space-y-1.5">
+            {carryOver.map((c) => (
+              <li key={c.itemId} className="text-sm flex flex-wrap items-center gap-2">
+                <span className={`text-[11px] px-2 py-0.5 rounded-full ${STATE_TONE[c.state]}`}>{MEETING_ITEM_STATE_LABELS[c.state]}</span>
+                <span className="text-slate-800 flex-1 min-w-[200px]">{c.text}</span>
+                <span className="text-xs text-slate-500">{c.assignees.join('، ')}{c.dueDateJalali ? ` — مهلت ${c.dueDateJalali}` : ''} ({c.meetingCode})</span>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    className="text-xs text-sky-700 hover:underline"
+                    onClick={() => addItem('INFO', `پیگیری اقدام جلسه ${c.meetingCode}: ${c.text}`)}
+                  >
+                    درج در بندها
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-bold text-slate-600">مصوبات، اقدامات و موارد اطلاع‌رسانی</span>
+          {!readOnly && (
+            <button type="button" data-add-item onClick={() => addItem()} className="text-sm text-sky-700 flex items-center gap-1"><Plus size={14} /> افزودن بند</button>
+          )}
+        </div>
+        {topic.items.map((item, idx) => (
+          <div key={item.key} className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-2 bg-white dark:bg-slate-900" data-meeting-item={idx + 1}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-bold text-slate-500">بند {(idx + 1).toLocaleString('fa-IR')}</span>
+              <div className="flex gap-1">
+                {MEETING_ITEM_KINDS.map((k) => (
+                  <button
+                    type="button"
+                    key={k}
+                    data-item-kind={k}
+                    onClick={() => updateItem(item.key, { kind: k })}
+                    className={`text-xs px-2.5 py-1 rounded-full border ${item.kind === k ? `${KIND_TONE[k]} border-transparent font-bold` : 'border-slate-200 text-slate-500'}`}
+                  >
+                    {MEETING_ITEM_KIND_LABELS[k]}
+                  </button>
+                ))}
+              </div>
+              {item.state && item.state !== 'NONE' && (
+                <span className={`text-[11px] px-2 py-0.5 rounded-full ${STATE_TONE[item.state]}`} data-item-state={item.state}>
+                  {MEETING_ITEM_STATE_LABELS[item.state]}
+                </span>
+              )}
+              {!readOnly && (
+                <button type="button" onClick={() => onItems((prev) => prev.filter((i) => i.key !== item.key))} className="mr-auto text-slate-400 hover:text-rose-600" aria-label="حذف بند">
+                  <Trash2 size={14} />
+                </button>
+              )}
+            </div>
+            <textarea
+              value={item.text}
+              onChange={(e) => updateItem(item.key, { text: e.target.value })}
+              rows={2}
+              placeholder="متن بند..."
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white dark:bg-slate-800"
+            />
+            {item.kind === 'ACTION' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <AssigneePicker
+                  value={item.assignees}
+                  onChange={(assignees) => updateItem(item.key, { assignees })}
+                  userOptions={userOptions}
+                />
+                <ShamsiDatePicker label="مهلت انجام" value={item.dueDate ?? ''} onChange={(v) => updateItem(item.key, { dueDate: v })} compact />
+              </div>
+            )}
+            {item.tasks && item.tasks.length > 0 && (
+              <div className="text-xs text-slate-500 flex flex-wrap gap-2">
+                {item.tasks.map((t, i) => (
+                  <span key={i} className="flex items-center gap-1"><CheckCircle2 size={11} /> {t.assigneeName}: {t.status ?? 'وظیفه یافت نشد'}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
