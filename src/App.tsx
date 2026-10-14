@@ -175,12 +175,13 @@ export default function App() {
   const [calculatorOpen, setCalculatorOpen] = useState<boolean>(false);
   const [triggeredReminders, setTriggeredReminders] = useState<string[]>([]);
   const [activeReminderTask, setActiveReminderTask] = useState<any>(null);
-  const [printDocumentRequest, setPrintDocumentRequest] = useState<{ module: string, docId: string } | null>(() => {
+  const [printDocumentRequest, setPrintDocumentRequest] = useState<{ module: string, docId: string, projectId?: string } | null>(() => {
     const urlParams = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
     const printModule = urlParams.get('printModule');
     const printId = urlParams.get('printId');
     if (printModule && printId) {
-      return { module: printModule, docId: printId };
+      // `printProject`: print only that project's piece (a meeting's minutes, from the project's folder).
+      return { module: printModule, docId: printId, projectId: urlParams.get('printProject') || undefined };
     }
     return null;
   });
@@ -620,6 +621,7 @@ export default function App() {
             settings={store.settings}
             onOpenProject={(code) => openProjectIn('projects', code)}
             initialPrintDocId={printDocumentRequest?.module === 'meetings' ? printDocumentRequest.docId : undefined}
+            initialPrintProjectId={printDocumentRequest?.module === 'meetings' ? printDocumentRequest.projectId : undefined}
             onClearInitialPrintDocId={handleClearPrintDoc}
           />
         );

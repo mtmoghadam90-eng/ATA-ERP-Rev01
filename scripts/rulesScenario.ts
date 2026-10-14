@@ -23191,7 +23191,25 @@ head("Meeting minutes: the printed document and the project folder");
   const docs = readFileSync("src/server/services/projectDocuments.ts", "utf8");
   ok("folder: «صورتجلسات» is one of the project's folders", docs.includes('{ id: "meetings", name: "صورتجلسات" }'));
   ok("folder: each meeting opens its printable view",
-    docs.includes("url: `?printModule=meetings&printId=${meeting.id}`") && /type: "meeting",\s*generated: true/.test(docs));
+    docs.includes("url: `?printModule=meetings&printId=${meeting.id}&printProject=${projectId}`") && /type: "meeting",\s*generated: true/.test(docs));
+  ok("folder: each meeting is listed as this project's piece, named by its own topics",
+    /topics: \{ where: \{ projectId \}, select: \{ title: true \}/.test(docs) && /\$\{own \|\| meeting\.title\}/.test(docs));
+  const app = readFileSync("src/App.tsx", "utf8");
+  ok("folder: the print link's project reaches the meetings screen",
+    app.includes("projectId: urlParams.get('printProject') || undefined")
+    && app.includes("initialPrintProjectId={printDocumentRequest?.module === 'meetings' ? printDocumentRequest.projectId : undefined}"));
+  const msvcSrc = readFileSync("src/server/services/meetingService.ts", "utf8");
+  ok("piece: a search from a project leaves the general summary out",
+    /scopeProjectId\s*\?\s*\["code", "title", "place", "attendees", "absentees"\]/.test(msvcSrc));
+  ok("piece: ...and reads only that project's topics and items",
+    /topics: \{ some: \{ AND: \[inScope,/.test(msvcSrc) && /topicId: \{ in: topics\.map/.test(msvcSrc));
+  ok("piece: «دارای اقدام باز» from a project counts only its own topics",
+    /topicMatchesProject\(t\.projectId, projectScope\)\s*&& t\.items\.some\(\(i\) => isOpenItemState/.test(msvcSrc));
+  const mvPiece = readFileSync("src/components/MeetingsView.tsx", "utf8");
+  ok("piece: the project tab says nothing about the other topics", !/data-hidden-topics/.test(mvPiece));
+  ok("piece: deleting from a project removes its piece only, while anything else is left",
+    /const removesPieceOnly = !!fixedProjectId && hiddenCount > 0;/.test(mvPiece)
+    && /input\.topics = input\.topics\.filter\(\(t\) => t\.projectId !== fixedProjectId\)/.test(mvPiece));
   ok("folder: the meetings listed go through the meeting's own visibility",
     /\{ AND: \[\{ topics: \{ some: \{ projectId \} \} \}, visibleMeetings\] \}/.test(docs));
   ok("folder: the route hands the caller over", readFileSync("src/server/routes/projects.ts", "utf8")

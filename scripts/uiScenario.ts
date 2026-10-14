@@ -4382,6 +4382,7 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
     ],
   };
   const askedM: string[] = [];
+  const deletedM: string[] = [];
   const actionRow = {
     itemId: "it1", lineNo: 1, text: "ارسال دیتاشیت", dueDateJalali: "1405/07/20", state: "OPEN",
     assignees: [{ userId: "u2", name: "رضا" }], tasks: [], meetingId: "m1", meetingCode: "MOM-0507-001",
@@ -4392,6 +4393,7 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
     const u = decodeURIComponent(String(url));
     askedM.push(u);
     if (init?.method === "POST" || init?.method === "PUT") posted.push({ url: u, body: String(init.body ?? "") });
+    if (init?.method === "DELETE") deletedM.push(u);
     let body: unknown = { success: true, rows: [], total: 0, page: 1, pageSize: 25, totalPages: 1 };
     if (u.startsWith("/api/meetings/actions")) {
       body = { success: true, rows: [actionRow], total: 1, page: 1, pageSize: 50, totalPages: 1 };
@@ -4527,6 +4529,8 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
   });
   await settleM();
   const rowP = hostP.querySelector('[data-meeting-row="m2"]');
+  ok("project tab: the open-action badge counts this project's piece only (none here)",
+    !rowP?.querySelector("[data-open-actions]"));
   ok("project tab: the row names this project's topic, not the internal one",
     (rowP?.textContent ?? "").includes("نقشه‌های پروژه") && !(rowP?.textContent ?? "").includes("استراتژی داخلی"));
   await act(async () => { rowP?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
@@ -4535,7 +4539,8 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
   const formText = hostP.querySelector("[data-meeting-topics]")?.textContent ?? "";
   ok("project tab: ...this project's, never the internal subject",
     !formText.includes("استراتژی داخلی") && !hostP.textContent?.includes("محرمانه"));
-  ok("project tab: ...and says the others are kept", !!hostP.querySelector("[data-hidden-topics]"));
+  ok("project tab: ...and says nothing about the others", !hostP.querySelector("[data-hidden-topics]")
+    && !(hostP.textContent ?? "").includes("موضوع دیگر"));
   ok("project tab: the meeting's general summary is not drawn", !hostP.textContent?.includes("خلاصه کلی جلسه"));
   posted.length = 0;
   await act(async () => { hostP.querySelector("#meeting-save-draft")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
@@ -4551,6 +4556,22 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
   await settleM();
   ok("project tab: the preview is of this project's part",
     (hostP.querySelector("[data-meeting-print] h3")?.textContent ?? "").includes("بخش پروژه ATA-05-38"));
+
+  await act(async () => { hostP.querySelector('[aria-label="بستن پیش‌نمایش"]')?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settleM();
+  /* -- deleting from a project removes its piece and keeps the rest -- */
+  ok("project tab: delete is offered as this project's piece",
+    (hostP.querySelector("#meeting-delete")?.textContent ?? "").includes("حذف بخش این پروژه"));
+  posted.length = 0;
+  await act(async () => { hostP.querySelector("#meeting-delete")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settleM();
+  const yes = [...hostP.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes("بله، حذف"));
+  await act(async () => { yes?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  await settleM();
+  const pieceBody = posted[0] ? JSON.parse(posted[0].body) : null;
+  ok("project tab: ...a save, not a delete, with only the other topics left",
+    posted[0]?.url === "/api/meetings/m2" && deletedM.length === 0
+    && pieceBody?.topics?.length === 1 && pieceBody.topics[0].id === "t2", pieceBody?.topics);
 
   act(() => { rootP.unmount(); });
   hostP.remove();

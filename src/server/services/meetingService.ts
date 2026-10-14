@@ -347,20 +347,43 @@ export const MEETING_SORTABLE = ["meetingDate", "createdAt", "code", "title"] as
  * (they are in the JSON as written, so a `contains` finds them), and the jobs
  * its topics were about.
  */
-function searchWhere(term: string): Prisma.MeetingWhereInput | undefined {
-  const own = searchClause(term, ["code", "title", "place", "summary", "attendees", "absentees"]);
+function searchWhere(term: string, scopeProjectId?: string | null): Prisma.MeetingWhereInput | undefined {
+  /*
+   * Seen from one project, a meeting is that project's piece of it: the
+   * general summary and the other topics are not searched, or a row would be
+   * listed under this project for words it cannot show.
+   */
+  const own = searchClause(term, scopeProjectId
+    ? ["code", "title", "place", "attendees", "absentees"]
+    : ["code", "title", "place", "summary", "attendees", "absentees"]);
   if (!own) return undefined;
-  const items = searchClause(term, ["text", "assignees"]);
+  const items = scopeProjectId ? undefined : searchClause(term, ["text", "assignees"]);
   const topics = searchClause(term, ["title", "discussion", "conclusion"]);
   const project = searchClause(term, ["code", "name"]);
+  const inScope = scopeProjectId ? { projectId: scopeProjectId } : {};
   return {
     OR: [
       ...(own.OR as Prisma.MeetingWhereInput[]),
       ...(items ? [{ items: { some: items as Prisma.MeetingItemWhereInput } }] : []),
-      ...(topics ? [{ topics: { some: topics as Prisma.MeetingTopicWhereInput } }] : []),
-      ...(project ? [{ topics: { some: { project: project as Prisma.ProjectWhereInput } } }] : []),
+      ...(topics ? [{ topics: { some: { AND: [inScope, topics as Prisma.MeetingTopicWhereInput] } } }] : []),
+      ...(project ? [{ topics: { some: { ...inScope, project: project as Prisma.ProjectWhereInput } } }] : []),
     ],
   };
+}
+
+/** Item ids under a project's own topics whose words match — the item half of a scoped search. */
+async function scopedItemMeetings(term: string, projectId: string): Promise<string[]> {
+  const items = searchClause(term, ["text", "assignees"]);
+  if (!items) return [];
+  const db = getDb();
+  const topics = await db.meetingTopic.findMany({ where: { projectId }, select: { id: true }, take: MEETING_SCAN_LIMIT });
+  if (topics.length === 0) return [];
+  const rows = await db.meetingItem.findMany({
+    where: { AND: [{ topicId: { in: topics.map((t) => t.id) } }, items as Prisma.MeetingItemWhereInput] },
+    select: { meetingId: true },
+    take: MEETING_SCAN_LIMIT,
+  });
+  return [...new Set(rows.map((r) => r.meetingId))];
 }
 
 /** A project filter as a topic clause: «internal», a project id, or nothing. */
@@ -376,7 +399,12 @@ export function topicMatchesProject(topicProjectId: string | null, filter: strin
   return topicProjectId === filter;
 }
 
-export function buildMeetingWhere(q: { search?: string }, filters: MeetingFilters, user: AuthUser): Prisma.MeetingWhereInput {
+export function buildMeetingWhere(
+  q: { search?: string },
+  filters: MeetingFilters,
+  user: AuthUser,
+  scopedItemIds?: string[],
+): Prisma.MeetingWhereInput {
   const and: Prisma.MeetingWhereInput[] = [];
   const visibility = visibilityClause(user);
   if (visibility) and.push(visibility);
@@ -397,8 +425,15 @@ export function buildMeetingWhere(q: { search?: string }, filters: MeetingFilter
   const status = String(filters.status ?? "").trim();
   if (status === "DRAFT" || status === "FINAL") and.push({ status });
 
-  const search = q.search ? searchWhere(q.search) : undefined;
-  if (search) and.push(search);
+  const scope = project && project !== "internal" ? project : null;
+  const search = q.search ? searchWhere(q.search, scope) : undefined;
+  if (search) {
+    // A scoped search's item half is resolved beforehand (an item has no
+    // relation to its topic for SQL to walk) and arrives as meeting ids.
+    and.push(scopedItemIds && scopedItemIds.length > 0
+      ? { OR: [search, { id: { in: scopedItemIds } }] }
+      : search);
+  }
 
   return and.length === 0 ? {} : and.length === 1 ? and[0] : { AND: and };
 }
@@ -410,7 +445,10 @@ export async function listMeetings(
   todayJalali: string,
 ) {
   const db = getDb();
-  let where = buildMeetingWhere(q, filters, user);
+  const scope = projectFilterOf(filters.project);
+  const projectScope = scope && scope !== "internal" ? scope : null;
+  const scopedItems = projectScope && q.search ? await scopedItemMeetings(q.search, projectScope) : undefined;
+  let where = buildMeetingWhere(q, filters, user, scopedItems);
 
   /*
    * «دارای اقدام باز» is derived from the tasks, which are not a relation SQL
@@ -429,7 +467,9 @@ export async function listMeetings(
     const tasks = await taskStatuses(candidates);
     const open = candidates
       .map((m) => toRow(m, tasks, user, todayJalali))
-      .filter((r) => r.openActionCount > 0)
+      // From a project, only its own piece's actions count.
+      .filter((r) => r.topics.some((t) => topicMatchesProject(t.projectId, projectScope)
+        && t.items.some((i) => isOpenItemState(i.state))))
       .map((r) => r.id);
     where = { id: { in: open } };
   }
