@@ -272,6 +272,7 @@ import {
   COST_DRIFT_THRESHOLD_PERCENT, COST_SOURCES, convertCost, costDrift, landedUnitCostOf,
   lineMargin, lineNeedsCost, linesMissingCost, sellingPriceFor,
 } from "../src/utils/costOfGoods";
+import { normalizeSupplierDocuments, parseSupplierDocuments } from "../src/utils/supplierDocuments";
 import { calculateSellingPrice } from "../src/utils/priceCalculator";
 import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
 import { nextSequence, renderAround } from "../src/server/documentNumbers";
@@ -2354,6 +2355,69 @@ head("Price calculator: stating the figures instead of deriving them");
     calculateSellingPrice({ ...inputs, mode: "BREAKDOWN" }).landedForeign);
   eq("which is not what manual mode would have said",
     calculateSellingPrice({ ...inputs, mode: "MANUAL", manualLandedForeign: 7 }).landedForeign, 7);
+
+  /*
+   * Freight in its own currency is its own row. The breakdown summed it into
+   * «هزینه‌های جانبی ارزی» under the goods' currency — 300 dollars of freight
+   * printed as 300 yuan, and shown inside a foreign subtotal that does not
+   * contain it. The figures it draws come from the calculator, not a second
+   * sum on the screen.
+   */
+  const yuanGoods = { ...inputs, priceForeign: 1000, exchangeRate: 400_000, shippingCost: 300, otherCostsForeign: 20 };
+  const own = calculateSellingPrice({ ...yuanGoods, shippingCurrency: "دلار", shippingExchangeRate: 2_600_000 });
+  eq("freight in its own currency is reported as separate", own.freightSeparate, true);
+  eq("at its own rate", own.freightRial, 300 * 2_600_000);
+  eq("and is not in the goods' foreign subtotal", own.totalForeignCost, 1020);
+  const same = calculateSellingPrice(yuanGoods);
+  eq("freight in the goods' currency is not separate", same.freightSeparate, false);
+  eq("and stays in the foreign subtotal", same.totalForeignCost, 1320);
+  const modal = readFileSync("src/components/PriceCalculatorModal.tsx", "utf8").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\{\/\*[\s\S]*?\*\/\}/g, " ");
+  ok("the breakdown no longer sums freight into the other foreign costs",
+    !/shipCost\s*\+\s*otherCostForeign/.test(modal));
+  ok("a separate freight has its own row in the breakdown",
+    modal.includes("data-calc-freight-row") && modal.includes("result.freightSeparate"));
+}
+
+/*
+ * A supplier's files, each with what it is. The description travels through
+ * the same normaliser the server writes with, and the route lets it in.
+ */
+head("Supplier files: a file and a line saying what it is");
+{
+  const docs = normalizeSupplierDocuments([
+    { name: "agency.pdf", size: "120 KB", url: "/uploads/supplier-docs/a.pdf", description: "  نامهٔ نمایندگی ۱۴۰۵ " },
+    { name: "dup.pdf", url: "/uploads/supplier-docs/a.pdf", description: "second" },
+    { name: "no-url.pdf", description: "points at nothing" },
+    "junk",
+  ]);
+  eq("an entry with no url is dropped and a repeat is one", docs.length, 1);
+  eq("the description is kept, trimmed", docs[0]?.description, "نامهٔ نمایندگی ۱۴۰۵");
+  eq("the first description of a repeat wins", docs[0]?.name, "agency.pdf");
+  eq("the stored column reads back", parseSupplierDocuments(JSON.stringify(docs))[0]?.url, "/uploads/supplier-docs/a.pdf");
+  eq("an unreadable column is no files", parseSupplierDocuments("{oops").length, 0);
+  ok("the supplier route lets the files in",
+    /"documents"/.test(readFileSync("src/server/routes/suppliers.ts", "utf8")));
+  const svc = readFileSync("src/server/services/supplierService.ts", "utf8");
+  ok("and the service writes them through the normaliser",
+    /normalizeSupplierDocuments\(input\.documents\)/.test(svc));
+  const form = readFileSync("src/components/SuppliersView.tsx", "utf8");
+  ok("the form asks what each file is", form.includes("data-supplier-document-description"));
+  ok("and uploads into a Latin folder", form.includes("'supplier-docs'"));
+}
+
+/*
+ * An activity's files sit under its words. In the header row they were read
+ * before the message and pushed the actions aside on a long file name.
+ */
+head("Activity card: attachments under the message, not in the header");
+{
+  const pv = readFileSync("src/components/ProjectsView.tsx", "utf8");
+  const files = pv.indexOf("data-activity-attachments");
+  const text = pv.indexOf("{renderWithMentions(act.text, users)}");
+  ok("the attachment block exists", files > 0);
+  ok("and comes after the message text", text > 0 && files > text);
+  ok("the header no longer draws the files beside the actions",
+    !pv.includes("editingActivityId !== act.id && act.attachments.map("));
 }
 
 

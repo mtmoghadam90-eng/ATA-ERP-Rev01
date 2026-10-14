@@ -72,7 +72,8 @@ export function rowToModuleNote(row: ModuleNoteRow): ModuleNote {
 
 export interface UseModuleNotesResult {
   notes: ModuleNote[];
-  addNote: (text: string, attachments?: ActivityAttachment[]) => Promise<void>;
+  /** Resolves true when the note was stored, false when it was refused (already reported). */
+  addNote: (text: string, attachments?: ActivityAttachment[]) => Promise<boolean>;
   deleteNote: (id: string) => Promise<void>;
 }
 
@@ -115,12 +116,14 @@ export function useModuleNotes(
     onError?.(err instanceof ApiError ? err.message : fallback);
 
   const addNote = useCallback(async (text: string, attachments?: ActivityAttachment[]) => {
-    if (!entityId) return;
+    if (!entityId) return false;
     try {
       await moduleNotesApi.add(entityType, entityId, text, attachments);
       await load();
+      return true;
     } catch (err) {
       report(err, "ثبت یادداشت با خطا مواجه شد.");
+      return false;
     }
     // `report` closes over onError, which callers commonly pass inline.
     // eslint-disable-next-line react-hooks/exhaustive-deps

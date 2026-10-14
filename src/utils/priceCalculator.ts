@@ -51,6 +51,14 @@ export interface PriceCalcOutputs {
   sellingRial: number;
   sellingForeign: number;
   profitAmountRial: number;
+  /**
+   * The freight at its own rate when it has one (`freightSeparate`), else 0 —
+   * the freight is then already inside `totalForeignCost`. Reported so the
+   * calculator's breakdown can draw freight as its own row in the currency it
+   * was actually quoted in, rather than summing it into the goods' currency.
+   */
+  freightRial: number;
+  freightSeparate: boolean;
 }
 
 /** Why the freight cannot be costed (a foreign currency with no rate), or null. */
@@ -84,6 +92,8 @@ export function calculateSellingPrice(i: PriceCalcInputs): PriceCalcOutputs {
       sellingRial: sellingRialManual,
       sellingForeign: sellingForeignManual,
       profitAmountRial: sellingRialManual - landedRialManual,
+      freightRial: 0,
+      freightSeparate: false,
     };
   }
 
@@ -134,5 +144,7 @@ export function calculateSellingPrice(i: PriceCalcInputs): PriceCalcOutputs {
     sellingRial,
     sellingForeign,
     profitAmountRial,
+    freightRial,
+    freightSeparate,
   };
 }

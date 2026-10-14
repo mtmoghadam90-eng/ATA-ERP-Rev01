@@ -6,6 +6,7 @@ import { toJsonColumn, toNullableString } from "../childSync";
 import { notifyModuleResponsible } from "./notificationService";
 import { logAction } from "./auditService";
 import { processWorkflowRules } from "./workflowService";
+import { normalizeSupplierDocuments } from "../../utils/supplierDocuments";
 
 /**
  * Supplier data access.
@@ -87,6 +88,8 @@ export interface SupplierInput {
   description?: string | null;
   providedCategories?: unknown;
   customValues?: unknown;
+  /** The supplier's files; absent = not edited, `[]` = all removed. */
+  documents?: unknown;
 }
 
 function scalarData(input: SupplierInput): Record<string, unknown> {
@@ -105,6 +108,7 @@ function scalarData(input: SupplierInput): Record<string, unknown> {
   if ("description" in input) set("description", toNullableString(input.description));
   if ("providedCategories" in input) set("providedCategories", toJsonColumn(input.providedCategories));
   if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
+  if ("documents" in input) set("documents", toJsonColumn(normalizeSupplierDocuments(input.documents)));
 
   return out;
 }

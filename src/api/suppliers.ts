@@ -25,6 +25,8 @@ export interface SupplierRow {
 export interface SupplierDetail extends Omit<SupplierRow, "_count"> {
   description: string | null;
   customValues: string | null;
+  /** Serialized `SupplierDocument[]`; the grid row does not carry it. */
+  documents: string | null;
   updatedAt: string;
 }
 
@@ -48,6 +50,7 @@ export interface SupplierWriteInput {
   description?: string | null;
   providedCategories?: unknown;
   customValues?: unknown;
+  documents?: unknown;
 }
 
 export const suppliersApi = {
@@ -94,6 +97,7 @@ export const suppliersApi = {
 /* ------------------------------- adapter ------------------------------- */
 
 import type { Supplier } from "../types";
+import { parseSupplierDocuments } from "../utils/supplierDocuments";
 
 function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   if (!raw) return fallback;
@@ -131,6 +135,7 @@ export function detailToSupplier(detail: SupplierDetail): Supplier {
   return markComplete({
     ...rowToSupplier({ ...detail, _count: { purchaseOrders: 0, inquiries: 0 } }),
     description: detail.description ?? "",
+    documents: parseSupplierDocuments(detail.documents),
   } as Supplier);
 }
 
@@ -149,5 +154,11 @@ export function supplierToWriteInput(supplier: Partial<Supplier>): SupplierWrite
     description: supplier.description ?? null,
     providedCategories: supplier.providedCategories,
     customValues: supplier.customValues,
+    /*
+     * Only when the record carries them: a supplier composed in the browser
+     * without the key (an older call site, a quick-add) must not erase the
+     * files on the stored row — absent is «not edited» on the server.
+     */
+    ...(supplier.documents !== undefined ? { documents: supplier.documents } : {}),
   };
 }

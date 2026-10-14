@@ -11,6 +11,7 @@ import { getTodayShamsi } from "../../dateUtils";
 const WRITABLE: (keyof SupplierInput)[] = [
   "name", "country", "city", "contactName", "phone", "email", "website",
   "paymentTerms", "status", "description", "providedCategories", "customValues",
+  "documents",
 ];
 
 function pickInput(body: unknown): SupplierInput {
