@@ -694,7 +694,7 @@ model Project {
   messages Message[]
   /// «صورتجلسات» held about this job. NoAction: a meeting is a document, so it
   /// is counted by `countProjectReferences` and blocks the delete by name.
-  meetings Meeting[]
+  meetingTopics MeetingTopic[]
 
   @@index([customerId])
   @@index([status])
@@ -2541,9 +2541,6 @@ model Meeting {
   /// Free text: the agenda, or a short summary of the discussion.
   summary           String?   @db.NVarChar(Max)
 
-  projectId String?  @db.NVarChar(36)
-  project   Project? @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
-
   /// DRAFT | FINAL. Finalising is what raises the tasks.
   status String @default("DRAFT") @db.NVarChar(20)
 
@@ -2565,18 +2562,39 @@ model Meeting {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @default(now()) @updatedAt
 
-  items MeetingItem[]
+  /// The topics discussed, in order; each belongs to a project or to none.
+  topics MeetingTopic[]
+  items  MeetingItem[]
 
-  @@index([projectId])
   @@index([meetingDate])
   @@index([status])
   @@map("meetings")
+}
+
+/// One subject on a meeting's agenda: what was discussed, what was concluded,
+/// and the items that followed. A project's, or internal when projectId is null.
+model MeetingTopic {
+  id         String   @id @default(uuid()) @db.NVarChar(36)
+  meetingId  String   @db.NVarChar(36)
+  meeting    Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  lineNo     Int      @default(0)
+  title      String   @db.NVarChar(300)
+  projectId  String?  @db.NVarChar(36)
+  project    Project? @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  discussion String?  @db.NVarChar(Max)
+  conclusion String?  @db.NVarChar(Max)
+
+  @@index([meetingId])
+  @@index([projectId])
+  @@map("meeting_topics")
 }
 
 model MeetingItem {
   id        String  @id @default(uuid()) @db.NVarChar(36)
   meetingId String  @db.NVarChar(36)
   meeting   Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  /// The topic it falls under — no foreign key (two cascade paths); see the migration.
+  topicId   String? @db.NVarChar(36)
   lineNo    Int     @default(0)
   text      String  @db.NVarChar(Max)
   /// DECISION (مصوبه) | ACTION (اقدام) | INFO (اطلاع).
@@ -2589,5 +2607,6 @@ model MeetingItem {
   taskLinks String? @db.NVarChar(Max)
 
   @@index([meetingId])
+  @@index([topicId])
   @@map("meeting_items")
 }

@@ -1068,7 +1068,7 @@ export async function countProjectReferences(id: string) {
       db.packagingDelivery.count({ where: { projectId: id } }),
       db.afterSalesService.count({ where: { projectId: id } }),
       // A meeting is a document: its minutes are counted and named, not lost.
-      db.meeting.count({ where: { projectId: id } }),
+      db.meeting.count({ where: { topics: { some: { projectId: id } } } }),
     ]);
   const total = proformas + purchaseOrders + transactions + inquiries + deliveries + services + meetings;
   return { proformas, purchaseOrders, transactions, inquiries, deliveries, services, meetings, total };

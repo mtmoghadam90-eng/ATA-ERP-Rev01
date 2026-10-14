@@ -1,3 +1,4 @@
+import { parseTaskLinks } from "../../utils/meetingMinutes";
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
@@ -393,6 +394,7 @@ export interface TaskProjectContext {
  * their list wants to know whose job it is.
  */
 async function withProjectContext<T extends {
+  id?: string;
   relatedToType?: string | null;
   relatedToId?: string | null;
 }>(rows: T[]): Promise<(T & { relatedProject: TaskProjectContext | null })[]> {
@@ -448,14 +450,20 @@ async function withProjectContext<T extends {
         })
       : Promise.resolve([]),
     /*
-     * A meeting's action item. The card shows the job the meeting was about,
-     * so a task handed out in a project meeting reads like any other work on
-     * that project; an internal meeting has none and shows none.
+     * A meeting's action item. The card shows the job of the **topic** the
+     * item was raised under — a meeting walks through several projects and an
+     * internal subject, so «the meeting's project» is not a thing that exists.
+     * The task is found through the item's own `taskLinks`; an internal topic
+     * has no project and the card shows none.
      */
     meetingIds.size > 0
       ? db.meeting.findMany({
           where: { id: { in: [...meetingIds] } },
-          select: { id: true, project: { select: projectSelect } },
+          select: {
+            id: true,
+            topics: { select: { id: true, project: { select: projectSelect } } },
+            items: { select: { topicId: true, taskLinks: true } },
+          },
         })
       : Promise.resolve([]),
   ]);
@@ -480,16 +488,27 @@ async function withProjectContext<T extends {
     id: c.id, code: "", name: "", customerName: c.companyName,
   } as TaskProjectContext]));
 
-  const byMeeting = new Map(
-    meetings.filter((m) => m.project).map((m) => [m.id, toContext(m.project!)]));
+  // Keyed by the **task** id, since one meeting's tasks belong to different projects.
+  const byMeetingTask = new Map<string, TaskProjectContext>();
+  for (const m of meetings) {
+    const projectOfTopic = new Map<string, TaskProjectContext | null>(
+      m.topics.map((t) => [t.id, t.project ? toContext(t.project) : null]));
+    for (const item of m.items) {
+      const ctx = item.topicId ? projectOfTopic.get(item.topicId) : null;
+      if (!ctx) continue;
+      for (const link of parseTaskLinks(item.taskLinks)) byMeetingTask.set(link.taskId, ctx);
+    }
+  }
 
   return rows.map((row) => {
     const kind = row.relatedToId ? taskRelationKind(row.relatedToType) : null;
+    if (kind === "meeting") {
+      return { ...row, relatedProject: (row.id && byMeetingTask.get(row.id)) || null };
+    }
     const source = kind === "project" ? byProject
       : kind === "proforma" ? byProforma
         : kind === "customer" ? byCustomer
-          : kind === "meeting" ? byMeeting
-            : null;
+          : null;
     return {
       ...row,
       relatedProject: source?.get(row.relatedToId!) ?? null,

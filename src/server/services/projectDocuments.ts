@@ -125,7 +125,9 @@ export async function listProjectDocuments(projectId: string, user?: AuthUser): 
       }),
       user
         ? db.meeting.findMany({
-            where: visibleMeetings ? { AND: [{ projectId }, visibleMeetings] } : { projectId },
+            where: visibleMeetings
+              ? { AND: [{ topics: { some: { projectId } } }, visibleMeetings] }
+              : { topics: { some: { projectId } } },
             select: { id: true, code: true, title: true, status: true, meetingDateJalali: true },
             orderBy: { meetingDate: "desc" },
           })

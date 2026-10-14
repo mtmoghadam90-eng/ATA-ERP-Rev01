@@ -12,8 +12,10 @@ import {
  * meetings answer is decided inside the service (`visibilityClause`).
  */
 const WRITABLE: (keyof MeetingInput)[] = [
-  "title", "meetingDate", "startTime", "endTime", "place", "summary", "projectId",
-  "attendees", "absentees", "nextMeetingDate", "attachments", "items", "finalize",
+  "title", "meetingDate", "startTime", "endTime", "place", "summary", "topics",
+  // A caller written before topics existed: read only when `topics` is absent.
+  "projectId", "items",
+  "attendees", "absentees", "nextMeetingDate", "attachments", "finalize",
 ];
 
 const pick = (body: unknown): MeetingInput => {

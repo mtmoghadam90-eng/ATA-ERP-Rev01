@@ -36,6 +36,17 @@ export interface MeetingDocumentItem {
   state: MeetingItemState;
 }
 
+/** One subject on the agenda, as printed: its project (none = internal), the talk, the result. */
+export interface MeetingDocumentTopic {
+  title: string;
+  projectCode: string | null;
+  projectName: string | null;
+  customerName: string | null;
+  discussion: string | null;
+  conclusion: string | null;
+  items: MeetingDocumentItem[];
+}
+
 export interface MeetingDocumentInput {
   meeting: {
     code: string;
@@ -45,16 +56,20 @@ export interface MeetingDocumentInput {
     endTime: string | null;
     place: string | null;
     summary: string | null;
-    projectCode: string | null;
-    projectName: string | null;
-    customerName: string | null;
     status: MeetingStatus;
     attendees: MeetingParticipant[];
     absentees: MeetingParticipant[];
     nextMeetingDateJalali: string | null;
     createdByName: string | null;
-    items: MeetingDocumentItem[];
+    topics: MeetingDocumentTopic[];
   };
+  /**
+   * Set when only one project's part is printed — «چاپ بخش این پروژه», the
+   * copy that can go to that project's customer. The caller passes only that
+   * project's topics; this names the part on the page and drops the meeting's
+   * general summary, which may speak about anything discussed that day.
+   */
+  projectScope?: { code: string | null; name: string | null; customerName: string | null } | null;
   /** The active proforma template — the company's letterhead. */
   template?: {
     companyName?: string;
@@ -75,8 +90,16 @@ const personLabel = (p: MeetingParticipant) =>
   p.organization ? `${text(p.name)} <span class="org">(${text(p.organization)})</span>` : text(p.name);
 
 /** The filename-and-tab title: what the PDF is saved under. */
-export function meetingDocumentTitle(meeting: { code: string; title: string }): string {
-  return `صورتجلسه ${meeting.code}`;
+export function meetingDocumentTitle(
+  meeting: { code: string; title: string },
+  projectCode?: string | null,
+): string {
+  return projectCode ? `صورتجلسه ${meeting.code} - ${projectCode}` : `صورتجلسه ${meeting.code}`;
+}
+
+/** A topic's scope as printed beside its title. */
+function topicScope(t: { projectCode: string | null; projectName: string | null }): string {
+  return t.projectCode ? `${text(t.projectCode)} — ${text(t.projectName)}` : "داخلی";
 }
 
 /** The order the sections print in, and their headings. */
@@ -100,14 +123,29 @@ export function renderMeetingDocument(input: MeetingDocumentInput): string {
     m.startTime ? `ساعت ${m.startTime}${m.endTime ? ` تا ${m.endTime}` : ""}` : "",
   ].filter(Boolean).join(" — ");
 
+  const scope = input.projectScope ?? null;
+  // The distinct projects the topics name, in order — what the meeting was about.
+  const seen = new Set<string>();
+  const projects = m.topics.filter((t) => {
+    if (!t.projectCode || seen.has(t.projectCode)) return false;
+    seen.add(t.projectCode);
+    return true;
+  });
+
   // Each half drops on its own: a heading with nothing under it reads as
   // something that failed to load.
   const infoRows: [string, string][] = [
     ["تاریخ و ساعت", text(when) || "-"],
     ["مکان", text(m.place) || "-"],
-    ["پروژه", m.projectCode ? `${text(m.projectCode)} — ${text(m.projectName)}` : "جلسه داخلی"],
   ];
-  if (m.customerName) infoRows.push(["کارفرما", text(m.customerName)]);
+  if (scope) {
+    infoRows.push(["پروژه", scope.code ? `${text(scope.code)} — ${text(scope.name)}` : "-"]);
+    if (scope.customerName) infoRows.push(["کارفرما", text(scope.customerName)]);
+  } else {
+    infoRows.push(["پروژه‌ها", projects.length === 0
+      ? "جلسه داخلی"
+      : projects.map((p) => topicScope(p)).join("، ")]);
+  }
   if (m.nextMeetingDateJalali) infoRows.push(["جلسه بعدی", text(m.nextMeetingDateJalali)]);
 
   const people = (list: MeetingParticipant[]) =>
@@ -121,8 +159,8 @@ export function renderMeetingDocument(input: MeetingDocumentInput): string {
    * columns stood empty on two rows in three. Each section is numbered from
    * one, and a kind with no items prints no section at all.
    */
-  const sections = MEETING_DOCUMENT_SECTIONS.map(({ kind, heading }) => {
-    const items = m.items.filter((i) => i.kind === kind);
+  const sectionsOf = (topicItems: MeetingDocumentItem[]) => MEETING_DOCUMENT_SECTIONS.map(({ kind, heading }) => {
+    const items = topicItems.filter((i) => i.kind === kind);
     if (items.length === 0) return "";
     const isAction = kind === "ACTION";
     const head = isAction
@@ -140,6 +178,19 @@ export function renderMeetingDocument(input: MeetingDocumentInput): string {
       <table class="items items-${kind}"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
     </div>`;
   }).join("");
+
+  /*
+   * Topic by topic, in the order they were discussed: what it was about (a
+   * project, or internal), what was said, what was concluded, and then its
+   * decisions, actions and information items. The heading is kept with what
+   * follows it, so a sheet never ends on a topic's title alone.
+   */
+  const topicsHtml = m.topics.map((t, idx) => `<div class="topic" data-topic="${idx + 1}">
+      <div class="topic-title">موضوع ${idx + 1}: ${text(t.title)} <span class="scope">(${topicScope(t)})</span></div>
+      ${t.discussion ? `<div class="label">شرح بحث</div><div class="summary">${multiline(t.discussion)}</div>` : ""}
+      ${t.conclusion ? `<div class="label">نتیجه‌گیری</div><div class="conclusion">${multiline(t.conclusion)}</div>` : ""}
+      ${sectionsOf(t.items)}
+    </div>`).join("");
 
   const signers = m.attendees;
   const signatures = signers.length === 0 ? "" : `
@@ -180,6 +231,7 @@ export function renderMeetingDocument(input: MeetingDocumentInput): string {
     .info td { padding: 3px 0; }
     .section-title { font-weight: 700; margin: 14px 0 6px; font-size: 10.5pt; color: ${accent}; }
     .org, .muted { color: #475569; }
+    .scope-note { font-size: 9.5pt; color: #475569; margin: -4px 0 8px; }
     .summary { white-space: normal; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; }
     .items { width: 100%; border-collapse: collapse; margin-top: 4px; }
     .items th { background: #f1f5f9; border: 1px solid #94a3b8; padding: 5px 6px; font-size: 9.5pt; }
@@ -194,6 +246,11 @@ export function renderMeetingDocument(input: MeetingDocumentInput): string {
     .section-title.kind-DECISION { color: #3730a3; }
     .section-title.kind-ACTION { color: #92400e; }
     .section-title.kind-INFO { color: #334155; }
+    .topic { margin-top: 16px; padding-top: 6px; border-top: 1px solid #cbd5e1; }
+    .topic-title { font-weight: 700; font-size: 11.5pt; color: ${accent}; margin-bottom: 6px; break-after: avoid; page-break-after: avoid; }
+    .topic-title .scope { font-weight: 400; font-size: 9.5pt; color: #475569; }
+    .label { font-size: 9pt; color: #475569; margin: 6px 0 2px; break-after: avoid; page-break-after: avoid; }
+    .conclusion { border: 1px solid #94a3b8; border-right: 4px solid ${accent}; border-radius: 6px; padding: 6px 12px; font-weight: 700; }
     .nowrap { white-space: nowrap; }
     .signatures { margin-top: 22px; break-before: avoid; page-break-before: avoid; break-inside: avoid; page-break-inside: avoid; }
     .sign-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 18px; }
@@ -242,15 +299,16 @@ export function renderMeetingDocument(input: MeetingDocumentInput): string {
     </td></tr></thead>
     <tbody><tr><td>
       <h1>${text(m.title)} <span class="status">(${text(MEETING_STATUS_LABELS[m.status])})</span></h1>
+      ${scope ? `<div class="scope-note" data-project-scope>بخش مربوط به پروژه ${scope.code ? text(scope.code) : ""} از این صورتجلسه</div>` : ""}
       <table class="info">
         ${infoRows.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join("")}
         <tr><th>حاضرین</th><td>${people(m.attendees)}</td></tr>
         <tr><th>غایبین</th><td>${people(m.absentees)}</td></tr>
       </table>
-      ${m.summary ? `<div class="section-title">دستور جلسه / خلاصه مذاکرات</div><div class="summary">${multiline(m.summary)}</div>` : ""}
-      ${m.items.length === 0
-        ? '<div class="section-title">بندهای صورتجلسه</div><div class="muted">بندی ثبت نشده است.</div>'
-        : sections}
+      ${m.summary && !scope ? `<div class="section-title">دستور جلسه / خلاصه مذاکرات</div><div class="summary">${multiline(m.summary)}</div>` : ""}
+      ${m.topics.length === 0
+        ? '<div class="section-title">موضوعات جلسه</div><div class="muted">موضوعی ثبت نشده است.</div>'
+        : topicsHtml}
       ${signatures}
     </td></tr></tbody>
     <tfoot><tr><td>
