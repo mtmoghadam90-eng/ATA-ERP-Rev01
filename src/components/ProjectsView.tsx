@@ -6012,20 +6012,6 @@ export default function ProjectsView({
                                             )}
                                           </div>
                                           <div className="flex items-center gap-2">
-                                            {/* Every file on the entry, not just the first. */}
-                                            {editingActivityId !== act.id && act.attachments.map((file) => (
-                                              <a
-                                                key={file.url}
-                                                href={file.url}
-                                                download={file.name}
-                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-100 hover:bg-sky-200 border border-sky-200 text-sky-800 text-[9px] font-bold transition mr-1"
-                                                title="دانلود فایل پیوست"
-                                              >
-                                                <Paperclip size={10} />
-                                                {file.name}{file.size ? ` (${file.size})` : ''}
-                                              </a>
-                                            ))}
-
                                             {/* What can be done with a message. */}
                                             <div className="flex items-center gap-1 bg-slate-100/60 p-0.5 rounded border border-slate-200/40">
                                               <button
@@ -6208,6 +6194,30 @@ export default function ProjectsView({
                                             <p className="text-slate-700 leading-relaxed font-semibold whitespace-pre-line">
                                               {renderWithMentions(act.text, users)}
                                             </p>
+                                            {/*
+                                              Every file on the entry, under the
+                                              words it belongs to. They used to
+                                              sit in the header row beside the
+                                              author, so a message read files
+                                              first and text second — and a long
+                                              file name pushed the actions over.
+                                            */}
+                                            {act.attachments.length > 0 && (
+                                              <div className="flex flex-wrap items-center gap-1.5 mt-1.5" data-activity-attachments>
+                                                {act.attachments.map((file) => (
+                                                  <a
+                                                    key={file.url}
+                                                    href={file.url}
+                                                    download={file.name}
+                                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-100 hover:bg-sky-200 border border-sky-200 text-sky-800 text-[9px] font-bold transition"
+                                                    title="دانلود فایل پیوست"
+                                                  >
+                                                    <Paperclip size={10} />
+                                                    {file.name}{file.size ? ` (${file.size})` : ''}
+                                                  </a>
+                                                ))}
+                                              </div>
+                                            )}
                                           </>
                                         )}
 

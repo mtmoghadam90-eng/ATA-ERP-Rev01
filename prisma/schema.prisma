@@ -394,6 +394,9 @@ model Supplier {
   /// String[] of product categories this supplier can provide.
   providedCategories String? @db.NVarChar(Max)
   customValues       String? @db.NVarChar(Max)
+  /// [{name,size,url,description}] — the supplier's files, each with what it
+  /// is (`src/utils/supplierDocuments.ts`). NULL is no files.
+  documents          String? @db.NVarChar(Max)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

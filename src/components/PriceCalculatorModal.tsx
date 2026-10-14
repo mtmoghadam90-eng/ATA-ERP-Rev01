@@ -730,43 +730,77 @@ export default function PriceCalculatorModal({
             <div className="flex justify-between text-slate-600">
               <span>۱. بهای خرید ارزی کالا:</span>
               <span>
-                {baseOrig.toLocaleString()} {calcCurrency}
+                {formatMoney(baseOrig)} {calcCurrency}
               </span>
             </div>
             <div className="flex justify-between text-slate-500">
               <span>۲. کارمزد صرافی حواله ارز:</span>
               <span>
-                +{result.remittanceForeign.toLocaleString()} {calcCurrency}
+                +{formatMoney(result.remittanceForeign)} {calcCurrency}
               </span>
             </div>
+            {/*
+              Freight is its own row, in the currency it was quoted in. It
+              used to be summed into «هزینه‌های جانبی ارزی» and labelled with
+              the goods' currency, which was wrong twice when the forwarder
+              quotes in another currency: the label named the wrong currency,
+              and that freight is not in the foreign subtotal below at all —
+              `calculateSellingPrice` converts it at its own rate and adds it on
+              the rial side, which is where it is drawn now.
+            */}
+            {!result.freightSeparate && (
+              <div className="flex justify-between text-slate-500">
+                <span>۳. هزینه حمل:</span>
+                <span>
+                  +{formatMoney(shipCost)} {calcCurrency}
+                </span>
+              </div>
+            )}
             <div className="flex justify-between text-slate-500">
-              <span>۳. هزینه‌های جانبی ارزی (ترابری و غیره):</span>
+              <span>{result.freightSeparate ? "۳" : "۴"}. سایر هزینه‌های ارزی:</span>
               <span>
-                +{(shipCost + otherCostForeign).toLocaleString()} {calcCurrency}
+                +{formatMoney(otherCostForeign)} {calcCurrency}
               </span>
             </div>
             <div className="flex justify-between text-slate-700 border-t border-dashed pt-1.5">
               <span>مجموع بهای ارزی FOB/Landed:</span>
               <span className="font-bold text-indigo-700">
-                {result.totalForeignCost.toLocaleString()} {calcCurrency}
+                {formatMoney(result.totalForeignCost)} {calcCurrency}
               </span>
             </div>
             <div className="flex justify-between text-slate-500 pt-1">
               <span>معادل ریالی بهای ارزی کالا (تسعیر):</span>
               <span>
-                {(result.totalForeignCost * rate).toLocaleString()} ریال
+                {formatMoney(result.totalForeignCost * rate)} ریال
+              </span>
+            </div>
+            {result.freightSeparate && (
+              <div className="flex justify-between text-slate-500" data-calc-freight-row>
+                <span>
+                  هزینه حمل ({formatMoney(shipCost)} {freightCurrency}
+                  {freightCurrency !== "ریال" ? ` × ${formatMoney(Number(calcShippingRate) || 0)}` : ""}):
+                </span>
+                <span>
+                  +{formatMoney(Math.round(result.freightRial))} ریال
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between text-slate-500">
+              <span>ترخیص و گمرک:</span>
+              <span>
+                +{formatMoney(customsDuty)} ریال
               </span>
             </div>
             <div className="flex justify-between text-slate-500">
-              <span>مخارج ریالی داخل کشور (ترخیص و عوارض + سایر):</span>
+              <span>سایر مخارج ریالی:</span>
               <span>
-                +{(customsDuty + otherCostRial).toLocaleString()} ریال
+                +{formatMoney(otherCostRial)} ریال
               </span>
             </div>
             <div className="flex justify-between text-slate-800 border-t border-dashed pt-1.5 text-xs font-bold">
               <span className="font-sans">بهای تمام‌شده کل کالا (ریال):</span>
               <span className="text-sky-700">
-                {Math.round(result.landedRial).toLocaleString()} ریال
+                {formatMoney(Math.round(result.landedRial))} ریال
               </span>
             </div>
             <div className="flex justify-between text-emerald-700 pt-1 text-xs font-bold">
@@ -775,7 +809,7 @@ export default function PriceCalculatorModal({
                 {calcMarginType === "PERCENT" ? `${profitPct}%` : "ثابت"}):
               </span>
               <span>
-                +{Math.round(result.profitAmountRial).toLocaleString()} ریال
+                +{formatMoney(Math.round(result.profitAmountRial))} ریال
               </span>
             </div>
           </div>

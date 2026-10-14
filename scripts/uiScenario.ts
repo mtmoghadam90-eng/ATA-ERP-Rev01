@@ -60,6 +60,7 @@ import TaskCompletionModal from "../src/components/TaskCompletionModal";
 import ModuleNotesSection from "../src/components/ModuleNotesSection";
 import AfterSalesServicesView from "../src/components/AfterSalesServicesView";
 import ReferralsView from "../src/components/ReferralsView";
+import NoteFollowUpBar from "../src/components/NoteFollowUpBar";
 import ProjectFollowUpTab from "../src/components/ProjectFollowUpTab";
 import AdEffectivenessView from "../src/components/AdEffectivenessView";
 import MeetingsView from "../src/components/MeetingsView";
@@ -4379,6 +4380,65 @@ head("Meeting minutes: an action carries its assignee, and finalising asks for a
   hostM.remove();
   gM.fetch = realFetchM;
   invalidateUserDirectory();
+}
+
+
+/*
+ * After a quotation's note: the stage is the project's manual override, and
+ * nothing else. The PUT names two keys — a whole project written back from a
+ * note would overwrite everything edited on the project since — and the task
+ * button hands over to the next-action form rather than writing anything.
+ */
+head("Note follow-up: the stage writes two keys, the task opens the form");
+{
+  const gN = globalThis as unknown as Record<string, unknown>;
+  const realFetchN = gN.fetch;
+  const callsN: { url: string; method: string; body: unknown }[] = [];
+  gN.fetch = async (url: unknown, init?: { method?: string; body?: string }) => {
+    const method = init?.method ?? "GET";
+    callsN.push({ url: String(url), method, body: init?.body ? JSON.parse(init.body) : null });
+    const project = { id: "pj1", stage: method === "PUT" ? "در حال بررسی فنی" : "جدید", manualStage: null, manualStageLocked: false };
+    return { ok: true, status: 200, json: async () => ({ success: true, project }), text: async () => "{}" } as unknown as Response;
+  };
+  const settleN = async () => { for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); }); };
+  let tasked = 0;
+  const hostN = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootN2 = createRoot(hostN);
+  await act(async () => {
+    rootN2.render(React.createElement(NoteFollowUpBar, {
+      projectId: "pj1", canEditProject: true, onTask: () => { tasked++; }, onClose: () => {},
+    }));
+  });
+  await act(async () => { (hostN.querySelector("[data-note-follow-up-task]") as HTMLElement).click(); });
+  ok("the task button hands over to the next-action form", tasked === 1);
+  ok("and writes nothing itself", callsN.length === 0, callsN);
+  await act(async () => { (hostN.querySelector("[data-note-follow-up-stage]") as HTMLElement).click(); });
+  await settleN();
+  ok("opening the stage control reads the project", callsN.some((c) => c.method === "GET" && c.url.includes("/api/projects/pj1")), callsN);
+  const sel = hostN.querySelector<HTMLSelectElement>("[data-note-follow-up-stage-select]")!;
+  await act(async () => {
+    sel.value = "در حال بررسی فنی";
+    sel.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  });
+  const saveBtn = [...hostN.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes("ثبت مرحله"));
+  await act(async () => { saveBtn?.click(); });
+  await settleN();
+  const put = callsN.find((c) => c.method === "PUT");
+  ok("the stage reaches the project route", !!put && put.url.includes("/api/projects/pj1"), callsN);
+  ok("with the manual stage and its lock and nothing else",
+    !!put && JSON.stringify(Object.keys(put.body as object).sort()) === JSON.stringify(["manualStage", "manualStageLocked"]), put?.body);
+  ok("naming the stage chosen", (put?.body as { manualStage?: string })?.manualStage === "در حال بررسی فنی", put?.body);
+  ok("and says what the project now reads", (hostN.querySelector("[data-note-follow-up-message]")?.textContent ?? "").includes("در حال بررسی فنی"));
+
+  await act(async () => {
+    rootN2.render(React.createElement(NoteFollowUpBar, {
+      projectId: null, canEditProject: true, onTask: () => {}, onClose: () => {},
+    }));
+  });
+  ok("a quotation with no project offers no stage", !hostN.querySelector("[data-note-follow-up-stage]"));
+  act(() => { rootN2.unmount(); });
+  hostN.remove();
+  gN.fetch = realFetchN;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

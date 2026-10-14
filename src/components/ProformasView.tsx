@@ -84,6 +84,9 @@ import { formatMoney } from "../numUtils";
 import { printHtmlDocument } from "../utils/printDocument";
 import { DocumentPreview } from "./DocumentPreview";
 import ModuleNotesSection from "./ModuleNotesSection";
+import NoteFollowUpBar from "./NoteFollowUpBar";
+import { useNextAction } from "../utils/useNextAction";
+import { NextActionPrompt } from "./NextActionModal";
 import CustomerAgreementAlert from "./CustomerAgreementAlert";
 import { isFieldRequired, renderFieldLabelWithAsterisk } from "../utils/requiredFields";
 import { buildCustomerOptions, buildCustomerOptionsFromSubset } from "../utils/customerLabel";
@@ -554,6 +557,13 @@ export default function ProformasView({
   // so they are never part of its write body — folding one into the record and
   // saving it discarded the note.
   const proformaNotes = useModuleNotes("proforma", selectedProforma?.id, (m) => alert(m));
+  /*
+   * After a note is saved, «حالا چه؟» — a task for oneself or a colleague, or
+   * the project's stage (`NoteFollowUpBar`). Which document it was saved on is
+   * remembered so a bar left open does not follow the person to the next one.
+   */
+  const [noteFollowUpFor, setNoteFollowUpFor] = useState<string | null>(null);
+  const noteNextAction = useNextAction();
 
   /** Which line is uploading, so its button can say so. */
   const [uploadingImageIndex, setUploadingImageIndex] = useState<number | null>(null);
@@ -2943,6 +2953,7 @@ export default function ProformasView({
   });
   return (
     <div className="space-y-6 animate-fade-in">
+      <NextActionPrompt next={noteNextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
       {/* Print View Overlay */}
       {showPrintView && selectedProforma && activeTemplate && (
         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xs overflow-y-auto p-4 md:p-8 z-50 flex justify-center">
@@ -2990,9 +3001,29 @@ export default function ProformasView({
                 notes={proformaNotes.notes}
                 title="توافقات خاص و کامنت‌های این پیش‌فاکتور"
                 placeholder="یادداشت یا کامنت جدید درباره شرایط پرداخت، تخفیفات، یا توافقات خاص مشتری بنویسید..."
-                onAddNote={proformaNotes.addNote}
+                onAddNote={async (text, files) => {
+                  const ok = await proformaNotes.addNote(text, files);
+                  if (ok) setNoteFollowUpFor(selectedProforma.id);
+                }}
                 onDeleteNote={proformaNotes.deleteNote}
               />
+              {noteFollowUpFor === selectedProforma.id && (
+                <NoteFollowUpBar
+                  projectId={selectedProforma.projectId || null}
+                  canEditProject={hasModulePermission(currentUser, 'projects')}
+                  onClose={() => setNoteFollowUpFor(null)}
+                  onTask={() => {
+                    void noteNextAction.ask(true, selectedProforma, (p) => ({
+                      relatedToType: 'پیش‌فاکتور',
+                      relatedToId: p.id,
+                      relatedToName: p.proformaNumber || '',
+                      assignedTo: currentUser?.fullName,
+                      projectId: p.projectId || null,
+                      module: 'proformas',
+                    }));
+                  }}
+                />
+              )}
             </div>
           </div>
         </div>

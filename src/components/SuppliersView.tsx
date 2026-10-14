@@ -10,7 +10,8 @@ import {
   FileSpreadsheet,
   Maximize2,
   Minimize2,
-  Loader2
+  Loader2,
+  Paperclip
 } from 'lucide-react';
 import { Supplier, ERPSettings, User } from '../types';
 import CustomFieldsForm from './CustomFieldsForm';
@@ -24,6 +25,9 @@ import ConfirmModal from './ConfirmModal';
 import { ApiError } from '../api/client';
 import { detailToSupplier, rowToSupplier, suppliersApi, supplierToWriteInput } from '../api/suppliers';
 import { useSupplierList } from '../api/useSupplierList';
+import { MAX_SUPPLIER_DOCUMENTS, SupplierDocument } from '../utils/supplierDocuments';
+import { formatFileSize } from '../utils/attachments';
+import { oversizedUploadReason } from '../utils/uploadLimits';
 
 /**
  * Suppliers screen. Reads through the API — search, filters and paging are
@@ -116,6 +120,42 @@ export default function SuppliersView({
   const [status, setStatus] = useState<Supplier['status']>('فعال');
   const [providedCategories, setProvidedCategories] = useState<string[]>([]);
   const [description, setDescription] = useState('');
+  const [documents, setDocuments] = useState<SupplierDocument[]>([]);
+  const [uploadingDocs, setUploadingDocs] = useState(false);
+
+  /*
+   * Files go up one at a time, each landing in the list as soon as it is
+   * stored, so a failure on the third keeps the first two. The folder name is
+   * Latin on purpose: `/api/upload` reduces anything else to an empty string
+   * and the file lands in the uploads root. `uploadFile` is imported on the
+   * press — `imageUtils` pulls `file-saver`, which would make this screen
+   * unmountable outside a bundler.
+   */
+  const handlePickDocuments = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploadingDocs(true);
+    try {
+      const { uploadFile } = await import('../imageUtils');
+      let count = documents.length;
+      for (const file of Array.from(files)) {
+        if (count >= MAX_SUPPLIER_DOCUMENTS) {
+          alert(`حداکثر ${MAX_SUPPLIER_DOCUMENTS} فایل برای هر تأمین‌کننده.`);
+          break;
+        }
+        const tooBig = oversizedUploadReason(file);
+        if (tooBig) { alert(tooBig); continue; }
+        try {
+          const url = await uploadFile(file, 'supplier-docs');
+          count += 1;
+          setDocuments((prev) => [...prev, { name: file.name, size: formatFileSize(file.size), url, description: '' }]);
+        } catch (err: any) {
+          alert(err?.message || 'خطا در بارگذاری فایل');
+        }
+      }
+    } finally {
+      setUploadingDocs(false);
+    }
+  };
 
   // Open add
   const handleOpenAdd = () => {
@@ -131,6 +171,7 @@ export default function SuppliersView({
     setStatus('فعال');
     setProvidedCategories([]);
     setDescription('');
+    setDocuments([]);
     setCustomValues({});
     setShowModal(true);
   };
@@ -163,6 +204,7 @@ export default function SuppliersView({
     setStatus(supp.status);
     setProvidedCategories(supp.providedCategories || []);
     setDescription(supp.description || '');
+    setDocuments(supp.documents ?? []);
     setCustomValues(supp.customValues || {});
     setShowModal(true);
   };
@@ -210,6 +252,7 @@ export default function SuppliersView({
       status,
       providedCategories,
       description,
+      documents,
       customValues
     };
 
@@ -768,6 +811,77 @@ export default function SuppliersView({
                     rows={3}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 outline-none text-right"
                   />
+                </div>
+
+                {/*
+                  The supplier's files, each with what it is. The description
+                  is asked beside the file because «scan0012.pdf» says nothing
+                  a year later; the agency letter and last year's price list
+                  look the same in a folder.
+                */}
+                <div className="col-span-1 md:col-span-2 space-y-2" data-supplier-documents>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-semibold text-slate-500">فایل‌های تأمین‌کننده</label>
+                    <label className={`cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition ${uploadingDocs ? 'bg-slate-100 text-slate-400 border-slate-200' : 'bg-white text-sky-700 border-sky-200 hover:bg-sky-50'}`}>
+                      {uploadingDocs ? <Loader2 size={13} className="animate-spin" /> : <Paperclip size={13} />}
+                      {uploadingDocs ? 'در حال بارگذاری…' : 'افزودن فایل'}
+                      <input
+                        type="file"
+                        multiple
+                        className="hidden"
+                        disabled={uploadingDocs}
+                        data-supplier-document-input
+                        onChange={(e) => {
+                          const picked = e.target.files;
+                          void handlePickDocuments(picked).finally(() => { if (e.target) e.target.value = ''; });
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {documents.length === 0 ? (
+                    <p className="text-[11px] text-slate-400 border border-dashed border-slate-200 rounded-lg px-3 py-2">
+                      فایلی پیوست نشده است. کاتالوگ، نامهٔ نمایندگی، لیست قیمت، مدارک ثبت شرکت و … را این‌جا بارگذاری کنید و بنویسید هر فایل چیست.
+                    </p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {documents.map((doc, idx) => (
+                        <li key={doc.url} className="flex flex-col sm:flex-row sm:items-center gap-1.5 border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-50/60" data-supplier-document>
+                          <a
+                            href={doc.url}
+                            download={doc.name}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-bold text-sky-700 hover:underline shrink-0 max-w-full sm:max-w-[40%] truncate"
+                            title={doc.name}
+                          >
+                            <Paperclip size={12} className="shrink-0" />
+                            <span className="truncate">{doc.name}</span>
+                            {doc.size && <span className="text-[10px] text-slate-400 font-normal shrink-0">({doc.size})</span>}
+                          </a>
+                          <input
+                            type="text"
+                            value={doc.description}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              setDocuments((prev) => prev.map((d, i) => (i === idx ? { ...d, description: value } : d)));
+                            }}
+                            placeholder="این فایل چیست؟ مثلاً: نامهٔ نمایندگی ۱۴۰۵"
+                            maxLength={500}
+                            className="flex-1 min-w-0 border border-slate-200 rounded-md px-2 py-1 text-xs outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 bg-white text-right"
+                            data-supplier-document-description
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setDocuments((prev) => prev.filter((_, i) => i !== idx))}
+                            className="self-end sm:self-auto p-1 text-rose-500 hover:bg-rose-50 rounded"
+                            title="حذف این فایل"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
 
                 {/* Dynamic Custom Fields Form Section */}

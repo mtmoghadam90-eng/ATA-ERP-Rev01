@@ -310,6 +310,8 @@ export interface Supplier {
   customValues?: Record<string, any>;
   providedCategories?: string[];
   description?: string;
+  /** Files, each with what it is. Carried by the detail read only. */
+  documents?: import("./utils/supplierDocuments").SupplierDocument[];
 }
 
 export interface ProformaItem {

@@ -28,7 +28,7 @@ interface NoteItem {
 
 interface ModuleNotesSectionProps {
   notes?: NoteItem[];
-  onAddNote: (text: string, attachments?: ActivityAttachment[]) => void;
+  onAddNote: (text: string, attachments?: ActivityAttachment[]) => void | Promise<unknown>;
   onDeleteNote: (id: string) => void;
   title?: string;
   placeholder?: string;
