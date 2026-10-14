@@ -52,6 +52,21 @@ export function canDeleteNote(note: NoteAuthorship, reader: NoteReader): boolean
 }
 
 /**
+ * Whether this person may correct this note.
+ *
+ * **The same person who may remove it, and deliberately so.** Removing a note
+ * and writing something else in its place is already within that right, so a
+ * narrower edit rule would only force the long way round (delete, retype,
+ * re-attach) and lose the original date on the way; a wider one would let a
+ * colleague put words into somebody else's agreement under their name. One
+ * function answering both is what keeps the pencil and the bin on the same
+ * notes — two would drift the first time either was corrected.
+ */
+export function canEditNote(note: NoteAuthorship, reader: NoteReader): boolean {
+  return canDeleteNote(note, reader);
+}
+
+/**
  * Whether there is anything to record.
  *
  * **A file on its own is a note.** What is written here is usually an

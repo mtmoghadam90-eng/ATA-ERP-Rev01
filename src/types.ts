@@ -28,6 +28,10 @@ export interface ModuleNote {
   attachments?: ActivityAttachment[];
   /** Whether this reader may remove it; the server answers, the card obeys. */
   canDelete?: boolean;
+  /** Whether this reader may correct it — the same rule as `canDelete`. */
+  canEdit?: boolean;
+  /** When it was last corrected; null if never. */
+  editedAt?: string | null;
 }
 
 export interface InventoryTransaction {

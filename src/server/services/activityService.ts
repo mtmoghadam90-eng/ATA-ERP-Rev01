@@ -25,7 +25,7 @@ import { ACTIVITY_CATEGORY, logProjectFact } from "./projectActivityLog";
 import { canDeleteCategoryGroup, canModifyActivity } from "../../utils/activityAuthorship";
 import { afterCommit } from "../afterCommit";
 import { capacityRefusalMessage } from "../../utils/workLimits";
-import { canDeleteNote, noteHasContent, noteSummary } from "../../utils/moduleNotes";
+import { canDeleteNote, canEditNote, noteHasContent, noteSummary } from "../../utils/moduleNotes";
 import { MoveOutcome } from "./taskService";
 import { capacityByUser } from "./workLoadService";
 import { notifyStaff } from "./staffNotifications";
@@ -1790,7 +1790,7 @@ export async function listModuleNotes(entityType: string, entityId: string) {
 function noteRow(row: {
   id: string; entityType: string; entityId: string; text: string;
   authorName: string | null; authorUserId: string | null; attachments: string | null;
-  createdAt: Date;
+  createdAt: Date; editedAt?: Date | null;
 }) {
   return {
     id: row.id,
@@ -1801,6 +1801,7 @@ function noteRow(row: {
     authorUserId: row.authorUserId,
     attachments: parseAttachmentList(row.attachments),
     createdAt: row.createdAt,
+    editedAt: row.editedAt ?? null,
   };
 }
 
@@ -1903,6 +1904,45 @@ async function logNoteOnTimeline(
     user,
     getTodayShamsi(),
   );
+}
+
+/**
+ * Corrects a note's words and files, and nothing else.
+ *
+ * The author, the date and the document it is on are not writable: the note is
+ * still the one that was written, only corrected, which is what `editedAt` says
+ * on the card. A correction that leaves neither words nor files is refused for
+ * the reason a new note with neither is — an empty note is a deletion, and the
+ * bin is for that. The project's timeline is not rewritten: its entry recorded
+ * what was said at the time, and a history that changes under the reader is the
+ * fault this application keeps the timeline append-only to avoid.
+ */
+export async function updateModuleNote(
+  id: string,
+  text: string,
+  attachments: unknown,
+  user: AuthUser,
+): Promise<"invalid" | "not-found" | "forbidden" | { note: unknown }> {
+  const db = getDb();
+  const note = await db.moduleNote.findUnique({
+    where: { id }, select: { id: true, authorName: true, authorUserId: true },
+  });
+  if (!note) return "not-found";
+
+  const me = user.isSystemAdmin || note.authorUserId
+    ? null
+    : await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
+  if (!canEditNote(note, { ...user, fullName: me?.fullName })) return "forbidden";
+
+  const trimmed = toNullableString(text);
+  const files = normalizeAttachments(attachments);
+  if (!noteHasContent(trimmed, files)) return "invalid";
+
+  const saved = await db.moduleNote.update({
+    where: { id },
+    data: { text: trimmed ?? "", attachments: attachmentListColumn(files), editedAt: new Date() },
+  });
+  return { note: noteRow(saved) };
 }
 
 export async function deleteModuleNote(

@@ -22,6 +22,10 @@ export interface ModuleNoteRow {
   authorUserId: string | null;
   attachments: ActivityAttachment[];
   createdAt: string;
+  /** When it was last corrected; null if never. */
+  editedAt?: string | null;
+  /** Whether this reader may correct it — the same rule as `canDelete`. */
+  canEdit?: boolean;
   /**
    * Whether **this** reader may remove it.
    *
@@ -43,6 +47,10 @@ export const moduleNotesApi = {
     api.post<{ note: ModuleNoteRow }>(`/api/notes/${entityType}/${entityId}`, {
       text, attachments: attachments ?? [],
     }).then((r) => r.note),
+
+  /** The whole new text and file list; refused like `remove` for anybody else's note. */
+  update: (id: string, text: string, attachments: ActivityAttachment[]) =>
+    api.put<{ note: ModuleNoteRow }>(`/api/notes/${id}`, { text, attachments }).then((r) => r.note),
 
   /** Refused for a note written by someone else, unless you administer the system. */
   remove: (id: string) => api.delete<Record<string, never>>(`/api/notes/${id}`),
@@ -67,6 +75,9 @@ export function rowToModuleNote(row: ModuleNoteRow): ModuleNote {
     createdAt: row.createdAt,
     attachments: row.attachments ?? [],
     canDelete: row.canDelete !== false,
+    // Absent (an older server) follows the delete answer, the same rule.
+    canEdit: row.canEdit ?? row.canDelete !== false,
+    editedAt: row.editedAt ?? null,
   } as ModuleNote;
 }
 
@@ -74,6 +85,8 @@ export interface UseModuleNotesResult {
   notes: ModuleNote[];
   /** Resolves true when the note was stored, false when it was refused (already reported). */
   addNote: (text: string, attachments?: ActivityAttachment[]) => Promise<boolean>;
+  /** Resolves true when the correction was stored, false when refused (already reported). */
+  updateNote: (id: string, text: string, attachments: ActivityAttachment[]) => Promise<boolean>;
   deleteNote: (id: string) => Promise<void>;
 }
 
@@ -129,6 +142,18 @@ export function useModuleNotes(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entityType, entityId, load]);
 
+  const updateNote = useCallback(async (id: string, text: string, attachments: ActivityAttachment[]) => {
+    try {
+      await moduleNotesApi.update(id, text, attachments);
+      await load();
+      return true;
+    } catch (err) {
+      report(err, "ویرایش یادداشت با خطا مواجه شد.");
+      return false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [load]);
+
   const deleteNote = useCallback(async (id: string) => {
     try {
       await moduleNotesApi.remove(id);
@@ -139,5 +164,5 @@ export function useModuleNotes(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
 
-  return { notes, addNote, deleteNote };
+  return { notes, addNote, updateNote, deleteNote };
 }

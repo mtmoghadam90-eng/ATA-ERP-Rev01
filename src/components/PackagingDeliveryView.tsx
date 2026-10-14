@@ -2416,6 +2416,7 @@ ${sheets}
                   placeholder="مثال: کامنت مشتری در مرحله بسته‌بندی یا شرایط لجستیک خاص این ارسال..."
                   onAddNote={deliveryNotes.addNote}
                   onDeleteNote={deliveryNotes.deleteNote}
+                  onEditNote={deliveryNotes.updateNote}
                 />
               </div>
 
