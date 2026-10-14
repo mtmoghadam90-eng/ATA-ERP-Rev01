@@ -47,6 +47,8 @@ interface Props {
   settings?: ERPSettings;
   /** A `?printModule=meetings&printId=…` link: open straight on its printable view. */
   initialPrintDocId?: string;
+  /** With it, the link prints only that project's piece of the minutes. */
+  initialPrintProjectId?: string;
   onClearInitialPrintDocId?: () => void;
 }
 
@@ -136,6 +138,12 @@ export function MeetingPrintModal({ meeting, settings, onClose, projectId }: {
   );
 }
 
+/** Open actions of a meeting — of one project's piece of it when a project is given. */
+export function openActionsIn(meeting: MeetingRow, projectId?: string | null): number {
+  const topics = projectId ? topicsForProject(meeting.topics, projectId) : meeting.topics;
+  return topics.reduce((n, t) => n + t.items.filter((i) => i.state === 'OPEN' || i.state === 'OVERDUE').length, 0);
+}
+
 const STATE_TONE: Record<MeetingItemState, string> = {
   NONE: '',
   PENDING: 'bg-slate-100 text-slate-600',
@@ -152,7 +160,8 @@ const KIND_TONE: Record<MeetingItemKind, string> = {
 };
 
 export default function MeetingsView({
-  currentUser, projectId, projectLabel, onOpenProject, settings, initialPrintDocId, onClearInitialPrintDocId,
+  currentUser, projectId, projectLabel, onOpenProject, settings, initialPrintDocId, initialPrintProjectId,
+  onClearInitialPrintDocId,
 }: Props) {
   /*
    * A printable link opened in its own tab: the record is read and the
@@ -163,10 +172,10 @@ export default function MeetingsView({
     if (!initialPrintDocId) return;
     let live = true;
     meetingsApi.get(initialPrintDocId)
-      .then(({ meeting }) => { if (live) setPrinting({ meeting, projectId: null }); })
+      .then(({ meeting }) => { if (live) setPrinting({ meeting, projectId: initialPrintProjectId ?? null }); })
       .catch(() => { /* a meeting that is gone, or not this person's, simply does not open */ });
     return () => { live = false; };
-  }, [initialPrintDocId]);
+  }, [initialPrintDocId, initialPrintProjectId]);
 
   const [projectFilter, setProjectFilter] = useState<string>('all');
   const [from, setFrom] = useState('');
@@ -378,9 +387,10 @@ export default function MeetingsView({
                 <span className={`text-[11px] px-2 py-0.5 rounded-full ${m.status === 'FINAL' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
                   {MEETING_STATUS_LABELS[m.status]}
                 </span>
-                {m.openActionCount > 0 && (
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">
-                    {m.openActionCount.toLocaleString('fa-IR')} اقدام باز
+                {/* Seen from a project, only its own piece's actions are counted. */}
+                {openActionsIn(m, projectId) > 0 && (
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700" data-open-actions>
+                    {openActionsIn(m, projectId).toLocaleString('fa-IR')} اقدام باز
                   </span>
                 )}
               </div>
@@ -693,10 +703,25 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
     }
   };
 
+  /*
+   * From a project, «حذف» removes this project's piece and nothing else: the
+   * same minutes may be another project's record, or the company's own. Only
+   * when nothing else is left does it delete the minutes themselves.
+   */
+  const removesPieceOnly = !!fixedProjectId && hiddenCount > 0;
   const remove = async () => {
     if (!loaded) return;
     setBusy(true);
     try {
+      if (removesPieceOnly) {
+        const input = toInput(false);
+        input.topics = input.topics.filter((t) => t.projectId !== fixedProjectId);
+        const result = await meetingsApi.update(loaded.id, input);
+        if (result.cancelledTasks > 0) dataChanged('tasks');
+        onSaved(result.meeting);
+        onClose();
+        return;
+      }
       await meetingsApi.remove(loaded.id);
       dataChanged('tasks');
       onSaved(loaded);
@@ -803,11 +828,6 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
 
             <div className="space-y-3" data-meeting-topics>
               <div className="text-sm font-bold text-slate-700 dark:text-slate-200">موضوعات جلسه</div>
-              {hiddenCount > 0 && (
-                <div className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2" data-hidden-topics>
-                  {hiddenCount.toLocaleString('fa-IR')} موضوع دیگرِ این جلسه (داخلی یا مربوط به پروژه‌های دیگر) اینجا نمایش داده نمی‌شود و دست‌نخورده می‌ماند.
-                </div>
-              )}
               {shown.length === 0 && <div className="text-xs text-slate-500">هنوز موضوعی ثبت نشده است.</div>}
               {shown.map((topic, idx) => (
                 <TopicCard
@@ -878,12 +898,16 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
             {loaded && (
               confirmDelete ? (
                 <span className="mr-auto flex items-center gap-2 text-sm">
-                  <span className="text-rose-700">وظایف باز این جلسه لغو می‌شوند. حذف شود؟</span>
+                  <span className="text-rose-700">
+                    {removesPieceOnly
+                      ? 'موضوع‌های این پروژه از صورتجلسه حذف و وظایف بازشان لغو می‌شوند. حذف شود؟'
+                      : 'وظایف باز این جلسه لغو می‌شوند. حذف شود؟'}
+                  </span>
                   <button type="button" onClick={() => void remove()} className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs">بله، حذف</button>
                   <button type="button" onClick={() => setConfirmDelete(false)} className="px-3 py-1.5 rounded-lg border text-xs">انصراف</button>
                 </span>
               ) : (
-                <button type="button" onClick={() => setConfirmDelete(true)} className="mr-auto text-sm text-rose-600 flex items-center gap-1"><Trash2 size={14} /> حذف</button>
+                <button type="button" id="meeting-delete" onClick={() => setConfirmDelete(true)} className="mr-auto text-sm text-rose-600 flex items-center gap-1"><Trash2 size={14} /> {removesPieceOnly ? 'حذف بخش این پروژه' : 'حذف'}</button>
               )
             )}
             {isFinal && (

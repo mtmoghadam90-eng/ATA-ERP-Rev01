@@ -128,7 +128,11 @@ export async function listProjectDocuments(projectId: string, user?: AuthUser): 
             where: visibleMeetings
               ? { AND: [{ topics: { some: { projectId } } }, visibleMeetings] }
               : { topics: { some: { projectId } } },
-            select: { id: true, code: true, title: true, status: true, meetingDateJalali: true },
+            select: {
+              id: true, code: true, title: true, status: true, meetingDateJalali: true,
+              // This project's own topics only: the folder lists its piece of the minutes.
+              topics: { where: { projectId }, select: { title: true }, orderBy: { lineNo: "asc" } },
+            },
             orderBy: { meetingDate: "desc" },
           })
         : Promise.resolve([]),
@@ -248,14 +252,19 @@ export async function listProjectDocuments(projectId: string, user?: AuthUser): 
     });
   }
 
-  // The minutes of the project's meetings, each opened in its printable view
-  // like a proforma — a generated document, not a stored file.
+  /*
+   * This project's piece of each meeting that discussed it, opened in its
+   * printable view like a proforma. One meeting under one number may be split
+   * across several projects' folders: each names and prints its own topics and
+   * never the internal subjects or the other jobs discussed the same day.
+   */
   for (const meeting of meetings) {
     const status = meetingStatus(meeting.status);
+    const own = meeting.topics.map((t) => t.title).filter(Boolean).join("، ");
     folders[MEETINGS_FOLDER].push({
       id: `meeting-${meeting.id}`,
-      name: `صورتجلسه ${meeting.code} - ${meeting.title}${status === "DRAFT" ? ` (${MEETING_STATUS_LABELS.DRAFT})` : ""}`,
-      url: `?printModule=meetings&printId=${meeting.id}`,
+      name: `صورتجلسه ${meeting.code} - ${own || meeting.title}${status === "DRAFT" ? ` (${MEETING_STATUS_LABELS.DRAFT})` : ""}`,
+      url: `?printModule=meetings&printId=${meeting.id}&printProject=${projectId}`,
       size: "سند سیستمی",
       date: meeting.meetingDateJalali ?? fallbackDate,
       type: "meeting",
