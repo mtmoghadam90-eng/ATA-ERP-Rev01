@@ -8,6 +8,7 @@ import {
   ACTIVITY_SORTABLE, REFERRAL_FILTERABLE, REFERRAL_SORTABLE, categoryUsage, renameCategory,
   addActivity, addModuleNote, addReferralMessage, deleteActivity, deleteCategoryGroup,
   deleteModuleNote,
+  updateModuleNote,
   listActivities, listActivityReaders, listCategoryGroups, listModuleNotes, listReferrals,
   markActivitiesRead, toggleActivityReaction,
   reassignReferral,
@@ -577,7 +578,12 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
       const me = await moduleNoteReaderName(user);
       res.json({
         success: true,
-        notes: notes.map((n) => ({ ...n, canDelete: canDeleteNote(n, { ...user, fullName: me }) })),
+        notes: notes.map((n) => {
+          const allowed = canDeleteNote(n, { ...user, fullName: me });
+          // One rule (`canEditNote` is `canDeleteNote`), so the pencil and the
+          // bin are drawn on exactly the same notes.
+          return { ...n, canDelete: allowed, canEdit: allowed };
+        }),
       });
     } catch (err) {
       sendError(res, err, "GET /api/notes/:entityType/:entityId");
@@ -602,9 +608,40 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
         return;
       }
       // Freshly written, so this reader is its author and may always remove it.
-      res.status(201).json({ success: true, note: { ...(outcome.note as object), canDelete: true } });
+      res.status(201).json({
+        success: true, note: { ...(outcome.note as object), canDelete: true, canEdit: true },
+      });
     } catch (err) {
       sendError(res, err, "POST /api/notes/:entityType/:entityId");
+    }
+  });
+
+  /*
+   * Only the words and the files are read from the body — never the author, the
+   * date or the document, which stay what they were when it was written.
+   */
+  app.put("/api/notes/:id", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as { text?: unknown; attachments?: unknown };
+      const outcome = await updateModuleNote(
+        req.params.id, typeof body.text === "string" ? body.text : "", body.attachments, user);
+      if (outcome === "forbidden") return denied(res, "فقط نویسنده می‌تواند این یادداشت را ویرایش کند.");
+      if (outcome === "not-found") {
+        res.status(404).json({ success: false, error: "یادداشت یافت نشد." });
+        return;
+      }
+      if (outcome === "invalid") {
+        res.status(400).json({
+          success: false,
+          error: "یادداشت باید متن یا حداقل یک فایل پیوست داشته باشد؛ برای حذف آن از دکمه حذف استفاده کنید.",
+        });
+        return;
+      }
+      res.json({ success: true, note: { ...(outcome.note as object), canDelete: true, canEdit: true } });
+    } catch (err) {
+      sendError(res, err, "PUT /api/notes/:id");
     }
   });
 

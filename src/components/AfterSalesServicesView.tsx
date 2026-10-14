@@ -1221,6 +1221,7 @@ export default function AfterSalesServicesView({
                     placeholder="مثال: توافق با مشتری درباره نحوه عودت، هزینه تعمیرات، یا کامنت تیکت پشتیبانی..."
                     onAddNote={serviceNotes.addNote}
                     onDeleteNote={serviceNotes.deleteNote}
+                    onEditNote={serviceNotes.updateNote}
                   />
                 </div>
               )}

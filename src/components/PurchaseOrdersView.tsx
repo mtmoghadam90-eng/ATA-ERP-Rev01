@@ -1611,6 +1611,7 @@ export default function PurchaseOrdersView({
                     placeholder="توافق ارزی خاص، جزییات حمل یا کامنت جدید درباره تامین کالا..."
                     onAddNote={poNotes.addNote}
                     onDeleteNote={poNotes.deleteNote}
+                    onEditNote={poNotes.updateNote}
                   />
                 </div>
               </div>

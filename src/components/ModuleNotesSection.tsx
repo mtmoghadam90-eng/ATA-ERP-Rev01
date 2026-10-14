@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Calendar, Loader2, MessageSquare, Paperclip, Plus, Trash2, X } from "lucide-react";
+import { Calendar, Check, Loader2, MessageSquare, Paperclip, Pencil, Plus, Trash2, X } from "lucide-react";
 import Avatar from "./Avatar";
 import { formatDateTimeToShamsi } from "../dateUtils";
 import {
@@ -24,12 +24,22 @@ interface NoteItem {
   attachments?: ActivityAttachment[];
   /** The server's answer, not a guess. Absent reads as allowed. */
   canDelete?: boolean;
+  /** Same rule as `canDelete`; absent follows it. */
+  canEdit?: boolean;
+  /** When it was last corrected; null if never. */
+  editedAt?: string | null;
 }
 
 interface ModuleNotesSectionProps {
   notes?: NoteItem[];
   onAddNote: (text: string, attachments?: ActivityAttachment[]) => void | Promise<unknown>;
   onDeleteNote: (id: string) => void;
+  /**
+   * Corrects a note in place. Resolves true once stored, so the editor closes
+   * only on a correction that landed — a refused one keeps what was typed.
+   * Absent draws no pencil, rather than one that does nothing.
+   */
+  onEditNote?: (id: string, text: string, attachments: ActivityAttachment[]) => Promise<boolean> | boolean;
   title?: string;
   placeholder?: string;
 }
@@ -41,6 +51,7 @@ export default function ModuleNotesSection({
   notes = [],
   onAddNote,
   onDeleteNote,
+  onEditNote,
   title = "توافقات و یادداشت‌های خاص",
   placeholder = "توافق خاص، کامنت یا یادداشت جدید را اینجا بنویسید...",
 }: ModuleNotesSectionProps) {
@@ -49,6 +60,38 @@ export default function ModuleNotesSection({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
+
+  // The note being corrected, with its own draft and its own files — kept apart
+  // from the new-note box above so editing one never clears the other.
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [editFiles, setEditFiles] = useState<ActivityAttachment[]>([]);
+  const [editUploading, setEditUploading] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const editFileInput = useRef<HTMLInputElement | null>(null);
+
+  const startEdit = (note: NoteItem) => {
+    setEditingId(note.id);
+    setEditText(note.text ?? "");
+    setEditFiles(note.attachments ?? []);
+    setEditError(null);
+  };
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditError(null);
+  };
+  const editHasContent = noteHasContent(editText, editFiles);
+  const saveEdit = async () => {
+    if (!editingId || !onEditNote || !editHasContent || editUploading || editSaving) return;
+    setEditSaving(true);
+    try {
+      const ok = await onEditNote(editingId, editText.trim(), editFiles);
+      if (ok) setEditingId(null);
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
   /*
    * **A file on its own is a note**, and this asks the *same function* the
@@ -71,10 +114,21 @@ export default function ModuleNotesSection({
     setUploadError(null);
   };
 
-  const handlePick = async (picked: FileList | null) => {
+  const handlePick = (picked: FileList | null) =>
+    uploadInto(picked, setFiles, setUploading, setUploadError, fileInput.current);
+  const handleEditPick = (picked: FileList | null) =>
+    uploadInto(picked, setEditFiles, setEditUploading, setEditError, editFileInput.current);
+
+  const uploadInto = async (
+    picked: FileList | null,
+    setList: (fn: (prev: ActivityAttachment[]) => ActivityAttachment[]) => void,
+    setBusy: (busy: boolean) => void,
+    setError: (msg: string | null) => void,
+    input: HTMLInputElement | null,
+  ) => {
     if (!picked || picked.length === 0) return;
-    setUploading(true);
-    setUploadError(null);
+    setBusy(true);
+    setError(null);
     const added: ActivityAttachment[] = [];
     try {
       /*
@@ -92,19 +146,19 @@ export default function ModuleNotesSection({
         const url = await uploadFile(file, NOTE_UPLOAD_FOLDER);
         added.push({ name: file.name, size: formatFileSize(file.size), url });
       }
-      setFiles((prev) => [...prev, ...added].slice(0, MAX_ACTIVITY_ATTACHMENTS));
+      setList((prev) => [...prev, ...added].slice(0, MAX_ACTIVITY_ATTACHMENTS));
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "بارگذاری فایل ممکن نشد.");
+      setError(err instanceof Error ? err.message : "بارگذاری فایل ممکن نشد.");
       // Whatever did upload is kept: re-picking the ones that worked is a cost
       // paid for somebody else's failure.
       if (added.length > 0) {
-        setFiles((prev) => [...prev, ...added].slice(0, MAX_ACTIVITY_ATTACHMENTS));
+        setList((prev) => [...prev, ...added].slice(0, MAX_ACTIVITY_ATTACHMENTS));
       }
     } finally {
-      setUploading(false);
+      setBusy(false);
       // Or picking the same file twice in a row is silently ignored by the
       // browser, which reads as the button having stopped working.
-      if (fileInput.current) fileInput.current.value = "";
+      if (input) input.value = "";
     }
   };
 
@@ -227,6 +281,7 @@ export default function ModuleNotesSection({
           {notes.map((note) => {
             const authorName = note.author || "کاربر سیستم";
             const attachments = note.attachments ?? [];
+            const isEditing = editingId === note.id;
             return (
               <div key={note.id} className="relative group animate-fade-in">
                 {/* Timeline Node */}
@@ -254,12 +309,32 @@ export default function ModuleNotesSection({
                         <Calendar size={10} className="text-slate-400" />
                         {formatDateTimeToShamsi(note.createdAt)}
                       </span>
+                      {note.editedAt && (
+                        <span
+                          className="text-[10px] text-slate-400"
+                          title={`ویرایش: ${formatDateTimeToShamsi(note.editedAt)}`}
+                          data-note-edited
+                        >
+                          (ویرایش شده)
+                        </span>
+                      )}
+                      {onEditNote && (note.canEdit ?? note.canDelete) !== false && !isEditing && (
+                        <button
+                          type="button"
+                          onClick={() => startEdit(note)}
+                          className="text-slate-400 hover:text-indigo-600 p-1 rounded transition-all hover:bg-indigo-50"
+                          title="ویرایش یادداشت"
+                          data-note-edit
+                        >
+                          <Pencil size={12} />
+                        </button>
+                      )}
                       {/*
                         Drawn only for somebody the server will let press it. It
                         used to be drawn for everybody and answered 403, which is
                         a refusal nobody can act on.
                       */}
-                      {note.canDelete !== false && (
+                      {note.canDelete !== false && !isEditing && (
                         <button
                           type="button"
                           onClick={() => onDeleteNote(note.id)}
@@ -272,6 +347,82 @@ export default function ModuleNotesSection({
                     </div>
                   </div>
 
+                  {isEditing ? (
+                    <div className="space-y-2" data-note-editor>
+                      <textarea
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        rows={3}
+                        autoFocus
+                        className="w-full text-xs border border-indigo-200 rounded-xl p-3 bg-white focus:border-indigo-500 resize-y outline-none leading-relaxed font-sans"
+                        data-note-edit-text
+                      />
+                      {editFiles.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5" data-note-edit-files>
+                          {editFiles.map((f) => (
+                            <span
+                              key={f.url}
+                              className="inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-100 text-indigo-800 rounded-lg px-2 py-1 text-[10px] max-w-full"
+                            >
+                              <Paperclip size={10} className="shrink-0" />
+                              <span className="truncate max-w-[160px]" title={f.name}>{f.name}</span>
+                              <button
+                                type="button"
+                                onClick={() => setEditFiles((prev) => prev.filter((x) => x.url !== f.url))}
+                                className="text-indigo-400 hover:text-rose-600 shrink-0"
+                                title="حذف پیوست"
+                              >
+                                <X size={11} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {editError && (
+                        <p className="text-[10px] text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-2 py-1.5">
+                          {editError}
+                        </p>
+                      )}
+                      <div className="flex items-center justify-between gap-2">
+                        <input
+                          ref={editFileInput}
+                          type="file"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => void handleEditPick(e.target.files)}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => editFileInput.current?.click()}
+                          disabled={editUploading || editFiles.length >= MAX_ACTIVITY_ATTACHMENTS}
+                          className="border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-bold py-1 px-2.5 rounded-lg text-[10px] flex items-center gap-1 disabled:opacity-50"
+                        >
+                          {editUploading ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />}
+                          افزودن فایل
+                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={cancelEdit}
+                            className="border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-bold py-1 px-3 rounded-lg text-[10px]"
+                            data-note-edit-cancel
+                          >
+                            انصراف
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void saveEdit()}
+                            disabled={!editHasContent || editUploading || editSaving}
+                            className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold py-1 px-3 rounded-lg text-[10px] flex items-center gap-1"
+                            data-note-edit-save
+                          >
+                            {editSaving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                            ذخیره
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (<>
                   {note.text && (
                     <p className="text-xs text-slate-700 leading-relaxed font-sans whitespace-pre-wrap">
                       {note.text}
@@ -296,6 +447,7 @@ export default function ModuleNotesSection({
                       ))}
                     </div>
                   )}
+                  </>)}
                 </div>
               </div>
             );

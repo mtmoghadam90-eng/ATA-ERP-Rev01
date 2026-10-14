@@ -3006,6 +3006,7 @@ export default function ProformasView({
                   if (ok) setNoteFollowUpFor(selectedProforma.id);
                 }}
                 onDeleteNote={proformaNotes.deleteNote}
+                onEditNote={proformaNotes.updateNote}
               />
               {noteFollowUpFor === selectedProforma.id && (
                 <NoteFollowUpBar

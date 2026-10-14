@@ -178,7 +178,7 @@ import {
 import { channelIsPaced, channelPassLimit, withSendTimeout } from "../src/server/services/messaging/messageService";
 import { telegramCredentialsFrom } from "../src/server/services/messaging/telegramClient";
 import { pickTelegramCredentials } from "../src/server/services/messaging/telegramCredentials";
-import { canDeleteNote, noteHasContent, noteSummary } from "../src/utils/moduleNotes";
+import { canDeleteNote, canEditNote, noteHasContent, noteSummary } from "../src/utils/moduleNotes";
 import {
   attachmentListColumn, formatFileSize, parseAttachmentList,
 } from "../src/utils/attachments";
@@ -10818,7 +10818,7 @@ head("A document's notes: files, a Shamsi clock, and a delete that is offered ho
    * fault as a switch that silently does nothing, wearing the other hat.
    */
   ok("the delete is gated on the server's own answer",
-    /note\.canDelete !== false && \(/.test(card), card.slice(0, 0));
+    /note\.canDelete !== false && (!isEditing && )?\(/.test(card), card.slice(0, 0));
   /*
    * The shared disc, so one colleague is one colour everywhere and «محمد مقدم»
    * reads «مم». This card drew its own monogram from the first two *characters*
@@ -10855,9 +10855,38 @@ head("A document's notes: files, a Shamsi clock, and a delete that is offered ho
 
   const route = strip(readFileSync("src/server/routes/activities.ts", "utf8"));
   ok("the route answers whether each note may be removed",
-    /canDelete: canDeleteNote\(/.test(route));
+    /canDelete: canDeleteNote\(|const allowed = canDeleteNote\([\s\S]{0,200}canDelete: allowed/.test(route));
   ok("...and accepts the files on the way in",
     /body\.attachments/.test(route));
+  /*
+   * **Correcting a note is the same right as removing it**, and the pencil is
+   * drawn from the same answer as the bin.
+   */
+  for (const [n, r] of [
+    [{ authorUserId: "u1", authorName: "x" }, { id: "u1" }],
+    [{ authorUserId: "u2", authorName: "x" }, { id: "u1" }],
+    [{ authorUserId: "u2", authorName: "x" }, { id: "u1", isSystemAdmin: true }],
+    [{ authorUserId: null, authorName: "محمد مقدم" }, { id: "u1", fullName: "محمد مقدم" }],
+    [{ authorUserId: null, authorName: null }, { id: "u1", fullName: "" }],
+  ] as const) {
+    eq(`edit follows delete for ${JSON.stringify(n)} / ${JSON.stringify(r)}`,
+      canEditNote(n, r), canDeleteNote(n, r));
+  }
+  ok("there is a route that corrects a note", /app\.put\("\/api\/notes\/:id"/.test(route));
+  ok("...and the list says which notes this reader may correct", /canEdit: allowed/.test(route));
+  {
+    const at = svc.indexOf("export async function updateModuleNote");
+    const body = at >= 0 ? svc.slice(at, svc.indexOf("export async function deleteModuleNote", at)) : "";
+    ok("the correction is refused by the shared rule", /canEditNote\(/.test(body));
+    ok("...refuses an emptied note through the shared content rule", /noteHasContent\(/.test(body));
+    ok("...writes only the words, the files and the edit date",
+      /data: \{ text: trimmed \?\? "", attachments: attachmentListColumn\(files\), editedAt: new Date\(\) \}/.test(body)
+        && !/authorUserId:|authorName:|entityId:|createdAt:/.test(body.split("data:")[1] ?? ""), body.slice(0, 0));
+  }
+  for (const f of ["ProformasView", "PurchaseOrdersView", "PackagingDeliveryView", "AfterSalesServicesView"]) {
+    ok(`${f} lets its notes be corrected`,
+      /onEditNote=\{\w+\.updateNote\}/.test(readFileSync(`src/components/${f}.tsx`, "utf8")));
+  }
   /*
    * The refusal names both halves, because a file on its own is a note: telling
    * somebody who attached exactly what they meant to record that «متن الزامی

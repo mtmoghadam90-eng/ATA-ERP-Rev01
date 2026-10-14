@@ -1868,6 +1868,8 @@ model ModuleNote {
   /// `[{name,size,url}]`, read and written only through `src/utils/attachments.ts`.
   attachments  String?  @db.NVarChar(Max)
   createdAt    DateTime @default(now())
+  /// Set when the author (or an administrator) corrects it; null = never edited.
+  editedAt     DateTime?
 
   @@index([entityType, entityId])
   @@map("module_notes")

@@ -3108,6 +3108,102 @@ head("A document's notes: a file is content, and the delete is only where it is 
   mHost.remove();
 }
 
+head("A document's notes can be corrected in place, by whoever may remove them");
+
+{
+  const eHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const eRoot = createRoot(eHost);
+  let edited: { id: string; text: string; files: unknown[] } | null = null;
+  let answer = false;
+  const file = { name: "confirm.pdf", size: "342 KB", url: "/uploads/note-files/a.pdf" };
+  const notes = [
+    {
+      id: "n-1", text: "قیمت نهایی تأیید شد", author: "محمد مقدم",
+      createdAt: new Date(Date.UTC(2026, 8, 16, 7, 5, 0)).toISOString(),
+      attachments: [file], canDelete: true, canEdit: true,
+      editedAt: new Date(Date.UTC(2026, 8, 17, 7, 5, 0)).toISOString(),
+    },
+    {
+      id: "n-2", text: "یادداشت همکار", author: "رضا رضایی",
+      createdAt: new Date(Date.UTC(2026, 8, 15, 7, 5, 0)).toISOString(),
+      attachments: [], canDelete: false, canEdit: false,
+    },
+  ];
+  const render = (withEdit: boolean) => act(() => {
+    eRoot.render(React.createElement(ModuleNotesSection, {
+      notes: notes as never,
+      onAddNote: () => undefined,
+      onDeleteNote: () => undefined,
+      ...(withEdit ? {
+        onEditNote: (id: string, text: string, files: unknown[]) => {
+          edited = { id, text, files };
+          return answer;
+        },
+      } : {}),
+    }));
+  });
+
+  render(false);
+  ok("no pencil when the screen cannot save a correction",
+    eHost.querySelectorAll("[data-note-edit]").length === 0);
+
+  render(true);
+  const pencils = [...eHost.querySelectorAll("[data-note-edit]")] as HTMLButtonElement[];
+  ok("a pencil only on the note this reader may correct", pencils.length === 1, pencils.length);
+  ok("a corrected note says so", eHost.querySelectorAll("[data-note-edited]").length === 1);
+
+  act(() => { pencils[0].dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  const box = eHost.querySelector("[data-note-edit-text]") as HTMLTextAreaElement | null;
+  ok("the editor opens on the note's own words", box?.value === "قیمت نهایی تأیید شد", box?.value);
+  ok("...with its files, removable",
+    eHost.querySelectorAll("[data-note-edit-files] button").length === 1);
+
+  act(() => {
+    box!.value = "قیمت نهایی با ۵٪ تخفیف تأیید شد";
+    handlers(box!).onChange?.({ target: box! });
+  });
+  // Remove the file, then save: the correction carries the list as it now stands.
+  const removeFile = eHost.querySelector("[data-note-edit-files] button") as HTMLButtonElement;
+  act(() => { removeFile.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+
+  const save = () => eHost.querySelector("[data-note-edit-save]") as HTMLButtonElement | null;
+  answer = false;
+  await act(async () => { save()!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("pressing save hands over the id, the words and the files",
+    (edited as { id: string } | null)?.id === "n-1"
+      && (edited as { text: string } | null)?.text === "قیمت نهایی با ۵٪ تخفیف تأیید شد"
+      && Array.isArray((edited as { files: unknown[] } | null)?.files)
+      && (edited as { files: unknown[] } | null)?.files.length === 0,
+    JSON.stringify(edited));
+  ok("...and a refused correction keeps the editor open", !!eHost.querySelector("[data-note-editor]"));
+
+  answer = true;
+  await act(async () => { save()!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("a stored correction closes the editor", !eHost.querySelector("[data-note-editor]"));
+
+  // Emptying a note is a deletion, not a correction: save goes dead.
+  act(() => {
+    ([...eHost.querySelectorAll("[data-note-edit]")][0] as HTMLButtonElement)
+      .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  const box2 = eHost.querySelector("[data-note-edit-text]") as HTMLTextAreaElement;
+  act(() => {
+    box2.value = "  ";
+    handlers(box2).onChange?.({ target: box2 });
+    (eHost.querySelector("[data-note-edit-files] button") as HTMLButtonElement | null)
+      ?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  ok("an emptied note cannot be saved", save()?.disabled === true);
+  act(() => {
+    (eHost.querySelector("[data-note-edit-cancel]") as HTMLButtonElement)
+      .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  ok("cancel closes the editor", !eHost.querySelector("[data-note-editor]"));
+
+  act(() => { eRoot.unmount(); });
+  eHost.remove();
+}
+
 
 head("The relationship picker asks the server for the opposite type");
 
