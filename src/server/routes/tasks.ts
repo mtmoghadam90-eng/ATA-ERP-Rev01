@@ -1,3 +1,4 @@
+import { TASK_DELETE_REFUSAL } from "../../utils/taskDeletion";
 import express from "express";
 import { parseListQuery } from "../listing";
 import { LANE_LABELS, MOVABLE_LANES, MovableLane, isMovableLane } from "../../utils/workBoard";
@@ -325,6 +326,10 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
       const outcome = await deleteTask(req.params.id, user, getTodayShamsi());
       if (outcome === "forbidden") {
         res.status(403).json({ success: false, error: "شما اجازه حذف این وظیفه را ندارید." });
+        return;
+      }
+      if (outcome === "not-creator") {
+        res.status(403).json({ success: false, error: TASK_DELETE_REFUSAL });
         return;
       }
       if (outcome === "not-found") {

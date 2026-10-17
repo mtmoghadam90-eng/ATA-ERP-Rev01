@@ -1,3 +1,4 @@
+import { canDeleteTask } from '../utils/taskDeletion';
 import React, { useEffect, useState } from 'react';
 import type { ActivityJump } from '../utils/notificationJump';
 import { cardProjectJump } from '../utils/notificationJump';
@@ -1673,14 +1674,22 @@ export default function TasksView({
                 <Edit size={14} />
               </button>
 
-              {/* Delete */}
-              <button
-                onClick={() => setTaskToDelete(task)}
-                className="p-1.5 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg transition"
-                title="حذف وظیفه"
-              >
-                <Trash2 size={14} />
-              </button>
+              {/*
+                Delete — drawn only for whoever raised the task or an
+                administrator (`canDeleteTask`, the server's own rule). The
+                person it was given to closes it instead; a bin they could
+                press would drop work from its owner's board in silence.
+              */}
+              {canDeleteTask(task, currentUser) && (
+                <button
+                  onClick={() => setTaskToDelete(task)}
+                  className="p-1.5 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-lg transition"
+                  title="حذف وظیفه"
+                  data-task-delete
+                >
+                  <Trash2 size={14} />
+                </button>
+              )}
             </div>
 
           </div>

@@ -211,6 +211,7 @@ export function rowToTask(row: TaskRow): Task {
     relatedToType: (row.relatedToType ?? undefined) as Task["relatedToType"],
     relatedToId: row.relatedToId ?? undefined,
     relatedToName: row.relatedToName ?? undefined,
+    createdByUserId: row.createdByUserId ?? null,
     createdByName: row.createdByName ?? undefined,
     // The board's own three: when work started, when it closed, and what kind
     // of work it is — the last of which decides what pressing the card does.
