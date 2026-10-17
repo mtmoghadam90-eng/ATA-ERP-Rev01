@@ -23223,6 +23223,35 @@ head("Meeting minutes: the printed document and the project folder");
     /inlineDocumentAssets\(html\)[\s\S]{0,120}printHtmlDocument\(standalone, meetingDocumentTitle\(meeting, scopeCode\)\)/.test(mv));
 }
 
+head("Deleting a task: whoever raised it or an administrator, never merely the assignee");
+{
+  const td = await import("../src/utils/taskDeletion");
+  const creator = { id: "u1" }, assignee = { id: "u2" }, admin = { id: "u9", isSystemAdmin: true };
+  const handed = { createdByUserId: "u1" };
+  ok("the person who raised it may delete it", td.canDeleteTask(handed, creator));
+  ok("the person it was given to may not", !td.canDeleteTask(handed, assignee));
+  ok("an administrator may", td.canDeleteTask(handed, admin));
+  ok("a task with no recorded creator is an administrator's alone",
+    !td.canDeleteTask({ createdByUserId: null }, assignee) && td.canDeleteTask({ createdByUserId: null }, admin));
+  ok("a blank creator is not matched by a reader with no id",
+    !td.canDeleteTask({ createdByUserId: "" }, { id: "" }) && !td.canDeleteTask(handed, null));
+  ok("tasksAll does not widen it — seeing every task is not owning it",
+    !td.canDeleteTask(handed, { id: "u3", permissions: { tasksAll: true } } as never));
+
+  const svcT = readFileSync("src/server/services/taskService.ts", "utf8");
+  const del = svcT.slice(svcT.indexOf("export async function deleteTask"), svcT.indexOf("/* ------------------------------- reminders"));
+  ok("the server asks the rule before it deletes",
+    del.indexOf("canDeleteTask(existing, user)") > 0
+    && del.indexOf("canDeleteTask(existing, user)") < del.indexOf("tx.task.delete("));
+  ok("...and the route says what the assignee can do instead",
+    /outcome === "not-creator"[\s\S]{0,120}TASK_DELETE_REFUSAL/.test(readFileSync("src/server/routes/tasks.ts", "utf8"))
+    && td.TASK_DELETE_REFUSAL.includes("کنسل شده"));
+  ok("the bin is drawn only where the server would accept it",
+    /\{canDeleteTask\(task, currentUser\) && \(\s*<button\s+onClick=\{\(\) => setTaskToDelete\(task\)\}/.test(readFileSync("src/components/TasksView.tsx", "utf8")));
+  ok("...from the creator the list row really carries",
+    /createdByUserId: row\.createdByUserId \?\? null/.test(readFileSync("src/api/tasks.ts", "utf8")));
+}
+
 head("Dark mode: the `dark:` variant follows the application's switch");
 {
   const css = readFileSync("src/index.css", "utf8");

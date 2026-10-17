@@ -1,4 +1,5 @@
 import { parseTaskLinks } from "../../utils/meetingMinutes";
+import { canDeleteTask } from "../../utils/taskDeletion";
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
@@ -1259,7 +1260,9 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
   return task;
 }
 
-export async function deleteTask(id: string, user: AuthUser, todayJalali: string): Promise<"ok" | "forbidden" | "not-found"> {
+export async function deleteTask(
+  id: string, user: AuthUser, todayJalali: string,
+): Promise<"ok" | "forbidden" | "not-creator" | "not-found"> {
   const db = getDb();
   const visibility = visibilityClause(user);
 
@@ -1272,6 +1275,9 @@ export async function deleteTask(id: string, user: AuthUser, todayJalali: string
     if (visibility) return "forbidden";
     return "not-found";
   }
+  // Seeing a task is not owning it: the person it was given to closes it, the
+  // person who raised it (or an administrator) may delete it.
+  if (!canDeleteTask(existing, user)) return "not-creator";
 
   // A deleted chase can be the only evidence of a technical approval, so the
   // stamp is re-derived in the same transaction rather than left standing.

@@ -738,6 +738,8 @@ export interface Task {
    */
   relatedToType: 'مشتری' | 'پروژه' | 'پیش‌فاکتور' | 'سفارش خرید' | 'عمومی' | 'خدمات پس از فروش' | 'بسته‌بندی و تحویل' | 'استعلام تامین‌کننده' | 'تأمین‌کننده' | 'محصول' | 'تراکنش' | 'صورتجلسه';
   /** Who raised it, kept beside the id so history survives a deactivated account. */
+  /** Whoever raised it — the only person besides an administrator who may delete it (`canDeleteTask`). */
+  createdByUserId?: string | null;
   createdByName?: string;
   /**
    * When the work was picked up, in Shamsi. Null until the card leaves «برای
