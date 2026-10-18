@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  CalendarClock, CheckCircle2, MessageSquare, Paperclip, Pencil, RefreshCcw, Send, X,
+  CalendarClock, CheckCircle2, ListTodo, MessageSquare, Paperclip, Pencil, RefreshCcw, Send, X,
 } from 'lucide-react';
 
 import { referralIsOpen } from '../utils/workBoard';
@@ -89,13 +89,25 @@ interface Props {
    * deadline is worth reading wherever the request is.
    */
   onSetDue?: (dueDate: string | null) => Promise<void>;
+  /**
+   * «ثبت وظیفه یا ارجاع»: opens the host's «اقدام بعدی» form for this
+   * referral's project — a task for yourself or anybody, a referral to
+   * colleagues, or both.
+   *
+   * The thread only draws the button. The form, its writes and its errors are
+   * the host's `useNextAction`, the same one every save button opens, because a
+   * second way of raising a task here would be a second copy of the assignee
+   * resolution and the category opening. Omitted where the referral belongs to
+   * no project, which leaves nowhere to file a referral.
+   */
+  onCreateFollowUp?: () => void;
   /** Smaller type, for the activity feed. */
   compact?: boolean;
 }
 
 export default function ReferralThread({
   referral, currentUserId, formatDate, users = [],
-  onUploadFile, onSubmit, onEditAction, onSetDue, compact = false,
+  onUploadFile, onSubmit, onEditAction, onSetDue, onCreateFollowUp, compact = false,
 }: Props) {
   /*
    * Open, which is not the same question as «در انتظار اقدام».
@@ -521,6 +533,19 @@ export default function ReferralThread({
                 >
                   <RefreshCcw size={13} />
                   ثبت پاسخ و ارجاع مجدد
+                </button>
+              )}
+
+              {onCreateFollowUp && (
+                <button
+                  type="button"
+                  onClick={onCreateFollowUp}
+                  disabled={busy}
+                  data-thread-follow-up
+                  className="px-3 py-1.5 border border-violet-200 bg-white hover:bg-violet-50 text-violet-700 rounded-lg text-[11px] font-bold transition flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <ListTodo size={13} />
+                  ثبت وظیفه یا ارجاع
                 </button>
               )}
             </div>

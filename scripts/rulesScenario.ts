@@ -23629,6 +23629,37 @@ head("A supplier inquiry has its own general description, apart from «توضی�
     /const body = await res\.text\(\)[\s\S]{0,120}feedFailureMessage\(res\.status, body, webRfqSourceSpec\(source\)\)/.test(svc));
 }
 
+{
+  head("A referral's thread raises a task or a referral onward, through the next-action form");
+  const { nextActionFromReferral } = await import("../src/utils/nextAction");
+  const { referralCategoryChoices, defaultReferralCategory } = await import("../src/utils/nextActionReferral");
+  const row = { activity: { group: { id: "g-ship", project: { id: "p-9", code: "ATA-05-35", name: "مخزن پرتابل" } } } };
+  const src = nextActionFromReferral(row, "محمد");
+  eq("it is about the referral's project", `${src?.relatedToType}|${src?.relatedToId}|${src?.projectId}`, "پروژه|p-9|p-9");
+  eq("named by code and name", src?.relatedToName, "ATA-05-35 مخزن پرتابل");
+  eq("it starts with whoever pressed it", src?.assignedTo, "محمد");
+  eq("and names the referral's own category group", src?.categoryGroupId, "g-ship");
+  eq("a referral with no project draws no button", nextActionFromReferral({ activity: { group: { id: "g", project: null } } }), null);
+  eq("...nor one with no activity", nextActionFromReferral({ activity: null }), null);
+  const choices = referralCategoryChoices(
+    [{ id: "g-buy", categoryId: "act-buy", categoryName: "خرید خارجی" }, { id: "g-ship", categoryId: "act-ship", categoryName: "ارسال و تحویل" }],
+    [{ id: "act-call", name: "پیگیری تماس" }]);
+  eq("the referral's own group wins over the module's guess",
+    defaultReferralCategory(choices, "purchaseOrders", "p-9", null, "g-ship"), "act-ship");
+  eq("...and over a remembered category", defaultReferralCategory(choices, "purchaseOrders", "p-9",
+    { module: "purchaseOrders", projectId: "p-9", categoryId: "act-call" }, "g-ship"), "act-ship");
+  eq("a group the project no longer has falls back as before",
+    defaultReferralCategory(choices, "purchaseOrders", "p-9", null, "g-gone"), "act-buy");
+  const modal = readFileSync("src/components/NextActionModal.tsx", "utf8");
+  ok("the form hands the source's group to the rule", /categoryContext\(\),\s*sourceRef\.current\?\.categoryGroupId\)/.test(modal));
+  const tasks = readFileSync("src/components/TasksView.tsx", "utf8");
+  const inbox = readFileSync("src/components/ReferralsView.tsx", "utf8");
+  ok("the board's referral modal offers it, through the screen's own useNextAction",
+    /onCreateFollowUp=\{nextActionFromReferral\(openReferral[\s\S]{0,300}nextAction\.ask\(true/.test(tasks));
+  ok("the inbox offers it too, and mounts the form", /onCreateFollowUp=\{followUpSource/.test(inbox)
+    && /<NextActionPrompt next=\{followUp\}/.test(inbox));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

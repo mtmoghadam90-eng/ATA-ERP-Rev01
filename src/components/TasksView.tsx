@@ -65,7 +65,7 @@ import { projectsApi } from '../api/projects';
 import { createCustomerWithLinks } from '../api/customerAdapter';
 import { detailToProject, projectToWriteInput } from '../api/projectAdapter';
 import { useNextAction } from '../utils/useNextAction';
-import { nextActionFromTask as describeNextAction } from '../utils/nextAction';
+import { nextActionFromTask as describeNextAction, nextActionFromReferral } from '../utils/nextAction';
 import type { NextActionSource } from '../utils/nextAction';
 import SaveWithNextActionButton from './SaveWithNextActionButton';
 import { NextActionPrompt } from './NextActionModal';
@@ -1826,6 +1826,15 @@ export default function TasksView({
                   }
 
                 }}
+                // The referral's own project and category; the form is the
+                // same `useNextAction` the save buttons and the tick open.
+                onCreateFollowUp={nextActionFromReferral(openReferral, currentUser?.fullName)
+                  ? () => {
+                      const source = nextActionFromReferral(openReferral, currentUser?.fullName);
+                      setOpenReferral(null);
+                      void nextAction.ask(true, openReferral, () => source!);
+                    }
+                  : undefined}
                 onEditAction={async (text) => {
                   await inboxApi.updateReferralAction(openReferral.id, text);
                   refreshReferrals();
