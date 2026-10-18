@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  CalendarClock, CheckCircle2, MessageSquare, Paperclip, Pencil, RefreshCcw, Send, X,
+  AtSign, CalendarClock, CheckCircle2, MessageSquare, Paperclip, Pencil, RefreshCcw, Send, X,
 } from 'lucide-react';
 
 import { referralIsOpen } from '../utils/workBoard';
 import { MAX_ACTIVITY_ATTACHMENTS, formatFileSize, type ActivityAttachment } from '../utils/attachments';
 import { oversizedUploadReason } from '../utils/uploadLimits';
 import ShamsiDatePicker from './ShamsiDatePicker';
+import MentionTextarea from './MentionTextarea';
+import { MentionableUser, parseMentions } from '../utils/mentions';
 
 /**
  * A referral, read as the conversation it actually is.
@@ -89,13 +91,18 @@ interface Props {
    * deadline is worth reading wherever the request is.
    */
   onSetDue?: (dueDate: string | null) => Promise<void>;
+  /**
+   * Colleagues who can be named with «@». Falls back to `users`, which is the
+   * forward picker's list; a screen that hides that picker passes these alone.
+   */
+  mentionUsers?: MentionableUser[];
   /** Smaller type, for the activity feed. */
   compact?: boolean;
 }
 
 export default function ReferralThread({
   referral, currentUserId, formatDate, users = [],
-  onUploadFile, onSubmit, onEditAction, onSetDue, compact = false,
+  onUploadFile, onSubmit, onEditAction, onSetDue, mentionUsers: mentionList, compact = false,
 }: Props) {
   /*
    * Open, which is not the same question as «در انتظار اقدام».
@@ -146,6 +153,8 @@ export default function ReferralThread({
   }, [referral.id, referral.actionRequired, referral.dueDateJalali]);
 
   const messages = referral.messages ?? [];
+  const mentionUsers = (mentionList ?? users).filter((u) => u.id !== currentUserId);
+  const named = parseMentions(text, mentionUsers);
 
   const send = async (outcome: ReplyOutcome) => {
     if (!onSubmit) return;
@@ -413,14 +422,26 @@ export default function ReferralThread({
       */}
       {onSubmit && (
         <div className="mt-2 pt-3 border-t-2 border-dashed border-slate-200 bg-slate-50/60 rounded-xl p-3 space-y-2">
-          <textarea
-            rows={2}
+          {/*
+            The same box as the feed's, «@» list included: this reply is
+            written into the project's feed too, and naming a colleague here
+            raises a referral exactly as it does there (`addReferralMessage`
+            reads the names with the feed's own rule).
+          */}
+          <MentionTextarea
             value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="پیام خود را بنویسید…"
+            onChange={setText}
+            users={mentionUsers}
+            placeholder="پیام خود را بنویسید… برای ارجاع، نام همکار را با @ بنویسید"
             className={`w-full border border-slate-200 rounded-xl px-3 py-2 ${size.body} bg-white outline-none focus:border-sky-400 text-right placeholder-slate-400`}
             id={`referral-reply-${referral.id}`}
           />
+          {named.length > 0 && (
+            <p className="text-[11px] text-violet-700 flex items-center gap-1" data-thread-mentions>
+              <AtSign size={11} />
+              برای {named.map((u) => u.fullName).join('، ')} ارجاع جدید ثبت می‌شود.
+            </p>
+          )}
 
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">

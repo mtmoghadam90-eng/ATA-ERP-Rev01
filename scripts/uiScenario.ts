@@ -4073,6 +4073,54 @@ head("The work board: the record is one press away from the headline");
   hostE.remove();
 }
 
+head("Referral thread: «@» in a reply names a colleague, the feed's own box");
+{
+  const { default: ReferralThread } = await import("../src/components/ReferralThread");
+  const submittedM: { text: string }[] = [];
+  const hostM = document.createElement("div");
+  document.body.appendChild(hostM);
+  const rootM = createRoot(hostM);
+  await act(async () => {
+    rootM.render(React.createElement(ReferralThread, {
+      referral: { id: "refM", status: "در انتظار اقدام", actionRequired: "x", assignedToUserId: "u1", assignedByUserId: "u2" },
+      currentUserId: "u1",
+      formatDate: () => "",
+      // The board's pop-up hides the forward picker and passes these alone.
+      mentionUsers: [
+        { id: "u1", fullName: "خودم کاربر" },
+        { id: "u3", fullName: "مریم کاظمی" },
+      ],
+      onSubmit: async (body: { text: string }) => { submittedM.push(body); },
+    }));
+  });
+  const boxM = hostM.querySelector("#referral-reply-refM") as HTMLTextAreaElement;
+  ok("the reply box rendered", !!boxM);
+  await act(async () => {
+    boxM.value = "لطفاً @مری";
+    boxM.selectionStart = boxM.value.length;
+    boxM.selectionEnd = boxM.value.length;
+    handlers(boxM).onChange?.({ target: boxM, currentTarget: boxM });
+  });
+  const listM = hostM.querySelector("[data-mention-list]");
+  ok("typing @ opens the colleague list", !!listM);
+  const optM = listM?.querySelector("button") as HTMLButtonElement | null;
+  await act(async () => {
+    (handlers(optM as Element) as { onMouseDown?: (e: unknown) => void })
+      .onMouseDown?.({ preventDefault: () => {} });
+  });
+  ok("picking completes the name", boxM.value === "لطفاً @مریم کاظمی ", boxM.value);
+  ok("the thread says a referral will be raised",
+    (hostM.querySelector("[data-thread-mentions]")?.textContent ?? "").includes("مریم کاظمی"));
+  await act(async () => {
+    boxM.value = "@خودم کاربر ";
+    boxM.selectionStart = boxM.value.length;
+    handlers(boxM).onChange?.({ target: boxM, currentTarget: boxM });
+  });
+  ok("the writer is not offered to themselves", !hostM.querySelector("[data-thread-mentions]"));
+  act(() => { rootM.unmount(); });
+  hostM.remove();
+}
+
 head("Referral thread: a reply carries several uploaded files");
 {
   const { default: ReferralThread } = await import("../src/components/ReferralThread");

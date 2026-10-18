@@ -1805,6 +1805,9 @@ export default function TasksView({
                   })),
                 }}
                 currentUserId={currentUser?.id}
+                // «@» in the reply names a colleague and raises a referral, the
+                // feed's own rule; the forward picker stays hidden here.
+                mentionUsers={users.filter((u) => u.isActive !== false)}
                 formatDate={(iso) => new Date(iso).toLocaleString('fa-IR')}
                 // The size rule lives in `uploadFile`, which is the only path
                 // to the server. A real upload, not a data URL: the server kept

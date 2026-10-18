@@ -451,6 +451,124 @@ function attachmentsOf(input: ActivityInput): ActivityAttachment[] {
 }
 
 /**
+ * The colleagues a message names with «@», never its author.
+ *
+ * Matched against the real directory rather than a pattern, because a name
+ * here is two or three words with spaces in it. Shared by the feed and by a
+ * reply typed into a referral's thread, which lands in the same feed: one
+ * reading of «who did this message name», or the two doors disagree about it.
+ */
+async function mentionedColleagues(text: string, authorId: string) {
+  if (!text.includes("@")) return [];
+  const directory = await getDb().user.findMany({
+    where: { isActive: true },
+    select: { id: true, fullName: true },
+  });
+  return parseMentions(text, directory).filter((u) => u.id !== authorId);
+}
+
+/** One referral per request, on the message that raised it — inside the write. */
+async function raiseReferrals(
+  tx: Prisma.TransactionClient,
+  activityId: string,
+  requests: { assignedToUserId: string | null; assignedToName: string | null; actionRequired: string }[],
+  by: {
+    userId: string;
+    authorName: string | null;
+    dueColumns?: Record<string, unknown>;
+    dueDateByAssignee?: boolean;
+  },
+) {
+  const created = [];
+  for (const request of requests) {
+    created.push(await tx.projectReferral.create({
+      data: {
+        activityId,
+        assignedToUserId: request.assignedToUserId,
+        assignedToName: request.assignedToName,
+        assignedByUserId: by.userId,
+        assignedByName: by.authorName,
+        actionRequired: request.actionRequired,
+        ...(by.dueColumns ?? {}),
+        dueDateByAssignee: !!by.dueDateByAssignee,
+      } as Prisma.ProjectReferralUncheckedCreateInput,
+    }));
+  }
+  return created;
+}
+
+/**
+ * Tells each colleague a new referral names — the notice, the phone and the
+ * workflow trigger. Runs after the commit, inside the caller's `afterCommit`.
+ */
+async function announceReferrals(
+  created: {
+    id: string;
+    assignedToUserId: string | null;
+    assignedToName: string | null;
+    actionRequired: string;
+  }[],
+  ctx: {
+    user: AuthUser;
+    authorName: string | null;
+    project: { id: string; code: string | null };
+  },
+) {
+  const user = ctx.user;
+  const author = { fullName: ctx.authorName };
+  const group = { project: ctx.project };
+  for (const referral of created) {
+    if (referral.assignedToUserId) {
+      await notifyUser({
+        userId: referral.assignedToUserId,
+        module: "ارجاعات",
+        title: "ارجاع جدید",
+        description: `${author?.fullName ?? "یک همکار"} شما را در پروژه ${
+          group.project.code ?? ""} نام برد: ${referral.actionRequired}`,
+        projectId: group.project.id,
+        actorUserId: user.id,
+      });
+    }
+
+    /*
+     * And on their phone, because a request is the one thing on this board
+     * that somebody else is waiting on.
+     *
+     * The message *is* the request — there is no separate «what should they
+     * do» box — so the text carries it and the project it was written under.
+     * `notifyStaff` refuses to write to whoever raised it, to an account
+     * that has since been deactivated, and to one with no number.
+     */
+    await notifyStaff({
+      kind: "REFERRAL_RAISED",
+      assigneeUserId: referral.assignedToUserId,
+      actorUserId: user.id,
+      actorName: author?.fullName ?? null,
+      title: referral.actionRequired,
+      projectId: group.project.id,
+      projectCode: group.project.code ?? null,
+      // The picker's selection carries no name here; the code is what a
+      // colleague recognises anyway, and it is the one that is unique.
+      projectName: null,
+      entityType: "referral",
+      entityId: referral.id,
+    });
+
+    await processWorkflowRules(
+      "referral_created",
+      {
+        referralId: referral.id,
+        projectId: group.project.id,
+        assignedToUserId: referral.assignedToUserId,
+        assignedToName: referral.assignedToName,
+        actionRequired: referral.actionRequired,
+      },
+      user,
+    );
+  }
+}
+
+/**
  * Appends an activity, and the referral it may carry, in one transaction.
  *
  * The author is taken from the session, never the body — an entry attributable
@@ -537,11 +655,7 @@ export async function addActivity(
    * your own name is not asking yourself, and it would put a referral in your
    * own inbox every time you signed a note.
    */
-  const directory = await db.user.findMany({
-    where: { isActive: true },
-    select: { id: true, fullName: true },
-  });
-  const mentioned = parseMentions(text, directory).filter((u) => u.id !== user.id);
+  const mentioned = await mentionedColleagues(text, user.id);
 
   const result = await db.$transaction(async (tx) => {
     const activity = await tx.projectActivity.create({
@@ -596,21 +710,12 @@ export async function addActivity(
      */
     const dueColumns = expandDateFields(input as Record<string, unknown>, ["dueDate"]);
 
-    const created = [];
-    for (const request of requests) {
-      created.push(await tx.projectReferral.create({
-        data: {
-          activityId: activity.id,
-          assignedToUserId: request.assignedToUserId,
-          assignedToName: request.assignedToName,
-          assignedByUserId: user.id,
-          assignedByName: author?.fullName ?? null,
-          actionRequired: request.actionRequired,
-          ...dueColumns,
-          dueDateByAssignee: !!input.dueDateByAssignee,
-        } as Prisma.ProjectReferralUncheckedCreateInput,
-      }));
-    }
+    const created = await raiseReferrals(tx, activity.id, requests, {
+      userId: user.id,
+      authorName: author?.fullName ?? null,
+      dueColumns,
+      dueDateByAssignee: !!input.dueDateByAssignee,
+    });
 
     /*
      * The same words, into the thread of every request being answered.
@@ -697,55 +802,11 @@ export async function addActivity(
       }
     }
 
-    for (const referral of result.created) {
-      if (referral.assignedToUserId) {
-        await notifyUser({
-          userId: referral.assignedToUserId,
-          module: "ارجاعات",
-          title: "ارجاع جدید",
-          description: `${author?.fullName ?? "یک همکار"} شما را در پروژه ${
-            group.project.code ?? ""} نام برد: ${referral.actionRequired}`,
-          projectId: group.project.id,
-          actorUserId: user.id,
-        });
-      }
-
-      /*
-       * And on their phone, because a request is the one thing on this board
-       * that somebody else is waiting on.
-       *
-       * The message *is* the request — there is no separate «what should they
-       * do» box — so the text carries it and the project it was written under.
-       * `notifyStaff` refuses to write to whoever raised it, to an account
-       * that has since been deactivated, and to one with no number.
-       */
-      await notifyStaff({
-        kind: "REFERRAL_RAISED",
-        assigneeUserId: referral.assignedToUserId,
-        actorUserId: user.id,
-        actorName: author?.fullName ?? null,
-        title: referral.actionRequired,
-        projectId: group.project.id,
-        projectCode: group.project.code ?? null,
-        // The picker's selection carries no name here; the code is what a
-        // colleague recognises anyway, and it is the one that is unique.
-        projectName: null,
-        entityType: "referral",
-        entityId: referral.id,
-      });
-
-      await processWorkflowRules(
-        "referral_created",
-        {
-          referralId: referral.id,
-          projectId: group.project.id,
-          assignedToUserId: referral.assignedToUserId,
-          assignedToName: referral.assignedToName,
-          actionRequired: referral.actionRequired,
-        },
-        user,
-      );
-    }
+    await announceReferrals(result.created, {
+      user,
+      authorName: author?.fullName ?? null,
+      project: group.project,
+    });
   });
 
   /*
@@ -1585,7 +1646,7 @@ export async function addReferralMessage(
 ): Promise<
   "forbidden" | "not-found" | "invalid"
   /** `reopened` when the answer brought a closed category back to «جاری». */
-  | { message: unknown; reopened: boolean }
+  | { message: unknown; reopened: boolean; referralsRaised: number }
 > {
   const db = getDb();
   // Files alone are an answer — a signed page or a photograph is often the
@@ -1653,6 +1714,9 @@ export async function addReferralMessage(
    * that function mirrors a reply *into* the referral thread, so calling it
    * would write the message twice — once as a reply and once as its own echo.
    */
+  const mentioned = await mentionedColleagues(text, user.id);
+  let raised: Awaited<ReturnType<typeof raiseReferrals>> = [];
+
   const { message, reopened } = await db.$transaction(async (tx) => {
     const created = await tx.referralMessage.create({
       data: {
@@ -1685,7 +1749,7 @@ export async function addReferralMessage(
         didReopen = true;
       }
 
-      await tx.projectActivity.create({
+      const mirrored = await tx.projectActivity.create({
         data: {
           groupId,
           text,
@@ -1695,6 +1759,21 @@ export async function addReferralMessage(
           ...attachments,
         } as Prisma.ProjectActivityUncheckedCreateInput,
       });
+
+      /*
+       * «@» here raises a referral exactly as it does in the feed.
+       *
+       * This reply *is* a message in the feed — the row just written — so a
+       * colleague named in it is asked to do something by the same rule and
+       * on the same message, with the message as the request. It was the one
+       * place a name could be typed and nothing happened, which is how it was
+       * reported: «با @ باید ارجاع ساخته شود، همان مسیر فعالیت است».
+       */
+      raised = await raiseReferrals(tx, mirrored.id, mentioned.map((u) => ({
+        assignedToUserId: u.id,
+        assignedToName: u.fullName,
+        actionRequired: text,
+      })), { userId: user.id, authorName: author?.fullName ?? null });
     }
 
     /*
@@ -1756,7 +1835,16 @@ export async function addReferralMessage(
     }
   }
 
-  return { message, reopened };
+  const project = referral.activity?.group?.project;
+  if (raised.length > 0 && project) {
+    await afterCommit("referral reply mentions", () => announceReferrals(raised, {
+      user,
+      authorName: author?.fullName ?? null,
+      project: { id: project.id, code: project.code ?? null },
+    }));
+  }
+
+  return { message, reopened, referralsRaised: raised.length };
 }
 
 /* ============================== module notes ============================= */

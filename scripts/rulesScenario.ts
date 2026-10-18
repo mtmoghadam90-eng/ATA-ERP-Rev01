@@ -7146,7 +7146,30 @@ head("Activity feed: the messenger, held together");
   ok("the service raises one referral per name", /parseMentions\(text, directory\)/.test(service));
   // Writing your own name is not asking yourself, and it would put a referral
   // in your own inbox every time you signed a note.
-  ok("never for the author", /filter\(\(u\) => u\.id !== user\.id\)/.test(service));
+  ok("never for the author", /parseMentions\(text, directory\)\.filter\(\(u\) => u\.id !== authorId\)/.test(service));
+  {
+    // A reply typed into a referral's thread is a message in the same feed, so
+    // «@» there raises a referral by the feed's own rule — not a second copy.
+    const fnOf = (name: string) => {
+      const at = service.indexOf(`export async function ${name}(`);
+      const next = service.indexOf("\nexport async function ", at + 10);
+      return service.slice(at, next < 0 ? undefined : next);
+    };
+    const feed = fnOf("addActivity");
+    const thread = fnOf("addReferralMessage");
+    ok("the feed and the thread read the names one way",
+      /mentionedColleagues\(text, user\.id\)/.test(feed) && /mentionedColleagues\(text, user\.id\)/.test(thread));
+    ok("the thread raises its referrals on the mirrored feed message, inside the write",
+      /const mirrored = await tx\.projectActivity\.create[\s\S]*?raiseReferrals\(tx, mirrored\.id/.test(thread));
+    ok("...and announces them after the commit, as the feed does",
+      /afterCommit\([^,]+, \(\) => announceReferrals\(raised/.test(thread) && /announceReferrals\(result\.created/.test(feed));
+    ok("neither writes a referral row itself", !/projectReferral\.create/.test(feed) && !/projectReferral\.create/.test(thread));
+    const threadUi = readFileSync("src/components/ReferralThread.tsx", "utf8");
+    const composer = readFileSync("src/components/ActivityComposer.tsx", "utf8");
+    ok("the thread's box is the feed's mention box", /<MentionTextarea/.test(threadUi) && /<MentionTextarea/.test(composer));
+    ok("...and neither keeps its own copy of the suggestion list",
+      !/mentionSuggestions/.test(threadUi) && !/mentionSuggestions/.test(composer));
+  }
   // The id comes from a browser: a reply hung under a message on another
   // project would quote a job the reader cannot see.
   ok("a reply's parent is checked against the same group",

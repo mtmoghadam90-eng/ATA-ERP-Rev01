@@ -1,9 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
-import { AtSign, CalendarClock, CornerUpLeft, Paperclip, Send, X } from 'lucide-react';
-import {
-  MentionableUser, insertMention, mentionIsComplete, mentionQuery, mentionSuggestions,
-  parseMentions,
-} from '../utils/mentions';
+import { useState } from 'react';
+import { CalendarClock, CornerUpLeft, Paperclip, Send, X } from 'lucide-react';
+import { MentionableUser, parseMentions } from '../utils/mentions';
+import MentionTextarea from './MentionTextarea';
 import type { ActivityAttachment } from '../utils/attachments';
 import type { OpenReferralHit } from '../utils/openReferrals';
 import ShamsiDatePicker from './ShamsiDatePicker';
@@ -60,66 +58,15 @@ export default function ActivityComposer({
   const [text, setText] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [dueByAssignee, setDueByAssignee] = useState(false);
-  const [caret, setCaret] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [highlight, setHighlight] = useState(0);
   /*
    * The open requests the writer was warned about, while the question stands.
    * Cleared by any edit of the text, because the names — and so the answer —
    * may have changed under it.
    */
   const [duplicates, setDuplicates] = useState<OpenReferralHit[] | null>(null);
-  const box = useRef<HTMLTextAreaElement | null>(null);
-
-  const query = mentionQuery(text, caret);
-  const suggestions = query === null ? [] : mentionSuggestions(query, users);
-  /*
-   * A finished mention closes the list.
-   *
-   * The completed name is still a name, so it still matches and the list would
-   * stay open over it — and Enter would pick the same person again instead of
-   * starting a new line.
-   */
-  const listOpen = query !== null && suggestions.length > 0
-    && !mentionIsComplete(text, caret, users);
-
-  // The list is rebuilt as the term narrows, so the highlighted row has to come
-  // back to the top or it points past the end of a shorter list.
-  useEffect(() => { setHighlight(0); }, [query]);
 
   const named = parseMentions(text, users);
-
-  /*
-   * Where the cursor has to be put back after a name is inserted.
-   *
-   * React re-renders the textarea with the new value and the browser drops the
-   * cursor at the end of it, so the caret is restored in an effect — after the
-   * new value is on the node. Not `requestAnimationFrame`: that is a browser
-   * global this component should not depend on, and it is absent when the
-   * screen is rendered outside one.
-   */
-  const [pendingCaret, setPendingCaret] = useState<number | null>(null);
-  useEffect(() => {
-    if (pendingCaret === null) return;
-    const node = box.current;
-    setPendingCaret(null);
-    if (!node) return;
-    try {
-      if (node.ownerDocument.activeElement !== node) node.focus();
-      node.setSelectionRange(pendingCaret, pendingCaret);
-    } catch {
-      // Putting a text cursor back is a convenience, and no environment is
-      // obliged to support it — a headless one does not implement the focus
-      // machinery React reaches for. It must never take the composer down.
-    }
-  }, [pendingCaret]);
-
-  const choose = (user: MentionableUser) => {
-    const next = insertMention(text, caret, user);
-    setText(next.text);
-    setCaret(next.caret);
-    setPendingCaret(next.caret);
-  };
 
   const send = async (confirmed = false) => {
     if (!text.trim() && attachments.length === 0) return;
@@ -147,7 +94,6 @@ export default function ActivityComposer({
       setText('');
       setDueDate('');
       setDueByAssignee(false);
-      setCaret(0);
     } finally {
       setBusy(false);
     }
@@ -187,62 +133,14 @@ export default function ActivityComposer({
         </div>
       )}
 
-      <div className="relative">
-        <textarea
-          ref={box}
-          rows={2}
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            setCaret(e.target.selectionStart ?? 0);
-            setDuplicates(null);
-          }}
-          onKeyUp={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
-          onClick={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
-          onKeyDown={(e) => {
-            if (!listOpen) return;
-            // While the list is open the arrows and Enter belong to it, not to
-            // the textarea — otherwise Enter posts the message mid-name.
-            if (e.key === 'ArrowDown') {
-              e.preventDefault();
-              setHighlight((h) => (h + 1) % suggestions.length);
-            } else if (e.key === 'ArrowUp') {
-              e.preventDefault();
-              setHighlight((h) => (h - 1 + suggestions.length) % suggestions.length);
-            } else if (e.key === 'Enter' || e.key === 'Tab') {
-              e.preventDefault();
-              choose(suggestions[highlight]);
-            } else if (e.key === 'Escape') {
-              setCaret(text.length);
-            }
-          }}
-          placeholder="پیام، شرح فعالیت یا مذاکره… برای ارجاع، نام همکار را با @ بنویسید"
-          className="w-full border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-sky-500/20 outline-none text-right placeholder-slate-400 bg-white"
-          id="activity-composer-text"
-          dir="rtl"
-        />
-
-        {listOpen && (
-          <ul className="absolute z-30 right-2 bottom-full mb-1 w-64 max-h-52 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
-            {suggestions.map((user, i) => (
-              <li key={user.id}>
-                <button
-                  type="button"
-                  // `onMouseDown`, not `onClick`: a click blurs the textarea
-                  // first, and the blur closes the list before the click lands.
-                  onMouseDown={(e) => { e.preventDefault(); choose(user); }}
-                  className={`w-full text-right px-3 py-1.5 text-xs flex items-center gap-1.5 transition ${
-                    i === highlight ? 'bg-sky-50 text-sky-800' : 'hover:bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  <AtSign size={11} className="text-sky-500" />
-                  {user.fullName}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <MentionTextarea
+        value={text}
+        onChange={(next) => { setText(next); setDuplicates(null); }}
+        users={users}
+        placeholder="پیام، شرح فعالیت یا مذاکره… برای ارجاع، نام همکار را با @ بنویسید"
+        className="w-full border border-slate-200 rounded-lg p-2 text-xs focus:ring-2 focus:ring-sky-500/20 outline-none text-right placeholder-slate-400 bg-white"
+        id="activity-composer-text"
+      />
 
       {/*
         Who this message is asking, and by when — drawn only once somebody is
