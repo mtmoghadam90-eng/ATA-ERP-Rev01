@@ -32,6 +32,10 @@ import { useRevalidate } from '../api/liveData';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { REFERRAL_DONE, REFERRAL_PENDING, referralIsOpen } from '../utils/workBoard';
 import { unreadNoticeCount } from '../utils/notificationCount';
+import { useNextAction } from '../utils/useNextAction';
+import { nextActionFromReferral } from '../utils/nextAction';
+import type { NextActionSource } from '../utils/nextAction';
+import { NextActionPrompt } from './NextActionModal';
 
 /**
  * The inbox: referrals to and from the signed-in user, plus their notices.
@@ -239,7 +243,7 @@ export default function ReferralsView({
       r => filterProject === 'all' || r.activity?.group?.project?.id === filterProject,
     );
 
-    const byGroup = new Map<string, { group: any; referrals: { activity: any; referral: any }[] }>();
+    const byGroup = new Map<string, { group: any; referrals: { activity: any; referral: any; followUp: NextActionSource | null }[] }>();
     for (const row of visible) {
       const g = row.activity?.group;
       const key = g?.id ?? 'بدون دسته';
@@ -262,6 +266,7 @@ export default function ReferralsView({
           text: row.activity?.text ?? '',
           createdAt: row.activity?.createdAt ?? row.createdAt,
         },
+        followUp: nextActionFromReferral(row, currentUser?.fullName),
         referral: {
           id: row.id,
           status: row.status,
@@ -486,6 +491,9 @@ export default function ReferralsView({
    * seeded with the notice's words and the job it is about, and assigned to
    * the reader only — handing work to somebody else is a referral, not this.
    */
+  // «ثبت وظیفه یا ارجاع» from inside a referral's thread — the same form
+  // every save button opens, seeded with the referral's project and category.
+  const followUp = useNextAction();
   const [taskFromNotice, setTaskFromNotice] = useState<{
     id: string;
     text: string;
@@ -1116,7 +1124,7 @@ export default function ReferralsView({
                 {isExpanded && (
                   <div className="p-6 space-y-8 animate-fade-in">
                     {referrals.map((item, refIdx) => {
-                    const { activity, referral } = item;
+                    const { activity, referral, followUp: followUpSource } = item;
                     /*
                      * Which buttons the thread offers is decided **by account
                      * id**, inside `ReferralThread`.
@@ -1194,6 +1202,9 @@ export default function ReferralsView({
                             onSubmit={(body) => handleReplySubmit(referral.id, body)}
                             onEditAction={(text) => handleEditAction(referral.id, text)}
                             onSetDue={(dueDate) => handleSetDue(referral.id, dueDate)}
+                            onCreateFollowUp={followUpSource
+                              ? () => { void followUp.ask(true, followUpSource, (src) => src); }
+                              : undefined}
                           />
                         </div>
                       </div>
@@ -1206,6 +1217,8 @@ export default function ReferralsView({
           })
         )}
       </div>
+
+      <NextActionPrompt next={followUp} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 
       {taskFromNotice && (
         <TaskFromMessageModal

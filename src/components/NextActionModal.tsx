@@ -126,7 +126,8 @@ export default function NextActionModal({
         setGroups(rows);
         const choices = referralCategoryChoices(rows, categoriesRef.current);
         const chosen = defaultReferralCategory(
-          choices, sourceRef.current?.module, projectId, categoryContext());
+          choices, sourceRef.current?.module, projectId, categoryContext(),
+          sourceRef.current?.categoryGroupId);
         setReferral((r) => (r.categoryId ? r : { ...r, categoryId: chosen }));
       })
       .catch((err) => {
@@ -186,7 +187,7 @@ export default function NextActionModal({
             <div className="text-right">
               <span className="text-sm font-bold text-slate-800 block">ثبت اقدام بعدی</span>
               <span className="text-[10px] text-slate-500 block">
-                رکورد ذخیره شد؛ کار بعدی خودتان یا ارجاع به همکار را ثبت کنید.
+                {source.intro ?? 'رکورد ذخیره شد؛ کار بعدی خودتان یا ارجاع به همکار را ثبت کنید.'}
               </span>
             </div>
           </div>
