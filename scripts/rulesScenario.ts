@@ -7167,6 +7167,15 @@ head("Activity feed: the messenger, held together");
     const threadUi = readFileSync("src/components/ReferralThread.tsx", "utf8");
     const composer = readFileSync("src/components/ActivityComposer.tsx", "utf8");
     ok("the thread's box is the feed's mention box", /<MentionTextarea/.test(threadUi) && /<MentionTextarea/.test(composer));
+    ok("the thread offers the feed's deadline control for the referrals it raises",
+      /<ReferralDueField/.test(threadUi) && /<ReferralDueField/.test(composer));
+    ok("...and neither keeps its own copy of it", !/مهلت را ارجاع‌شونده تعیین کند/.test(threadUi) && !/مهلت را ارجاع‌شونده تعیین کند/.test(composer));
+    ok("the thread's referrals carry the deadline, through the feed's own date rule",
+      /raiseReferrals\(tx, mirrored\.id[\s\S]{0,400}expandDateFields\(input as Record<string, unknown>, \["dueDate"\]\)[\s\S]{0,120}dueDateByAssignee: !!input\.dueDateByAssignee/.test(thread));
+    const actRoute = readFileSync("src/server/routes/activities.ts", "utf8");
+    const msgRoute = actRoute.slice(actRoute.indexOf('app.post("/api/referrals/:id/messages"'));
+    ok("the reply route passes the deadline on", /dueDate: body\.dueDate/.test(msgRoute.slice(0, 1500))
+      && /dueDateByAssignee: body\.dueDateByAssignee === true/.test(msgRoute.slice(0, 1500)));
     ok("...and neither keeps its own copy of the suggestion list",
       !/mentionSuggestions/.test(threadUi) && !/mentionSuggestions/.test(composer));
   }

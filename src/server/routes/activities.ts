@@ -518,6 +518,9 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
         attachmentUrl: typeof body.attachmentUrl === "string" ? body.attachmentUrl : null,
         // The client sends this when the same action also hands the referral on.
         andForwarded: body.andForwarded === true,
+        // For the referrals an «@» in the reply raises, as on the feed.
+        ...(typeof body.dueDate === "string" && body.dueDate.trim() ? { dueDate: body.dueDate } : {}),
+        dueDateByAssignee: body.dueDateByAssignee === true,
       }, user);
 
       if (outcome === "forbidden") return denied(res, "شما در این ارجاع نقشی ندارید.");
