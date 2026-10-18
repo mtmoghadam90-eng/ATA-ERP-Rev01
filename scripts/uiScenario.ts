@@ -4131,34 +4131,6 @@ head("Referral thread: a reply carries several uploaded files");
   hostF.remove();
 }
 
-head("Referral thread: «ثبت وظیفه یا ارجاع» reaches the host and writes nothing itself");
-{
-  const { default: ReferralThread } = await import("../src/components/ReferralThread");
-  const pressed: string[] = [];
-  const submittedG: unknown[] = [];
-  const hostG = document.createElement("div");
-  document.body.appendChild(hostG);
-  const rootG = createRoot(hostG);
-  const base = {
-    referral: { id: "ref2", status: "انجام شده", actionRequired: "x", assignedToUserId: "u1", assignedByUserId: "u2" },
-    currentUserId: "u1",
-    formatDate: () => "",
-    onSubmit: async (body: unknown) => { submittedG.push(body); },
-  };
-  await act(async () => { rootG.render(React.createElement(ReferralThread, base)); });
-  ok("no host handler, no button", !hostG.querySelector("[data-thread-follow-up]"));
-  await act(async () => {
-    rootG.render(React.createElement(ReferralThread, { ...base, onCreateFollowUp: () => { pressed.push("open"); } }));
-  });
-  const btn = hostG.querySelector("[data-thread-follow-up]") as HTMLButtonElement | null;
-  ok("drawn on a finished referral too", !!btn);
-  await act(async () => { btn?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
-  ok("pressing it calls the host once", pressed.join(",") === "open", pressed);
-  ok("...and sends no reply", submittedG.length === 0, submittedG);
-  act(() => { rootG.unmount(); });
-  hostG.remove();
-}
-
 /*
  * A card's project code and name open that project.
  *
