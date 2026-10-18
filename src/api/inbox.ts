@@ -97,6 +97,9 @@ export interface ReferralReply {
   attachments?: ActivityAttachment[];
   outcome?: "none" | "done" | "reopen";
   forwardToUserId?: string;
+  /** For the referrals an «@» in the reply raises. */
+  dueDate?: string;
+  dueDateByAssignee?: boolean;
 }
 
 export async function submitReferralReply(
@@ -123,6 +126,8 @@ export async function submitReferralReply(
     text,
     attachments,
     andForwarded: !!forwardTo,
+    ...(body.dueDate ? { dueDate: body.dueDate } : {}),
+    ...(body.dueDateByAssignee ? { dueDateByAssignee: true } : {}),
   });
 
   // Forwarding sets its own status, so an outcome only applies without it.
@@ -192,6 +197,8 @@ export const inboxApi = {
       attachments?: ActivityAttachment[];
       /** True when the same action hands the referral on, so no notice is raised. */
       andForwarded?: boolean;
+      dueDate?: string;
+      dueDateByAssignee?: boolean;
     },
     /*
      * Answers with the message **and** whether a closed category had to be

@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { CalendarClock, CornerUpLeft, Paperclip, Send, X } from 'lucide-react';
+import { CornerUpLeft, Paperclip, Send, X } from 'lucide-react';
 import { MentionableUser, parseMentions } from '../utils/mentions';
 import MentionTextarea from './MentionTextarea';
+import ReferralDueField from './ReferralDueField';
 import type { ActivityAttachment } from '../utils/attachments';
 import type { OpenReferralHit } from '../utils/openReferrals';
-import ShamsiDatePicker from './ShamsiDatePicker';
 
 /**
  * Writing a message on a project's feed.
@@ -158,52 +158,13 @@ export default function ActivityComposer({
         the other person for one instead of letting the request sit undated.
       */}
       {named.length > 0 && (
-        <div
-          className="text-[10px] text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-2 py-1.5 space-y-1.5"
-          data-referral-due
-        >
-          <p>
-            با ارسال این پیام، برای{' '}
-            <strong>{named.map((u) => u.fullName).join('، ')}</strong>{' '}
-            ارجاع ثبت می‌شود و متن همین پیام به‌عنوان اقدام خواسته‌شده ثبت خواهد شد.
-          </p>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="flex items-center gap-1 font-bold shrink-0">
-              <CalendarClock size={11} />
-              مهلت انجام:
-            </span>
-
-            {dueByAssignee ? (
-              <span className="text-slate-600">تعیین مهلت بر عهدهٔ ارجاع‌شونده است.</span>
-            ) : (
-              <div className="w-40">
-                <ShamsiDatePicker
-                  value={dueDate}
-                  onChange={setDueDate}
-                  compact
-                  placeholder="اختیاری"
-                />
-              </div>
-            )}
-
-            <label className="flex items-center gap-1 cursor-pointer text-slate-600">
-              <input
-                type="checkbox"
-                checked={dueByAssignee}
-                onChange={(e) => {
-                  setDueByAssignee(e.target.checked);
-                  // The two answers are exclusive: a date agreed here is not a
-                  // date the other person was asked to pick.
-                  if (e.target.checked) setDueDate('');
-                }}
-                data-referral-due-by-assignee
-                className="w-3 h-3 accent-sky-600"
-              />
-              مهلت را ارجاع‌شونده تعیین کند
-            </label>
-          </div>
-        </div>
+        <ReferralDueField
+          names={named.map((u) => u.fullName)}
+          dueDate={dueDate}
+          onDueDateChange={setDueDate}
+          dueByAssignee={dueByAssignee}
+          onDueByAssigneeChange={setDueByAssignee}
+        />
       )}
 
       {/*

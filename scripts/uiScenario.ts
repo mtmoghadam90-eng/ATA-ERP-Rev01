@@ -4117,6 +4117,33 @@ head("Referral thread: «@» in a reply names a colleague, the feed's own box");
     handlers(boxM).onChange?.({ target: boxM, currentTarget: boxM });
   });
   ok("the writer is not offered to themselves", !hostM.querySelector("[data-thread-mentions]"));
+  // A colleague named again: the deadline control appears, and its answer
+  // reaches the submit; with nobody named no deadline key is sent at all.
+  await act(async () => {
+    boxM.value = "@مریم کاظمی لطفاً بررسی کن";
+    boxM.selectionStart = boxM.value.length;
+    handlers(boxM).onChange?.({ target: boxM, currentTarget: boxM });
+  });
+  const byAssignee = hostM.querySelector("[data-thread-mentions] [data-referral-due-by-assignee]") as HTMLInputElement | null;
+  ok("naming a colleague offers a deadline", !!byAssignee);
+  await act(async () => { handlers(byAssignee!).onChange?.({ target: { checked: true } }); });
+  const sendM = Array.from(hostM.querySelectorAll("button")).find((b) => (b.textContent ?? "").includes("ارسال پیام")) as HTMLButtonElement | undefined;
+  await act(async () => {
+    sendM?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    for (let k = 0; k < 6; k++) await Promise.resolve();
+  });
+  const sentM = submittedM[0] as { dueDateByAssignee?: boolean; dueDate?: string } | undefined;
+  ok("the deadline answer reaches the submit", sentM?.dueDateByAssignee === true && sentM?.dueDate === "", sentM);
+  ok("...and the control resets after sending", !hostM.querySelector("[data-thread-mentions]"));
+  await act(async () => {
+    boxM.value = "یک پاسخ ساده";
+    handlers(boxM).onChange?.({ target: boxM, currentTarget: boxM });
+  });
+  await act(async () => {
+    sendM?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    for (let k = 0; k < 6; k++) await Promise.resolve();
+  });
+  ok("a reply naming nobody sends no deadline", submittedM[1] !== undefined && !("dueDateByAssignee" in (submittedM[1] as object)), submittedM[1]);
   act(() => { rootM.unmount(); });
   hostM.remove();
 }

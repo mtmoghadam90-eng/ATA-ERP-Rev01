@@ -1641,6 +1641,9 @@ export async function addReferralMessage(
      * referral inbox, so a notice on top of it would say the same thing twice.
      */
     andForwarded?: boolean;
+    /** The deadline of the referrals an «@» in this reply raises. */
+    dueDate?: string;
+    dueDateByAssignee?: boolean;
   },
   user: AuthUser,
 ): Promise<
@@ -1773,7 +1776,13 @@ export async function addReferralMessage(
         assignedToUserId: u.id,
         assignedToName: u.fullName,
         actionRequired: text,
-      })), { userId: user.id, authorName: author?.fullName ?? null });
+      })), {
+        userId: user.id,
+        authorName: author?.fullName ?? null,
+        // The composer's own three states, through the feed's own rule.
+        dueColumns: expandDateFields(input as Record<string, unknown>, ["dueDate"]),
+        dueDateByAssignee: !!input.dueDateByAssignee,
+      });
     }
 
     /*

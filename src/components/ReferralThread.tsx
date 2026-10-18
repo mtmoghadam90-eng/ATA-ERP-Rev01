@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  AtSign, CalendarClock, CheckCircle2, MessageSquare, Paperclip, Pencil, RefreshCcw, Send, X,
+  CalendarClock, CheckCircle2, MessageSquare, Paperclip, Pencil, RefreshCcw, Send, X,
 } from 'lucide-react';
 
 import { referralIsOpen } from '../utils/workBoard';
@@ -8,6 +8,7 @@ import { MAX_ACTIVITY_ATTACHMENTS, formatFileSize, type ActivityAttachment } fro
 import { oversizedUploadReason } from '../utils/uploadLimits';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import MentionTextarea from './MentionTextarea';
+import ReferralDueField from './ReferralDueField';
 import { MentionableUser, parseMentions } from '../utils/mentions';
 
 /**
@@ -59,6 +60,12 @@ export interface ReferralComposerSubmit {
   attachments: ActivityAttachment[];
   outcome: ReplyOutcome;
   forwardToUserId: string;
+  /**
+   * The deadline for the referrals the «@» names in this reply raise — sent
+   * only when somebody is named, exactly as the feed's composer does.
+   */
+  dueDate?: string;
+  dueDateByAssignee?: boolean;
 }
 
 interface Props {
@@ -155,15 +162,26 @@ export default function ReferralThread({
   const messages = referral.messages ?? [];
   const mentionUsers = (mentionList ?? users).filter((u) => u.id !== currentUserId);
   const named = parseMentions(text, mentionUsers);
+  // The deadline of the new referrals this reply raises — not this referral's
+  // own deadline, which is the strip above the conversation.
+  const [dueDate, setNewDue] = useState('');
+  const [dueByAssignee, setNewDueByAssignee] = useState(false);
 
   const send = async (outcome: ReplyOutcome) => {
     if (!onSubmit) return;
     setBusy(true);
     try {
-      await onSubmit({ text, attachments, outcome, forwardToUserId: forwardTo });
+      await onSubmit({
+        text, attachments, outcome, forwardToUserId: forwardTo,
+        // Only where a referral is raised: a date typed and then un-named is
+        // a promise nobody is making.
+        ...(named.length > 0 ? { dueDate, dueDateByAssignee: dueByAssignee } : {}),
+      });
       setText('');
       setAttachments([]);
       setForwardTo('');
+      setNewDue('');
+      setNewDueByAssignee(false);
     } finally {
       setBusy(false);
     }
@@ -437,10 +455,15 @@ export default function ReferralThread({
             id={`referral-reply-${referral.id}`}
           />
           {named.length > 0 && (
-            <p className="text-[11px] text-violet-700 flex items-center gap-1" data-thread-mentions>
-              <AtSign size={11} />
-              برای {named.map((u) => u.fullName).join('، ')} ارجاع جدید ثبت می‌شود.
-            </p>
+            <div data-thread-mentions>
+              <ReferralDueField
+                names={named.map((u) => u.fullName)}
+                dueDate={dueDate}
+                onDueDateChange={setNewDue}
+                dueByAssignee={dueByAssignee}
+                onDueByAssigneeChange={setNewDueByAssignee}
+              />
+            </div>
           )}
 
           <div className="flex flex-wrap items-center justify-between gap-2">
