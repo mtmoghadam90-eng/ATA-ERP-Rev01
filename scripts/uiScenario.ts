@@ -4073,6 +4073,54 @@ head("The work board: the record is one press away from the headline");
   hostE.remove();
 }
 
+head("Referral thread: «@» in a reply names a colleague, the feed's own box");
+{
+  const { default: ReferralThread } = await import("../src/components/ReferralThread");
+  const submittedM: { text: string }[] = [];
+  const hostM = document.createElement("div");
+  document.body.appendChild(hostM);
+  const rootM = createRoot(hostM);
+  await act(async () => {
+    rootM.render(React.createElement(ReferralThread, {
+      referral: { id: "refM", status: "در انتظار اقدام", actionRequired: "x", assignedToUserId: "u1", assignedByUserId: "u2" },
+      currentUserId: "u1",
+      formatDate: () => "",
+      // The board's pop-up hides the forward picker and passes these alone.
+      mentionUsers: [
+        { id: "u1", fullName: "خودم کاربر" },
+        { id: "u3", fullName: "مریم کاظمی" },
+      ],
+      onSubmit: async (body: { text: string }) => { submittedM.push(body); },
+    }));
+  });
+  const boxM = hostM.querySelector("#referral-reply-refM") as HTMLTextAreaElement;
+  ok("the reply box rendered", !!boxM);
+  await act(async () => {
+    boxM.value = "لطفاً @مری";
+    boxM.selectionStart = boxM.value.length;
+    boxM.selectionEnd = boxM.value.length;
+    handlers(boxM).onChange?.({ target: boxM, currentTarget: boxM });
+  });
+  const listM = hostM.querySelector("[data-mention-list]");
+  ok("typing @ opens the colleague list", !!listM);
+  const optM = listM?.querySelector("button") as HTMLButtonElement | null;
+  await act(async () => {
+    (handlers(optM as Element) as { onMouseDown?: (e: unknown) => void })
+      .onMouseDown?.({ preventDefault: () => {} });
+  });
+  ok("picking completes the name", boxM.value === "لطفاً @مریم کاظمی ", boxM.value);
+  ok("the thread says a referral will be raised",
+    (hostM.querySelector("[data-thread-mentions]")?.textContent ?? "").includes("مریم کاظمی"));
+  await act(async () => {
+    boxM.value = "@خودم کاربر ";
+    boxM.selectionStart = boxM.value.length;
+    handlers(boxM).onChange?.({ target: boxM, currentTarget: boxM });
+  });
+  ok("the writer is not offered to themselves", !hostM.querySelector("[data-thread-mentions]"));
+  act(() => { rootM.unmount(); });
+  hostM.remove();
+}
+
 head("Referral thread: a reply carries several uploaded files");
 {
   const { default: ReferralThread } = await import("../src/components/ReferralThread");
@@ -4129,34 +4177,6 @@ head("Referral thread: a reply carries several uploaded files");
 
   act(() => { rootF.unmount(); });
   hostF.remove();
-}
-
-head("Referral thread: «ثبت وظیفه یا ارجاع» reaches the host and writes nothing itself");
-{
-  const { default: ReferralThread } = await import("../src/components/ReferralThread");
-  const pressed: string[] = [];
-  const submittedG: unknown[] = [];
-  const hostG = document.createElement("div");
-  document.body.appendChild(hostG);
-  const rootG = createRoot(hostG);
-  const base = {
-    referral: { id: "ref2", status: "انجام شده", actionRequired: "x", assignedToUserId: "u1", assignedByUserId: "u2" },
-    currentUserId: "u1",
-    formatDate: () => "",
-    onSubmit: async (body: unknown) => { submittedG.push(body); },
-  };
-  await act(async () => { rootG.render(React.createElement(ReferralThread, base)); });
-  ok("no host handler, no button", !hostG.querySelector("[data-thread-follow-up]"));
-  await act(async () => {
-    rootG.render(React.createElement(ReferralThread, { ...base, onCreateFollowUp: () => { pressed.push("open"); } }));
-  });
-  const btn = hostG.querySelector("[data-thread-follow-up]") as HTMLButtonElement | null;
-  ok("drawn on a finished referral too", !!btn);
-  await act(async () => { btn?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
-  ok("pressing it calls the host once", pressed.join(",") === "open", pressed);
-  ok("...and sends no reply", submittedG.length === 0, submittedG);
-  act(() => { rootG.unmount(); });
-  hostG.remove();
 }
 
 /*

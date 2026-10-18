@@ -101,17 +101,7 @@ export function defaultReferralCategory(
   module: string | undefined,
   projectId: string | undefined,
   context: CategoryContext | null,
-  /**
-   * The project's category group the form was opened from, when it was opened
-   * from one — a referral's own thread. It wins over everything else: a
-   * follow-on to a request is work under the same heading as the request.
-   */
-  groupId?: string | null,
 ): string {
-  if (groupId) {
-    const own = choices.find((c) => c.groupId === groupId);
-    if (own) return own.categoryId;
-  }
   if (context && module && projectId
       && context.module === module && context.projectId === projectId
       && choices.some((c) => c.categoryId === context.categoryId)) {

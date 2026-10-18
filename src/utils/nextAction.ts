@@ -95,18 +95,6 @@ export interface NextActionSource {
    * referral's starting category — see `defaultReferralCategory`.
    */
   module?: string;
-  /**
-   * The project's category group the record sits under, when it sits under one
-   * — a referral is a message in exactly one. The referral half then starts on
-   * that category rather than guessing one from the module.
-   */
-  categoryGroupId?: string | null;
-  /**
-   * The sentence under the form's heading. Absent reads «رکورد ذخیره شد…»,
-   * which is true of every save button and false where nothing was saved —
-   * a referral's thread opens the form without writing anything first.
-   */
-  intro?: string;
 }
 
 /**
@@ -229,43 +217,4 @@ export function nextActionTitle(kind: string, source: NextActionSource): string 
   const name = String(source.relatedToName ?? "").trim();
   const head = kind.trim();
   return name ? `${head} — ${name}` : head;
-}
-
-/**
- * What «ثبت وظیفه یا ارجاع» inside a referral's thread starts from.
- *
- * A referral is a message in one category of one project, so the follow-on —
- * a task for yourself or a colleague, or a referral onward — is about **that
- * project**, and the referral half starts under **that category** rather than
- * one guessed from the module. A referral whose project has gone answers null
- * and the thread draws no button: a referral needs a project to be filed in,
- * and a task related to nothing is better raised from the tasks screen.
- *
- * Structural for the reason `nextActionFromTask` is: the board and the inbox
- * hand it the same server row, and naming a type would tie it to one of them.
- */
-export function nextActionFromReferral(
-  referral: {
-    activity?: {
-      group?: {
-        id?: string | null;
-        project?: { id?: string | null; code?: string | null; name?: string | null } | null;
-      } | null;
-    } | null;
-  },
-  assignedTo?: string | null,
-): NextActionSource | null {
-  const group = referral.activity?.group;
-  const project = group?.project;
-  if (!project?.id) return null;
-  return {
-    relatedToType: "پروژه",
-    relatedToId: project.id,
-    relatedToName: [project.code, project.name].filter(Boolean).join(" "),
-    assignedTo: assignedTo ?? null,
-    projectId: project.id,
-    module: "tasks",
-    categoryGroupId: group?.id ?? null,
-    intro: "کار بعدیِ این ارجاع را برای خودتان یا هر همکاری ثبت کنید، یا آن را به همکار دیگری ارجاع دهید.",
-  };
 }

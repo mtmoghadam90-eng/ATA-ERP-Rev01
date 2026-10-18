@@ -7146,7 +7146,30 @@ head("Activity feed: the messenger, held together");
   ok("the service raises one referral per name", /parseMentions\(text, directory\)/.test(service));
   // Writing your own name is not asking yourself, and it would put a referral
   // in your own inbox every time you signed a note.
-  ok("never for the author", /filter\(\(u\) => u\.id !== user\.id\)/.test(service));
+  ok("never for the author", /parseMentions\(text, directory\)\.filter\(\(u\) => u\.id !== authorId\)/.test(service));
+  {
+    // A reply typed into a referral's thread is a message in the same feed, so
+    // «@» there raises a referral by the feed's own rule — not a second copy.
+    const fnOf = (name: string) => {
+      const at = service.indexOf(`export async function ${name}(`);
+      const next = service.indexOf("\nexport async function ", at + 10);
+      return service.slice(at, next < 0 ? undefined : next);
+    };
+    const feed = fnOf("addActivity");
+    const thread = fnOf("addReferralMessage");
+    ok("the feed and the thread read the names one way",
+      /mentionedColleagues\(text, user\.id\)/.test(feed) && /mentionedColleagues\(text, user\.id\)/.test(thread));
+    ok("the thread raises its referrals on the mirrored feed message, inside the write",
+      /const mirrored = await tx\.projectActivity\.create[\s\S]*?raiseReferrals\(tx, mirrored\.id/.test(thread));
+    ok("...and announces them after the commit, as the feed does",
+      /afterCommit\([^,]+, \(\) => announceReferrals\(raised/.test(thread) && /announceReferrals\(result\.created/.test(feed));
+    ok("neither writes a referral row itself", !/projectReferral\.create/.test(feed) && !/projectReferral\.create/.test(thread));
+    const threadUi = readFileSync("src/components/ReferralThread.tsx", "utf8");
+    const composer = readFileSync("src/components/ActivityComposer.tsx", "utf8");
+    ok("the thread's box is the feed's mention box", /<MentionTextarea/.test(threadUi) && /<MentionTextarea/.test(composer));
+    ok("...and neither keeps its own copy of the suggestion list",
+      !/mentionSuggestions/.test(threadUi) && !/mentionSuggestions/.test(composer));
+  }
   // The id comes from a browser: a reply hung under a message on another
   // project would quote a job the reader cannot see.
   ok("a reply's parent is checked against the same group",
@@ -23627,37 +23650,6 @@ head("A supplier inquiry has its own general description, apart from «توضی�
   const svc = readFileSync("src/server/services/webRfqService.ts", "utf8");
   ok("the poller reads the body and goes through the rule",
     /const body = await res\.text\(\)[\s\S]{0,120}feedFailureMessage\(res\.status, body, webRfqSourceSpec\(source\)\)/.test(svc));
-}
-
-{
-  head("A referral's thread raises a task or a referral onward, through the next-action form");
-  const { nextActionFromReferral } = await import("../src/utils/nextAction");
-  const { referralCategoryChoices, defaultReferralCategory } = await import("../src/utils/nextActionReferral");
-  const row = { activity: { group: { id: "g-ship", project: { id: "p-9", code: "ATA-05-35", name: "مخزن پرتابل" } } } };
-  const src = nextActionFromReferral(row, "محمد");
-  eq("it is about the referral's project", `${src?.relatedToType}|${src?.relatedToId}|${src?.projectId}`, "پروژه|p-9|p-9");
-  eq("named by code and name", src?.relatedToName, "ATA-05-35 مخزن پرتابل");
-  eq("it starts with whoever pressed it", src?.assignedTo, "محمد");
-  eq("and names the referral's own category group", src?.categoryGroupId, "g-ship");
-  eq("a referral with no project draws no button", nextActionFromReferral({ activity: { group: { id: "g", project: null } } }), null);
-  eq("...nor one with no activity", nextActionFromReferral({ activity: null }), null);
-  const choices = referralCategoryChoices(
-    [{ id: "g-buy", categoryId: "act-buy", categoryName: "خرید خارجی" }, { id: "g-ship", categoryId: "act-ship", categoryName: "ارسال و تحویل" }],
-    [{ id: "act-call", name: "پیگیری تماس" }]);
-  eq("the referral's own group wins over the module's guess",
-    defaultReferralCategory(choices, "purchaseOrders", "p-9", null, "g-ship"), "act-ship");
-  eq("...and over a remembered category", defaultReferralCategory(choices, "purchaseOrders", "p-9",
-    { module: "purchaseOrders", projectId: "p-9", categoryId: "act-call" }, "g-ship"), "act-ship");
-  eq("a group the project no longer has falls back as before",
-    defaultReferralCategory(choices, "purchaseOrders", "p-9", null, "g-gone"), "act-buy");
-  const modal = readFileSync("src/components/NextActionModal.tsx", "utf8");
-  ok("the form hands the source's group to the rule", /categoryContext\(\),\s*sourceRef\.current\?\.categoryGroupId\)/.test(modal));
-  const tasks = readFileSync("src/components/TasksView.tsx", "utf8");
-  const inbox = readFileSync("src/components/ReferralsView.tsx", "utf8");
-  ok("the board's referral modal offers it, through the screen's own useNextAction",
-    /onCreateFollowUp=\{nextActionFromReferral\(openReferral[\s\S]{0,300}nextAction\.ask\(true/.test(tasks));
-  ok("the inbox offers it too, and mounts the form", /onCreateFollowUp=\{followUpSource/.test(inbox)
-    && /<NextActionPrompt next=\{followUp\}/.test(inbox));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
