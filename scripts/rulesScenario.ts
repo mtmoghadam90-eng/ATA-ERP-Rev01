@@ -22328,6 +22328,9 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
       /const side = activitySide\(act, currentUser\?\.id\)/.test(pv)
         && /side === 'mine' \? 'justify-start' : side === 'theirs' \? 'justify-end' : 'justify-center'/.test(pv));
     ok("...and the jump target stays on the bubble", /id=\{`activity-\$\{act\.id\}`\}/.test(pv));
+    ok("a reply's quote is a button that jumps to the message it answers",
+      /<button\s+type="button"\s+data-reply-quote=\{act\.replyTo\.id\}/.test(pv)
+        && /const target = act\.replyTo!\.id;[\s\S]{0,600}setActivityFocus\(target\)/.test(pv));
   }
 
   const how = sentDescription({ sentMethod: "ایمیل", sentRecipients: JSON.stringify(["رضایی", "احمدی"]), sentDateJalali: "1405/07/01" });
