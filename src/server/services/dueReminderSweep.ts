@@ -251,9 +251,10 @@ export async function runDueReminders(
       dueAskedNoticeOn: true,
       assignedToUserId: true, assignedToName: true,
       assignedByUserId: true, assignedByName: true,
+      activityId: true,
       activity: {
         select: {
-          group: { select: { project: { select: { code: true, name: true } } } },
+          group: { select: { project: { select: { id: true, code: true, name: true } } } },
         },
       },
     },
@@ -276,6 +277,8 @@ export async function runDueReminders(
       counterpartFor: (kind) =>
         kind === "OVERDUE" ? referral.assignedToName : referral.assignedByName,
       project: projectLabel(referral.activity?.group?.project),
+      projectId: referral.activity?.group?.project?.id ?? null,
+      activityId: referral.activityId,
     });
   }
 
@@ -302,6 +305,9 @@ async function raise(
     dueDateJalali?: string | null;
     counterpartFor: (kind: DueNotice) => string | null | undefined;
     project?: string;
+    /** Where clicking the notice leads — a referral's project and message. */
+    projectId?: string | null;
+    activityId?: string | null;
   },
 ): Promise<void> {
   for (const kind of dueNoticesFor(subject, todayJalali)) {
@@ -323,6 +329,8 @@ async function raise(
           dueDateJalali: text.dueDateJalali,
           project: text.project,
         }),
+        projectId: text.projectId ?? null,
+        activityId: text.activityId ?? null,
       });
 
       if (kind === "SOON") report.soon++;

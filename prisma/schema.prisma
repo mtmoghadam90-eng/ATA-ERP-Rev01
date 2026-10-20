@@ -1899,6 +1899,11 @@ model ModuleNotification {
   /// reading either marks both, and the panel counts it once.
   itemId String? @db.NVarChar(36)
 
+  /// The feed message this notice is about — what clicking it scrolls to. The
+  /// category is resolved from it when the list is read, never stored beside
+  /// it, so a message moved or deleted cannot leave a stale target behind.
+  activityId String? @db.NVarChar(36)
+
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
 
