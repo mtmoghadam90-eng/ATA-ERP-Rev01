@@ -23737,6 +23737,37 @@ head("A supplier inquiry has its own general description, apart from «توضی�
     /const body = await res\.text\(\)[\s\S]{0,120}feedFailureMessage\(res\.status, body, webRfqSourceSpec\(source\)\)/.test(svc));
 }
 
+{
+  head("A new project opens «بررسی درخواست» with the request as its first message");
+  const rr = await import("../src/utils/requestReview");
+  const cats = [{ id: "act-1", name: "پیگیری" }, { id: "mine", name: "بررسي  درخواست" }];
+  eq("the company's own entry is found, folded", rr.findRequestReviewCategory(cats)?.id, "mine");
+  eq("no entry, no category", rr.findRequestReviewCategory([{ id: "a", name: "پیگیری" }]), null);
+  const entry = rr.requestReviewEntry("  دبی‌سنج DN50  ", [
+    { name: "a.pdf", size: "1 KB", url: "/uploads/a.pdf" },
+    { name: "b.png", url: "data:image/png;base64,xx" },
+  ]);
+  eq("the request text is the message", entry?.text, "دبی‌سنج DN50");
+  eq("only stored files are attached, by their own url", entry?.attachments.map((a) => a.url).join("|"), "/uploads/a.pdf");
+  eq("files with no words still make a message", rr.requestReviewEntry("", [{ name: "x", url: "/uploads/x" }])?.text,
+    rr.REQUEST_REVIEW_FILES_ONLY);
+  eq("nothing at all, no message", rr.requestReviewEntry("", []), null);
+  const plain = { appliedPatches: [], activityCategories: [{ id: "act-1", name: "پیگیری", module: "پروژه" }] } as any;
+  const added = applySettingsPatches(plain)!.next.activityCategories;
+  ok("the patch adds the entry where a company has none",
+    added.some((c: any) => c.id === rr.REQUEST_REVIEW_CATEGORY_ID));
+  const own = { appliedPatches: [], activityCategories: cats.map((c) => ({ ...c, module: "پروژه" })) } as any;
+  eq("and leaves a hand-made one alone, with no second copy",
+    applySettingsPatches(own)!.next.activityCategories.length, 2);
+  const svc = readFileSync("src/server/services/projectService.ts", "utf8");
+  const create = svc.slice(svc.indexOf("export async function createProject"), svc.indexOf("export function lossReasonRefusal"));
+  ok("createProject opens it after the commit, never inside the transaction",
+    /afterCommit\("request review category"[\s\S]{0,1200}upsertCategoryGroup\([\s\S]{0,800}addActivity\(/.test(create)
+      && create.indexOf("afterCommit(\"request review category\"") > create.indexOf("return project;\n  });"));
+  ok("the files are read off the stored project, not copied",
+    /requestReviewEntry\(\s*project\.description, fromJsonColumn<unknown>\(project\.attachments/.test(create));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

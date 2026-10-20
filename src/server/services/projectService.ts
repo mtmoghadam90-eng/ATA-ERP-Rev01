@@ -4,7 +4,7 @@ import { GROUP_CLOSED } from "../../utils/workBoard";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
 import { AuthUser, hasPermission } from "../auth";
 import { expandDateFields, jalaliRangeFilter, jalaliToDate, normalizeJalali } from "../dates";
-import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
+import { fromJsonColumn, syncChildren, toJsonColumn, toNullableString, toNumber } from "../childSync";
 import { scrubProductRefs } from "../refIntegrity";
 import { deriveProjectStage, resolveStage } from "../../utils/projectStage";
 import { PROFORMA_SENT_STATUS, PROJECT_STATUS_NEW, afterSalesIsOpen, inquiryWorkflowStatus } from "../../utils/moduleStatuses";
@@ -18,6 +18,10 @@ import { logAction } from "./auditService";
 import { runMilestoneRules } from "./milestoneAutomation";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
+import { addActivity, upsertCategoryGroup } from "./activityService";
+import { afterCommit } from "../afterCommit";
+import { loadSettings } from "../settings";
+import { findRequestReviewCategory, requestReviewEntry } from "../../utils/requestReview";
 
 /**
  * Project data access.
@@ -888,6 +892,35 @@ export async function createProject(input: ProjectInput, user: AuthUser, todayJa
     user,
     project.id,
   );
+
+  /*
+   * «بررسی درخواست», opened with the customer's request as its first message.
+   *
+   * After the commit and never able to fail the save: the project exists and
+   * its number is taken, so a category that could not be opened must not come
+   * back to the form as a failed create. The files are the project's own
+   * `attachments` URLs, referenced rather than copied, so the request folder
+   * lists them exactly as before. See src/utils/requestReview.ts.
+   */
+  await afterCommit("request review category", async () => {
+    const category = findRequestReviewCategory((await loadSettings())?.activityCategories);
+    if (!category) return;
+    const opened = await upsertCategoryGroup({
+      projectId: project.id,
+      categoryId: category.id,
+      categoryName: category.name,
+      startDate: todayJalali,
+    }, user);
+    if (typeof opened === "string") return;
+    const entry = requestReviewEntry(
+      project.description, fromJsonColumn<unknown>(project.attachments, []));
+    if (!entry) return;
+    await addActivity({
+      groupId: (opened.group as { id: string }).id,
+      text: entry.text,
+      attachments: entry.attachments,
+    }, user);
+  });
 
   // Workflow trigger
   await processWorkflowRules(

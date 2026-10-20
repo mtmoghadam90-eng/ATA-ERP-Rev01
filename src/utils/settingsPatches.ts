@@ -35,6 +35,9 @@
  */
 
 import type { ERPSettings } from "../types";
+import {
+  REQUEST_REVIEW_CATEGORY, REQUEST_REVIEW_CATEGORY_ID, findRequestReviewCategory,
+} from "./requestReview";
 import { DEFAULT_NEXT_ACTION_KINDS } from "./nextAction";
 import { DEFAULT_AD_AUDIENCES, DEFAULT_AD_CHANNELS } from "./adEffectiveness";
 import { PROJECT_TECHNICAL_APPROVED, PROJECT_TECHNICAL_OFFERED } from "./moduleStatuses";
@@ -367,6 +370,27 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
       const reasons = settings.lossReasons ?? [];
       if (reasons.some((r) => resultKey(r) === resultKey(NO_RESPONSE_LOSS_REASON))) return null;
       return { ...settings, lossReasons: [...reasons, NO_RESPONSE_LOSS_REASON] };
+    },
+  },
+  {
+    id: "request-review-category-1",
+    describe: "دستهٔ فعالیت «بررسی درخواست» که هر پروژهٔ جدید با آن باز می‌شود",
+    apply: (settings) => {
+      /*
+       * Project creation opens this category by name, so a company without it
+       * would see nothing happen. Folded through `findRequestReviewCategory`,
+       * so a company that already made it by hand — with its own id and every
+       * project already filed under it — is left exactly as it is.
+       */
+      const list = settings.activityCategories ?? [];
+      if (findRequestReviewCategory(list)) return null;
+      return {
+        ...settings,
+        activityCategories: [
+          ...list,
+          { id: REQUEST_REVIEW_CATEGORY_ID, name: REQUEST_REVIEW_CATEGORY, module: "پروژه" },
+        ],
+      };
     },
   },
 ];
