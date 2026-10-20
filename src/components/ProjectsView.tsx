@@ -3,7 +3,7 @@ import { adCampaignsApi, type AdCampaignOption } from '../api/adCampaigns';
 import { itemCategoryFromText, projectItemCategory } from '../utils/productCategories';
 import React, { useState, useRef } from 'react';
 import type { ActivityJump } from '../utils/notificationJump';
-import { canDeleteCategoryGroup, canModifyActivity } from '../utils/activityAuthorship';
+import { activitySide, canDeleteCategoryGroup, canModifyActivity } from '../utils/activityAuthorship';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 
 /**
@@ -5968,28 +5968,58 @@ export default function ProjectsView({
                                       هنوز هیچ فعالیتی در این دسته ثبت نشده است.
                                     </p>
                                   ) : (
-                                    (group.activities || []).map((act) => (
+                                    (group.activities || []).map((act) => {
                                       /*
+                                        A conversation, sided like a messenger.
+
+                                        Yours on the right, a colleague's on the
+                                        left, the application's own entries in
+                                        the middle as a quiet line — the
+                                        referral thread's shape, so the two
+                                        screens read alike. `activitySide`
+                                        decides, by account id.
+                                      */
+                                      const side = activitySide(act, currentUser?.id);
+                                      return (
+                                      <div
+                                        key={act.id}
+                                        data-activity-side={side}
+                                        className={`flex ${
+                                          side === 'mine' ? 'justify-start' : side === 'theirs' ? 'justify-end' : 'justify-center'
+                                        }`}
+                                      >
+                                      {/*
                                         The message a notification lands on.
 
                                         The id is what the jump scrolls to and
                                         the ring is what says «this one» on a
                                         feed of a dozen that look alike; both
                                         fall away a few seconds later.
-                                      */
+                                      */}
                                       <div
-                                        key={act.id}
                                         id={`activity-${act.id}`}
-                                        className={`bg-slate-50/50 p-3.5 rounded-lg border space-y-2.5 text-xs text-right transition-colors ${
+                                        className={`border space-y-2.5 text-xs text-right transition-colors ${
+                                          side === 'system'
+                                            ? 'w-full max-w-[90%] px-3 py-2 rounded-lg border-dashed'
+                                            : `min-w-[14rem] max-w-[85%] p-3.5 rounded-2xl ${side === 'mine' ? 'rounded-tr-sm' : 'rounded-tl-sm'}`
+                                        } ${
                                           activityFocus === act.id
-                                            ? 'border-sky-400 ring-2 ring-sky-200 bg-sky-50/60'
-                                            : 'border-slate-100'
+                                            ? 'border-sky-400 ring-2 ring-sky-200 bg-sky-50'
+                                            : side === 'mine'
+                                              ? 'bg-sky-50 border-sky-200'
+                                              : side === 'theirs'
+                                                ? 'bg-white border-slate-200 shadow-sm'
+                                                : 'bg-slate-50 border-slate-200'
                                         }`}
                                       >
-                                        <div className="flex justify-between items-center text-[10px] text-slate-400">
+                                        <div className="flex justify-between items-center gap-3 text-[10px] text-slate-400">
                                           <div className="flex items-center gap-2">
                                             <span className="font-mono">{formatDateTimeToShamsi(act.createdAt)}</span>
-                                            {act.createdBy && (
+                                            {side === 'system' && (
+                                              <span className="text-slate-500 font-bold">ثبت خودکار</span>
+                                            )}
+                                            {/* Your own name on your own bubble says nothing — the side already does. */}
+                                            {act.createdBy && side === 'theirs' && (
                                               /*
                                                 * The author's face where the generic glyph was.
                                                 *
@@ -6178,7 +6208,7 @@ export default function ProjectsView({
                                           <>
                                             {/* What is being answered, quoted. */}
                                             {act.replyTo && (
-                                              <div className="bg-white border-r-2 border-sky-300 rounded px-2 py-1 mb-1.5">
+                                              <div className={`${side === 'mine' ? 'bg-white' : 'bg-slate-50'} border-r-2 border-sky-300 rounded px-2 py-1 mb-1.5`}>
                                                 <div className="text-[9px] font-bold text-sky-600">
                                                   در پاسخ به {act.replyTo.authorName || 'یک همکار'}
                                                 </div>
@@ -6191,7 +6221,9 @@ export default function ProjectsView({
                                                 requests it carries, so they are
                                                 marked as such rather than left
                                                 as punctuation in a sentence. */}
-                                            <p className="text-slate-700 leading-relaxed font-semibold whitespace-pre-line">
+                                            <p className={`leading-relaxed whitespace-pre-line ${
+                                              side === 'system' ? 'text-slate-500 text-[11px]' : 'text-slate-700 font-semibold'
+                                            }`}>
                                               {renderWithMentions(act.text, users)}
                                             </p>
                                             {/*
@@ -6338,7 +6370,9 @@ export default function ProjectsView({
                                           </div>
                                         )}
                                       </div>
-                                    ))
+                                      </div>
+                                      );
+                                    })
                                   )}
                                 </div>
 

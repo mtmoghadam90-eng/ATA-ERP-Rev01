@@ -57,3 +57,25 @@ export function canDeleteCategoryGroup(
   if (String(group.categoryId ?? "").startsWith(SYSTEM_GROUP_PREFIX)) return false;
   return !!group.createdByUserId && group.createdByUserId === user.id;
 }
+
+/**
+ * Which side of the conversation an entry is drawn on.
+ *
+ * The feed reads like a messenger: what **you** wrote sits on the right (the
+ * sender's side on a Persian screen), what a colleague wrote on the left, and
+ * what the application wrote in the middle — it is nobody's message, so giving
+ * it a side would say somebody said it. Decided by **account id**, never by the
+ * display name, for the reason `ReferralThread` sides its messages by id: a
+ * renamed account would otherwise put its whole history on the other side.
+ * Without a signed-in id nothing is «mine» — the safe direction, since claiming
+ * somebody else's words as the reader's own is the wrong way to be mistaken.
+ */
+export type ActivitySide = "mine" | "theirs" | "system";
+
+export function activitySide(
+  activity: { isSystem?: boolean | null; authorUserId?: string | null },
+  userId: string | null | undefined,
+): ActivitySide {
+  if (activity.isSystem) return "system";
+  return !!userId && activity.authorUserId === userId ? "mine" : "theirs";
+}
