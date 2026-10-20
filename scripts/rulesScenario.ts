@@ -29,7 +29,7 @@ import {
   catalogueCodeRefusal, catalogueNameRefusal, describeProductSpec, newConfigId,
   catalogueRemovalRefusal, removeFromCatalogue, renameFeature, renameOption,
 } from "../src/utils/productConfig";
-import { canDeleteCategoryGroup, canModifyActivity } from "../src/utils/activityAuthorship";
+import { activitySide, canDeleteCategoryGroup, canModifyActivity } from "../src/utils/activityAuthorship";
 import {
   proformaCreatedSentence, sentDescription,
 } from "../src/server/services/proformaChanges";
@@ -22312,6 +22312,23 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("a system entry is edited by a system administrator", canModifyActivity(fact, admin));
   ok("...and not by whoever caused it", !canModifyActivity(fact, author));
   ok("an entry with no author is nobody's", !canModifyActivity({ isSystem: false, authorUserId: null }, { id: "", isSystemAdmin: false }));
+  /*
+   * The feed is sided like a messenger: yours right, a colleague's left, the
+   * application's own entries in the middle — by account id, never by name.
+   */
+  eq("my own message is mine", activitySide({ isSystem: false, authorUserId: "u1" }, "u1"), "mine");
+  eq("a colleague's is theirs", activitySide({ isSystem: false, authorUserId: "u2" }, "u1"), "theirs");
+  eq("a system entry is nobody's side, even when I pressed the button",
+    activitySide({ isSystem: true, authorUserId: "u1" }, "u1"), "system");
+  eq("signed out, nothing is mine", activitySide({ isSystem: false, authorUserId: "u1" }, null), "theirs");
+  eq("an authorless note is not mine either", activitySide({ isSystem: false, authorUserId: null }, ""), "theirs");
+  {
+    const pv = readFileSync("src/components/ProjectsView.tsx", "utf8");
+    ok("the feed sides each entry through the rule",
+      /const side = activitySide\(act, currentUser\?\.id\)/.test(pv)
+        && /side === 'mine' \? 'justify-start' : side === 'theirs' \? 'justify-end' : 'justify-center'/.test(pv));
+    ok("...and the jump target stays on the bubble", /id=\{`activity-\$\{act\.id\}`\}/.test(pv));
+  }
 
   const how = sentDescription({ sentMethod: "ایمیل", sentRecipients: JSON.stringify(["رضایی", "احمدی"]), sentDateJalali: "1405/07/01" });
   ok("sending names the channel, the people and the date",
