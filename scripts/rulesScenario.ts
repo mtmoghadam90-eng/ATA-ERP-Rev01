@@ -21413,6 +21413,17 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
       /groupId: n\.groupId \?\? null/.test(rv) && /activityId: n\.activityId \?\? null/.test(rv));
     ok("following a notice reads it",
       /if \(!notif\.read\) markModuleNotificationAsRead\(notif\.id\);\s*onOpenNotification\(jump\)/.test(rv));
+    {
+      const bf = readFileSync("prisma/migrations/20261011000000_notification_activity_backfill/migration.sql", "utf8");
+      const updates = bf.split(/\bUPDATE n SET\b/).slice(1);
+      ok("notices written before the column are matched to their message, and only those",
+        updates.length === 3
+          && updates.every((u) => /n\.\[activityId\] IS NULL AND n\.\[itemId\] IS NULL/.test(u)));
+      ok("...a «new referral» notice through the referral raised for that very person",
+        /r\.\[assignedToUserId\] = n\.\[userId\][\s\S]*N'ارجاع جدید'/.test(bf));
+      ok("...a later referral notice only where one referral can be meant",
+        /\) = 1;/.test(bf));
+    }
     ok("the migration adds the column, guarded",
       /IF COL_LENGTH\('dbo\.module_notifications', 'activityId'\) IS NULL/.test(
         readFileSync("prisma/migrations/20261010000000_notification_activity/migration.sql", "utf8")));
