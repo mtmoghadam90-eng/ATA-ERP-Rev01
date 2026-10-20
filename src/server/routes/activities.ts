@@ -202,6 +202,8 @@ export function registerActivityRoutes(app: express.Express, deps: RouteDeps): v
         // from a browser, and a reply hung under a message on another project
         // would quote a job the reader cannot see.
         replyToId: typeof body.replyToId === "string" ? body.replyToId : null,
+        // Read strictly: absent is off, so an integration texts nobody it did not mean to.
+        notifyReplyAuthor: body.notifyReplyAuthor === true,
         referral: referral
           ? {
               assignedToUserId: typeof referral.assignedToUserId === "string" ? referral.assignedToUserId : null,

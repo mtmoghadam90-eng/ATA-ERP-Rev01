@@ -388,6 +388,15 @@ export interface ActivityInput {
    */
   dueDate?: string | null;
   dueDateByAssignee?: boolean;
+  /**
+   * Text the author of the message being answered on their messenger.
+   *
+   * The composer's «اطلاع از طریق پیام‌رسان» toggle, which starts on. **Absent
+   * is off**, so an integration posting replies texts nobody it never meant to.
+   * Ignored where the reply names somebody with «@»: that raises a referral and
+   * its own text already reaches whoever was named.
+   */
+  notifyReplyAuthor?: boolean;
 }
 
 /**
@@ -608,6 +617,8 @@ export async function addActivity(
    * job the reader cannot see.
    */
   let replyToId: string | null = null;
+  /** Who wrote the message being answered — the messenger notice's recipient. */
+  let replyAuthorUserId: string | null = null;
   /*
    * The requests on the message being answered that belong to this author.
    *
@@ -625,6 +636,8 @@ export async function addActivity(
       where: { id: requestedReply, groupId: input.groupId },
       select: {
         id: true,
+        authorUserId: true,
+        isSystem: true,
         /*
          * Either party, not only the assignee: whoever raised the request reads
          * the answer in the feed and says «این آن چیزی نیست که خواستم» there,
@@ -642,6 +655,8 @@ export async function addActivity(
       },
     });
     replyToId = parent?.id ?? null;
+    // An entry the application wrote has nobody behind it to tell.
+    replyAuthorUserId = parent && !parent.isSystem ? parent.authorUserId ?? null : null;
     answering = parent?.referrals ?? [];
   }
 
@@ -814,6 +829,31 @@ export async function addActivity(
       project: group.project,
     });
   });
+
+  /*
+   * The author of the message being answered, on their messenger, when the
+   * writer left «اطلاع از طریق پیام‌رسان» on.
+   *
+   * Not when the reply names somebody: «@» raises a referral and
+   * `announceReferrals` has already texted whoever was named, so a second
+   * text for the same message would be the pair people learn to dismiss.
+   * `notifyStaff` refuses writing to yourself, to a deactivated account and to
+   * one with no mobile, and reports why.
+   */
+  if (input.notifyReplyAuthor === true && replyAuthorUserId && mentioned.length === 0) {
+    await afterCommit("activity reply messenger", () => notifyStaff({
+      kind: "ACTIVITY_REPLY",
+      assigneeUserId: replyAuthorUserId,
+      actorUserId: user.id,
+      actorName: author?.fullName ?? null,
+      title: noticeExcerpt(text),
+      projectId: group.project.id,
+      projectCode: group.project.code ?? null,
+      projectName: null,
+      entityType: "activity",
+      entityId: String((result.activity as { id?: string } | null)?.id ?? replyToId),
+    }));
+  }
 
   /*
    * And the people who follow this category, whom nobody named.

@@ -487,7 +487,15 @@ export default function ProjectsView({
    * started in one must not follow the reader into another.
    */
   const [replyTo, setReplyTo] = useState<
-    { groupId: string; id: string; text: string; authorName: string | null } | null
+    {
+      groupId: string; id: string; text: string; authorName: string | null;
+      /**
+       * Whether the messenger toggle means anything: a colleague wrote it. A
+       * reply to your own message or to an entry the application wrote has
+       * nobody to tell, so the composer draws no toggle for it.
+       */
+      notifiable: boolean;
+    } | null
   >(null);
   /** The message a task is being raised from, or null. */
   const [taskFromMessage, setTaskFromMessage] = useState<{ id: string; text: string } | null>(null);
@@ -6041,6 +6049,8 @@ export default function ProjectsView({
                                                   id: act.id,
                                                   text: act.text,
                                                   authorName: act.createdBy ?? null,
+                                                  notifiable: activitySide(act, currentUser?.id) === 'theirs'
+                                                    && !!act.authorUserId,
                                                 })}
                                                 className="text-slate-400 hover:text-sky-600 transition p-1 hover:bg-white rounded"
                                                 title="پاسخ به این پیام"
@@ -6435,6 +6445,7 @@ export default function ProjectsView({
                                             // where it names nobody.
                                             dueDate: due.dueDate || null,
                                             dueDateByAssignee: due.dueDateByAssignee,
+                                            notifyReplyAuthor: due.notifyReplyAuthor,
                                           });
                                           setNewActivityAttachment((prev: any) => ({ ...prev, [group.id]: [] }));
                                           setReplyTo(null);

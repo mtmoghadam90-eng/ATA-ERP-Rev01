@@ -966,7 +966,7 @@ export interface ERPSettings {
       channel?: StaffChannel;
       /** Absent is on: SMS carries it when the chosen channel is switched off. */
       fallbackToSms?: boolean;
-      templates?: { TASK_ASSIGNED?: string; REFERRAL_RAISED?: string };
+      templates?: { TASK_ASSIGNED?: string; REFERRAL_RAISED?: string; ACTIVITY_REPLY?: string };
     };
   };
   showProductBrandInDocuments?: boolean;

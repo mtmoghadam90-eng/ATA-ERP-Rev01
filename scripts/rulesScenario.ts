@@ -15279,7 +15279,8 @@ head("Staff SMS: only the work a person hands to another person");
     appliedPatches: ["staff-sms-notifications-1"],
     messaging: { staffSms: { enabled: true, templates: { ...SUPERSEDED_DOC } } },
   } as unknown as ERPSettings);
-  for (const kind of STAFF_NOTIFICATION_KINDS) {
+  // The kinds a live document stores a copy of; a kind added later has no copy.
+  for (const kind of ["TASK_ASSIGNED", "REFERRAL_RAISED"] as const) {
     eq(`an unedited ${kind} template is brought forward`,
       templatesOf(untouched?.next)[kind], DEFAULT_STAFF_TEMPLATES[kind]);
   }
@@ -23766,6 +23767,26 @@ head("A supplier inquiry has its own general description, apart from «توضی�
       && create.indexOf("afterCommit(\"request review category\"") > create.indexOf("return project;\n  });"));
   ok("the files are read off the stored project, not copied",
     /requestReviewEntry\(\s*project\.description, fromJsonColumn<unknown>\(project\.attachments/.test(create));
+}
+
+{
+  head("A reply on the feed can text the colleague it answers, unless it names somebody");
+  const svc = readFileSync("src/server/services/activityService.ts", "utf8");
+  const add = svc.slice(svc.indexOf("export async function addActivity"), svc.indexOf("export async function updateActivity"));
+  ok("the notice is the ACTIVITY_REPLY kind, through notifyStaff, after the commit",
+    /afterCommit\("activity reply messenger", \(\) => notifyStaff\(\{\s*kind: "ACTIVITY_REPLY"/.test(add));
+  ok("only when asked, only to the answered message's author, only when nobody is named",
+    /input\.notifyReplyAuthor === true && replyAuthorUserId && mentioned\.length === 0/.test(add));
+  ok("an entry the application wrote has nobody to tell",
+    /replyAuthorUserId = parent && !parent\.isSystem \? parent\.authorUserId/.test(add));
+  const route = readFileSync("src/server/routes/activities.ts", "utf8");
+  ok("the route reads the switch strictly, so absent is off",
+    /notifyReplyAuthor: body\.notifyReplyAuthor === true/.test(route));
+  ok("the wording is editable beside the other two",
+    STAFF_NOTIFICATION_KINDS.includes("ACTIVITY_REPLY")
+      && DEFAULT_STAFF_TEMPLATES.ACTIVITY_REPLY.includes("{assigneeAddressee}"));
+  eq("a document storing only the older two reads the default for it",
+    staffTemplateFor("ACTIVITY_REPLY", { templates: { TASK_ASSIGNED: "x" } }), DEFAULT_STAFF_TEMPLATES.ACTIVITY_REPLY);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

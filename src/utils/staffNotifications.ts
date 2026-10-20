@@ -40,13 +40,22 @@
 import { type Channel, looksLikeMobile } from "./messaging";
 import { FOLLOW_UP_KIND } from "./salesFollowUp";
 
-/** The two events worth interrupting somebody's afternoon for. */
-export const STAFF_NOTIFICATION_KINDS = ["TASK_ASSIGNED", "REFERRAL_RAISED"] as const;
+/**
+ * The events worth interrupting somebody's afternoon for.
+ *
+ * `ACTIVITY_REPLY` is the one the writer decides: a reply to a colleague's
+ * message on a project's feed is texted to that colleague only when the
+ * composer's «اطلاع از طریق پیام‌رسان» toggle is on (it starts on), and never
+ * when the reply names somebody with «@» — that raises a referral, whose own
+ * `REFERRAL_RAISED` text already reaches whoever was named.
+ */
+export const STAFF_NOTIFICATION_KINDS = ["TASK_ASSIGNED", "REFERRAL_RAISED", "ACTIVITY_REPLY"] as const;
 export type StaffNotificationKind = (typeof STAFF_NOTIFICATION_KINDS)[number];
 
 export const STAFF_NOTIFICATION_LABELS: Record<StaffNotificationKind, string> = {
   TASK_ASSIGNED: "ارجاع وظیفه به همکار",
   REFERRAL_RAISED: "ارجاع کار در فید پروژه",
+  ACTIVITY_REPLY: "پاسخ به پیام همکار در فید پروژه",
 };
 
 /* ------------------------------- the wording ------------------------------ */
@@ -135,11 +144,14 @@ export const SUPERSEDED_STAFF_TEMPLATES: Record<StaffNotificationKind, string[]>
   REFERRAL_RAISED: [
     "{actorName} در پروژه {projectCode} از شما درخواست کرد: {title}",
   ],
+  // Born with the honorific; no earlier wording was ever written for it.
+  ACTIVITY_REPLY: [],
 };
 
 export const DEFAULT_STAFF_TEMPLATES: Record<StaffNotificationKind, string> = {
   TASK_ASSIGNED: "{assigneeAddressee} عزیز، {actorName} وظیفه‌ای به شما ارجاع داد: {title} | سررسید: {dueDate} | اولویت: {priority}",
   REFERRAL_RAISED: "{assigneeAddressee} عزیز، {actorName} در پروژه {projectCode} از شما درخواست کرد: {title}",
+  ACTIVITY_REPLY: "{assigneeAddressee} عزیز، {actorName} در پروژه {projectCode} به پیام شما پاسخ داد: {title}",
 };
 
 /* -------------------------------- the rules ------------------------------- */

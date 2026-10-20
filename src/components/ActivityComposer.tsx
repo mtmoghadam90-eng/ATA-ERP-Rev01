@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CornerUpLeft, Paperclip, Send, X } from 'lucide-react';
+import { BellRing, CornerUpLeft, Paperclip, Send, X } from 'lucide-react';
 import { MentionableUser, parseMentions } from '../utils/mentions';
 import MentionTextarea from './MentionTextarea';
 import ReferralDueField from './ReferralDueField';
@@ -25,7 +25,15 @@ interface Props {
   /** Colleagues who can be named. The author is filtered out by the server. */
   users: MentionableUser[];
   /** The message being answered, if any. */
-  replyTo: { id: string; text: string; authorName?: string | null } | null;
+  replyTo: {
+    id: string; text: string; authorName?: string | null;
+    /**
+     * A colleague wrote it, so «اطلاع از طریق پیام‌رسان» has somebody to tell.
+     * Absent or false draws no toggle: your own message, or an entry the
+     * application wrote.
+     */
+    notifiable?: boolean;
+  } | null;
   onCancelReply: () => void;
   attachments: ActivityAttachment[];
   onAttachmentsChange: (next: ActivityAttachment[]) => void;
@@ -39,7 +47,7 @@ interface Props {
    */
   onSend: (
     text: string,
-    due: { dueDate: string; dueDateByAssignee: boolean },
+    due: { dueDate: string; dueDateByAssignee: boolean; notifyReplyAuthor: boolean },
   ) => Promise<void>;
   /**
    * The open requests this writer has already raised, in this category, for
@@ -60,6 +68,12 @@ export default function ActivityComposer({
   const [dueByAssignee, setDueByAssignee] = useState(false);
   const [busy, setBusy] = useState(false);
   /*
+   * «اطلاع از طریق پیام‌رسان» for the author of the message being answered.
+   * Starts on, and is put back on after every send so the next reply does not
+   * inherit a «no» given to the last one.
+   */
+  const [notifyReplyAuthor, setNotifyReplyAuthor] = useState(true);
+  /*
    * The open requests the writer was warned about, while the question stands.
    * Cleared by any edit of the text, because the names — and so the answer —
    * may have changed under it.
@@ -67,6 +81,14 @@ export default function ActivityComposer({
   const [duplicates, setDuplicates] = useState<OpenReferralHit[] | null>(null);
 
   const named = parseMentions(text, users);
+  /*
+   * The toggle only means something on a reply to a colleague, and stands
+   * down once the message names somebody: «@» raises a referral, and its own
+   * messenger text already reaches whoever was named.
+   */
+  const replyToggleShown = !!replyTo?.notifiable;
+  const replyToggleLocked = named.length > 0;
+  const willNotifyReplyAuthor = replyToggleShown && !replyToggleLocked && notifyReplyAuthor;
 
   const send = async (confirmed = false) => {
     if (!text.trim() && attachments.length === 0) return;
@@ -89,11 +111,12 @@ export default function ActivityComposer({
        * carrying a deadline nobody agreed.
        */
       await onSend(text.trim(), named.length > 0
-        ? { dueDate, dueDateByAssignee: dueByAssignee }
-        : { dueDate: '', dueDateByAssignee: false });
+        ? { dueDate, dueDateByAssignee: dueByAssignee, notifyReplyAuthor: false }
+        : { dueDate: '', dueDateByAssignee: false, notifyReplyAuthor: willNotifyReplyAuthor });
       setText('');
       setDueDate('');
       setDueByAssignee(false);
+      setNotifyReplyAuthor(true);
     } finally {
       setBusy(false);
     }
@@ -165,6 +188,34 @@ export default function ActivityComposer({
           dueByAssignee={dueByAssignee}
           onDueByAssigneeChange={setDueByAssignee}
         />
+      )}
+
+      {replyToggleShown && (
+        <label
+          data-reply-notify
+          className={`flex items-center gap-2 text-[11px] font-bold rounded-lg px-2.5 py-1.5 border ${
+            replyToggleLocked
+              ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+              : 'bg-white border-slate-200 text-slate-600 cursor-pointer'
+          }`}
+          title={replyToggleLocked
+            ? 'پیام نام همکار را با @ دارد؛ ارجاع ثبت می‌شود و پیام‌رسان از همان راه ارسال می‌شود.'
+            : undefined}
+        >
+          <input
+            type="checkbox"
+            className="accent-sky-600"
+            checked={replyToggleLocked ? false : notifyReplyAuthor}
+            disabled={replyToggleLocked}
+            onChange={(e) => setNotifyReplyAuthor(e.target.checked)}
+            data-reply-notify-toggle
+          />
+          <BellRing size={12} className={replyToggleLocked ? 'text-slate-300' : 'text-sky-500'} />
+          <span>
+            اطلاع به {replyTo?.authorName || 'نویسندهٔ پیام'} از طریق پیام‌رسان
+            {replyToggleLocked && <span className="font-normal"> — با @ از راه ارجاع اطلاع داده می‌شود</span>}
+          </span>
+        </label>
       )}
 
       {/*
