@@ -1376,6 +1376,81 @@ head("Activity composer: an ordinary message asks about no deadline");
 }
 
 
+head("Activity composer: a reply to a colleague offers a messenger notice, on by default");
+{
+  const settle = async () => {
+    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  };
+  const render = async (root: ReturnType<typeof createRoot>, replyTo: unknown,
+    sends: { text: string; notify: boolean }[]) => {
+    await act(async () => {
+      root.render(React.createElement(ActivityComposer, {
+        users: [{ id: "u1", fullName: "علی رضایی" }],
+        replyTo: replyTo as never,
+        onCancelReply: () => {},
+        attachments: [],
+        onAttachmentsChange: () => {},
+        onPickFiles: () => {},
+        uploading: false,
+        onSend: async (text: string, opts: { notifyReplyAuthor: boolean }) => {
+          sends.push({ text, notify: opts.notifyReplyAuthor });
+        },
+      }));
+    });
+    await settle();
+  };
+  const host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const root = createRoot(host);
+  const sends: { text: string; notify: boolean }[] = [];
+
+  await render(root, { id: "a1", text: "بار رسید", authorName: "مریم کاظمی", notifiable: false }, sends);
+  ok("no toggle on a reply to your own message or a system entry", !host.querySelector("[data-reply-notify]"));
+
+  await render(root, { id: "a1", text: "بار رسید", authorName: "مریم کاظمی", notifiable: true }, sends);
+  const toggle = () => host.querySelector("[data-reply-notify-toggle]") as HTMLInputElement;
+  ok("a reply to a colleague draws the toggle, naming them",
+    !!toggle() && (host.querySelector("[data-reply-notify]")?.textContent ?? "").includes("مریم کاظمی"));
+  ok("it starts on", toggle().checked && !toggle().disabled);
+
+  const box = host.querySelector("#activity-composer-text") as HTMLTextAreaElement;
+  const type = async (value: string) => {
+    await act(async () => {
+      box.value = value;
+      box.selectionStart = value.length;
+      box.selectionEnd = value.length;
+      handlers(box).onChange?.({ target: box, currentTarget: box });
+    });
+    await settle();
+  };
+  const pressSend = async () => {
+    const btn = host.querySelector("#activity-composer-send") as HTMLButtonElement;
+    await act(async () => { await (handlers(btn) as { onClick?: (e: unknown) => unknown }).onClick?.({}); });
+    await settle();
+  };
+
+  await type("ممنون، دیدم");
+  await pressSend();
+  ok("left on, the send asks for the notice", sends.at(-1)?.notify === true);
+
+  await type("باشه");
+  await act(async () => {
+    handlers(toggle()).onChange?.({ target: { checked: false }, currentTarget: { checked: false } });
+  });
+  await settle();
+  await pressSend();
+  ok("switched off, the send asks for none", sends.at(-1)?.notify === false);
+  ok("and it is back on for the next reply", toggle().checked);
+
+  await type("@علی رضایی لطفاً پیگیری کن");
+  ok("naming somebody with @ stands the toggle down", toggle().disabled && !toggle().checked);
+  await pressSend();
+  ok("and the send asks for no second notice", sends.at(-1)?.notify === false);
+
+  act(() => { root.unmount(); });
+  host.remove();
+}
+
+
 head("Activity composer: asks before a second open referral to the same person");
 {
   const settle = async () => {

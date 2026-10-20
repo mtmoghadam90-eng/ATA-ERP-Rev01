@@ -466,6 +466,8 @@ export const projectsApi = {
      */
     dueDate?: string;
     dueDateByAssignee?: boolean;
+    /** Text the answered message's author on their messenger. Absent is off. */
+    notifyReplyAuthor?: boolean;
   }) => api.post<{ activity: ActivityRow }>("/api/activities", body).then((r) => r.activity),
 
   /**
