@@ -20,8 +20,58 @@ export const NOTIFICATION_SORTABLE = ["createdAt", "isRead"] as const;
 
 const NOTIFICATION_SELECT = {
   id: true, module: true, title: true, description: true,
-  projectId: true, itemId: true, isRead: true, createdAt: true,
+  projectId: true, itemId: true, activityId: true, isRead: true, createdAt: true,
 } satisfies Prisma.ModuleNotificationSelect;
+
+/**
+ * Where each notice leads inside its project: the message, and its category.
+ *
+ * Clicking a notice used to open the project's feed with every category folded,
+ * so the reader then hunted for the message by hand. The notice records the
+ * message (`activityId`); a reply notice written before that column names its
+ * reply instead (`itemId`), whose referral names the message that raised it —
+ * which is where a reply leads, since the feed draws no row of its own for one.
+ *
+ * The category is **read here, never stored**: a message that has since been
+ * deleted simply yields no target, and the notice still opens its project. A
+ * message on another project than the notice says is ignored rather than
+ * followed, so a target can never lead somewhere the notice does not name.
+ * Two reads for the whole page, never one per row.
+ */
+async function noticeTargets(
+  rows: { id: string; projectId: string | null; itemId: string | null; activityId: string | null }[],
+): Promise<Map<string, { groupId: string; activityId: string; projectId: string }>> {
+  const db = getDb();
+  const viaReply = rows.filter((r) => !r.activityId && r.itemId).map((r) => r.itemId as string);
+  const replies = viaReply.length === 0 ? [] : await db.referralMessage.findMany({
+    where: { id: { in: viaReply } },
+    select: { id: true, referral: { select: { activityId: true } } },
+  });
+  const replyActivity = new Map(replies.map((m) => [m.id, m.referral.activityId]));
+
+  const wanted = new Map<string, string>();
+  for (const row of rows) {
+    const activityId = row.activityId ?? (row.itemId ? replyActivity.get(row.itemId) : undefined);
+    if (activityId) wanted.set(row.id, activityId);
+  }
+  const ids = [...new Set(wanted.values())];
+  const activities = ids.length === 0 ? [] : await db.projectActivity.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, groupId: true, group: { select: { projectId: true } } },
+  });
+  const byId = new Map(activities.map((a) => [a.id, a]));
+
+  const out = new Map<string, { groupId: string; activityId: string; projectId: string }>();
+  for (const row of rows) {
+    const activity = byId.get(wanted.get(row.id) ?? "");
+    if (!activity) continue;
+    if (row.projectId && row.projectId !== activity.group.projectId) continue;
+    out.set(row.id, {
+      groupId: activity.groupId, activityId: activity.id, projectId: activity.group.projectId,
+    });
+  }
+  return out;
+}
 
 export async function listNotifications(
   q: ListQuery,
@@ -46,7 +96,18 @@ export async function listNotifications(
     db.moduleNotification.count({ where: { userId: user.id, isRead: false } }),
   ]);
 
-  return { ...buildResult(rows as unknown as Record<string, unknown>[], total, q), unread };
+  const targets = await noticeTargets(rows);
+  const withTargets = rows.map((row) => {
+    const target = targets.get(row.id);
+    return {
+      ...row,
+      projectId: row.projectId ?? target?.projectId ?? null,
+      groupId: target?.groupId ?? null,
+      activityId: target?.activityId ?? null,
+    };
+  });
+
+  return { ...buildResult(withTargets as unknown as Record<string, unknown>[], total, q), unread };
 }
 
 /** Marks one notice read. Scoped to the caller, so it cannot touch another inbox. */
@@ -97,6 +158,8 @@ export async function notifyUser(input: {
   projectId?: string | null;
   /** The inbox item this notice announces — see `ModuleNotification.itemId`. */
   itemId?: string | null;
+  /** The feed message the notice is about — what clicking it scrolls to. */
+  activityId?: string | null;
   actorUserId?: string | null;
 }): Promise<void> {
   if (!input.userId || input.userId === input.actorUserId) return;
@@ -109,6 +172,7 @@ export async function notifyUser(input: {
       description: toNullableString(input.description) ?? "",
       projectId: toNullableString(input.projectId, 36),
       itemId: toNullableString(input.itemId, 36),
+      activityId: toNullableString(input.activityId, 36),
     },
   });
 }

@@ -21370,11 +21370,53 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     referralJump({ activity: { id: "act-1", group: { id: "g", project: null } } }) === null);
   ok("...and neither does one with no message behind it at all",
     referralJump({ activity: null }) === null);
-  ok("a module notice leads to its project and no further",
+  ok("a module notice written before the target column leads to its project",
     JSON.stringify(moduleNotificationJump({ projectId: "proj-9" }))
       === JSON.stringify({ projectId: "proj-9" }));
   ok("...and one about no project is not a link",
     moduleNotificationJump({ projectId: null }) === null);
+  /*
+   * «بره روی همون پیغام در فعالیت پروژه»: a notice the server resolved leads to
+   * the message, inside its category — the feed opens that category and
+   * scrolls, rather than opening the job with everything folded.
+   */
+  eq("a module notice leads to its message, in its category",
+    JSON.stringify(moduleNotificationJump({ projectId: "p", groupId: "g", activityId: "a" })),
+    JSON.stringify({ projectId: "p", groupId: "g", activityId: "a" }));
+  eq("...and a message with no category is not a target (nothing to expand)",
+    JSON.stringify(moduleNotificationJump({ projectId: "p", activityId: "a" })),
+    JSON.stringify({ projectId: "p" }));
+  {
+    const ns = readFileSync("src/server/services/notificationService.ts", "utf8");
+    ok("the list resolves each notice's message and category",
+      /const targets = await noticeTargets\(rows\)/.test(ns)
+        && /groupId: target\?\.groupId \?\? null/.test(ns)
+        && /activityId: target\?\.activityId \?\? null/.test(ns));
+    ok("...a reply notice written before the column through its reply's referral",
+      /referralMessage\.findMany\(\{[\s\S]*?referral: \{ select: \{ activityId: true \} \}/.test(ns));
+    ok("...never a message on another project than the notice names",
+      /row\.projectId && row\.projectId !== activity\.group\.projectId\) continue/.test(ns));
+    ok("...and the category is read, never stored",
+      !/groupId: toNullableString\(input\.groupId/.test(ns)
+        && /activityId: toNullableString\(input\.activityId, 36\)/.test(ns));
+    const as = readFileSync("src/server/services/activityService.ts", "utf8");
+    const calls = as.split("await notifyUser({").slice(1).map((c) => c.slice(0, c.indexOf("});")));
+    ok("every feed and referral notice names its message",
+      calls.length >= 7 && calls.every((c) => /activityId:/.test(c)), calls.length);
+    ok("...a reply's notice leading to the message it answers, not the reply",
+      /itemId: result\.replyMessageIds[\s\S]{0,200}activityId: replyToId/.test(as));
+    const ds = readFileSync("src/server/services/dueReminderSweep.ts", "utf8");
+    ok("a referral's deadline notice leads to its message too",
+      /activityId: referral\.activityId/.test(ds) && /activityId: text\.activityId \?\? null/.test(ds));
+    const rv = readFileSync("src/components/ReferralsView.tsx", "utf8");
+    ok("the panel carries the target from the row",
+      /groupId: n\.groupId \?\? null/.test(rv) && /activityId: n\.activityId \?\? null/.test(rv));
+    ok("following a notice reads it",
+      /if \(!notif\.read\) markModuleNotificationAsRead\(notif\.id\);\s*onOpenNotification\(jump\)/.test(rv));
+    ok("the migration adds the column, guarded",
+      /IF COL_LENGTH\('dbo\.module_notifications', 'activityId'\) IS NULL/.test(
+        readFileSync("prisma/migrations/20261010000000_notification_activity/migration.sql", "utf8")));
+  }
 
   /* --------------------- and the panel really calls it -------------------- */
 
@@ -23613,7 +23655,7 @@ head("A supplier inquiry has its own general description, apart from «توضی�
   ok("reading the notice (one or all) writes the reply's receipt",
     /if \(notice\.itemId\) await recordReceipts\(\[notice\.itemId\], user\)/.test(ntf)
       && /recordReceipts\(announced\.map/.test(ntf));
-  ok("the list carries the link", /projectId: true, itemId: true, isRead: true/.test(ntf));
+  ok("the list carries the link", /projectId: true, itemId: true, activityId: true, isRead: true/.test(ntf));
   const act = readFileSync("src/server/services/activityService.ts", "utf8");
   ok("both reply notices name their message",
     /itemId: result\.replyMessageIds\.get\(request\.id\)/.test(act) && /itemId: message\.id,/.test(act));

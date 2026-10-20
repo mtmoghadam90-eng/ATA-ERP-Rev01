@@ -504,6 +504,7 @@ async function raiseReferrals(
 async function announceReferrals(
   created: {
     id: string;
+    activityId: string;
     assignedToUserId: string | null;
     assignedToName: string | null;
     actionRequired: string;
@@ -526,6 +527,8 @@ async function announceReferrals(
         description: `${author?.fullName ?? "یک همکار"} شما را در پروژه ${
           group.project.code ?? ""} نام برد: ${referral.actionRequired}`,
         projectId: group.project.id,
+        // The message that named them: clicking the notice opens it.
+        activityId: referral.activityId,
         actorUserId: user.id,
       });
     }
@@ -797,6 +800,9 @@ export async function addActivity(
           projectId: group.project.id,
           // The reply this announces — reading the notice reads the reply.
           itemId: result.replyMessageIds.get(request.id) ?? null,
+          // A reply leads to the referral, never to the reply: the message
+          // that raised it is where its thread is drawn.
+          activityId: replyToId,
           actorUserId: user.id,
         });
       }
@@ -847,6 +853,7 @@ export async function addActivity(
         description: `${author?.fullName ?? "یک همکار"} در پروژه ${
           group.project.code ?? ""} نوشت: ${noticeExcerpt(text)}`,
         projectId: group.project.id,
+        activityId: result.activity?.id ?? null,
         actorUserId: user.id,
       });
     }
@@ -1405,6 +1412,7 @@ export async function setReferralStatus(
           ? `${actor?.fullName ?? "یک همکار"} کار ارجاع${where} را انجام‌شده اعلام کرد.`
           : `${actor?.fullName ?? "یک همکار"} ارجاع${where} را دوباره باز کرد و در انتظار اقدام قرار داد.`,
         projectId: project?.id ?? null,
+        activityId: referral.activityId,
         actorUserId: user.id,
       });
     }
@@ -1503,6 +1511,7 @@ export async function updateReferralAction(
     where: { id },
     select: {
       id: true, actionRequired: true, assignedToUserId: true, assignedByUserId: true,
+      activityId: true,
       activity: { select: { group: { select: { project: { select: { id: true, name: true, code: true } } } } } },
     },
   });
@@ -1525,6 +1534,7 @@ export async function updateReferralAction(
       title: "ویرایش متن ارجاع",
       description: `${actor?.fullName ?? "یک همکار"} متن ارجاع${where} را ویرایش کرد: ${text}`,
       projectId: project?.id ?? null,
+      activityId: referral.activityId,
       actorUserId: user.id,
     });
   }
@@ -1560,6 +1570,7 @@ export async function setReferralDue(
     where: { id },
     select: {
       id: true, assignedToUserId: true, assignedByUserId: true, dueDateJalali: true,
+      activityId: true,
       activity: { select: { group: { select: { project: { select: { id: true, name: true, code: true } } } } } },
     },
   });
@@ -1618,6 +1629,7 @@ export async function setReferralDue(
         ? `${actor?.fullName ?? "یک همکار"} مهلت این ارجاع را ${nextDue} تعیین کرد.`
         : `${actor?.fullName ?? "یک همکار"} مهلت این ارجاع را برداشت.`,
       projectId: project?.id ?? null,
+      activityId: referral.activityId,
       actorUserId: user.id,
     });
   }
@@ -1839,6 +1851,7 @@ export async function addReferralMessage(
         projectId: project?.id ?? null,
         // The reply this announces — reading the notice reads the reply.
         itemId: message.id,
+        activityId: referral.activityId,
         actorUserId: user.id,
       });
     }

@@ -3839,6 +3839,71 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
 }
 
 /**
+ * A module notice opens the message it is about, read or unread.
+ *
+ * «فقط صفحه فعالیت‌ها باز می‌شه و باید توی دسته‌بندی‌ها دنبال پیغام بگردم»:
+ * the jump carried the project alone. It carries the category and the message
+ * the server resolved now — on a notice already read exactly as on a new one —
+ * and following an unread one reads it.
+ */
+{
+  const gM = globalThis as unknown as Record<string, unknown>;
+  const realFetchM = gM.fetch;
+  const putM: string[] = [];
+  const notices = [
+    { id: "n-read", module: "فعالیت‌ها", title: "پیام جدید در خرید", description: "علی نوشت: بار رسید",
+      projectId: "proj-1", groupId: "grp-1", activityId: "act-1", isRead: true, createdAt: "2026-10-01T08:00:00.000Z" },
+    { id: "n-new", module: "ارجاعات", title: "ارجاع جدید", description: "رضا شما را نام برد",
+      projectId: "proj-2", groupId: "grp-2", activityId: "act-2", isRead: false, createdAt: "2026-10-02T08:00:00.000Z" },
+  ];
+  gM.fetch = (async (url: string, init?: { method?: string }) => {
+    if (init?.method === "PUT") putM.push(String(url));
+    const body = String(url).includes("/api/notifications")
+      ? { success: true, rows: notices, unread: 1, total: 2, page: 1, pageSize: 200, totalPages: 1 }
+      : { success: true, rows: [], read: [], total: 0, page: 1, pageSize: 200, totalPages: 1 };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+  const hostM = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootM = createRoot(hostM);
+  const settleM = async () => {
+    for (let i = 0; i < 14; i++) await act(async () => { await Promise.resolve(); });
+  };
+  const jumpsM: { projectId?: string; groupId?: string; activityId?: string }[] = [];
+  await act(async () => {
+    rootM.render(React.createElement(ReferralsView, {
+      embedded: true,
+      notificationsOnly: true,
+      settings: DEFAULT_SETTINGS as never,
+      currentUser: { id: "u-1", fullName: "محمد مقدم" } as never,
+      onOpenNotification: (jump: never) => { jumpsM.push(jump); },
+    } as never));
+  });
+  await settleM();
+
+  const textOf = (id: string) => hostM.querySelector<HTMLElement>(`#module-notification-${id} p`);
+  ok("both notices are drawn", textOf("n-read") !== null && textOf("n-new") !== null);
+  await act(async () => {
+    textOf("n-read")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleM();
+  ok("a read notice's text leads to its message, in its category",
+    jumpsM[0]?.projectId === "proj-1" && jumpsM[0]?.groupId === "grp-1" && jumpsM[0]?.activityId === "act-1",
+    jumpsM);
+  ok("...without writing anything", putM.length === 0, putM);
+  await act(async () => {
+    textOf("n-new")?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleM();
+  ok("an unread notice leads there too",
+    jumpsM[1]?.groupId === "grp-2" && jumpsM[1]?.activityId === "act-2", jumpsM);
+  ok("...and is read on the way", putM.some((u) => /\/api\/notifications\/n-new\/read/.test(u)), putM);
+
+  act(() => { rootM.unmount(); });
+  hostM.remove();
+  gM.fetch = realFetchM;
+}
+
+/**
  * A project's tab shows the job's own work, and ticks it off from there.
  *
  * Two things only a render can say. The rows are columned with the board's own

@@ -65,17 +65,26 @@ export function referralJump(referral: NotifiedReferral): ActivityJump | null {
 }
 
 /**
- * A module notice leads to its project, and to nothing finer.
+ * A module notice leads to the message it is about, inside its project.
  *
- * `notifications.projectId` is the whole of what such a row records about
- * where it came from — there is no message and no category behind it — so the
- * jump carries the project alone rather than inventing a target inside it.
+ * It used to lead to the project alone, so the feed opened with every category
+ * folded and the reader hunted for the message by hand. The server now answers
+ * the category and the message beside the project (`noticeTargets`), and the
+ * jump carries whichever of them it has: a notice written before that, or
+ * about a message since deleted, still opens its project and stops there.
  */
 export function moduleNotificationJump(
-  notification: { projectId?: string | null },
+  notification: { projectId?: string | null; groupId?: string | null; activityId?: string | null },
 ): ActivityJump | null {
   const projectId = text(notification.projectId);
-  return projectId ? { projectId } : null;
+  if (!projectId) return null;
+  const groupId = text(notification.groupId);
+  return {
+    projectId,
+    ...(groupId ? { groupId } : {}),
+    // A message without its category could not be drawn to scroll to.
+    ...(groupId && text(notification.activityId) ? { activityId: text(notification.activityId) } : {}),
+  };
 }
 
 /**

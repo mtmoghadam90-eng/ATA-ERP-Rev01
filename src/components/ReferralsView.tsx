@@ -399,6 +399,8 @@ export default function ReferralsView({
     () => notifications.map(n => ({
       id: n.id, module: n.module, title: n.title, description: n.description,
       projectId: n.projectId,
+      groupId: n.groupId ?? null,
+      activityId: n.activityId ?? null,
       // A notice announcing a reply is read once that reply is.
       timestamp: new Date(n.createdAt).getTime(),
       read: n.isRead || (!!n.itemId && readItemsSet.has(n.itemId)),
@@ -729,13 +731,15 @@ export default function ReferralsView({
                 key={`mnotif-${notif.id}`} 
                 onClick={() => {
                   /*
-                    A module notice carries a project and nothing finer — there
-                    is no message and no category behind it — so it opens the
-                    job's feed and stops there. One that names no project is
-                    not a link at all.
+                    The notice opens the message it is about — its category
+                    expanded and the message scrolled to — read or unread. One
+                    that names no project is not a link at all. Following it is
+                    reading it, so an unread one is marked on the way.
                   */
                   const jump = onOpenNotification ? moduleNotificationJump(notif) : null;
-                  if (jump && onOpenNotification) onOpenNotification(jump);
+                  if (!jump || !onOpenNotification) return;
+                  if (!notif.read) markModuleNotificationAsRead(notif.id);
+                  onOpenNotification(jump);
                 }}
                 id={`module-notification-${notif.id}`}
                 className={`bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden transition-all duration-300 hover:shadow-md ${!notif.read ? 'border-r-4 border-r-rose-400 bg-rose-50/10' : 'border-r-4 border-r-slate-300'} ${

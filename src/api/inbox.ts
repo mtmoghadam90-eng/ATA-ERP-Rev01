@@ -74,6 +74,9 @@ export interface NotificationRow {
   projectId: string | null;
   /** The reply this notice announces, when it announces one. */
   itemId?: string | null;
+  /** The category and message the notice is about, resolved by the server. */
+  groupId?: string | null;
+  activityId?: string | null;
   isRead: boolean;
   createdAt: string;
 }
