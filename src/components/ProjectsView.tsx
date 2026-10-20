@@ -6207,15 +6207,36 @@ export default function ProjectsView({
                                         ) : (
                                           <>
                                             {/* What is being answered, quoted. */}
+                                            {/*
+                                              The quote leads to what it quotes:
+                                              a press scrolls to the message
+                                              answered and rings it, through the
+                                              same focus a notice's jump uses. The
+                                              parent is always in this category
+                                              (the server refuses a reply across
+                                              groups), so nothing needs expanding.
+                                            */}
                                             {act.replyTo && (
-                                              <div className={`${side === 'mine' ? 'bg-white' : 'bg-slate-50'} border-r-2 border-sky-300 rounded px-2 py-1 mb-1.5`}>
+                                              <button
+                                                type="button"
+                                                data-reply-quote={act.replyTo.id}
+                                                onClick={() => {
+                                                  const target = act.replyTo!.id;
+                                                  if (activityFocus === target) {
+                                                    document.getElementById(`activity-${target}`)
+                                                      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                  }
+                                                  setActivityFocus(target);
+                                                }}
+                                                title="رفتن به پیام اصلی"
+                                                className={`block w-full text-right cursor-pointer hover:border-sky-500 transition-colors ${side === 'mine' ? 'bg-white' : 'bg-slate-50'} border-r-2 border-sky-300 rounded px-2 py-1 mb-1.5`}>
                                                 <div className="text-[9px] font-bold text-sky-600">
                                                   در پاسخ به {act.replyTo.authorName || 'یک همکار'}
                                                 </div>
                                                 <div className="text-[10px] text-slate-500 line-clamp-2">
                                                   {act.replyTo.text}
                                                 </div>
-                                              </div>
+                                              </button>
                                             )}
                                             {/* The names in the message are the
                                                 requests it carries, so they are
