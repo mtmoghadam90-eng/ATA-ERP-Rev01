@@ -22339,6 +22339,9 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
       /const side = activitySide\(act, currentUser\?\.id\)/.test(pv)
         && /side === 'mine' \? 'justify-start' : side === 'theirs' \? 'justify-end' : 'justify-center'/.test(pv));
     ok("...and the jump target stays on the bubble", /id=\{`activity-\$\{act\.id\}`\}/.test(pv));
+    ok("opening a category is a row above the feed, which runs full width",
+      /data-category-activate-row/.test(pv) && !/lg:grid-cols-3 gap-6">\s*\{\/\* Right Side: Activate/.test(pv)
+        && !/<div className="lg:col-span-2 space-y-6">/.test(pv));
     ok("a reply's quote is a button that jumps to the message it answers",
       /<button\s+type="button"\s+data-reply-quote=\{act\.replyTo\.id\}/.test(pv)
         && /const target = act\.replyTo!\.id;[\s\S]{0,600}setActivityFocus\(target\)/.test(pv));

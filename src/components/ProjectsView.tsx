@@ -5608,24 +5608,29 @@ export default function ProjectsView({
               </div>
 
               {modalTab === 'activities' ? (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
-                {/* Right Side: Activate/Open Category Group form */}
                 <div className="space-y-4">
-                  <div className="bg-white p-5 rounded-xl border border-slate-100 shadow-sm space-y-4">
-                    <div className="flex items-center gap-2 pb-3 border-b border-slate-100 text-slate-800">
-                      <Sliders size={16} className="text-sky-500" />
-                      <h3 className="font-bold text-xs">فعال‌سازی دسته‌بندی فعالیت جدید</h3>
-                    </div>
-                    
-                    <p className="text-slate-400 text-[10px] leading-relaxed">
-                      برای ثبت فعالیت، ابتدا باید یکی از دسته‌بندی‌های مشخص‌شده در تنظیمات را برای این پروژه فعال کنید. طبق تعهد، تکرار دسته‌بندی مجاز نیست.
-                    </p>
 
-                    <div className="space-y-3">
-                      <div className="space-y-1.5">
-                        <label className="text-[11px] font-semibold text-slate-500 block">انتخاب دسته‌بندی فعالیت *</label>
-                        <select
+                {/*
+                  Opening a category is a row above the feed, not a column
+                  beside it: the conversation is what this tab is read for,
+                  and a side panel took a third of its width on every visit
+                  to offer a control used once per category.
+                */}
+                <div className="bg-white px-4 py-3 rounded-xl border border-slate-100 shadow-sm" data-category-activate-row>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="flex items-center gap-2 text-slate-800 self-center">
+                      <Sliders size={16} className="text-sky-500" />
+                      <h3 className="font-bold text-xs whitespace-nowrap">فعال‌سازی دسته‌بندی فعالیت جدید</h3>
+                      <span
+                        className="text-slate-400 cursor-help"
+                        title={'برای ثبت فعالیت، ابتدا یکی از دسته‌بندی‌های تنظیمات را برای این پروژه فعال کنید؛ تکرار دسته‌بندی مجاز نیست.\n• ثبت فعالیت حتماً باید ذیل یک دسته‌بندی باشد.\n• با پایان کار یک دسته‌بندی، «اتمام کار» را بزنید؛ در صورت لزوم می‌توانید آن را دوباره به جریان بیندازید.\n• با نام بردن همکار با @، ارجاع کار ثبت می‌شود.'}
+                      >
+                        <AlertCircle size={13} />
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-[12rem] space-y-1">
+                      <label className="text-[11px] font-semibold text-slate-500 block">انتخاب دسته‌بندی فعالیت *</label>
+                      <select
                           value={selectedCategoryToCreate}
                           onChange={(e) => setSelectedCategoryToCreate(e.target.value)}
                           className="w-full border border-slate-200 rounded-lg py-2 px-3 text-xs outline-none bg-white focus:ring-2 focus:ring-sky-500/20 text-right"
@@ -5646,17 +5651,15 @@ export default function ProjectsView({
                             );
                           })}
                         </select>
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <label className="text-[11px] font-semibold text-slate-500 block">تاریخ شروع فعالیت *</label>
-                        <ShamsiDatePicker
-                          value={categoryStartDate}
-                          onChange={(val) => setCategoryStartDate(val)}
-                        />
-                      </div>
-
-                      <button
+                    </div>
+                    <div className="w-44 space-y-1">
+                      <label className="text-[11px] font-semibold text-slate-500 block">تاریخ شروع فعالیت *</label>
+                      <ShamsiDatePicker
+                        value={categoryStartDate}
+                        onChange={(val) => setCategoryStartDate(val)}
+                      />
+                    </div>
+                    <button
                         type="button"
                         onClick={async () => {
                           if (!selectedCategoryToCreate) {
@@ -5674,36 +5677,23 @@ export default function ProjectsView({
                             reportActivityError(err, 'فعال‌سازی دسته‌بندی با خطا مواجه شد.');
                           }
                         }}
-                        className="w-full py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-sky-500/10"
+                        className="shrink-0 px-4 py-2 bg-sky-500 hover:bg-sky-600 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-sky-500/10"
                       >
                         <Plus size={14} />
                         راه‌اندازی دسته‌بندی در پروژه
                       </button>
-                    </div>
-                  </div>
-
-                  {/* Quick Info Box */}
-                  <div className="bg-sky-50 border border-sky-100 p-4 rounded-xl text-[10px] text-sky-800 leading-relaxed space-y-1 text-right">
-                    <div className="font-bold flex items-center gap-1">
-                      <AlertCircle size={13} />
-                      <span>قوانین ثبت فعالیت‌ها:</span>
-                    </div>
-                    <div>• ثبت فعالیت حتماً باید ذیل یک دسته‌بندی مشخص باشد.</div>
-                    <div>• در صورت اتمام کار در یک دسته‌بندی، دکمه اتمام کار را بزنید.</div>
-                    <div>• پس از بسته‌شدن دسته‌بندی، در صورت لزوم می‌توانید مجدداً آن را به جریان بیندازید.</div>
-                    <div>• هر فعالیت می‌تواند به عنوان ارجاع کار برای یکی از همکاران صادر شود.</div>
                   </div>
                 </div>
 
-                {/* Left Side: Category Groups List & Inside Activities */}
-                <div className="lg:col-span-2 space-y-6">
+                {/* The category groups and their conversations, full width. */}
+                <div className="space-y-6">
                   
                   {/* Filter and Category Groups Block */}
                   {(!projectCategoryGroups || projectCategoryGroups.filter(g => g.projectId === selectedProjectForActivities.id).length === 0) ? (
                     <div className="bg-white p-12 text-center rounded-xl border border-slate-100 shadow-sm space-y-3">
                       <History className="mx-auto text-slate-300" size={36} />
                       <p className="text-slate-500 text-xs font-semibold">هیچ دسته‌بندی فعالیتی هنوز برای این پروژه راه‌اندازی نشده است.</p>
-                      <p className="text-[10px] text-slate-400">لطفاً از پنل سمت راست، اولین دسته‌بندی فعالیت را فعال کنید.</p>
+                      <p className="text-[10px] text-slate-400">لطفاً از نوار بالا، اولین دسته‌بندی فعالیت را فعال کنید.</p>
                     </div>
                   ) : (
                     <div className="space-y-4">
