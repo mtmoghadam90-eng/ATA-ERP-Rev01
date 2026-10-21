@@ -3865,7 +3865,17 @@ export default function SettingsView({
                           left standing over it.
                         */
                         const chosenField = fieldOptions.find((f) => f.value === cond.field);
-                        const valueOptions: readonly string[] = chosenField?.options ?? [];
+                        /*
+                          Or the company's own list, read as it stands today —
+                          see `TriggerField.companyList`. A typed box could not
+                          be matched: the comparison is exact, and one space
+                          where the list has a half-space is a rule that never
+                          fires.
+                        */
+                        const valueOptions: readonly string[] = chosenField?.options
+                          ?? (chosenField?.companyList
+                            ? (settings.dropdownItems?.[chosenField.companyList] ?? [])
+                            : []);
 
                         return (
                           <div key={condIdx} className="flex flex-wrap items-center gap-3 bg-slate-50 p-3 rounded-xl border border-slate-150 animate-fade-in text-xs">

@@ -92,17 +92,37 @@ export function ConditionValueField({
     );
   }
 
+  /*
+   * A stored value the list does not hold is drawn, disabled and named, rather
+   * than left to the placeholder: a `<select>` whose value matches no option
+   * renders the first one, so the screen would read as unanswered while the
+   * rule holds a value that can never match — which is exactly what a rule
+   * saved with a mistyped list entry looks like.
+   */
+  const stale = value !== '' && !options.includes(value);
+
   return (
+    <div className="flex flex-col gap-1">
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="border border-slate-200 rounded-lg p-2 bg-white focus:outline-none focus:border-sky-500"
+      className={`border rounded-lg p-2 bg-white focus:outline-none focus:border-sky-500 ${
+        stale ? 'border-amber-400' : 'border-slate-200'
+      }`}
+      data-condition-select
     >
       <option value="">-- انتخاب مقدار --</option>
+      {stale && <option value={value} disabled>{value} (در فهرست نیست)</option>}
       {options.map((val) => (
         <option key={val} value={val}>{val}</option>
       ))}
     </select>
+    {stale && (
+      <span className="text-[10px] text-amber-700" data-condition-stale>
+        این مقدار دقیقاً در فهرست نیست و شرط هیچ‌وقت برقرار نمی‌شود؛ یکی از گزینه‌ها را انتخاب کنید.
+      </span>
+    )}
+    </div>
   );
 }
 

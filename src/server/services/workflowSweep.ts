@@ -462,33 +462,23 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
       if (occurrence < 1) continue;
 
       const entityId = String(row.id);
-      // Written first, and the unique index is what decides: two servers, or a
-      // sweep overlapping a manual run, cannot both get past this line. The
-      // occurrence is part of that key, which is the whole of what lets a
-      // repeat through while a one-shot rule stays a one-shot rule.
-      try {
-        await db.workflowFiring.create({
-          data: {
-            ruleId: rule.id,
-            entityType: subject.entityType,
-            entityId,
-            occurrence,
-            dueDay: dueDay(base, days, direction),
-          } as Prisma.WorkflowFiringUncheckedCreateInput,
-        });
-      } catch (err) {
-        // P2002: this rule has already fired this occurrence for this record.
-        // Anything else is a real problem and is worth the log line.
-        if ((err as { code?: string })?.code !== "P2002") {
-          console.error("[workflow] could not record firing:", (err as Error)?.message || err);
-        }
-        continue;
-      }
+      const firingDueDay = dueDay(base, days, direction);
 
+      /*
+       * Already answered? A cheap index seek before anything else, so a record
+       * this rule has fired on costs no enrichment on every later day.
+       */
+      const already = await db.workflowFiring.findFirst({
+        where: { ruleId: rule.id, entityId, occurrence, dueDay: firingDueDay },
+        select: { id: true },
+      });
+      if (already) continue;
+
+      let payload: Record<string, unknown>;
       try {
         // Through the same enrichment an event-driven rule gets, so the same
         // templates — {projectName}, {customerName} — work in both.
-        const payload = await enrichPayload(
+        payload = await enrichPayload(
           {
             ...row,
             /*
@@ -530,6 +520,49 @@ export async function runDueWorkflows(todayJalali = getTodayShamsi()): Promise<n
           },
           subject.entityType,
         );
+      } catch (err) {
+        console.error(`[workflow] rule "${rule.name}" could not read ${entityId}:`, (err as Error)?.message || err);
+        continue;
+      }
+
+      /*
+       * The conditions decide **before** the firing is claimed, never after.
+       *
+       * The claim used to come first and `executeRule` checked the conditions
+       * behind it, so a record that did not match on the first day it was due
+       * was recorded as fired and never looked at again: a rule whose condition
+       * was corrected afterwards — a list entry typed with a space where the
+       * list has a half-space, a «false» picked where «true» was meant — never
+       * fired on any record already past its due day, with nothing on any
+       * screen saying so. Unclaimed, a record that does not match is simply
+       * asked again tomorrow, which is what «N روز بعد، اگر هنوز…» means.
+       */
+      if (!matchesConditions(rule.conditions, payload)) continue;
+
+      // Written first, and the unique index is what decides: two servers, or a
+      // sweep overlapping a manual run, cannot both get past this line. The
+      // occurrence is part of that key, which is the whole of what lets a
+      // repeat through while a one-shot rule stays a one-shot rule.
+      try {
+        await db.workflowFiring.create({
+          data: {
+            ruleId: rule.id,
+            entityType: subject.entityType,
+            entityId,
+            occurrence,
+            dueDay: dueDay(base, days, direction),
+          } as Prisma.WorkflowFiringUncheckedCreateInput,
+        });
+      } catch (err) {
+        // P2002: this rule has already fired this occurrence for this record.
+        // Anything else is a real problem and is worth the log line.
+        if ((err as { code?: string })?.code !== "P2002") {
+          console.error("[workflow] could not record firing:", (err as Error)?.message || err);
+        }
+        continue;
+      }
+
+      try {
         await executeRule(rule, payload, undefined, settings);
         fired++;
       } catch (err) {

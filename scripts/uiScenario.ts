@@ -3471,6 +3471,20 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
     !!hostC.querySelector("input[type=\"text\"]")
     && !hostC.querySelector("[data-condition-values]"));
 
+  /*
+   * A stored value the list does not hold — the reported rule: the result typed
+   * as «دریافت پیش فاکتور تایید شد» while the list says «…پیش‌فاکتور تأیید شد».
+   * It must be drawn and named, not left to the placeholder.
+   */
+  const RESULTS = ["دریافت پیش‌فاکتور تأیید شد", "موکول به تاریخ دیگر"];
+  draw("equals", "دریافت پیش فاکتور تایید شد", RESULTS);
+  const sel = hostC.querySelector("[data-condition-select]") as HTMLSelectElement;
+  ok("a value the list does not hold is kept on the control",
+    !!sel && sel.value === "دریافت پیش فاکتور تایید شد", sel?.value);
+  ok("...and named as not in the list", !!hostC.querySelector("[data-condition-stale]"));
+  draw("equals", "دریافت پیش‌فاکتور تأیید شد", RESULTS);
+  ok("a value from the list raises no warning", !hostC.querySelector("[data-condition-stale]"));
+
   act(() => { rootC.unmount(); });
   hostC.remove();
 }
