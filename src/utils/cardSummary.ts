@@ -43,6 +43,8 @@ export const DETAIL_LABELS = {
   followUpDescription: 'شرح کار',
   /** What the customer said. */
   followUpResult: 'نتیجه پیگیری',
+  /** What a call to a customer came to (`src/utils/contactResults.ts`). */
+  contactResult: 'نتیجه تماس',
   /** The note about the call that closed it. */
   completionNote: 'یادداشت انجام کار',
 } as const;
@@ -71,6 +73,7 @@ export interface CardTextInput {
   headline: string;
   description?: string | null;
   followUpResult?: string | null;
+  contactResult?: string | null;
   completionNote?: string | null;
   /** Decides which of the two names `description` is printed under. */
   isFollowUp?: boolean;
@@ -128,6 +131,7 @@ export function detailBlocks(input: CardTextInput): CardDetailBlock[] {
     'plain',
   );
   push(DETAIL_LABELS.followUpResult, input.followUpResult, 'done');
+  push(DETAIL_LABELS.contactResult, input.contactResult, 'done');
   push(DETAIL_LABELS.completionNote, input.completionNote, 'done');
   return blocks;
 }

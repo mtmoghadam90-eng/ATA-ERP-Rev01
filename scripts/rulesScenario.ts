@@ -10042,7 +10042,7 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   // it — the two-places-to-look problem, put back.
   ok("the list draws the referrals too", /referral-row-\$\{card\.id\}/.test(view));
   ok("...and only the notices tab skips fetching them",
-    /if \(mainTab === 'inbox'\) return;/.test(view));
+    /if \(mainTab === 'inbox' \|\| mainTab === 'contacts'\) return;/.test(view));
   ok("one filter bar decides which of them are shown",
     /referralPassesTaskFilters\(/.test(view));
 
@@ -10400,7 +10400,7 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   eq("...an ordinary task is not refused", completionNoteRefusal("GENERAL"), null);
   eq("...nor a next action", completionNoteRefusal("NEXT_ACTION"), null);
   ok("the refusal is checked where the note is written",
-    /if \("completionNote" in input\) \{[\s\S]{0,160}completionNoteRefusal\(before\.taskKind\)/
+    /if \("completionNote" in input \|\| "contactResult" in input\) \{[\s\S]{0,160}completionNoteRefusal\(before\.taskKind\)/
       .test(taskService));
 
   /*
@@ -10409,8 +10409,8 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    * which is why `taskToWriteInput` deliberately does not carry the note.
    */
   const tasksView = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
-  ok("the tick's write names the status and the note only",
-    /tasksApi\.update\(task\.id, \{\s*status: 'انجام شده',\s*completionNote: note\.trim\(\) \|\| null,\s*\}\)/
+  ok("the tick's write names the status, the note and (only when asked) the call's result",
+    /tasksApi\.update\(task\.id, \{\s*status: 'انجام شده',\s*completionNote: note\.trim\(\) \|\| null,\s*\.\.\.\(contactResult !== undefined \? \{ contactResult \} : \{\}\),\s*\}\)/
       .test(tasksView));
   ok("...and the whole-record adapter still leaves the note alone",
     !/completionNote/.test(
@@ -10457,7 +10457,8 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    * perfectly while the second one silently does what the first does.
    */
   ok("...and each button says which one was pressed",
-    /onConfirm\(note, false\)/.test(tickModal) && /onConfirm\(note, true\)/.test(tickModal));
+    /onClick=\{\(\) => send\(false\)\}/.test(tickModal) && /onClick=\{\(\) => send\(true\)\}/.test(tickModal)
+    && /const send = \(withNext: boolean\) =>\s*onConfirm\(note, withNext,/.test(tickModal));
 
   /*
    * **The completion lands first, and a refused one raises nothing.** `ask`
@@ -21340,7 +21341,7 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     tasks.indexOf("export const TASK_MAIN_TABS"),
     tasks.indexOf("] as const;"),
   ).matchAll(/key: '([^']+)'/g)].map(m => m[1]);
-  ok("the screen names three tabs", tabKeys.length === 3);
+  ok("the screen names four tabs", tabKeys.length === 4);
   ok("...and each icon names one of them",
     named.every(tab => tabKeys.includes(tab)));
   ok("...through the tab hand-off, not a state of their own",
@@ -23827,6 +23828,65 @@ head("A supplier inquiry has its own general description, apart from «توضی�
   const one = svc.slice(svc.indexOf("async function importOne"), svc.indexOf("/* --------------------------------- the pass"));
   ok("the importer notifies the sales expert after the write, with no actor (they are the importer)",
     /createProject\(input, user[\s\S]{0,900}afterCommit\("web rfq sales notice", \(\) => notifyUser\(\{\s*userId: user\.id[\s\S]{0,300}actorUserId: null/.test(one));
+}
+
+head("Contact results: a call to a customer records what it came to");
+{
+  const cr = await import("../src/utils/contactResults");
+  ok("a task related to a customer asks for it, in either spelling",
+    cr.takesContactResult({ relatedToType: "مشتری" }) && cr.takesContactResult({ relatedToType: "customer" }));
+  ok("...a project task and a sales chase do not",
+    !cr.takesContactResult({ relatedToType: "پروژه" })
+    && !cr.takesContactResult({ relatedToType: "مشتری", taskKind: "SALES_FOLLOW_UP" })
+    && !cr.takesContactResult(null));
+  const sum = cr.summarizeContactResults([
+    { contactResult: "فعلاً نیازی ندارد", assignedToName: "علی" },
+    { contactResult: "فعلاً نيازي ندارد", assignedToName: "علی" },
+    { contactResult: "پاسخ نداد", assignedToName: "رضا" },
+    { contactResult: null, assignedToName: "رضا" },
+  ], [...cr.DEFAULT_CONTACT_RESULTS]);
+  eq("every call is counted", sum.total, 4);
+  eq("...an unrecorded one is not a recorded one", sum.recorded, 3);
+  eq("two spellings of one result are one row", sum.byResult[0].result, "فعلاً نیازی ندارد");
+  eq("...counted together", sum.byResult[0].count, 2);
+  ok("an unrecorded call is reported, not dropped",
+    sum.byResult.some((r) => r.result === cr.CONTACT_RESULT_UNRECORDED && r.count === 1));
+  eq("the percentages are of the whole", sum.byResult[0].percent, 50);
+  eq("per person, under the same result names", sum.byAssignee.find((p) => p.name === "رضا")?.counts["پاسخ نداد"], 1);
+  eq("an empty period is empty, not a division by zero", cr.summarizeContactResults([]).byResult.length, 0);
+
+  const svc = readFileSync("src/server/services/taskService.ts", "utf8");
+  ok("the column is listed, writable through the input, and refused for a chase with the note",
+    /followUpResult: true,\s*contactResult: true,/.test(svc)
+    && /"contactResult" in input\) set\("contactResult"/.test(svc)
+    && /"completionNote" in input \|\| "contactResult" in input\) \{\s*const noteRefusal/.test(svc));
+  const route = readFileSync("src/server/routes/tasks.ts", "utf8");
+  ok("the route lets it through", /"completionNote",[\s\S]{0,120}"contactResult",/.test(route));
+  ok("the report is registered before /api/tasks/:id",
+    route.indexOf('"/api/tasks/contact-results"') > 0
+    && route.indexOf('"/api/tasks/contact-results"') < route.indexOf('app.get("/api/tasks/:id"'));
+  const report = readFileSync("src/server/services/contactResultService.ts", "utf8");
+  ok("the report reads through the tasks visibility rule, both customer spellings, and no chases",
+    /visibilityClause\(user\)/.test(report) && /relationSpellings\("customer"\)/.test(report)
+    && /taskKind: \{ not: FOLLOW_UP_KIND \}/.test(report));
+  ok("...and counts over the scan, not the listed page",
+    /summarizeContactResults\(scanned,/.test(report));
+  const schema = readFileSync("prisma/schema.prisma", "utf8");
+  ok("the column exists on the model", /contactResult\s+String\?\s+@db\.NVarChar\(200\)/.test(schema));
+
+  const { applySettingsPatches } = await import("../src/utils/settingsPatches");
+  const patched = applySettingsPatches({ dropdownItems: {} } as any);
+  ok("a live document is given the list once",
+    (patched?.next.dropdownItems as any)?.contactResults?.length === cr.DEFAULT_CONTACT_RESULTS.length);
+  const kept = applySettingsPatches({ dropdownItems: { contactResults: ["فقط این"] }, appliedPatches: [] } as any);
+  ok("...appending, never replacing what a company wrote",
+    (kept?.next.dropdownItems as any)?.contactResults?.[0] === "فقط این");
+  const settingsView = readFileSync("src/components/SettingsView.tsx", "utf8");
+  ok("the list is editable in Settings", /'contactResults',/.test(settingsView) && /contactResults: '/.test(settingsView));
+  const tasksView = readFileSync("src/components/TasksView.tsx", "utf8");
+  ok("the tick sends the result only when the modal asked it",
+    /\.\.\.\(contactResult !== undefined \? \{ contactResult \} : \{\}\)/.test(tasksView)
+    && /contactResults=\{settings\.dropdownItems\?\.contactResults\}/.test(tasksView));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

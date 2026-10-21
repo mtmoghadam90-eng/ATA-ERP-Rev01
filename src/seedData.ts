@@ -1,6 +1,7 @@
 import { DEFAULT_AD_AUDIENCES, DEFAULT_AD_CHANNELS } from "./utils/adEffectiveness";
 import { DEFAULT_FOLLOW_UP_RESULTS } from './utils/salesFollowUp';
 import { DEFAULT_NEXT_ACTION_KINDS } from './utils/nextAction';
+import { DEFAULT_CONTACT_RESULTS } from './utils/contactResults';
 import { DEFAULT_MODULE_ORDER } from './appModules';
 import { ExchangeRate, ERPSettings } from './types';
 import { DEFAULT_CUSTOMER_VALUE_SETTINGS } from './utils/customerValue';
@@ -201,6 +202,7 @@ export const DEFAULT_SETTINGS: ERPSettings = {
     adChannels: [...DEFAULT_AD_CHANNELS],
     adAudiences: [...DEFAULT_AD_AUDIENCES],
     nextActionKinds: [...DEFAULT_NEXT_ACTION_KINDS],
+    contactResults: [...DEFAULT_CONTACT_RESULTS],
     equipmentTypes: [
       'فلومتر کوریولیس',
       'فلومتر التراسونیک',

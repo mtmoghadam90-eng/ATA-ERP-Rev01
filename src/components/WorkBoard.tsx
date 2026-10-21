@@ -54,6 +54,7 @@ export interface BoardTaskCard {
   description?: string | null;
   /** What the customer said, and the note about the call, once it closed. */
   followUpResult?: string | null;
+  contactResult?: string | null;
   completionNote?: string | null;
 }
 
@@ -293,6 +294,7 @@ export default function WorkBoard({
                   headline: card.title,
                   description: card.kind === 'task' ? card.description : null,
                   followUpResult: card.kind === 'task' ? card.followUpResult : null,
+                  contactResult: card.kind === 'task' ? card.contactResult : null,
                   completionNote: card.kind === 'task' ? card.completionNote : null,
                   isFollowUp: card.kind === 'task' && card.taskKind === 'SALES_FOLLOW_UP',
                 });

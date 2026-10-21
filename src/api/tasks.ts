@@ -1,6 +1,7 @@
 import type { MovableLane } from "../utils/workBoard";
 import { ListResponse, api } from "./client";
 import type { Task } from "../types";
+import type { ContactResultSummary } from "../utils/contactResults";
 
 /**
  * How much work this person is holding, and what they are held to.
@@ -47,6 +48,8 @@ export interface TaskRow {
   /** What the customer said, and the note about the call that closed this. */
   followUpResult?: string | null;
   completionNote?: string | null;
+  /** What a call to a customer came to (`src/utils/contactResults.ts`). */
+  contactResult?: string | null;
   /**
    * The job behind the task, resolved on the server.
    *
@@ -76,6 +79,18 @@ export interface TaskRow {
   createdAt: string;
   /** The task card draws a custom-fields block from these. */
   customValues: string | null;
+}
+
+/** «گزارش نتیجه تماس‌ها» — see `contactResultService.ts`. */
+export interface ContactResultReport {
+  summary: ContactResultSummary;
+  truncated: boolean;
+  listedTotal: number;
+  rows: {
+    id: string; title: string; customerId: string | null; customerName: string;
+    assignedToName: string; contactResult: string | null;
+    completionNote: string | null; completedAtJalali: string | null;
+  }[];
 }
 
 export interface TaskSummary {
@@ -126,6 +141,8 @@ export interface TaskWriteInput {
    * `SALES_FOLLOW_UP`, where `completeFollowUp` is the only writer.
    */
   completionNote?: string | null;
+  /** Written on the same tick as the note, and also not in `taskToWriteInput`. */
+  contactResult?: string | null;
   customValues?: unknown;
 }
 
@@ -137,6 +154,8 @@ export const tasksApi = {
 
   /** Open, overdue and due-today counts, aggregated in SQL. */
   summary: () => api.get<{ summary: TaskSummary }>("/api/tasks/summary").then((r) => r.summary),
+  contactResults: (query: { from?: string; to?: string; assigneeUserId?: string; result?: string }, signal?: AbortSignal) =>
+    api.get<ContactResultReport>("/api/tasks/contact-results", query, signal),
 
   /**
    * Moves several cards into one column.
@@ -227,6 +246,7 @@ export function rowToTask(row: TaskRow): Task {
     */
     followUpResult: row.followUpResult ?? undefined,
     completionNote: row.completionNote ?? undefined,
+    contactResult: row.contactResult ?? undefined,
     createdAt: row.createdAt,
     relatedProject: row.relatedProject ?? undefined,
     priority: row.priority as Task["priority"],

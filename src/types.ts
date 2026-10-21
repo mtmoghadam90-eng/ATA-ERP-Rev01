@@ -758,6 +758,8 @@ export interface Task {
    */
   followUpResult?: string;
   completionNote?: string;
+  /** What a call to a customer came to — chosen on the tick (`src/utils/contactResults.ts`). */
+  contactResult?: string;
   /** When it was raised. What «تاریخ ارجاع» sorts the board by. */
   createdAt?: string;
   /** The job behind the task — code, name and customer — joined by the server. */
@@ -1065,6 +1067,11 @@ export interface ERPSettings {
      * a settings patch to reach a live document.
      */
     nextActionKinds?: string[];
+    /**
+     * «نتیجهٔ تماس با مشتری» — offered when a task related to a customer is
+     * ticked off. A plain company list; nothing keys on its words.
+     */
+    contactResults?: string[];
   };
   /**
    * Why a project or a proforma line was lost.

@@ -330,6 +330,7 @@ const LIST_SELECT = {
   // offering the ordinary tick, which is refused for these.
   taskKind: true,
   followUpResult: true,
+  contactResult: true,
   completionNote: true,
   completedAtJalali: true,
   // When the work was picked up and when it closed — the board's own record,
@@ -625,6 +626,12 @@ export interface TaskInput {
    * *customer* said, and only the follow-up flow learns it.
    */
   completionNote?: string | null;
+  /**
+   * What a call to a customer came to (`src/utils/contactResults.ts`), chosen
+   * on the tick. Refused for a sales chase with the note, for the same reason:
+   * that call's answer is `followUpResult`, written by its own flow.
+   */
+  contactResult?: string | null;
   customValues?: unknown;
 }
 
@@ -657,6 +664,7 @@ function scalarData(input: TaskInput): Record<string, unknown> {
     set("reminderRepeatUntilJalali", toNullableString(input.reminderRepeatUntilJalali, 10));
   }
   if ("completionNote" in input) set("completionNote", toNullableString(input.completionNote));
+  if ("contactResult" in input) set("contactResult", toNullableString(input.contactResult, 200));
   if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
 
   return { ...out, ...expandDateFields(input as Record<string, unknown>, TASK_DATE_FIELDS) };
@@ -1149,7 +1157,7 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
     );
   }
 
-  if ("completionNote" in input) {
+  if ("completionNote" in input || "contactResult" in input) {
     const noteRefusal = completionNoteRefusal(before.taskKind);
     if (noteRefusal) throw new Error(noteRefusal);
   }

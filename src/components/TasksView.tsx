@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import type { ActivityJump } from '../utils/notificationJump';
 import { cardProjectJump } from '../utils/notificationJump';
 import TaskCompletionModal from './TaskCompletionModal';
+import ContactResultsReport from './ContactResultsReport';
 import { 
   Plus, 
   Search, 
@@ -13,6 +14,7 @@ import {
   X,
   CheckCircle2,
   ListTodo,
+  PhoneCall,
   Maximize2,
   Minimize2,
   Eye,
@@ -93,6 +95,8 @@ export const TASK_MAIN_TABS = [
   { key: 'board', label: 'تخته کار', icon: LayoutGrid },
   { key: 'list', label: 'فهرست وظایف', icon: ListTodo },
   { key: 'inbox', label: 'اعلان‌ها', icon: Bell },
+  // What the calls to customers came to — `ContactResultsReport`.
+  { key: 'contacts', label: 'نتایج تماس', icon: PhoneCall },
 ] as const;
 type MainTab = (typeof TASK_MAIN_TABS)[number]['key'];
 const isMainTab = (value: string | undefined): value is MainTab =>
@@ -468,8 +472,8 @@ export default function TasksView({
   useRevalidate(['referrals', 'activities'], refreshReferrals);
 
   React.useEffect(() => {
-    // Both views draw referrals; only the notices tab does not.
-    if (mainTab === 'inbox') return;
+    // Both views draw referrals; the notices tab and the call report do not.
+    if (mainTab === 'inbox' || mainTab === 'contacts') return;
     const controller = new AbortController();
     inboxApi
       .referrals({
@@ -836,7 +840,7 @@ export default function TasksView({
    * same reason it is refused for a chase: only this gesture and
    * `completeFollowUp` ever write it.
    */
-  const confirmCompletion = async (note: string, withNextAction: boolean) => {
+  const confirmCompletion = async (note: string, withNextAction: boolean, contactResult?: string | null) => {
     const task = completingTask;
     if (!task) return;
     setCompletingTask(null);
@@ -857,6 +861,8 @@ export default function TasksView({
         status: 'انجام شده',
         // Blank is «nothing to add», which is an answer — never «unchanged».
         completionNote: note.trim() || null,
+        // Sent only when the modal asked it; absent leaves the column alone.
+        ...(contactResult !== undefined ? { contactResult } : {}),
       });
       done = task;
       void topUpBoard();
@@ -919,6 +925,7 @@ export default function TasksView({
       // the list row — `LIST_SELECT` carries all three — so this costs nothing.
       description: task.description,
       followUpResult: task.followUpResult,
+      contactResult: task.contactResult,
       completionNote: task.completionNote,
     }));
 
@@ -1206,6 +1213,8 @@ export default function TasksView({
           settings={settings}
           onOpenNotification={onOpenNotification}
         />
+      ) : mainTab === 'contacts' ? (
+        <ContactResultsReport />
       ) : (<>
 
       {/*
@@ -1612,6 +1621,12 @@ export default function TasksView({
                   نتیجه: {task.followUpResult}
                 </span>
               )}
+              {/* What a call to a customer came to. */}
+              {task.contactResult && (
+                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full border bg-violet-50 border-violet-200 text-violet-700">
+                  {DETAIL_LABELS.contactResult}: {task.contactResult}
+                </span>
+              )}
 
               <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${getStatusBadge(task.status)}`}>
                 وضعیت: {task.status}
@@ -1861,8 +1876,9 @@ export default function TasksView({
       */}
       <TaskCompletionModal
         task={completingTask}
+        contactResults={settings.dropdownItems?.contactResults}
         onCancel={() => setCompletingTask(null)}
-        onConfirm={(note, withNextAction) => { void confirmCompletion(note, withNextAction); }}
+        onConfirm={(note, withNextAction, contactResult) => { void confirmCompletion(note, withNextAction, contactResult); }}
       />
 
       {followUpRow && (

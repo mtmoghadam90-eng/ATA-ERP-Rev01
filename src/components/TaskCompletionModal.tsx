@@ -1,6 +1,7 @@
 import { DETAIL_LABELS } from '../utils/cardSummary';
 import React, { useEffect, useRef, useState } from "react";
 import { CalendarPlus, CheckCircle2, X } from "lucide-react";
+import { contactResultKey, takesContactResult } from "../utils/contactResults";
 
 /**
  * «چه کاری انجام شد؟» — asked once, as the task is ticked off.
@@ -53,7 +54,16 @@ export interface TaskCompletionModalProps {
    * which is how a second «ثبت انجام کار» dialog comes to be written. These
    * three fields are the whole of what it reads.
    */
-  task: { id: string; title: string; completionNote?: string | null } | null;
+  task: {
+    id: string; title: string; completionNote?: string | null;
+    relatedToType?: string | null; taskKind?: string | null; contactResult?: string | null;
+  } | null;
+  /**
+   * `settings.dropdownItems.contactResults`. Offered only for a task related to
+   * a customer (`takesContactResult`); absent or empty on a host that has no
+   * such task, which draws no box.
+   */
+  contactResults?: readonly string[];
   onCancel: () => void;
   /**
    * Ticks the task off.
@@ -63,14 +73,15 @@ export interface TaskCompletionModalProps {
    * writes the completion either way and asks the follow-on question only on
    * the second, **after** the write has landed.
    */
-  onConfirm: (note: string, withNextAction: boolean) => void;
+  onConfirm: (note: string, withNextAction: boolean, contactResult?: string | null) => void;
   saving?: boolean;
 }
 
 export default function TaskCompletionModal({
-  task, onCancel, onConfirm, saving,
+  task, contactResults, onCancel, onConfirm, saving,
 }: TaskCompletionModalProps): React.ReactElement | null {
   const [note, setNote] = useState("");
+  const [result, setResult] = useState("");
   const box = useRef<HTMLTextAreaElement | null>(null);
 
   /*
@@ -83,9 +94,25 @@ export default function TaskCompletionModal({
   useEffect(() => {
     if (!task) return;
     setNote(task.completionNote ?? "");
+    setResult(task.contactResult ?? "");
   }, [task?.id]);
 
   if (!task) return null;
+
+  /*
+   * The result is asked only where it means something — a task related to a
+   * customer — and only when it is sent: a host that draws no box sends
+   * `undefined`, which the write leaves out, so ticking an ordinary task never
+   * clears a result recorded on it some other way.
+   */
+  const asksResult = takesContactResult(task) && ((contactResults?.length ?? 0) > 0 || !!task.contactResult);
+  const list = contactResults ?? [];
+  // A stored value the list no longer holds is drawn, disabled, rather than
+  // rendering the placeholder over it — a `<select>` whose value matches no
+  // option shows the first one, and a re-save would quietly clear it.
+  const stale = !!result && !list.some((r) => contactResultKey(r) === contactResultKey(result));
+  const send = (withNext: boolean) =>
+    onConfirm(note, withNext, asksResult ? (result.trim() || null) : undefined);
 
   return (
     <div className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4">
@@ -105,6 +132,23 @@ export default function TaskCompletionModal({
 
         <div className="p-5 space-y-3">
           <p className="text-xs text-secondary break-words">{task.title}</p>
+          {asksResult && (
+            <div>
+              <label htmlFor="task-completion-result" className="block text-xs font-medium text-slate-700 mb-1">
+                نتیجهٔ تماس با مشتری <span className="text-faint">(اختیاری)</span>
+              </label>
+              <select
+                id="task-completion-result"
+                value={result}
+                onChange={(e) => setResult(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-right bg-white focus:outline-none focus:ring-2 focus:ring-sky-500/20 focus:border-sky-500 transition"
+              >
+                <option value="">— انتخاب نشده —</option>
+                {stale && <option value={result} disabled>{result} (در فهرست نیست)</option>}
+                {list.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label htmlFor="task-completion-note" className="block text-xs font-medium text-slate-700 mb-1">
               {DETAIL_LABELS.completionNote} <span className="text-faint">(اختیاری)</span>
@@ -131,7 +175,7 @@ export default function TaskCompletionModal({
           </button>
           <button
             type="button"
-            onClick={() => onConfirm(note, false)}
+            onClick={() => send(false)}
             disabled={saving}
             id="task-completion-confirm"
             className="px-3 py-1.5 rounded-lg text-xs bg-emerald-500 text-white hover:bg-emerald-600 transition inline-flex items-center gap-1.5 disabled:opacity-60"
@@ -147,7 +191,7 @@ export default function TaskCompletionModal({
           */}
           <button
             type="button"
-            onClick={() => onConfirm(note, true)}
+            onClick={() => send(true)}
             disabled={saving}
             id="task-completion-confirm-next"
             className="px-3 py-1.5 rounded-lg text-xs bg-sky-600 text-white hover:bg-sky-700 transition inline-flex items-center gap-1.5 disabled:opacity-60"
