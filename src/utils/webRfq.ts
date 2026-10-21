@@ -670,6 +670,29 @@ export function customerFor(rfq: WebRfq): WebRfqCustomer {
  * every grid it appears in, as a job for one. A request that named no equipment
  * at all (the form's «فقط فایل» mode) is named for the request itself.
  */
+/**
+ * The notice the project's sales expert gets when a website request becomes a
+ * project.
+ *
+ * Without it the import is silent to the one person it lands on: the importer
+ * acts *as* that account, and `notifyUser` refuses to tell an actor about their
+ * own act — so the job appeared on their board with nothing saying it had
+ * arrived. It names the plugin, because «مشاور هوشمند سایت» and «فرم استعلام
+ * قیمت» are two different kinds of enquiry, and the customer, because that is
+ * who the first call is to.
+ */
+export function webRfqProjectNotice(
+  rfq: WebRfq,
+  project: { code: string; name: string },
+): { title: string; description: string } {
+  const who = [rfq.company, rfq.fullName].map((v) => String(v ?? "").trim()).filter(Boolean).join(" — ");
+  return {
+    title: "پروژهٔ جدید از سایت",
+    description: `پروژهٔ ${project.code} «${project.name}» از «${webRfqSourceSpec(rfq.source).label}» `
+      + `ثبت شد${who ? ` — ${who}` : ""}.`,
+  };
+}
+
 export function projectNameFor(rfq: WebRfq): string {
   const first = rfq.lines[0]?.productName.trim() ?? "";
   if (!first) return `استعلام سایت ${inquiryKeyFor(rfq)}`.slice(0, 400);

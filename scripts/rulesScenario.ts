@@ -23810,6 +23810,25 @@ head("A supplier inquiry has its own general description, apart from «توضی�
     /chosenField\?\.companyList[\s\S]{0,120}settings\.dropdownItems\?\.\[chosenField\.companyList\]/.test(settingsSrc));
 }
 
+{
+  head("A project imported from the website tells its sales expert");
+  const { webRfqProjectNotice: notice } = await import("../src/utils/webRfq");
+  const base = { id: 7, reference: "", fullName: "علی رضایی", company: "شرکت نمونه", mobile: "", email: "",
+    city: "", deadline: "", notes: "", productUrl: "", panelUrl: "" } as any;
+  const advisor = notice({ ...base, source: "ADVISOR" }, { code: "ATA-05-40", name: "فلومتر" });
+  ok("it names the project, the plugin and the customer",
+    advisor.description.includes("ATA-05-40") && advisor.description.includes("مشاور هوشمند سایت")
+      && advisor.description.includes("شرکت نمونه") && advisor.description.includes("علی رضایی"));
+  ok("the form says which plugin it was",
+    notice({ ...base, source: "FORM" }, { code: "X", name: "y" }).description.includes("فرم استعلام قیمت"));
+  ok("a blank customer leaves no dangling dash",
+    !notice({ ...base, source: "FORM", company: "", fullName: "" }, { code: "X", name: "y" }).description.includes("—"));
+  const svc = readFileSync("src/server/services/webRfqService.ts", "utf8");
+  const one = svc.slice(svc.indexOf("async function importOne"), svc.indexOf("/* --------------------------------- the pass"));
+  ok("the importer notifies the sales expert after the write, with no actor (they are the importer)",
+    /createProject\(input, user[\s\S]{0,900}afterCommit\("web rfq sales notice", \(\) => notifyUser\(\{\s*userId: user\.id[\s\S]{0,300}actorUserId: null/.test(one));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

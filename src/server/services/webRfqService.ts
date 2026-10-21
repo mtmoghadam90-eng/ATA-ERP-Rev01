@@ -6,13 +6,14 @@ import { afterCommit } from "../afterCommit";
 import { CustomerInput, createCustomer, normalizeMobile } from "./customerService";
 import { ProjectInput, createProject } from "./projectService";
 import { loadSettings } from "../settings";
+import { notifyUser } from "./notificationService";
 import { nextProjectCode } from "../documentNumberSpecs";
 import {
   BASELINE_PROBE_LIMIT, DEFAULT_WEB_RFQ_SOURCE, MAX_IMPORT_ATTEMPTS,
   WEB_RFQ_SOURCES, WebRfq, WebRfqFeed, WebRfqSourceId,
   customerFor, duplicateFeedRefusal, feedConfigRefusal, feedFailureMessage, feedRequestUrl, webRfqSourceSpec,
   inquiryKeyFor, isBeforeLine, isWebRfqSource, parseFeed, parseFeedRow,
-  projectDescriptionFor, projectItemsFor, projectNameFor, syncWindow, webEntryIn,
+  projectDescriptionFor, projectItemsFor, projectNameFor, syncWindow, webEntryIn, webRfqProjectNotice,
 } from "../../utils/webRfq";
 
 /**
@@ -393,6 +394,23 @@ async function importOne(rfq: WebRfq, user: AuthUser): Promise<{ customerId: str
     items,
   };
   const project = await createProject(input, user, getTodayShamsi());
+
+  /*
+   * Told to the sales expert, who is the importing account.
+   *
+   * With **no actor**: the importer writes as that person, and `notifyUser`
+   * refuses to tell somebody about their own act, which is exactly how a job
+   * arriving from the website used to land on their board in silence. After
+   * the write and never able to fail it — a notice that could not be stored is
+   * not a reason to leave the request FAILED and import it twice.
+   */
+  await afterCommit("web rfq sales notice", () => notifyUser({
+    userId: user.id,
+    module: "پروژه‌ها",
+    ...webRfqProjectNotice(rfq, { code: project.code, name: input.name ?? "" }),
+    projectId: project.id,
+    actorUserId: null,
+  }));
 
   return { customerId, projectId: project.id, code: project.code };
 }
