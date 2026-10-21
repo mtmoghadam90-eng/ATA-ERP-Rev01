@@ -34,7 +34,7 @@
  * for the keys they emit.
  */
 
-import type { WorkflowRule } from "../types";
+import type { ERPSettings, WorkflowRule } from "../types";
 import { APP_MODULES } from "../appModules";
 import {
   AFTER_SALES_STATUSES, CUSTOMER_TYPES, DELIVERY_WORKFLOW_STATUSES,
@@ -90,6 +90,19 @@ export interface TriggerField {
    * other end and exactly how `ENRICHED_PAYLOAD_VARIABLES` is checked.
    */
   derived?: boolean;
+  /**
+   * The company's own editable list this field's values come from, read live
+   * from `settings.dropdownItems` by the editor.
+   *
+   * Not `options`: those are values this application writes, fixed in code,
+   * while these are the company's wording — so the editor offers whatever the
+   * list says today rather than a second copy of it. It exists because a box
+   * to type into could not be matched: `matchesConditions` compares exactly,
+   * and «دریافت پیش فاکتور تایید شد» typed with a space and no hamza never
+   * equals the list's «دریافت پیش‌فاکتور تأیید شد», so the rule saved, printed
+   * correctly and never fired.
+   */
+  companyList?: keyof ERPSettings["dropdownItems"];
 }
 
 export interface TriggerSpec {
@@ -405,7 +418,7 @@ export const WORKFLOW_TRIGGERS: Record<WorkflowTriggerType, TriggerSpec> = {
        * The result is `settings.dropdownItems.followUpResults`, editable by the
        * company, so free text for the same reason as the category above.
        */
-      { value: "followUpResult", label: "نتیجهٔ پیگیری" },
+      { value: "followUpResult", label: "نتیجهٔ پیگیری", companyList: "followUpResults" },
       {
         value: "settledOutcome", label: "وضعیت نهایی ثبت‌شده", options: PROFORMA_OUTCOMES,
         hint: "فقط وقتی پر می‌شود که همان تماس فروش را قطعی کرده باشد — «تأیید نهایی خرید»، "
@@ -941,7 +954,7 @@ export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
    */
   task: [
     {
-      value: "followUpResult", label: "نتیجهٔ پیگیری",
+      value: "followUpResult", label: "نتیجهٔ پیگیری", companyList: "followUpResults",
       hint: "همان چیزی که مشتری گفت، از فهرست «نتایج پیگیری» در تنظیمات — مثلاً "
         + "«تأیید نهایی خرید» یا «موکول به تاریخ دیگر». دقیقاً همان نوشتهٔ فهرست "
         + "را بنویس، وگرنه شرط هیچ‌وقت برقرار نمی‌شود.",

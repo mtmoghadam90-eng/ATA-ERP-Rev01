@@ -23789,6 +23789,27 @@ head("A supplier inquiry has its own general description, apart from «توضی�
     staffTemplateFor("ACTIVITY_REPLY", { templates: { TASK_ASSIGNED: "x" } }), DEFAULT_STAFF_TEMPLATES.ACTIVITY_REPLY);
 }
 
+{
+  head("A scheduled rule claims its firing only once the conditions match");
+  const sweep = readFileSync("src/server/services/workflowSweep.ts", "utf8");
+  const run = sweep.slice(sweep.indexOf("export async function runDueWorkflows"), sweep.indexOf("function resolveFinishedTasks"));
+  const check = run.indexOf("if (!matchesConditions(rule.conditions, payload)) continue;");
+  const claim = run.indexOf("await db.workflowFiring.create(");
+  ok("the conditions are asked in the sweep itself", check > 0);
+  ok("...before the firing is written, so a record that does not match yet is asked again",
+    check > 0 && claim > check);
+  ok("...and an already-fired record is skipped before any enrichment",
+    run.indexOf("workflowFiring.findFirst(") > 0 && run.indexOf("workflowFiring.findFirst(") < run.indexOf("payload = await enrichPayload("));
+  const { SCHEDULE_MODEL_FIELDS: smf, triggerFields: tf } = await import("../src/utils/workflowTriggers");
+  ok("the chase's result is offered from the company's own list on the schedule subject",
+    smf.task.find((f) => f.value === "followUpResult")?.companyList === "followUpResults");
+  ok("...and on the event trigger",
+    tf("follow_up_completed").find((f) => f.value === "followUpResult")?.companyList === "followUpResults");
+  const settingsSrc = readFileSync("src/components/SettingsView.tsx", "utf8");
+  ok("the editor reads that list for the value control",
+    /chosenField\?\.companyList[\s\S]{0,120}settings\.dropdownItems\?\.\[chosenField\.companyList\]/.test(settingsSrc));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
