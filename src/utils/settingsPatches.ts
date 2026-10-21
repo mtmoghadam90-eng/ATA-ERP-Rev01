@@ -39,6 +39,7 @@ import {
   REQUEST_REVIEW_CATEGORY, REQUEST_REVIEW_CATEGORY_ID, findRequestReviewCategory,
 } from "./requestReview";
 import { DEFAULT_NEXT_ACTION_KINDS } from "./nextAction";
+import { DEFAULT_CONTACT_RESULTS } from "./contactResults";
 import { DEFAULT_AD_AUDIENCES, DEFAULT_AD_CHANNELS } from "./adEffectiveness";
 import { PROJECT_TECHNICAL_APPROVED, PROJECT_TECHNICAL_OFFERED } from "./moduleStatuses";
 import { STAGE_OFFER_REVIEW, STAGE_OFFER_REVIEW_WAS } from "./projectStage";
@@ -390,6 +391,24 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
           ...list,
           { id: REQUEST_REVIEW_CATEGORY_ID, name: REQUEST_REVIEW_CATEGORY, module: "پروژه" },
         ],
+      };
+    },
+  },
+  {
+    id: "contact-results-1",
+    describe: "فهرست «نتیجهٔ تماس با مشتری» برای ثبت انجام وظیفهٔ مرتبط با مشتری",
+    /*
+     * A list, not a rule — the `next-action-kinds-1` reason: a live document
+     * never sees a default added to `seedData`, and an empty dropdown on the
+     * completion form would read as the feature not working.
+     */
+    apply: (settings) => {
+      const next = appendMissing(
+        settings.dropdownItems?.contactResults, [...DEFAULT_CONTACT_RESULTS]);
+      if (!next) return null;
+      return {
+        ...settings,
+        dropdownItems: { ...settings.dropdownItems, contactResults: next },
       };
     },
   },

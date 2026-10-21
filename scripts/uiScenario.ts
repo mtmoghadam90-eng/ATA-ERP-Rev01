@@ -3076,6 +3076,45 @@ head("Completing a task: the note reaches the caller");
   nHost.remove();
 }
 
+head("Completing a call to a customer: the result reaches the caller");
+{
+  const cHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const cRoot = createRoot(cHost);
+  let got: { note: string; next: boolean; result: string | null | undefined } | null = null;
+  const draw = (t: unknown) => act(() => {
+    cRoot.render(React.createElement(TaskCompletionModal, {
+      task: t as never,
+      contactResults: ["فعلاً نیازی ندارد", "پاسخ نداد"],
+      onCancel: () => {},
+      onConfirm: (note: string, next: boolean, result?: string | null) => { got = { note, next, result }; },
+    }));
+  });
+  const base = { id: "c-1", title: "تماس تلفنی", taskKind: "NEXT_ACTION", status: "برای انجام" };
+
+  draw({ ...base, relatedToType: "پروژه" });
+  ok("a task not about a customer draws no result box", !cHost.querySelector("#task-completion-result"));
+  act(() => { (cHost.querySelector("#task-completion-confirm") as HTMLElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("...and sends no result, so the column is left alone", got !== null && (got as any).result === undefined, JSON.stringify(got));
+
+  draw({ ...base, id: "c-2", relatedToType: "مشتری" });
+  const sel = cHost.querySelector("#task-completion-result") as HTMLSelectElement | null;
+  ok("a customer task offers the company's list", !!sel && sel.options.length === 3, sel?.options.length);
+  act(() => { sel!.value = "پاسخ نداد"; handlers(sel!).onChange?.({ target: sel }); });
+  act(() => { (cHost.querySelector("#task-completion-confirm-next") as HTMLElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("...the chosen result reaches the caller with the next-action answer",
+    (got as any)?.result === "پاسخ نداد" && (got as any)?.next === true, JSON.stringify(got));
+
+  draw({ ...base, id: "c-3", relatedToType: "customer", contactResult: "نام قدیمی" });
+  const stale = cHost.querySelector("#task-completion-result") as HTMLSelectElement | null;
+  ok("a stored result the list no longer holds is kept, not replaced by the placeholder",
+    stale?.value === "نام قدیمی", stale?.value);
+  act(() => { (cHost.querySelector("#task-completion-confirm") as HTMLElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("...and re-sent as it was", (got as any)?.result === "نام قدیمی", JSON.stringify(got));
+
+  act(() => { cRoot.unmount(); });
+  cHost.remove();
+}
+
 head("A document's notes: a file is content, and the delete is only where it is allowed");
 
 /*

@@ -11,6 +11,7 @@ import {
   moveTasksToLane, taskSummary, updateTask,
 } from "../services/taskService";
 import { topUpActiveWork } from "../services/workLoadService";
+import { contactResultReport } from "../services/contactResultService";
 
 const WRITABLE: (keyof TaskInput)[] = [
   "title", "description", "relatedToType", "relatedToId", "relatedToName",
@@ -30,6 +31,8 @@ const WRITABLE: (keyof TaskInput)[] = [
    * said, and nothing but the follow-up flow ever learns it.
    */
   "completionNote",
+  // The call's result, on the same tick and under the same refusal.
+  "contactResult",
   /*
    * `taskKind` is writable, and **`SALES_FOLLOW_UP` is refused in the service**.
    *
@@ -182,6 +185,28 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
       res.json({ success: true, topUp: await topUpActiveWork(user, getTodayShamsi()) });
     } catch (err) {
       sendError(res, err, "POST /api/tasks/board/top-up");
+    }
+  });
+
+  /*
+    «گزارش نتیجه تماس‌ها» — registered before `/api/tasks/:id` for the reason
+    the reminder routes below are: after it, Express reads «contact-results» as
+    a task id and answers 404.
+  */
+  app.get("/api/tasks/contact-results", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "read");
+    if (!user) return;
+    try {
+      const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+      const report = await contactResultReport(user, {
+        from: text(req.query.from),
+        to: text(req.query.to),
+        assigneeUserId: text(req.query.assigneeUserId),
+        result: text(req.query.result),
+      });
+      res.json({ success: true, ...report });
+    } catch (err) {
+      sendError(res, err, "GET /api/tasks/contact-results");
     }
   });
 

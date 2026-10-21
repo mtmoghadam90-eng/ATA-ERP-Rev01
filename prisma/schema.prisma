@@ -1729,6 +1729,11 @@ model Task {
   /// `settings.dropdownItems.followUpResults` — and is **not** a loss reason and
   /// not a commercial outcome.
   followUpResult    String?   @db.NVarChar(200)
+  /// What a call to a customer came to — a value from
+  /// `settings.dropdownItems.contactResults`, chosen as an ordinary task related
+  /// to a customer is ticked off. Not `followUpResult`, which is a quotation's
+  /// and settles sales (`src/utils/contactResults.ts`).
+  contactResult     String?   @db.NVarChar(200)
   completionNote    String?   @db.NVarChar(Max)
   completedAt       DateTime? @db.Date
   completedAtJalali String?   @db.NVarChar(10)
