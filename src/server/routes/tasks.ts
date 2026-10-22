@@ -12,6 +12,7 @@ import {
 } from "../services/taskService";
 import { topUpActiveWork } from "../services/workLoadService";
 import { contactResultReport } from "../services/contactResultService";
+import { createBulkCallTasks } from "../services/bulkCallTaskService";
 
 const WRITABLE: (keyof TaskInput)[] = [
   "title", "description", "relatedToType", "relatedToId", "relatedToName",
@@ -113,6 +114,31 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
    * at a time. Tasks and referrals move in the same call because the board does
    * not distinguish them — a person drags a card, not a record type.
    */
+  /*
+    «ساخت وظیفهٔ تماس گروهی» from the customers grid. Registered with the other
+    fixed paths, before anything under `/api/tasks/:id`.
+  */
+  app.post("/api/tasks/bulk-customer-calls", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const perDay = Number(body.perDay);
+      const result = await createBulkCallTasks({
+        customerIds: Array.isArray(body.customerIds) ? body.customerIds.map((v) => String(v ?? "")) : [],
+        kind: String(body.kind ?? ""),
+        description: typeof body.description === "string" ? body.description : null,
+        assignedToUserId: typeof body.assignedToUserId === "string" ? body.assignedToUserId : null,
+        startDate: String(body.startDate ?? ""),
+        perDay: Number.isFinite(perDay) && perDay > 0 ? perDay : null,
+        priority: typeof body.priority === "string" ? body.priority : null,
+      }, user, getTodayShamsi());
+      res.json({ success: true, ...result });
+    } catch (err) {
+      sendError(res, err, "POST /api/tasks/bulk-customer-calls");
+    }
+  });
+
   app.post("/api/tasks/board/move", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;

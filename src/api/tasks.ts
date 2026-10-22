@@ -81,6 +81,16 @@ export interface TaskRow {
   customValues: string | null;
 }
 
+/** «ساخت وظیفهٔ تماس گروهی» — see `bulkCallTaskService.ts`. */
+export interface BulkCallResult {
+  created: number;
+  firstDate: string | null;
+  lastDate: string | null;
+  assignedToName: string;
+  skippedOpen: string[];
+  skippedMissing: number;
+}
+
 /** «گزارش نتیجه تماس‌ها» — see `contactResultService.ts`. */
 export interface ContactResultReport {
   summary: ContactResultSummary;
@@ -154,6 +164,10 @@ export const tasksApi = {
 
   /** Open, overdue and due-today counts, aggregated in SQL. */
   summary: () => api.get<{ summary: TaskSummary }>("/api/tasks/summary").then((r) => r.summary),
+  bulkCustomerCalls: (body: {
+    customerIds: string[]; kind: string; description?: string | null;
+    assignedToUserId?: string | null; startDate: string; perDay?: number | null; priority?: string | null;
+  }) => api.post<BulkCallResult & { success: boolean }>("/api/tasks/bulk-customer-calls", body),
   contactResults: (query: { from?: string; to?: string; assigneeUserId?: string; result?: string }, signal?: AbortSignal) =>
     api.get<ContactResultReport>("/api/tasks/contact-results", query, signal),
 
