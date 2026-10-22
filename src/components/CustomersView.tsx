@@ -16,7 +16,8 @@ import {
   Maximize2,
   Minimize2,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  PhoneCall
 } from 'lucide-react';
 import { Customer, ERPSettings } from '../types';
 import type { User as AppUser } from '../types';
@@ -47,6 +48,7 @@ import DuplicateCustomerModal from './DuplicateCustomerModal';
 import { CustomerReferenceCounts } from '../utils/customerMigration';
 import CustomerDeleteMigrationModal from './CustomerDeleteMigrationModal';
 import { SearchableSelect } from './SearchableSelect';
+import BulkCallTasksModal from './BulkCallTasksModal';
 
 /**
  * A header cell that sorts on the server.
@@ -163,6 +165,20 @@ export default function CustomersView({
   // button that leads nowhere.
   const canSaveSegment = hasModulePermission(currentUser, 'messaging');
   const [segmentModalOpen, setSegmentModalOpen] = useState(false);
+  /*
+   * The ticked customers, kept across pages and filters (id → the name the
+   * row showed), so a list can be built from several searches before it is
+   * handed to somebody. Cleared once the tasks are written: the next batch —
+   * the half for a colleague — is ticked afresh.
+   */
+  const [selectedCustomers, setSelectedCustomers] = useState<Map<string, string>>(() => new Map());
+  const [bulkCallOpen, setBulkCallOpen] = useState(false);
+  const canRaiseTasks = hasModulePermission(currentUser, 'tasks');
+  const toggleSelected = (id: string, name: string) => setSelectedCustomers((prev) => {
+    const next = new Map(prev);
+    if (next.has(id)) next.delete(id); else next.set(id, name);
+    return next;
+  });
 
   const list = useCustomerList(initialSearchQuery ?? '');
   const search = list.search;
@@ -703,6 +719,8 @@ export default function CustomersView({
   // Filter and search logic
   // The server did the filtering; this page is already the answer.
   const filteredCustomers = customers;
+  const customerDisplayName = (c: Customer): string =>
+    (c.customerType === 'حقوقی' ? c.companyName : `${c.firstName || ''} ${c.lastName || ''}`.trim()) || c.companyName || '';
 
   const [exporting, setExporting] = useState(false);
 
@@ -1046,12 +1064,59 @@ export default function CustomersView({
         );
       })()}
 
+      {/*
+        The selection's own bar: how many are ticked, and the one thing to do
+        with them. Drawn only while something is ticked.
+      */}
+      {canRaiseTasks && selectedCustomers.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 bg-sky-50 border border-sky-200 rounded-xl px-4 py-2 text-sm" data-customer-selection-bar>
+          <span className="font-bold text-sky-800">{selectedCustomers.size.toLocaleString('fa-IR')} مشتری انتخاب شده</span>
+          <button
+            type="button"
+            onClick={() => setBulkCallOpen(true)}
+            id="btn-bulk-call-tasks"
+            className="px-3 py-1.5 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-xs font-medium inline-flex items-center gap-1.5"
+          >
+            <PhoneCall size={14} />
+            ساخت وظیفهٔ تماس گروهی
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedCustomers(new Map())}
+            className="px-3 py-1.5 bg-white border border-edge text-slate-600 rounded-lg text-xs"
+          >
+            پاک کردن انتخاب
+          </button>
+        </div>
+      )}
+
       {/* Customer Table List */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden" id="customers-grid">
         <div className="overflow-x-auto">
           <table className="w-full text-right border-collapse min-w-[1900px]">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-xs font-bold">
+                {canRaiseTasks && (
+                  <th className="p-3 text-center w-10">
+                    <input
+                      type="checkbox"
+                      data-select-page
+                      title="انتخاب همهٔ مشتریان این صفحه"
+                      checked={filteredCustomers.length > 0 && filteredCustomers.every((c) => selectedCustomers.has(c.id))}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setSelectedCustomers((prev) => {
+                          const next = new Map(prev);
+                          for (const c of filteredCustomers) {
+                            if (on) next.set(c.id, customerDisplayName(c)); else next.delete(c.id);
+                          }
+                          return next;
+                        });
+                      }}
+                      className="w-4 h-4 accent-sky-600"
+                    />
+                  </th>
+                )}
                 <th className="p-3 text-center w-24">نوع</th>
                 <th className="p-3">نام مشتری / شرکت</th>
                 <th className="p-3">حوزه فعالیت / سمت</th>
@@ -1080,6 +1145,7 @@ export default function CustomersView({
               </tr>
               {/* Column Filters Input Row */}
               <tr className="bg-slate-50/50 border-b border-slate-100">
+                {canRaiseTasks && <th className="p-2"></th>}
                 <th className="p-2">
                   <input
                     type="text"
@@ -1179,6 +1245,17 @@ export default function CustomersView({
 
                 return (
                   <tr key={cust.id} className="hover:bg-slate-50/50 transition" id={`customer-card-${cust.id}`}>
+                    {canRaiseTasks && (
+                      <td className="p-3 text-center">
+                        <input
+                          type="checkbox"
+                          data-select-customer={cust.id}
+                          checked={selectedCustomers.has(cust.id)}
+                          onChange={() => toggleSelected(cust.id, customerDisplayName(cust))}
+                          className="w-4 h-4 accent-sky-600"
+                        />
+                      </td>
+                    )}
                     {/* Type Badge */}
                     <td className="p-3 text-center">
                       <span className={`px-2.5 py-1 rounded-full font-bold text-[10px] ${isLegal ? 'bg-sky-50 text-sky-700 border border-sky-100' : 'bg-violet-50 text-violet-700 border border-violet-100'}`}>
@@ -2468,6 +2545,30 @@ export default function CustomersView({
           setMigrationCounts(null);
           setCustomerToDeleteId(null);
           setCustomerToDeleteName('');
+        }}
+      />
+
+      <BulkCallTasksModal
+        open={bulkCallOpen}
+        customers={[...selectedCustomers].map(([id, name]) => ({ id, name }))}
+        kinds={settings.dropdownItems?.nextActionKinds}
+        priorities={settings.dropdownItems?.taskPriorities}
+        currentUserId={currentUser?.id}
+        onClose={() => setBulkCallOpen(false)}
+        onDone={(result) => {
+          setBulkCallOpen(false);
+          setSelectedCustomers(new Map());
+          const lines = [
+            `${result.created.toLocaleString('fa-IR')} وظیفه برای ${result.assignedToName} ثبت شد`
+              + (result.firstDate ? ` (از ${result.firstDate}${result.lastDate && result.lastDate !== result.firstDate ? ` تا ${result.lastDate}` : ''})` : '') + '.',
+          ];
+          if (result.skippedOpen.length > 0) {
+            lines.push(`این مشتریان از قبل اقدام بعدی باز داشتند و برایشان وظیفهٔ تازه ساخته نشد: ${result.skippedOpen.join('، ')}`);
+          }
+          if (result.skippedMissing > 0) {
+            lines.push(`${result.skippedMissing.toLocaleString('fa-IR')} مشتری پیدا نشد یا به آن دسترسی ندارید.`);
+          }
+          alert(lines.join('\n'));
         }}
       />
 

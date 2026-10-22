@@ -23889,6 +23889,51 @@ head("Contact results: a call to a customer records what it came to");
     && /contactResults=\{settings\.dropdownItems\?\.contactResults\}/.test(tasksView));
 }
 
+head("Bulk call tasks: one task per customer, spread over working days");
+{
+  const b = await import("../src/utils/bulkCallTasks");
+  // A toy calendar: days are numbers as strings, every 7th is off.
+  const cal = {
+    nextDay: (d: string) => String(Number(d) + 1),
+    isOff: (d: string) => Number(d) % 7 === 0,
+  };
+  const d = b.spreadDueDates(12, "5", 5, cal);
+  eq("twelve tasks get twelve dates", d.length, 12);
+  eq("five on the first working day", d.filter((x) => x === "5").length, 5);
+  eq("...the next working day skips the day off", d[5], "6");
+  eq("...and the one after skips the weekend", d[10], "8");
+  eq("a start on a day off moves to the next working day", b.spreadDueDates(2, "7", 5, cal)[0], "8");
+  eq("no per-day number puts every task on one day", new Set(b.spreadDueDates(9, "5", 0, cal)).size, 1);
+  eq("nothing asked, nothing spread", b.spreadDueDates(0, "5", 5, cal).length, 0);
+  const allOff = b.spreadDueDates(3, "1", 1, { nextDay: cal.nextDay, isOff: () => true });
+  eq("a calendar with no working day still ends", allOff.length, 3);
+  eq("the title names the kind and the customer", b.bulkCallTitle("تماس تلفنی", "پتروشیمی نمونه"), "تماس تلفنی با پتروشیمی نمونه");
+  ok("an empty selection is refused", !!b.bulkCallRefusal({ customerIds: [], startDate: "1405/08/01", perDay: 5, kind: "x" }));
+  ok("too many is refused", !!b.bulkCallRefusal({ customerIds: Array.from({ length: b.MAX_BULK_CALL_TASKS + 1 }, (_, i) => `c${i}`), startDate: "1405/08/01", perDay: 5, kind: "x" }));
+  ok("a missing start date is refused", !!b.bulkCallRefusal({ customerIds: ["a"], startDate: "", perDay: 5, kind: "x" }));
+  eq("a sound request is not", b.bulkCallRefusal({ customerIds: ["a"], startDate: "1405/08/01", perDay: 5, kind: "تماس" }), null);
+
+  const svc = readFileSync("src/server/services/bulkCallTaskService.ts", "utf8");
+  ok("the tasks are ordinary next actions related to the customer",
+    /taskKind: NEXT_ACTION_KIND/.test(svc) && /relatedToType: "مشتری"/.test(svc));
+  ok("...written in one transaction", /db\.\$transaction\(async \(tx\) =>[\s\S]{0,300}tx\.task\.create/.test(svc));
+  ok("...through the customers module's own visibility rule", /customerVisibility\(user\)/.test(svc));
+  ok("...skipping a customer with an open next action, in both relation spellings",
+    /relationSpellings\("customer"\)/.test(svc) && /status: \{ notIn: \[TASK_DONE, TASK_CANCELLED\] \}/.test(svc));
+  ok("...with the server's own refusal and spread", /bulkCallRefusal\(/.test(svc) && /spreadDueDates\(/.test(svc));
+  ok("...and one notice, not one per task, after the commit",
+    (svc.match(/notifyStaff\(/g) ?? []).length === 1 && /afterCommit\("bulk call tasks staff message"/.test(svc));
+  const route = readFileSync("src/server/routes/tasks.ts", "utf8");
+  ok("the endpoint is a tasks write, registered before /api/tasks/:id",
+    /"\/api\/tasks\/bulk-customer-calls", async \(req, res\) => \{\s*const user = await deps\.requireKeyAccess\(req, res, KEY, "write"\)/.test(route)
+    && route.indexOf('"/api/tasks/bulk-customer-calls"') < route.indexOf('app.get("/api/tasks/:id"'));
+  const cv = readFileSync("src/components/CustomersView.tsx", "utf8");
+  ok("the grid's selection is offered only to somebody who may raise tasks",
+    /const canRaiseTasks = hasModulePermission\(currentUser, 'tasks'\)/.test(cv) && /\{canRaiseTasks && \(\s*<td/.test(cv));
+  ok("...and the filter row keeps its alignment", /\{canRaiseTasks && <th className="p-2"><\/th>\}/.test(cv));
+  ok("...and the selection is cleared once the tasks exist", /onDone=\{\(result\) => \{\s*setBulkCallOpen\(false\);\s*setSelectedCustomers\(new Map\(\)\)/.test(cv));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

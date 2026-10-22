@@ -57,6 +57,7 @@ import LoginView from "../src/components/LoginView";
 import WebRfqPanel from "../src/components/WebRfqPanel";
 import Avatar from "../src/components/Avatar";
 import TaskCompletionModal from "../src/components/TaskCompletionModal";
+import BulkCallTasksModal from "../src/components/BulkCallTasksModal";
 import ModuleNotesSection from "../src/components/ModuleNotesSection";
 import AfterSalesServicesView from "../src/components/AfterSalesServicesView";
 import ReferralsView from "../src/components/ReferralsView";
@@ -3113,6 +3114,58 @@ head("Completing a call to a customer: the result reaches the caller");
 
   act(() => { cRoot.unmount(); });
   cHost.remove();
+}
+
+head("Bulk call tasks: the form posts the ticked customers to one assignee, spread");
+{
+  const gb = globalThis as unknown as Record<string, unknown>;
+  const realFetchB = gb.fetch;
+  const postedB: { path: string; body: string }[] = [];
+  gb.fetch = (async (url: string, init?: { method?: string; body?: unknown }) => {
+    const path = String(url);
+    if ((init?.method ?? "GET") !== "GET") postedB.push({ path, body: String(init?.body ?? "") });
+    const body = path.includes("/api/tasks/bulk-customer-calls")
+      ? { success: true, created: 3, firstDate: "1405/08/02", lastDate: "1405/08/03", assignedToName: "رضا", skippedOpen: [], skippedMissing: 0 }
+      : { success: true, rows: [{ id: "u1", fullName: "محمد", isActive: true }, { id: "u2", fullName: "رضا", isActive: true }], total: 2, page: 1, pageSize: 200, totalPages: 1 };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+
+  const hostB = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootB = createRoot(hostB);
+  let done: unknown = null;
+  const settleB = async () => { for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); }); };
+  await act(async () => {
+    rootB.render(React.createElement(BulkCallTasksModal, {
+      open: true,
+      customers: [{ id: "c1", name: "الف" }, { id: "c2", name: "ب" }, { id: "c3", name: "ج" }],
+      kinds: ["تماس تلفنی", "ارسال ایمیل / مدارک"],
+      currentUserId: "u1",
+      onClose: () => {},
+      onDone: (r: unknown) => { done = r; },
+    }));
+  });
+  await settleB();
+  ok("the form says how many tasks it will write",
+    (hostB.querySelector("#bulk-call-submit")?.textContent ?? "").includes("۳"));
+  ok("...and previews the dates it will spread them over", !!hostB.querySelector("[data-bulk-call-preview]"));
+  const assigneeB = hostB.querySelector("#bulk-call-assignee") as HTMLSelectElement | null;
+  ok("the assignee starts as whoever opened it", assigneeB?.value === "u1", assigneeB?.value);
+  act(() => { assigneeB!.value = "u2"; handlers(assigneeB!).onChange?.({ target: assigneeB }); });
+  await act(async () => {
+    (hostB.querySelector("#bulk-call-submit") as HTMLElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleB();
+  const sent = postedB.find((p) => p.path.includes("/api/tasks/bulk-customer-calls"));
+  const sentBody = sent ? JSON.parse(sent.body) : null;
+  ok("pressing it posts once to the bulk endpoint", postedB.length === 1 && !!sent, postedB.map((p) => p.path));
+  ok("...with every ticked customer, in order", JSON.stringify(sentBody?.customerIds) === JSON.stringify(["c1", "c2", "c3"]), sentBody?.customerIds);
+  ok("...to the assignee chosen, not whoever pressed it", sentBody?.assignedToUserId === "u2", sentBody?.assignedToUserId);
+  ok("...with a per-day spread and the default kind", sentBody?.perDay === 5 && sentBody?.kind === "تماس تلفنی", sentBody);
+  ok("...and the server's answer reaches the caller", (done as { created?: number } | null)?.created === 3);
+
+  act(() => { rootB.unmount(); });
+  hostB.remove();
+  gb.fetch = realFetchB;
 }
 
 head("A document's notes: a file is content, and the delete is only where it is allowed");
