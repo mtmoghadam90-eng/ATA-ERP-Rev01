@@ -58,6 +58,7 @@ import WebRfqPanel from "../src/components/WebRfqPanel";
 import Avatar from "../src/components/Avatar";
 import TaskCompletionModal from "../src/components/TaskCompletionModal";
 import BulkCallTasksModal from "../src/components/BulkCallTasksModal";
+import CustomerImportModal from "../src/components/CustomerImportModal";
 import ModuleNotesSection from "../src/components/ModuleNotesSection";
 import AfterSalesServicesView from "../src/components/AfterSalesServicesView";
 import ReferralsView from "../src/components/ReferralsView";
@@ -3166,6 +3167,71 @@ head("Bulk call tasks: the form posts the ticked customers to one assignee, spre
   act(() => { rootB.unmount(); });
   hostB.remove();
   gb.fetch = realFetchB;
+}
+
+head("Customer import: a sheet is read, previewed, posted once, and its customers can be selected");
+{
+  const gi = globalThis as unknown as Record<string, unknown>;
+  const realFetchI = gi.fetch;
+  const postedI: { path: string; body: string }[] = [];
+  gi.fetch = (async (url: string, init?: { method?: string; body?: unknown }) => {
+    const path = String(url);
+    if ((init?.method ?? "GET") !== "GET") postedI.push({ path, body: String(init?.body ?? "") });
+    const body = {
+      success: true, created: 1, updated: 1, unchanged: 0, hidden: 0, errors: 1,
+      rows: [
+        { rowNumber: 2, name: "شرکت یک", outcome: "created", customerId: "n1" },
+        { rowNumber: 3, name: "شرکت دو", outcome: "updated", customerId: "e2", filled: ["شهر"] },
+        { rowNumber: 4, name: "سه", outcome: "error", customerId: null, message: "کد اقتصادی تکراری است." },
+      ],
+    };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+
+  const XLSX = await import("xlsx");
+  const ws = XLSX.utils.json_to_sheet([
+    { "نام شرکت": "شرکت یک", "موبایل": "09121234567" },
+    { "نام شرکت": "شرکت دو", "تلفن": "02112345678", "شهر": "تبریز" },
+    { "نام شرکت": "بی‌نشانی" },
+  ]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "s");
+  const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+  const fakeFile = { name: "list.xlsx", arrayBuffer: async () => buf };
+
+  const hostI = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootI = createRoot(hostI);
+  let selected: { id: string; name: string }[] | null = null;
+  const settleI = async () => { for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); }); };
+  await act(async () => {
+    rootI.render(React.createElement(CustomerImportModal, {
+      open: true, canSelect: true, onClose: () => {}, onSelect: (c: { id: string; name: string }[]) => { selected = c; },
+    }));
+  });
+  const input = hostI.querySelector("[data-customer-import-file]") as HTMLInputElement;
+  await act(async () => { await handlers(input).onChange?.({ target: { files: [fakeFile], value: "" } }); });
+  await settleI();
+  const previewI = hostI.querySelector("[data-customer-import-preview]")?.textContent ?? "";
+  ok("the preview counts the importable rows with the server's own parser", previewI.includes("۲ ردیف آمادهٔ ورود"), previewI);
+  ok("...and names the row it will refuse", previewI.includes("ردیف ۴"), previewI);
+  ok("nothing is posted by reading the file", postedI.length === 0);
+  await act(async () => {
+    (hostI.querySelector("#btn-customer-import-submit") as HTMLElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleI();
+  const sentI = postedI.length === 1 ? JSON.parse(postedI[0].body) : null;
+  ok("pressing import posts once to the import endpoint with the sheet's rows",
+    postedI.length === 1 && postedI[0].path.includes("/api/customers/import") && sentI?.rows?.length === 3, postedI.map((p) => p.path));
+  ok("the result is drawn", !!hostI.querySelector("[data-customer-import-result]"));
+  await act(async () => {
+    (hostI.querySelector("#btn-customer-import-select") as HTMLElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  ok("selecting hands over the created and the matched customers, not the failed row",
+    JSON.stringify(selected) === JSON.stringify([{ id: "n1", name: "شرکت یک" }, { id: "e2", name: "شرکت دو" }]), JSON.stringify(selected));
+
+  act(() => { rootI.unmount(); });
+  hostI.remove();
+  gi.fetch = realFetchI;
 }
 
 head("A document's notes: a file is content, and the delete is only where it is allowed");

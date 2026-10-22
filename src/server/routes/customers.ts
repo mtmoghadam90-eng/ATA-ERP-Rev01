@@ -31,6 +31,7 @@ import {
   CustomerCandidate, findCustomerDuplicates, hasHardDuplicate,
 } from "../../utils/customerDuplicates";
 import type { Customer } from "../../types";
+import { importCustomers } from "../services/customerImportService";
 
 /**
  * Customers REST API — the reference shape for every other module.
@@ -248,6 +249,31 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
    *
    * POST rather than GET because the candidate is a record, not a lookup key.
    */
+  /**
+   * «ورود از اکسل»: the sheet's rows, keyed by header as `sheet_to_json` reads
+   * them. New customers are created and existing ones only filled in — the
+   * rules are `importCustomers`'s, and each row answers for itself.
+   */
+  app.post("/api/customers/import", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const rows = (req.body as { rows?: unknown })?.rows;
+      if (!Array.isArray(rows)) {
+        res.status(400).json({ success: false, error: "ردیف‌های فایل ارسال نشده است." });
+        return;
+      }
+      const result = await importCustomers(rows as Record<string, unknown>[], user, getTodayShamsi());
+      res.json({ success: true, ...result });
+    } catch (err) {
+      if (err instanceof Error && !(err as { code?: string }).code) {
+        res.status(400).json({ success: false, error: err.message });
+        return;
+      }
+      sendError(res, err, "POST /api/customers/import");
+    }
+  });
+
   app.post("/api/customers/check-duplicates", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "read");
     if (!user) return;
