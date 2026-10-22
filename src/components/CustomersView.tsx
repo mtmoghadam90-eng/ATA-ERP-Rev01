@@ -17,7 +17,8 @@ import {
   Minimize2,
   Loader2,
   AlertCircle,
-  PhoneCall
+  PhoneCall,
+  Upload
 } from 'lucide-react';
 import { Customer, ERPSettings } from '../types';
 import type { User as AppUser } from '../types';
@@ -48,6 +49,7 @@ import DuplicateCustomerModal from './DuplicateCustomerModal';
 import { CustomerReferenceCounts } from '../utils/customerMigration';
 import CustomerDeleteMigrationModal from './CustomerDeleteMigrationModal';
 import { SearchableSelect } from './SearchableSelect';
+import CustomerImportModal from './CustomerImportModal';
 import BulkCallTasksModal from './BulkCallTasksModal';
 
 /**
@@ -173,6 +175,7 @@ export default function CustomersView({
    */
   const [selectedCustomers, setSelectedCustomers] = useState<Map<string, string>>(() => new Map());
   const [bulkCallOpen, setBulkCallOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const canRaiseTasks = hasModulePermission(currentUser, 'tasks');
   const toggleSelected = (id: string, name: string) => setSelectedCustomers((prev) => {
     const next = new Map(prev);
@@ -826,6 +829,15 @@ export default function CustomersView({
           >
             <FileSpreadsheet size={16} />
             خروجی اکسل
+          </button>
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            id="btn-customer-import"
+            className="px-4 py-2 bg-white hover:bg-slate-50 border border-edge text-slate-700 rounded-xl text-sm font-medium transition flex items-center gap-2"
+          >
+            <Upload size={16} />
+            ورود از اکسل
           </button>
           {canSaveSegment && (
             <button
@@ -2545,6 +2557,20 @@ export default function CustomersView({
           setMigrationCounts(null);
           setCustomerToDeleteId(null);
           setCustomerToDeleteName('');
+        }}
+      />
+
+      <CustomerImportModal
+        open={importOpen}
+        canSelect={canRaiseTasks}
+        onClose={() => setImportOpen(false)}
+        onSelect={(picked) => {
+          setImportOpen(false);
+          setSelectedCustomers((prev) => {
+            const next = new Map(prev);
+            for (const c of picked) next.set(c.id, c.name);
+            return next;
+          });
         }}
       />
 

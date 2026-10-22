@@ -1,4 +1,5 @@
 import { ListResponse, api } from "./client";
+import type { CustomerImportResult } from "../utils/customerImport";
 
 /**
  * Customer endpoints.
@@ -244,6 +245,10 @@ export const customersApi = {
   checkDuplicates: (candidate: DuplicateCandidate) =>
     api.post<{ matches: DuplicateMatchRow[]; hasHardDuplicate: boolean }>(
       "/api/customers/check-duplicates", candidate),
+
+  /** «ورود از اکسل»: rows keyed by header; see `customerImportService`. */
+  importRows: (rows: Record<string, unknown>[]) =>
+    api.post<CustomerImportResult>("/api/customers/import", { rows }),
 
   create: (input: CustomerWriteInput) =>
     api.post<{ customer: CustomerDetail }>("/api/customers", input).then((r) => r.customer),

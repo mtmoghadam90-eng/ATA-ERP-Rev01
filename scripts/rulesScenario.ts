@@ -23934,6 +23934,51 @@ head("Bulk call tasks: one task per customer, spread over working days");
   ok("...and the selection is cleared once the tasks exist", /onDone=\{\(result\) => \{\s*setBulkCallOpen\(false\);\s*setSelectedCustomers\(new Map\(\)\)/.test(cv));
 }
 
+head("Customer import from Excel: new rows created, existing ones only filled in");
+{
+  const m = await import("../src/utils/customerImport");
+  const company = m.parseImportRow({ "نوع مشتری": "حقوقی", "نام شرکت": "شرکت نمونه", "نام": "علی", "نام خانوادگی": "رضایی", "موبایل": 9121234567, "استان": "تهران" }, 2);
+  ok("a company row takes the company's name", company.customer?.companyName === "شرکت نمونه" && company.customer?.customerType === "حقوقی");
+  ok("...keeps the person written beside it as the key person", company.customer?.keyPerson === "علی رضایی" && !company.customer?.firstName);
+  ok("...and a mobile the spreadsheet stored as a number gets its leading zero back", company.customer?.mobile === "09121234567");
+  const person = m.parseImportRow({ "نام": "مریم", "نام‌خانوادگی": "احمدی", "ایمیل": "M@Example.com" }, 3);
+  ok("a row with no company is a person named by first and last name",
+    person.customer?.customerType === "حقیقی" && person.customer?.companyName === "مریم احمدی" && person.customer?.email === "m@example.com");
+  ok("a row with no name is refused", !!m.parseImportRow({ "موبایل": "09120000000" }, 4).error);
+  ok("a row with no contact field is refused by the customer form's own rule",
+    !!m.parseImportRow({ "نام شرکت": "بی‌نشانی" }, 5).error);
+  const badProvince = m.parseImportRow({ "نام شرکت": "الف", "تلفن": "02112345678", "استان": "ناکجا" }, 6);
+  ok("an unknown province is dropped with a warning, not stored", !badProvince.customer?.province && badProvince.warnings.length === 1);
+  ok("persian digits are folded", m.parseImportRow({ "نام شرکت": "ب", "موبایل": "۰۹۱۲۱۱۱۲۲۳۳" }, 7).customer?.mobile === "09121112233");
+  const sheet = m.parseImportSheet([
+    { "نام شرکت": "یک", "موبایل": "09121234567" },
+    {},
+    { "نام شرکت": "دو", "موبایل": "+989121234567" },
+  ]);
+  ok("an empty row is skipped and a later duplicate within the sheet names the earlier row",
+    sheet.length === 2 && sheet[1].customer === null && /ردیف ۲/.test(sheet[1].error ?? ""));
+  ok("matching keys fold the mobile the way mobileNormalized does", m.mobileKey("+98 912 123 4567") === "9121234567");
+  const patch = m.fillBlanks({ mobile: "0912", city: "", email: null }, { customerType: "حقوقی", companyName: "x", mobile: "0935", city: "شیراز", email: "a@b.co" });
+  ok("fillBlanks never overwrites a filled field and fills every blank one",
+    !("mobile" in patch) && patch.city === "شیراز" && patch.email === "a@b.co");
+  ok("...and never renames or retypes the record",
+    !("companyName" in m.fillBlanks({}, { customerType: "حقیقی", companyName: "y" })) && !("customerType" in m.fillBlanks({}, { customerType: "حقیقی", companyName: "y" })));
+  ok("an unknown header is reported", m.unknownHeaders([{ "نام شرکت": "a", "رنگ": "آبی" }]).join() === "رنگ");
+  const svc = readFileSync("src/server/services/customerImportService.ts", "utf8");
+  ok("rows are written through the customers module's own create and update, never a write of its own",
+    /createCustomer\(/.test(svc) && /updateCustomer\(/.test(svc) && !/db\.customer\.(create|update|upsert)\(/.test(svc));
+  ok("...an existing customer is matched over the whole table and only filled in",
+    /fillBlanks\(/.test(svc) && /economicCode: \{ in: codes \}/.test(svc) && /mobileNormalized: \{ in: mobiles \}/.test(svc));
+  ok("...and one the caller may not see is reported, never changed", /if \(!visible\.has\(match\.id\)\)/.test(svc));
+  const route = readFileSync("src/server/routes/customers.ts", "utf8");
+  ok("the endpoint is a customers write",
+    /"\/api\/customers\/import", async \(req, res\) => \{\s*const user = await deps\.requireKeyAccess\(req, res, KEY, "write"\)/.test(route));
+  const modal = readFileSync("src/components/CustomerImportModal.tsx", "utf8");
+  ok("the screen imports xlsx on the press, never at module scope",
+    !/^import .*['"]xlsx['"]/m.test(modal) && /await import\('xlsx'\)/.test(modal));
+  ok("...and previews with the server's own parser", /parseImportSheet\(rows\)/.test(modal));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
