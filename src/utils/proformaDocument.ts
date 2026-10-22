@@ -5,6 +5,7 @@ import { familyNameOnly } from "./customerLabel";
 import { namePrefixFor } from "./honorific";
 import { proformaDocumentTitle } from "./moduleStatuses";
 import { hasDeviations } from "./deviations";
+import { PRINT_FONT_FACE } from "./printFont";
 
 /**
  * The proforma, as a standalone A4 document.
@@ -316,7 +317,7 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
   <meta charset="UTF-8">
   <title>پیش‌فاکتور ${pf.proformaNumber}</title>
   <style>
-      @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap');
+      ${PRINT_FONT_FACE}
       body {
           font-family: 'Vazirmatn', Tahoma, sans-serif;
           background-color: #f8fafc;

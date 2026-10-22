@@ -1,4 +1,5 @@
 import { escapeHtml } from "./richText";
+import { PRINT_FONT_FACE } from "./printFont";
 import {
   MEETING_ITEM_STATE_LABELS, MEETING_STATUS_LABELS,
   type MeetingAssignee, type MeetingItemKind, type MeetingItemState, type MeetingParticipant,
@@ -209,7 +210,7 @@ export function renderMeetingDocument(input: MeetingDocumentInput): string {
   <meta charset="UTF-8">
   <title>${text(meetingDocumentTitle(m))}</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;700&display=swap');
+    ${PRINT_FONT_FACE}
     * { box-sizing: border-box; }
     body { font-family: 'Vazirmatn', Tahoma, sans-serif; color: #0f172a; margin: 0; background: #f1f5f9; font-size: 10.5pt; line-height: 1.7; }
     .doc-frame { width: 100%; max-width: 820px; margin: 0 auto; background: #ffffff; border-collapse: collapse; }

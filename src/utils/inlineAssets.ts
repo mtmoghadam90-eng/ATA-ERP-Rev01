@@ -20,6 +20,12 @@
 
 /** Same-origin paths only: an absolute URL elsewhere already resolves. */
 const LOCAL_SRC = /(?:src|href)="(\/[^"/][^"]*)"/g;
+/**
+ * A same-origin `url('…')` in a stylesheet — the print font's `@font-face`.
+ * A saved document opened from disk resolves `/fonts/…` against the file, so
+ * the font has to travel inside it exactly as the logo does.
+ */
+const LOCAL_CSS_URL = /url\((['"]?)(\/[^'")\/][^'")]*)\1\)/g;
 
 async function toDataUri(path: string): Promise<string | null> {
   try {
@@ -29,9 +35,12 @@ async function toDataUri(path: string): Promise<string | null> {
     if (!response.ok) return null;
 
     const blob = await response.blob();
-    // Only pictures: a stylesheet or a script has no business being inlined
-    // here, and a large PDF would bloat the file for nothing.
-    if (!blob.type.startsWith("image/")) return null;
+    // Only pictures and fonts: a stylesheet or a script has no business being
+    // inlined here, and a large PDF would bloat the file for nothing. A font
+    // is checked by the path as well as the type, because a static server may
+    // answer a woff2 as application/octet-stream.
+    const isFont = blob.type.startsWith("font/") || /\.woff2?$/i.test(path);
+    if (!blob.type.startsWith("image/") && !isFont) return null;
 
     return await new Promise<string | null>((resolve) => {
       const reader = new FileReader();
@@ -52,7 +61,10 @@ async function toDataUri(path: string): Promise<string | null> {
  * throws: a document with a missing picture is worth far more than no document.
  */
 export async function inlineDocumentAssets(html: string): Promise<string> {
-  const paths = [...new Set([...html.matchAll(LOCAL_SRC)].map((m) => m[1]))];
+  const paths = [...new Set([
+    ...[...html.matchAll(LOCAL_SRC)].map((m) => m[1]),
+    ...[...html.matchAll(LOCAL_CSS_URL)].map((m) => m[2]),
+  ])];
   if (paths.length === 0) return html;
 
   const inlined = new Map<string, string>();
@@ -63,8 +75,13 @@ export async function inlineDocumentAssets(html: string): Promise<string> {
 
   // Replaced by exact attribute text, so a path that is a prefix of another
   // cannot be corrupted — `/uploads/a.png` never rewrites `/uploads/ab.png`.
-  return html.replace(LOCAL_SRC, (whole, path: string) => {
-    const replacement = inlined.get(path);
-    return replacement ? whole.replace(`"${path}"`, `"${replacement}"`) : whole;
-  });
+  return html
+    .replace(LOCAL_SRC, (whole, path: string) => {
+      const replacement = inlined.get(path);
+      return replacement ? whole.replace(`"${path}"`, `"${replacement}"`) : whole;
+    })
+    .replace(LOCAL_CSS_URL, (whole, quote: string, path: string) => {
+      const replacement = inlined.get(path);
+      return replacement ? `url(${quote}${replacement}${quote})` : whole;
+    });
 }

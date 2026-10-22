@@ -23979,6 +23979,30 @@ head("Customer import from Excel: new rows created, existing ones only filled in
   ok("...and previews with the server's own parser", /parseImportSheet\(rows\)/.test(modal));
 }
 
+head("Printed documents carry the application's own font, never Google's");
+{
+  const { existsSync, readdirSync, statSync } = await import("node:fs");
+  const pf = await import("../src/utils/printFont");
+  ok("the font file is in public/fonts, where Vite serves and copies it",
+    existsSync(`public${pf.PRINT_FONT_URL}`));
+  ok("...and the interface reads the same file",
+    readFileSync("src/index.css", "utf8").includes(`url("${pf.PRINT_FONT_URL}")`));
+  const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => {
+    const full = `${dir}/${n}`;
+    return statSync(full).isDirectory() ? walk(full) : /\.(tsx?|css|html)$/.test(n) ? [full] : [];
+  });
+  const offenders = [...walk("src"), "index.html"].filter((f) => /(?:@import\s+url\(|href=)\s*['"]?https:\/\/fonts\.(googleapis|gstatic)\.com/.test(readFileSync(f, "utf8")));
+  ok("no file loads a font from Google", offenders.length === 0, offenders);
+  for (const f of ["src/utils/proformaDocument.ts", "src/utils/meetingDocument.ts", "src/components/ProjectsView.tsx"]) {
+    ok(`${f} puts the local @font-face in its document`, /\$\{PRINT_FONT_FACE\}/.test(readFileSync(f, "utf8")));
+  }
+  const inline = readFileSync("src/utils/inlineAssets.ts", "utf8");
+  ok("a saved document carries the font inside it rather than pointing at the server",
+    /LOCAL_CSS_URL/.test(inline) && /isFont/.test(inline));
+  ok("printing waits for the document's font, with a cap",
+    /fonts\?\.ready/.test(readFileSync("src/utils/printDocument.ts", "utf8")));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
