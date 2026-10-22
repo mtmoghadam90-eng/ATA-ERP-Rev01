@@ -22,6 +22,8 @@
 
 /** How long to let images and fonts settle before printing. */
 const SETTLE_MS = 350;
+/** The longest a print waits for the document's own font. */
+const FONT_WAIT_MS = 3000;
 
 /**
  * The name the browser suggests for the saved PDF.
@@ -104,6 +106,17 @@ export function printHtmlDocument(html: string, title?: string): Promise<void> {
     const go = () => {
       if (printed) return;
       printed = true;
+      // The document's font is fetched by the frame itself, and a page printed
+      // before it arrives is laid out in the fallback — different line heights,
+      // different page breaks. Wait for it, but never for long: a font that
+      // cannot load must not cost the print.
+      const fonts = frame.contentWindow?.document?.fonts?.ready;
+      Promise.race([
+        fonts ? fonts.then(() => undefined, () => undefined) : Promise.resolve(),
+        new Promise<void>((r) => setTimeout(r, FONT_WAIT_MS)),
+      ]).then(printNow);
+    };
+    const printNow = () => {
       try {
         const win = frame.contentWindow;
         if (!win) { done(); return; }

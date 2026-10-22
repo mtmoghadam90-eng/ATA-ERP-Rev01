@@ -19,8 +19,10 @@
  * *browser* makes, not the server. On an internal network a client that cannot
  * reach Google silently falls back to a system font, and the entire interface
  * changes shape with nothing to say why. The file is checked in under
- * `src/fonts/` (SIL Open Font License; see the licence note beside it), and
- * Vite fingerprints it into the build like any other asset.
+ * `public/fonts/` (SIL Open Font License; see the licence note beside it):
+ * Vite serves it as-is in development and copies it into `dist/`, and the
+ * printed documents read the very same file through `src/utils/printFont.ts`,
+ * so the screen and the paper cannot come to use two copies.
  *
  * One variable file covers every weight the app uses — 300 through 800 — in
  * 111 KB, which is less than the six static weights it replaces, and it is one
@@ -28,7 +30,7 @@
  */
 @font-face {
   font-family: "Vazirmatn";
-  src: url("./fonts/Vazirmatn-Variable.woff2") format("woff2-variations");
+  src: url("/fonts/Vazirmatn-Variable.woff2") format("woff2-variations");
   font-weight: 100 900;
   font-style: normal;
   /* Text renders immediately in the fallback and is restyled when the font

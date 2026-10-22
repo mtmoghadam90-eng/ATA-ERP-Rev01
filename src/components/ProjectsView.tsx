@@ -86,6 +86,7 @@ import { useNextAction } from '../utils/useNextAction';
 import SaveWithNextActionButton from './SaveWithNextActionButton';
 import { NextActionPrompt } from './NextActionModal';
 import { PROJECT_STATUSES } from "../utils/moduleStatuses";
+import { PRINT_FONT_FACE } from "../utils/printFont";
 
 /**
  * What the sidebar calls each module, so a link reads as the place it goes.
@@ -1854,7 +1855,7 @@ export default function ProjectsView({
           <title>${doc.name}</title>
           <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
           <style>
-            @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;700&display=swap');
+            ${PRINT_FONT_FACE}
             body {
               font-family: 'Vazirmatn', 'Tahoma', sans-serif;
               background-color: #f8fafc;
