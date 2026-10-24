@@ -28,12 +28,54 @@ export interface CategoryCompletionPrompt {
   mode?: "close" | "reopen";
 }
 
+/** Two questions about one category are one question; the first asked stands. */
+function sameQuestion(a: CategoryCompletionPrompt, b: CategoryCompletionPrompt): boolean {
+  return a.projectId === b.projectId && sameCategory(a.categoryName, b.categoryName);
+}
+
 export function useCategoryCompletion() {
-  const [prompt, setPrompt] = useState<CategoryCompletionPrompt | null>(null);
+  /*
+   * A queue, not a slot. One save can raise two questions about two different
+   * categories — a quotation issued asks to reopen «پیش‌فاکتور» if it was closed
+   * and to close «بررسی درخواست» if it is still open — and a single slot kept
+   * whichever arrived first and silently dropped the other. Each is shown in
+   * turn; a second question about the same category is never queued, since
+   * asking to reopen a category the dialog before offered to close is the one
+   * answer nobody can give.
+   */
+  const [queue, setQueue] = useState<CategoryCompletionPrompt[]>([]);
+  const prompt = queue[0] ?? null;
+  const enqueue = useCallback((p: CategoryCompletionPrompt) => {
+    setQueue((prev) => (prev.some((q) => sameQuestion(q, p)) ? prev : [...prev, p]));
+  }, []);
+  const done = useCallback(() => setQueue((prev) => prev.slice(1)), []);
 
   const promptCompletion = useCallback((p: CategoryCompletionPrompt) => {
-    setPrompt(p);
-  }, []);
+    enqueue(p);
+  }, [enqueue]);
+
+  /**
+   * «این دسته‌بندی هنوز باز است؛ بسته شود؟»
+   *
+   * The mirror of `promptReopen`: asks only when that project's group for the
+   * category exists **and is open**. A category never opened has nothing to
+   * close and one already closed needs no answer, so asking in either case
+   * would be a dialog after every save — the reason a «no» is not remembered
+   * either: the next save asks again only while the category is still open.
+   */
+  const promptCloseIfOpen = useCallback(async (p: {
+    projectId?: string | null; categoryName: string; message: string;
+  }) => {
+    if (!p.projectId) return;
+    try {
+      const groups = await projectsApi.categoryGroups(p.projectId);
+      const group = groups.find((g) => sameCategory(g.categoryName, p.categoryName));
+      if (!group || group.status === GROUP_CLOSED) return;
+      enqueue({ projectId: p.projectId, categoryName: group.categoryName, message: p.message });
+    } catch {
+      // Asking is a courtesy; a failed read must not turn a good save into an error.
+    }
+  }, [enqueue]);
 
   /**
    * «این دسته‌بندی بسته شده؛ دوباره باز شود؟»
@@ -43,10 +85,11 @@ export function useCategoryCompletion() {
    * group that does not exist yet or is still open needs no answer, and asking
    * would be a dialog after every save.
    *
-   * It never replaces a question already on the screen (`prev ?? next`): a
+   * It never replaces a question already asked about the same category: a
    * record saved already finished asks to *close* its category, synchronously,
    * while this one waits on a read — and asking to reopen a category the next
-   * dialog offers to close is the one answer nobody can give.
+   * dialog offers to close is the one answer nobody can give. A question about
+   * another category waits its turn in the queue.
    */
   const promptReopen = useCallback(async (p: {
     projectId?: string | null; categoryName: string; reason: string;
@@ -56,9 +99,8 @@ export function useCategoryCompletion() {
       const groups = await projectsApi.categoryGroups(p.projectId);
       const group = groups.find((g) => sameCategory(g.categoryName, p.categoryName));
       if (!group || group.status !== GROUP_CLOSED) return;
-      const projectId = p.projectId;
-      setPrompt((prev) => prev ?? {
-        projectId,
+      enqueue({
+        projectId: p.projectId,
         categoryName: group.categoryName,
         message: reopenCategoryMessage(group.categoryName, p.reason),
         mode: "reopen",
@@ -66,7 +108,7 @@ export function useCategoryCompletion() {
     } catch {
       // Asking is a courtesy; a failed read must not turn a good save into an error.
     }
-  }, []);
+  }, [enqueue]);
 
   const confirmCompletion = useCallback(async () => {
     if (!prompt) return;
@@ -92,7 +134,7 @@ export function useCategoryCompletion() {
             text: `دسته‌بندی «${group.categoryName}» دوباره باز شد و تاریخ پایان قبلی آن پاک شد.`,
           });
         }
-        setPrompt(null);
+        done();
       } catch (err) {
         console.error("Failed to reopen category:", err);
         alert("باز کردن دوبارهٔ دسته‌بندی با خطا مواجه شد.");
@@ -142,21 +184,22 @@ export function useCategoryCompletion() {
         });
       }
 
-      setPrompt(null);
+      done();
     } catch (err) {
       console.error("Failed to complete category:", err);
       alert("بستن دسته‌بندی با خطا مواجه شد.");
     }
-  }, [prompt]);
+  }, [prompt, done]);
 
   const dismissPrompt = useCallback(() => {
-    setPrompt(null);
-  }, []);
+    done();
+  }, [done]);
 
   return {
     prompt,
     promptCompletion,
     promptReopen,
+    promptCloseIfOpen,
     confirmCompletion,
     dismissPrompt,
   };
