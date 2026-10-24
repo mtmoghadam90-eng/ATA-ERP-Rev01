@@ -1,6 +1,7 @@
 import type { Proforma, ProformaItem } from "../types";
 import type { ProformaDetail, ProformaRow, ProformaWriteInput } from "./proformas";
 import { assertComplete, markComplete, markPartial } from "./partial";
+import { deviationEntries } from "../utils/deviations";
 
 /**
  * Translation between the proformas API and the `Proforma` shape the view was
@@ -165,6 +166,7 @@ export function detailToProforma(detail: ProformaDetail): Proforma {
       deviationRequested: item.deviationRequested ?? undefined,
       deviationOffered: item.deviationOffered ?? undefined,
       deviationRemark: item.deviationRemark ?? undefined,
+      deviations: deviationEntries(item),
       selectedFeatures: parseJson<Record<string, string>>(item.selectedFeatures, {}),
       selectedImage: item.selectedImage ?? undefined,
     })),
@@ -247,6 +249,7 @@ export function proformaToWriteInput(proforma: Partial<Proforma>): ProformaWrite
       deviationRequested: item.deviationRequested ?? null,
       deviationOffered: item.deviationOffered ?? null,
       deviationRemark: item.deviationRemark ?? null,
+      deviations: item.deviations ?? null,
       selectedFeatures: item.selectedFeatures,
       selectedImage: item.selectedImage ?? null,
     })),

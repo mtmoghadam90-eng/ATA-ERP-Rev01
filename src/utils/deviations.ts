@@ -8,9 +8,17 @@
  * optional reference into the customer's own document (a datasheet clause, an
  * item number) and an optional remark.
  *
+ * One line may depart in several ways — the body material *and* the range *and*
+ * the connection — so a deviating line carries a **list** of entries
+ * (`deviations`, JSON), each with those four fields. The four original columns
+ * still hold the **first** entry, so the reporting export and anything else
+ * reading them is unaffected; `deviationEntries` is the only reader and never
+ * reads both (the first entry would print twice). A row written before the list
+ * existed has no JSON and reads as one entry from its columns.
+ *
  * What is printed follows from that and nothing else:
  *  - some line deviates → an English «Technical Deviation List» page is printed
- *    with the proforma, one row per deviating line;
+ *    with the proforma, one row per entry, numbered by the quotation's row;
  *  - nothing deviates → no page. `NO_DEVIATION_STATEMENT` is then a line the
  *    form writes into the terms box (`setNoDeviationStatement`), where it can
  *    be deleted; the printout prints whatever the box says and adds nothing.
@@ -18,8 +26,24 @@
  * Pure so the form, the server and the printed document read one rule.
  */
 
+/** One way a line departs from the request. */
+export interface DeviationEntry {
+  reference: string | null;
+  requested: string | null;
+  offered: string | null;
+  remark: string | null;
+}
+
+/** How many entries one line may carry — a cap, not a design limit. */
+export const MAX_DEVIATIONS_PER_LINE = 20;
+
 export interface DeviationFields {
   deviation?: boolean | null;
+  /**
+   * The entries: an array from the form, the stored JSON string from the
+   * database. Absent means «read the four columns», never «none».
+   */
+  deviations?: DeviationEntry[] | string | null;
   deviationReference?: string | null;
   deviationRequested?: string | null;
   deviationOffered?: string | null;
@@ -28,6 +52,8 @@ export interface DeviationFields {
 
 export interface NormalizedDeviation {
   deviation: boolean;
+  /** The entries as stored JSON, or null for a complying line. */
+  deviations: string | null;
   deviationReference: string | null;
   deviationRequested: string | null;
   deviationOffered: string | null;
@@ -40,6 +66,47 @@ const text = (value: unknown, max: number): string | null => {
   return t ? t.slice(0, max) : null;
 };
 
+const entryOf = (raw: unknown): DeviationEntry => {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return {
+    reference: text(r.reference, 200),
+    requested: text(r.requested, 1000),
+    offered: text(r.offered, 1000),
+    remark: text(r.remark, 1000),
+  };
+};
+
+const isBlank = (e: DeviationEntry): boolean => !e.reference && !e.requested && !e.offered && !e.remark;
+
+/**
+ * Every entry a line carries, as written — blank ones included, so a form can
+ * hold a box somebody has just added. The list wins when present (an array, or
+ * stored JSON that parses to one); otherwise the four columns are one entry, or
+ * none when they are all empty. Unreadable JSON falls back to the columns,
+ * which hold the first entry.
+ */
+export function deviationEntries(row: DeviationFields | null | undefined): DeviationEntry[] {
+  const raw = row?.deviations;
+  let list: unknown = undefined;
+  if (Array.isArray(raw)) list = raw;
+  else if (typeof raw === "string" && raw.trim()) {
+    try { list = JSON.parse(raw); } catch { list = undefined; }
+  }
+  if (Array.isArray(list)) return list.slice(0, MAX_DEVIATIONS_PER_LINE).map(entryOf);
+  const legacy = entryOf({
+    reference: row?.deviationReference,
+    requested: row?.deviationRequested,
+    offered: row?.deviationOffered,
+    remark: row?.deviationRemark,
+  });
+  return isBlank(legacy) ? [] : [legacy];
+}
+
+/** The entries worth printing and storing: the blank ones dropped. */
+export function filledDeviationEntries(row: DeviationFields | null | undefined): DeviationEntry[] {
+  return deviationEntries(row).filter((e) => !isBlank(e));
+}
+
 /**
  * A complying line stores no deviation text. Unticking the box is «this line
  * complies», and keeping the words would print them again the moment somebody
@@ -50,18 +117,23 @@ export function normalizeDeviation(row: DeviationFields | null | undefined): Nor
   if (!deviation) {
     return {
       deviation: false,
+      deviations: null,
       deviationReference: null,
       deviationRequested: null,
       deviationOffered: null,
       deviationRemark: null,
     };
   }
+  const entries = filledDeviationEntries(row);
+  const first = entries[0];
   return {
     deviation: true,
-    deviationReference: text(row?.deviationReference, 200),
-    deviationRequested: text(row?.deviationRequested, 1000),
-    deviationOffered: text(row?.deviationOffered, 1000),
-    deviationRemark: text(row?.deviationRemark, 1000),
+    deviations: entries.length > 0 ? JSON.stringify(entries) : null,
+    // The first entry, mirrored for every reader of the original columns.
+    deviationReference: first?.reference ?? null,
+    deviationRequested: first?.requested ?? null,
+    deviationOffered: first?.offered ?? null,
+    deviationRemark: first?.remark ?? null,
   };
 }
 
@@ -78,12 +150,20 @@ export function hasDeviations(items: (DeviationFields | null | undefined)[] | nu
 export function deviationRefusal(
   items: ({ productName?: string | null } & DeviationFields)[] | null | undefined,
 ): string | null {
-  const rows = (items ?? [])
-    .map((row, index) => ({ row, index }))
-    .filter(({ row }) => (row?.productName ?? "").trim())
-    .filter(({ row }) => row?.deviation === true
-      && (!text(row.deviationRequested, 1000) || !text(row.deviationOffered, 1000)))
-    .map(({ index }) => `ردیف ${index + 1}`);
+  const rows: string[] = [];
+  (items ?? []).forEach((row, index) => {
+    if (!(row?.productName ?? "").trim() || row?.deviation !== true) return;
+    const entries = filledDeviationEntries(row);
+    const label = `ردیف ${index + 1}`;
+    if (entries.length === 0) { rows.push(label); return; }
+    const incomplete = entries
+      .map((e, i) => ({ e, i }))
+      .filter(({ e }) => !e.requested || !e.offered)
+      .map(({ i }) => i + 1);
+    if (incomplete.length === 0) return;
+    // A line with one entry is named as before; with several, the entry too.
+    rows.push(entries.length === 1 ? label : `${label} (مغایرت ${incomplete.join("، ")})`);
+  });
   if (rows.length === 0) return null;
   return `برای ${rows.join("، ")} مغایرت ثبت شده ولی «مشخصهٔ درخواستی» یا «مشخصهٔ پیشنهادی» خالی است. `
     + "هر دو را بنویسید یا تیک مغایرت را بردارید.";

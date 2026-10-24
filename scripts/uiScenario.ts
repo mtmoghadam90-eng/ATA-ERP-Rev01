@@ -1632,7 +1632,27 @@ head("Proforma line: the deviation boxes appear on the tick and reach the form")
     });
     await settle();
   }
-  ok("what is typed reaches the form, keeping the tick", value.deviationOffered === "SS304" && value.deviation === true);
+  const entriesNow = () => (value.deviations as { requested: string | null; offered: string | null }[] | undefined) ?? [];
+  ok("what is typed reaches the form, keeping the tick", entriesNow()[0]?.offered === "SS304" && value.deviation === true);
+  const add = host.querySelector("[data-deviation-add]") as HTMLButtonElement | null;
+  ok("«افزودن مغایرت» is drawn on a ticked line", !!add);
+  if (add) await act(async () => { add.click(); });
+  await settle();
+  ok("pressing it adds a second entry and keeps the first", entriesNow().length === 2 && entriesNow()[0]?.offered === "SS304"
+    && host.querySelectorAll("[data-deviation-entry]").length === 2);
+  const secondOffered = host.querySelectorAll("[data-deviation-offered]")[1] as HTMLTextAreaElement | undefined;
+  if (secondOffered) {
+    await act(async () => {
+      secondOffered.value = "0-16 bar";
+      handlers(secondOffered).onChange?.({ target: secondOffered, currentTarget: secondOffered });
+    });
+    await settle();
+  }
+  ok("the second entry's boxes write the second entry", entriesNow()[1]?.offered === "0-16 bar" && entriesNow()[0]?.offered === "SS304");
+  const removeFirst = host.querySelector('[data-deviation-remove="0"]') as HTMLButtonElement | null;
+  if (removeFirst) await act(async () => { removeFirst.click(); });
+  await settle();
+  ok("removing one entry leaves the other", entriesNow().length === 1 && entriesNow()[0]?.offered === "0-16 bar" && value.deviation === true);
   act(() => { root.unmount(); });
   host.remove();
 }

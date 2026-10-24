@@ -1470,6 +1470,7 @@ export default function ProformasView({
       deviationRequested: item.deviationRequested,
       deviationOffered: item.deviationOffered,
       deviationRemark: item.deviationRemark,
+      deviations: item.deviations,
     }));
     setItems(loadedItems);
     const allEqual =

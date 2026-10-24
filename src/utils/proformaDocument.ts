@@ -4,7 +4,7 @@ import { escapeHtml, renderRichText } from "./richText";
 import { familyNameOnly } from "./customerLabel";
 import { namePrefixFor } from "./honorific";
 import { proformaDocumentTitle } from "./moduleStatuses";
-import { hasDeviations } from "./deviations";
+import { filledDeviationEntries, hasDeviations } from "./deviations";
 import { PRINT_FONT_FACE } from "./printFont";
 
 /**
@@ -1185,7 +1185,7 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
 }
 
 /**
- * The «Technical Deviation List» page — one row per deviating line, numbered
+ * The «Technical Deviation List» page — one row per deviation entry, numbered
  * by its own row on the quotation so the two documents can be read together.
  * Every value is escaped: all of it was typed into a form.
  */
@@ -1193,17 +1193,20 @@ export function renderDeviationPage(pf: Proforma): string {
   const rows = pf.items
     .map((item, index) => ({ item, no: index + 1 }))
     .filter(({ item }) => item.deviation === true)
-    .map(({ item, no }) => {
+    .flatMap(({ item, no }) => {
       const tag = item.tagNumber ? `\nTag: ${item.tagNumber}` : "";
-      return `
+      const description = escapeHtml(`${item.productName}${tag}`);
+      // One row per entry; each repeats the quotation's row and the item, so a
+      // row that falls on the next sheet still says which line it is about.
+      return filledDeviationEntries(item).map((entry) => `
                   <tr>
                       <td style="width: 34px; text-align: center;">${no}</td>
-                      <td>${escapeHtml(`${item.productName}${tag}`)}</td>
-                      <td>${escapeHtml(item.deviationReference ?? "-")}</td>
-                      <td>${escapeHtml(item.deviationRequested ?? "")}</td>
-                      <td>${escapeHtml(item.deviationOffered ?? "")}</td>
-                      <td>${escapeHtml(item.deviationRemark ?? "-")}</td>
-                  </tr>`;
+                      <td>${description}</td>
+                      <td>${escapeHtml(entry.reference ?? "-")}</td>
+                      <td>${escapeHtml(entry.requested ?? "")}</td>
+                      <td>${escapeHtml(entry.offered ?? "")}</td>
+                      <td>${escapeHtml(entry.remark ?? "-")}</td>
+                  </tr>`);
     }).join("");
   const meta = [
     ["Quotation No.", pf.proformaNumber],

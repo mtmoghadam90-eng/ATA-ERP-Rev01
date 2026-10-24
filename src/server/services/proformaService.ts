@@ -1,4 +1,4 @@
-import { deviationRefusal, normalizeDeviation } from "../../utils/deviations";
+import { DeviationEntry, deviationRefusal, normalizeDeviation } from "../../utils/deviations";
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { formatMoney } from "../../numUtils";
@@ -329,6 +329,8 @@ export interface ProformaItemInput {
   deviationRequested?: string | null;
   deviationOffered?: string | null;
   deviationRemark?: string | null;
+  /** The entries; absent reads the four columns above as one. */
+  deviations?: DeviationEntry[] | string | null;
   selectedFeatures?: unknown;
   selectedImage?: string | null;
 }
