@@ -677,6 +677,14 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
       }
       .deviation-table th { background-color: #f1f5f9; font-weight: bold; }
       .deviation-table tr { page-break-inside: avoid; break-inside: avoid; }
+      /* One quotation line is one block: its item and description merged down
+         its rows, a tinted item cell, and a gap before the next line. */
+      .deviation-group { page-break-inside: avoid; break-inside: avoid; }
+      .deviation-group tr:first-child td { border-top: 1.5px solid #64748b; }
+      .deviation-group tr:last-child td,
+      .deviation-group td.deviation-item { border-bottom: 1.5px solid #64748b; }
+      .deviation-table td.deviation-item { background-color: #f8fafc; font-weight: 600; vertical-align: middle; }
+      .deviation-gap td { border: none; padding: 0; height: 8px; background: transparent; }
       .deviation-note { margin-top: 10px; font-style: italic; }
       .totals-card {
           border: 1px solid #e2e8f0;
@@ -1194,35 +1202,47 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
 }
 
 /**
- * The «Technical Deviation List» page — one row per deviation entry.
+ * The «Technical Deviation List» page — one row per deviation entry, grouped
+ * by the quotation line it belongs to.
  *
  * Two numbers, because they answer two questions: «No.» counts the deviations
  * down the page (1, 2, 3 …), while «Item» is the line's own row on the
- * quotation, so the two documents can be read together. With only the second,
- * three deviations on one line all printed «1» and the list read as a mistake.
+ * quotation, so the two documents can be read together. A line with several
+ * deviations prints its «Item» and description **once**, merged down its rows
+ * (`rowspan`) — repeating «1, 1, 1» read as a mistake — and each line is its own
+ * `<tbody>` with a gap before the next, so one item's deviations read as a block
+ * apart from the next item's. A block is kept on one sheet where it fits
+ * (`break-inside: avoid`, a preference the browser drops for a block taller
+ * than a page, so nothing is ever lost).
  * Every value is escaped: all of it was typed into a form.
  */
 export function renderDeviationPage(pf: Proforma): string {
   let seq = 0;
-  const rows = pf.items
+  const groups = pf.items
     .map((item, index) => ({ item, no: index + 1 }))
     .filter(({ item }) => item.deviation === true)
-    .flatMap(({ item, no }) => {
-      const tag = item.tagNumber ? `\nTag: ${item.tagNumber}` : "";
-      const description = escapeHtml(`${item.productName}${tag}`);
-      // One row per entry; each repeats the quotation's row and the item, so a
-      // row that falls on the next sheet still says which line it is about.
-      return filledDeviationEntries(item).map((entry) => `
+    .map(({ item, no }) => ({ item, no, entries: filledDeviationEntries(item) }))
+    .filter(({ entries }) => entries.length > 0);
+  const rows = groups.map(({ item, no, entries }, groupIndex) => {
+    const tag = item.tagNumber ? `\nTag: ${item.tagNumber}` : "";
+    const description = escapeHtml(`${item.productName}${tag}`);
+    const span = entries.length;
+    const body = entries.map((entry, i) => `
                   <tr>
-                      <td class="deviation-seq" style="width: 30px; text-align: center;">${++seq}</td>
-                      <td style="width: 34px; text-align: center;">${no}</td>
-                      <td>${description}</td>
+                      <td class="deviation-seq" style="width: 30px; text-align: center;">${++seq}</td>${i === 0 ? `
+                      <td class="deviation-item" rowspan="${span}" style="width: 34px; text-align: center;">${no}</td>
+                      <td class="deviation-item" rowspan="${span}">${description}</td>` : ""}
                       <td>${escapeHtml(entry.reference ?? "-")}</td>
                       <td>${escapeHtml(entry.requested ?? "")}</td>
                       <td>${escapeHtml(entry.offered ?? "")}</td>
                       <td>${escapeHtml(entry.remark ?? "-")}</td>
-                  </tr>`);
-    }).join("");
+                  </tr>`).join("");
+    const gap = groupIndex === 0 ? "" : `
+                  <tbody class="deviation-gap" aria-hidden="true"><tr><td colspan="7"></td></tr></tbody>`;
+    return `${gap}
+                  <tbody class="deviation-group">${body}
+                  </tbody>`;
+  }).join("");
   const meta = [
     ["Quotation No.", pf.proformaNumber],
     ["Date", pf.issueDate],
@@ -1247,8 +1267,7 @@ export function renderDeviationPage(pf: Proforma): string {
                               <th>Remarks</th>
                           </tr>
                       </thead>
-                      <tbody>${rows}
-                      </tbody>
+${rows}
                   </table>
                   <p class="deviation-note">All other items and specifications comply with the customer's inquiry.</p>
               </div>`;

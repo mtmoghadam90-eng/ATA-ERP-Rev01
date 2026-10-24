@@ -22866,7 +22866,7 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("deviation: a deviating line prints the English page", dev.includes("TECHNICAL DEVIATION LIST"));
   ok("deviation: and no compliance statement", !dev.includes(NO_DEVIATION_STATEMENT));
   ok("deviation: the row keeps its quotation row number, tag and both specs",
-    /<td[^>]*>2<\/td>\s*<td>Flow &lt;meter&gt;\nTag: FT-101<\/td>\s*<td>DS Rev.2 Item 7<\/td>\s*<td>Body SS316<\/td>\s*<td>Body SS304<\/td>/.test(dev));
+    /<td[^>]*>2<\/td>\s*<td[^>]*>Flow &lt;meter&gt;\nTag: FT-101<\/td>\s*<td>DS Rev.2 Item 7<\/td>\s*<td>Body SS316<\/td>\s*<td>Body SS304<\/td>/.test(dev));
   ok("deviation: only deviating lines are listed", !/<td>Gauge<\/td>/.test(dev));
   ok("deviation: the customer's inquiry number heads it", dev.includes("Customer Inquiry No.:</strong> RFQ-9"));
   ok("deviation: the page starts on a sheet of its own", /\.deviation-page \{[^}]*break-before: page/.test(dev));
@@ -22904,8 +22904,10 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     template: tpl, products: [], showBrand: false,
   });
   const devPage = multi.slice(multi.indexOf("TECHNICAL DEVIATION LIST"));
-  const devRows = devPage.match(/<td style="width: 34px; text-align: center;">2<\/td>/g) ?? [];
-  eq("deviations: each entry prints its own row, carrying the quotation's row", devRows.length, 2);
+  eq("deviations: each entry prints its own row", (devPage.match(/<td class="deviation-seq"/g) ?? []).length, 2);
+  ok("...and the line's «Item» and description are printed once, merged down both rows",
+    (devPage.match(/rowspan="2"[^>]*>2<\/td>/g) ?? []).length === 1
+    && /<td class="deviation-item" rowspan="2">PT<\/td>/.test(devPage));
   eq("deviations: the rows are numbered down the page, not all «1»",
     JSON.stringify([...devPage.matchAll(/<td class="deviation-seq"[^>]*>(\d+)<\/td>/g)].map((m) => m[1])), JSON.stringify(["1", "2"]));
   {
@@ -22918,9 +22920,13 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
       template: tpl, products: [], showBrand: false,
     });
     const page = three.slice(three.indexOf("TECHNICAL DEVIATION LIST"));
-    eq("deviations: the count runs on across lines while «Item» keeps each line's own row",
-      JSON.stringify([...page.matchAll(/<td class="deviation-seq"[^>]*>(\d+)<\/td>\s*<td[^>]*>(\d+)<\/td>/g)].map((m) => `${m[1]}/${m[2]}`)),
-      JSON.stringify(["1/1", "2/1", "3/3"]));
+    eq("deviations: the count runs on across lines while «Item» is printed once per line",
+      JSON.stringify([...page.matchAll(/<td class="deviation-seq"[^>]*>(\d+)<\/td>(?:\s*<td class="deviation-item" rowspan="(\d+)"[^>]*>(\d+)<\/td>)?/g)]
+        .map((m) => (m[3] ? `${m[1]}/${m[3]}x${m[2]}` : m[1]))),
+      JSON.stringify(["1/1x2", "2", "3/3x1"]));
+    eq("...each line is its own block, with a gap between blocks and none before the first",
+      [(page.match(/<tbody class="deviation-group">/g) ?? []).length, (page.match(/<tbody class="deviation-gap"/g) ?? []).length].join(","), "2,1");
+    ok("...a block is kept on one sheet where it fits", /\.deviation-group \{[^}]*break-inside: avoid/.test(three));
     ok("deviations: the page heads both numbers", page.includes(">No.</th>") && page.includes(">Item</th>"));
   }
   ok("deviations: both entries reach the page, the first once",
