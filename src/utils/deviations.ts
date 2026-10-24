@@ -37,6 +37,13 @@ export interface DeviationEntry {
 /** How many entries one line may carry — a cap, not a design limit. */
 export const MAX_DEVIATIONS_PER_LINE = 20;
 
+/**
+ * How long one entry's text may be. The list is an NVARCHAR(MAX) column, so a
+ * long multi-line remark is kept whole there; only the copy mirrored into the
+ * original NVARCHAR(1000) columns is cut, and nothing prints from that copy.
+ */
+export const ENTRY_TEXT_MAX = 4000;
+
 export interface DeviationFields {
   deviation?: boolean | null;
   /**
@@ -66,21 +73,37 @@ const text = (value: unknown, max: number): string | null => {
   return t ? t.slice(0, max) : null;
 };
 
+/**
+ * Untrimmed: this is what the form reads back on every keystroke, and trimming
+ * here swallowed a space or a line break typed at the end of a box the moment
+ * it was typed — so nobody could write two words or a second line. The words
+ * are trimmed once, on the way to being stored or printed (`filledDeviationEntries`).
+ */
+const asIs = (value: unknown, max: number): string | null =>
+  typeof value === "string" ? value.slice(0, max) : null;
+
 const entryOf = (raw: unknown): DeviationEntry => {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   return {
-    reference: text(r.reference, 200),
-    requested: text(r.requested, 1000),
-    offered: text(r.offered, 1000),
-    remark: text(r.remark, 1000),
+    reference: asIs(r.reference, 200),
+    requested: asIs(r.requested, ENTRY_TEXT_MAX),
+    offered: asIs(r.offered, ENTRY_TEXT_MAX),
+    remark: asIs(r.remark, ENTRY_TEXT_MAX),
   };
 };
+
+const trimmed = (e: DeviationEntry): DeviationEntry => ({
+  reference: text(e.reference, 200),
+  requested: text(e.requested, ENTRY_TEXT_MAX),
+  offered: text(e.offered, ENTRY_TEXT_MAX),
+  remark: text(e.remark, ENTRY_TEXT_MAX),
+});
 
 const isBlank = (e: DeviationEntry): boolean => !e.reference && !e.requested && !e.offered && !e.remark;
 
 /**
- * Every entry a line carries, as written — blank ones included, so a form can
- * hold a box somebody has just added. The list wins when present (an array, or
+ * Every entry a line carries, as written — untrimmed and blank ones included,
+ * so a form can hold a box somebody has just added and the space just typed. The list wins when present (an array, or
  * stored JSON that parses to one); otherwise the four columns are one entry, or
  * none when they are all empty. Unreadable JSON falls back to the columns,
  * which hold the first entry.
@@ -93,18 +116,18 @@ export function deviationEntries(row: DeviationFields | null | undefined): Devia
     try { list = JSON.parse(raw); } catch { list = undefined; }
   }
   if (Array.isArray(list)) return list.slice(0, MAX_DEVIATIONS_PER_LINE).map(entryOf);
-  const legacy = entryOf({
+  const legacy = trimmed(entryOf({
     reference: row?.deviationReference,
     requested: row?.deviationRequested,
     offered: row?.deviationOffered,
     remark: row?.deviationRemark,
-  });
+  }));
   return isBlank(legacy) ? [] : [legacy];
 }
 
 /** The entries worth printing and storing: the blank ones dropped. */
 export function filledDeviationEntries(row: DeviationFields | null | undefined): DeviationEntry[] {
-  return deviationEntries(row).filter((e) => !isBlank(e));
+  return deviationEntries(row).map(trimmed).filter((e) => !isBlank(e));
 }
 
 /**
@@ -131,9 +154,9 @@ export function normalizeDeviation(row: DeviationFields | null | undefined): Nor
     deviations: entries.length > 0 ? JSON.stringify(entries) : null,
     // The first entry, mirrored for every reader of the original columns.
     deviationReference: first?.reference ?? null,
-    deviationRequested: first?.requested ?? null,
-    deviationOffered: first?.offered ?? null,
-    deviationRemark: first?.remark ?? null,
+    deviationRequested: first?.requested?.slice(0, 1000) ?? null,
+    deviationOffered: first?.offered?.slice(0, 1000) ?? null,
+    deviationRemark: first?.remark?.slice(0, 1000) ?? null,
   };
 }
 

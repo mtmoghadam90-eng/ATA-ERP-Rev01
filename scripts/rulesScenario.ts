@@ -22907,6 +22907,24 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   eq("deviations: each entry prints its own row, numbered by the quotation's row", devRows.length, 2);
   ok("deviations: both entries reach the page, the first once",
     multi.split("Body SS304").length - 1 === 1 && multi.includes("Range 0-16 bar") && multi.includes("<td>standard</td>"));
+  eq("deviations: the form reads back a trailing space and line break as typed",
+    deviationEntries({ deviations: [{ reference: null, requested: null, offered: null, remark: "word \n" }] })[0]?.remark, "word \n");
+  eq("deviations: they are trimmed only on the way to storage",
+    normalizeDeviation({ deviation: true, deviations: [{ reference: null, requested: " a ", offered: "b\n", remark: " x " }] }).deviations,
+    JSON.stringify([{ reference: null, requested: "a", offered: "b", remark: "x" }]));
+  const longRemark = "Line one\nLine two\n" + "x".repeat(1500);
+  const kept = normalizeDeviation({ deviation: true, deviations: [{ reference: null, requested: "a", offered: "b", remark: longRemark }] });
+  eq("deviations: a long multi-line remark is kept whole in the list", deviationEntries({ deviations: kept.deviations }).at(0)?.remark, longRemark);
+  eq("deviations: only the mirrored column copy is cut to its width", kept.deviationRemark?.length, 1000);
+  const multiLine = renderProformaDocument({
+    proforma: { ...base, items: [
+      { productName: "PT", quantity: 1, unitPriceRIYAL: 0, deviation: true,
+        deviations: [{ reference: null, requested: "a", offered: "b", remark: "First reason\nSecond reason" }] },
+    ] } as never,
+    template: tpl, products: [], showBrand: false,
+  });
+  ok("deviations: a multi-line remark reaches the page with its line break, in a pre-line cell",
+    multiLine.includes("<td>First reason\nSecond reason</td>") && /\.deviation-table th, \.deviation-table td \{[^}]*white-space: pre-line/.test(multiLine));
   ok("deviations: the migration adds the list column, nullable",
     readFileSync("prisma/migrations/20261013000000_proforma_item_deviations/migration.sql", "utf8").includes("ADD [deviations] NVARCHAR(MAX) NULL"));
   ok("deviations: the form's load list carries the list, or an edit would erase it",
