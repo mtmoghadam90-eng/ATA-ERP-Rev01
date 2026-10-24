@@ -1194,11 +1194,16 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
 }
 
 /**
- * The «Technical Deviation List» page — one row per deviation entry, numbered
- * by its own row on the quotation so the two documents can be read together.
+ * The «Technical Deviation List» page — one row per deviation entry.
+ *
+ * Two numbers, because they answer two questions: «No.» counts the deviations
+ * down the page (1, 2, 3 …), while «Item» is the line's own row on the
+ * quotation, so the two documents can be read together. With only the second,
+ * three deviations on one line all printed «1» and the list read as a mistake.
  * Every value is escaped: all of it was typed into a form.
  */
 export function renderDeviationPage(pf: Proforma): string {
+  let seq = 0;
   const rows = pf.items
     .map((item, index) => ({ item, no: index + 1 }))
     .filter(({ item }) => item.deviation === true)
@@ -1209,6 +1214,7 @@ export function renderDeviationPage(pf: Proforma): string {
       // row that falls on the next sheet still says which line it is about.
       return filledDeviationEntries(item).map((entry) => `
                   <tr>
+                      <td class="deviation-seq" style="width: 30px; text-align: center;">${++seq}</td>
                       <td style="width: 34px; text-align: center;">${no}</td>
                       <td>${description}</td>
                       <td>${escapeHtml(entry.reference ?? "-")}</td>
@@ -1232,6 +1238,7 @@ export function renderDeviationPage(pf: Proforma): string {
                   <table class="deviation-table">
                       <thead>
                           <tr>
+                              <th style="width: 30px;">No.</th>
                               <th style="width: 34px;">Item</th>
                               <th>Description / Tag</th>
                               <th>Customer Ref.</th>

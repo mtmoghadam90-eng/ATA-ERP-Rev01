@@ -22903,8 +22903,26 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
     ] } as never,
     template: tpl, products: [], showBrand: false,
   });
-  const devRows = multi.slice(multi.indexOf("TECHNICAL DEVIATION LIST")).match(/<tr>\s*<td style="width: 34px; text-align: center;">2<\/td>/g) ?? [];
-  eq("deviations: each entry prints its own row, numbered by the quotation's row", devRows.length, 2);
+  const devPage = multi.slice(multi.indexOf("TECHNICAL DEVIATION LIST"));
+  const devRows = devPage.match(/<td style="width: 34px; text-align: center;">2<\/td>/g) ?? [];
+  eq("deviations: each entry prints its own row, carrying the quotation's row", devRows.length, 2);
+  eq("deviations: the rows are numbered down the page, not all «1»",
+    JSON.stringify([...devPage.matchAll(/<td class="deviation-seq"[^>]*>(\d+)<\/td>/g)].map((m) => m[1])), JSON.stringify(["1", "2"]));
+  {
+    const three = renderProformaDocument({
+      proforma: { ...base, items: [
+        { productName: "A", quantity: 1, unitPriceRIYAL: 0, deviation: true, deviations: [two[0], two[1]] },
+        { productName: "B", quantity: 1, unitPriceRIYAL: 0 },
+        { productName: "C", quantity: 1, unitPriceRIYAL: 0, deviation: true, deviations: [two[0]] },
+      ] } as never,
+      template: tpl, products: [], showBrand: false,
+    });
+    const page = three.slice(three.indexOf("TECHNICAL DEVIATION LIST"));
+    eq("deviations: the count runs on across lines while «Item» keeps each line's own row",
+      JSON.stringify([...page.matchAll(/<td class="deviation-seq"[^>]*>(\d+)<\/td>\s*<td[^>]*>(\d+)<\/td>/g)].map((m) => `${m[1]}/${m[2]}`)),
+      JSON.stringify(["1/1", "2/1", "3/3"]));
+    ok("deviations: the page heads both numbers", page.includes(">No.</th>") && page.includes(">Item</th>"));
+  }
   ok("deviations: both entries reach the page, the first once",
     multi.split("Body SS304").length - 1 === 1 && multi.includes("Range 0-16 bar") && multi.includes("<td>standard</td>"));
   eq("deviations: the form reads back a trailing space and line break as typed",
