@@ -59,6 +59,7 @@ import Avatar from "../src/components/Avatar";
 import TaskCompletionModal from "../src/components/TaskCompletionModal";
 import BulkCallTasksModal from "../src/components/BulkCallTasksModal";
 import CustomerImportModal from "../src/components/CustomerImportModal";
+import CustomerInfoButton from "../src/components/CustomerInfoButton";
 import CompanyCleanupModal from "../src/components/CompanyCleanupModal";
 import ModuleNotesSection from "../src/components/ModuleNotesSection";
 import AfterSalesServicesView from "../src/components/AfterSalesServicesView";
@@ -3351,6 +3352,53 @@ head("Company cleanup: the plan is drawn, the ticked groups are what is posted")
   act(() => { rootC.unmount(); });
   hostC.remove();
   gc.fetch = realFetchC;
+}
+
+head("Work card: the customer's name opens their details, and nothing else");
+{
+  const gi = globalThis as unknown as Record<string, unknown>;
+  const realFetchI = gi.fetch;
+  const askedI: string[] = [];
+  gi.fetch = (async (url: string) => {
+    askedI.push(String(url));
+    const body = { success: true, customer: {
+      id: "c-9", customerType: "حقوقی", status: "فعال", companyName: "TC MFG شرکت سازنده توربو کمپرسور",
+      mobile: "09121234567", phone: "02188776655", email: "info@tc.example", province: "تهران", city: "تهران",
+      address: null, keyPerson: null, position: null, industry: null, economicCode: null, tags: null, notes: null,
+      doNotContact: false, linksFrom: [{ fromId: "c-9", toId: "p-1", to: { id: "p-1", companyName: "دشتی", customerType: "حقیقی" } }],
+    } };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+  const hostI = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootI = createRoot(hostI);
+  let cardPressed = 0;
+  await act(async () => {
+    rootI.render(React.createElement("div", { onClick: () => { cardPressed++; } },
+      React.createElement(CustomerInfoButton, { customerId: "c-9", name: "TC MFG" })));
+  });
+  ok("nothing is fetched until the name is pressed", askedI.length === 0);
+  await act(async () => {
+    (hostI.querySelector('[data-card-customer="c-9"]') as HTMLElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+  const modalI = dom.window.document.querySelector("[data-customer-info-modal]");
+  ok("pressing the name reads that customer", askedI.length === 1 && askedI[0].includes("/api/customers/c-9"), askedI);
+  ok("...and draws the number to ring and the linked people",
+    (modalI?.textContent ?? "").includes("09121234567") && (modalI?.textContent ?? "").includes("دشتی"), modalI?.textContent);
+  ok("the press does not reach the card beneath it", cardPressed === 0, cardPressed);
+  await act(async () => {
+    (modalI?.querySelector("[data-customer-info-rows]") as HTMLElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  ok("a press inside the pop-up does not reach the card either", cardPressed === 0, cardPressed);
+  act(() => { rootI.unmount(); });
+  hostI.remove();
+  const plainHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const plainRoot = createRoot(plainHost);
+  act(() => { plainRoot.render(React.createElement(CustomerInfoButton, { customerId: null, name: "بدون شناسه" })); });
+  ok("with no customer id it is plain text", !plainHost.querySelector("button") && (plainHost.textContent ?? "").includes("بدون شناسه"));
+  act(() => { plainRoot.unmount(); });
+  plainHost.remove();
+  gi.fetch = realFetchI;
 }
 
 head("A document's notes: a file is content, and the delete is only where it is allowed");

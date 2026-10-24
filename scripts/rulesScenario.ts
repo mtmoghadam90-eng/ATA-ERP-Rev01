@@ -24091,6 +24091,19 @@ head("Customer import from Excel: new rows created, existing ones only filled in
   ok("...and previews with the server's own parser", /parseImportSheet\(rows\)/.test(modal));
 }
 
+head("Work card: the customer behind the job carries its id, and the name opens it");
+{
+  const svc = readFileSync("src/server/services/taskService.ts", "utf8");
+  ok("the project's customer is read with its id", /customer: \{ select: \{ id: true, companyName: true \} \}/.test(svc));
+  ok("a task on a customer carries that customer's id", /customerName: c\.companyName, customerId: c\.id/.test(svc));
+  ok("a task on a project carries the project's customer id", /customerId: p\.customer\?\.id \?\? null/.test(svc));
+  for (const f of ["src/components/WorkBoard.tsx", "src/components/TasksView.tsx"]) {
+    const src = readFileSync(f, "utf8");
+    ok(`${f}: the customer's name is drawn through CustomerInfoButton`,
+      /<CustomerInfoButton[^>]*customerId=/.test(src) && !/— \{card\.context\.customerName\}/.test(src));
+  }
+}
+
 head("Company cleanup: one company per name, its people linked to it");
 {
   const cc = await import("../src/utils/customerCleanup");

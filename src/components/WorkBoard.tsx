@@ -13,6 +13,7 @@ import {
 import type { WorkLoad } from '../api/tasks';
 import type { ActivityJump } from '../utils/notificationJump';
 import CardProjectLink from './CardProjectLink';
+import CustomerInfoButton from './CustomerInfoButton';
 
 /**
  * The three columns, over both kinds of work.
@@ -42,7 +43,7 @@ export interface BoardTaskCard {
   completedAt?: string | null;
   assignedTo?: string | null;
   createdBy?: string | null;
-  context?: { code: string; name: string; customerName: string | null } | null;
+  context?: { code: string; name: string; customerName: string | null; customerId?: string | null } | null;
   /** Where the code and name lead — the project, opened. Null draws text. */
   projectJump?: ActivityJump | null;
   /**
@@ -66,7 +67,7 @@ export interface BoardReferralCard {
   status: string;
   assignedTo?: string | null;
   createdBy?: string | null;
-  context?: { code: string; name: string; customerName: string | null } | null;
+  context?: { code: string; name: string; customerName: string | null; customerId?: string | null } | null;
   /** Where the code and name lead — the project, opened. Null draws text. */
   projectJump?: ActivityJump | null;
   /**
@@ -459,7 +460,7 @@ export default function WorkBoard({
                           onOpen={onOpenProject}
                         />
                         {card.context.customerName && (
-                          <span className="text-slate-500">— {card.context.customerName}</span>
+                          <span className="text-slate-500">— <CustomerInfoButton customerId={card.context.customerId} name={card.context.customerName} /></span>
                         )}
                       </div>
                     )}

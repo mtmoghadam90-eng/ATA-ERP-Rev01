@@ -32,6 +32,7 @@ import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from 
 import ShamsiDatePicker from './ShamsiDatePicker';
 import WorkBoard, { BoardCard } from './WorkBoard';
 import CardProjectLink from './CardProjectLink';
+import CustomerInfoButton from './CustomerInfoButton';
 import { DETAIL_LABELS } from '../utils/cardSummary';
 import ConfirmModal from './ConfirmModal';
 import ReferralsView from './ReferralsView';
@@ -976,6 +977,7 @@ export default function TasksView({
           code: ref.activity.group.project.code,
           name: ref.activity.group.project.name,
           customerName: ref.activity.group.project.customer?.companyName ?? null,
+          customerId: ref.activity.group.project.customer?.id ?? null,
         }
         : null,
       projectJump: cardProjectJump(ref.activity?.group?.project, {
@@ -1440,7 +1442,7 @@ export default function TasksView({
                         onOpen={onOpenProject}
                       />
                       {card.context.customerName && (
-                        <span className="text-slate-500">— {card.context.customerName}</span>
+                        <span className="text-slate-500">— <CustomerInfoButton customerId={card.context.customerId} name={card.context.customerName} /></span>
                       )}
                     </div>
                   )}
@@ -1550,7 +1552,7 @@ export default function TasksView({
                     {task.relatedProject.customerName && (
                       <>
                         {task.relatedProject.name && <span className="text-sky-300">|</span>}
-                        <span className="truncate text-slate-600">{task.relatedProject.customerName}</span>
+                        <CustomerInfoButton className="truncate text-slate-600" customerId={task.relatedProject.customerId} name={task.relatedProject.customerName} />
                       </>
                     )}
                   </span>

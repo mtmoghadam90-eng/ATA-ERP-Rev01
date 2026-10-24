@@ -770,6 +770,7 @@ export interface Task {
   /** The job behind the task — code, name and customer — joined by the server. */
   relatedProject?: {
     id: string; code: string; name: string; customerName: string | null;
+    customerId?: string | null;
   };
   relatedToId?: string;
   relatedToName?: string;

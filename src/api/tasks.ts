@@ -61,6 +61,7 @@ export interface TaskRow {
    */
   relatedProject: {
     id: string; code: string; name: string; customerName: string | null;
+    customerId?: string | null;
   } | null;
   dueDate: string | null;
   dueDateJalali: string | null;
