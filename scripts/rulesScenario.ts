@@ -24091,6 +24091,14 @@ head("Customer import from Excel: new rows created, existing ones only filled in
   ok("...and previews with the server's own parser", /parseImportSheet\(rows\)/.test(modal));
 }
 
+head("Customer form: a linked customer outside the grid's page is still drawn");
+{
+  const cv = readFileSync("src/components/CustomersView.tsx", "utf8");
+  ok("a chip falls back to the record fetched by id", /customers\.find\(c => c\.id === id\) \?\? linkedRecords\[id\]/.test(cv));
+  ok("missing linked customers are read through customersApi.get", /missing\.map\(\(id\) => customersApi\.get\(id\)/.test(cv));
+  ok("a chip that is not loaded yet still draws (never returns null)", !/const linkedCust = customers\.find\(c => c\.id === id\);\s*if \(!linkedCust\) return null;/.test(cv));
+}
+
 head("Work card: the customer behind the job carries its id, and the name opens it");
 {
   const svc = readFileSync("src/server/services/taskService.ts", "utf8");

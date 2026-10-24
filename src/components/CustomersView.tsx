@@ -269,6 +269,41 @@ export default function CustomersView({
 
   // Selection for relationships
   const [selectedLinks, setSelectedLinks] = useState<string[]>([]);
+  /*
+   * The linked customers' own records, read by id.
+   *
+   * The chips below used to look each id up in `customers` — the page of the
+   * grid behind the modal — so a link to anybody outside that page counted in
+   * «۴ انتخاب شده» and drew nothing at all (reported). A screen must not
+   * resolve a record out of a list it happens to hold; the missing ones are
+   * fetched, and the cache keeps them while the form is open.
+   */
+  const [linkedRecords, setLinkedRecords] = useState<Record<string, Customer>>({});
+  const [linkedUnreadable, setLinkedUnreadable] = useState<string[]>([]);
+  // Ids already asked for, so a record that cannot be read is asked once and not on every render.
+  const linkedAsked = React.useRef<Set<string>>(new Set());
+  React.useEffect(() => {
+    const onPage = new Set(customers.map((c) => c.id));
+    const missing = selectedLinks.filter((id) => !onPage.has(id) && !linkedRecords[id] && !linkedAsked.current.has(id));
+    if (missing.length === 0) return;
+    for (const id of missing) linkedAsked.current.add(id);
+    let cancelled = false;
+    void Promise.all(missing.map((id) => customersApi.get(id).then(detailToCustomer).catch(() => null)))
+      .then((found) => {
+        if (cancelled) return;
+        setLinkedRecords((prev) => {
+          const next = { ...prev };
+          for (const c of found) if (c) next[c.id] = c;
+          return next;
+        });
+        const failed = missing.filter((_, i) => !found[i]);
+        if (failed.length > 0) setLinkedUnreadable((prev) => [...prev, ...failed]);
+      });
+    return () => {
+      cancelled = true;
+      for (const id of missing) linkedAsked.current.delete(id);
+    };
+  }, [selectedLinks, customers, linkedRecords]);
 
   // Quick Add states inside Relationship block
   const [showQuickAddRelation, setShowQuickAddRelation] = useState(false);
@@ -2109,8 +2144,15 @@ export default function CustomersView({
                     <p className="text-[11px] font-bold text-slate-500 mb-1">ارتباط‌های فعال پرونده (جهت مشاهده و جابجایی روی هرکدام کلیک کنید):</p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {selectedLinks.map(id => {
-                        const linkedCust = customers.find(c => c.id === id);
-                        if (!linkedCust) return null;
+                        const linkedCust = customers.find(c => c.id === id) ?? linkedRecords[id];
+                        if (!linkedCust) {
+                          return (
+                            <div key={id} className="p-3 bg-white border border-slate-200 rounded-xl text-[11px] text-slate-400 flex items-center justify-between gap-2" data-linked-loading>
+                              <span>{linkedUnreadable.includes(id) ? 'اطلاعات این مشتری خوانده نشد.' : 'در حال خواندن…'}</span>
+                              <button type="button" onClick={() => handleToggleLink(id)} className="text-slate-400 hover:text-rose-600 p-1" title="قطع ارتباط"><X size={13} /></button>
+                            </div>
+                          );
+                        }
                         
                         const isCompany = linkedCust.customerType === 'حقوقی';
                         const name = isCompany 
