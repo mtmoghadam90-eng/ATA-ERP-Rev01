@@ -43,6 +43,7 @@ export interface ProformaItemRow {
   deviationRequested: string | null;
   deviationOffered: string | null;
   deviationRemark: string | null;
+  deviations: string | null;
   selectedFeatures: string | null;
   selectedImage: string | null;
 }

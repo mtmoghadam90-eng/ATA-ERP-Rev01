@@ -960,6 +960,8 @@ model ProformaItem {
   deviationRequested String? @db.NVarChar(1000)
   deviationOffered   String? @db.NVarChar(1000)
   deviationRemark    String? @db.NVarChar(1000)
+  /// The entries as JSON; the four columns above hold the first — see deviations.ts.
+  deviations         String? @db.NVarChar(Max)
 
   selectedFeatures String? @db.NVarChar(Max)
   selectedImage    String? @db.NVarChar(500)

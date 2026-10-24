@@ -112,7 +112,7 @@ import {
   CARD_PRESSES, CARD_TARGETS, cardPressTarget,
 } from "../src/utils/workBoard";
 import { openReferralsTo } from "../src/utils/openReferrals";
-import { deviationRefusal, normalizeDeviation, NO_DEVIATION_STATEMENT } from "../src/utils/deviations";
+import { deviationEntries, deviationRefusal, MAX_DEVIATIONS_PER_LINE, normalizeDeviation, NO_DEVIATION_STATEMENT } from "../src/utils/deviations";
 import { projectToWriteInput } from "../src/api/projectAdapter";
 import { reopenCategoryMessage } from "../src/utils/activityCategories";
 import {
@@ -22810,7 +22810,7 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
 {
   eq("deviation: a line complies unless ticked, and keeps no text then",
     JSON.stringify(normalizeDeviation({ deviation: false, deviationOffered: "x" })),
-    JSON.stringify({ deviation: false, deviationReference: null, deviationRequested: null, deviationOffered: null, deviationRemark: null }));
+    JSON.stringify({ deviation: false, deviations: null, deviationReference: null, deviationRequested: null, deviationOffered: null, deviationRemark: null }));
   eq("deviation: a ticked line keeps its words", normalizeDeviation({ deviation: true, deviationOffered: " SS304 " }).deviationOffered, "SS304");
   ok("deviation: a ticked line without the offered spec is refused, naming the row",
     (deviationRefusal([{ productName: "a" }, { productName: "b", deviation: true, deviationRequested: "SS316" }]) ?? "").includes("ردیف 2"));
@@ -22870,6 +22870,47 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("deviation: only deviating lines are listed", !/<td>Gauge<\/td>/.test(dev));
   ok("deviation: the customer's inquiry number heads it", dev.includes("Customer Inquiry No.:</strong> RFQ-9"));
   ok("deviation: the page starts on a sheet of its own", /\.deviation-page \{[^}]*break-before: page/.test(dev));
+  // Several deviations on one line.
+  const two = [
+    { reference: "DS 7", requested: "Body SS316", offered: "Body SS304", remark: null },
+    { reference: null, requested: "Range 0-10 bar", offered: "Range 0-16 bar", remark: "standard" },
+  ];
+  const stored = normalizeDeviation({ deviation: true, deviations: [two[0], { reference: " ", requested: "", offered: null, remark: null }, two[1]] });
+  eq("deviations: a blank entry is dropped and the list is stored as JSON", stored.deviations, JSON.stringify(two));
+  ok("deviations: the four columns mirror the first entry",
+    stored.deviationRequested === "Body SS316" && stored.deviationOffered === "Body SS304" && stored.deviationReference === "DS 7");
+  eq("deviations: the stored JSON reads back as the list", JSON.stringify(deviationEntries({ deviation: true, deviations: stored.deviations, deviationRequested: "stale" })), JSON.stringify(two));
+  eq("deviations: a row written before the list reads as one entry from its columns",
+    JSON.stringify(deviationEntries({ deviation: true, deviationRequested: "A", deviationOffered: "B" })),
+    JSON.stringify([{ reference: null, requested: "A", offered: "B", remark: null }]));
+  eq("deviations: a present list is never read beside the columns (no duplicate first entry)",
+    deviationEntries({ deviation: true, deviations: [two[0]], deviationRequested: "Body SS316", deviationOffered: "Body SS304" }).length, 1);
+  eq("deviations: unreadable JSON falls back to the columns",
+    deviationEntries({ deviation: true, deviations: "{oops", deviationRequested: "A", deviationOffered: "B" })[0]?.requested, "A");
+  eq("deviations: an unticked line stores no list", normalizeDeviation({ deviation: false, deviations: two }).deviations, null);
+  eq("deviations: the list is capped", deviationEntries({ deviations: Array.from({ length: 30 }, () => two[0]) }).length, MAX_DEVIATIONS_PER_LINE);
+  ok("deviations: an incomplete second entry is refused, naming the row and the entry",
+    (deviationRefusal([{ productName: "a", deviation: true, deviations: [two[0], { reference: null, requested: "X", offered: null, remark: null }] }]) ?? "")
+      .includes("ردیف 1 (مغایرت 2)"));
+  ok("deviations: a ticked line with only blank entries is refused",
+    (deviationRefusal([{ productName: "a", deviation: true, deviations: [{ reference: null, requested: null, offered: null, remark: null }] }]) ?? "").includes("ردیف 1"));
+  eq("deviations: two complete entries pass", deviationRefusal([{ productName: "a", deviation: true, deviations: two }]), null);
+  const multi = renderProformaDocument({
+    proforma: { ...base, items: [
+      { productName: "Gauge", quantity: 1, unitPriceRIYAL: 0 },
+      { productName: "PT", quantity: 1, unitPriceRIYAL: 0, deviation: true, deviations: two,
+        deviationRequested: "Body SS316", deviationOffered: "Body SS304" },
+    ] } as never,
+    template: tpl, products: [], showBrand: false,
+  });
+  const devRows = multi.slice(multi.indexOf("TECHNICAL DEVIATION LIST")).match(/<tr>\s*<td style="width: 34px; text-align: center;">2<\/td>/g) ?? [];
+  eq("deviations: each entry prints its own row, numbered by the quotation's row", devRows.length, 2);
+  ok("deviations: both entries reach the page, the first once",
+    multi.split("Body SS304").length - 1 === 1 && multi.includes("Range 0-16 bar") && multi.includes("<td>standard</td>"));
+  ok("deviations: the migration adds the list column, nullable",
+    readFileSync("prisma/migrations/20261013000000_proforma_item_deviations/migration.sql", "utf8").includes("ADD [deviations] NVARCHAR(MAX) NULL"));
+  ok("deviations: the form's load list carries the list, or an edit would erase it",
+    /deviationRemark: item\.deviationRemark,\s*deviations: item\.deviations,/.test(pv));
   const svc = readFileSync("src/server/services/proformaService.ts", "utf8");
   ok("deviation: the server stores it through the one rule and refuses an incomplete one",
     svc.includes("...normalizeDeviation(row)") && (svc.match(/assertDeviationsComplete\(/g) ?? []).length >= 3);

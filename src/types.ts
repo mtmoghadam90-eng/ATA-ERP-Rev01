@@ -17,6 +17,7 @@ import type { CostSource } from './utils/costOfGoods';
 export type { ProductDocument, ProductDocumentKind } from './utils/productDocuments';
 import type { ProductDocument } from './utils/productDocuments';
 import type { Channel } from './utils/messaging';
+import type { DeviationEntry } from './utils/deviations';
 
 export interface ModuleNote {
   id: string;
@@ -400,6 +401,8 @@ export interface ProformaItem {
   deviationRequested?: string;
   deviationOffered?: string;
   deviationRemark?: string;
+  /** Every entry; the four fields above are the first, kept for old readers. */
+  deviations?: DeviationEntry[];
 }
 
 export interface Proforma {
