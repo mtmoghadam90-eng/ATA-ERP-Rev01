@@ -514,7 +514,12 @@ export async function getCustomer(id: string, user: AuthUser) {
  */
 const DETAIL_INCLUDE = {
   agreements: { orderBy: { createdAt: "desc" } },
-  linksFrom: { include: { to: { select: { id: true, companyName: true, customerType: true } } } },
+  // A linked person's contact details travel with the link: the work card's
+  // customer pop-up lists the people at a company with the number to ring.
+  linksFrom: { include: { to: { select: {
+    id: true, companyName: true, customerType: true,
+    position: true, mobile: true, phone: true, email: true,
+  } } } },
 } as const;
 
 /** Re-reads a just-written record in the shape a detail response has. */

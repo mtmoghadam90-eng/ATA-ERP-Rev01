@@ -3365,7 +3365,7 @@ head("Work card: the customer's name opens their details, and nothing else");
       id: "c-9", customerType: "حقوقی", status: "فعال", companyName: "TC MFG شرکت سازنده توربو کمپرسور",
       mobile: "09121234567", phone: "02188776655", email: "info@tc.example", province: "تهران", city: "تهران",
       address: null, keyPerson: null, position: null, industry: null, economicCode: null, tags: null, notes: null,
-      doNotContact: false, linksFrom: [{ fromId: "c-9", toId: "p-1", to: { id: "p-1", companyName: "دشتی", customerType: "حقیقی" } }],
+      doNotContact: false, linksFrom: [{ fromId: "c-9", toId: "p-1", to: { id: "p-1", companyName: "دشتی", customerType: "حقیقی", position: "مدیر خرید", mobile: "09351112233", phone: null, email: "dashti@tc.example" } }],
     } };
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
   }) as never;
@@ -3385,6 +3385,9 @@ head("Work card: the customer's name opens their details, and nothing else");
   ok("pressing the name reads that customer", askedI.length === 1 && askedI[0].includes("/api/customers/c-9"), askedI);
   ok("...and draws the number to ring and the linked people",
     (modalI?.textContent ?? "").includes("09121234567") && (modalI?.textContent ?? "").includes("دشتی"), modalI?.textContent);
+  const linksI = modalI?.querySelector("[data-customer-info-links]")?.textContent ?? "";
+  ok("a linked person carries their position, mobile and email",
+    linksI.includes("مدیر خرید") && linksI.includes("09351112233") && linksI.includes("dashti@tc.example"), linksI);
   ok("the press does not reach the card beneath it", cardPressed === 0, cardPressed);
   await act(async () => {
     (modalI?.querySelector("[data-customer-info-rows]") as HTMLElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
