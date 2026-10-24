@@ -1632,8 +1632,25 @@ head("Proforma line: the deviation boxes appear on the tick and reach the form")
     });
     await settle();
   }
-  const entriesNow = () => (value.deviations as { requested: string | null; offered: string | null }[] | undefined) ?? [];
+  const entriesNow = () => (value.deviations as { requested: string | null; offered: string | null; remark: string | null }[] | undefined) ?? [];
   ok("what is typed reaches the form, keeping the tick", entriesNow()[0]?.offered === "SS304" && value.deviation === true);
+  const remark = host.querySelector("[data-deviation-remark]") as HTMLTextAreaElement | null;
+  ok("the remark is a multi-line box, not a one-line input", remark?.tagName === "TEXTAREA");
+  // Typed one keystroke at a time: a space or Enter at the end must survive
+  // the round trip through the form's own state.
+  for (const typed of ["one", "one ", "one t", "one two", "one two\n", "one two\nthree\nfour\nfive"]) {
+    const box = host.querySelector("[data-deviation-remark]") as HTMLTextAreaElement;
+    await act(async () => {
+      box.value = typed;
+      handlers(box).onChange?.({ target: box, currentTarget: box });
+    });
+    await settle();
+    if (typed === "one ") ok("a trailing space survives the keystroke", entriesNow()[0]?.remark === "one ");
+    if (typed === "one two\n") ok("a trailing line break survives the keystroke", entriesNow()[0]?.remark === "one two\n");
+  }
+  const grown = host.querySelector("[data-deviation-remark]") as HTMLTextAreaElement | null;
+  ok("the remark keeps its line breaks and grows to show them",
+    entriesNow()[0]?.remark === "one two\nthree\nfour\nfive" && (grown?.rows ?? 0) >= 5);
   const add = host.querySelector("[data-deviation-add]") as HTMLButtonElement | null;
   ok("«افزودن مغایرت» is drawn on a ticked line", !!add);
   if (add) await act(async () => { add.click(); });

@@ -25,6 +25,13 @@ interface Props {
 const box =
   'w-full border border-slate-200 rounded-md px-2 py-1 text-[11px] bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 text-left [direction:ltr]';
 
+/**
+ * A box tall enough for what is in it: the text is often several lines, and a
+ * box that shows one of them hides the rest from the person checking it.
+ */
+const rowsFor = (value: string | null | undefined, min: number): number =>
+  Math.min(12, Math.max(min, (value ?? '').split('\n').length + 1));
+
 const blank = (): DeviationEntry => ({ reference: null, requested: null, offered: null, remark: null });
 
 export default function ProformaDeviationFields({ value, onChange, rowIndex }: Props) {
@@ -89,7 +96,7 @@ export default function ProformaDeviationFields({ value, onChange, rowIndex }: P
                     مشخصهٔ درخواستی مشتری (Required) *
                   </label>
                   <textarea
-                    rows={2}
+                    rows={rowsFor(entry.requested, 2)}
                     value={entry.requested ?? ''}
                     onChange={(e) => setEntry(index, { requested: e.target.value })}
                     placeholder="e.g. Body material: SS316"
@@ -102,7 +109,7 @@ export default function ProformaDeviationFields({ value, onChange, rowIndex }: P
                     مشخصهٔ پیشنهادی ما (Offered) *
                   </label>
                   <textarea
-                    rows={2}
+                    rows={rowsFor(entry.offered, 2)}
                     value={entry.offered ?? ''}
                     onChange={(e) => setEntry(index, { offered: e.target.value })}
                     placeholder="e.g. Body material: SS304"
@@ -123,16 +130,16 @@ export default function ProformaDeviationFields({ value, onChange, rowIndex }: P
                     data-deviation-reference
                   />
                 </div>
-                <div>
+                <div className="md:col-span-2">
                   <label className="block text-[10px] text-slate-500 mb-0.5">
                     توضیح / دلیل (اختیاری)
                   </label>
-                  <input
-                    type="text"
+                  <textarea
+                    rows={rowsFor(entry.remark, 3)}
                     value={entry.remark ?? ''}
                     onChange={(e) => setEntry(index, { remark: e.target.value })}
                     placeholder="e.g. Equivalent performance, shorter delivery"
-                    className={box}
+                    className={`${box} resize-y`}
                     data-deviation-remark
                   />
                 </div>
