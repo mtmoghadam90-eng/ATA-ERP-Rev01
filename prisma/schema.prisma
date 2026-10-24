@@ -195,6 +195,9 @@ model Customer {
   ownerUserId String? @db.NVarChar(36)
   owner       User?   @relation("CustomerOwner", fields: [ownerUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  /// MANUAL, EXCEL or WEBSITE — stamped by the server at creation; NULL reads as MANUAL.
+  entrySource String? @db.NVarChar(20)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

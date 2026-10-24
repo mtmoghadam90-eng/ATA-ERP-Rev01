@@ -333,7 +333,7 @@ async function findOrCreateCustomer(rfq: WebRfq, user: AuthUser): Promise<string
   }
 
   const created = await createCustomer(
-    customerFor(rfq) as CustomerInput, user, getTodayShamsi(),
+    customerFor(rfq) as CustomerInput, user, getTodayShamsi(), "WEBSITE",
   );
   return created.id;
 }

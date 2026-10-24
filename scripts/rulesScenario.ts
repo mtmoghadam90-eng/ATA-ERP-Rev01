@@ -24065,6 +24065,43 @@ head("Customer import from Excel: new rows created, existing ones only filled in
   ok("...and previews with the server's own parser", /parseImportSheet\(rows\)/.test(modal));
 }
 
+head("Customers: filtered by when and how they were put on the system");
+{
+  const ce = await import("../src/utils/customerEntry");
+  const { jalaliToDate } = await import("../src/server/dates");
+  eq("«ثبت دستی» takes the rows written before the column, which are null",
+    JSON.stringify(ce.entrySourceWhere("MANUAL")), JSON.stringify({ OR: [{ entrySource: null }, { entrySource: "MANUAL" }] }));
+  eq("«ورود از اکسل» is equality", JSON.stringify(ce.entrySourceWhere("EXCEL")), JSON.stringify({ entrySource: "EXCEL" }));
+  ok("«همه» and an unknown value filter nothing", ce.entrySourceWhere("all") === undefined && ce.entrySourceWhere("X") === undefined);
+  eq("a blank stored source reads as the manual one", ce.entrySourceLabel(null), "ثبت دستی");
+  const range = ce.createdRangeWhere("1405/07/05", "1405/07/05", jalaliToDate) as { createdAt: { gte: Date; lt: Date } };
+  eq("a day starts at Tehran's midnight", range.createdAt.gte.toISOString(), "2026-09-26T20:30:00.000Z");
+  eq("...and runs to the next one, exclusive", range.createdAt.lt.toISOString(), "2026-09-27T20:30:00.000Z");
+  ok("a customer written at 01:00 Tehran on that day is inside it, one written at 23:59 the day before is not",
+    new Date("2026-09-26T21:30:00Z") >= range.createdAt.gte && new Date("2026-09-26T20:29:00Z") < range.createdAt.gte);
+  const swapped = ce.createdRangeWhere("1405/07/10", "1405/07/01", jalaliToDate) as { createdAt: { gte: Date; lt: Date } };
+  ok("a range given backwards is read the right way round", swapped.createdAt.gte < swapped.createdAt.lt);
+  ok("one bound alone is a half-open range", JSON.stringify(Object.keys((ce.createdRangeWhere("", "1405/07/05", jalaliToDate) as { createdAt: object }).createdAt)) === JSON.stringify(["lt"]));
+  ok("no dates, or an unreadable one, is no filter",
+    ce.createdRangeWhere("", "", jalaliToDate) === undefined && ce.createdRangeWhere("abc", "", jalaliToDate) === undefined);
+  const svc = readFileSync("src/server/services/customerService.ts", "utf8");
+  ok("the server stamps the source after the input, so nothing in a body can set it",
+    /\.\.\.\(data as Prisma\.CustomerUncheckedCreateInput\),[\s\S]{0,400}entrySource,\s*\},/.test(svc)
+    && !/"entrySource"/.test(readFileSync("src/server/routes/customers.ts", "utf8")));
+  ok("the Excel import stamps EXCEL and the website import WEBSITE",
+    /createCustomer\([^)]*"EXCEL"\)/.test(readFileSync("src/server/services/customerImportService.ts", "utf8"))
+    && /getTodayShamsi\(\), "WEBSITE"/.test(readFileSync("src/server/services/webRfqService.ts", "utf8")));
+  ok("the filters are query keys a saved segment can store, read into the where",
+    /const ENTRY_QUERY_KEYS = \["createdFrom", "createdTo", "entrySource"\] as const;/.test(svc)
+    && /\.\.\.ENTRY_QUERY_KEYS,/.test(svc) && /\.\.\.entryClause\(extra\.entry\),/.test(svc));
+  const hook = readFileSync("src/api/useCustomerList.ts", "utf8");
+  ok("the grid sends all three and counts them as active filters",
+    /createdFrom: filters\.createdFrom,\s*createdTo: filters\.createdTo,\s*entrySource: filters\.entrySource,/.test(hook)
+    && /!!filters\.createdFrom \|\| !!filters\.createdTo \|\| filters\.entrySource !== "all"/.test(hook));
+  ok("the migration adds the column, nullable",
+    readFileSync("prisma/migrations/20261014000000_customer_entry_source/migration.sql", "utf8").includes("ADD [entrySource] NVARCHAR(20) NULL"));
+}
+
 head("Printed documents carry the application's own font, never Google's");
 {
   const { existsSync, readdirSync, statSync } = await import("node:fs");
