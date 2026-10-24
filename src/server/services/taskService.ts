@@ -380,6 +380,8 @@ export interface TaskProjectContext {
   code: string;
   name: string;
   customerName: string | null;
+  /** The customer behind the job, so the card can open their details. */
+  customerId: string | null;
 }
 
 /**
@@ -430,7 +432,7 @@ async function withProjectContext<T extends {
 
   const projectSelect = {
     id: true, code: true, name: true,
-    customer: { select: { companyName: true } },
+    customer: { select: { id: true, companyName: true } },
   };
 
   const [projects, proformas, customers, meetings] = await Promise.all([
@@ -471,10 +473,11 @@ async function withProjectContext<T extends {
   ]);
 
   const toContext = (p: {
-    id: string; code: string; name: string; customer: { companyName: string } | null;
+    id: string; code: string; name: string; customer: { id: string; companyName: string } | null;
   }): TaskProjectContext => ({
     id: p.id, code: p.code, name: p.name,
     customerName: p.customer?.companyName ?? null,
+    customerId: p.customer?.id ?? null,
   });
 
   const byProject = new Map(projects.map((p) => [p.id, toContext(p)]));
@@ -487,7 +490,7 @@ async function withProjectContext<T extends {
    * does not exist.
    */
   const byCustomer = new Map(customers.map((c) => [c.id, {
-    id: c.id, code: "", name: "", customerName: c.companyName,
+    id: c.id, code: "", name: "", customerName: c.companyName, customerId: c.id,
   } as TaskProjectContext]));
 
   // Keyed by the **task** id, since one meeting's tasks belong to different projects.
