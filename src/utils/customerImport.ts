@@ -31,7 +31,7 @@ export const CUSTOMER_TYPE_PERSON = "حقیقی";
 export type ImportField =
   | "customerType" | "companyName" | "firstName" | "lastName" | "position"
   | "mobile" | "phone" | "email" | "province" | "city" | "industry"
-  | "keyPerson" | "economicCode" | "address" | "tags" | "notes";
+  | "keyPerson" | "economicCode" | "address" | "tags" | "notes" | "gender";
 
 /**
  * The sheet's columns, in the order the template lays them out. The header is
@@ -107,7 +107,13 @@ export type ImportedCustomer = Partial<Record<ImportField, string>> & {
 export interface ParsedImportRow {
   /** The row's number as the sheet shows it (header is row 1). */
   rowNumber: number;
+  /** The row's customer — the company, when the row names one. */
   customer: ImportedCustomer | null;
+  /**
+   * The person written beside a company: their own «حقیقی» customer, linked
+   * to the company. Null when the row names nobody, or names only a person.
+   */
+  contact?: ImportedCustomer | null;
   /** Why the row cannot be imported; null when it can. */
   error: string | null;
   /** Things changed or dropped on the way, the row still imported. */
@@ -125,10 +131,11 @@ function typeOf(raw: string, companyName: string): string {
 /**
  * One sheet row (as `sheet_to_json` hands it, keyed by header) to a customer.
  *
- * A company row takes its name from «نام شرکت» and keeps the person on it as
- * `keyPerson` when the sheet named nobody else — throwing that name away loses
- * the one detail needed to ring back. A person's row is named by first and
- * last name, which is how every customer form names one.
+ * A company row takes its name from «نام شرکت». When it also names a person,
+ * that person is a customer of their own («حقیقی», `contact`), linked to the
+ * company by the import — so four rows of one company are one company and
+ * four people, not four companies. A person's row is named by first and last
+ * name, which is how every customer form names one.
  */
 export function parseImportRow(row: Record<string, unknown>, rowNumber: number): ParsedImportRow {
   const values: Partial<Record<ImportField, string>> = {};
@@ -181,15 +188,72 @@ export function parseImportRow(row: Record<string, unknown>, rowNumber: number):
   });
   if (contactError) return { rowNumber, customer: null, warnings, error: contactError };
 
+  if (customerType === CUSTOMER_TYPE_COMPANY && person) {
+    // A company row naming a person is two customers: the company, and the
+    // person who works there — linked to it, carrying their own mobile and
+    // email. Folding the person into `keyPerson` made every row of one company
+    // a company of its own: «زلال ایران» four times, once per person.
+    return { rowNumber, customer: companyHalf(values, companyName), contact: personHalf(values, person), error: null, warnings };
+  }
+
   const customer: ImportedCustomer = { ...values, customerType, companyName };
   if (customerType === CUSTOMER_TYPE_COMPANY) {
-    // A company has no first and last name of its own; the person written
-    // beside it is who to ask for.
-    if (person && !customer.keyPerson) customer.keyPerson = person;
     delete customer.firstName;
     delete customer.lastName;
+  } else {
+    const gender = genderFromNotes(values.notes);
+    if (gender) customer.gender = gender;
   }
-  return { rowNumber, customer, error: null, warnings };
+  return { rowNumber, customer, contact: null, error: null, warnings };
+}
+
+/** The fields that describe the company rather than the person on the row. */
+const COMPANY_FIELDS: ImportField[] = [
+  "phone", "province", "city", "industry", "keyPerson", "economicCode", "address", "tags",
+];
+/** The fields that describe the person. */
+const PERSON_FIELDS: ImportField[] = [
+  "position", "mobile", "phone", "email", "province", "city", "industry", "tags", "notes",
+];
+
+function companyHalf(values: Partial<Record<ImportField, string>>, companyName: string): ImportedCustomer {
+  const out: ImportedCustomer = { customerType: CUSTOMER_TYPE_COMPANY, companyName };
+  for (const f of COMPANY_FIELDS) if (values[f]) out[f] = values[f];
+  return out;
+}
+
+function personHalf(values: Partial<Record<ImportField, string>>, fullName: string): ImportedCustomer {
+  const out: ImportedCustomer = { customerType: CUSTOMER_TYPE_PERSON, companyName: fullName };
+  if (values.firstName) out.firstName = values.firstName;
+  if (values.lastName) out.lastName = values.lastName;
+  for (const f of PERSON_FIELDS) if (values[f]) out[f] = values[f];
+  const gender = genderFromNotes(values.notes);
+  if (gender) out.gender = gender;
+  return out;
+}
+
+/**
+ * «عنوان: آقای» / «عنوان: خانم» in the notes, as the stored gender the
+ * honorific rule reads (`genderOf`). Nothing else is read as a gender.
+ */
+export function genderFromNotes(notes: string | null | undefined): string | null {
+  const m = /عنوان\s*:\s*(آقا|خانم)/.exec(String(notes ?? ""));
+  if (!m) return null;
+  return m[1] === "خانم" ? "زن" : "مرد";
+}
+
+/**
+ * A company's name folded to what it says: «تأسیسات پارک» and «تاسیسات پارک»,
+ * ی/ي, ک/ك, the half-space and spacing are one company. Only a company's name
+ * is matched this way — a person is matched by mobile and email, never by name.
+ */
+export function companyNameKey(value: string | null | undefined): string {
+  return String(value ?? "")
+    .replace(/[\u200c\u200f\u200e]/g, "")
+    .replace(/ي/g, "ی").replace(/ك/g, "ک")
+    .replace(/[أإآ]/g, "ا").replace(/ؤ/g, "و").replace(/ة/g, "ه").replace(/[\u064B-\u0652]/g, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
 }
 
 /** The keys a row can be matched on, in the order they decide. */
@@ -225,7 +289,7 @@ export function markDuplicateRows(rows: ParsedImportRow[]): ParsedImportRow[] {
   const seen = new Map<string, number>();
   return rows.map((row) => {
     if (!row.customer) return row;
-    const keys = matchKeys(row.customer);
+    const keys = matchKeys(row.contact ?? row.customer);
     const tags = [
       keys.economicCode && `code:${keys.economicCode}`,
       keys.mobile && `mobile:${keys.mobile}`,
@@ -233,7 +297,7 @@ export function markDuplicateRows(rows: ParsedImportRow[]): ParsedImportRow[] {
     ].filter((t): t is string => !!t);
     const earlier = tags.map((t) => seen.get(t)).find((n) => n != null);
     if (earlier != null) {
-      return { ...row, customer: null, error: `تکراری است؛ همان مشتری ردیف ${earlier.toLocaleString("fa-IR")}.` };
+      return { ...row, customer: null, contact: null, error: `تکراری است؛ همان مشتری ردیف ${earlier.toLocaleString("fa-IR")}.` };
     }
     for (const t of tags) seen.set(t, row.rowNumber);
     return row;
@@ -262,7 +326,7 @@ export function unknownHeaders(rows: Record<string, unknown>[]): string[] {
 
 const FILLABLE: ImportField[] = [
   "position", "mobile", "phone", "email", "province", "city", "industry",
-  "keyPerson", "economicCode", "address", "tags", "notes", "firstName", "lastName",
+  "keyPerson", "economicCode", "address", "tags", "notes", "firstName", "lastName", "gender",
 ];
 
 /**
@@ -288,6 +352,8 @@ export function fillBlanks(
 export interface CustomerImportRowResult {
   rowNumber: number;
   name: string;
+  /** The company a person on this row was linked to, when the row named one. */
+  companyName?: string;
   outcome: "created" | "updated" | "unchanged" | "hidden" | "error";
   customerId: string | null;
   /** The fields filled in on an existing customer. */

@@ -26,7 +26,7 @@ import { canSeeCosts, hasModulePermission } from '../utils/permissions';
 import CustomFieldsForm from './CustomFieldsForm';
 import CustomerValueFields from './CustomerValueFields';
 import CustomerValueCard, { RANK_STYLE } from './CustomerValueCard';
-import { Pencil } from 'lucide-react';
+import { Pencil, Building2 } from 'lucide-react';
 import { formatMoney } from '../numUtils';
 import { COST_TO_SERVE_LEVELS, PAYMENT_BEHAVIOURS, RANK_META } from '../utils/customerValue';
 import CustomFieldsDetailView from './CustomFieldsDetailView';
@@ -50,6 +50,7 @@ import { CustomerReferenceCounts } from '../utils/customerMigration';
 import CustomerDeleteMigrationModal from './CustomerDeleteMigrationModal';
 import { SearchableSelect } from './SearchableSelect';
 import CustomerImportModal from './CustomerImportModal';
+import CompanyCleanupModal from './CompanyCleanupModal';
 import BulkCallTasksModal from './BulkCallTasksModal';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { CUSTOMER_ENTRY_SOURCES, entrySourceLabel } from '../utils/customerEntry';
@@ -179,6 +180,7 @@ export default function CustomersView({
   const [selectedCustomers, setSelectedCustomers] = useState<Map<string, string>>(() => new Map());
   const [bulkCallOpen, setBulkCallOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
   const canRaiseTasks = hasModulePermission(currentUser, 'tasks');
   const toggleSelected = (id: string, name: string) => setSelectedCustomers((prev) => {
     const next = new Map(prev);
@@ -841,6 +843,16 @@ export default function CustomersView({
           >
             <Upload size={16} />
             ورود از اکسل
+          </button>
+          <button
+            type="button"
+            onClick={() => setCleanupOpen(true)}
+            id="btn-company-cleanup"
+            title="شرکت‌هایی که با یک نام چند بار ثبت شده‌اند را یکی می‌کند و اشخاصشان را مشتری حقیقیِ متصل می‌سازد"
+            className="px-4 py-2 bg-white hover:bg-slate-50 border border-edge text-slate-700 rounded-xl text-sm font-medium transition flex items-center gap-2"
+          >
+            <Building2 size={16} />
+            اصلاح شرکت‌های تکراری
           </button>
           {canSaveSegment && (
             <button
@@ -2619,6 +2631,8 @@ export default function CustomersView({
           setCustomerToDeleteName('');
         }}
       />
+
+      <CompanyCleanupModal open={cleanupOpen} onClose={() => setCleanupOpen(false)} />
 
       <CustomerImportModal
         open={importOpen}

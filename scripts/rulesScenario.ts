@@ -24036,8 +24036,18 @@ head("Customer import from Excel: new rows created, existing ones only filled in
   const m = await import("../src/utils/customerImport");
   const company = m.parseImportRow({ "نوع مشتری": "حقوقی", "نام شرکت": "شرکت نمونه", "نام": "علی", "نام خانوادگی": "رضایی", "موبایل": 9121234567, "استان": "تهران" }, 2);
   ok("a company row takes the company's name", company.customer?.companyName === "شرکت نمونه" && company.customer?.customerType === "حقوقی");
-  ok("...keeps the person written beside it as the key person", company.customer?.keyPerson === "علی رضایی" && !company.customer?.firstName);
-  ok("...and a mobile the spreadsheet stored as a number gets its leading zero back", company.customer?.mobile === "09121234567");
+  ok("...and the person beside it is a «حقیقی» customer of their own, not a key person",
+    company.contact?.customerType === "حقیقی" && company.contact?.companyName === "علی رضایی"
+    && company.contact?.firstName === "علی" && company.contact?.lastName === "رضایی" && !company.customer?.keyPerson);
+  ok("...the mobile is the person's, not the company's", company.contact?.mobile === "09121234567" && !company.customer?.mobile);
+  ok("...and a mobile the spreadsheet stored as a number gets its leading zero back", company.contact?.mobile === "09121234567");
+  const lone = m.parseImportRow({ "نام شرکت": "تنها", "موبایل": "09120001122" }, 9);
+  ok("a company row naming nobody stays one company with its mobile", !lone.contact && lone.customer?.mobile === "09120001122");
+  eq("«عنوان: خانم» in the notes is the person's gender", m.genderFromNotes("عنوان: خانم | داخلی: 2"), "زن");
+  eq("...«عنوان: آقای» likewise", m.genderFromNotes("عنوان: آقای مهندس"), "مرد");
+  ok("...and a note saying neither guesses nothing", m.genderFromNotes("عنوان: مهندس") === null);
+  ok("company names fold hamza, ی/ي, ک/ك and spacing to one",
+    m.companyNameKey("تأسیسات پارک") === m.companyNameKey("تاسیسات  پارك") && m.companyNameKey("زلال ایران") !== m.companyNameKey("آب سان زلال"));
   const person = m.parseImportRow({ "نام": "مریم", "نام‌خانوادگی": "احمدی", "ایمیل": "M@Example.com" }, 3);
   ok("a row with no company is a person named by first and last name",
     person.customer?.customerType === "حقیقی" && person.customer?.companyName === "مریم احمدی" && person.customer?.email === "m@example.com");
@@ -24067,6 +24077,11 @@ head("Customer import from Excel: new rows created, existing ones only filled in
   ok("...an existing customer is matched over the whole table and only filled in",
     /fillBlanks\(/.test(svc) && /economicCode: \{ in: codes \}/.test(svc) && /mobileNormalized: \{ in: mobiles \}/.test(svc));
   ok("...and one the caller may not see is reported, never changed", /if \(!visible\.has\(match\.id\)\)/.test(svc));
+  ok("a company is found by its name after its code, before any mobile",
+    /byCode\.get\(k\.economicCode\)\)\s*\|\| \(incoming\.customerType === CUSTOMER_TYPE_COMPANY && byCompanyName\.get\(companyNameKey/.test(svc));
+  ok("...the company is written first and the person linked to it",
+    /const company = await write\(row\.customer\);\s*const person = await write\(row\.contact/.test(svc) && /await linkCustomers\(person\.id, company\.id\)/.test(svc));
+  ok("...a link adds to the links a customer has, never replaces them", /customerLink\.upsert\(/.test(svc) && !/setCustomerLinks/.test(svc));
   const route = readFileSync("src/server/routes/customers.ts", "utf8");
   ok("the endpoint is a customers write",
     /"\/api\/customers\/import", async \(req, res\) => \{\s*const user = await deps\.requireKeyAccess\(req, res, KEY, "write"\)/.test(route));
@@ -24074,6 +24089,53 @@ head("Customer import from Excel: new rows created, existing ones only filled in
   ok("the screen imports xlsx on the press, never at module scope",
     !/^import .*['"]xlsx['"]/m.test(modal) && /await import\('xlsx'\)/.test(modal));
   ok("...and previews with the server's own parser", /parseImportSheet\(rows\)/.test(modal));
+}
+
+head("Company cleanup: one company per name, its people linked to it");
+{
+  const cc = await import("../src/utils/customerCleanup");
+  const rec = (id: string, over: Record<string, unknown> = {}) => ({
+    id, companyName: "زلال ایران", customerType: "حقوقی", keyPerson: null as string | null, notes: null as string | null,
+    entrySource: "EXCEL", createdAt: `2026-10-0${id.length}T00:00:00Z`, references: 0, ...over,
+  });
+  const groups = cc.planCompanyCleanup([
+    rec("a", { keyPerson: "دشتی", createdAt: "2026-10-01T00:00:00Z" }),
+    rec("b", { keyPerson: "گیلکی", createdAt: "2026-10-02T00:00:00Z", references: 2 }),
+    rec("c", { createdAt: "2026-10-03T00:00:00Z" }),
+    rec("d", { companyName: "زلال  ايران", keyPerson: "مقدم", notes: "عنوان: خانم", createdAt: "2026-10-04T00:00:00Z" }),
+    rec("p", { companyName: "علی", customerType: "حقیقی" }),
+    rec("x", { companyName: "تنها", keyPerson: null }),
+  ]);
+  ok("one group per folded company name; a lone company with nobody in it is not a group, nor is a person",
+    groups.length === 1 && groups[0].size === 4, JSON.stringify(groups));
+  const g = groups[0];
+  ok("the record the business hangs on stays the company", g.anchorId === "b");
+  ok("...its own person is written out as a new customer", g.extract?.fullName === "گیلکی");
+  ok("...the others naming a person become that person", JSON.stringify(g.convert.map((p) => p.id).sort()) === JSON.stringify(["a", "d"]));
+  ok("...with the gender their notes give", g.convert.find((p) => p.id === "d")?.gender === "زن");
+  ok("...and the one naming nobody is merged into the company", JSON.stringify(g.merge) === JSON.stringify(["c"]));
+  ok("with no references, a record naming nobody is preferred as the company",
+    cc.planCompanyCleanup([rec("a", { keyPerson: "دشتی" }), rec("bb")])[0].anchorId === "bb");
+  const single = cc.planCompanyCleanup([rec("s", { companyName: "تک", keyPerson: "رضایی", entrySource: null })]);
+  ok("a single company still carrying a person is offered, unticked unless the import wrote it",
+    single.length === 1 && single[0].defaultSelected === false && single[0].extract?.fullName === "رضایی");
+  ok("...and ticked when it did", cc.planCompanyCleanup([rec("s", { companyName: "تک", keyPerson: "رضایی" })])[0].defaultSelected === true);
+  const svc = readFileSync("src/server/services/customerCleanupService.ts", "utf8");
+  ok("the plan is made again from the database on apply; the browser sends only keys",
+    /planCompanyCleanup\(rows\.map\(toPlanRecord\)\)\.filter\(\(g\) => wanted\.has\(g\.key\)\)/.test(svc));
+  ok("a converted record's projects, proformas and transactions move to the company first",
+    /project\.updateMany\(\{ where: \{ customerId: r\.id \}, data: \{ customerId: anchor\.id \} \}\)[\s\S]{0,400}customerType: "حقیقی"/.test(svc));
+  ok("a merged record's mobile and email are kept, never dropped with it", /spareMobiles\.push\(r\.mobile\)/.test(svc) && /از رکوردهای تکراری ادغام‌شده/.test(svc));
+  ok("the records are read through the customers' own visibility rule", /visibilityClause\(user\)/.test(svc));
+  const route = readFileSync("src/server/routes/customers.ts", "utf8");
+  ok("the endpoints are a customers write, registered before /:id",
+    route.indexOf('"/api/customers/company-cleanup"') > 0
+    && route.indexOf('"/api/customers/company-cleanup"') < route.indexOf('"/api/customers/:id"')
+    && /"\/api\/customers\/company-cleanup", async \(req, res\) => \{\s*const user = await deps\.requireKeyAccess\(req, res, KEY, "write"\)/.test(route));
+  const cs = readFileSync("src/server/services/customerService.ts", "utf8");
+  ok("merging a customer away moves its tasks and messages too",
+    /task\.updateMany\(\{\s*where: \{ relatedToId: fromId, relatedToType: \{ in: relationSpellings\("customer"\) \} \}/.test(cs)
+    && /message\.updateMany\(\{ where: \{ customerId: fromId \}, data: \{ customerId: toId \} \}\)/.test(cs));
 }
 
 head("Customers: filtered by when and how they were put on the system");

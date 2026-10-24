@@ -1,5 +1,6 @@
 import { ListResponse, api } from "./client";
 import type { CustomerImportResult } from "../utils/customerImport";
+import type { CompanyCleanupGroup, CompanyCleanupResult } from "../utils/customerCleanup";
 
 /**
  * Customer endpoints.
@@ -249,6 +250,12 @@ export const customersApi = {
       "/api/customers/check-duplicates", candidate),
 
   /** «ورود از اکسل»: rows keyed by header; see `customerImportService`. */
+  companyCleanupPreview: () =>
+    api.get<{ groups: CompanyCleanupGroup[] }>("/api/customers/company-cleanup").then((r) => r.groups),
+
+  applyCompanyCleanup: (keys: string[]) =>
+    api.post<CompanyCleanupResult>("/api/customers/company-cleanup", { keys }),
+
   importRows: (rows: Record<string, unknown>[]) =>
     api.post<CustomerImportResult>("/api/customers/import", { rows }),
 
