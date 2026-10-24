@@ -59,6 +59,7 @@ import Avatar from "../src/components/Avatar";
 import TaskCompletionModal from "../src/components/TaskCompletionModal";
 import BulkCallTasksModal from "../src/components/BulkCallTasksModal";
 import CustomerImportModal from "../src/components/CustomerImportModal";
+import CompanyCleanupModal from "../src/components/CompanyCleanupModal";
 import ModuleNotesSection from "../src/components/ModuleNotesSection";
 import AfterSalesServicesView from "../src/components/AfterSalesServicesView";
 import ReferralsView from "../src/components/ReferralsView";
@@ -3310,6 +3311,46 @@ head("Customer import: a sheet is read, previewed, posted once, and its customer
   act(() => { rootI.unmount(); });
   hostI.remove();
   gi.fetch = realFetchI;
+}
+
+head("Company cleanup: the plan is drawn, the ticked groups are what is posted");
+{
+  const gc = globalThis as unknown as Record<string, unknown>;
+  const realFetchC = gc.fetch;
+  const postedC: { path: string; body: string }[] = [];
+  gc.fetch = (async (url: string, init?: { method?: string; body?: unknown }) => {
+    const path = String(url);
+    const method = init?.method ?? "GET";
+    if (method !== "GET") postedC.push({ path, body: String(init?.body ?? "") });
+    const body = method === "GET"
+      ? { success: true, groups: [
+        { key: "zolal", name: "زلال ایران", size: 4, summary: "۱ شرکت + ۴ شخص متصل", people: ["دشتی", "گیلکی"], defaultSelected: true, createdAt: "2026-10-20T08:00:00Z" },
+        { key: "tak", name: "تک", size: 1, summary: "۱ شرکت + ۱ شخص متصل", people: ["رضایی"], defaultSelected: false, createdAt: "" },
+      ] }
+      : { success: true, groups: 1, people: 4, merged: 0, failed: [] };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+  const hostC = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootC = createRoot(hostC);
+  const settleC = async () => { for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); }); };
+  await act(async () => { rootC.render(React.createElement(CompanyCleanupModal, { open: true, onClose: () => {} })); });
+  await settleC();
+  const listC = hostC.querySelector("[data-company-cleanup-list]")?.textContent ?? "";
+  ok("each group is drawn with its people", listC.includes("زلال ایران") && listC.includes("دشتی"), listC);
+  ok("opening the screen writes nothing", postedC.length === 0);
+  const boxOf = (key: string) => hostC.querySelector(`[data-company-cleanup-group="${key}"] input`) as HTMLInputElement;
+  ok("a real duplicate is ticked and a single typed company is not", boxOf("zolal").checked && !boxOf("tak").checked);
+  await act(async () => {
+    (hostC.querySelector("#btn-company-cleanup-apply") as HTMLElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+  });
+  await settleC();
+  const sentC = postedC.length === 1 ? JSON.parse(postedC[0].body) : null;
+  ok("the apply posts once, naming only the ticked groups' keys",
+    postedC.length === 1 && postedC[0].path.includes("/api/customers/company-cleanup") && JSON.stringify(sentC?.keys) === JSON.stringify(["zolal"]), postedC);
+  ok("...and the result is drawn", (hostC.querySelector("[data-company-cleanup-result]")?.textContent ?? "").includes("۴ شخص"));
+  act(() => { rootC.unmount(); });
+  hostC.remove();
+  gc.fetch = realFetchC;
 }
 
 head("A document's notes: a file is content, and the delete is only where it is allowed");

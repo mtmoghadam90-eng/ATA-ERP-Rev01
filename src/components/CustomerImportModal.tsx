@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Download, FileSpreadsheet, PhoneCall, Upload, X } from 'lucide-react';
 import { customersApi } from '../api/customers';
 import {
-  CUSTOMER_IMPORT_COLUMNS, MAX_CUSTOMER_IMPORT_ROWS, parseImportSheet, unknownHeaders,
+  CUSTOMER_IMPORT_COLUMNS, MAX_CUSTOMER_IMPORT_ROWS, companyNameKey, parseImportSheet, unknownHeaders,
   type CustomerImportResult, type CustomerImportRowResult,
 } from '../utils/customerImport';
 
@@ -77,6 +77,8 @@ export default function CustomerImportModal({
   const preview = rows ? parseImportSheet(rows) : [];
   const readable = preview.filter((r) => r.customer).length;
   const refused = preview.filter((r) => !r.customer);
+  const splitRows = preview.filter((r) => r.customer && r.contact).length;
+  const companyCount = new Set(preview.filter((r) => r.customer && r.contact).map((r) => companyNameKey(r.customer!.companyName))).size;
   const strange = rows ? unknownHeaders(rows) : [];
 
   const pick = async (file: File | undefined) => {
@@ -129,7 +131,7 @@ export default function CustomerImportModal({
           {!result && (
             <>
               <p className="text-xs text-secondary leading-6">
-                هر ردیف یک مشتری است. اگر مشتری با همان کد اقتصادی، موبایل یا ایمیل از قبل در سیستم باشد، دوباره ساخته نمی‌شود و فقط فیلدهای خالی‌اش از فایل پر می‌شود. ستون‌ها باید همان عنوان‌های فایل نمونه را داشته باشند.
+                ردیفی که هم نام شرکت و هم نام شخص دارد دو مشتری می‌سازد: شرکت (حقوقی) و آن شخص (حقیقی) که به شرکت متصل می‌شود. چند ردیفِ یک شرکت، یک شرکت می‌سازند. اگر مشتری با همان کد اقتصادی، موبایل یا ایمیل — یا شرکت با همان نام — از قبل در سیستم باشد، دوباره ساخته نمی‌شود و فقط فیلدهای خالی‌اش از فایل پر می‌شود. ستون‌ها باید همان عنوان‌های فایل نمونه را داشته باشند.
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <button type="button" onClick={() => void downloadCustomerImportTemplate()} id="btn-customer-import-template"
@@ -147,6 +149,11 @@ export default function CustomerImportModal({
               {rows && (
                 <div className="text-xs space-y-1.5 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2" data-customer-import-preview>
                   <p className="text-slate-800 font-medium">{fa(readable)} ردیف آمادهٔ ورود است.</p>
+                  {splitRows > 0 && (
+                    <p className="text-secondary" data-customer-import-split>
+                      {fa(splitRows)} ردیف شرکت و شخص را با هم دارد؛ برای {fa(companyCount)} شرکت، شرکت یک بار و هر شخص به‌صورت مشتری حقیقیِ متصل ثبت می‌شود.
+                    </p>
+                  )}
                   {refused.length > 0 && (
                     <div className="text-red-700">
                       <p>{fa(refused.length)} ردیف وارد نمی‌شود:</p>
@@ -178,7 +185,7 @@ export default function CustomerImportModal({
                     {problems.map((r) => (
                       <tr key={r.rowNumber} className="border-t border-slate-100 align-top">
                         <td className="py-1 px-2">{fa(r.rowNumber)}</td>
-                        <td className="py-1 px-2">{r.name || '—'}</td>
+                        <td className="py-1 px-2">{r.name || '—'}{r.companyName ? ` (${r.companyName})` : ''}</td>
                         <td className="py-1 px-2 whitespace-nowrap">{OUTCOME_LABEL[r.outcome]}</td>
                         <td className="py-1 px-2">{[r.message, ...(r.warnings ?? [])].filter(Boolean).join(' ')}</td>
                       </tr>

@@ -12,6 +12,7 @@ import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
 import { jalaliToDate } from "../dates";
 import { CustomerEntrySource, createdRangeWhere, entrySourceWhere } from "../../utils/customerEntry";
+import { relationSpellings } from "../../utils/taskRelations";
 
 /**
  * Customer data access.
@@ -1065,6 +1066,14 @@ export async function deleteCustomerWithMigration(fromId: string, toId: string) 
     await tx.proforma.updateMany({ where: { contactCustomerId: fromId }, data: { contactCustomerId: toId } });
     await tx.transaction.updateMany({ where: { customerId: fromId }, data: { customerId: toId } });
     await tx.customerAgreement.updateMany({ where: { customerId: fromId }, data: { customerId: toId } });
+    // A task about this customer (a call raised on it) and a message sent to
+    // it are about the replacement now; the message's foreign key would
+    // otherwise refuse the delete below.
+    await tx.task.updateMany({
+      where: { relatedToId: fromId, relatedToType: { in: relationSpellings("customer") } },
+      data: { relatedToId: toId, relatedToName: replacement.companyName },
+    });
+    await tx.message.updateMany({ where: { customerId: fromId }, data: { customerId: toId } });
 
     // Links are a composite key, so a blind update could collide with an existing
     // row or create a self-link. Rebuild them instead.

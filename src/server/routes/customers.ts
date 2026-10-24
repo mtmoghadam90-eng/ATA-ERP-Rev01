@@ -32,6 +32,7 @@ import {
 } from "../../utils/customerDuplicates";
 import type { Customer } from "../../types";
 import { importCustomers } from "../services/customerImportService";
+import { applyCompanyCleanup, previewCompanyCleanup } from "../services/customerCleanupService";
 
 /**
  * Customers REST API — the reference shape for every other module.
@@ -210,6 +211,39 @@ export function registerCustomerRoutes(app: express.Express, deps: RouteDeps): v
       res.json({ success: true, ...result });
     } catch (err) {
       sendError(res, err, "PUT /api/customers/:id/rank");
+    }
+  });
+
+  /**
+   * «اصلاح شرکت‌های تکراری»: companies sharing one name, and companies still
+   * carrying a person in `keyPerson` — what the first Excel import wrote. The
+   * preview is the plan; the apply sends only the ticked groups' keys and the
+   * plan is made again from the database. Registered before `/:id`, or
+   * Express reads «company-cleanup» as a customer id.
+   */
+  app.get("/api/customers/company-cleanup", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      res.json({ success: true, groups: await previewCompanyCleanup(user) });
+    } catch (err) {
+      sendError(res, err, "GET /api/customers/company-cleanup");
+    }
+  });
+
+  app.post("/api/customers/company-cleanup", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const keys = (req.body as { keys?: unknown })?.keys;
+      if (!Array.isArray(keys) || keys.length === 0) {
+        res.status(400).json({ success: false, error: "هیچ شرکتی برای اصلاح انتخاب نشده است." });
+        return;
+      }
+      const result = await applyCompanyCleanup(keys.map(String), user, getTodayShamsi());
+      res.json({ success: true, ...result });
+    } catch (err) {
+      sendError(res, err, "POST /api/customers/company-cleanup");
     }
   });
 
