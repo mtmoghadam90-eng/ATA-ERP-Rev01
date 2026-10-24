@@ -131,10 +131,40 @@ export function CustomerInfoModal({ customerId, onClose }: { customerId: string;
               {links.length > 0 && (
                 <div className="pt-2 border-t border-hairline">
                   <p className="text-muted mb-1">{isCompany ? 'اشخاص مرتبط' : 'شرکت‌های مرتبط'}</p>
-                  <ul className="space-y-1">
-                    {links.map((l) => (
-                      <li key={l.to.id} className="text-slate-700">{l.to.companyName}</li>
-                    ))}
+                  <ul className="space-y-2" data-customer-info-links>
+                    {links.map((l) => {
+                      const mobile = show(l.to.mobile);
+                      const phone = show(l.to.phone);
+                      const email = show(l.to.email);
+                      const position = show(l.to.position);
+                      return (
+                        <li key={l.to.id} className="border border-slate-100 rounded-lg px-2.5 py-1.5 space-y-0.5">
+                          <div className="text-slate-800 font-medium break-words">
+                            {l.to.companyName}
+                            {position && <span className="text-muted font-normal"> — {position}</span>}
+                          </div>
+                          {(mobile || phone || email) && (
+                            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
+                              {mobile && (
+                                <a href={`tel:${mobile}`} dir="ltr" className="inline-flex items-center gap-1 text-sky-700 hover:underline">
+                                  <Smartphone size={11} />{mobile}
+                                </a>
+                              )}
+                              {phone && (
+                                <a href={`tel:${phone}`} dir="ltr" className="inline-flex items-center gap-1 text-sky-700 hover:underline">
+                                  <Phone size={11} />{phone}
+                                </a>
+                              )}
+                              {email && (
+                                <a href={`mailto:${email}`} dir="ltr" className="inline-flex items-center gap-1 text-sky-700 hover:underline break-all">
+                                  <Mail size={11} />{email}
+                                </a>
+                              )}
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               )}

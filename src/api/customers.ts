@@ -118,7 +118,10 @@ export interface CustomerDetail extends CustomerRow {
   }[];
   linksFrom: {
     fromId: string; toId: string;
-    to: { id: string; companyName: string; customerType: string };
+    to: {
+      id: string; companyName: string; customerType: string;
+      position?: string | null; mobile?: string | null; phone?: string | null; email?: string | null;
+    };
   }[];
 }
 
