@@ -22925,6 +22925,15 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   });
   ok("deviations: a multi-line remark reaches the page with its line break, in a pre-line cell",
     multiLine.includes("<td>First reason\nSecond reason</td>") && /\.deviation-table th, \.deviation-table td \{[^}]*white-space: pre-line/.test(multiLine));
+  ok("deviations: a printed cell takes each line's direction from what was typed, so Persian with Latin codes is not reordered",
+    /\.deviation-table td \{[^}]*unicode-bidi: plaintext[^}]*text-align: start/.test(multi));
+  ok("deviations: the column order stays left to right", /\.deviation-table \{[^}]*direction: ltr/.test(multi));
+  {
+    const devForm = readFileSync("src/components/ProformaDeviationFields.tsx", "utf8");
+    ok("deviations: no form box is forced left to right", !devForm.includes("[direction:ltr]"));
+    eq("deviations: every one of the four boxes reads its direction from what is typed",
+      (devForm.match(/dir="auto"/g) ?? []).length - (devForm.match(/`dir="auto"`/g) ?? []).length, 4);
+  }
   ok("deviations: the migration adds the list column, nullable",
     readFileSync("prisma/migrations/20261013000000_proforma_item_deviations/migration.sql", "utf8").includes("ADD [deviations] NVARCHAR(MAX) NULL"));
   ok("deviations: the form's load list carries the list, or an edit would erase it",

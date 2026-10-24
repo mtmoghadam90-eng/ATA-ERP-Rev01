@@ -8,8 +8,11 @@ import {
  *
  * A single tick, off by default, so a line that complies costs nothing; once
  * it is ticked the line carries a list of entries — one way it departs from the
- * request each, added with «افزودن مغایرت». What is typed is in English because
- * it prints on the English «Technical Deviation List» page.
+ * request each, added with «افزودن مغایرت». It prints on the English
+ * «Technical Deviation List» page, but what is typed is often Persian with
+ * Latin model codes inside it, so each box takes its direction from what is
+ * typed, line by line (`dir="auto"` + `unicode-bidi: plaintext`): forced to
+ * left-to-right, a Persian sentence with «SS316» in it was drawn reordered.
  *
  * The change handed back is always the whole list, so the four single-entry
  * columns the line may still carry are never read again (`deviationEntries`
@@ -23,7 +26,7 @@ interface Props {
 }
 
 const box =
-  'w-full border border-slate-200 rounded-md px-2 py-1 text-[11px] bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 text-left [direction:ltr]';
+  'w-full border border-slate-200 rounded-md px-2 py-1 text-[11px] bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 text-start [unicode-bidi:plaintext]';
 
 /**
  * A box tall enough for what is in it: the text is often several lines, and a
@@ -101,6 +104,7 @@ export default function ProformaDeviationFields({ value, onChange, rowIndex }: P
                     onChange={(e) => setEntry(index, { requested: e.target.value })}
                     placeholder="e.g. Body material: SS316"
                     className={box}
+                    dir="auto"
                     data-deviation-requested
                   />
                 </div>
@@ -114,6 +118,7 @@ export default function ProformaDeviationFields({ value, onChange, rowIndex }: P
                     onChange={(e) => setEntry(index, { offered: e.target.value })}
                     placeholder="e.g. Body material: SS304"
                     className={box}
+                    dir="auto"
                     data-deviation-offered
                   />
                 </div>
@@ -127,6 +132,7 @@ export default function ProformaDeviationFields({ value, onChange, rowIndex }: P
                     onChange={(e) => setEntry(index, { reference: e.target.value })}
                     placeholder="e.g. Datasheet Rev.2 – Item 7"
                     className={box}
+                    dir="auto"
                     data-deviation-reference
                   />
                 </div>
@@ -140,6 +146,7 @@ export default function ProformaDeviationFields({ value, onChange, rowIndex }: P
                     onChange={(e) => setEntry(index, { remark: e.target.value })}
                     placeholder="e.g. Equivalent performance, shorter delivery"
                     className={`${box} resize-y`}
+                    dir="auto"
                     data-deviation-remark
                   />
                 </div>

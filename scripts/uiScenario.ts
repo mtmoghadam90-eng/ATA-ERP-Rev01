@@ -1634,6 +1634,8 @@ head("Proforma line: the deviation boxes appear on the tick and reach the form")
   }
   const entriesNow = () => (value.deviations as { requested: string | null; offered: string | null; remark: string | null }[] | undefined) ?? [];
   ok("what is typed reaches the form, keeping the tick", entriesNow()[0]?.offered === "SS304" && value.deviation === true);
+  ok("each deviation box takes its direction from what is typed",
+    ["requested", "offered", "reference", "remark"].every((k) => host.querySelector(`[data-deviation-${k}]`)?.getAttribute("dir") === "auto"));
   const remark = host.querySelector("[data-deviation-remark]") as HTMLTextAreaElement | null;
   ok("the remark is a multi-line box, not a one-line input", remark?.tagName === "TEXTAREA");
   // Typed one keystroke at a time: a space or Enter at the end must survive

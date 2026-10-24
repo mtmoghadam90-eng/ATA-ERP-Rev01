@@ -666,6 +666,15 @@ export function renderProformaDocument(input: ProformaDocumentInput): string {
           vertical-align: top;
           white-space: pre-line;
       }
+      /*
+       * The columns run left to right, but a cell may be written in Persian
+       * with Latin codes inside it: each line takes its own direction from
+       * its first letter, or a Persian sentence prints reordered.
+       */
+      .deviation-table td {
+          unicode-bidi: plaintext;
+          text-align: start;
+      }
       .deviation-table th { background-color: #f1f5f9; font-weight: bold; }
       .deviation-table tr { page-break-inside: avoid; break-inside: avoid; }
       .deviation-note { margin-top: 10px; font-style: italic; }
