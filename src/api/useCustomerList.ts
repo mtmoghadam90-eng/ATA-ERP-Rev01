@@ -30,6 +30,10 @@ export interface CustomerListFilters {
   costToServe: string;
   /** "true" to show only customers whose potential has never been assessed. */
   notAssessed: string;
+  /** When and how it was put on the system — see utils/customerEntry.ts. */
+  createdFrom: string;
+  createdTo: string;
+  entrySource: string;
   /** fieldId -> value, from the user-defined custom fields. */
   customFields: Record<string, string>;
   /** The grid's per-column header inputs, applied on the server. */
@@ -52,6 +56,9 @@ const EMPTY_FILTERS: CustomerListFilters = {
   paymentBehaviour: "all",
   costToServe: "all",
   notAssessed: "",
+  createdFrom: "",
+  createdTo: "",
+  entrySource: "all",
   customFields: {},
   columns: {},
 };
@@ -76,6 +83,9 @@ export function useCustomerList(initialSearch = "") {
       paymentBehaviour: filters.paymentBehaviour,
       costToServe: filters.costToServe,
       notAssessed: filters.notAssessed,
+      createdFrom: filters.createdFrom,
+      createdTo: filters.createdTo,
+      entrySource: filters.entrySource,
     };
 
     // URLSearchParams cannot express a repeated key through a plain object, so
@@ -139,6 +149,7 @@ export function useCustomerList(initialSearch = "") {
     !!filters.minPotential || !!filters.maxPotential ||
     !!filters.minGrossProfit || !!filters.maxGrossProfit ||
     !!filters.lastPurchaseWithinMonths || !!filters.notAssessed ||
+    !!filters.createdFrom || !!filters.createdTo || filters.entrySource !== "all" ||
     Object.values(filters.customFields).some(Boolean) ||
     Object.values(filters.columns).some(Boolean);
 

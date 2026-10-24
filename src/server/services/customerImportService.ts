@@ -120,7 +120,7 @@ export async function importCustomers(
         continue;
       }
 
-      const created = await createCustomer({ ...incoming } as CustomerInput, user, todayJalali);
+      const created = await createCustomer({ ...incoming } as CustomerInput, user, todayJalali, "EXCEL");
       const id = (created as { id?: string } | null)?.id ?? null;
       results.push({ rowNumber: row.rowNumber, name: incoming.companyName, outcome: "created", customerId: id, warnings: row.warnings });
       // A later row naming the same customer finds the one just written.

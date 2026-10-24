@@ -32,6 +32,8 @@ export interface CustomerRow {
   keyPerson: string | null;
   ownerUserId: string | null;
   createdAt: string;
+  /** How it arrived: MANUAL, EXCEL or WEBSITE; null is MANUAL (see customerEntry.ts). */
+  entrySource: string | null;
   /** Serialized custom-field values, or null. */
   customValues: string | null;
   /** Joined in the list query so the grid does not fetch one per row. */

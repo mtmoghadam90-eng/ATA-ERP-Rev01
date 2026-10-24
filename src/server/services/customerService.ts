@@ -10,6 +10,8 @@ import { AuthUser, hasPermission } from "../auth";
 import { logAction } from "./auditService";
 import { notifyModuleResponsible } from "./notificationService";
 import { processWorkflowRules } from "./workflowService";
+import { jalaliToDate } from "../dates";
+import { CustomerEntrySource, createdRangeWhere, entrySourceWhere } from "../../utils/customerEntry";
 
 /**
  * Customer data access.
@@ -234,6 +236,29 @@ function valueClause(filters: CustomerValueFilters | undefined): Record<string, 
   return and;
 }
 
+/**
+ * When and how a customer was put on the system. Kept apart from the value
+ * filters because it answers a different question; both travel as query
+ * parameters a saved segment can store.
+ */
+export interface CustomerEntryFilters {
+  /** Shamsi day, inclusive, on Tehran's clock. */
+  createdFrom?: unknown;
+  createdTo?: unknown;
+  /** MANUAL, EXCEL or WEBSITE; anything else is no filter. */
+  entrySource?: unknown;
+}
+
+function entryClause(filters: CustomerEntryFilters | undefined): Record<string, unknown>[] {
+  if (!filters) return [];
+  const and: Record<string, unknown>[] = [];
+  const range = createdRangeWhere(filters.createdFrom, filters.createdTo, jalaliToDate);
+  if (range) and.push(range);
+  const source = entrySourceWhere(filters.entrySource);
+  if (source) and.push(source);
+  return and;
+}
+
 /* --------------------------- one query dialect --------------------------- */
 
 /**
@@ -250,6 +275,8 @@ const VALUE_QUERY_KEYS = [
   "minGrossProfit", "maxGrossProfit", "lastPurchaseWithinMonths",
   "paymentBehaviour", "costToServe", "notAssessed",
 ] as const;
+
+const ENTRY_QUERY_KEYS = ["createdFrom", "createdTo", "entrySource"] as const;
 
 /** Query parameter -> the column filter it fills in. */
 const COLUMN_QUERY_KEYS = {
@@ -270,6 +297,11 @@ type _EveryValueFilterIsQueryable =
 type _EveryColumnFilterIsQueryable =
   Exclude<keyof CustomerColumnFilters, typeof COLUMN_QUERY_KEYS[keyof typeof COLUMN_QUERY_KEYS]> extends never ? true
     : ["column filter with no query key", keyof CustomerColumnFilters];
+type _EveryEntryFilterIsQueryable =
+  Exclude<keyof CustomerEntryFilters, typeof ENTRY_QUERY_KEYS[number]> extends never ? true
+    : ["entry filter with no query key", Exclude<keyof CustomerEntryFilters, typeof ENTRY_QUERY_KEYS[number]>];
+const _entryKeysAreComplete: _EveryEntryFilterIsQueryable = true;
+void _entryKeysAreComplete;
 const _valueKeysAreComplete: _EveryValueFilterIsQueryable = true;
 const _columnKeysAreComplete: _EveryColumnFilterIsQueryable = true;
 void _valueKeysAreComplete;
@@ -287,6 +319,7 @@ export const CUSTOMER_QUERY_KEYS: readonly string[] = [
   ...CUSTOMER_FILTERABLE,
   "customField", "linkedTo",
   ...VALUE_QUERY_KEYS,
+  ...ENTRY_QUERY_KEYS,
   ...Object.keys(COLUMN_QUERY_KEYS),
 ];
 
@@ -294,6 +327,7 @@ export interface CustomerListExtras {
   customField?: unknown;
   linkedTo?: unknown;
   value?: CustomerValueFilters;
+  entry?: CustomerEntryFilters;
   columns?: CustomerColumnFilters;
 }
 
@@ -304,6 +338,8 @@ export interface CustomerListExtras {
 export function customerListExtras(query: Record<string, unknown>): CustomerListExtras {
   const value: Record<string, unknown> = {};
   for (const key of VALUE_QUERY_KEYS) value[key] = query[key];
+  const entry: Record<string, unknown> = {};
+  for (const key of ENTRY_QUERY_KEYS) entry[key] = query[key];
 
   const columns: Record<string, unknown> = {};
   for (const [param, field] of Object.entries(COLUMN_QUERY_KEYS)) columns[field] = query[param];
@@ -312,6 +348,7 @@ export function customerListExtras(query: Record<string, unknown>): CustomerList
     customField: query.customField,
     linkedTo: query.linkedTo,
     value: value as CustomerValueFilters,
+    entry: entry as CustomerEntryFilters,
     columns: columns as CustomerColumnFilters,
   };
 }
@@ -321,11 +358,12 @@ export function buildCustomerWhere(
   user: AuthUser,
   extra: {
     customField?: unknown; linkedTo?: unknown;
-    value?: CustomerValueFilters; columns?: CustomerColumnFilters;
+    value?: CustomerValueFilters; entry?: CustomerEntryFilters; columns?: CustomerColumnFilters;
   } = {},
 ): Record<string, unknown> {
   const and: Record<string, unknown>[] = [
     ...valueClause(extra.value),
+    ...entryClause(extra.entry),
     ...columnClause(extra.columns),
   ];
 
@@ -394,6 +432,7 @@ const LIST_SELECT = {
   keyPerson: true, // The grid's «شخص کلیدی» column
   ownerUserId: true,
   createdAt: true,
+  entrySource: true,
   customValues: true,
   // The grid shows who each customer is linked to. Joined here rather than
   // fetched per row, which would be one request per visible customer.
@@ -436,7 +475,7 @@ export async function listCustomers(
   user: AuthUser,
   extra: {
     customField?: unknown; linkedTo?: unknown;
-    value?: CustomerValueFilters; columns?: CustomerColumnFilters;
+    value?: CustomerValueFilters; entry?: CustomerEntryFilters; columns?: CustomerColumnFilters;
   } = {},
 ): Promise<ListResult<Record<string, unknown>>> {
   const db = getDb();
@@ -740,7 +779,13 @@ async function logPotentialChange(
   });
 }
 
-export async function createCustomer(input: CustomerInput, user: AuthUser, todayJalali: string) {
+export async function createCustomer(
+  input: CustomerInput,
+  user: AuthUser,
+  todayJalali: string,
+  /** How it arrived — the server's answer, never the body's (see customerEntry.ts). */
+  entrySource: CustomerEntrySource = "MANUAL",
+) {
   const db = getDb();
   const data: Record<string, unknown> = { ...input };
   const potential = await applyValueFields(data, input, null, user);
@@ -753,6 +798,9 @@ export async function createCustomer(input: CustomerInput, user: AuthUser, today
       // Unassigned records default to their creator, so ownership rules have
       // something to work with from the start.
       ownerUserId: input.ownerUserId ?? user.id,
+      // After the spread, so nothing in the input can file a customer under
+      // another source.
+      entrySource,
     },
   });
 

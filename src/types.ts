@@ -52,6 +52,8 @@ export interface Customer {
   customerType: 'حقیقی' | 'حقوقی';
   status: 'فعال' | 'غیرفعال';
   createdAt: string;
+  /** How it arrived: MANUAL, EXCEL or WEBSITE; absent is MANUAL (utils/customerEntry.ts). */
+  entrySource?: string | null;
   phone: string;
   mobile: string;
   email: string;

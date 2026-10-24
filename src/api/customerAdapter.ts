@@ -34,6 +34,7 @@ export function rowToCustomer(row: CustomerRow): Customer {
   return markPartial({
     id: row.id,
     createdAt: row.createdAt,
+    entrySource: row.entrySource ?? null,
     customerType: row.customerType as Customer["customerType"],
     status: row.status as Customer["status"],
     companyName: row.companyName,

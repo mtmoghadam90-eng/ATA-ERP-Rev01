@@ -51,6 +51,9 @@ import CustomerDeleteMigrationModal from './CustomerDeleteMigrationModal';
 import { SearchableSelect } from './SearchableSelect';
 import CustomerImportModal from './CustomerImportModal';
 import BulkCallTasksModal from './BulkCallTasksModal';
+import ShamsiDatePicker from './ShamsiDatePicker';
+import { CUSTOMER_ENTRY_SOURCES, entrySourceLabel } from '../utils/customerEntry';
+import { formatDateTimeToShamsi } from '../dateUtils';
 
 /**
  * A header cell that sorts on the server.
@@ -914,6 +917,60 @@ export default function CustomersView({
         </div>
       </div>
 
+      {/* When and how each customer was put on the system */}
+      <details className="bg-white rounded-xl shadow-sm border border-slate-100" data-customer-entry-filters>
+        <summary className="px-4 py-3 text-xs font-bold text-slate-700 cursor-pointer select-none flex items-center gap-2">
+          <Filter size={14} className="text-slate-400" />
+          فیلتر تاریخ و نوع ثبت
+          {(list.filters.createdFrom || list.filters.createdTo || list.filters.entrySource !== 'all') && (
+            <span className="text-[10px] bg-sky-50 text-sky-700 border border-sky-200 px-2 py-0.5 rounded-full">فعال</span>
+          )}
+        </summary>
+        <div className="px-4 pb-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
+          <div className="space-y-1">
+            <label className="block font-bold text-slate-500">ثبت شده از تاریخ</label>
+            <ShamsiDatePicker
+              value={list.filters.createdFrom}
+              onChange={(v) => list.setFilter('createdFrom', v)}
+              placeholder="از تاریخ"
+              compact
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="block font-bold text-slate-500">تا تاریخ</label>
+            <ShamsiDatePicker
+              value={list.filters.createdTo}
+              onChange={(v) => list.setFilter('createdTo', v)}
+              placeholder="تا تاریخ"
+              compact
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="block font-bold text-slate-500">نوع ثبت</label>
+            <select
+              value={list.filters.entrySource}
+              onChange={(e) => list.setFilter('entrySource', e.target.value)}
+              className="w-full border border-slate-200 rounded-lg py-1.5 px-2 bg-white focus:outline-none focus:ring-1 focus:ring-sky-500"
+              data-customer-entry-source
+            >
+              <option value="all">همه</option>
+              {CUSTOMER_ENTRY_SOURCES.map((s) => (
+                <option key={s.id} value={s.id}>{s.label}</option>
+              ))}
+            </select>
+          </div>
+          {(list.filters.createdFrom || list.filters.createdTo) && (
+            <button
+              type="button"
+              onClick={() => { list.setFilter('createdFrom', ''); list.setFilter('createdTo', ''); }}
+              className="md:col-span-3 justify-self-start text-[11px] text-sky-700 hover:underline"
+            >
+              پاک کردن تاریخ‌ها
+            </button>
+          )}
+        </div>
+      </details>
+
       {/* Customer value filters */}
       <details className="bg-white rounded-xl shadow-sm border border-slate-100">
         <summary className="px-4 py-3 text-xs font-bold text-slate-700 cursor-pointer select-none flex items-center gap-2">
@@ -1279,6 +1336,9 @@ export default function CustomersView({
                     <td className="p-3 font-bold text-slate-900">
                       <div>{isLegal ? cust.companyName : `${cust.firstName || ''} ${cust.lastName || ''}`}</div>
                       {cust.economicCode && isLegal && <div className="text-[10px] text-slate-400 font-normal mt-0.5">کد اقتصادی: {cust.economicCode}</div>}
+                      <div className="text-[10px] text-slate-400 font-normal mt-0.5" data-customer-entry={cust.entrySource || 'MANUAL'}>
+                        ثبت: {formatDateTimeToShamsi(cust.createdAt).split(' ')[0] || '-'} · {entrySourceLabel(cust.entrySource)}
+                      </div>
                     </td>
 
                     {/* Industry / Position */}
