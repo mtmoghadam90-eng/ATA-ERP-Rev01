@@ -22803,7 +22803,12 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
       new RegExp(`promptReopen\\(\\{[\\s\\S]{0,120}ACTIVITY_CATEGORY\\.${cat}`).test(readFileSync(file, "utf8")));
   }
   const hookSrc = readFileSync("src/api/useCategoryCompletion.ts", "utf8");
-  ok("reopen: never replaces a question already on screen", hookSrc.includes("setPrompt((prev) => prev ?? {"));
+  ok("reopen: questions queue rather than replace one already on screen",
+    /const prompt = queue\[0\] \?\? null/.test(hookSrc) && /prev\.some\(\(q\) => sameQuestion\(q, p\)\)/.test(hookSrc));
+  ok("request review: a new quotation asks to close «بررسی درخواست»",
+    /offerRequestReviewClose\(created\.projectId/.test(pv) && /promptCloseIfOpen\(\{[\s\S]{0,120}REQUEST_REVIEW_CATEGORY/.test(pv));
+  ok("request review: only an open group is asked about",
+    /promptCloseIfOpen[\s\S]{0,600}GROUP_CLOSED/.test(hookSrc));
 }
 
 // ── Technical Deviation List ──

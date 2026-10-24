@@ -1533,6 +1533,7 @@ head("Category reopen: a closed category asks, and reopening clears its end date
   const g = globalThis as unknown as Record<string, unknown>;
   const realFetch = g.fetch;
   let status = "اتمام کار";
+  let reviewStatus: string | null = null;
   const puts: Record<string, unknown>[] = [];
   const posts: Record<string, unknown>[] = [];
   g.fetch = async (url: unknown, init?: { method?: string; body?: string }) => {
@@ -1543,7 +1544,10 @@ head("Category reopen: a closed category asks, and reopening clears its end date
       return { ok: true, status: 200, json: async () => ({ success: true, groups: [{
         id: "g1", projectId: "p1", categoryId: "c1", categoryName: "پیش‌فاکتورها و مهندسی فروش",
         status, startDate: "2026-09-01", endDate: "2026-09-20",
-      }] }), text: async () => "{}" } as unknown as Response;
+      }, ...(reviewStatus ? [{
+        id: "g2", projectId: "p1", categoryId: "c2", categoryName: "بررسی درخواست",
+        status: reviewStatus, startDate: "2026-08-20",
+      }] : [])] }), text: async () => "{}" } as unknown as Response;
     }
     if (method === "PUT") puts.push(body);
     if (method === "POST") posts.push(body);
@@ -1591,6 +1595,41 @@ head("Category reopen: a closed category asks, and reopening clears its end date
   await settle();
   ok("a close question already on screen is never replaced by a reopen one",
     hook!.prompt?.mode !== "reopen" && hook!.prompt?.message === "ببندم؟");
+
+  await act(async () => { hook!.dismissPrompt(); });
+  ok("dismissing leaves nothing on screen", hook!.prompt === null);
+
+  reviewStatus = "جاری";
+  await act(async () => {
+    await hook!.promptCloseIfOpen({ projectId: "p1", categoryName: "بررسی درخواست", message: "پیش‌فاکتور صادر شد؛ ببندم؟" });
+  });
+  await settle();
+  ok("a quotation issued asks to close an open «بررسی درخواست»",
+    hook!.prompt?.mode !== "reopen" && hook!.prompt?.categoryName === "بررسی درخواست");
+
+  await act(async () => {
+    await hook!.promptReopen({ projectId: "p1", categoryName: "پیش‌فاکتورها و مهندسی فروش", reason: "P3" });
+  });
+  await settle();
+  ok("a second question about another category waits behind the first",
+    hook!.prompt?.categoryName === "بررسی درخواست");
+  await act(async () => { hook!.dismissPrompt(); });
+  ok("and is shown once the first is answered", hook!.prompt?.mode === "reopen");
+  await act(async () => { hook!.dismissPrompt(); });
+
+  reviewStatus = "اتمام کار";
+  await act(async () => {
+    await hook!.promptCloseIfOpen({ projectId: "p1", categoryName: "بررسی درخواست", message: "x" });
+  });
+  await settle();
+  ok("an already closed «بررسی درخواست» asks nothing", hook!.prompt === null);
+
+  reviewStatus = null;
+  await act(async () => {
+    await hook!.promptCloseIfOpen({ projectId: "p1", categoryName: "بررسی درخواست", message: "x" });
+  });
+  await settle();
+  ok("a project that never opened it asks nothing", hook!.prompt === null);
 
   act(() => { root.unmount(); });
   host.remove();

@@ -118,6 +118,7 @@ import { ensureVariantForAttributes, updateProductById as applyProductChange } f
 import { priceInWarehouseCurrency } from "../utils/finance";
 import { computeProformaTotals } from "../utils/proformaTotals";
 import type { useCategoryCompletion } from "../api/useCategoryCompletion";
+import { REQUEST_REVIEW_CATEGORY } from "../utils/requestReview";
 import { PROJECT_STATUSES } from "../utils/moduleStatuses";
 
 // Helper functions for dynamic delivery time notes generation
@@ -355,11 +356,23 @@ export default function ProformasView({
       // A quotation written into a category this project has already closed —
       // the next version after a cancelled one — asks whether to reopen it.
       if (askReopen) offerCategoryReopen(created.projectId ?? data.projectId, created.proformaNumber);
+      // Issuing a quotation is what «بررسی درخواست» was for, so it asks
+      // whether that category is finished — only while it is still open.
+      offerRequestReviewClose(created.projectId ?? data.projectId, created.proformaNumber);
       return created;
     } catch (err) {
       reportError(err, 'ثبت پیش‌فاکتور با خطا مواجه شد.');
       return null;
     }
+  };
+
+  /** See `useCategoryCompletion.promptCloseIfOpen` — it asks only while the group is open. */
+  const offerRequestReviewClose = (projectId: string | null | undefined, proformaNumber: string) => {
+    void categoryCompletion?.promptCloseIfOpen({
+      projectId,
+      categoryName: REQUEST_REVIEW_CATEGORY,
+      message: `پیش‌فاکتور ${proformaNumber} برای این پروژه صادر شد. آیا می‌خواهید وضعیت فعالیت‌های «${REQUEST_REVIEW_CATEGORY}» این پروژه را به «اتمام کار» تغییر دهید؟`,
+    });
   };
 
   /** See `useCategoryCompletion.promptReopen` — it asks only when the group is closed. */
