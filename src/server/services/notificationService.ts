@@ -4,6 +4,7 @@ import { ListQuery, ListResult, buildResult, paginationArgs } from "../listing";
 import { AuthUser } from "../auth";
 import { toNullableString } from "../childSync";
 import { loadSettings } from "../settings";
+import { attachmentListColumn, normalizeAttachments, parseAttachmentList } from "../../utils/attachments";
 
 /**
  * The inbox: notices addressed to one user, and what that user has already
@@ -21,6 +22,7 @@ export const NOTIFICATION_SORTABLE = ["createdAt", "isRead"] as const;
 const NOTIFICATION_SELECT = {
   id: true, module: true, title: true, description: true,
   projectId: true, itemId: true, activityId: true, isRead: true, createdAt: true,
+  attachments: true,
 } satisfies Prisma.ModuleNotificationSelect;
 
 /**
@@ -104,6 +106,8 @@ export async function listNotifications(
       projectId: row.projectId ?? target?.projectId ?? null,
       groupId: target?.groupId ?? null,
       activityId: target?.activityId ?? null,
+      // The files handed over with a task or a notice («ارسال به همکار»).
+      attachments: parseAttachmentList(row.attachments),
     };
   });
 
@@ -160,6 +164,8 @@ export async function notifyUser(input: {
   itemId?: string | null;
   /** The feed message the notice is about — what clicking it scrolls to. */
   activityId?: string | null;
+  /** Files the notice carries — a «فقط اطلاع» from `taskHandoffService`. */
+  attachments?: unknown;
   actorUserId?: string | null;
 }): Promise<void> {
   if (!input.userId || input.userId === input.actorUserId) return;
@@ -173,6 +179,7 @@ export async function notifyUser(input: {
       projectId: toNullableString(input.projectId, 36),
       itemId: toNullableString(input.itemId, 36),
       activityId: toNullableString(input.activityId, 36),
+      attachments: attachmentListColumn(normalizeAttachments(input.attachments ?? [])),
     },
   });
 }

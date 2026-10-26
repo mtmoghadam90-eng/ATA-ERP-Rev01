@@ -5,14 +5,14 @@ import {
   RefreshCcw, User as UserIcon,
 } from 'lucide-react';
 import FollowUpCompletionModal from './FollowUpCompletionModal';
-import TaskCompletionModal from './TaskCompletionModal';
+import TaskCompletionModal, { type TaskCompletionExtras } from './TaskCompletionModal';
 import { NextActionPrompt } from './NextActionModal';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { ApiError } from '../api/client';
 import {
   ProjectFollowUpQuote, ProjectFollowUpReport, ProjectTaskRow, salesFollowUpApi,
 } from '../api/salesFollowUp';
-import { tasksApi } from '../api/tasks';
+import { sendHandoff, tasksApi } from '../api/tasks';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { formatMoney } from '../numUtils';
 import { addDaysToShamsi, getTodayShamsi } from '../dateUtils';
@@ -51,7 +51,7 @@ interface Props {
    * same default the ten forms use. The server decides what this account may
    * read; nothing on this screen does.
    */
-  currentUser?: { fullName?: string | null } | null;
+  currentUser?: { id?: string | null; fullName?: string | null } | null;
   /** Asks about closing the project's proforma activity category on a settlement. */
   categoryCompletion?: ReturnType<typeof useCategoryCompletion>;
 }
@@ -177,14 +177,19 @@ export default function ProjectFollowUpTab({
    * over anything changed since — the rule `taskToWriteInput` keeps by not
    * carrying the note at all.
    */
-  const confirmTick = async (note: string, withNextAction: boolean) => {
+  const confirmTick = async (note: string, withNextAction: boolean, extras?: TaskCompletionExtras) => {
     const task = ticking;
     if (!task) return;
     setTicking(null);
     let done: ProjectTaskRow | undefined;
     try {
-      await tasksApi.update(task.id, { status: TASK_DONE, completionNote: note.trim() || null });
+      await tasksApi.update(task.id, {
+        status: TASK_DONE, completionNote: note.trim() || null,
+        completionAttachments: extras?.attachments ?? [],
+      });
       done = task;
+      const handoffProblem = await sendHandoff(task.id, extras?.handoff);
+      if (handoffProblem) setError(handoffProblem);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'ثبت انجام کار با خطا مواجه شد.');
@@ -554,7 +559,13 @@ export default function ProjectFollowUpTab({
         <TaskCompletionModal
           task={ticking}
           onCancel={() => setTicking(null)}
-          onConfirm={(note, withNextAction) => void confirmTick(note, withNextAction)}
+          users={users}
+          currentUserId={currentUser?.id}
+          // This tab is the project's own, so the work always belongs to a job.
+          hasProject
+          categories={settings.activityCategories}
+          priorityOptions={settings.dropdownItems?.taskPriorities}
+          onConfirm={(note, withNextAction, _result, extras) => void confirmTick(note, withNextAction, extras)}
         />
       )}
 

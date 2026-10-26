@@ -765,6 +765,12 @@ export interface Task {
   completionNote?: string;
   /** What a call to a customer came to — chosen on the tick (`src/utils/contactResults.ts`). */
   contactResult?: string;
+  /** Files handed over with the task, and the files of its «شرح اقدام». */
+  attachments?: import('./utils/attachments').ActivityAttachment[];
+  completionAttachments?: import('./utils/attachments').ActivityAttachment[];
+  /** «در ادامهٔ وظیفه» — the task this one continues. */
+  previousTaskId?: string;
+  previousTaskTitle?: string;
   /** When it was raised. What «تاریخ ارجاع» sorts the board by. */
   createdAt?: string;
   /** The job behind the task — code, name and customer — joined by the server. */

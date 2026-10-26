@@ -14,6 +14,8 @@ import type { WorkLoad } from '../api/tasks';
 import type { ActivityJump } from '../utils/notificationJump';
 import CardProjectLink from './CardProjectLink';
 import CustomerInfoButton from './CustomerInfoButton';
+import TaskFileLinks from './TaskFileLinks';
+import type { ActivityAttachment } from '../utils/attachments';
 
 /**
  * The three columns, over both kinds of work.
@@ -57,6 +59,10 @@ export interface BoardTaskCard {
   followUpResult?: string | null;
   contactResult?: string | null;
   completionNote?: string | null;
+  /** «در ادامهٔ وظیفهٔ …», and the files that came with it and with its «شرح اقدام». */
+  previousTaskTitle?: string | null;
+  attachments?: ActivityAttachment[];
+  completionAttachments?: ActivityAttachment[];
 }
 
 export interface BoardReferralCard {
@@ -337,6 +343,17 @@ export default function WorkBoard({
                         {isOpen ? card.title : detail.summary}
                       </button>
                     </div>
+
+                    {card.kind === 'task' && (
+                      <div className="pr-6">
+                        <TaskFileLinks
+                          compact
+                          previousTaskTitle={card.previousTaskTitle}
+                          attachments={card.attachments}
+                          completionAttachments={card.completionAttachments}
+                        />
+                      </div>
+                    )}
 
                     <div className="flex flex-wrap items-center gap-1 pr-6">
                       {/*

@@ -32,6 +32,7 @@ import { useRevalidate } from '../api/liveData';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { REFERRAL_DONE, REFERRAL_PENDING, referralIsOpen } from '../utils/workBoard';
 import { unreadNoticeCount } from '../utils/notificationCount';
+import TaskFileLinks from './TaskFileLinks';
 
 /**
  * The inbox: referrals to and from the signed-in user, plus their notices.
@@ -401,6 +402,7 @@ export default function ReferralsView({
       projectId: n.projectId,
       groupId: n.groupId ?? null,
       activityId: n.activityId ?? null,
+      attachments: n.attachments ?? [],
       // A notice announcing a reply is read once that reply is.
       timestamp: new Date(n.createdAt).getTime(),
       read: n.isRead || (!!n.itemId && readItemsSet.has(n.itemId)),
@@ -495,6 +497,8 @@ export default function ReferralsView({
     project: { id: string; code: string; name: string } | null;
     /** A module notice is marked read once it has become a task. */
     noticeId?: string;
+    /** The feed message the notice is about — the task's `sourceActivityId`. */
+    activityId?: string | null;
   } | null>(null);
 
   const openTaskFromNotice = (notice: NonNullable<typeof taskFromNotice>) => {
@@ -528,6 +532,8 @@ export default function ReferralsView({
       relatedToType: projectId ? 'پروژه' : 'عمومی',
       relatedToId: projectId,
       relatedToName: taskFromNotice.project?.name ?? null,
+      // So «ارسال به همکار» from this task files under the message's category.
+      sourceActivityId: taskFromNotice.activityId ?? null,
     });
     const noticeId = taskFromNotice.noticeId;
     setTaskFromNotice(null);
@@ -759,9 +765,14 @@ export default function ReferralsView({
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-slate-500 pr-6 leading-relaxed">
+                    <p className="text-xs text-slate-500 pr-6 leading-relaxed whitespace-pre-line">
                       {notif.description}
                     </p>
+                    {notif.attachments.length > 0 && (
+                      <div className="pr-6 pt-1">
+                        <TaskFileLinks attachments={notif.attachments} />
+                      </div>
+                    )}
                     <div className="text-[10px] text-slate-400 pr-6 pt-1">
                       {new Date(notif.timestamp).toLocaleDateString('fa-IR', { hour: '2-digit', minute: '2-digit' })}
                     </div>
@@ -780,6 +791,7 @@ export default function ReferralsView({
                         projectId: notif.projectId ?? null,
                         project: null,
                         noticeId: notif.read ? undefined : notif.id,
+                        activityId: notif.activityId ?? null,
                       });
                     }}
                     data-task-from-notice={notif.id}
@@ -927,6 +939,7 @@ export default function ReferralsView({
                                 project: project
                                   ? { id: project.id, code: project.code ?? '', name: project.name ?? '' }
                                   : null,
+                                activityId: item.activity.id ?? null,
                               });
                             }}
                             data-task-from-reply={`${group.id}-${i}`}

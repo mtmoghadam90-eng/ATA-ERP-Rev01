@@ -3,6 +3,7 @@ import type {
   MeetingAssignee, MeetingItemKind, MeetingItemState, MeetingParticipant, MeetingStatus,
 } from "../utils/meetingMinutes";
 import type { ActivityAttachment } from "../utils/attachments";
+import type { HandoffEntry } from "../utils/taskHandoff";
 
 /** «صورتجلسات». Rows are what `meetingService.toRow` answers. */
 
@@ -139,11 +140,32 @@ export interface MeetingActionRow {
   projectName: string | null;
 }
 
+/** One task in an action row's trail (`meetingItemTrail` on the server). */
+export interface MeetingTrailTask {
+  id: string;
+  previousTaskId: string | null;
+  depth: number;
+  title: string;
+  description: string | null;
+  status: string;
+  assignedToName: string | null;
+  createdByName: string | null;
+  dueDateJalali: string | null;
+  completedAtJalali: string | null;
+  completionNote: string | null;
+  attachments: ActivityAttachment[];
+  completionAttachments: ActivityAttachment[];
+  handoffs: HandoffEntry[];
+}
+
 export const meetingsApi = {
   get: (id: string) => api.get<{ meeting: MeetingRow }>(`/api/meetings/${id}`),
   create: (input: MeetingInput) => api.post<MeetingSaveResult>("/api/meetings", input),
   update: (id: string, input: MeetingInput) => api.put<MeetingSaveResult>(`/api/meetings/${id}`, input),
   remove: (id: string) => api.delete<Record<string, never>>(`/api/meetings/${id}`),
+  /** «اقدامات انجام شده» — what was done on one action row, and what it led to. */
+  itemTrail: (meetingId: string, itemId: string) =>
+    api.get<{ trail: MeetingTrailTask[] }>(`/api/meetings/${meetingId}/items/${itemId}/trail`).then((r) => r.trail),
   openActions: (projectId: string, exclude?: string | null) =>
     api.get<{ items: CarryOverItem[] }>("/api/meetings/open-actions", {
       projectId, ...(exclude ? { exclude } : {}),

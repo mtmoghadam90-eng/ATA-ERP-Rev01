@@ -2,7 +2,8 @@ import { canDeleteTask } from '../utils/taskDeletion';
 import React, { useEffect, useState } from 'react';
 import type { ActivityJump } from '../utils/notificationJump';
 import { cardProjectJump } from '../utils/notificationJump';
-import TaskCompletionModal from './TaskCompletionModal';
+import TaskFileLinks from './TaskFileLinks';
+import TaskCompletionModal, { type TaskCompletionExtras } from './TaskCompletionModal';
 import ContactResultsReport from './ContactResultsReport';
 import { 
   Plus, 
@@ -57,7 +58,7 @@ import CustomFieldsDetailView from './CustomFieldsDetailView';
 import QuickAddModal from './QuickAddModal';
 import { Bell, Loader2 } from 'lucide-react';
 import { ApiError } from '../api/client';
-import { rowToTask, tasksApi, taskToWriteInput, type WorkLoad } from '../api/tasks';
+import { rowToTask, sendHandoff, tasksApi, taskToWriteInput, type WorkLoad } from '../api/tasks';
 import { useTaskList } from '../api/useTaskList';
 import { useUserDirectory } from '../api/useUserDirectory';
 import { useEntitySearch } from '../api/useEntitySearch';
@@ -841,7 +842,9 @@ export default function TasksView({
    * same reason it is refused for a chase: only this gesture and
    * `completeFollowUp` ever write it.
    */
-  const confirmCompletion = async (note: string, withNextAction: boolean, contactResult?: string | null) => {
+  const confirmCompletion = async (
+    note: string, withNextAction: boolean, contactResult?: string | null, extras?: TaskCompletionExtras,
+  ) => {
     const task = completingTask;
     if (!task) return;
     setCompletingTask(null);
@@ -864,8 +867,12 @@ export default function TasksView({
         completionNote: note.trim() || null,
         // Sent only when the modal asked it; absent leaves the column alone.
         ...(contactResult !== undefined ? { contactResult } : {}),
+        completionAttachments: extras?.attachments ?? [],
       });
       done = task;
+      // «ارسال به همکار» only once the tick has landed — see `sendHandoff`.
+      const handoffProblem = await sendHandoff(task.id, extras?.handoff);
+      if (handoffProblem) alert(handoffProblem);
       void topUpBoard();
       list.refresh();
     } catch (err) {
@@ -928,6 +935,9 @@ export default function TasksView({
       followUpResult: task.followUpResult,
       contactResult: task.contactResult,
       completionNote: task.completionNote,
+      previousTaskTitle: task.previousTaskTitle,
+      attachments: task.attachments,
+      completionAttachments: task.completionAttachments,
     }));
 
     /*
@@ -1611,6 +1621,14 @@ export default function TasksView({
               </div>
             )}
 
+            <div className="w-full pr-8 sm:pr-9">
+              <TaskFileLinks
+                previousTaskTitle={task.previousTaskTitle}
+                attachments={task.attachments}
+                completionAttachments={task.completionAttachments}
+              />
+            </div>
+
             {/* Meta */}
             <div className="flex flex-wrap items-center gap-2 w-full text-xs pt-3 border-t border-slate-100">
               <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${getPriorityClass(task.priority)}`}>
@@ -1880,7 +1898,11 @@ export default function TasksView({
         task={completingTask}
         contactResults={settings.dropdownItems?.contactResults}
         onCancel={() => setCompletingTask(null)}
-        onConfirm={(note, withNextAction, contactResult) => { void confirmCompletion(note, withNextAction, contactResult); }}
+        users={users}
+        currentUserId={currentUser?.id}
+        categories={settings.activityCategories}
+        priorityOptions={settings.dropdownItems?.taskPriorities}
+        onConfirm={(note, withNextAction, contactResult, extras) => { void confirmCompletion(note, withNextAction, contactResult, extras); }}
       />
 
       {followUpRow && (

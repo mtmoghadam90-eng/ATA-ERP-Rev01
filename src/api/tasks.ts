@@ -2,6 +2,8 @@ import type { MovableLane } from "../utils/workBoard";
 import { ListResponse, api } from "./client";
 import type { Task } from "../types";
 import type { ContactResultSummary } from "../utils/contactResults";
+import { parseAttachmentList, type ActivityAttachment } from "../utils/attachments";
+import type { HandoffMode } from "../utils/taskHandoff";
 
 /**
  * How much work this person is holding, and what they are held to.
@@ -50,6 +52,12 @@ export interface TaskRow {
   completionNote?: string | null;
   /** What a call to a customer came to (`src/utils/contactResults.ts`). */
   contactResult?: string | null;
+  /** Files handed over with the task, and files attached to «شرح اقدام» (JSON lists). */
+  attachments?: string | null;
+  completionAttachments?: string | null;
+  /** The task this one continues («در ادامهٔ وظیفه»), and its title. */
+  previousTaskId?: string | null;
+  previousTaskTitle?: string | null;
   /**
    * The job behind the task, resolved on the server.
    *
@@ -154,6 +162,12 @@ export interface TaskWriteInput {
   completionNote?: string | null;
   /** Written on the same tick as the note, and also not in `taskToWriteInput`. */
   contactResult?: string | null;
+  /** The files of «شرح اقدام», written on the tick with the note. */
+  completionAttachments?: ActivityAttachment[];
+  /** Files handed over with a new task. */
+  attachments?: ActivityAttachment[];
+  /** The feed message a task was raised from; settled at creation. */
+  sourceActivityId?: string | null;
   customValues?: unknown;
 }
 
@@ -223,7 +237,45 @@ export const tasksApi = {
    */
   ackReminder: (id: string, occurrence: string) =>
     api.post<{ success: boolean }>(`/api/tasks/${id}/reminder-ack`, { occurrence }),
+  /**
+   * «ارسال به همکار» — after the tick has landed, hand the work on as a task,
+   * a referral or a notice (`src/utils/taskHandoff.ts`).
+   */
+  handoff: (id: string, body: HandoffBody) =>
+    api.post<{
+      success: boolean; mode: HandoffMode; taskId: string | null;
+      activityId: string | null; categoryName: string | null;
+    }>(`/api/tasks/${id}/handoff`, body),
 };
+
+/**
+ * The handoff half of a tick, after the completion has landed.
+ *
+ * Two requests, never one: the completion is true on its own, so a handoff the
+ * server refuses leaves the task finished and answers with the sentence to show
+ * — rather than throwing and making the tick read as having failed.
+ */
+export async function sendHandoff(taskId: string, handoff: HandoffBody | null | undefined): Promise<string | null> {
+  if (!handoff) return null;
+  try {
+    await tasksApi.handoff(taskId, handoff);
+    return null;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return `کار ثبت شد، ولی ارسال به همکار انجام نشد:\n${reason}`;
+  }
+}
+
+/** What the completion modal sends for «ارسال به همکار». */
+export interface HandoffBody {
+  mode: HandoffMode;
+  recipientUserId: string;
+  text: string;
+  attachments: ActivityAttachment[];
+  dueDate?: string | null;
+  priority?: string | null;
+  categoryId?: string | null;
+}
 
 /* ------------------------------- adapter ------------------------------- */
 
@@ -262,6 +314,10 @@ export function rowToTask(row: TaskRow): Task {
     followUpResult: row.followUpResult ?? undefined,
     completionNote: row.completionNote ?? undefined,
     contactResult: row.contactResult ?? undefined,
+    attachments: parseAttachmentList(row.attachments),
+    completionAttachments: parseAttachmentList(row.completionAttachments),
+    previousTaskId: row.previousTaskId ?? undefined,
+    previousTaskTitle: row.previousTaskTitle ?? undefined,
     createdAt: row.createdAt,
     relatedProject: row.relatedProject ?? undefined,
     priority: row.priority as Task["priority"],

@@ -13,6 +13,7 @@ import {
 import { topUpActiveWork } from "../services/workLoadService";
 import { contactResultReport } from "../services/contactResultService";
 import { createBulkCallTasks } from "../services/bulkCallTaskService";
+import { handoffFromTask, readHandoffRequest } from "../services/taskHandoffService";
 
 const WRITABLE: (keyof TaskInput)[] = [
   "title", "description", "relatedToType", "relatedToId", "relatedToName",
@@ -34,6 +35,9 @@ const WRITABLE: (keyof TaskInput)[] = [
   "completionNote",
   // The call's result, on the same tick and under the same refusal.
   "contactResult",
+  // The files of «شرح اقدام» (same refusal), the files a task carries, and the
+  // feed message a task was raised from (honoured at creation only).
+  "completionAttachments", "attachments", "sourceActivityId",
   /*
    * `taskKind` is writable, and **`SALES_FOLLOW_UP` is refused in the service**.
    *
@@ -322,6 +326,25 @@ export function registerTaskRoutes(app: express.Express, deps: RouteDeps): void 
       res.json({ success: true });
     } catch (err) {
       sendError(res, err, "POST /api/tasks/:id/reminder-ack");
+    }
+  });
+
+  /*
+   * «ارسال به همکار» from a task just ticked off — a task, a referral or a
+   * notice, with the words and files of its «شرح اقدام». `taskHandoff.ts`.
+   */
+  app.post("/api/tasks/:id/handoff", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const outcome = await handoffFromTask(req.params.id, readHandoffRequest(req.body), user, getTodayShamsi());
+      if (!outcome.ok) {
+        res.status(outcome.status).json({ success: false, error: outcome.error });
+        return;
+      }
+      res.json({ success: true, mode: outcome.mode, taskId: outcome.taskId, activityId: outcome.activityId, categoryName: outcome.categoryName });
+    } catch (err) {
+      sendError(res, err, "POST /api/tasks/:id/handoff");
     }
   });
 
