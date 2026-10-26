@@ -1,5 +1,6 @@
 import { parseTaskLinks } from "../../utils/meetingMinutes";
 import { canDeleteTask } from "../../utils/taskDeletion";
+import { attachmentListColumn, normalizeAttachments } from "../../utils/attachments";
 import { Prisma } from "@prisma/client";
 import { getDb } from "../db";
 import { ListQuery, ListResult, buildResult, paginationArgs, searchClause } from "../listing";
@@ -339,6 +340,11 @@ const LIST_SELECT = {
   startedAtJalali: true,
   // The task card draws a custom-fields block from these.
   customValues: true,
+  // «ارسال به همکار»: the files it came with, the files of its «شرح اقدام»,
+  // and the task it continues (named on the card as «در ادامهٔ …»).
+  attachments: true,
+  completionAttachments: true,
+  previousTaskId: true,
 } satisfies Prisma.TaskSelect;
 
 export async function listTasks(
@@ -371,7 +377,28 @@ export async function listTasks(
   ]);
 
   return buildResult(
-    await withProjectContext(rows) as unknown as Record<string, unknown>[], total, q);
+    await withPreviousTitles(await withProjectContext(rows)) as unknown as Record<string, unknown>[], total, q);
+}
+
+/** «در ادامهٔ وظیفهٔ …» — the title of the task each row continues, in one read. */
+async function withPreviousTitles<T extends { previousTaskId?: string | null }>(
+  rows: T[],
+): Promise<(T & { previousTaskTitle: string | null })[]> {
+  const ids = [...new Set(rows.map((r) => r.previousTaskId).filter((x): x is string => !!x))];
+  if (ids.length === 0) return rows.map((r) => ({ ...r, previousTaskTitle: null }));
+  const prev = await getDb().task.findMany({ where: { id: { in: ids } }, select: { id: true, title: true } });
+  const byId = new Map(prev.map((p) => [p.id, p.title]));
+  return rows.map((r) => ({ ...r, previousTaskTitle: (r.previousTaskId && byId.get(r.previousTaskId)) || null }));
+}
+
+/** The job one task belongs to — its own project, its quotation's, or its meeting topic's. */
+export async function projectOfTask(task: {
+  id: string; relatedToType?: string | null; relatedToId?: string | null;
+}): Promise<TaskProjectContext | null> {
+  const [row] = await withProjectContext([task]);
+  const ctx = row?.relatedProject ?? null;
+  // A customer-only context has no project: its code and name are empty.
+  return ctx && ctx.code ? ctx : null;
 }
 
 /** The job a task belongs to, as the card prints it. */
@@ -635,6 +662,12 @@ export interface TaskInput {
    * that call's answer is `followUpResult`, written by its own flow.
    */
   contactResult?: string | null;
+  /** The files a task was handed over with (`taskHandoff.ts`). */
+  attachments?: unknown;
+  /** The files attached to «شرح اقدام» on the tick; refused for a chase with the note. */
+  completionAttachments?: unknown;
+  /** The feed message a task was raised from. Written at creation only. */
+  sourceActivityId?: string | null;
   customValues?: unknown;
 }
 
@@ -668,6 +701,10 @@ function scalarData(input: TaskInput): Record<string, unknown> {
   }
   if ("completionNote" in input) set("completionNote", toNullableString(input.completionNote));
   if ("contactResult" in input) set("contactResult", toNullableString(input.contactResult, 200));
+  if ("attachments" in input) set("attachments", attachmentListColumn(normalizeAttachments(input.attachments)));
+  if ("completionAttachments" in input) {
+    set("completionAttachments", attachmentListColumn(normalizeAttachments(input.completionAttachments)));
+  }
   if ("customValues" in input) set("customValues", toJsonColumn(input.customValues));
 
   return { ...out, ...expandDateFields(input as Record<string, unknown>, TASK_DATE_FIELDS) };
@@ -942,7 +979,13 @@ export function creatableKindRefusal(kind: unknown): string | null {
     : null;
 }
 
-export async function createTask(input: TaskInput, user: AuthUser, todayJalali: string) {
+export async function createTask(
+  input: TaskInput,
+  user: AuthUser,
+  todayJalali: string,
+  /** The task this one continues — only `handoffFromTask` names one. */
+  continues?: { previousTaskId: string },
+) {
   const refusal = creatableKindRefusal(input.taskKind);
   if (refusal) throw new Error(refusal);
 
@@ -976,6 +1019,9 @@ export async function createTask(input: TaskInput, user: AuthUser, todayJalali: 
       ...(input.taskKind === undefined
         ? {}
         : { taskKind: toNullableString(input.taskKind, 30) ?? "GENERAL" }),
+      // Facts about how the record was raised, settled once, never edited.
+      ...(input.sourceActivityId ? { sourceActivityId: toNullableString(input.sourceActivityId, 36) } : {}),
+      ...(continues ? { previousTaskId: continues.previousTaskId } : {}),
       /*
        * The account behind the name, and the creator only as a last resort.
        *
@@ -1160,7 +1206,7 @@ export async function updateTask(id: string, input: TaskInput, user: AuthUser, t
     );
   }
 
-  if ("completionNote" in input || "contactResult" in input) {
+  if ("completionNote" in input || "contactResult" in input || "completionAttachments" in input) {
     const noteRefusal = completionNoteRefusal(before.taskKind);
     if (noteRefusal) throw new Error(noteRefusal);
   }

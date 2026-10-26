@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { MAX_TRAIL_TASKS, orderTrail, parseHandoffs } from "../../utils/taskHandoff";
 import { getDb } from "../db";
 import { AuthUser, canSeeAllMeetings } from "../auth";
 import { expandDateFields, jalaliRangeFilter } from "../dates";
@@ -1108,4 +1109,85 @@ export async function deleteMeeting(
     todayJalali,
   ));
   return "ok";
+}
+
+/* ------------------------- an action item's trail ------------------------ */
+
+/** One task in the trail of a meeting action, as «اقدامات انجام شده» draws it. */
+export interface MeetingTrailTask {
+  id: string;
+  previousTaskId: string | null;
+  depth: number;
+  title: string;
+  description: string | null;
+  status: string;
+  assignedToName: string | null;
+  createdByName: string | null;
+  dueDateJalali: string | null;
+  completedAtJalali: string | null;
+  completionNote: string | null;
+  attachments: ReturnType<typeof parseAttachmentList>;
+  completionAttachments: ReturnType<typeof parseAttachmentList>;
+  handoffs: ReturnType<typeof parseHandoffs>;
+}
+
+/**
+ * Everything done on one action row: each assignee's own task, and every task
+ * colleagues raised in continuing it (`previousTaskId`), with what each
+ * recorded and handed on.
+ *
+ * Read through the meeting's own visibility — somebody who may open the
+ * minutes may read what was done on them — and bounded (`MAX_TRAIL_TASKS`).
+ * Answers null when the meeting or the item cannot be seen.
+ */
+export async function meetingItemTrail(
+  meetingId: string,
+  itemId: string,
+  user: AuthUser,
+): Promise<MeetingTrailTask[] | null> {
+  const db = getDb();
+  const visibility = visibilityClause(user);
+  const meeting = await db.meeting.findFirst({
+    where: visibility ? { AND: [{ id: meetingId }, visibility] } : { id: meetingId },
+    select: { id: true, items: { where: { id: itemId }, select: { id: true, taskLinks: true } } },
+  });
+  const item = meeting?.items[0];
+  if (!item) return null;
+  const roots = parseTaskLinks(item.taskLinks).map((l) => l.taskId);
+  if (roots.length === 0) return [];
+
+  const select = {
+    id: true, previousTaskId: true, title: true, description: true, status: true,
+    assignedToName: true, createdByName: true, dueDateJalali: true, completedAtJalali: true,
+    completionNote: true, attachments: true, completionAttachments: true, handoffs: true,
+  } as const;
+  const found = await db.task.findMany({ where: { id: { in: roots } }, select });
+  // Down the chain one generation at a time — a chain is a handful of tasks.
+  let frontier = found.map((t) => t.id);
+  while (frontier.length > 0 && found.length < MAX_TRAIL_TASKS) {
+    const next = await db.task.findMany({
+      where: { previousTaskId: { in: frontier }, id: { notIn: found.map((t) => t.id) } },
+      select,
+      take: MAX_TRAIL_TASKS - found.length,
+    });
+    found.push(...next);
+    frontier = next.map((t) => t.id);
+  }
+
+  return orderTrail(roots, found).map(({ task, depth }) => ({
+    id: task.id,
+    previousTaskId: task.previousTaskId,
+    depth,
+    title: task.title,
+    description: task.description,
+    status: task.status,
+    assignedToName: task.assignedToName,
+    createdByName: task.createdByName,
+    dueDateJalali: task.dueDateJalali,
+    completedAtJalali: task.completedAtJalali,
+    completionNote: task.completionNote,
+    attachments: parseAttachmentList(task.attachments),
+    completionAttachments: parseAttachmentList(task.completionAttachments),
+    handoffs: parseHandoffs(task.handoffs),
+  }));
 }

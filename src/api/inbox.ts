@@ -77,6 +77,8 @@ export interface NotificationRow {
   /** The category and message the notice is about, resolved by the server. */
   groupId?: string | null;
   activityId?: string | null;
+  /** Files handed over with the notice («ارسال به همکار»). */
+  attachments?: ActivityAttachment[];
   isRead: boolean;
   createdAt: string;
 }

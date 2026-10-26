@@ -10400,7 +10400,7 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   eq("...an ordinary task is not refused", completionNoteRefusal("GENERAL"), null);
   eq("...nor a next action", completionNoteRefusal("NEXT_ACTION"), null);
   ok("the refusal is checked where the note is written",
-    /if \("completionNote" in input \|\| "contactResult" in input\) \{[\s\S]{0,160}completionNoteRefusal\(before\.taskKind\)/
+    /if \("completionNote" in input \|\| "contactResult" in input \|\| "completionAttachments" in input\) \{[\s\S]{0,160}completionNoteRefusal\(before\.taskKind\)/
       .test(taskService));
 
   /*
@@ -10410,7 +10410,7 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    */
   const tasksView = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
   ok("the tick's write names the status, the note and (only when asked) the call's result",
-    /tasksApi\.update\(task\.id, \{\s*status: 'انجام شده',\s*completionNote: note\.trim\(\) \|\| null,\s*\.\.\.\(contactResult !== undefined \? \{ contactResult \} : \{\}\),\s*\}\)/
+    /tasksApi\.update\(task\.id, \{\s*status: 'انجام شده',\s*completionNote: note\.trim\(\) \|\| null,\s*\.\.\.\(contactResult !== undefined \? \{ contactResult \} : \{\}\),\s*completionAttachments: extras\?\.attachments \?\? \[\],\s*\}\)/
       .test(tasksView));
   ok("...and the whole-record adapter still leaves the note alone",
     !/completionNote/.test(
@@ -10458,7 +10458,7 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
    */
   ok("...and each button says which one was pressed",
     /onClick=\{\(\) => send\(false\)\}/.test(tickModal) && /onClick=\{\(\) => send\(true\)\}/.test(tickModal)
-    && /const send = \(withNext: boolean\) =>\s*onConfirm\(note, withNext,/.test(tickModal));
+    && /const send = \(withNext: boolean\) => \{[\s\S]{0,500}onConfirm\(note, withNext,/.test(tickModal));
 
   /*
    * **The completion lands first, and a refused one raises nothing.** `ask`
@@ -21758,7 +21758,7 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
    */
   const tick = tab.slice(tab.indexOf("const confirmTick"), tab.indexOf("const submitSchedule"));
   ok("the tick writes the status and the note and nothing else",
-    /tasksApi\.update\(task\.id, \{ status: TASK_DONE, completionNote:/.test(tick));
+    /tasksApi\.update\(task\.id, \{\s*status: TASK_DONE, completionNote: note\.trim\(\) \|\| null,\s*completionAttachments: extras\?\.attachments \?\? \[\],\s*\}\)/.test(tick));
   /*
    * The follow-on question comes **after** the write, and a refused write asks
    * nothing — `ask` reads `undefined` as «the save failed», so a tick the
@@ -23956,7 +23956,7 @@ head("Contact results: a call to a customer records what it came to");
   ok("the column is listed, writable through the input, and refused for a chase with the note",
     /followUpResult: true,\s*contactResult: true,/.test(svc)
     && /"contactResult" in input\) set\("contactResult"/.test(svc)
-    && /"completionNote" in input \|\| "contactResult" in input\) \{\s*const noteRefusal/.test(svc));
+    && /"completionNote" in input \|\| "contactResult" in input \|\| "completionAttachments" in input\) \{\s*const noteRefusal/.test(svc));
   const route = readFileSync("src/server/routes/tasks.ts", "utf8");
   ok("the route lets it through", /"completionNote",[\s\S]{0,120}"contactResult",/.test(route));
   ok("the report is registered before /api/tasks/:id",
@@ -24218,6 +24218,75 @@ head("Printed documents carry the application's own font, never Google's");
     /LOCAL_CSS_URL/.test(inline) && /isFont/.test(inline));
   ok("printing waits for the document's font, with a cap",
     /fonts\?\.ready/.test(readFileSync("src/utils/printDocument.ts", "utf8")));
+}
+
+// ── «ارسال به همکار»: a completed task hands work on as a task, referral or notice ──
+{
+  const h = await import("../src/utils/taskHandoff");
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const base = { mode: "TASK" as const, recipientUserId: "u2", text: "لیست قیمت به پیوست", attachments: [] };
+  eq("handoff: a complete request is accepted", h.handoffRefusal(base, { hasProject: false, selfUserId: "u1" }), null);
+  ok("handoff: no mode is refused", !!h.handoffRefusal({ ...base, mode: undefined }, { hasProject: true }));
+  ok("handoff: no colleague is refused", !!h.handoffRefusal({ ...base, recipientUserId: "" }, { hasProject: true }));
+  ok("handoff: sending to yourself is refused", !!h.handoffRefusal(base, { hasProject: true, selfUserId: "u2" }));
+  ok("handoff: a referral needs a project", !!h.handoffRefusal({ ...base, mode: "REFERRAL" }, { hasProject: false }));
+  eq("handoff: ...and is accepted on one", h.handoffRefusal({ ...base, mode: "REFERRAL" }, { hasProject: true }), null);
+  ok("handoff: neither words nor a file is refused", !!h.handoffRefusal({ ...base, text: "  " }, { hasProject: true }));
+  eq("handoff: a file alone is enough",
+    h.handoffRefusal({ ...base, mode: "NOTICE", text: "", attachments: [{ name: "a.pdf", size: "1 KB", url: "/uploads/a.pdf" }] }, { hasProject: false }), null);
+
+  const cats = [{ id: "c1", name: "خرید" }, { id: "c2", name: "صورتجلسات و جلسات" }, { id: "c3", name: "پیش‌فاکتور" }];
+  eq("category: the one picked wins", h.handoffCategoryId({ picked: "c3", sourceCategoryId: "c1", categories: cats }), "c3");
+  eq("category: ...a pick the company no longer lists is ignored",
+    h.handoffCategoryId({ picked: "gone", sourceCategoryId: "c1", categories: cats }), "c1");
+  eq("category: then the message the task came from", h.handoffCategoryId({ sourceCategoryId: "c1", relatedToType: "meeting", categories: cats }), "c1");
+  eq("category: a meeting's task files under «صورتجلسات»", h.handoffCategoryId({ relatedToType: "meeting", categories: cats }), "c2");
+  eq("category: a quotation's task under the quotations' category", h.handoffCategoryId({ relatedToType: "proforma", categories: cats }), "c3");
+  eq("category: otherwise a category the project already has open",
+    h.handoffCategoryId({ relatedToType: "project", openGroupCategoryIds: ["c3"], categories: cats }), "c3");
+  eq("category: and last the company's first", h.handoffCategoryId({ relatedToType: "project", categories: cats }), "c1");
+  eq("category: none listed is none", h.handoffCategoryId({ categories: [] }), null);
+
+  ok("feed text: a task or a notice never writes «@» (that would raise a referral)",
+    !h.handoffFeedText("TASK", { toName: "بهمانی", taskTitle: "تهیه لیست", text: "پیوست" }).includes("@")
+    && !h.handoffFeedText("NOTICE", { toName: "بهمانی", taskTitle: "تهیه لیست", text: "" }).includes("@"));
+  eq("title: a continuation takes the first line", h.continuationTitle("تهیه لیست", "ارسال لیست\nجزئیات"), "ارسال لیست");
+  eq("title: ...or names what it continues", h.continuationTitle("تهیه لیست", ""), "در ادامهٔ: تهیه لیست");
+
+  const entry = { mode: "NOTICE" as const, toUserId: "u2", toName: "ب", at: "x", text: "t", attachments: [] };
+  const stored = h.appendHandoff(h.appendHandoff(null, entry), { ...entry, mode: "TASK", taskId: "t9" });
+  eq("handoffs: appended, oldest first", h.parseHandoffs(stored).map((e) => e.mode).join(","), "NOTICE,TASK");
+  eq("handoffs: junk reads as nothing", h.parseHandoffs("{not json").length, 0);
+  eq("handoffs: bounded", h.parseHandoffs(Array.from({ length: 60 }).reduce<string>((acc) => h.appendHandoff(acc, entry), "[]")).length, h.MAX_HANDOFFS_PER_TASK);
+
+  const trail = h.orderTrail(["a", "b"], [
+    { id: "a", previousTaskId: null }, { id: "b", previousTaskId: null },
+    { id: "a1", previousTaskId: "a" }, { id: "a2", previousTaskId: "a1" }, { id: "b1", previousTaskId: "b" },
+  ]);
+  eq("trail: depth-first under each root", trail.map((t) => `${t.task.id}:${t.depth}`).join(" "), "a:0 a1:1 a2:2 b:0 b1:1");
+  eq("trail: a cycle is drawn once", h.orderTrail(["x"], [{ id: "x", previousTaskId: "y" }, { id: "y", previousTaskId: "x" }]).length, 2);
+
+  const route = strip(readFileSync("src/server/routes/tasks.ts", "utf8"));
+  ok("handoff: the route is registered before /api/tasks/:id",
+    route.indexOf('"/api/tasks/:id/handoff"') > 0 && route.indexOf('"/api/tasks/:id/handoff"') < route.indexOf('app.get("/api/tasks/:id"'));
+  ok("handoff: the files of «شرح اقدام» and a task's source message are writable",
+    /"completionAttachments"/.test(route) && /"sourceActivityId"/.test(route));
+  const svc = strip(readFileSync("src/server/services/taskHandoffService.ts", "utf8"));
+  ok("handoff: creates through the existing writers, never a write of its own",
+    /createTask\(/.test(svc) && /addActivity\(/.test(svc) && /upsertCategoryGroup\(/.test(svc)
+    && /notifyUser\(/.test(svc) && !/db\.task\.create\(/.test(svc) && !/projectActivity\.create\(/.test(svc));
+  ok("handoff: a closed category is reopened, not left closed", /existing\.status === GROUP_CLOSED/.test(svc) && /status: GROUP_OPEN/.test(svc));
+  ok("handoff: the notice is after the commit", /afterCommit\("task handoff notice"/.test(svc));
+  const view = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
+  ok("handoff: posted only after the completion has landed",
+    view.indexOf("completionAttachments: extras?.attachments") < view.indexOf("sendHandoff(task.id, extras?.handoff)"));
+  const meetings = strip(readFileSync("src/server/routes/meetings.ts", "utf8"));
+  ok("meeting trail: registered before /api/meetings/:id",
+    meetings.indexOf('"/api/meetings/:id/items/:itemId/trail"') < meetings.indexOf('app.get("/api/meetings/:id"'));
+  const modal = strip(readFileSync("src/components/TaskCompletionModal.tsx", "utf8"));
+  ok("modal: uploads at call time, into a Latin folder",
+    /await import\("\.\.\/imageUtils"\)/.test(modal) && /"task-files"/.test(modal) && !/^import .*imageUtils/m.test(modal));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

@@ -1847,6 +1847,22 @@ model Task {
   workflowEntityType String? @db.NVarChar(40)
   workflowEntityId   String? @db.NVarChar(36)
 
+  /**
+   * «ارسال به همکار» — `src/utils/taskHandoff.ts`.
+   * `attachments`: the files this task was handed over with (JSON list).
+   * `completionAttachments`: the files attached to «شرح اقدام» on the tick.
+   * `handoffs`: what this task's completion handed on, so a meeting's action
+   * row can show the whole trail. `previousTaskId`: the task this one continues
+   * — no relation, since a self-relation on tasks is a second cascade path.
+   * `sourceActivityId`: the feed message a task was raised from, so a handoff
+   * lands in that message's own category. All null for every older row.
+   */
+  attachments           String? @db.NVarChar(Max)
+  completionAttachments String? @db.NVarChar(Max)
+  handoffs              String? @db.NVarChar(Max)
+  previousTaskId        String? @db.NVarChar(36)
+  sourceActivityId      String? @db.NVarChar(36)
+
   @@index([assignedToUserId, status])
   /// «کارهایی که من سپرده‌ام» — the other half of the board's own scope.
   @@index([createdByUserId, status])
@@ -1857,6 +1873,7 @@ model Task {
   @@index([taskKind, relatedToType, relatedToId, status])
   @@index([taskKind, status, dueDate])
   @@index([reminderEnabled, reminderRepeat])
+  @@index([previousTaskId])
   @@map("tasks")
 }
 
@@ -1913,6 +1930,9 @@ model ModuleNotification {
   /// category is resolved from it when the list is read, never stored beside
   /// it, so a message moved or deleted cannot leave a stale target behind.
   activityId String? @db.NVarChar(36)
+
+  /// The files a «فقط اطلاع» was sent with (JSON list, `src/utils/attachments.ts`).
+  attachments String? @db.NVarChar(Max)
 
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())

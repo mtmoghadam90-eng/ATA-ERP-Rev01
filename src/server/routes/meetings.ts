@@ -4,7 +4,7 @@ import { getTodayShamsi } from "../../dateUtils";
 import { parseListQuery } from "../listing";
 import {
   MEETING_SORTABLE, MeetingInput, deleteMeeting, getMeeting, listMeetingActions, listMeetings,
-  openActionsForProject, saveMeeting,
+  meetingItemTrail, openActionsForProject, saveMeeting,
 } from "../services/meetingService";
 
 /**
@@ -77,6 +77,19 @@ export function registerMeetingRoutes(app: express.Express, deps: RouteDeps): vo
       });
     } catch (err) {
       sendError(res, err, "GET /api/meetings/open-actions");
+    }
+  });
+
+  // «اقدامات انجام شده» of one action row — its tasks and everything done in continuing them.
+  app.get("/api/meetings/:id/items/:itemId/trail", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, "erp_meetings", "read");
+    if (!user) return;
+    try {
+      const trail = await meetingItemTrail(req.params.id, req.params.itemId, user);
+      if (!trail) { res.status(404).json({ success: false, error: "این ردیف صورتجلسه یافت نشد." }); return; }
+      res.json({ success: true, trail });
+    } catch (err) {
+      sendError(res, err, "GET /api/meetings/:id/items/:itemId/trail");
     }
   });
 

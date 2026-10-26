@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   CalendarDays, CheckCircle2, ClipboardList, Clock, FileText, Loader2, MapPin, Paperclip,
-  Plus, Search, Trash2, Users, X, AlertTriangle, Lock, Printer,
+  Plus, Search, Trash2, Users, X, AlertTriangle, Lock, Printer, ListChecks,
 } from 'lucide-react';
 import type { ERPSettings, User } from '../types';
 import { DocumentPreview } from './DocumentPreview';
@@ -19,8 +19,10 @@ import type { ProjectRow } from '../api/projects';
 import type { CustomerRow } from '../api/customers';
 import {
   meetingsApi, type CarryOverItem, type MeetingActionRow, type MeetingInput, type MeetingItemInput,
-  type MeetingRow,
+  type MeetingRow, type MeetingTrailTask,
 } from '../api/meetings';
+import { HANDOFF_MODE_LABELS } from '../utils/taskHandoff';
+import TaskFileLinks from './TaskFileLinks';
 import {
   MEETING_ITEM_KINDS, MEETING_ITEM_KIND_LABELS, MEETING_ITEM_STATE_LABELS, MEETING_STATUS_LABELS,
   meetingRefusal, topicsForProject, type MeetingAssignee, type MeetingItemKind, type MeetingItemState,
@@ -954,6 +956,8 @@ function TopicCard({
     enabled: !fixedProjectId,
   });
 
+  // «اقدامات انجام شده» of one row, when its button is pressed.
+  const [trailFor, setTrailFor] = useState<{ id: string; text: string } | null>(null);
   // The open actions of this project's earlier meetings: what this topic has to ask about.
   const [carryOver, setCarryOver] = useState<CarryOverItem[]>([]);
   useEffect(() => {
@@ -1113,14 +1117,109 @@ function TopicCard({
               </div>
             )}
             {item.tasks && item.tasks.length > 0 && (
-              <div className="text-xs text-slate-500 flex flex-wrap gap-2">
+              <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2">
                 {item.tasks.map((t, i) => (
                   <span key={i} className="flex items-center gap-1"><CheckCircle2 size={11} /> {t.assigneeName}: {t.status ?? 'وظیفه یافت نشد'}</span>
                 ))}
+                {/*
+                  What was done on this row and what colleagues raised from it.
+                  Only for a saved action with tasks: before then there is
+                  nothing anybody could have done.
+                */}
+                {meetingId && item.id && item.kind === 'ACTION' && (
+                  <button
+                    type="button"
+                    data-item-trail={item.id}
+                    onClick={() => setTrailFor({ id: item.id!, text: item.text })}
+                    className="mr-auto inline-flex items-center gap-1 text-sky-700 hover:underline"
+                  >
+                    <ListChecks size={12} /> اقدامات انجام شده
+                  </button>
+                )}
               </div>
             )}
           </div>
         ))}
+      </div>
+      {trailFor && meetingId && (
+        <MeetingItemTrailModal
+          meetingId={meetingId}
+          itemId={trailFor.id}
+          itemText={trailFor.text}
+          onClose={() => setTrailFor(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * «اقدامات انجام شده» of one action row: each assignee's task and every task
+ * colleagues raised in continuing it, indented by how far down the chain it
+ * is, with what each recorded and handed on. Read when opened, never before.
+ */
+export function MeetingItemTrailModal({ meetingId, itemId, itemText, onClose }: {
+  meetingId: string; itemId: string; itemText: string; onClose: () => void;
+}) {
+  const [trail, setTrail] = useState<MeetingTrailTask[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    setTrail(null); setError(null);
+    meetingsApi.itemTrail(meetingId, itemId)
+      .then((t) => { if (live) setTrail(t); })
+      .catch((err) => { if (live) setError(err instanceof Error ? err.message : 'خواندن اقدامات ممکن نشد.'); });
+    return () => { live = false; };
+  }, [meetingId, itemId]);
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/40 z-[70] flex items-center justify-center p-4" onClick={onClose} data-item-trail-modal>
+      <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-2xl border border-slate-200 max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()} dir="rtl">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-hairline shrink-0">
+          <h3 className="font-bold text-sm text-slate-800 dark:text-slate-100">اقدامات انجام شده</h3>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-700" title="بستن"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-3 overflow-y-auto text-xs">
+          <p className="text-secondary whitespace-pre-line break-words">{itemText}</p>
+          {!trail && !error && <p className="text-muted flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> در حال خواندن…</p>}
+          {error && <div className="text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>}
+          {trail && trail.length === 0 && <p className="text-muted">هنوز وظیفه‌ای برای این ردیف ساخته نشده است.</p>}
+          {trail?.map((t) => (
+            <div
+              key={t.id}
+              data-trail-task={t.id}
+              className="border border-slate-200 dark:border-slate-700 rounded-xl p-3 space-y-1.5"
+              style={{ marginRight: `${Math.min(t.depth, 6) * 20}px` }}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-bold text-slate-800 dark:text-slate-100 break-words">{t.title}</span>
+                <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{t.status}</span>
+                <span className="text-muted">
+                  {t.assignedToName ? `مسئول: ${t.assignedToName}` : ''}
+                  {t.depth > 0 && t.createdByName ? ` — از طرف ${t.createdByName}` : ''}
+                  {t.completedAtJalali ? ` — انجام: ${t.completedAtJalali}` : t.dueDateJalali ? ` — مهلت: ${t.dueDateJalali}` : ''}
+                </span>
+              </div>
+              {t.depth > 0 && t.description && (
+                <p className="text-slate-600 whitespace-pre-line break-words">{t.description}</p>
+              )}
+              {t.completionNote && (
+                <div className="bg-emerald-50/40 border border-emerald-100 rounded-lg px-2.5 py-1.5">
+                  <span className="block text-[10px] font-bold text-emerald-700">شرح اقدام</span>
+                  <p className="text-slate-700 whitespace-pre-line break-words">{t.completionNote}</p>
+                </div>
+              )}
+              <TaskFileLinks attachments={t.attachments} completionAttachments={t.completionAttachments} compact />
+              {t.handoffs.filter((h) => h.mode !== 'TASK').map((h, i) => (
+                <div key={i} className="border-r-2 border-sky-200 pr-2 space-y-0.5" data-trail-handoff={h.mode}>
+                  <div className="text-sky-800 font-bold">{HANDOFF_MODE_LABELS[h.mode]}: {h.toName}</div>
+                  {h.text && <p className="text-slate-600 whitespace-pre-line break-words">{h.text}</p>}
+                  <TaskFileLinks attachments={h.attachments} compact />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

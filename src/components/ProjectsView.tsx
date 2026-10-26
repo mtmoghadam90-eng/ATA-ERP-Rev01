@@ -6582,6 +6582,8 @@ export default function ProjectsView({
               relatedToType: project ? 'پروژه' : 'عمومی',
               relatedToId: project?.id ?? null,
               relatedToName: project?.name ?? null,
+              // The message it came from: «ارسال به همکار» later files under its category.
+              sourceActivityId: taskFromMessage?.id ?? null,
             });
             setTaskFromMessage(null);
           }}

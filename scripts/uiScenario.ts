@@ -67,7 +67,7 @@ import ReferralsView from "../src/components/ReferralsView";
 import NoteFollowUpBar from "../src/components/NoteFollowUpBar";
 import ProjectFollowUpTab from "../src/components/ProjectFollowUpTab";
 import AdEffectivenessView from "../src/components/AdEffectivenessView";
-import MeetingsView from "../src/components/MeetingsView";
+import MeetingsView, { MeetingItemTrailModal } from "../src/components/MeetingsView";
 import { invalidateUserDirectory } from "../src/api/useUserDirectory";
 import { LANE_LABELS } from "../src/utils/workBoard";
 import { DEFAULT_SETTINGS } from "../src/seedData";
@@ -4466,9 +4466,9 @@ head("A condition on «یکی از این‌ها باشد» names more than one 
   await settleP();
   const write = askedP.slice(before).find((a) => /\/api\/tasks\/t-open$/.test(a.url));
   ok("...and the tick reaches the task", !!write, askedP.slice(before).map((a) => a.url));
-  ok("...writing the status and the note and nothing else",
+  ok("...writing the status, the note and its files and nothing else",
     Object.keys((write?.body ?? {}) as Record<string, unknown>).sort().join(",")
-      === "completionNote,status",
+      === "completionAttachments,completionNote,status",
     Object.keys((write?.body ?? {}) as Record<string, unknown>).sort().join(","));
 
   act(() => { rootP.unmount(); });
@@ -5193,6 +5193,100 @@ head("Note follow-up: the stage writes two keys, the task opens the form");
   act(() => { rootN2.unmount(); });
   hostN.remove();
   gN.fetch = realFetchN;
+}
+
+head("«ارسال به همکار»: the tick hands the work on, and a meeting row shows what was done");
+{
+  const hostH = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootH = createRoot(hostH);
+  let got: { extras?: { attachments: unknown[]; handoff: Record<string, unknown> | null } } | null = null;
+  const users = [
+    { id: "u-me", fullName: "آقای فلانی" },
+    { id: "u-b", fullName: "آقای بهمانی" },
+    { id: "u-off", fullName: "غیرفعال", isActive: false },
+  ];
+  const draw = (task: unknown, hasProject?: boolean) => act(() => {
+    rootH.render(React.createElement(TaskCompletionModal, {
+      task: task as never,
+      users, currentUserId: "u-me", hasProject,
+      categories: [{ id: "c1", name: "خرید" }],
+      onCancel: () => {},
+      onConfirm: (_n: string, _w: boolean, _r: unknown, extras: unknown) => { got = { extras: extras as never }; },
+    }));
+  });
+  const click = (el: Element | null) => act(() => { el?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+
+  draw({ id: "h-1", title: "تهیه لیست قیمت", relatedToType: "عمومی" });
+  ok("the handoff section is offered", !!hostH.querySelector("[data-completion-handoff]"));
+  ok("...folded until asked for", !hostH.querySelector("#task-completion-recipient"));
+  click(hostH.querySelector("#task-completion-confirm"));
+  ok("a plain tick hands on nothing", got?.extras?.handoff === null, got);
+
+  const toggle = hostH.querySelector("#task-completion-handoff") as HTMLInputElement;
+  act(() => { handlers(toggle).onChange?.({ target: { checked: true } }); });
+  const pick = hostH.querySelector("#task-completion-recipient") as HTMLSelectElement | null;
+  ok("ticking it asks for the colleague", !!pick);
+  const offered = [...(pick?.options ?? [])].map((o) => o.value);
+  ok("...never yourself, nor an inactive account", !offered.includes("u-me") && !offered.includes("u-off") && offered.includes("u-b"), offered);
+  ok("no project: no referral is offered", !hostH.querySelector('[data-handoff-mode="REFERRAL"]'));
+  ok("...no category either", !hostH.querySelector("#task-completion-handoff-category"));
+
+  got = null;
+  click(hostH.querySelector("#task-completion-confirm"));
+  ok("with no colleague chosen nothing is ticked", got === null);
+  ok("...and the reason is said", !!hostH.querySelector("[data-completion-problem]"));
+
+  act(() => { handlers(pick!).onChange?.({ target: { value: "u-b" } }); });
+  const note = hostH.querySelector("#task-completion-note") as HTMLTextAreaElement;
+  act(() => { handlers(note).onChange?.({ target: { value: "آقای بهمانی لیست قیمت به پیوست خدمت شما" } }); });
+  click(hostH.querySelector('[data-handoff-mode="NOTICE"]'));
+  click(hostH.querySelector("#task-completion-confirm"));
+  const sent = got?.extras?.handoff ?? null;
+  ok("the handoff reaches the caller", !!sent, got);
+  ok("...as a notice to the chosen colleague, with the words of «شرح اقدام»",
+    sent?.mode === "NOTICE" && sent?.recipientUserId === "u-b" && sent?.text === "آقای بهمانی لیست قیمت به پیوست خدمت شما", sent);
+
+  draw({ id: "h-2", title: "پیگیری پروژه", relatedToType: "پروژه", relatedProject: { code: "ATA-01" } });
+  act(() => { handlers(hostH.querySelector("#task-completion-handoff")!).onChange?.({ target: { checked: true } }); });
+  ok("on a project the referral is offered", !!hostH.querySelector('[data-handoff-mode="REFERRAL"]'));
+  ok("...and the category, «خودکار» by default",
+    (hostH.querySelector("#task-completion-handoff-category") as HTMLSelectElement | null)?.value === "");
+  act(() => { rootH.unmount(); });
+  hostH.remove();
+
+  // The meeting row's trail: read when opened, drawn indented.
+  const gT = globalThis as unknown as { fetch: unknown };
+  const realFetchT = gT.fetch;
+  const askedT: string[] = [];
+  gT.fetch = (async (url: string) => {
+    askedT.push(String(url));
+    const trail = [
+      { id: "r1", previousTaskId: null, depth: 0, title: "تهیه لیست قیمت", description: null, status: "انجام شده",
+        assignedToName: "آقای فلانی", createdByName: null, dueDateJalali: null, completedAtJalali: "1405/08/01",
+        completionNote: "لیست تهیه و ارسال شد", attachments: [], completionAttachments: [{ name: "list.pdf", size: "1 KB", url: "/uploads/task-files/list.pdf" }],
+        handoffs: [{ mode: "NOTICE", toUserId: "u-b", toName: "آقای بهمانی", at: "", text: "به پیوست", attachments: [] }] },
+      { id: "r2", previousTaskId: "r1", depth: 1, title: "بررسی لیست", description: "به پیوست", status: "برای انجام",
+        assignedToName: "آقای بهمانی", createdByName: "آقای فلانی", dueDateJalali: null, completedAtJalali: null,
+        completionNote: null, attachments: [], completionAttachments: [], handoffs: [] },
+    ];
+    const body = { success: true, trail };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+  const hostT = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootT = createRoot(hostT);
+  await act(async () => {
+    rootT.render(React.createElement(MeetingItemTrailModal, { meetingId: "m1", itemId: "i1", itemText: "تهیه لیست", onClose: () => {} }));
+  });
+  for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+  ok("the trail is read from the row's own endpoint", askedT.some((u) => u.includes("/api/meetings/m1/items/i1/trail")), askedT);
+  ok("...each task drawn", hostT.querySelectorAll("[data-trail-task]").length === 2);
+  ok("...a continuation indented under what it continues",
+    (hostT.querySelector('[data-trail-task="r2"]') as HTMLElement | null)?.style.marginRight === "20px");
+  ok("...with the notice handed on and the files of «شرح اقدام»",
+    !!hostT.querySelector('[data-trail-handoff="NOTICE"]') && (hostT.textContent ?? "").includes("list.pdf"));
+  act(() => { rootT.unmount(); });
+  hostT.remove();
+  gT.fetch = realFetchT;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
