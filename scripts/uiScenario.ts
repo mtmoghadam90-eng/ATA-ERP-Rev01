@@ -2568,6 +2568,18 @@ head("Next action: the form survives the screen carrying on underneath it");
   ok("the form drew its fields", !!kind && !!desc && !!who && !!save);
 
   ok("the person who pressed save is carried over", who?.value === "علی رضایی", who?.value);
+  /*
+   * One answer for «me»: the toggle no longer says «برای خودم» over a box that
+   * offers every colleague, and the box no longer offers «شخصی (بدون ارجاع)»
+   * beside the person's own name — both meant the same account.
+   */
+  const whoOptions = [...(who?.options ?? [])].map((o) => `${o.value}|${o.textContent}`);
+  ok("...offered once, as «خودم», with no second spelling of the same person",
+    whoOptions[0] === "علی رضایی|خودم (علی رضایی)"
+    && whoOptions.filter((o) => o.startsWith("علی رضایی|")).length === 1
+    && !whoOptions.some((o) => o.includes("شخصی")), whoOptions);
+  ok("...and the toggle names the next action, not who does it",
+    !(nHost.textContent ?? "").includes("اقدام بعدی برای خودم"));
   ok("...while the kind starts empty", kind?.value === "", kind?.value);
   ok("...and the record is named rather than asked for again",
     nHost.textContent?.includes("فولاد مبارکه") === true);

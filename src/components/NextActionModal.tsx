@@ -223,7 +223,7 @@ export default function NextActionModal({
               onChange={(e) => setWithTask(e.target.checked)}
               data-next-action-with-task
             />
-            اقدام بعدی برای خودم
+            ثبت اقدام بعدی (وظیفه)
           </label>
 
           {withTask && (<>
@@ -286,7 +286,7 @@ export default function NextActionModal({
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-600">مسئول</label>
+            <label className="text-xs font-semibold text-slate-600">انجام‌دهنده</label>
             <select
               value={draft.assignedTo}
               onChange={(e) => setDraft({ ...draft, assignedTo: e.target.value })}
@@ -294,13 +294,22 @@ export default function NextActionModal({
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
             >
               {/*
-                «Nobody» is a real answer — the task form's «شخصی (بدون ارجاع)» —
-                and `assigneeColumns` reads an empty name as deliberate rather
-                than looking it up.
+                One answer for «me», never two. The toggle above used to read
+                «اقدام بعدی برای خودم» while this box offered every colleague,
+                and «شخصی (بدون ارجاع)» sat beside the person's own name — both
+                meaning the same account, since an empty name on a create falls
+                back to whoever raised it (`assigneeColumns`). So the person
+                pressing save is the first option, named as themselves, and
+                choosing a colleague puts the task on that colleague's board.
               */}
-              <option value="">شخصی (بدون ارجاع)</option>
-              {people.map((n) => <option key={n} value={n}>{n}</option>)}
+              <option value={self}>{self ? `خودم (${self})` : 'خودم'}</option>
+              {people.filter((n) => n !== self).map((n) => <option key={n} value={n}>{n}</option>)}
             </select>
+            {draft.assignedTo.trim() && draft.assignedTo.trim() !== self && (
+              <p className="text-[10px] text-slate-500" data-next-action-for-colleague>
+                این وظیفه روی تخته کار {draft.assignedTo} می‌نشیند.
+              </p>
+            )}
           </div>
           </>)}
 
