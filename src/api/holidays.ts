@@ -1,6 +1,6 @@
 import { api } from "./client";
 import { setHolidayCalendar } from "../dateUtils";
-import type { HolidayMap } from "../utils/holidays";
+import { normalizeWeekendDays, type HolidayMap } from "../utils/holidays";
 
 /**
  * The official calendar, loaded once and handed to the date helpers.
@@ -48,6 +48,8 @@ export interface HolidayImportResult {
   url: string;
   /** The lunar correction applied on the way in. */
   hijriShift: number;
+  /** Open tasks moved off a day the import made off. */
+  tasksMoved?: number;
 }
 
 export interface HolidayShiftResult {
@@ -56,10 +58,18 @@ export interface HolidayShiftResult {
   moved: number;
   /** Days that could not move because a hand-entered day is already there. */
   blocked: string[];
+  tasksMoved?: number;
 }
 
 let cache: HolidayRow[] | null = null;
 let inFlight: Promise<HolidayRow[]> | null = null;
+/** Friday always; Thursday too when the company closes on it. */
+let weekend: number[] = normalizeWeekendDays(undefined);
+
+/** The weekend this browser counts working days against. */
+export function holidayWeekendDays(): number[] {
+  return weekend;
+}
 
 /*
  * Who to tell when the calendar lands.
@@ -106,7 +116,7 @@ function applyToDateUtils(rows: HolidayRow[]): void {
     // is named on the settings screen and nowhere else.
     if (row.isHoliday && row.title) titles[row.dateJalali] = row.title;
   }
-  setHolidayCalendar(map, undefined, titles);
+  setHolidayCalendar(map, weekend, titles);
   for (const listener of [...listeners]) listener();
 }
 
@@ -120,9 +130,10 @@ export async function ensureHolidayCalendar(): Promise<HolidayRow[]> {
   if (cache) return cache;
   if (inFlight) return inFlight;
 
-  inFlight = api.get<{ holidays: HolidayRow[] }>("/api/holidays")
+  inFlight = api.get<{ holidays: HolidayRow[]; weekendDays?: number[] }>("/api/holidays")
     .then((r) => {
       cache = r.holidays ?? [];
+      weekend = normalizeWeekendDays(r.weekendDays);
       applyToDateUtils(cache);
       return cache;
     })
@@ -149,8 +160,11 @@ export const holidaysApi = {
 
   /** Adds or corrects one day. Always stored as a hand-entered answer. */
   save: (dateJalali: string, title: string, isHoliday: boolean) =>
-    api.put<{ holiday: HolidayRow }>("/api/holidays", { dateJalali, title, isHoliday })
-      .then((r) => r.holiday),
+    api.put<{ holiday: HolidayRow; tasksMoved?: number }>("/api/holidays", { dateJalali, title, isHoliday }),
+
+  /** Closes or reopens Thursdays; closing moves their open tasks to the next working day. */
+  setThursdayOff: (thursdayOff: boolean) =>
+    api.put<{ weekendDays: number[]; tasksMoved: number }>("/api/holidays/weekend", { thursdayOff }),
 
   remove: (dateJalali: string) =>
     api.delete<Record<string, never>>(`/api/holidays/${encodeURIComponent(dateJalali)}`),

@@ -364,3 +364,153 @@ export function shiftForYear(stored: unknown, year: number): number {
   const n = Number(raw);
   return Number.isInteger(n) && Math.abs(n) <= MAX_HIJRI_SHIFT_DAYS ? n : 0;
 }
+
+/* ------------------------- which weekdays are off ------------------------- */
+
+/** Thursday, as a JS getDay() number — the one weekday the settings can add. */
+export const THURSDAY = 4;
+
+/**
+ * The stored weekend, as the date helpers take it.
+ *
+ * Friday is always off: it is the Iranian weekend and every working-day
+ * figure here has been counted against it since the first quotation. What a
+ * company can add is Thursday, which many here close on and many do not — so
+ * the stored list only ever *adds* to Friday. Anything that is not a whole
+ * weekday is dropped rather than guessed, and a list naming all seven days
+ * (no working day at all) is refused back to Friday, because every walk to
+ * the next working day would then run to its bound.
+ */
+export function normalizeWeekendDays(value: unknown): number[] {
+  const days = new Set<number>(DEFAULT_WEEKEND_DAYS);
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const n = typeof v === "number" ? v : Number(v);
+      if (Number.isInteger(n) && n >= 0 && n <= 6) days.add(n);
+    }
+  }
+  if (days.size >= 7) return [...DEFAULT_WEEKEND_DAYS];
+  return [...days].sort((a, b) => a - b);
+}
+
+export function thursdayIsOff(weekend: readonly number[]): boolean {
+  return weekend.includes(THURSDAY);
+}
+
+/* --------------------- moving work off a day that is off --------------------- */
+
+/**
+ * How many days forward the first working day is, counting the day itself as 0.
+ *
+ * 0 when the day is already worked. Bounded by `MAX_WORKING_DAY_SPAN` like
+ * every other walk here, and null past it — a calendar that marks every day
+ * off must leave a task where it is rather than spin, or move it nowhere.
+ */
+export function firstWorkingOffset(isOff: (offset: number) => boolean): number | null {
+  for (let offset = 0; offset <= MAX_WORKING_DAY_SPAN; offset++) {
+    if (!isOff(offset)) return offset;
+  }
+  return null;
+}
+
+export interface ReschedulableTask {
+  id: string;
+  dueDateJalali: string | null;
+}
+
+export interface TaskMove {
+  id: string;
+  from: string;
+  to: string;
+}
+
+/**
+ * Which tasks move, and to where.
+ *
+ * A task due on a day that is now off goes to the **next working day** — not
+ * the one before: bringing a deadline forward takes a day away from whoever is
+ * doing the work, while pushing it to Saturday is what «that day is closed»
+ * means. Only a date from `today` on is moved; a date already past is overdue,
+ * and moving it would quietly rewrite how late it is.
+ */
+export function planHolidayReschedule(
+  tasks: readonly ReschedulableTask[],
+  todayJalali: string,
+  isOff: (jalali: string) => boolean,
+  addDays: (jalali: string, days: number) => string,
+): TaskMove[] {
+  const today = normalizeJalali(todayJalali);
+  const moves: TaskMove[] = [];
+  const memo = new Map<string, string | null>();
+  for (const task of tasks) {
+    const due = normalizeJalali(task.dueDateJalali);
+    if (!due || (today && due < today)) continue;
+    let to = memo.get(due);
+    if (to === undefined) {
+      const offset = firstWorkingOffset((i) => isOff(i === 0 ? due : addDays(due, i)));
+      to = offset ? normalizeJalali(addDays(due, offset)) : null;
+      memo.set(due, to);
+    }
+    if (to && to !== due) moves.push({ id: task.id, from: due, to });
+  }
+  return moves;
+}
+
+/* --------------------- a year nobody has loaded yet ---------------------- */
+
+/** How long before Nowruz the administrator is told next year is empty. */
+export const NEW_YEAR_NOTICE_MONTH = 12;
+
+export interface CalendarYearRow {
+  yearJalali: number;
+  source: string;
+  isHoliday: boolean;
+}
+
+/**
+ * Is a year's calendar there at all?
+ *
+ * A row typed by hand — a snow day — is not the year being loaded, so one
+ * `MANUAL` day must not silence the reminder. A year counts as loaded when
+ * anything in it was imported, or when enough days were typed by hand to look
+ * like a year (the same floor an import is held to), since a company that
+ * enters its holidays itself has done exactly what the reminder asks.
+ */
+export function calendarYearLoaded(rows: readonly CalendarYearRow[], year: number): boolean {
+  const own = rows.filter((r) => r.yearJalali === year);
+  if (own.some((r) => r.source !== "MANUAL")) return true;
+  return own.filter((r) => r.isHoliday).length >= MIN_PLAUSIBLE_HOLIDAYS;
+}
+
+/**
+ * The year an administrator should be told to load, or null.
+ *
+ * The current year when it is empty — the reminder is overdue then. Otherwise,
+ * from Esfand on, the year about to begin, so the calendar is in place before
+ * the first delivery date is counted across Nowruz. A year already told about
+ * (`sentFor`) is never told again: a reminder repeated every morning is one
+ * people learn to dismiss.
+ */
+export function calendarYearToAnnounce(
+  todayJalali: string,
+  rows: readonly CalendarYearRow[],
+  sentFor: readonly number[],
+): number | null {
+  const today = normalizeJalali(todayJalali);
+  if (!today) return null;
+  const year = parseInt(today.slice(0, 4), 10);
+  const month = parseInt(today.slice(5, 7), 10);
+  if (!Number.isFinite(year)) return null;
+  const candidates = [year];
+  if (month >= NEW_YEAR_NOTICE_MONTH) candidates.push(year + 1);
+  for (const y of candidates) {
+    if (!calendarYearLoaded(rows, y) && !sentFor.includes(y)) return y;
+  }
+  return null;
+}
+
+/** The stored list of years already announced, read defensively. */
+export function announcedYears(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(Number).filter((n) => Number.isInteger(n) && n >= 1300 && n <= 1600);
+}
