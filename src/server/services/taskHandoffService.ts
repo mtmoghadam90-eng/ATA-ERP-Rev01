@@ -55,6 +55,7 @@ export function readHandoffRequest(body: unknown): Partial<HandoffRequest> {
     dueDate: typeof b.dueDate === "string" && b.dueDate.trim() ? b.dueDate.trim() : null,
     priority: typeof b.priority === "string" && b.priority.trim() ? b.priority.trim() : null,
     categoryId: typeof b.categoryId === "string" && b.categoryId.trim() ? b.categoryId.trim() : null,
+    kind: typeof b.kind === "string" && b.kind.trim() ? b.kind.trim() : null,
   };
 }
 
@@ -80,14 +81,42 @@ export async function handoffFromTask(
   if (refusal) return fail(400, refusal);
   const request = req as HandoffRequest;
 
+  const me = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
+  const fromName = me?.fullName ?? "";
+
+  /*
+   * SELF: the ticker's own next action. A task that continues this one, parked
+   * until its date like every next action (`NEXT_ACTION` is in `PARKED_KINDS`),
+   * with no feed line and no notice — a reminder to oneself is not news to a
+   * project's members, and `notifyUser` would refuse to tell an actor anyway.
+   */
+  if (request.mode === "SELF") {
+    const created = await createTask({
+      title: continuationTitle(task.title, request.text, request.kind),
+      taskKind: "NEXT_ACTION",
+      description: request.text.trim() || null,
+      priority: request.priority ?? task.priority,
+      dueDate: request.dueDate ?? null,
+      assignedToUserId: user.id,
+      assignedToName: fromName || null,
+      relatedToType: task.relatedToType,
+      relatedToId: task.relatedToId,
+      relatedToName: task.relatedToName,
+    }, user, todayJalali, { previousTaskId: task.id });
+    const selfTaskId = (created as { id: string }).id;
+    const selfEntry: HandoffEntry = {
+      mode: "SELF", toUserId: user.id, toName: fromName, at: new Date().toISOString(),
+      text: request.text.trim(), attachments: [], taskId: selfTaskId, activityId: null,
+    };
+    await db.task.update({ where: { id: task.id }, data: { handoffs: appendHandoff(task.handoffs, selfEntry) } });
+    return { ok: true, status: 200, error: null, mode: "SELF", taskId: selfTaskId, activityId: null, categoryName: null };
+  }
+
   const recipient = await db.user.findFirst({
     where: { id: request.recipientUserId, isActive: true },
     select: { id: true, fullName: true },
   });
   if (!recipient) return fail(400, "همکار انتخاب‌شده پیدا نشد یا غیرفعال است.");
-
-  const me = await db.user.findUnique({ where: { id: user.id }, select: { fullName: true } });
-  const fromName = me?.fullName ?? "";
   const text = request.text.trim();
   const files = normalizeAttachments(request.attachments);
 

@@ -843,23 +843,17 @@ export default function TasksView({
    * `completeFollowUp` ever write it.
    */
   const confirmCompletion = async (
-    note: string, withNextAction: boolean, contactResult?: string | null, extras?: TaskCompletionExtras,
+    note: string, contactResult?: string | null, extras?: TaskCompletionExtras,
   ) => {
     const task = completingTask;
     if (!task) return;
     setCompletingTask(null);
 
     /*
-     * The completion answers with the task, or with nothing.
-     *
-     * `ask` reads `undefined` as «the write was refused» — the contract every
-     * one of the ten save buttons relies on — so a tick that failed raises no
-     * card pointing at work nobody finished. The task itself is what is handed
-     * on rather than the server's row: the next action inherits the relation,
-     * the title and the priority, and those are exactly what was on the card
-     * the person pressed.
+     * The completion first, «کار بعدی» after it — two requests, because the
+     * completion is true on its own, and work handed on before it lands could
+     * point at a task that was never closed. A refused tick hands on nothing.
      */
-    let done: Task | undefined;
     try {
       await tasksApi.update(task.id, {
         status: 'انجام شده',
@@ -869,8 +863,7 @@ export default function TasksView({
         ...(contactResult !== undefined ? { contactResult } : {}),
         completionAttachments: extras?.attachments ?? [],
       });
-      done = task;
-      // «ارسال به همکار» only once the tick has landed — see `sendHandoff`.
+      // «کار بعدی» only once the tick has landed — see `sendHandoff`.
       const handoffProblem = await sendHandoff(task.id, extras?.handoff);
       if (handoffProblem) alert(handoffProblem);
       void topUpBoard();
@@ -878,14 +871,6 @@ export default function TasksView({
     } catch (err) {
       reportError(err, 'ثبت انجام کار با خطا مواجه شد.');
     }
-
-    /*
-     * And only then the follow-on question — the save-first rule, for the same
-     * reason it is forced on the form: the two are two requests, the completion
-     * is true on its own, and a next action raised before it lands could point
-     * at a task that was never closed.
-     */
-    await nextAction.ask(withNextAction, done, nextActionFromTask);
   };
 
   const getPriorityClass = (pr: Task['priority']) => {
@@ -1902,7 +1887,8 @@ export default function TasksView({
         currentUserId={currentUser?.id}
         categories={settings.activityCategories}
         priorityOptions={settings.dropdownItems?.taskPriorities}
-        onConfirm={(note, withNextAction, contactResult, extras) => { void confirmCompletion(note, withNextAction, contactResult, extras); }}
+        kinds={settings.dropdownItems?.nextActionKinds}
+        onConfirm={(note, contactResult, extras) => { void confirmCompletion(note, contactResult, extras); }}
       />
 
       {followUpRow && (

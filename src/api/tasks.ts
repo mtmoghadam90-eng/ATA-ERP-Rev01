@@ -275,6 +275,8 @@ export interface HandoffBody {
   dueDate?: string | null;
   priority?: string | null;
   categoryId?: string | null;
+  /** «برای خودم» only: the next action's kind, used as its title. */
+  kind?: string | null;
 }
 
 /* ------------------------------- adapter ------------------------------- */

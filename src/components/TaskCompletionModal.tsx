@@ -1,9 +1,11 @@
 import { DETAIL_LABELS } from '../utils/cardSummary';
 import React, { useEffect, useRef, useState } from "react";
-import { CalendarPlus, CheckCircle2, Paperclip, Send, X } from "lucide-react";
+import { CheckCircle2, ListPlus, Paperclip, X } from "lucide-react";
 import { contactResultKey, takesContactResult } from "../utils/contactResults";
 import { MAX_ACTIVITY_ATTACHMENTS, formatFileSize, type ActivityAttachment } from "../utils/attachments";
-import { HANDOFF_MODES, HANDOFF_MODE_LABELS, handoffRefusal, type HandoffMode } from "../utils/taskHandoff";
+import {
+  HANDOFF_MODES, HANDOFF_MODE_LABELS, handoffNeedsRecipient, handoffRefusal, type HandoffMode,
+} from "../utils/taskHandoff";
 import type { HandoffBody } from "../api/tasks";
 import ShamsiDatePicker from "./ShamsiDatePicker";
 
@@ -32,31 +34,27 @@ import ShamsiDatePicker from "./ShamsiDatePicker";
  * ticked cards, and asking per card there would make it a form rather than a
  * gesture.
  *
- * **And the tick is where «حالا بعدش چه؟» belongs**, which is the one thing it
- * did not ask. «ذخیره و ثبت اقدام بعدی» sits beside «ذخیره» on ten forms, so
- * the question could only be reached by *opening* the task, setting its status
- * by hand and saving — while the gesture people actually finish a task with is
- * this one. That is the same Odoo shape the save button already takes: the
- * choice is in the **button**, so it costs one press when the answer is yes and
- * nothing at all when it is no — as against a dialog on every completion, which
- * is answered «no» often enough to become a reflex and takes the tenth with it.
- *
- * **The intent travels as an argument rather than through `arm`/`takeArmed`.**
- * That pair exists to bridge a `type="submit"` button and a form handler that
- * runs in a later tick; here the button *is* the action, so a ref would be a
- * flag that can be left set — exactly what `takeArmed` was written to clear —
- * to say what one parameter already says.
+ * **«کار بعدی» is one section of this form, and there is one way to answer it.**
+ * There used to be two: a second button («ثبت و اقدام بعدی») opening the
+ * next-action form, and an «ارسال به همکار» section here. Both could raise a
+ * task for a colleague and both a referral, with different results — the
+ * second button's task did not continue this one, carried no files and never
+ * reached a meeting row's «اقدامات انجام شده». So the button is gone and the
+ * section offers all four answers (`HANDOFF_MODES`): **برای خودم** (a next action
+ * parked until its date), **وظیفه برای همکار**, **ارجاع** (on a project only)
+ * and **فقط اطلاع** — every one through the same endpoint, recorded the same
+ * way. It is **off by default**, so a plain tick still costs one press. The
+ * ten save forms keep «ذخیره و ثبت اقدام بعدی»: nothing has been finished
+ * there, so there is nothing to hand over.
  */
 export interface TaskCompletionModalProps {
   /**
    * The task being ticked. The modal is drawn only while this is set.
    *
-   * **Structural rather than `Task`**, for the reason `nextActionFromTask`'s
-   * parameter is: the doors hand it different shapes — the board hands a
-   * `Task`, a project's follow-up tab hands a row its own endpoint derived —
-   * and naming either type would make this modal usable from that one only,
-   * which is how a second «ثبت انجام کار» dialog comes to be written. These
-   * three fields are the whole of what it reads.
+   * **Structural rather than `Task`**: the doors hand it different shapes — the
+   * board hands a `Task`, a project's follow-up tab hands a row its own endpoint
+   * derived — and naming either type would make this modal usable from that one
+   * only, which is how a second «ثبت انجام کار» dialog comes to be written.
    */
   task: {
     id: string; title: string; completionNote?: string | null;
@@ -64,12 +62,9 @@ export interface TaskCompletionModalProps {
     completionAttachments?: ActivityAttachment[];
     relatedProject?: { code?: string | null } | null;
   } | null;
-  /**
-   * «ارسال به همکار» — the colleagues the work can be handed on to. Absent or
-   * empty draws no section, which is how a host that cannot hand work on says so.
-   */
+  /** The colleagues work can go to. Absent or empty offers «برای خودم» alone. */
   users?: readonly { id: string; fullName: string; isActive?: boolean }[];
-  /** Never offered as a colleague: a task for oneself is «ثبت و اقدام بعدی». */
+  /** Never offered as a colleague: work for oneself is «برای خودم». */
   currentUserId?: string | null;
   /**
    * Whether the task belongs to a project — what allows a referral and the
@@ -79,6 +74,8 @@ export interface TaskCompletionModalProps {
   /** `settings.activityCategories`, for the optional category choice. */
   categories?: readonly { id: string; name: string }[];
   priorityOptions?: readonly string[];
+  /** `settings.dropdownItems.nextActionKinds`, for «برای خودم». */
+  kinds?: readonly string[];
   /**
    * `settings.dropdownItems.contactResults`. Offered only for a task related to
    * a customer (`takesContactResult`); absent or empty on a host that has no
@@ -89,22 +86,17 @@ export interface TaskCompletionModalProps {
   /**
    * Ticks the task off.
    *
-   * `note` is as typed; blank means «nothing to add», never «unchanged».
-   * `withNextAction` says which of the two buttons was pressed — the host
-   * writes the completion either way and asks the follow-on question only on
-   * the second, **after** the write has landed.
+   * `note` is as typed; blank means «nothing to add», never «unchanged». The
+   * host writes the completion first and posts `extras.handoff` only once that
+   * has landed.
    */
-  onConfirm: (
-    note: string, withNextAction: boolean, contactResult?: string | null,
-    extras?: TaskCompletionExtras,
-  ) => void;
+  onConfirm: (note: string, contactResult?: string | null, extras?: TaskCompletionExtras) => void;
   saving?: boolean;
 }
 
 /**
- * What the tick carries besides the words: the files of «شرح اقدام», and the
- * handoff when «ارسال به همکار» is on. The host writes the completion with the
- * files first and posts the handoff only once that has landed.
+ * What the tick carries besides the words: the files of «شرح اقدام», and «کار
+ * بعدی» when it is on.
  */
 export interface TaskCompletionExtras {
   attachments: ActivityAttachment[];
@@ -113,15 +105,17 @@ export interface TaskCompletionExtras {
 
 export default function TaskCompletionModal({
   task, contactResults, onCancel, onConfirm, saving,
-  users, currentUserId, hasProject, categories, priorityOptions,
+  users, currentUserId, hasProject, categories, priorityOptions, kinds,
 }: TaskCompletionModalProps): React.ReactElement | null {
   const [note, setNote] = useState("");
   const [result, setResult] = useState("");
   const [files, setFiles] = useState<ActivityAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [sendOn, setSendOn] = useState(false);
+  const [nextOn, setNextOn] = useState(false);
   const [recipient, setRecipient] = useState("");
-  const [mode, setMode] = useState<HandoffMode>("TASK");
+  const [mode, setMode] = useState<HandoffMode>("SELF");
+  const [kind, setKind] = useState("");
+  const [nextText, setNextText] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [priority, setPriority] = useState("");
   const [categoryId, setCategoryId] = useState("");
@@ -140,7 +134,7 @@ export default function TaskCompletionModal({
     setNote(task.completionNote ?? "");
     setResult(task.contactResult ?? "");
     setFiles(task.completionAttachments ?? []);
-    setSendOn(false); setRecipient(""); setMode("TASK");
+    setNextOn(false); setRecipient(""); setMode("SELF"); setKind(""); setNextText("");
     setDueDate(""); setPriority(""); setCategoryId(""); setProblem(null);
   }, [task?.id]);
 
@@ -160,21 +154,25 @@ export default function TaskCompletionModal({
   const stale = !!result && !list.some((r) => contactResultKey(r) === contactResultKey(result));
   const onProject = hasProject ?? !!task.relatedProject?.code;
   const colleagues = (users ?? []).filter((u) => u.id !== currentUserId && u.isActive !== false);
-  const canHandOff = colleagues.length > 0;
-  const modes = HANDOFF_MODES.filter((m) => m !== "REFERRAL" || onProject);
-  const chosenMode: HandoffMode = modes.includes(mode) ? mode : "TASK";
+  const modes = HANDOFF_MODES.filter((m) =>
+    (m !== "REFERRAL" || onProject) && (!handoffNeedsRecipient(m) || colleagues.length > 0));
+  const chosenMode: HandoffMode = modes.includes(mode) ? mode : "SELF";
+  const forSelf = chosenMode === "SELF";
 
-  const handoff: HandoffBody | null = sendOn ? {
+  const handoff: HandoffBody | null = nextOn ? {
     mode: chosenMode,
-    recipientUserId: recipient,
-    text: note,
-    attachments: files,
+    recipientUserId: forSelf ? "" : recipient,
+    // Yourself: the next step, in its own words. A colleague: «شرح اقدام» is the
+    // message — «آقای بهمانی لیست قیمت به پیوست خدمت شما» — with its files.
+    text: forSelf ? nextText : note,
+    attachments: forSelf ? [] : files,
     dueDate: chosenMode !== "NOTICE" && dueDate ? dueDate : null,
-    priority: chosenMode === "TASK" && priority ? priority : null,
-    categoryId: onProject && categoryId ? categoryId : null,
+    priority: (forSelf || chosenMode === "TASK") && priority ? priority : null,
+    categoryId: !forSelf && onProject && categoryId ? categoryId : null,
+    kind: forSelf && kind ? kind : null,
   } : null;
 
-  const send = (withNext: boolean) => {
+  const send = () => {
     // Asked here as well as on the server, so nothing is ticked off before the
     // person learns that the second half could not be sent.
     if (handoff) {
@@ -182,7 +180,7 @@ export default function TaskCompletionModal({
       if (refusal) { setProblem(refusal); return; }
     }
     setProblem(null);
-    onConfirm(note, withNext, asksResult ? (result.trim() || null) : undefined, { attachments: files, handoff });
+    onConfirm(note, asksResult ? (result.trim() || null) : undefined, { attachments: files, handoff });
   };
 
   const pickFiles = async (list: FileList | null) => {
@@ -209,6 +207,8 @@ export default function TaskCompletionModal({
       setUploading(false);
     }
   };
+
+  const field = "w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-right bg-white";
 
   return (
     <div className="fixed inset-0 bg-slate-900/40 z-50 flex items-center justify-center p-4">
@@ -283,76 +283,106 @@ export default function TaskCompletionModal({
             </div>
           </div>
 
-          {canHandOff && (
-            <div className="border-t border-hairline pt-3 space-y-2" data-completion-handoff>
-              <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  id="task-completion-handoff"
-                  checked={sendOn}
-                  onChange={(e) => setSendOn(e.target.checked)}
-                />
-                <Send size={13} />
-                ارسال به همکار
-              </label>
-              {sendOn && (
-                <div className="space-y-2">
-                  <p className="text-[11px] text-muted">
-                    شرح اقدام و فایل‌های بالا برای همکار فرستاده می‌شود.
-                    {onProject ? " در فعالیت‌های پروژه هم ثبت می‌شود و دسته‌بندی در صورت نیاز باز می‌شود." : " در ادامهٔ همین وظیفه ثبت می‌شود."}
-                  </p>
-                  <select
-                    id="task-completion-recipient"
-                    value={recipient}
-                    onChange={(e) => setRecipient(e.target.value)}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-right bg-white"
-                  >
-                    <option value="">— انتخاب همکار —</option>
-                    {colleagues.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
-                  </select>
-                  <div className="flex flex-wrap gap-1.5" role="radiogroup">
-                    {modes.map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        data-handoff-mode={m}
-                        aria-pressed={chosenMode === m}
-                        onClick={() => setMode(m)}
-                        className={`px-2.5 py-1 rounded-full text-[11px] border transition ${chosenMode === m ? "bg-sky-600 text-white border-sky-600" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}
-                      >
-                        {HANDOFF_MODE_LABELS[m]}
-                      </button>
-                    ))}
-                  </div>
-                  {chosenMode !== "NOTICE" && (
-                    <ShamsiDatePicker label="مهلت انجام (اختیاری)" value={dueDate} onChange={setDueDate} compact />
-                  )}
-                  {chosenMode === "TASK" && (priorityOptions?.length ?? 0) > 0 && (
-                    <select
-                      id="task-completion-handoff-priority"
-                      value={priority}
-                      onChange={(e) => setPriority(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-right bg-white"
+          <div className="border-t border-hairline pt-3 space-y-2" data-completion-handoff>
+            <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                id="task-completion-handoff"
+                checked={nextOn}
+                onChange={(e) => setNextOn(e.target.checked)}
+              />
+              <ListPlus size={13} />
+              کار بعدی
+            </label>
+            {nextOn && (
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-1.5" role="radiogroup">
+                  {modes.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      data-handoff-mode={m}
+                      aria-pressed={chosenMode === m}
+                      onClick={() => setMode(m)}
+                      className={`px-2.5 py-1 rounded-full text-[11px] border transition ${chosenMode === m ? "bg-sky-600 text-white border-sky-600" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}
                     >
-                      <option value="">اولویت: همان اولویت این وظیفه</option>
-                      {priorityOptions!.map((p) => <option key={p} value={p}>{p}</option>)}
-                    </select>
-                  )}
-                  {onProject && (categories?.length ?? 0) > 0 && (
-                    <select
-                      id="task-completion-handoff-category"
-                      value={categoryId}
-                      onChange={(e) => setCategoryId(e.target.value)}
-                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-right bg-white"
-                    >
-                      <option value="">دسته‌بندی فعالیت: خودکار</option>
-                      {categories!.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
-                  )}
+                      {HANDOFF_MODE_LABELS[m]}
+                    </button>
+                  ))}
                 </div>
-              )}
-            </div>
-          )}
+
+                {forSelf ? (
+                  <>
+                    <p className="text-[11px] text-muted">
+                      یک وظیفه برای خودتان در ادامهٔ همین کار ساخته می‌شود و تا تاریخش در «در انتظار» می‌ماند.
+                    </p>
+                    {(kinds?.length ?? 0) > 0 && (
+                      <select
+                        id="task-completion-next-kind"
+                        value={kind}
+                        onChange={(e) => setKind(e.target.value)}
+                        className={field}
+                      >
+                        <option value="">نوع اقدام (اختیاری)</option>
+                        {kinds!.map((k) => <option key={k} value={k}>{k}</option>)}
+                      </select>
+                    )}
+                    <textarea
+                      id="task-completion-next-text"
+                      value={nextText}
+                      onChange={(e) => setNextText(e.target.value)}
+                      rows={2}
+                      placeholder="کار بعدی چیست؟"
+                      className={`${field} resize-y`}
+                    />
+                    <ShamsiDatePicker label="تاریخ کار بعدی" required value={dueDate} onChange={setDueDate} compact />
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[11px] text-muted">
+                      شرح اقدام و فایل‌های بالا برای همکار فرستاده می‌شود.
+                      {onProject ? " در فعالیت‌های پروژه هم ثبت می‌شود و دسته‌بندی در صورت نیاز باز می‌شود." : " در ادامهٔ همین وظیفه ثبت می‌شود."}
+                    </p>
+                    <select
+                      id="task-completion-recipient"
+                      value={recipient}
+                      onChange={(e) => setRecipient(e.target.value)}
+                      className={field}
+                    >
+                      <option value="">— انتخاب همکار —</option>
+                      {colleagues.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+                    </select>
+                    {chosenMode !== "NOTICE" && (
+                      <ShamsiDatePicker label="مهلت انجام (اختیاری)" value={dueDate} onChange={setDueDate} compact />
+                    )}
+                  </>
+                )}
+
+                {(forSelf || chosenMode === "TASK") && (priorityOptions?.length ?? 0) > 0 && (
+                  <select
+                    id="task-completion-handoff-priority"
+                    value={priority}
+                    onChange={(e) => setPriority(e.target.value)}
+                    className={field}
+                  >
+                    <option value="">اولویت: همان اولویت این وظیفه</option>
+                    {priorityOptions!.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                )}
+                {!forSelf && onProject && (categories?.length ?? 0) > 0 && (
+                  <select
+                    id="task-completion-handoff-category"
+                    value={categoryId}
+                    onChange={(e) => setCategoryId(e.target.value)}
+                    className={field}
+                  >
+                    <option value="">دسته‌بندی فعالیت: خودکار</option>
+                    {categories!.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                )}
+              </div>
+            )}
+          </div>
 
           {problem && (
             <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2" data-completion-problem>{problem}</div>
@@ -369,29 +399,13 @@ export default function TaskCompletionModal({
           </button>
           <button
             type="button"
-            onClick={() => send(false)}
+            onClick={send}
             disabled={saving || uploading}
             id="task-completion-confirm"
             className="px-3 py-1.5 rounded-lg text-xs bg-emerald-500 text-white hover:bg-emerald-600 transition inline-flex items-center gap-1.5 disabled:opacity-60"
           >
             <CheckCircle2 size={14} />
             ثبت انجام کار
-          </button>
-          {/*
-            The second answer, and the reason it is a button rather than a
-            question: finishing a piece of work is exactly when the next one is
-            known, and it costs nothing on the completions that have no next
-            step — which is most of them.
-          */}
-          <button
-            type="button"
-            onClick={() => send(true)}
-            disabled={saving || uploading}
-            id="task-completion-confirm-next"
-            className="px-3 py-1.5 rounded-lg text-xs bg-sky-600 text-white hover:bg-sky-700 transition inline-flex items-center gap-1.5 disabled:opacity-60"
-          >
-            <CalendarPlus size={14} />
-            ثبت و اقدام بعدی
           </button>
         </div>
       </div>

@@ -26,14 +26,28 @@ import { ACTIVITY_CATEGORY, sameCategory } from "./activityCategories";
 import { normalizeAttachments, type ActivityAttachment } from "./attachments";
 import { taskRelationKind } from "./taskRelations";
 
-export const HANDOFF_MODES = ["TASK", "REFERRAL", "NOTICE"] as const;
+export const HANDOFF_MODES = ["SELF", "TASK", "REFERRAL", "NOTICE"] as const;
 export type HandoffMode = (typeof HANDOFF_MODES)[number];
 
+/**
+ * «کار بعدی» — the one place a tick asks what happens next.
+ *
+ * SELF is the next action for whoever ticked: it used to be a second button
+ * («ثبت و اقدام بعدی») opening a second form, which raised a task that did not
+ * continue this one and so never reached a meeting row's «اقدامات انجام شده».
+ * All four now go through the same endpoint, so all four are recorded the same.
+ */
 export const HANDOFF_MODE_LABELS: Record<HandoffMode, string> = {
+  SELF: "برای خودم",
   TASK: "وظیفه برای همکار",
   REFERRAL: "ارجاع در فعالیت‌های پروژه",
   NOTICE: "فقط اطلاع",
 };
+
+/** The modes that name a colleague. */
+export function handoffNeedsRecipient(mode: HandoffMode): boolean {
+  return mode !== "SELF";
+}
 
 export function isHandoffMode(value: unknown): value is HandoffMode {
   return typeof value === "string" && (HANDOFF_MODES as readonly string[]).includes(value);
@@ -52,24 +66,35 @@ export interface HandoffRequest {
   priority?: string | null;
   /** A category id the person picked; absent means «خودکار». */
   categoryId?: string | null;
+  /** SELF only: the kind of next action (`settings.dropdownItems.nextActionKinds`), its title. */
+  kind?: string | null;
 }
 
 /**
  * Why a handoff cannot be sent, or null.
  *
  * A referral needs a project because it is a message in a project's feed; the
- * other two do not. Sending work to yourself is refused — a task for oneself is
- * «ثبت و اقدام بعدی», and a notice to oneself is nothing.
+ * others do not. Naming yourself as the colleague is refused — work for oneself
+ * is SELF, which needs a date instead of a recipient.
  */
 export function handoffRefusal(
   req: Partial<HandoffRequest> | null | undefined,
   ctx: { hasProject: boolean; selfUserId?: string | null },
 ): string | null {
   if (!req) return "درخواست ارسال خالی است.";
-  if (!isHandoffMode(req.mode)) return "نوع ارسال (وظیفه، ارجاع یا اطلاع) مشخص نیست.";
+  if (!isHandoffMode(req.mode)) return "نوع کار بعدی مشخص نیست.";
+  if (req.mode === "SELF") {
+    // A next action is work agreed for a date, and an undated one sorts last in
+    // its column — exactly the work that goes missing (the next-action form's rule).
+    if (!String(req.dueDate ?? "").trim()) return "برای کار بعدیِ خودتان تاریخ لازم است.";
+    if (!String(req.kind ?? "").trim() && !String(req.text ?? "").trim()) {
+      return "نوع یا شرح کار بعدی را بنویسید.";
+    }
+    return null;
+  }
   if (!String(req.recipientUserId ?? "").trim()) return "همکاری که باید به او ارسال شود انتخاب نشده است.";
   if (ctx.selfUserId && req.recipientUserId === ctx.selfUserId) {
-    return "ارسال به خودتان معنا ندارد؛ برای کار بعدی خودتان «ثبت و اقدام بعدی» را بزنید.";
+    return "ارسال به خودتان معنا ندارد؛ برای کار بعدی خودتان «برای خودم» را انتخاب کنید.";
   }
   if (req.mode === "REFERRAL" && !ctx.hasProject) {
     return "ارجاع فقط برای کاری ممکن است که به یک پروژه مربوط باشد؛ «وظیفه» یا «فقط اطلاع» را انتخاب کنید.";
@@ -115,6 +140,7 @@ export function handoffCategoryId(input: {
 /** One thing a completed task handed on, kept on that task. */
 export interface HandoffEntry {
   mode: HandoffMode;
+  /** The account the work went to — the ticker's own for SELF. */
   toUserId: string;
   toName: string;
   /** ISO instant. */
@@ -174,10 +200,11 @@ export function handoffFeedText(mode: HandoffMode, input: {
   return input.text.trim() ? `${head}:\n${input.text.trim()}` : head;
 }
 
-/** A new task's title, when it continues another. */
-export function continuationTitle(taskTitle: string, text: string): string {
+/** A new task's title, when it continues another — the kind leads when one was chosen. */
+export function continuationTitle(taskTitle: string, text: string, kind?: string | null): string {
   const firstLine = text.trim().split(/\r?\n/)[0]?.trim() ?? "";
-  const base = firstLine || `در ادامهٔ: ${taskTitle}`;
+  const k = String(kind ?? "").trim();
+  const base = k || firstLine || `در ادامهٔ: ${taskTitle}`;
   return base.length > 200 ? `${base.slice(0, 199)}…` : base;
 }
 
