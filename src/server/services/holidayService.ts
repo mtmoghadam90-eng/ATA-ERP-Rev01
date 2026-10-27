@@ -3,9 +3,10 @@ import { AuthUser, hasPermission } from "../auth";
 import { jalaliToDate } from "../dates";
 import { logAction } from "./auditService";
 import {
-  HolidayMap, ImportedHoliday, importRefusalReason, normalizeJalali, planHijriShift,
-  shiftForYear, shiftRefusalReason,
+  HolidayMap, ImportedHoliday, importRefusalReason, normalizeJalali, normalizeWeekendDays,
+  planHijriShift, shiftForYear, shiftRefusalReason, thursdayIsOff,
 } from "../../utils/holidays";
+import { rescheduleTasksOffHolidays } from "./holidayReschedule";
 import { DEFAULT_HOLIDAY_SOURCE_URL, fetchHolidayYear } from "../holidaySource";
 import { invalidateSettingsCache, loadSettings } from "../settings";
 import { addDaysToShamsi, setHolidayCalendar } from "../../dateUtils";
@@ -69,12 +70,101 @@ export function holidayMapOf(rows: { dateJalali: string; isHoliday: boolean }[])
 export async function refreshHolidayCache(): Promise<number> {
   try {
     const rows = await listHolidays();
-    setHolidayCalendar(holidayMapOf(rows));
+    setHolidayCalendar(holidayMapOf(rows), await storedWeekendDays());
     return rows.length;
   } catch (err) {
     console.warn("[holidays] calendar could not be loaded:", (err as Error)?.message ?? err);
     return 0;
   }
+}
+
+/**
+ * The weekdays nobody works, as stored: Friday always, Thursday when the
+ * company closes on it (`normalizeWeekendDays`).
+ *
+ * Read with the calendar by the same endpoint, because the answer to «is this a
+ * working day» is the two together — a browser that had the days and not the
+ * weekend would count Thursday as worked while the server moved every task off
+ * it.
+ */
+export async function storedWeekendDays(): Promise<number[]> {
+  try {
+    const settings = await loadSettings() as { weekendDays?: unknown } | undefined;
+    return normalizeWeekendDays(settings?.weekendDays);
+  } catch {
+    return normalizeWeekendDays(undefined);
+  }
+}
+
+/**
+ * Writes some keys of the settings document, read fresh rather than from the
+ * five-second cache — a read-modify-write against a stale copy would put back
+ * whatever somebody saved in between.
+ */
+async function writeSettingsKeys(mutate: (doc: Record<string, unknown>) => void): Promise<boolean> {
+  const db = getDb();
+  const row = await db.appSetting.findUnique({ where: { id: "singleton" } });
+  if (!row?.data) return false;
+  let doc: Record<string, unknown>;
+  try { doc = JSON.parse(row.data) as Record<string, unknown>; } catch { return false; }
+  mutate(doc);
+  await db.appSetting.update({ where: { id: "singleton" }, data: { data: JSON.stringify(doc) } });
+  invalidateSettingsCache();
+  return true;
+}
+
+export interface WeekendOutcome {
+  weekendDays: number[];
+  /** Open tasks moved off a day that is now off. */
+  tasksMoved: number;
+}
+
+/**
+ * Closes (or reopens) Thursdays.
+ *
+ * Closing one moves every open task due on a Thursday from today on to the
+ * next working day — the setting is a statement that nobody will be there to
+ * do it, so leaving the work on that day would be a column of deadlines that
+ * cannot be met. Reopening moves nothing back: a task now due on Saturday is
+ * still due on a working day, and guessing which of them were Thursday's
+ * would be rewriting dates somebody may have set since.
+ */
+export async function setThursdayOff(
+  off: boolean,
+  user: AuthUser,
+  todayJalali: string,
+): Promise<"forbidden" | "no-settings" | WeekendOutcome> {
+  if (!hasPermission(user, "settings")) return "forbidden";
+  const before = await storedWeekendDays();
+  const weekendDays = normalizeWeekendDays(off ? [...before, 4] : before.filter((d) => d !== 4));
+  const written = await writeSettingsKeys((doc) => { doc.weekendDays = weekendDays; });
+  if (!written) return "no-settings";
+  await refreshHolidayCache();
+
+  const tasksMoved = thursdayIsOff(weekendDays) && !thursdayIsOff(before)
+    ? (await rescheduleTasksOffHolidays(todayJalali, user)).moved
+    : 0;
+
+  await logAction(
+    {
+      action: "UPDATE",
+      module: "تقویم",
+      entityId: "holidays-weekend",
+      description: `${off ? "تعطیل" : "کاری"} شدن پنجشنبه‌ها`
+        + (tasksMoved ? ` (${tasksMoved} وظیفه به روز کاری بعد منتقل شد)` : ""),
+      afterState: { weekendDays, tasksMoved },
+    },
+    user,
+    todayJalali,
+  );
+  return { weekendDays, tasksMoved };
+}
+
+/** Records that a year's «load the calendar» notice went out. */
+export async function markCalendarYearAnnounced(year: number, sentFor: readonly number[]): Promise<void> {
+  await writeSettingsKeys((doc) => {
+    doc.holidayNoticeSentFor = [...new Set([...sentFor, year])].sort((a, b) => a - b);
+  });
 }
 
 export interface HolidayInput {
@@ -97,7 +187,7 @@ export async function upsertHoliday(
   input: HolidayInput,
   user: AuthUser,
   todayJalali: string,
-): Promise<"forbidden" | "invalid" | { holiday: HolidayRow }> {
+): Promise<"forbidden" | "invalid" | { holiday: HolidayRow; tasksMoved: number }> {
   if (!hasPermission(user, "settings")) return "forbidden";
 
   const dateJalali = normalizeJalali(input.dateJalali);
@@ -127,6 +217,8 @@ export async function upsertHoliday(
   });
 
   await refreshHolidayCache();
+  // A day made off takes its open tasks with it; a day made worked moves none back.
+  const tasksMoved = isHoliday ? (await rescheduleTasksOffHolidays(todayJalali, user)).moved : 0;
 
   await logAction(
     {
@@ -140,7 +232,7 @@ export async function upsertHoliday(
     todayJalali,
   );
 
-  return { holiday };
+  return { holiday, tasksMoved };
 }
 
 export async function deleteHoliday(
@@ -183,6 +275,8 @@ export interface ImportOutcome {
   url: string;
   /** The lunar correction that was applied on the way in. */
   hijriShift: number;
+  /** Open tasks moved off a day the import made off. */
+  tasksMoved: number;
 }
 
 /**
@@ -278,12 +372,14 @@ export async function importHolidayYear(
   }
 
   await refreshHolidayCache();
+  const tasksMoved = (await rescheduleTasksOffHolidays(todayJalali, user)).moved;
 
   const outcome: ImportOutcome = {
     year, added, updated, keptManual,
     found: fetched.holidays.length,
     url: fetched.url,
     hijriShift: offset,
+    tasksMoved,
   };
 
   await logAction(
@@ -313,6 +409,8 @@ export interface ShiftOutcome {
   moved: number;
   /** Days that could not move because a day somebody entered is already there. */
   blocked: string[];
+  /** Open tasks moved off a lunar day's new date. */
+  tasksMoved: number;
 }
 
 /**
@@ -403,12 +501,14 @@ export async function shiftHijriHolidays(
   }
 
   await refreshHolidayCache();
+  const tasksMoved = plan.moves.length ? (await rescheduleTasksOffHolidays(todayJalali, user)).moved : 0;
 
   const outcome: ShiftOutcome = {
     year,
     offset,
     moved: plan.moves.length,
     blocked: plan.blocked.map((b) => b.from),
+    tasksMoved,
   };
 
   await logAction(

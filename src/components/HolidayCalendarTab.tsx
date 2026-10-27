@@ -5,9 +5,9 @@ import {
 } from 'lucide-react';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { ApiError } from '../api/client';
-import { HolidayRow, holidaysApi, refreshHolidayCalendar } from '../api/holidays';
+import { HolidayRow, holidayWeekendDays, holidaysApi, refreshHolidayCalendar } from '../api/holidays';
 import { getShamsiDaysDifference, getTodayShamsi } from '../dateUtils';
-import { FIXED_SOLAR_HOLIDAYS, MAX_HIJRI_SHIFT_DAYS } from '../utils/holidays';
+import { FIXED_SOLAR_HOLIDAYS, MAX_HIJRI_SHIFT_DAYS, thursdayIsOff } from '../utils/holidays';
 
 /**
  * The official calendar: the days nobody works.
@@ -35,6 +35,11 @@ import { FIXED_SOLAR_HOLIDAYS, MAX_HIJRI_SHIFT_DAYS } from '../utils/holidays';
 
 const YEAR_OF_TODAY = parseInt(getTodayShamsi().slice(0, 4), 10) || 1404;
 
+/** «، ۳ وظیفه به روز کاری بعد منتقل شد» — or nothing, when none moved. */
+function movedSuffix(count: number | undefined): string {
+  return count ? `؛ ${count.toLocaleString('fa-IR')} وظیفه از روز تعطیل به روز کاری بعد منتقل شد` : '';
+}
+
 export default function HolidayCalendarTab() {
   const [rows, setRows] = useState<HolidayRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +51,11 @@ export default function HolidayCalendarTab() {
 
   const [shifting, setShifting] = useState(false);
 
+  // Seeded from the calendar the browser already holds, then corrected by the
+  // load below — the endpoint answers the weekend beside the days.
+  const [thursdayOff, setThursdayOffState] = useState(() => thursdayIsOff(holidayWeekendDays()));
+  const [savingWeekend, setSavingWeekend] = useState(false);
+
   const [newDate, setNewDate] = useState(getTodayShamsi());
   const [newTitle, setNewTitle] = useState('');
   const [newIsHoliday, setNewIsHoliday] = useState(true);
@@ -55,6 +65,7 @@ export default function HolidayCalendarTab() {
     setLoading(true);
     try {
       setRows(await holidaysApi.list(signal));
+      setThursdayOffState(thursdayIsOff(holidayWeekendDays()));
       setError(null);
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -116,9 +127,9 @@ export default function HolidayCalendarTab() {
     setSaving(true);
     setError(null);
     try {
-      await holidaysApi.save(newDate, newTitle.trim() || 'تعطیل', newIsHoliday);
+      const saved = await holidaysApi.save(newDate, newTitle.trim() || 'تعطیل', newIsHoliday);
       setNewTitle('');
-      await after(`${newDate} ثبت شد.`);
+      await after(`${newDate} ثبت شد${movedSuffix(saved.tasksMoved)}.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'ثبت روز با خطا مواجه شد.');
     } finally {
@@ -148,7 +159,8 @@ export default function HolidayCalendarTab() {
       await after(
         `سال ${year}: ${result.found} روز خوانده شد — `
         + `${result.added} روز جدید، ${result.updated} به‌روزرسانی`
-        + (result.keptManual ? `، ${result.keptManual} روز دستی دست‌نخورده ماند` : ''),
+        + (result.keptManual ? `، ${result.keptManual} روز دستی دست‌نخورده ماند` : '')
+        + movedSuffix(result.tasksMoved),
       );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'دریافت تقویم با خطا مواجه شد.');
@@ -175,12 +187,35 @@ export default function HolidayCalendarTab() {
         + ` روز تنظیم شد (${result.moved} روز جابه‌جا شد)`
         + (result.blocked.length
           ? ` — ${result.blocked.length} روز جابه‌جا نشد چون روز مقصد دستی ثبت شده است`
-          : ''),
+          : '')
+        + movedSuffix(result.tasksMoved),
       );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'جابه‌جایی تقویم قمری با خطا مواجه شد.');
     } finally {
       setShifting(false);
+    }
+  };
+
+  /**
+   * Closes or reopens Thursdays. The server moves the open tasks due on a
+   * Thursday when it closes them, and says how many.
+   */
+  const toggleThursday = async (off: boolean) => {
+    setSavingWeekend(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await holidaysApi.setThursdayOff(off);
+      setThursdayOffState(thursdayIsOff(result.weekendDays));
+      await after(
+        (off ? 'پنجشنبه‌ها تعطیل در نظر گرفته می‌شوند' : 'پنجشنبه‌ها روز کاری در نظر گرفته می‌شوند')
+        + movedSuffix(result.tasksMoved) + '.',
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'ذخیره تعطیلی پنجشنبه با خطا مواجه شد.');
+    } finally {
+      setSavingWeekend(false);
     }
   };
 
@@ -193,8 +228,31 @@ export default function HolidayCalendarTab() {
         </h3>
         <p className="text-slate-500 text-xs mt-1 leading-relaxed">
           محاسبه «روز کاری» در تاریخ تحویل پیش‌فاکتور، اقدام بعدی پیگیری‌ها و موعد وظایف از این
-          تقویم خوانده می‌شود. جمعه‌ها و تعطیلات ثابت شمسی همیشه اعمال می‌شوند؛ تعطیلات قمری هر سال
+          تقویم خوانده می‌شود. جمعه‌ها (و در صورت انتخاب، پنجشنبه‌ها) و تعطیلات ثابت شمسی همیشه اعمال می‌شوند؛ تعطیلات قمری هر سال
           جابه‌جا می‌شوند و باید برای هر سال دریافت یا ثبت شوند.
+        </p>
+      </div>
+
+      {/* Which weekdays are off */}
+      <div className="bg-amber-50/60 border border-amber-100 rounded-2xl p-4 space-y-2" data-weekend-panel>
+        <label className="flex items-center gap-2 text-xs font-bold text-amber-900 cursor-pointer">
+          <input
+            type="checkbox"
+            id="holiday-thursday-off"
+            checked={thursdayOff}
+            disabled={savingWeekend}
+            onChange={(e) => void toggleThursday(e.target.checked)}
+            className="w-4 h-4 accent-amber-600"
+          />
+          پنجشنبه‌ها هم تعطیل است
+          {savingWeekend && <Loader2 size={13} className="animate-spin text-amber-600" />}
+        </label>
+        <p className="text-[10px] text-amber-900/80 leading-relaxed">
+          با روشن کردن این گزینه، پنجشنبه‌ها مثل جمعه در شمارش روز کاری (موعد وظایف، اقدام بعدی
+          پیگیری‌ها و زمان تحویل) کنار گذاشته می‌شوند و <b>وظایف باز که موعدشان از امروز به بعد روی
+          پنجشنبه یا هر روز تعطیل دیگری افتاده، به اولین روز کاری بعد منتقل می‌شوند</b> و به انجام‌دهنده
+          اطلاع داده می‌شود. ثبت یک روز تعطیل یا دریافت تعطیلات یک سال هم همین کار را می‌کند. برای
+          یک پنجشنبهٔ خاص که کار می‌کنید، آن روز را پایین‌تر «کاری (استثنا)» ثبت کنید.
         </p>
       </div>
 
@@ -433,8 +491,10 @@ export default function HolidayCalendarTab() {
 
       <p className="text-[10px] text-slate-400 leading-relaxed border-t border-slate-100 pt-3">
         تعطیلات ثابت شمسی که همیشه و بدون ثبت اعمال می‌شوند:{' '}
-        <span className="font-mono">{FIXED_SOLAR_HOLIDAYS.join('، ')}</span>. جمعه‌ها هم همیشه
-        تعطیل در نظر گرفته می‌شوند مگر آنکه برای یک تاریخ مشخص «کاری (استثنا)» ثبت کنید.
+        <span className="font-mono">{FIXED_SOLAR_HOLIDAYS.join('، ')}</span>. جمعه‌ها
+        {thursdayOff ? ' و پنجشنبه‌ها' : ''} هم همیشه تعطیل در نظر گرفته می‌شوند مگر آنکه برای یک
+        تاریخ مشخص «کاری (استثنا)» ثبت کنید. در اسفند هر سال، اگر تعطیلات سال بعد هنوز دریافت نشده
+        باشد، به مدیر سیستم اعلان داده می‌شود.
       </p>
     </div>
   );

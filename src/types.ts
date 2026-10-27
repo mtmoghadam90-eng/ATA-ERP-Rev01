@@ -1020,6 +1020,14 @@ export interface ERPSettings {
    */
   hijriHolidayShift?: Record<string, number>;
   /**
+   * The weekdays nobody works, as `getDay()` numbers — Friday (5) always, and
+   * Thursday (4) when the company closes on it. Written only by
+   * `PUT /api/holidays/weekend`, read through `normalizeWeekendDays`.
+   */
+  weekendDays?: number[];
+  /** Shamsi years whose «load the calendar» notice has gone to the administrators. */
+  holidayNoticeSentFor?: number[];
+  /**
    * How many days in a state before «کارهای متوقف» calls it stuck, per state.
    *
    * Absent falls back to `DEFAULT_STUCK_THRESHOLDS` in

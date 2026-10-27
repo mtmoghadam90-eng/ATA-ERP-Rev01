@@ -1137,7 +1137,7 @@ export async function createTask(
  * this is where the task's date is written, and a second writer is how the two
  * halves came to disagree in the first place.
  */
-async function syncDeferralToChase(
+export async function syncDeferralToChase(
   tx: Prisma.TransactionClient,
   task: { taskKind: string | null; relatedToType: string | null; relatedToId: string | null },
   newDueDateJalali: string | null | undefined,

@@ -68,6 +68,7 @@ import NoteFollowUpBar from "../src/components/NoteFollowUpBar";
 import ProjectFollowUpTab from "../src/components/ProjectFollowUpTab";
 import AdEffectivenessView from "../src/components/AdEffectivenessView";
 import MeetingsView, { MeetingItemTrailModal } from "../src/components/MeetingsView";
+import HolidayCalendarTab from "../src/components/HolidayCalendarTab";
 import { invalidateUserDirectory } from "../src/api/useUserDirectory";
 import { LANE_LABELS } from "../src/utils/workBoard";
 import { DEFAULT_SETTINGS } from "../src/seedData";
@@ -5314,6 +5315,42 @@ head("«ارسال به همکار»: the tick hands the work on, and a meeting 
   act(() => { rootT.unmount(); });
   hostT.remove();
   gT.fetch = realFetchT;
+}
+
+head("Holiday calendar: closing Thursdays reaches the server and reports the tasks moved");
+{
+  const gW = globalThis as unknown as { fetch: unknown };
+  const realFetchW = gW.fetch;
+  const sent: { url: string; method: string; body: string }[] = [];
+  let thursdayStored = false;
+  gW.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
+    const method = init?.method ?? "GET";
+    sent.push({ url: String(url), method, body: String(init?.body ?? "") });
+    let body: unknown = { success: true };
+    if (String(url).includes("/api/holidays/weekend")) {
+      thursdayStored = JSON.parse(String(init?.body ?? "{}")).thursdayOff === true;
+      body = { success: true, weekendDays: thursdayStored ? [4, 5] : [5], tasksMoved: 3 };
+    } else if (String(url).includes("/api/holidays")) {
+      body = { success: true, holidays: [], weekendDays: thursdayStored ? [4, 5] : [5] };
+    }
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+  }) as never;
+  const hostW = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootW = createRoot(hostW);
+  await act(async () => { rootW.render(React.createElement(HolidayCalendarTab)); });
+  for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+  const box = () => hostW.querySelector("#holiday-thursday-off") as HTMLInputElement | null;
+  ok("the Thursday switch is drawn, off by default", !!box() && box()!.checked === false);
+  await act(async () => { box()?.click(); });
+  for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+  const put = sent.find((r) => r.url.includes("/api/holidays/weekend"));
+  ok("...ticking it writes thursdayOff: true to the weekend endpoint",
+    !!put && put.method === "PUT" && JSON.parse(put.body).thursdayOff === true, sent);
+  ok("...and stays ticked once the calendar is read back", box()?.checked === true);
+  ok("...and says how many tasks were moved", (hostW.textContent ?? "").includes("به روز کاری بعد منتقل شد"));
+  act(() => { rootW.unmount(); });
+  hostW.remove();
+  gW.fetch = realFetchW;
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

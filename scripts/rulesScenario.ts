@@ -332,6 +332,8 @@ import {
   MAX_HIJRI_SHIFT_DAYS, importRefusalReason, isNonWorkingDay, monthDayOf, normalizeJalali,
   normalizeCalendarKind, parseCalendarYear, planHijriShift, shiftForYear, shiftRefusalReason,
   toLatinDigits as holidayLatinDigits,
+  normalizeWeekendDays, thursdayIsOff, firstWorkingOffset, planHolidayReschedule,
+  calendarYearLoaded, calendarYearToAnnounce, announcedYears,
 } from "../src/utils/holidays";
 import {
   addDaysToShamsi as addDays, holidayReason, setHolidayCalendar, toGregorianStr,
@@ -24287,6 +24289,124 @@ head("Printed documents carry the application's own font, never Google's");
   const modal = strip(readFileSync("src/components/TaskCompletionModal.tsx", "utf8"));
   ok("modal: uploads at call time, into a Latin folder",
     /await import\("\.\.\/imageUtils"\)/.test(modal) && /"task-files"/.test(modal) && !/^import .*imageUtils/m.test(modal));
+}
+
+head("Thursdays off, tasks moved off a day off, and the new-year calendar notice");
+{
+  const strip = (src: string) =>
+    src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\s\/\/.*$/gm, "");
+  /*
+   * Friday is always off; only Thursday is ever added. A list that names every
+   * day would leave no working day, and every walk to the next one would run
+   * to its bound, so it falls back to Friday.
+   */
+  ok("weekend: absent is Friday alone", JSON.stringify(normalizeWeekendDays(undefined)) === "[5]");
+  ok("weekend: Thursday is added beside Friday, never instead of it",
+    JSON.stringify(normalizeWeekendDays([4])) === "[4,5]");
+  ok("weekend: junk is dropped", JSON.stringify(normalizeWeekendDays([4, "x", 9, 2.5, -1, "4"])) === "[4,5]");
+  ok("weekend: all seven days is refused back to Friday",
+    JSON.stringify(normalizeWeekendDays([0, 1, 2, 3, 4, 5, 6])) === "[5]");
+  ok("weekend: thursdayIsOff reads the list", thursdayIsOff([4, 5]) && !thursdayIsOff([5]));
+
+  ok("first working offset: 0 when the day is worked", firstWorkingOffset(() => false) === 0);
+  ok("first working offset: skips the days that are off",
+    firstWorkingOffset((i) => i < 3) === 3);
+  ok("first working offset: bounded, null when nothing is worked", firstWorkingOffset(() => true) === null);
+
+  // A real Thursday, found from the calendar rather than typed in.
+  const weekday = (j: string) => new Date(toGregorianStr(j)!).getDay();
+  let thursday = "1405/08/01";
+  for (let i = 0; i < 7 && weekday(thursday) !== 4; i++) thursday = addDays(thursday, 1);
+  const friday = addDays(thursday, 1);
+  const saturday = addDays(thursday, 2);
+  ok("fixture: the day found is a Thursday", weekday(thursday) === 4 && weekday(saturday) === 6);
+
+  setHolidayCalendar({}, [4, 5]);
+  const isOffNow = (j: string) => isNonWorkingDay(j, weekday(j), { holidays: {}, weekendDays: [4, 5] });
+  const plan = planHolidayReschedule([
+    { id: "thu", dueDateJalali: thursday },
+    { id: "fri", dueDateJalali: friday },
+    { id: "sat", dueDateJalali: saturday },
+    { id: "past", dueDateJalali: addDays(thursday, -7) },
+    { id: "none", dueDateJalali: null },
+  ], addDays(thursday, -3), isOffNow, addDays);
+  ok("reschedule: a Thursday task goes to Saturday",
+    plan.find((m) => m.id === "thu")?.to === saturday);
+  ok("reschedule: a Friday task goes to Saturday too", plan.find((m) => m.id === "fri")?.to === saturday);
+  ok("reschedule: a working day, a past date and an undated task stay",
+    !plan.some((m) => m.id === "sat" || m.id === "past" || m.id === "none") && plan.length === 2);
+  const sameDay = planHolidayReschedule([{ id: "t", dueDateJalali: thursday }], thursday, isOffNow, addDays);
+  ok("reschedule: today itself counts as from-today-on", sameDay[0]?.to === saturday);
+  // With Thursday worked, the same task does not move.
+  const worked = (j: string) => isNonWorkingDay(j, weekday(j), { holidays: {}, weekendDays: [5] });
+  ok("reschedule: nothing moves when Thursday is worked",
+    planHolidayReschedule([{ id: "t", dueDateJalali: thursday }], thursday, worked, addDays).length === 0);
+  ok("reschedule: an explicit working Thursday is not moved",
+    planHolidayReschedule([{ id: "t", dueDateJalali: thursday }], thursday,
+      (j) => isNonWorkingDay(j, weekday(j), { holidays: { [thursday]: false }, weekendDays: [4, 5] }), addDays,
+    ).length === 0);
+  ok("date helpers: Thursday's reason is the weekend once closed",
+    holidayReason(thursday) === "تعطیل آخر هفته");
+  setHolidayCalendar({});
+  ok("date helpers: a Thursday is worked again on the default weekend", holidayReason(thursday) === null);
+
+  // The new-year notice.
+  const imported = (y: number) => ({ yearJalali: y, source: "IMPORT", isHoliday: true });
+  const manual = (y: number) => ({ yearJalali: y, source: "MANUAL", isHoliday: true });
+  ok("year loaded: one imported day is a loaded year", calendarYearLoaded([imported(1405)], 1405));
+  ok("year loaded: one snow day typed by hand is not",
+    !calendarYearLoaded([manual(1405)], 1405));
+  ok("year loaded: a year typed in full by hand is",
+    calendarYearLoaded(Array.from({ length: MIN_PLAUSIBLE_HOLIDAYS }, () => manual(1405)), 1405));
+  ok("notice: an empty current year is announced at once",
+    calendarYearToAnnounce("1405/03/10", [], []) === 1405);
+  ok("notice: a loaded year mid-year says nothing",
+    calendarYearToAnnounce("1405/08/10", [imported(1405)], []) === null);
+  ok("notice: from Esfand the coming year is announced",
+    calendarYearToAnnounce("1405/12/01", [imported(1405)], []) === 1406);
+  ok("notice: not before Esfand",
+    calendarYearToAnnounce("1405/11/29", [imported(1405)], []) === null);
+  ok("notice: a year once announced is never announced again",
+    calendarYearToAnnounce("1405/12/05", [imported(1405)], [1406]) === null
+    && calendarYearToAnnounce("1406/01/05", [], [1406]) === null);
+  ok("notice: a loaded coming year says nothing",
+    calendarYearToAnnounce("1405/12/20", [imported(1405), imported(1406)], []) === null);
+  ok("notice: the stored list is read defensively",
+    JSON.stringify(announcedYears([1405, "1406", "x", 99])) === "[1405,1406]" && announcedYears(null).length === 0);
+
+  const svc = strip(readFileSync("src/server/services/holidayService.ts", "utf8"));
+  ok("server: the cache carries the stored weekend",
+    /setHolidayCalendar\(holidayMapOf\(rows\), await storedWeekendDays\(\)\)/.test(svc));
+  const weekendFn = svc.slice(svc.indexOf("export async function setThursdayOff"), svc.indexOf("export async function markCalendarYearAnnounced"));
+  ok("server: closing Thursdays refreshes the calendar before moving tasks",
+    weekendFn.indexOf("refreshHolidayCache()") > 0
+    && weekendFn.indexOf("refreshHolidayCache()") < weekendFn.indexOf("rescheduleTasksOffHolidays("));
+  ok("server: a day typed in as off, an import and a lunar shift all move tasks",
+    (svc.match(/rescheduleTasksOffHolidays\(todayJalali, user\)/g) ?? []).length >= 4);
+  const resched = strip(readFileSync("src/server/services/holidayReschedule.ts", "utf8"));
+  ok("reschedule: open tasks only, from today on, through the pure plan",
+    /openTaskWhere\(\)/.test(resched) && /dueDate: \{ gte: from \}/.test(resched)
+    && /planHolidayReschedule\(/.test(resched));
+  ok("reschedule: a parked chase's quotation moves with it",
+    /syncDeferralToChase\(tx, task, move\.to, todayJalali\)/.test(resched));
+  ok("reschedule: one notice per person, after the commit",
+    /afterCommit\("holiday reschedule notices"/.test(resched) && /perAssignee/.test(resched));
+  const route = strip(readFileSync("src/server/routes/admin.ts", "utf8"));
+  ok("route: GET /api/holidays answers the weekend beside the days",
+    /res\.json\(\{ success: true, holidays, weekendDays \}\)/.test(route));
+  ok("route: the weekend endpoint reads the flag strictly",
+    /thursdayOff\?: unknown \}\)\?\.thursdayOff === true/.test(route));
+  const client = strip(readFileSync("src/api/holidays.ts", "utf8"));
+  ok("client: the browser counts against the stored weekend",
+    /weekend = normalizeWeekendDays\(r\.weekendDays\)/.test(client)
+    && /setHolidayCalendar\(map, weekend, titles\)/.test(client));
+  const notice = strip(readFileSync("src/server/services/holidayYearNotice.ts", "utf8"));
+  ok("year notice: claimed before it is sent, to active system administrators",
+    notice.indexOf("markCalendarYearAnnounced(") > 0
+    && notice.indexOf("markCalendarYearAnnounced(") < notice.indexOf("notifyUser(")
+    && /isSystemAdmin: true, isActive: true/.test(notice));
+  const server = strip(readFileSync("server.ts", "utf8"));
+  ok("year notice: started at sign-in, never awaited", /void ensureHolidayYearNoticeRanToday\(\)/.test(server));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

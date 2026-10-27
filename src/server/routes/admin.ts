@@ -12,7 +12,8 @@ import {
 } from "../services/adminService";
 import { ensureRatesFresh, rateRefreshReport } from "../services/rateRefresh";
 import {
-  deleteHoliday, importHolidayYear, listHolidays, shiftHijriHolidays, upsertHoliday,
+  deleteHoliday, importHolidayYear, listHolidays, setThursdayOff, shiftHijriHolidays,
+  storedWeekendDays, upsertHoliday,
 } from "../services/holidayService";
 
 /** Settings, exchange rates and the audit log. */
@@ -103,7 +104,8 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
     const user = await deps.requireAuth(req, res);
     if (!user) return;
     try {
-      res.json({ success: true, holidays: await listHolidays() });
+      const [holidays, weekendDays] = await Promise.all([listHolidays(), storedWeekendDays()]);
+      res.json({ success: true, holidays, weekendDays });
     } catch (err) {
       sendError(res, err, "GET /api/holidays");
     }
@@ -128,9 +130,30 @@ export function registerAdminRoutes(app: express.Express, deps: RouteDeps): void
         res.status(400).json({ success: false, error: "تاریخ شمسی معتبر نیست." });
         return;
       }
-      res.json({ success: true, holiday: outcome.holiday });
+      res.json({ success: true, holiday: outcome.holiday, tasksMoved: outcome.tasksMoved });
     } catch (err) {
       sendError(res, err, "PUT /api/holidays");
+    }
+  });
+
+  /**
+   * Closes or reopens Thursdays. Closing one moves the open tasks due on a
+   * Thursday to the next working day (`setThursdayOff`).
+   */
+  app.put("/api/holidays/weekend", async (req, res) => {
+    const user = await deps.requireAuth(req, res);
+    if (!user) return;
+    try {
+      const off = (req.body as { thursdayOff?: unknown })?.thursdayOff === true;
+      const outcome = await setThursdayOff(off, user, getTodayShamsi());
+      if (outcome === "forbidden") return denied(res, "شما اجازه تغییر تقویم را ندارید.");
+      if (outcome === "no-settings") {
+        res.status(409).json({ success: false, error: "تنظیمات سامانه هنوز ایجاد نشده است." });
+        return;
+      }
+      res.json({ success: true, ...outcome });
+    } catch (err) {
+      sendError(res, err, "PUT /api/holidays/weekend");
     }
   });
 

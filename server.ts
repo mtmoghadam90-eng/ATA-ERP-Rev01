@@ -59,6 +59,7 @@ import { refreshHolidayCache } from "./src/server/services/holidayService";
 import { ensureSettingsPatches } from "./src/server/settings";
 import { ensureWorkflowSweepRanToday, runDueWorkflows } from "./src/server/services/workflowSweep";
 import { ensureDueRemindersRanToday } from "./src/server/services/dueReminderSweep";
+import { ensureHolidayYearNoticeRanToday } from "./src/server/services/holidayYearNotice";
 import { isDbConfigured, pingDb, disconnectDb } from "./src/server/db";
 import { UPLOADS_DIR, ensureUploadsDir } from "./src/server/uploadsDir";
 import { recalculateCustomerValueNow } from "./src/server/services/customerValueRecalc";
@@ -644,6 +645,11 @@ registerCampaignRoutes(app, routeDeps);
          * failures.
          */
         void ensureDueRemindersRanToday();
+        /*
+         * And, once a day, whether next year's (or this year's) holidays have
+         * been loaded — the administrators are told once per year.
+         */
+        void ensureHolidayYearNoticeRanToday();
       } else {
         // Increment failed attempts
         const currentU = userLoginAttempts.get(userKey) || { count: 0, lastAttempt: 0 };
