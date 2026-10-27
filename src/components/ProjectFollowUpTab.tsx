@@ -6,7 +6,6 @@ import {
 } from 'lucide-react';
 import FollowUpCompletionModal from './FollowUpCompletionModal';
 import TaskCompletionModal, { type TaskCompletionExtras } from './TaskCompletionModal';
-import { NextActionPrompt } from './NextActionModal';
 import ShamsiDatePicker from './ShamsiDatePicker';
 import { ApiError } from '../api/client';
 import {
@@ -21,8 +20,6 @@ import type { ERPSettings } from '../types';
 import { settlementCategoryPrompt } from '../utils/salesFollowUp';
 import { ACTIVITY_CATEGORY } from '../utils/activityCategories';
 import type { useCategoryCompletion } from '../api/useCategoryCompletion';
-import { useNextAction } from '../utils/useNextAction';
-import { nextActionFromTask } from '../utils/nextAction';
 import {
   LANE_LABELS, TASK_DONE, sortBoardCards, taskBoardLane, type BoardLane,
 } from '../utils/workBoard';
@@ -106,13 +103,11 @@ export default function ProjectFollowUpTab({
   /*
    * Ticking the job's ordinary work off, from the tab that shows it.
    *
-   * The same two controls the board offers — `TaskCompletionModal` asks «شرح
-   * اقدام» and carries «ثبت و اقدام بعدی» beside it — rather than a bare tick
-   * of this screen's own, because a second way to finish a task is a second
-   * copy of what finishing one means.
+   * The board's own `TaskCompletionModal` — «شرح اقدام» and «کار بعدی» — rather
+   * than a bare tick of this screen's own, because a second way to finish a
+   * task is a second copy of what finishing one means.
    */
   const [ticking, setTicking] = useState<ProjectTaskRow | null>(null);
-  const nextAction = useNextAction();
   const [showDoneTasks, setShowDoneTasks] = useState(false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
@@ -177,32 +172,22 @@ export default function ProjectFollowUpTab({
    * over anything changed since — the rule `taskToWriteInput` keeps by not
    * carrying the note at all.
    */
-  const confirmTick = async (note: string, withNextAction: boolean, extras?: TaskCompletionExtras) => {
+  const confirmTick = async (note: string, extras?: TaskCompletionExtras) => {
     const task = ticking;
     if (!task) return;
     setTicking(null);
-    let done: ProjectTaskRow | undefined;
     try {
       await tasksApi.update(task.id, {
         status: TASK_DONE, completionNote: note.trim() || null,
         completionAttachments: extras?.attachments ?? [],
       });
-      done = task;
+      // «کار بعدی» only once the tick has landed: a refused tick hands on nothing.
       const handoffProblem = await sendHandoff(task.id, extras?.handoff);
       if (handoffProblem) setError(handoffProblem);
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'ثبت انجام کار با خطا مواجه شد.');
     }
-    // `undefined` is a refused write: a tick the server rejected must not leave
-    // a card pointing at work nobody finished.
-    await nextAction.ask(
-      withNextAction,
-      done,
-      // This tab is the project's own, so the job is known whatever the task is
-      // related to — a quotation's task still belongs to this project.
-      (row) => ({ ...nextActionFromTask(row, currentUser?.fullName), projectId, module: 'projects' }),
-    );
   };
 
   const submitSchedule = async () => {
@@ -565,11 +550,10 @@ export default function ProjectFollowUpTab({
           hasProject
           categories={settings.activityCategories}
           priorityOptions={settings.dropdownItems?.taskPriorities}
-          onConfirm={(note, withNextAction, _result, extras) => void confirmTick(note, withNextAction, extras)}
+          kinds={settings.dropdownItems?.nextActionKinds}
+          onConfirm={(note, _result, extras) => void confirmTick(note, extras)}
         />
       )}
-
-      <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
 
       {scheduling && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">

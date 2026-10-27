@@ -3093,16 +3093,16 @@ head("Completing a task: the note reaches the caller");
     taskKind: "GENERAL", priority: "متوسط",
   };
   let confirmed: string | null = null;
-  let confirmedNext: boolean | null = null;
+  let confirmedHandoff: unknown = "unset";
   let cancelled = 0;
 
   const draw = (t: unknown) => act(() => {
     nRoot.render(React.createElement(TaskCompletionModal, {
       task: t as never,
       onCancel: () => { cancelled += 1; },
-      onConfirm: (note: string, withNextAction: boolean) => {
+      onConfirm: (note: string, _result: unknown, extras?: { handoff: unknown }) => {
         confirmed = note;
-        confirmedNext = withNextAction;
+        confirmedHandoff = extras?.handoff;
       },
     }));
   });
@@ -3132,25 +3132,14 @@ head("Completing a task: the note reaches the caller");
   act(() => { confirm!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
   ok("...pressing it hands over exactly what was typed",
     confirmed === "قیمت رقیب گرفته شد و ۵٪ تخفیف پیشنهاد شد", confirmed);
-  ok("...and asks for no next action", confirmedNext === false, String(confirmedNext));
+  ok("...and hands on nothing while «کار بعدی» is off", confirmedHandoff === null, String(confirmedHandoff));
 
   /*
-   * **«ثبت و اقدام بعدی» is the same completion plus one answer.**
-   *
-   * The choice is in the button rather than in a dialog after every tick — the
-   * `SaveWithNextActionButton` rule — and it travels as an argument rather than
-   * through a ref, so this is what says the second button is not simply the
-   * first one drawn twice. A button that renders perfectly and hands over the
-   * same `false` as its neighbour type-checks and reads correctly, and the
-   * follow-on question would then never be asked from the one gesture people
-   * finish a task with.
+   * One door for «what next». The second button («ثبت و اقدام بعدی») is gone:
+   * it raised a next action that did not continue this task, so «کار بعدی» —
+   * off by default — is the only way the tick asks it.
    */
-  const confirmNext = nHost.querySelector("#task-completion-confirm-next") as HTMLElement | null;
-  ok("the second answer is offered beside the first", !!confirmNext);
-  act(() => { confirmNext!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
-  ok("...and says so to the caller", confirmedNext === true, String(confirmedNext));
-  ok("...carrying the same note, since it is the same completion",
-    confirmed === "قیمت رقیب گرفته شد و ۵٪ تخفیف پیشنهاد شد", confirmed);
+  ok("there is no second confirm button", !nHost.querySelector("#task-completion-confirm-next"));
 
   /*
    * A note already on the task seeds the box: re-completing a card that was
@@ -3174,13 +3163,13 @@ head("Completing a call to a customer: the result reaches the caller");
 {
   const cHost = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
   const cRoot = createRoot(cHost);
-  let got: { note: string; next: boolean; result: string | null | undefined } | null = null;
+  let got: { note: string; result: string | null | undefined } | null = null;
   const draw = (t: unknown) => act(() => {
     cRoot.render(React.createElement(TaskCompletionModal, {
       task: t as never,
       contactResults: ["فعلاً نیازی ندارد", "پاسخ نداد"],
       onCancel: () => {},
-      onConfirm: (note: string, next: boolean, result?: string | null) => { got = { note, next, result }; },
+      onConfirm: (note: string, result?: string | null) => { got = { note, result }; },
     }));
   });
   const base = { id: "c-1", title: "تماس تلفنی", taskKind: "NEXT_ACTION", status: "برای انجام" };
@@ -3194,9 +3183,9 @@ head("Completing a call to a customer: the result reaches the caller");
   const sel = cHost.querySelector("#task-completion-result") as HTMLSelectElement | null;
   ok("a customer task offers the company's list", !!sel && sel.options.length === 3, sel?.options.length);
   act(() => { sel!.value = "پاسخ نداد"; handlers(sel!).onChange?.({ target: sel }); });
-  act(() => { (cHost.querySelector("#task-completion-confirm-next") as HTMLElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
-  ok("...the chosen result reaches the caller with the next-action answer",
-    (got as any)?.result === "پاسخ نداد" && (got as any)?.next === true, JSON.stringify(got));
+  act(() => { (cHost.querySelector("#task-completion-confirm") as HTMLElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("...the chosen result reaches the caller",
+    (got as any)?.result === "پاسخ نداد", JSON.stringify(got));
 
   draw({ ...base, id: "c-3", relatedToType: "customer", contactResult: "نام قدیمی" });
   const stale = cHost.querySelector("#task-completion-result") as HTMLSelectElement | null;
@@ -5223,21 +5212,44 @@ head("«ارسال به همکار»: the tick hands the work on, and a meeting 
       users, currentUserId: "u-me", hasProject,
       categories: [{ id: "c1", name: "خرید" }],
       onCancel: () => {},
-      onConfirm: (_n: string, _w: boolean, _r: unknown, extras: unknown) => { got = { extras: extras as never }; },
+      onConfirm: (_n: string, _r: unknown, extras: unknown) => { got = { extras: extras as never }; },
     }));
   });
   const click = (el: Element | null) => act(() => { el?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
 
   draw({ id: "h-1", title: "تهیه لیست قیمت", relatedToType: "عمومی" });
-  ok("the handoff section is offered", !!hostH.querySelector("[data-completion-handoff]"));
-  ok("...folded until asked for", !hostH.querySelector("#task-completion-recipient"));
+  ok("the «کار بعدی» section is offered", !!hostH.querySelector("[data-completion-handoff]"));
+  ok("...folded until asked for", !hostH.querySelector("[data-handoff-mode]"));
   click(hostH.querySelector("#task-completion-confirm"));
   ok("a plain tick hands on nothing", got?.extras?.handoff === null, got);
 
   const toggle = hostH.querySelector("#task-completion-handoff") as HTMLInputElement;
   act(() => { handlers(toggle).onChange?.({ target: { checked: true } }); });
+  /*
+   * «برای خودم» is the first answer and the default: it replaced the second
+   * button, and it raises a dated next action through the same endpoint — so it
+   * asks for the next step's own words and a date, and for no colleague.
+   */
+  ok("opened, it starts on «برای خودم», asking no colleague",
+    hostH.querySelector('[data-handoff-mode="SELF"]')?.getAttribute("aria-pressed") === "true"
+    && !hostH.querySelector("#task-completion-recipient")
+    && !!hostH.querySelector("#task-completion-next-text"));
+  got = null;
+  click(hostH.querySelector("#task-completion-confirm"));
+  ok("...and refuses a next step with no date", got === null && !!hostH.querySelector("[data-completion-problem]"));
+  const nextText = hostH.querySelector("#task-completion-next-text") as HTMLTextAreaElement;
+  act(() => { handlers(nextText).onChange?.({ target: { value: "پیگیری تأیید لیست" } }); });
+  const dateBox = hostH.querySelector('[data-completion-handoff] input[type="text"]') as HTMLInputElement | null;
+  if (dateBox) act(() => { handlers(dateBox).onChange?.({ target: { value: "1405/09/01" } }); });
+  click(hostH.querySelector("#task-completion-confirm"));
+  const mine = got?.extras?.handoff ?? null;
+  ok("...a dated next step for yourself reaches the caller, with its own words and no colleague",
+    mine?.mode === "SELF" && mine?.text === "پیگیری تأیید لیست" && mine?.recipientUserId === "" && mine?.dueDate === "1405/09/01",
+    mine);
+
+  click(hostH.querySelector('[data-handoff-mode="TASK"]'));
   const pick = hostH.querySelector("#task-completion-recipient") as HTMLSelectElement | null;
-  ok("ticking it asks for the colleague", !!pick);
+  ok("a colleague's task asks for the colleague", !!pick);
   const offered = [...(pick?.options ?? [])].map((o) => o.value);
   ok("...never yourself, nor an inactive account", !offered.includes("u-me") && !offered.includes("u-off") && offered.includes("u-b"), offered);
   ok("no project: no referral is offered", !hostH.querySelector('[data-handoff-mode="REFERRAL"]'));
@@ -5261,7 +5273,10 @@ head("«ارسال به همکار»: the tick hands the work on, and a meeting 
   draw({ id: "h-2", title: "پیگیری پروژه", relatedToType: "پروژه", relatedProject: { code: "ATA-01" } });
   act(() => { handlers(hostH.querySelector("#task-completion-handoff")!).onChange?.({ target: { checked: true } }); });
   ok("on a project the referral is offered", !!hostH.querySelector('[data-handoff-mode="REFERRAL"]'));
-  ok("...and the category, «خودکار» by default",
+  ok("...while «برای خودم» asks no category (it writes no feed line)",
+    !hostH.querySelector("#task-completion-handoff-category"));
+  click(hostH.querySelector('[data-handoff-mode="REFERRAL"]'));
+  ok("...and a referral asks the category, «خودکار» by default",
     (hostH.querySelector("#task-completion-handoff-category") as HTMLSelectElement | null)?.value === "");
   act(() => { rootH.unmount(); });
   hostH.remove();

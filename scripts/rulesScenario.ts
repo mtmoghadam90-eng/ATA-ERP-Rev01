@@ -10438,58 +10438,39 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   /* -- «و حالا بعدش چه؟», on the gesture that finishes the work -- */
 
   /*
-   * «ذخیره و ثبت اقدام بعدی» sits beside «ذخیره» on ten forms, so the question
-   * could be reached only by *opening* the task, setting its status by hand and
-   * saving — while the gesture people actually finish a task with is the tick.
-   * Both doors now ask it, and the second is what makes the first reachable
-   * from where the work ends.
+   * **The tick asks «what next» in one place.** It used to ask it twice — a
+   * second button («ثبت و اقدام بعدی») opening the next-action form, and an
+   * «ارسال به همکار» section — and the two raised a colleague's task and a
+   * referral by different routes: the button's task continued nothing, carried
+   * no files and never reached a meeting row's «اقدامات انجام شده». The button
+   * is gone and «کار بعدی» offers «برای خودم» beside the three colleague modes,
+   * all through `POST /api/tasks/:id/handoff`.
    */
   const tickModal = strip(readFileSync("src/components/TaskCompletionModal.tsx", "utf8"));
-  ok("the tick offers the next action beside the plain confirm",
-    tickModal.includes('id="task-completion-confirm-next"')
-    && tickModal.includes('id="task-completion-confirm"'));
+  ok("the tick has one confirm and no second «next action» button",
+    tickModal.includes('id="task-completion-confirm"')
+    && !tickModal.includes('id="task-completion-confirm-next"')
+    && !/send\(true\)/.test(tickModal));
+  ok("...and «کار بعدی» starts on «برای خودم»",
+    /useState<HandoffMode>\("SELF"\)/.test(tickModal) && /HANDOFF_MODES\.filter/.test(tickModal));
   /*
-   * The intent is an **argument**, not a ref. `arm`/`takeArmed` exist to bridge
-   * a `type="submit"` and a handler that runs in a later tick; here the button
-   * *is* the action, and a flag that can be left set is exactly what that pair
-   * was written to clear. Held as «each button names its own answer», since two
-   * buttons calling `onConfirm(note)` identically type-check and render
-   * perfectly while the second one silently does what the first does.
-   */
-  ok("...and each button says which one was pressed",
-    /onClick=\{\(\) => send\(false\)\}/.test(tickModal) && /onClick=\{\(\) => send\(true\)\}/.test(tickModal)
-    && /const send = \(withNext: boolean\) => \{[\s\S]{0,500}onConfirm\(note, withNext,/.test(tickModal));
-
-  /*
-   * **The completion lands first, and a refused one raises nothing.** `ask`
-   * reads `undefined` as «the write failed» — the contract all ten save buttons
-   * rely on — so a tick that the server refused must not leave a card pointing
-   * at work nobody finished. Written the other way round it type-checks and
-   * reads perfectly.
+   * The completion lands first and «کار بعدی» after it: work handed on before
+   * the tick lands could point at a task that was never closed.
    */
   const completion = tasksView.slice(
     tasksView.indexOf("const confirmCompletion"),
     tasksView.indexOf("const getPriorityClass"));
-  ok("the follow-on question comes after the write",
-    completion.indexOf("tasksApi.update(") < completion.indexOf("nextAction.ask("));
-  ok("...and a refused completion asks nothing",
-    /let done: Task \| undefined;/.test(completion)
-    && /done = task;/.test(completion)
-    && completion.indexOf("done = task;") > completion.indexOf("tasksApi.update("));
+  ok("«کار بعدی» is sent after the write",
+    completion.indexOf("tasksApi.update(") < completion.indexOf("sendHandoff("));
+  ok("...and the tick no longer opens the next-action form",
+    !/nextAction\.ask\(/.test(completion));
 
   /*
-   * One description for every door. Written out at each, they would answer
-   * «what is this next action about» differently within a month — and it is
-   * the job rather than the task, or the card reads «تماس تلفنی — تماس تلفنی»
-   * with no way back to the work.
-   *
-   * The rule moved to `utils/nextAction.ts` when a **third** door arrived: the
-   * project's own follow-up tab ticks the job's ordinary work off beside its
-   * chases, and a copy there would have been the second-copy fault this check
-   * exists to catch, arriving through the screen it was written for.
+   * The task form's own «ذخیره و ثبت اقدام بعدی» still describes its next action
+   * through the shared rule — that door stays: nothing is finished on a save.
    */
-  ok("both of this screen's doors describe the next action through one function",
-    (tasksView.match(/nextAction\.ask\([^)]*nextActionFromTask\)/g) ?? []).length === 2);
+  ok("the save door describes the next action through one function",
+    (tasksView.match(/nextAction\.ask\([^)]*nextActionFromTask\)/g) ?? []).length === 1);
   ok("...and the rule itself is shared rather than written out here",
     /from '\.\.\/utils\/nextAction'/.test(tasksView)
     && !/relatedToType: task\.relatedToType \|\| 'عمومی'/.test(tasksView));
@@ -21760,17 +21741,13 @@ head("A deadline reminds the assignee, and reports back to whoever asked");
   ok("the tick writes the status and the note and nothing else",
     /tasksApi\.update\(task\.id, \{\s*status: TASK_DONE, completionNote: note\.trim\(\) \|\| null,\s*completionAttachments: extras\?\.attachments \?\? \[\],\s*\}\)/.test(tick));
   /*
-   * The follow-on question comes **after** the write, and a refused write asks
-   * nothing — `ask` reads `undefined` as «the save failed», so a tick the
-   * server rejected must not raise a card pointing at work nobody finished.
+   * «کار بعدی» goes **after** the write, inside the same try: a tick the server
+   * refused throws first and hands nothing on.
    */
-  ok("...the follow-on question comes after it",
-    tick.indexOf("tasksApi.update(") < tick.indexOf("nextAction.ask("));
-  ok("...and a refused tick asks nothing",
-    /let done: ProjectTaskRow \| undefined;/.test(tick)
-    && tick.indexOf("done = task;") > tick.indexOf("tasksApi.update("));
-  ok("...through the one shared description, not a third copy",
-    /nextActionFromTask\(row, currentUser\?\.fullName\)/.test(tick));
+  ok("...«کار بعدی» is sent after it, and only if it landed",
+    tick.indexOf("tasksApi.update(") < tick.indexOf("sendHandoff(")
+    && tick.indexOf("sendHandoff(") < tick.indexOf("catch"));
+  ok("...and the tab no longer opens the next-action form", !/nextAction\.ask\(/.test(tab));
 
   /*
    * **A sales chase is refused by the ordinary tick**, so one that reached this
@@ -24231,6 +24208,20 @@ head("Printed documents carry the application's own font, never Google's");
   ok("handoff: no colleague is refused", !!h.handoffRefusal({ ...base, recipientUserId: "" }, { hasProject: true }));
   ok("handoff: sending to yourself is refused", !!h.handoffRefusal(base, { hasProject: true, selfUserId: "u2" }));
   ok("handoff: a referral needs a project", !!h.handoffRefusal({ ...base, mode: "REFERRAL" }, { hasProject: false }));
+  // «برای خودم» replaced the tick's second button: no colleague, but a date.
+  eq("self: no colleague is needed", h.handoffRefusal(
+    { mode: "SELF", recipientUserId: "", text: "پیگیری", attachments: [], dueDate: "1405/09/01" },
+    { hasProject: false, selfUserId: "u1" }), null);
+  ok("self: an undated next step is refused", !!h.handoffRefusal(
+    { mode: "SELF", recipientUserId: "", text: "پیگیری", attachments: [] }, { hasProject: false }));
+  ok("self: nothing said at all is refused", !!h.handoffRefusal(
+    { mode: "SELF", recipientUserId: "", text: " ", attachments: [], dueDate: "1405/09/01" }, { hasProject: false }));
+  eq("self: a kind alone names it", h.handoffRefusal(
+    { mode: "SELF", recipientUserId: "", text: "", attachments: [], dueDate: "1405/09/01", kind: "تماس تلفنی" },
+    { hasProject: false }), null);
+  eq("self: the kind is the title", h.continuationTitle("تهیه لیست", "شرح", "تماس تلفنی"), "تماس تلفنی");
+  ok("self: only the colleague modes need a recipient",
+    !h.handoffNeedsRecipient("SELF") && h.handoffNeedsRecipient("TASK") && h.handoffNeedsRecipient("NOTICE"));
   eq("handoff: ...and is accepted on one", h.handoffRefusal({ ...base, mode: "REFERRAL" }, { hasProject: true }), null);
   ok("handoff: neither words nor a file is refused", !!h.handoffRefusal({ ...base, text: "  " }, { hasProject: true }));
   eq("handoff: a file alone is enough",
@@ -24277,6 +24268,15 @@ head("Printed documents carry the application's own font, never Google's");
     /createTask\(/.test(svc) && /addActivity\(/.test(svc) && /upsertCategoryGroup\(/.test(svc)
     && /notifyUser\(/.test(svc) && !/db\.task\.create\(/.test(svc) && !/projectActivity\.create\(/.test(svc));
   ok("handoff: a closed category is reopened, not left closed", /existing\.status === GROUP_CLOSED/.test(svc) && /status: GROUP_OPEN/.test(svc));
+  /*
+   * «برای خودم» is a parked next action continuing this task — so it reaches a
+   * meeting row's trail like the colleague modes — and writes no feed line and
+   * no notice (a reminder to oneself is not news to a project's members).
+   */
+  const selfBranch = svc.slice(svc.indexOf('request.mode === "SELF"'), svc.indexOf("const recipient = await"));
+  ok("self: a parked next action continuing this task",
+    /taskKind: "NEXT_ACTION"/.test(selfBranch) && /previousTaskId: task\.id/.test(selfBranch));
+  ok("self: no feed line and no notice", !/addActivity\(|notifyUser\(/.test(selfBranch) && selfBranch.length > 200);
   ok("handoff: the notice is after the commit", /afterCommit\("task handoff notice"/.test(svc));
   const view = strip(readFileSync("src/components/TasksView.tsx", "utf8"));
   ok("handoff: posted only after the completion has landed",

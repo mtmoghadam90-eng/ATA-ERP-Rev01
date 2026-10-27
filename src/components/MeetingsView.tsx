@@ -1210,7 +1210,8 @@ export function MeetingItemTrailModal({ meetingId, itemId, itemText, onClose }: 
                 </div>
               )}
               <TaskFileLinks attachments={t.attachments} completionAttachments={t.completionAttachments} compact />
-              {t.handoffs.filter((h) => h.mode !== 'TASK').map((h, i) => (
+              {/* A task handed on is drawn as its own row below, so only notices and referrals here. */}
+              {t.handoffs.filter((h) => h.mode !== 'TASK' && h.mode !== 'SELF').map((h, i) => (
                 <div key={i} className="border-r-2 border-sky-200 pr-2 space-y-0.5" data-trail-handoff={h.mode}>
                   <div className="text-sky-800 font-bold">{HANDOFF_MODE_LABELS[h.mode]}: {h.toName}</div>
                   {h.text && <p className="text-slate-600 whitespace-pre-line break-words">{h.text}</p>}
