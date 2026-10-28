@@ -1466,11 +1466,15 @@ export default function ProformasView({
       selectedFeatures: item.selectedFeatures,
       techSpecs: item.techSpecs || "",
       selectedImage: item.selectedImage,
-      deliveryRange: item.deliveryRange || "۳-۴",
-      deliveryUnit: item.deliveryUnit || "هفته",
-      deliveryType: item.deliveryType || "کاری",
+      // `??`, not `||`: what was stored is what the form shows. A value the
+      // writer emptied on purpose came back as the default, so opening a
+      // document and saving it changed its delivery terms. Only a line that
+      // never had one (null) falls back.
+      deliveryRange: item.deliveryRange ?? "۳-۴",
+      deliveryUnit: item.deliveryUnit ?? "هفته",
+      deliveryType: item.deliveryType ?? "کاری",
       deliveryPostfix:
-        item.deliveryPostfix || "پس از تایید پیش فاکتور و دریافت پیش پرداخت",
+        item.deliveryPostfix ?? "پس از تایید پیش فاکتور و دریافت پیش پرداخت",
       // `??`, not `||`: a document written before this column existed has none,
       // and «nobody has said» is what its notes were already written against.
       paymentTerm: item.paymentTerm ?? "",
@@ -1502,7 +1506,18 @@ export default function ProformasView({
           )
         : true;
     setIsEqualDelivery(allEqual);
-    setNotes(updateNotesForItems(pf.notes || "", loadedItems, allEqual));
+    /*
+     * The notes as stored, never rebuilt on opening.
+     *
+     * Opening a document is not a change to its delivery or payment, yet the
+     * managed sections were regenerated from the fields here — so a sentence
+     * the writer had adjusted in the box was put back every time the form was
+     * opened, and the next save stored the regenerated one: reported as «هر
+     * بار روی ویرایش میزنم زمان تحویل و نحوه پرداختش عوض میشه». The sections
+     * are rewritten when a line's delivery or payment actually changes, by the
+     * handlers that change it.
+     */
+    setNotes(pf.notes || "");
     setDeliveryDate(getDeliverySummary(loadedItems));
     setShowCreateModal(true);
   };
@@ -5073,6 +5088,10 @@ export default function ProformasView({
                           className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold bg-white focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none text-right"
                         >
                           <option value="">انتخاب نشده</option>
+                          {/* A stored term the list no longer holds is drawn, or the select shows «انتخاب نشده» over a value it still has. */}
+                          {items[0]?.paymentTerm && !paymentTermOptions.includes(items[0].paymentTerm) && (
+                            <option value={items[0].paymentTerm} disabled>{items[0].paymentTerm}</option>
+                          )}
                           {paymentTermOptions.map((term) => (
                             <option key={term} value={term}>{term}</option>
                           ))}
@@ -6032,6 +6051,9 @@ export default function ProformasView({
                                 className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold bg-white focus:ring-1 focus:ring-sky-500 focus:border-sky-500 outline-none text-right"
                               >
                                 <option value="">انتخاب نشده</option>
+                                {item.paymentTerm && !paymentTermOptions.includes(item.paymentTerm) && (
+                                  <option value={item.paymentTerm} disabled>{item.paymentTerm}</option>
+                                )}
                                 {paymentTermOptions.map((term) => (
                                   <option key={term} value={term}>{term}</option>
                                 ))}

@@ -14,7 +14,7 @@ import { afterCommit } from "../afterCommit";
 import { closeFollowUpTasks } from "./followUpService";
 import { isTerminalOutcome, technicalWithdrawnByLines, versionRefusalReason } from "../../utils/salesFollowUp";
 import { deriveProjectCompetitor } from "../../utils/competitors";
-import { describeProformaChanges, proformaChangeSentence, proformaCreatedSentence } from "./proformaChanges";
+import { proformaCreatedSentence, proformaEditLogText } from "./proformaChanges";
 import {
   ProformaOutcome, commercialProformas, decidingProformas, deriveProjectLossReason,
   deriveProjectStatus, getProformaOutcome, getWonItems, isWonStatus, outcomeWhere,
@@ -1171,32 +1171,35 @@ export async function updateProforma(
         );
       }
 
-      // What the edit actually did, spelled out — see proformaChanges.ts.
-      await logProjectFact(
+      // What the edit did — only once the customer has the document; a draft
+      // writes nothing and the sending save writes the send. See
+      // `proformaEditLogText`.
+      const editText = proformaEditLogText(
+        result.proforma.proformaNumber,
+        result.before as never,
+        (result.after ?? result.proforma) as never,
         {
-          projectId: result.proforma.projectId,
-          categoryName: ACTIVITY_CATEGORY.PROFORMAS,
-          sourceType: "PROFORMA",
-          sourceId: result.proforma.id,
-          text: proformaChangeSentence(
-            result.proforma.proformaNumber,
-            describeProformaChanges(
-              result.before as never,
-              (result.after ?? result.proforma) as never,
-              {
-                customerBefore: result.beforeLabels.customerName,
-                customerAfter: result.afterLabels.customerName,
-                projectBefore: result.beforeLabels.projectName,
-                projectAfter: result.afterLabels.projectName,
-                projectStatusBefore: result.beforeLabels.projectStatus,
-                projectStatusAfter: result.afterLabels.projectStatus,
-              },
-            ),
-          ),
+          customerBefore: result.beforeLabels.customerName,
+          customerAfter: result.afterLabels.customerName,
+          projectBefore: result.beforeLabels.projectName,
+          projectAfter: result.afterLabels.projectName,
+          projectStatusBefore: result.beforeLabels.projectStatus,
+          projectStatusAfter: result.afterLabels.projectStatus,
         },
-        user,
-        todayJalali,
       );
+      if (editText) {
+        await logProjectFact(
+          {
+            projectId: result.proforma.projectId,
+            categoryName: ACTIVITY_CATEGORY.PROFORMAS,
+            sourceType: "PROFORMA",
+            sourceId: result.proforma.id,
+            text: editText,
+          },
+          user,
+          todayJalali,
+        );
+      }
     });
 
     return withOutcomeFor(result.proforma.id);
