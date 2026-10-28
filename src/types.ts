@@ -602,6 +602,12 @@ export interface Project {
   lossReason?: string;
   /** How many quotations this project carries. Derived, never written back. */
   proformaCount?: number;
+  /**
+   * How many of them are priced (not technical proposals). This, not
+   * `proformaCount`, decides whether the loss reason is typed on the form: a
+   * project lost on a technical proposal has no lost line to carry it.
+   */
+  pricedProformaCount?: number;
 
   // New Requested Fields:
   salesExpert?: string;            // کارشناس فروش

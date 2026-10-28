@@ -93,7 +93,7 @@ import {
 import { SETTINGS_PATCHES, applySettingsPatches } from "../src/utils/settingsPatches";
 import {
   RESULT_TECHNICAL_APPROVED, TECHNICAL_DOCUMENT_STATUSES, impliesTechnicalApproval,
-  technicalApprovalRefusal, technicalDocumentStatus, technicalSettlementRefusal,
+  technicalApprovalRefusal, technicalDocumentStatus, technicalSettlementRefusal, technicalWithdrawnByLines,
 } from "../src/utils/salesFollowUp";
 import { PROJECT_TECHNICAL_APPROVED } from "../src/utils/moduleStatuses";
 import { isWonStatus, technicalApprovalStands } from "../src/server/proformaStatus";
@@ -9401,6 +9401,14 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
 
   eq("no proformas: the project's own box is the only answer there is",
     deriveProjectLossReason([]), undefined);
+  /*
+   * A project lost on a technical proposal: no priced line can carry the
+   * reason, so the proformas say nothing and the typed reason must survive —
+   * `null` here cleared it on the next re-derivation.
+   */
+  eq("technical proposals alone say nothing about the loss reason",
+    deriveProjectLossReason([{ ...pf("t", "2026-01-01", []), proformaType: "TECHNICAL", isCancelled: true } as never]),
+    undefined);
 
   eq("one lost line gives its reason",
     deriveProjectLossReason([pf("a", "2026-01-01", [{ status: LOST, lossReason: "قیمت بالا" }])]),
@@ -9500,7 +9508,20 @@ head("Follow-up: a result that ends a sale, and the outcome it offers to write")
   const view = readFileSync("src/components/ProjectsView.tsx", "utf8");
   ok("the form shows the derived value read-only once a quotation exists",
     /project-loss-reason-derived/.test(view));
-  ok("and sends nothing for it", /lossReason: proformaCount > 0 \? void 0 :/.test(view));
+  ok("and sends nothing for it", /lossReason: pricedProformaCount > 0 \? void 0 :/.test(view));
+  /*
+   * Priced quotations decide it, never every document: a project whose only
+   * document is a technical proposal has no lost line, so counting it locked the
+   * box and the loss could be recorded nowhere.
+   */
+  ok("the form's lock reads the priced count the detail answers",
+    /setPricedProformaCount\(proj\.pricedProformaCount \?\? proj\.proformaCount \?\? 0\)/.test(view));
+  const projSvc = readFileSync("src/server/services/projectService.ts", "utf8");
+  ok("the server's refusal counts priced proformas only",
+    /pricedProformaCount = await db\.proforma\.count\(\{ where: \{ projectId: id, \.\.\.notTechnical\(\) \} \}\)/.test(projSvc)
+    && /lossReasonRefusal\(input, before\.lossReason, pricedProformaCount\)/.test(projSvc));
+  ok("the detail answers the priced count",
+    /pricedProformaCount\] = await Promise\.all/.test(projSvc) && /\{ \.\.\.project, summary, pricedProformaCount \}/.test(projSvc));
   /*
    * «Nothing» has to survive the adapter too. It used to write `?? null`, so the
    * form's `void 0` reached the server as «clear it» — refused on every lost
@@ -24407,6 +24428,25 @@ head("Thursdays off, tasks moved off a day off, and the new-year calendar notice
     && /isSystemAdmin: true, isActive: true/.test(notice));
   const server = strip(readFileSync("server.ts", "utf8"));
   ok("year notice: started at sign-in, never awaited", /void ensureHolidayYearNoticeRanToday\(\)/.test(server));
+}
+
+head("A technical proposal withdrawn line by line is withdrawn");
+{
+  ok("every line «لغو شده» withdraws it",
+    technicalWithdrawnByLines([{ status: "لغو شده" }, { status: "لغو شده" }]));
+  ok("one line still open does not",
+    !technicalWithdrawnByLines([{ status: "لغو شده" }, { status: "جاری" }]));
+  ok("lost or blank lines do not", !technicalWithdrawnByLines([{ status: "بازنده" }])
+    && !technicalWithdrawnByLines([{ status: null }]));
+  ok("no lines is no answer", !technicalWithdrawnByLines([]) && !technicalWithdrawnByLines(null));
+  ok("and the document then reads cancelled",
+    technicalDocumentStatus({ status: "ارسال شده", isCancelled: true }) === "لغو شده");
+  const svc = readFileSync("src/server/services/proformaService.ts", "utf8");
+  const fn = svc.slice(svc.indexOf("export async function setItemOutcomes"));
+  ok("the outcome save cancels a technical proposal whose lines are all cancelled, before the project is re-derived",
+    /proformaType === PROFORMA_TECHNICAL_TYPE && !existing\.isCancelled/.test(fn)
+    && /technicalWithdrawnByLines\(lines\)/.test(fn)
+    && fn.indexOf("technicalWithdrawnByLines(lines)") < fn.indexOf("syncProjectStatus(tx"));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

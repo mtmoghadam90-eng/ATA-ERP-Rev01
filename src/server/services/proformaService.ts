@@ -9,10 +9,10 @@ import { syncChildren, toJsonColumn, toNullableString, toNumber } from "../child
 import { scrubProductRefs } from "../refIntegrity";
 import { syncProjectStage } from "./projectService";
 import { statusChangeColumns } from "../../utils/statusDwell";
-import { PROFORMA_SENT_STATUS } from "../../utils/moduleStatuses";
+import { PROFORMA_SENT_STATUS, PROFORMA_TECHNICAL_TYPE } from "../../utils/moduleStatuses";
 import { afterCommit } from "../afterCommit";
 import { closeFollowUpTasks } from "./followUpService";
-import { isTerminalOutcome, versionRefusalReason } from "../../utils/salesFollowUp";
+import { isTerminalOutcome, technicalWithdrawnByLines, versionRefusalReason } from "../../utils/salesFollowUp";
 import { deriveProjectCompetitor } from "../../utils/competitors";
 import { describeProformaChanges, proformaChangeSentence, proformaCreatedSentence } from "./proformaChanges";
 import {
@@ -1473,6 +1473,7 @@ export async function setItemOutcomes(
         // Both halves of the outcome rule, so "did the sale end just now" can
         // be answered on the way out.
         status: true, isCancelled: true, items: { select: { status: true } },
+        proformaType: true,
       },
     });
     if (!existing) return "forbidden";
@@ -1488,6 +1489,20 @@ export async function setItemOutcomes(
         },
       });
       if (updated.count === 0) return "not-found";
+    }
+
+    /*
+     * A technical proposal is closed by its document, not its lines: every
+     * line marked «لغو شده» here is the proposal withdrawn, so the document says
+     * so too — before the project is re-derived, which reads `isCancelled`.
+     * Only ever *sets* it: a proposal cancelled from the status control is not
+     * reopened by a later line edit; reopening is that control's job.
+     */
+    if (existing.proformaType === PROFORMA_TECHNICAL_TYPE && !existing.isCancelled) {
+      const lines = await tx.proformaItem.findMany({ where: { proformaId: id }, select: { status: true } });
+      if (technicalWithdrawnByLines(lines)) {
+        await tx.proforma.update({ where: { id }, data: { isCancelled: true } });
+      }
     }
 
     /*
