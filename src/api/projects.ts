@@ -179,6 +179,8 @@ export interface LinkedCustomer {
 
 export interface ProjectDetail extends ProjectRow {
   description: string | null;
+  /** Non-technical proformas — what decides who owns the loss reason. */
+  pricedProformaCount?: number;
   adCampaignId?: string | null;
   adCampaign?: { id: string; code: string; topic: string } | null;
   endUserCustomerId: string | null;

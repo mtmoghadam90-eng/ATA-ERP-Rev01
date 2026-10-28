@@ -344,6 +344,13 @@ export function deriveProjectLossReason(
   proformas: StatusProforma[],
 ): string | null | undefined {
   if (!proformas || proformas.length === 0) return undefined;
+  /*
+   * Technical proposals alone say nothing about the sale either. A job lost on
+   * a specification — «دیر و ناقص جواب دادیم» — has no priced line to carry its
+   * reason, so the reason typed on the project form is the only answer there
+   * is, and `null` here would clear it on the next re-derivation.
+   */
+  if (commercialProformas(proformas).length === 0) return undefined;
 
   const tally = new Map<string, number>();
   const order: string[] = [];

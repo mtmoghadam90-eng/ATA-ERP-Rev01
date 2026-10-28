@@ -228,6 +228,23 @@ export function technicalDocumentStatus(pf: {
 }
 
 /**
+ * Whether a technical proposal's lines say it was withdrawn.
+ *
+ * A technical proposal's status is read off the document (`technicalDocumentStatus`
+ * reads `isCancelled`), never off its lines — a specification quotes no prices,
+ * so a line outcome describes no sale. But the outcome modal is where people
+ * close a document, and marking every line «لغو شده» there left the proposal on
+ * «در انتظار تأیید فنی» for ever (reported). Every line cancelled is the one
+ * line answer that means something for this kind of document: it was withdrawn.
+ * No lines at all is not an answer, so it says nothing.
+ */
+export function technicalWithdrawnByLines(
+  items: readonly { status?: string | null }[] | null | undefined,
+): boolean {
+  return !!items && items.length > 0 && items.every((i) => String(i.status ?? "").trim() === "لغو شده");
+}
+
+/**
  * Refused when the result names a technical approval and the document is not a
  * technical proposal.
  *

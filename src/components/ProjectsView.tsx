@@ -618,7 +618,9 @@ export default function ProjectsView({
    * report came to find two different answers for one project. Zero quotations
    * is the case the box still answers: a job lost before anything was quoted.
    */
-  const [proformaCount, setProformaCount] = useState(0);
+  // Priced quotations only: with technical proposals alone (or nothing) the
+  // loss reason is typed here, since no lost line can carry it.
+  const [pricedProformaCount, setPricedProformaCount] = useState(0);
   const [salesExpert, setSalesExpert] = useState("");
   /** Who to write to about this job, and how — see the messaging module. */
   const [messagingContactId, setMessagingContactId] = useState("");
@@ -1046,7 +1048,7 @@ export default function ProjectsView({
     setItemsNeeded([]);
     setLossReason("");
     // A project being created has no quotation, so its loss reason is its own.
-    setProformaCount(0);
+    setPricedProformaCount(0);
     // Whoever is opening the form is nearly always the expert on the
     // opportunity; it stays editable for the times they are not.
     setSalesExpert(currentUser?.fullName || "");
@@ -1115,7 +1117,7 @@ export default function ProjectsView({
     setCustomValues(proj.customValues || {});
     setItemsNeeded(proj.itemsNeeded || []);
     setLossReason(proj.lossReason || "");
-    setProformaCount(proj.proformaCount ?? 0);
+    setPricedProformaCount(proj.pricedProformaCount ?? proj.proformaCount ?? 0);
     setSalesExpert(proj.salesExpert || "");
     setMessagingContactId(proj.messagingContactId || "");
     setSuppressAutoMessages(proj.suppressAutoMessages === true);
@@ -1203,7 +1205,7 @@ export default function ProjectsView({
        */
       // With no quotation the box is the answer: the typed reason while the
       // project is lost, and cleared ("") once it is not.
-      lossReason: proformaCount > 0 ? void 0 : (status === "باخته" ? lossReason : ""),
+      lossReason: pricedProformaCount > 0 ? void 0 : (status === "باخته" ? lossReason : ""),
       // New Fields
       salesExpert,
       messagingContactId: messagingContactId || undefined,
@@ -4636,9 +4638,9 @@ export default function ProjectsView({
                   {status === 'باخته' && (
                     <div className="space-y-1.5">
                       <label className="text-xs font-semibold text-rose-500">
-                        دلیل باخت پروژه {proformaCount === 0 && '*'}
+                        دلیل باخت پروژه {pricedProformaCount === 0 && '*'}
                       </label>
-                      {proformaCount > 0 ? (
+                      {pricedProformaCount > 0 ? (
                         <>
                           <div
                             id="project-loss-reason-derived"
@@ -4647,7 +4649,7 @@ export default function ProjectsView({
                             {lossReason || '— هنوز در ردیف‌های پیش‌فاکتور ثبت نشده —'}
                           </div>
                           <p className="text-[10px] text-slate-500 leading-relaxed">
-                            این پروژه پیش‌فاکتور دارد، بنابراین دلیل باخت از «ثبت نتیجه اقلام»
+                            این پروژه پیش‌فاکتور مالی دارد، بنابراین دلیل باخت از «ثبت نتیجه اقلام»
                             همان پیش‌فاکتور گرفته می‌شود تا برای هر پروژه فقط یک دلیل باخت وجود
                             داشته باشد.
                           </p>

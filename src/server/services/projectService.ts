@@ -10,7 +10,7 @@ import { deriveProjectStage, resolveStage } from "../../utils/projectStage";
 import { PROFORMA_SENT_STATUS, PROJECT_STATUS_NEW, afterSalesIsOpen, inquiryWorkflowStatus } from "../../utils/moduleStatuses";
 import { statusChangeColumns } from "../../utils/statusDwell";
 import { scheduleProjectStageTrigger } from "./projectStageEvents";
-import { isWonStatus } from "../proformaStatus";
+import { isWonStatus, notTechnical } from "../proformaStatus";
 import { summarizeProject, summarizeProjects } from "./projectSummary";
 // The custom-field clause is identical for every module; defined once with customers.
 import { customFieldClause } from "./customerService";
@@ -303,7 +303,13 @@ export async function listProjects(
 export async function getProject(id: string, user: AuthUser) {
   const project = await getProjectRecord(id, user);
   if (!project) return null;
-  return { ...project, summary: await summarizeProject(id) };
+  const [summary, pricedProformaCount] = await Promise.all([
+    summarizeProject(id),
+    // Who owns the loss reason: the priced quotations' lines, or — with only
+    // technical proposals or none — the box on the project form.
+    getDb().proforma.count({ where: { projectId: id, ...notTechnical() } }),
+  ]);
+  return { ...project, summary, pricedProformaCount };
 }
 
 /** The stored record alone, without the derived figures. */
@@ -969,9 +975,10 @@ export interface ProjectWriteRefusal { refusal: string }
 export function lossReasonRefusal(
   input: ProjectInput,
   stored: string | null | undefined,
-  proformaCount: number,
+  /** Priced (non-technical) proformas — `notTechnical()`, never every document. */
+  pricedProformaCount: number,
 ): string | null {
-  if (!("lossReason" in input) || proformaCount === 0) return null;
+  if (!("lossReason" in input) || pricedProformaCount === 0) return null;
   const next = (input.lossReason ?? "").trim();
   if (next === (stored ?? "").trim()) return null;
   return "علت باخت این پروژه از نتیجه ردیف‌های پیش‌فاکتورهای آن گرفته می‌شود. "
@@ -986,8 +993,10 @@ export async function updateProject(id: string, input: ProjectInput, user: AuthU
   const before = await db.project.findUnique({ where: { id } });
   if (!before) return null;
 
-  const proformaCount = await db.proforma.count({ where: { projectId: id } });
-  const refusal = lossReasonRefusal(input, before.lossReason, proformaCount);
+  // Priced documents only: a technical proposal has no lost line to carry the
+  // reason, so a project with nothing else keeps the box on its own form.
+  const pricedProformaCount = await db.proforma.count({ where: { projectId: id, ...notTechnical() } });
+  const refusal = lossReasonRefusal(input, before.lossReason, pricedProformaCount);
   if (refusal) return { refusal } satisfies ProjectWriteRefusal;
 
   /*

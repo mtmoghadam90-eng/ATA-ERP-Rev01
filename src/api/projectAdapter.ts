@@ -85,6 +85,7 @@ export function detailToProject(detail: ProjectDetail): Project {
     adCampaignId: detail.adCampaignId ?? undefined,
     adCampaignLabel: detail.adCampaign ? `${detail.adCampaign.code} — ${detail.adCampaign.topic}` : undefined,
     lossReason: detail.lossReason ?? undefined,
+    pricedProformaCount: detail.pricedProformaCount,
     closingDate: detail.closingDateJalali ?? undefined,
     communicationMethod: detail.communicationMethod ?? undefined,
     customerInquiryNumber: detail.customerInquiryNumber ?? undefined,
