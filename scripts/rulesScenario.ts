@@ -276,7 +276,7 @@ import { normalizeSupplierDocuments, parseSupplierDocuments } from "../src/utils
 import { calculateSellingPrice } from "../src/utils/priceCalculator";
 import { findHooksAfterEarlyReturn } from "../src/utils/hookOrder";
 import { nextSequence, renderAround } from "../src/server/documentNumbers";
-import { describeProformaChanges, proformaChangeSentence } from "../src/server/services/proformaChanges";
+import { describeProformaChanges, proformaChangeSentence, proformaEditLogText } from "../src/server/services/proformaChanges";
 import {
   REPEAT_SWEEP_WINDOW_DAYS, SCHEDULE_SUBJECTS, SWEEP_WINDOW_DAYS, TIME_TRIGGER,
   describeSchedule, dueDay, isDue, occurrenceDue, scheduleRepeats, scheduledRules, sweepRange,
@@ -24459,6 +24459,40 @@ head("A proforma's payment terms are required, line by line");
   ok("a technical proposal is exempt", /proformaType !== "TECHNICAL"\s*\) \{\s*const missing/.test(save));
   ok("both payment selects carry the asterisk",
     (view.match(/renderFieldLabelWithAsterisk\(settings, 'proformas', 'paymentTerm'/g) ?? []).length === 2);
+}
+
+head("A draft's edits are not history; opening a document changes nothing");
+{
+  const base = {
+    status: "پیش‌نویس", isCancelled: false, currency: "دلار", finalAmount: 3240,
+    discountPercent: 0, taxPercent: 0, issueDateJalali: "1405/05/24",
+    expiryDateJalali: "1405/06/23", customerId: "c1", projectId: "p1", notes: "n",
+    items: [{ productName: "Turbine Flow Meter", quantity: 2, unitPriceRial: 1620, status: "جاری" }],
+  };
+  eq("a draft saved as a draft writes nothing",
+    proformaEditLogText("X-1", base, { ...base, finalAmount: 5000, notes: "m" }), null);
+  const sending = proformaEditLogText("X-1", base, { ...base, status: "ارسال شده", finalAmount: 5000, sentMethod: "ایمیل" });
+  ok("the sending save writes the send", !!sending && sending.includes("برای مشتری ارسال شد"), sending);
+  ok("and not the draft's edits on the way", !!sending && !sending.includes("مبلغ نهایی"), sending);
+  const sentBase = { ...base, status: "ارسال شده" };
+  const after = proformaEditLogText("X-1", sentBase, { ...sentBase, finalAmount: 5000 });
+  ok("an edit after sending is written in full", !!after && after.includes("مبلغ نهایی از 3,240 به 5,000"), after);
+  ok("pulling a sent document back to draft is recorded",
+    !!proformaEditLogText("X-1", sentBase, { ...base }));
+
+  const service = readFileSync("src/server/services/proformaService.ts", "utf8");
+  ok("the update logs through the gate, and only when it answers",
+    /const editText = proformaEditLogText\(/.test(service) && /if \(editText\) \{\s*await logProjectFact/.test(service)
+    && !/proformaChangeSentence\(/.test(service));
+
+  const view = readFileSync("src/components/ProformasView.tsx", "utf8");
+  const open = view.slice(view.indexOf("const handleOpenEdit"), view.indexOf("// Handle Currency selection conversion"));
+  ok("opening the form keeps the stored notes", /setNotes\(pf\.notes \|\| ""\)/.test(open) && !/updateNotesForItems/.test(open));
+  ok("and the stored delivery fields, empty ones included",
+    /deliveryRange: item\.deliveryRange \?\? /.test(open) && /deliveryPostfix \?\? /.test(open)
+    && !/item\.delivery\w+ \|\| /.test(open));
+  ok("a stored payment term the list no longer holds is still drawn, in both selects",
+    (view.match(/!paymentTermOptions\.includes\(/g) ?? []).length === 2);
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

@@ -276,6 +276,37 @@ export function proformaChangeSentence(
 }
 
 /**
+ * What an edit writes into the project's proforma category, or null for nothing.
+ *
+ * Only an edit the customer could have seen is history: reported as «ویرایش
+ * های قبل از ارسال به مشتری رو لازم نیست ثبت بشه». A draft is reworked many
+ * times before it goes out, and a line per save buried the entries that matter
+ * under «ویرایش شد» after «ویرایش شد». So:
+ *
+ * - a draft saved as a draft writes **nothing**;
+ * - the save that **sends** it writes the send alone — how, to whom and when —
+ *   since what was changed in the draft on the way is not news to anybody;
+ * - an edit of a document **already sent** writes the whole list, as before.
+ *
+ * Decided on the stored status *before* the save, which is what «already sent»
+ * means; an admin pulling a sent document back to draft is itself recorded.
+ */
+export function proformaEditLogText(
+  proformaNumber: string,
+  before: ChangeSnapshot | null | undefined,
+  after: ChangeSnapshot,
+  labels: ChangeLabels = {},
+): string | null {
+  if (!before) return null;
+  const wasSent = text(before.status) === PROFORMA_SENT_STATUS;
+  const isSent = text(after.status) === PROFORMA_SENT_STATUS;
+  if (wasSent) return proformaChangeSentence(proformaNumber, describeProformaChanges(before, after, labels));
+  if (!isSent) return null;
+  const how = sentDescription(after);
+  return `پیش‌فاکتور شماره ${proformaNumber} توسط {actor} ${how ? `${how} ` : ""}برای مشتری ارسال شد.`;
+}
+
+/**
  * The sentence for a newly issued proforma. Each detail drops on its own when
  * it is not recorded — it used to open a bracket with «(» and then find
  * nothing to put in it — and a document created already sent says how and to
