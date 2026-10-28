@@ -96,6 +96,7 @@ export const REQUIRED_FIELDS_METADATA: ModuleConfig[] = [
       { key: 'expiryDate', label: 'تاریخ اعتبار' },
       { key: 'currency', label: 'ارز پیش‌فاکتور' },
       { key: 'notes', label: 'توضیحات و شرایط' },
+      { key: 'paymentTerm', label: 'نحوه پرداخت (هر ردیف)' },
     ]
   },
   {
@@ -232,6 +233,7 @@ export const DEFAULT_REQUIRED_FIELDS: Record<string, Record<string, boolean>> = 
     expiryDate: true,
     currency: true,
     notes: false,
+    paymentTerm: true,
   },
   tasks: {
     title: true,

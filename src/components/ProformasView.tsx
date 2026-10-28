@@ -2401,6 +2401,29 @@ export default function ProformasView({
       return;
     }
 
+    /*
+     * «نحوه پرداخت» per line. A `<select>` whose empty option is a real value,
+     * so the browser enforces nothing and the check lives here; the rows are
+     * named because the per-row block is folded away under the uniform one.
+     * A technical proposal quotes no prices, so it has no payment to arrange.
+     */
+    if (
+      isFieldRequired(settings, "proformas", "paymentTerm") &&
+      proformaType !== "TECHNICAL"
+    ) {
+      const missing = items
+        .map((it, i) => (String(it.paymentTerm ?? "").trim() ? null : i + 1))
+        .filter((n): n is number => n !== null);
+      if (missing.length > 0) {
+        alert(
+          isEqualDelivery
+            ? "«نحوه پرداخت» را انتخاب کنید."
+            : `«نحوه پرداخت» برای ردیف ${missing.map((n) => n.toLocaleString("fa-IR")).join("، ")} انتخاب نشده است.`,
+        );
+        return;
+      }
+    }
+
     if (projectId) {
       const selectedProj = projects.find((p) => p.id === projectId);
       if (selectedProj && selectedProj.customerId !== customerId) {
@@ -5024,7 +5047,9 @@ export default function ProformasView({
                       {/*
                         The payment terms, from the company's own list.
 
-                        «انتخاب نشده» is a real answer and not a placeholder:
+                        Required by default (`requiredFields.proformas.paymentTerm`,
+                        checked per line in `handleSaveProforma`). Where the
+                        company switches that off, «انتخاب نشده» is a real answer:
                         ready stock still prints «۱۰۰٪ کل مبلغ در زمان تحویل
                         کالا» when nothing is chosen — the rule that shipped
                         before this field existed — and ordinary goods print no
@@ -5034,7 +5059,7 @@ export default function ProformasView({
                       */}
                       <div className="space-y-1 sm:col-span-2">
                         <label className="text-[10px] font-bold text-slate-500 block">
-                          نحوه پرداخت
+                          {renderFieldLabelWithAsterisk(settings, 'proformas', 'paymentTerm', 'نحوه پرداخت')}
                         </label>
                         <select
                           value={items[0]?.paymentTerm ?? ""}
@@ -5993,7 +6018,7 @@ export default function ProformasView({
                             {/* This row's own payment terms — see the uniform block. */}
                             <div className="space-y-1 sm:col-span-2">
                               <label className="text-[9px] font-bold text-slate-500 block">
-                                نحوه پرداخت
+                                {renderFieldLabelWithAsterisk(settings, 'proformas', 'paymentTerm', 'نحوه پرداخت')}
                               </label>
                               <select
                                 value={item.paymentTerm ?? ""}
