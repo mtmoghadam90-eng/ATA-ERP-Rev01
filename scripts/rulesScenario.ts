@@ -24449,6 +24449,18 @@ head("A technical proposal withdrawn line by line is withdrawn");
     && fn.indexOf("technicalWithdrawnByLines(lines)") < fn.indexOf("syncProjectStatus(tx"));
 }
 
+head("A proforma's payment terms are required, line by line");
+{
+  const view = readFileSync("src/components/ProformasView.tsx", "utf8");
+  const save = view.slice(view.indexOf("const handleSaveProforma"), view.indexOf("const handleSaveProforma") + 4000);
+  ok("the save checks every line's payment term when the switch is on",
+    /isFieldRequired\(settings, "proformas", "paymentTerm"\)/.test(save)
+    && /items\s*\.map\(\(it, i\) => \(String\(it\.paymentTerm/.test(save));
+  ok("a technical proposal is exempt", /proformaType !== "TECHNICAL"\s*\) \{\s*const missing/.test(save));
+  ok("both payment selects carry the asterisk",
+    (view.match(/renderFieldLabelWithAsterisk\(settings, 'proformas', 'paymentTerm'/g) ?? []).length === 2);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
