@@ -24643,7 +24643,12 @@ head("A packing line carries the product's specification, read from the won prof
   ok("picking a won line seeds the add form's specification", /setTempItemSpecs\(remainingLines\.find\(l => l\.key === key\)\?\.techSpecs \?\? ''\);/.test(view));
   ok("a manual row can be given one", /techSpecs: tempItemSpecs\.trim\(\) \|\| undefined,/.test(view));
   ok("every row's specification is editable on the form", /<PackingSpecEditor\s+compact\s+value=\{item\.techSpecs\}/.test(view));
-  ok("the printout renders it escaped, under the name", /renderRichText\(item\.techSpecs\.trim\(\)\)/.test(view) && /\$\{tagStr\}\$\{specStr\}/.test(view));
+  ok("the printout renders it escaped, under the name", /renderRichText\(item\.techSpecs\.trim\(\)\)/.test(view) && /\$\{brandStr\}\$\{specStr\}/.test(view));
+  ok("the tag is its own column in the printout, escaped, in Latin", /<th[^>]*>Tag<\/th>/.test(view)
+    && /escapeHtml\(item\.tagNumber\.trim\(\)\)/.test(view) && /data-packing-tag style="[^"]*direction: ltr/.test(view));
+  ok("and on the screen", /data-packing-tag-view>\{item\.tagNumber\?\.trim\(\) \|\| '-'\}/.test(view));
+  ok("the brand starts unticked on every document", /setOverrideShowBrand\(false\);\s*\}, \[selectedDelivery\?\.id\]\);/.test(view)
+    && !/setOverrideShowBrand\(!!settings\.showProductBrandInDocuments\)/.test(view));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);

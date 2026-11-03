@@ -36,7 +36,7 @@ import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from 
 import { inlineDocumentAssets } from '../utils/inlineAssets';
 import { printHtmlDocument } from '../utils/printDocument';
 import PackingSpecEditor from './PackingSpecEditor';
-import { renderRichText } from '../utils/richText';
+import { renderRichText, escapeHtml } from '../utils/richText';
 import {
   packableLines, packingRowKey,
   outstandingFor as packingOutstandingFor,
@@ -327,11 +327,12 @@ export default function PackagingDeliveryView({
     return () => { cancelled = true; };
   }, [selectedDelivery]);
 
+  // The brand is printed only when somebody ticks it for this document: a
+  // packing list travels with the goods, and the company-wide setting that
+  // puts the brand on a quotation is not a decision about this sheet.
   React.useEffect(() => {
-    if (selectedDelivery) {
-      setOverrideShowBrand(!!settings.showProductBrandInDocuments);
-    }
-  }, [selectedDelivery, settings.showProductBrandInDocuments]);
+    setOverrideShowBrand(false);
+  }, [selectedDelivery?.id]);
 
   const getDeliveryActualDateLabel = (del: PackagingDelivery) => {
     if (del.actualDeliveryDate) return del.actualDeliveryDate;
@@ -611,17 +612,20 @@ export default function PackagingDeliveryView({
       const itemsRows = items.map((item, index) => {
         const prod = item.productId ? documentProducts[item.productId] : undefined;
         const brandStr = overrideShowBrand && prod?.brand ? ` (${prod.brand})` : '';
-        const tagStr = item.tagNumber ? ` <span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 2px 6px; border-radius: 4px; margin-right: 8px;">تگ: ${item.tagNumber}</span>` : '';
+        // The tag is its own column, in Latin and left to right, because it
+        // is what the customer's P&ID and datasheet call the instrument.
+        const tagCell = item.tagNumber?.trim() ? escapeHtml(item.tagNumber.trim()) : '-';
         // The specification under the name, rendered as the quotation renders
         // it (escaped first, marks applied after), one line per line.
         const specStr = item.techSpecs?.trim()
           ? `<div style="font-weight: normal; color: #475569; font-size: 10px; margin-top: 3px; white-space: pre-line; line-height: 1.6;">${renderRichText(item.techSpecs.trim())}</div>`
           : '';
-        const displayedName = `${item.itemOrDocName}${brandStr}${tagStr}${specStr}`;
+        const displayedName = `${item.itemOrDocName}${brandStr}${specStr}`;
         return `
         <tr style="border-bottom: 1px solid #e2e8f0;">
           <td style="padding: 7px 4px; text-align: center; font-family: monospace; vertical-align: middle;">${index + 1}</td>
           <td style="padding: 7px 8px; font-weight: bold; color: #1e293b; vertical-align: middle;">${displayedName}</td>
+          <td data-packing-tag style="padding: 7px 4px; text-align: center; font-family: monospace; direction: ltr; unicode-bidi: isolate; word-break: break-all; vertical-align: middle;">${tagCell}</td>
           <td style="padding: 7px 4px; text-align: center; font-family: monospace; font-weight: bold; vertical-align: middle;">${item.quantity}<span style="font-family: inherit; font-weight: normal; color: #64748b;"> ${item.unit || ''}</span></td>
           <td style="padding: 7px 4px; text-align: center; vertical-align: middle;">${item.packageType}</td>
           <td style="padding: 7px 4px; text-align: left; font-family: monospace; vertical-align: middle;" dir="ltr">${item.dimensions}</td>
@@ -650,6 +654,7 @@ export default function PackagingDeliveryView({
               <tr>
                 <th style="padding: 8px 4px; width: 26px; text-align: center;">ردیف</th>
                 <th style="padding: 8px;">کالا / تجهیز / سند</th>
+                <th style="padding: 8px 4px; text-align: center; width: 72px;">Tag</th>
                 <th style="padding: 8px 4px; text-align: center; width: 62px;">تعداد</th>
                 <th style="padding: 8px 4px; text-align: center; width: 68px;">نوع بسته</th>
                 <th style="padding: 8px 4px; text-align: center; width: 86px;">ابعاد</th>
@@ -2343,6 +2348,7 @@ ${sheets}
                         <tr className="bg-slate-50/50 text-slate-500 font-bold border-b border-slate-200">
                           <th className="p-3 w-10">ردیف</th>
                           <th className="p-3">کالا / تجهیز / سند</th>
+                          <th className="p-3 text-center w-28">Tag</th>
                           <th className="p-3 text-center w-16">تعداد</th>
                           <th className="p-3 text-center w-16">واحد</th>
                           <th className="p-3 w-28">نوع بسته‌بندی</th>
@@ -2364,9 +2370,6 @@ ${sheets}
                                       <span className="text-[10px] text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded font-semibold">برند: {prod.brand}</span>
                                     ) : null;
                                   })()}
-                                  {item.tagNumber && (
-                                    <span className="font-sans text-rose-600 bg-rose-50 border border-rose-100 px-1.5 py-0.5 rounded font-bold text-[10px]">تگ: {item.tagNumber}</span>
-                                  )}
                                 </div>
                                 {item.techSpecs?.trim() && (
                                   <div
@@ -2377,6 +2380,7 @@ ${sheets}
                                 )}
                               </div>
                             </td>
+                            <td className="p-3 text-center font-mono text-slate-700 break-all" dir="ltr" data-packing-tag-view>{item.tagNumber?.trim() || '-'}</td>
                             <td className="p-3 font-extrabold text-slate-700 text-center font-mono">{item.quantity}</td>
                             <td className="p-3 text-center text-slate-600">{item.unit || '-'}</td>
                             <td className="p-3 font-medium text-slate-600">{item.packageType}</td>
