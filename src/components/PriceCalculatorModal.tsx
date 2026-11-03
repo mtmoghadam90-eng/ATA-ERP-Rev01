@@ -11,6 +11,7 @@ import {
 import { ExchangeRate, ProductVariant } from "../types";
 import { calcFreightRefusal, calculateSellingPrice } from "../utils/priceCalculator";
 import { formatMoney } from '../numUtils';
+import { DEFAULT_PROFIT_PCT } from "../utils/skuCostPricing";
 
 interface Props {
   open: boolean;
@@ -88,7 +89,7 @@ export default function PriceCalculatorModal({
   const [calcOtherCostsForeign, setCalcOtherCostsForeign] =
     useState<string>("0");
   const [calcOtherCostsRIYAL, setCalcOtherCostsRIYAL] = useState<string>("0");
-  const [calcProfitPct, setCalcProfitPct] = useState<string>("55");
+  const [calcProfitPct, setCalcProfitPct] = useState<string>(String(DEFAULT_PROFIT_PCT));
   const [calcProfitRIYAL, setCalcProfitRIYAL] = useState<string>("0");
   const [calcMarginType, setCalcMarginType] = useState<"PERCENT" | "FIXED">(
     "PERCENT",
@@ -180,7 +181,7 @@ export default function PriceCalculatorModal({
     setCalcProfitPct(
       initialValues?.calcProfitPct !== undefined
         ? String(initialValues.calcProfitPct)
-        : "55",
+        : String(DEFAULT_PROFIT_PCT),
     );
     setCalcProfitRIYAL(
       initialValues?.calcProfitRIYAL !== undefined

@@ -23754,7 +23754,9 @@ head("A supplier inquiry has its own general description, apart from «توضی�
     /initialValues: Partial<ProductVariant> = item\.priceCalc\s*\? calcSeedOf\(item\.priceCalc\)\s*: calcSource \? calcSeedOf\(calcSource\) : \{\};/.test(view));
   ok("applying stores the working on the line", /priceCalc: \{ \.\.\.details, calcCurrency: appliedCurrency \},/.test(view));
   ok("the edit form carries it, or the next save erases it", /priceCalc: item\.priceCalc \?\? null,/.test(view));
-  ok("changing the SKU drops the previous SKU's working", /\.\.\.costPatchFor\(prod, variant\),[\s\S]{0,200}priceCalc: null,/.test(view));
+  ok("changing the SKU replaces the previous SKU's working",
+    /const pricing = catalogueLinePricing\(prod, variant\);/.test(view)
+      && /\.\.\.costPatchFor\(product, variant\),\s*priceCalc: null,/.test(view));
   const svc = readFileSync("src/server/services/proformaService.ts", "utf8");
   ok("the server stores it", /priceCalc: toJsonColumn\(row\.priceCalc\),/.test(svc));
   ok("the column exists", /priceCalc    String\?  @db\.NVarChar\(Max\)/.test(readFileSync("prisma/schema.prisma", "utf8")));
@@ -24563,6 +24565,48 @@ head("The proforma's product picker names the code and the brand");
     productPickerLabel({ displayName: "Flow Meter", code: "FM-1", brand: "" }), "Flow Meter | FM-1");
   const view = readFileSync("src/components/ProformasView.tsx", "utf8");
   ok("the picker reads it", /label: productPickerLabel\(p, stockText\)/.test(view));
+}
+
+head("A SKU's warehouse price is its cost, and the line is marked up from it");
+{
+  const { DEFAULT_PROFIT_PCT, skuProfitPct, sellingFromCost, skuCostCalcSeed, roundInCurrency } =
+    await import("../src/utils/skuCostPricing");
+  const { calculateSellingPrice } = await import("../src/utils/priceCalculator");
+  eq("the default margin is the calculator's", DEFAULT_PROFIT_PCT, 55);
+  eq("a SKU with no stored margin takes the default", skuProfitPct(undefined), 55);
+  eq("a stored percent margin is kept", skuProfitPct({ calcMarginType: "PERCENT", calcProfitPct: 30 }), 30);
+  eq("a stored fixed margin is not read as a percent", skuProfitPct({ calcMarginType: "FIXED", calcProfitPct: 30 }), 55);
+  eq("a dollar cost of 119 sells at 184.45", sellingFromCost(119, 55, false), 184.45);
+  eq("a rial cost rounds to the whole rial", sellingFromCost(1_000_001, 55, true), 1_550_002);
+  eq("two decimals outside rial", roundInCurrency(10.005 + 0.001, false), 10.01);
+  // The calculator, opened on the seed, shows the same cost and the same price.
+  const seed = skuCostCalcSeed({ costForeign: 100, currency: "یورو", rate: 900_000, profitPct: 55 });
+  const out = calculateSellingPrice({
+    mode: seed.calcMode, priceForeign: seed.calcPriceForeign, exchangeRate: seed.calcExchangeRate,
+    remittanceFee: 0, remittancePct: 0, shippingCost: 0, otherCostsForeign: 0,
+    customsDutyRIYAL: 0, otherCostsRIYAL: 0, profitPct: seed.calcProfitPct, profitRIYAL: 0,
+    marginType: seed.calcMarginType,
+  } as Parameters<typeof calculateSellingPrice>[0]);
+  eq("the seed's landed cost is the SKU's cost", Math.round(out.landedRial), 90_000_000);
+  eq("and its selling price is the cost plus the margin", Math.round(out.sellingRial), 139_500_000);
+
+  const view = readFileSync("src/components/ProformasView.tsx", "utf8");
+  ok("choosing a SKU from the list prices from its cost",
+    /const pricing = catalogueLinePricing\(prod, variant\);/.test(view));
+  ok("so does the configurator", /Object\.assign\(newItems\[itemIdx\], catalogueLinePricing\(productForItem, variant\)\);/.test(view));
+  ok("and so does the project's item list", /catalogueLinePricing\(prod, variant\)\s*:\s*\{ unitPriceRIYAL: 0/.test(view));
+  ok("the SKU's price lands in «بهای تمام‌شده» and the selling price is marked up",
+    /unitPriceRIYAL: sellingFromCost\(cost, profitPct, isRial\),\s*unitCost: cost,/.test(view));
+  ok("the calculator writes the landed cost to the SKU, never the selling price",
+    /priceRIYAL: Math\.round\(landed\.landedRial\),\s*\.\.\.warehouseCost,/.test(view)
+      && !/priceRIYAL: Math\.round\(sellingRial\),\s*\.\.\.warehousePrice,\s*\.\.\.details,\s*\}\s*:\s*v,/.test(view));
+  ok("publishing a SKU line publishes its cost",
+    /const price = variant \? Number\(item\.unitCost\) \|\| 0 : Number\(item\.unitPriceRIYAL\) \|\| 0;/.test(view));
+  ok("and only to somebody who may see costs", /item\.productId && \(!item\.variantId \|\| showCosts\)/.test(view));
+  const products = readFileSync("src/components/ProductsView.tsx", "utf8");
+  ok("the warehouse labels the SKU price as cost",
+    />قیمت تمام‌شده ارزی<\/th>/.test(products) && />قیمت تمام‌شده \(ریال\)<\/th>/.test(products)
+      && !/>قیمت فروش \(ریال\)<\/th>/.test(products));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
