@@ -24553,6 +24553,18 @@ head("Deadline reminders are workflow rules, not code");
   ok("the rule editor offers the recipient", /NOTIFICATION_RECIPIENTS\.map/.test(view) && /data-notify-user/.test(view));
 }
 
+head("The proforma's product picker names the code and the brand");
+{
+  const { productPickerLabel } = await import("../src/utils/productPickerLabel");
+  eq("name, code and brand, then the stock",
+    productPickerLabel({ displayName: "Compact Pressure Transmitter", code: "PT-100", brand: "Yokogawa" }, " | موجودی: 3"),
+    "Compact Pressure Transmitter | PT-100 | Yokogawa | موجودی: 3");
+  eq("a blank brand prints no empty column",
+    productPickerLabel({ displayName: "Flow Meter", code: "FM-1", brand: "" }), "Flow Meter | FM-1");
+  const view = readFileSync("src/components/ProformasView.tsx", "utf8");
+  ok("the picker reads it", /label: productPickerLabel\(p, stockText\)/.test(view));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
