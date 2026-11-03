@@ -55,6 +55,7 @@ import { getProformaOutcomeStatus } from "../useERPStore";
 import { uploadFile } from "../imageUtils";
 import ConfirmModal from "./ConfirmModal";
 import DeleteActivitiesOption from './DeleteActivitiesOption';
+import { productPickerLabel } from "../utils/productPickerLabel";
 import { SearchableSelect } from "./SearchableSelect";
 import { ApiError } from "../api/client";
 import { proformasApi, type ProformaDetail } from "../api/proformas";
@@ -5299,7 +5300,7 @@ export default function ProformasView({
                                         }
                                         return {
                                           value: p.id,
-                                          label: `${p.displayName}${stockText}`,
+                                          label: productPickerLabel(p, stockText),
                                         };
                                       }),
                                     ]}
