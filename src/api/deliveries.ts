@@ -18,6 +18,7 @@ export interface PackingItemRow {
   productId: string | null;
   variantId: string | null;
   tagNumber: string | null;
+  techSpecs: string | null;
   quantity: string;
   unit: string | null;
   packageType: string | null;
@@ -87,6 +88,8 @@ export interface RemainingLine {
   /** The unit the proforma quoted it in; the packing line inherits it. */
   unit: string | null;
   tagNumber: string | null;
+  /** The won line's specification; the packing line it seeds starts from it. */
+  techSpecs: string | null;
   promised: number;
   shipped: number;
   remaining: number;
@@ -205,6 +208,7 @@ export function detailToDelivery(detail: DeliveryDetail): PackagingDelivery {
       productId: item.productId ?? undefined,
       variantId: item.variantId ?? undefined,
       tagNumber: item.tagNumber ?? undefined,
+      techSpecs: item.techSpecs ?? undefined,
       quantity: Number(item.quantity),
       unit: item.unit ?? undefined,
       packageType: item.packageType ?? "",
@@ -238,6 +242,7 @@ export function deliveryToWriteInput(delivery: Partial<PackagingDelivery>): Deli
       productId: item.productId || null,
       variantId: item.variantId || null,
       tagNumber: item.tagNumber || null,
+      techSpecs: item.techSpecs || null,
       quantity: item.quantity,
       unit: item.unit || null,
       packageType: item.packageType || null,

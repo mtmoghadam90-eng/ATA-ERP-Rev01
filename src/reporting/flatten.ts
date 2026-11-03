@@ -804,6 +804,7 @@ export const flattenPackagingDeliveryItems = (list: any[]): Row[] => {
         item_or_doc_name: s(it.itemOrDocName),
         product_id: s(it.productId),
         tag_number: s(it.tagNumber),
+        tech_specs: s(it.techSpecs),
         quantity: n(it.quantity),
         unit_of_measure: s(it.unit),
         package_type: s(it.packageType),

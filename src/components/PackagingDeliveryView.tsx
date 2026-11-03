@@ -35,6 +35,8 @@ import { getTodayShamsi } from '../dateUtils';
 import { isFieldRequired, renderFieldLabelWithAsterisk, getFieldAsterisk } from '../utils/requiredFields';
 import { inlineDocumentAssets } from '../utils/inlineAssets';
 import { printHtmlDocument } from '../utils/printDocument';
+import PackingSpecEditor from './PackingSpecEditor';
+import { renderRichText } from '../utils/richText';
 import {
   packableLines, packingRowKey,
   outstandingFor as packingOutstandingFor,
@@ -287,6 +289,9 @@ export default function PackagingDeliveryView({
   const [tempItemHeight, setTempItemHeight] = useState<string>('');
   const [tempItemWeight, setTempItemWeight] = useState<number>(0);
   const [tempItemBoxNumber, setTempItemBoxNumber] = useState<string>('');
+  /* The row's specification: read from the won proforma line when one is
+     picked, typed by hand otherwise, and editable either way. */
+  const [tempItemSpecs, setTempItemSpecs] = useState<string>('');
 
   // Selected Packing List Detail Modal
   const [selectedDelivery, setSelectedDelivery] = useState<PackagingDelivery | null>(null);
@@ -366,6 +371,8 @@ export default function PackagingDeliveryView({
         dimensions: '50x40x30 سانتی‌متر',
         weight: 1,
         tagNumber: line.tagNumber ?? undefined,
+        // The quotation's specification, for the person to trim per list.
+        techSpecs: line.techSpecs ?? undefined,
       }));
 
   /**
@@ -535,6 +542,7 @@ export default function PackagingDeliveryView({
       productId: source?.productId ?? undefined,
       variantId: source?.variantId ?? undefined,
       tagNumber: source?.tagNumber ?? undefined,
+      techSpecs: tempItemSpecs.trim() || undefined,
       quantity: tempItemQty,
       unit: defaultUnitFor(source?.unit),
       packageType: tempItemPackType,
@@ -555,6 +563,7 @@ export default function PackagingDeliveryView({
     setTempItemHeight('');
     setTempItemWeight(0);
     setTempItemBoxNumber('');
+    setTempItemSpecs('');
   };
 
   // Remove Packing Item
@@ -603,7 +612,12 @@ export default function PackagingDeliveryView({
         const prod = item.productId ? documentProducts[item.productId] : undefined;
         const brandStr = overrideShowBrand && prod?.brand ? ` (${prod.brand})` : '';
         const tagStr = item.tagNumber ? ` <span style="font-family: monospace; font-size: 10px; color: #dc2626; background-color: #fef2f2; border: 1px solid #fee2e2; padding: 2px 6px; border-radius: 4px; margin-right: 8px;">تگ: ${item.tagNumber}</span>` : '';
-        const displayedName = `${item.itemOrDocName}${brandStr}${tagStr}`;
+        // The specification under the name, rendered as the quotation renders
+        // it (escaped first, marks applied after), one line per line.
+        const specStr = item.techSpecs?.trim()
+          ? `<div style="font-weight: normal; color: #475569; font-size: 10px; margin-top: 3px; white-space: pre-line; line-height: 1.6;">${renderRichText(item.techSpecs.trim())}</div>`
+          : '';
+        const displayedName = `${item.itemOrDocName}${brandStr}${tagStr}${specStr}`;
         return `
         <tr style="border-bottom: 1px solid #e2e8f0;">
           <td style="padding: 7px 4px; text-align: center; font-family: monospace; vertical-align: middle;">${index + 1}</td>
@@ -1856,6 +1870,14 @@ ${sheets}
                                 className="w-full border border-slate-200 rounded-md px-1.5 py-0.5 text-[9px] bg-white font-mono text-right"
                               />
                             </div>
+                            <div className="mt-1.5">
+                              <span className="text-[9px] text-slate-500 block mb-0.5">مشخصات فنی:</span>
+                              <PackingSpecEditor
+                                compact
+                                value={item.techSpecs}
+                                onChange={next => handleUpdateItemField(item.id, 'techSpecs', next || undefined)}
+                              />
+                            </div>
                           </td>
                           <td className="p-2">
                             {(() => {
@@ -1980,6 +2002,9 @@ ${sheets}
                         const key = e.target.value;
                         setTempItemSourceKey(key);
                         const picked = packableProformaLines.find(o => o.line.key === key);
+                        // The won line's specification seeds the row; a
+                        // manual row starts empty and is typed by hand.
+                        setTempItemSpecs(remainingLines.find(l => l.key === key)?.techSpecs ?? '');
                         if (picked) {
                           setTempItemName(picked.line.productName);
                           // The whole remainder by default: one carton is the
@@ -2001,6 +2026,12 @@ ${sheets}
                 )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
+                  <div className="space-y-1 md:col-span-2 lg:col-span-4 order-last">
+                    <label className="text-[10px] font-bold text-slate-500 block">
+                      مشخصات فنی {tempItemSourceKey ? '(از پیش‌فاکتور تأیید شده — قابل ویرایش و حذف سطر)' : '(اختیاری)'}
+                    </label>
+                    <PackingSpecEditor value={tempItemSpecs} onChange={setTempItemSpecs} />
+                  </div>
                   <div className="space-y-1 lg:col-span-2">
                     <label className="text-[10px] font-bold text-slate-500 block">نام کالا یا مستندات (مثال: شناسنامه گارانتی)</label>
                     <input
@@ -2337,6 +2368,13 @@ ${sheets}
                                     <span className="font-sans text-rose-600 bg-rose-50 border border-rose-100 px-1.5 py-0.5 rounded font-bold text-[10px]">تگ: {item.tagNumber}</span>
                                   )}
                                 </div>
+                                {item.techSpecs?.trim() && (
+                                  <div
+                                    className="mt-1 text-[10px] font-normal text-slate-600 whitespace-pre-line leading-relaxed"
+                                    data-packing-spec-view
+                                    dangerouslySetInnerHTML={{ __html: renderRichText(item.techSpecs.trim()) }}
+                                  />
+                                )}
                               </div>
                             </td>
                             <td className="p-3 font-extrabold text-slate-700 text-center font-mono">{item.quantity}</td>

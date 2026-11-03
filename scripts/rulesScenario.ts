@@ -24620,6 +24620,32 @@ head("Picking a proforma's contact sets its honorific from that person's own rec
     !/const selectedContact = modalCustomers\.find/.test(view));
 }
 
+head("A packing line carries the product's specification, read from the won proforma or typed");
+{
+  const { specLines, setSpecLine, removeSpecLine, addSpecLine } = await import("../src/utils/packingSpecs");
+  const spec = "**Range:** 0~100 kPa\n\nOutput: 4-20mA\nPrice valid 30 days";
+  eq("blank lines are not lines", specLines(spec).join("|"), "**Range:** 0~100 kPa|Output: 4-20mA|Price valid 30 days");
+  eq("a line is removed", removeSpecLine(spec, 2), "**Range:** 0~100 kPa\nOutput: 4-20mA");
+  eq("a line is edited", setSpecLine(spec, 1, "Output: HART"), "**Range:** 0~100 kPa\nOutput: HART\nPrice valid 30 days");
+  eq("an emptied line is dropped", setSpecLine(spec, 1, "  "), "**Range:** 0~100 kPa\nPrice valid 30 days");
+  eq("a line is added by hand", addSpecLine("", "Body: SS316"), "Body: SS316");
+  eq("a blank addition adds nothing", addSpecLine("A", "  "), "A");
+
+  const svc = readFileSync("src/server/services/deliveryService.ts", "utf8");
+  ok("the won line's specification is read for the remaining lines", /techSpecs: true, quantity: true,/.test(svc)
+    && /techSpecs: item\.techSpecs \?\? null,/.test(svc));
+  ok("the packing line stores it", /techSpecs: toNullableString\(row\.techSpecs\),/.test(svc));
+  ok("the column exists", /techSpecs     String\? @db\.NVarChar\(Max\)/.test(readFileSync("prisma/schema.prisma", "utf8")));
+  const api = readFileSync("src/api/deliveries.ts", "utf8");
+  ok("the client reads and writes it", /techSpecs: item\.techSpecs \?\? undefined,/.test(api) && /techSpecs: item\.techSpecs \|\| null,/.test(api));
+  const view = readFileSync("src/components/PackagingDeliveryView.tsx", "utf8");
+  ok("the auto-filled rows carry the won line's specification", /techSpecs: line\.techSpecs \?\? undefined,/.test(view));
+  ok("picking a won line seeds the add form's specification", /setTempItemSpecs\(remainingLines\.find\(l => l\.key === key\)\?\.techSpecs \?\? ''\);/.test(view));
+  ok("a manual row can be given one", /techSpecs: tempItemSpecs\.trim\(\) \|\| undefined,/.test(view));
+  ok("every row's specification is editable on the form", /<PackingSpecEditor\s+compact\s+value=\{item\.techSpecs\}/.test(view));
+  ok("the printout renders it escaped, under the name", /renderRichText\(item\.techSpecs\.trim\(\)\)/.test(view) && /\$\{tagStr\}\$\{specStr\}/.test(view));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

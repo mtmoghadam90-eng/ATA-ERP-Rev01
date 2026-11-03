@@ -1325,6 +1325,9 @@ model PackingItem {
   /// the SKU being retired. The stock ledger reads it to issue the right one.
   variantId     String? @db.NVarChar(36)
   tagNumber     String? @db.NVarChar(100)
+  /// The item's technical specification as printed on this packing list:
+  /// seeded from the won proforma line and edited per list (lines removed).
+  techSpecs     String? @db.NVarChar(Max)
   quantity      Decimal @default(1) @db.Decimal(18, 3)
   /// عدد | دستگاه | متر | … — from settings.dropdownItems.units, per line.
   unit          String? @db.NVarChar(30)
