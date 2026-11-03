@@ -24629,6 +24629,7 @@ head("A packing line carries the product's specification, read from the won prof
   eq("a line is edited", setSpecLine(spec, 1, "Output: HART"), "**Range:** 0~100 kPa\nOutput: HART\nPrice valid 30 days");
   eq("an emptied line is dropped", setSpecLine(spec, 1, "  "), "**Range:** 0~100 kPa\nPrice valid 30 days");
   eq("a line is added by hand", addSpecLine("", "Body: SS316"), "Body: SS316");
+  eq("a line is read untrimmed, so a typed space survives", specLines("Range \nB").join("|"), "Range |B");
   eq("a blank addition adds nothing", addSpecLine("A", "  "), "A");
 
   const svc = readFileSync("src/server/services/deliveryService.ts", "utf8");
