@@ -19867,7 +19867,7 @@ head("A quotation to a person is sent to that person");
    * has just loaded, and would wipe the stored list of every document opened.
    */
   ok("choosing a different buyer drops the old buyer's people",
-    /setContactPrefix\(""\);[\s\S]{0,80}?setSelectedSentRecipients\(\[\]\);/.test(view));
+    /applyPrefixFor\(""\);[\s\S]{0,800}?setSelectedSentRecipients\(\[\]\);/.test(view));
 }
 
 
@@ -24607,6 +24607,17 @@ head("A SKU's warehouse price is its cost, and the line is marked up from it");
   ok("the warehouse labels the SKU price as cost",
     />قیمت تمام‌شده ارزی<\/th>/.test(products) && />قیمت تمام‌شده \(ریال\)<\/th>/.test(products)
       && !/>قیمت فروش \(ریال\)<\/th>/.test(products));
+}
+
+head("Picking a proforma's contact sets its honorific from that person's own record");
+{
+  const view = readFileSync("src/components/ProformasView.tsx", "utf8");
+  ok("the contact's prefix is looked up in both lists, contacts first",
+    /\[\.\.\.contactCustomers, \.\.\.modalCustomers\]\.find\(\(c\) => c\.id === id\)/.test(view));
+  ok("a person in neither list is read from the server", /customersApi\.get\(id\)\.then\(\(full\) => \{\s*if \(latestPrefixSubject\.current !== id\) return;/.test(view));
+  ok("both pickers go through it", (view.match(/applyPrefixFor\(new(Cust|Contact)Id\)/g) || []).length === 2);
+  ok("the contact is no longer looked up in the buyer's list alone",
+    !/const selectedContact = modalCustomers\.find/.test(view));
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
