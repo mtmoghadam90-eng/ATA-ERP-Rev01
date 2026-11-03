@@ -5353,6 +5353,28 @@ head("Holiday calendar: closing Thursdays reaches the server and reports the tas
   gW.fetch = realFetchW;
 }
 
+head("A packing line's specification is edited line by line");
+{
+  const { default: PackingSpecEditor } = await import("../src/components/PackingSpecEditor");
+  let value = "Range: 0~100 kPa\nOutput: 4-20mA\nPrice valid 30 days";
+  const hostP = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootP = createRoot(hostP);
+  const draw = () => act(() => {
+    rootP.render(React.createElement(PackingSpecEditor, { value, onChange: (next: string) => { value = next; draw(); } }));
+  });
+  draw();
+  const removes = () => [...hostP.querySelectorAll("[data-packing-spec-remove]")] as HTMLButtonElement[];
+  ok("each line is drawn with its own remove button", removes().length === 3);
+  act(() => { removes()[2].dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("...and pressing one removes exactly that line", value === "Range: 0~100 kPa\nOutput: 4-20mA", value);
+  const draft = hostP.querySelector("[data-packing-spec-draft]") as HTMLInputElement;
+  act(() => { handlers(draft).onChange?.({ target: { value: "Body: SS316" } }); });
+  act(() => { (hostP.querySelector("[data-packing-spec-add]") as HTMLButtonElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  ok("a line typed by hand is added under the rest", value === "Range: 0~100 kPa\nOutput: 4-20mA\nBody: SS316", value);
+  act(() => { rootP.unmount(); });
+  hostP.remove();
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 
 if (fails.length) {

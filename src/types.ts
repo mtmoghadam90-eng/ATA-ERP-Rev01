@@ -1415,6 +1415,8 @@ export interface PackingItem {
   boxNumber?: string;
   actualDeliveryDate?: string; // تاریخ تحویل قطعی این ردیف کالا به مشتری
   tagNumber?: string;
+  /** مشخصات فنی printed under the item; seeded from the won proforma line. */
+  techSpecs?: string;
 }
 
 export interface DeliveryChecklistItem {
