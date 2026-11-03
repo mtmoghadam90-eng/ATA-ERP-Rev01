@@ -1130,6 +1130,30 @@ export default function ProformasView({
   });
   const contactCustomers = contactPicker.matches as unknown as Customer[];
 
+  /*
+   * The honorific for a picked person, from the person's own record.
+   *
+   * The contact's options come from `contactCustomers` (the people linked to
+   * the buyer) and the buyer's from `modalCustomers`, and the prefix used to be
+   * looked up in the second list alone — so picking a contact found nobody and
+   * left «پیشوند نام» blank whenever that person was not also on the buyer
+   * picker's page, which was most of the time. Both lists are asked first; a
+   * person in neither is read from the server, and the answer is applied only
+   * if the same person is still the one chosen.
+   */
+  const latestPrefixSubject = React.useRef("");
+  const applyPrefixFor = (id: string) => {
+    latestPrefixSubject.current = id;
+    if (!id) { setContactPrefix(""); return; }
+    const held = [...contactCustomers, ...modalCustomers].find((c) => c.id === id);
+    if (held?.gender) { setContactPrefix(namePrefixFor(held.gender)); return; }
+    setContactPrefix(held ? namePrefixFor(held.gender) : "");
+    void customersApi.get(id).then((full) => {
+      if (latestPrefixSubject.current !== id) return;
+      setContactPrefix(namePrefixFor(full.gender));
+    }).catch(() => { /* the box stays editable; a person types it */ });
+  };
+
   /**
    * The people a proforma can be recorded as sent to.
    *
@@ -1326,6 +1350,7 @@ export default function ProformasView({
     recipientPicker.setTerm("");
     setCustomerId("");
     setContactCustomerId("");
+    latestPrefixSubject.current = "";
     setContactPrefix("");
     setProjectId("");
     setProformaType("FINANCIAL");
@@ -1401,6 +1426,7 @@ export default function ProformasView({
     setProformaType(pf.proformaType || "FINANCIAL");
     setCustomerId(pf.customerId);
     setContactCustomerId(pf.contactCustomerId || "");
+    latestPrefixSubject.current = "";
     setContactPrefix(pf.contactPrefix || "");
     setProjectId(pf.projectId || "");
     setProformaNumber(pf.proformaNumber || "");
@@ -4456,9 +4482,9 @@ export default function ProformasView({
                           selectedCust &&
                           selectedCust.customerType === "حقیقی"
                         ) {
-                          setContactPrefix(namePrefixFor(selectedCust.gender));
+                          applyPrefixFor(newCustId);
                         } else {
-                          setContactPrefix("");
+                          applyPrefixFor("");
                         }
                         /*
                          * The recipients belong to the buyer that was there a
@@ -4574,15 +4600,9 @@ export default function ProformasView({
                             onChange={(val) => {
                               const newContactId = val;
                               setContactCustomerId(newContactId);
-                              // Auto set prefix for Contact Customer
-                              const selectedContact = modalCustomers.find(
-                                (c) => c.id === newContactId,
-                              );
-                              if (selectedContact) {
-                                setContactPrefix(namePrefixFor(selectedContact.gender));
-                              } else {
-                                setContactPrefix("");
-                              }
+                              // The contact's own record decides the
+                              // honorific — see `applyPrefixFor`.
+                              applyPrefixFor(newContactId);
                             }}
                             required={isFieldRequired(settings, 'proformas', 'contactCustomerId')}
                             onSearchChange={contactPicker.setTerm}
@@ -7291,6 +7311,7 @@ export default function ProformasView({
                   }
                 } else if (isQuickAddingContact) {
                   setContactCustomerId(newEntity.id);
+                  latestPrefixSubject.current = newEntity.id;
                   setContactPrefix(namePrefixFor(newEntity.gender));
                   void linkCustomerTo(
                     customers.find((c) => c.id === customerId),
@@ -7298,6 +7319,10 @@ export default function ProformasView({
                   );
                 } else {
                   setCustomerId(newEntity.id);
+                  // A person bought for themselves is addressed by their own
+                  // honorific, as when picked from the list.
+                  latestPrefixSubject.current = newEntity.id;
+                  setContactPrefix(newEntity.customerType === "حقیقی" ? namePrefixFor(newEntity.gender) : "");
                 }
               } else if (quickAddType === "project") {
                 setProjectId(newEntity.id);
