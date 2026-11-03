@@ -60,7 +60,7 @@ import { escalationIsConfigured } from '../utils/workflowEscalation';
 import { cloneWorkflowRule } from '../utils/workflowRules';
 import { ConditionValueField } from './ConditionValueField';
 import {
-  RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS, WORKFLOW_ACTION_TYPES, WORKFLOW_OPERATORS,
+  NOTIFICATION_RECIPIENTS, RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS, WORKFLOW_ACTION_TYPES, WORKFLOW_OPERATORS,
   emptyInCondition,
   MESSAGE_ONCE_SCOPES, WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS,
   actionLabel, conditionFieldLabel, isMessageOnceScope, operatorLabel,
@@ -4750,7 +4750,65 @@ export default function SettingsView({
                                 </div>
 
                                 <div>
-                                  <label className="block text-slate-600 text-[11px] font-bold mb-1">ارسال به مسئول ماژول</label>
+                                  <label className="block text-slate-600 text-[11px] font-bold mb-1">گیرندهٔ اعلان</label>
+                                  {/*
+                                    Who receives it. Absent is the module's responsible, which is
+                                    what every rule saved before this field did; the record's own
+                                    two people are what a deadline reminder needs.
+                                  */}
+                                  <select
+                                    value={act.notificationConfig.recipient ?? 'MODULE_RESPONSIBLE'}
+                                    onChange={(e) => {
+                                      const updatedActs = [...editingRule.actions];
+                                      updatedActs[actIdx] = {
+                                        ...updatedActs[actIdx],
+                                        notificationConfig: {
+                                          ...updatedActs[actIdx].notificationConfig!,
+                                          recipient: e.target.value as NonNullable<typeof act.notificationConfig.recipient>,
+                                        },
+                                      };
+                                      setEditingRule({ ...editingRule, actions: updatedActs });
+                                    }}
+                                    className="w-full border border-slate-200 rounded-lg p-2.5 bg-white"
+                                    data-notify-recipient
+                                  >
+                                    {NOTIFICATION_RECIPIENTS.map((r) => (
+                                      <option key={r.value} value={r.value}>{r.label}</option>
+                                    ))}
+                                  </select>
+                                  {(act.notificationConfig.recipient === 'RECORD_ASSIGNEE'
+                                    || act.notificationConfig.recipient === 'RECORD_REQUESTER') && (
+                                    <p className="text-[10px] text-slate-500 mt-1">
+                                      برای قانون‌هایی است که روی وظیفه یا ارجاع اجرا می‌شوند (مثلاً «سررسید وظیفه»). اگر رکورد کسی را نام نبرد، اعلان به مدیران سیستم می‌رود.
+                                    </p>
+                                  )}
+                                  {act.notificationConfig.recipient === 'USER' && (
+                                    <select
+                                      value={act.notificationConfig.userId ?? ''}
+                                      onChange={(e) => {
+                                        const updatedActs = [...editingRule.actions];
+                                        updatedActs[actIdx] = {
+                                          ...updatedActs[actIdx],
+                                          notificationConfig: { ...updatedActs[actIdx].notificationConfig!, userId: e.target.value },
+                                        };
+                                        setEditingRule({ ...editingRule, actions: updatedActs });
+                                      }}
+                                      className="w-full border border-slate-200 rounded-lg p-2.5 bg-white mt-2"
+                                      data-notify-user
+                                    >
+                                      <option value="">— انتخاب کاربر —</option>
+                                      {users.map((u) => (
+                                        <option key={u.id} value={u.id}>{u.fullName}</option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </div>
+
+                                <div>
+                                  <label className="block text-slate-600 text-[11px] font-bold mb-1">
+                                    {(act.notificationConfig.recipient ?? 'MODULE_RESPONSIBLE') === 'MODULE_RESPONSIBLE'
+                                      ? 'ارسال به مسئول ماژول' : 'ماژول اعلان'}
+                                  </label>
                                   <select
                                     value={act.notificationConfig.module}
                                     onChange={(e) => {

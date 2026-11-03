@@ -72,7 +72,7 @@ export interface ScheduleSubject {
   /** The Prisma model to sweep. */
   model:
     | "proforma" | "project" | "purchaseOrder" | "packagingDelivery"
-    | "supplierInquiry" | "afterSalesService" | "task";
+    | "supplierInquiry" | "afterSalesService" | "task" | "projectReferral";
   /** The Jalali column the count starts from. */
   dateField: string;
   /** The trigger name the rule's payload is built for. */
@@ -200,6 +200,29 @@ export const SCHEDULE_SUBJECTS: Record<string, ScheduleSubject> = {
     model: "task", dateField: "completedAtJalali", entityType: "task",
     payloadIdKey: "taskId",
     where: { taskKind: "SALES_FOLLOW_UP", followUpResult: { not: null } },
+  },
+  /*
+   * The deadline of a task or a referral.
+   *
+   * These used to be read by a hardcoded pass (`dueReminderSweep`) that told
+   * the assignee a day before and whoever asked once it passed — the right
+   * idea with the wrong owner, since «چند روز قبل» and «به چه کسی» are exactly
+   * what a company wants to decide. As subjects they are ordinary rules:
+   * «۱ روز قبل از سررسید + هنوز باز است → اعلان به مسئول وظیفه», and a second
+   * rule after it for whoever should hear that it was missed. A sales chase is
+   * left out: its due date is the day to ring the customer and the queue
+   * already ranks it.
+   */
+  task_due: {
+    label: "سررسید وظیفه",
+    model: "task", dateField: "dueDateJalali", entityType: "task",
+    payloadIdKey: "taskId",
+    where: { taskKind: { not: "SALES_FOLLOW_UP" } },
+  },
+  referral_due: {
+    label: "مهلت انجام ارجاع",
+    model: "projectReferral", dateField: "dueDateJalali", entityType: "referral",
+    payloadIdKey: "referralId",
   },
   inquiry_creation: {
     label: "تاریخ ثبت استعلام قیمت",

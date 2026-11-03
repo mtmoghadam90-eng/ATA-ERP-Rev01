@@ -30,6 +30,9 @@ import { FOLLOW_UP_KIND } from "../../utils/salesFollowUp";
  * record leaves every record after it unreminded.
  */
 
+/** The notices this pass still sends itself; the rest are workflow rules. */
+const CODE_NOTICES = new Set<DueNotice>(["ASK"]);
+
 /** A ceiling on one pass, not a page. */
 const DUE_SCAN_LIMIT = 500;
 
@@ -310,7 +313,14 @@ async function raise(
     activityId?: string | null;
   },
 ): Promise<void> {
-  for (const kind of dueNoticesFor(subject, todayJalali)) {
+  /*
+   * Only «مهلت را تعیین کن» is still decided here. «سررسید نزدیک است» and
+   * «سررسید گذشت» moved to the workflow rules (`task_due`/`referral_due`
+   * subjects): how many days before, and who hears it was missed, are a
+   * company's choices, and `settingsPatches`' `due-reminder-rules-1` seeds the
+   * two this pass used to send so nothing goes quiet on the day it ships.
+   */
+  for (const kind of dueNoticesFor(subject, todayJalali).filter((k) => CODE_NOTICES.has(k))) {
     const userId = dueNoticeRecipient(kind, subject);
     if (!userId) continue;
     try {

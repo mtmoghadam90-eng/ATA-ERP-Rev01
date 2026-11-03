@@ -24495,6 +24495,64 @@ head("A draft's edits are not history; opening a document changes nothing");
     (view.match(/!paymentTermOptions\.includes\(/g) ?? []).length === 2);
 }
 
+head("Deadline reminders are workflow rules, not code");
+{
+  const sp = await import("../src/utils/settingsPatches");
+  const wt = await import("../src/utils/workflowTriggers");
+  const ws = await import("../src/utils/workflowSchedule");
+  const wc = await import("../src/utils/workflowConditions");
+
+  ok("the task deadline is a schedule subject, chases left out",
+    ws.SCHEDULE_SUBJECTS.task_due?.dateField === "dueDateJalali"
+    && JSON.stringify(ws.SCHEDULE_SUBJECTS.task_due.where) === JSON.stringify({ taskKind: { not: "SALES_FOLLOW_UP" } }));
+  ok("so is a referral's", ws.SCHEDULE_SUBJECTS.referral_due?.model === "projectReferral");
+
+  eq("four default rules", sp.DUE_REMINDER_RULES.length, 4);
+  for (const rule of sp.DUE_REMINDER_RULES) {
+    const subject = ws.SCHEDULE_SUBJECTS[rule.schedule!.subject];
+    const fields = (wt.SCHEDULE_MODEL_FIELDS[subject.model] ?? []).map((f) => f.value);
+    ok(`«${rule.name}» conditions on a field its record carries`,
+      rule.conditions.every((c) => fields.includes(c.field)), rule.conditions);
+    const cfg = rule.actions[0].notificationConfig!;
+    ok(`«${rule.name}» names a person on the record`, wt.isNotificationRecipient(cfg.recipient)
+      && cfg.recipient !== "MODULE_RESPONSIBLE");
+    eq(`«${rule.name}» prints no token its payload cannot fill`,
+      wt.unresolvableTemplateTokens(`${cfg.titleTemplate} ${cfg.descTemplate}`, "time_elapsed", subject.model).join("|"), "");
+    ok(`«${rule.name}» uses a real module id`, wt.RESPONSIBLE_MODULES.some((m) => m.id === cfg.module));
+  }
+  const patched = sp.applySettingsPatches({ workflows: [] } as never);
+  eq("the patch seeds them", (patched?.next.workflows ?? []).filter((r: { id: string }) => r.id.startsWith("wf-due-")).length, 4);
+  const edited = { workflows: [{ ...sp.DUE_REMINDER_RULES[0], name: "خودم عوضش کردم" }] };
+  const again = sp.applySettingsPatches(edited as never)!;
+  ok("and leaves one already there alone",
+    again.next.workflows!.filter((r: { id: string }) => r.id === "wf-due-task-soon").length === 1
+    && again.next.workflows![0].name === "خودم عوضش کردم");
+
+  eq("the assignee is the record's assignee",
+    wt.recordRecipientId("RECORD_ASSIGNEE", { assignedToUserId: "u1", createdByUserId: "u2" }), "u1");
+  eq("the requester is a task's creator", wt.recordRecipientId("RECORD_REQUESTER", { createdByUserId: "u2" }), "u2");
+  eq("...or a referral's author", wt.recordRecipientId("RECORD_REQUESTER", { assignedByUserId: "u3" }), "u3");
+  eq("nobody named is null", wt.recordRecipientId("RECORD_REQUESTER", {}), null);
+
+  ok("an open task matches «هنوز انجام نشده»",
+    wc.matchesConditions([{ field: "taskOpen", operator: "equals", value: "true" }], { taskOpen: "true" }));
+  ok("a finished one does not",
+    !wc.matchesConditions([{ field: "taskOpen", operator: "equals", value: "true" }], { taskOpen: "false" }));
+
+  const sweep = readFileSync("src/server/services/workflowSweep.ts", "utf8");
+  ok("the sweep derives the open state for tasks and referrals",
+    /taskOpen: String\(taskLane\(/.test(sweep) && /referralOpen: String\(referralIsOpen\(/.test(sweep)
+    && /model === "projectReferral"\) return derivedReferralValues/.test(sweep));
+  const engine = readFileSync("src/server/services/workflowService.ts", "utf8");
+  ok("the notification reaches the record's person, admins as the fallback",
+    /recordRecipientId\(recipient, enrichedPayload\)/.test(engine) && /isSystemAdmin: true, isActive: true/.test(engine));
+  const due = readFileSync("src/server/services/dueReminderSweep.ts", "utf8");
+  ok("the hardcoded pass sends only «مهلت را تعیین کن»",
+    /CODE_NOTICES = new Set<DueNotice>\(\["ASK"\]\)/.test(due) && /filter\(\(k\) => CODE_NOTICES\.has\(k\)\)/.test(due));
+  const view = readFileSync("src/components/SettingsView.tsx", "utf8");
+  ok("the rule editor offers the recipient", /NOTIFICATION_RECIPIENTS\.map/.test(view) && /data-notify-user/.test(view));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

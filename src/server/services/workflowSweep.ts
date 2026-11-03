@@ -9,6 +9,8 @@ import { FINISHED_TASK_STATUSES, isTerminalOutcome } from "../../utils/salesFoll
 import { AFTER_SALES_CLOSED } from "../../utils/moduleStatuses";
 import { getProformaOutcome } from "../proformaStatus";
 import { expandDateFields } from "../dates";
+import { referralIsOpen, taskLane } from "../../utils/workBoard";
+import { taskRelationKind } from "../../utils/taskRelations";
 import {
   REPEAT_SWEEP_WINDOW_DAYS, SCHEDULE_SUBJECTS, SWEEP_WINDOW_DAYS,
   dueDay, occurrenceDue, scheduleRepeats, scheduledRules, sweepRange,
@@ -99,8 +101,23 @@ const PAYLOAD_SELECT: Record<string, Record<string, unknown>> = {
   task: {
     id: true, title: true, taskKind: true, priority: true, status: true,
     followUpResult: true, completionNote: true,
-    relatedToType: true, relatedToId: true,
+    relatedToType: true, relatedToId: true, relatedToName: true,
     assignedToName: true, completedAtJalali: true,
+    // «سررسید وظیفه»: the deadline and the two people a notice can go to.
+    dueDateJalali: true, assignedToUserId: true,
+    createdByUserId: true, createdByName: true,
+  },
+  /*
+   * «مهلت انجام ارجاع». A referral has no project column — it hangs off a
+   * feed message — so the project comes down through the message and is
+   * flattened into `projectId` by `derivedReferralValues`.
+   */
+  projectReferral: {
+    id: true, status: true, actionRequired: true, dueDateJalali: true,
+    assignedToUserId: true, assignedToName: true,
+    assignedByUserId: true, assignedByName: true,
+    activityId: true,
+    activity: { select: { group: { select: { projectId: true } } } },
   },
 };
 
@@ -273,8 +290,19 @@ async function derivedTaskValues(
   for (const row of rows) {
     const id = String(row.id);
     const proformaId = proformaOf.get(id);
+    /*
+     * Whether the task is still to be done — the condition a deadline rule
+     * needs («هنوز انجام نشده»), and the board's own reading of the status so
+     * an automation's «در انتظار» counts as open.
+     */
+    const own: Record<string, unknown> = {
+      taskOpen: String(taskLane(String(row.status ?? "")) !== "DONE"),
+      // A task about a project names it, so `{projectName}` resolves.
+      ...(taskRelationKind(row.relatedToType as string) === "project" && row.relatedToId
+        ? { projectId: String(row.relatedToId) } : {}),
+    };
     if (!proformaId) {
-      out.set(id, {});
+      out.set(id, own);
       continue;
     }
     /*
@@ -283,7 +311,29 @@ async function derivedTaskValues(
      * fired *by* one of them would be asking about itself — never below 1, so a
      * condition on it could only ever mislead.
      */
-    out.set(id, { proformaId, ...(derived.get(proformaId) ?? {}) });
+    out.set(id, { ...own, proformaId, ...(derived.get(proformaId) ?? {}) });
+  }
+  return out;
+}
+
+/**
+ * A referral's state and project, for the deadline rules.
+ *
+ * `referralOpen` is `referralIsOpen` — an exclusion, so a status nobody
+ * anticipated still counts as open — and the project is read off the message
+ * that raised the request, which is where a referral keeps it.
+ */
+function derivedReferralValues(
+  rows: Record<string, unknown>[],
+): Map<string, Record<string, unknown>> {
+  const out = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    const activity = row.activity as { group?: { projectId?: string | null } | null } | null;
+    const projectId = activity?.group?.projectId ?? null;
+    out.set(String(row.id), {
+      referralOpen: String(referralIsOpen(String(row.status ?? ""))),
+      ...(projectId ? { projectId } : {}),
+    });
   }
   return out;
 }
@@ -355,6 +405,7 @@ async function derivedValuesFor(
   if (model === "task") return derivedTaskValues(rows);
   if (model === "packagingDelivery") return derivedDeliveryValues(rows);
   if (model === "project") return derivedProjectValues(rows);
+  if (model === "projectReferral") return derivedReferralValues(rows);
   return new Map<string, Record<string, unknown>>();
 }
 
@@ -653,7 +704,11 @@ export async function resolveFinishedTasks(
          * whose subject was changed since must not send the resolver to the
          * wrong table for a task already raised.
          */
-        const model = task.workflowEntityType ?? subject.model;
+        // An entity type is not always the model's name («referral» is a
+        // `projectReferral` row), so it is looked up through the subjects.
+        const model = Object.values(SCHEDULE_SUBJECTS)
+          .find((s) => s.entityType === task.workflowEntityType)?.model
+          ?? task.workflowEntityType ?? subject.model;
         const select = PAYLOAD_SELECT[model];
         const delegate = (db as any)[model];
         if (!select || !delegate) continue;

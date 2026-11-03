@@ -3,11 +3,14 @@ import { TRIGGER_ENTITY, WorkflowTriggerType } from "../../utils/workflowTrigger
 import { AuthUser } from "../auth";
 import { loadSettings } from "../settings";
 import { getTodayShamsi, addDaysToShamsi } from "../../dateUtils";
-import { notifyModuleResponsible } from "./notificationService";
+import { notifyModuleResponsible, notifyUser } from "./notificationService";
 import { failedMessageBody, failedMessageTitle } from "../../utils/workflowNotice";
 import { expandDateFields } from "../dates";
 import { matchesConditions } from "../../utils/workflowConditions";
-import { isMessageOnceScope, messageOnceKey } from "../../utils/workflowTriggers";
+import {
+  RESPONSIBLE_MODULES, isMessageOnceScope, isNotificationRecipient, messageOnceKey,
+  recordRecipientId,
+} from "../../utils/workflowTriggers";
 import { escalationFor } from "../../utils/workflowEscalation";
 import { isChannel, renderTemplate } from "../../utils/messaging";
 import { messageVariables, queueForCustomer } from "./messaging/messageService";
@@ -604,13 +607,49 @@ export async function executeRule(
         // hear about it. Resolving the responsible here directly meant that
         // when no account matched the configured name — including the default
         // "سیستم", which is nobody — the notice was dropped without a trace.
-        await notifyModuleResponsible(
-          config.module || "سیستم",
-          replaceTemplateVars(config.titleTemplate, enrichedPayload) || rule.name,
-          replaceTemplateVars(config.descTemplate, enrichedPayload) || "",
-          user,
-          enrichedPayload.projectId || null,
-        );
+        const title = replaceTemplateVars(config.titleTemplate, enrichedPayload) || rule.name;
+        const description = replaceTemplateVars(config.descTemplate, enrichedPayload) || "";
+        const recipient = isNotificationRecipient(config.recipient)
+          ? config.recipient : "MODULE_RESPONSIBLE";
+
+        if (recipient === "MODULE_RESPONSIBLE") {
+          await notifyModuleResponsible(
+            config.module || "سیستم", title, description, user,
+            enrichedPayload.projectId || null,
+          );
+        } else {
+          /*
+           * A person rather than a module. A record that names nobody (a task
+           * raised by an automation has no creator) and a deactivated account
+           * fall back to the system administrators, so the notice is never
+           * dropped without a trace.
+           */
+          const named = recipient === "USER"
+            ? String(config.userId ?? "").trim() || null
+            : recipient === "SYSTEM_ADMINS"
+              ? null
+              : recordRecipientId(recipient, enrichedPayload);
+          const target = named
+            ? await db.user.findFirst({ where: { id: named, isActive: true }, select: { id: true } })
+            : null;
+          const userIds = target
+            ? [target.id]
+            : (await db.user.findMany({
+                where: { isSystemAdmin: true, isActive: true }, select: { id: true },
+              })).map((u: { id: string }) => u.id);
+          for (const userId of userIds) {
+            await notifyUser({
+              userId,
+              actorUserId: user?.id ?? null,
+              // The module's name, as the inbox groups by it, never its id.
+              module: RESPONSIBLE_MODULES.find((m) => m.id === config.module)?.name
+                || config.module || "اتوماسیون",
+              title,
+              description,
+              projectId: enrichedPayload.projectId || null,
+            });
+          }
+        }
       }
     }
   }
