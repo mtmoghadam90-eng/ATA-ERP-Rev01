@@ -12,11 +12,15 @@
  * printout renders it exactly as the quotation did.
  */
 
-/** The non-blank lines of a specification, in order. */
+/**
+ * The non-blank lines of a specification, in order, **untrimmed**: the editor
+ * reads its boxes back through this on every keystroke, so trimming here
+ * swallowed a space typed at the end of a line and two words could never be
+ * written (`deviationEntries`' lesson). The printout trims what it prints.
+ */
 export function specLines(text: string | null | undefined): string[] {
   return String(text ?? "")
     .split(/\r?\n/)
-    .map((line) => line.trimEnd())
     .filter((line) => line.trim() !== "");
 }
 

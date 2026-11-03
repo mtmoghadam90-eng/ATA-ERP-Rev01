@@ -5371,6 +5371,15 @@ head("A packing line's specification is edited line by line");
   act(() => { handlers(draft).onChange?.({ target: { value: "Body: SS316" } }); });
   act(() => { (hostP.querySelector("[data-packing-spec-add]") as HTMLButtonElement).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
   ok("a line typed by hand is added under the rest", value === "Range: 0~100 kPa\nOutput: 4-20mA\nBody: SS316", value);
+  const box = () => hostP.querySelectorAll("[data-packing-spec] input")[0] as HTMLInputElement;
+  act(() => { handlers(box()).onChange?.({ target: { value: "Range: 0~100 kPa " } }); });
+  ok("a space typed at the end of a line stays in the box", box().value === "Range: 0~100 kPa ", box().value);
+  act(() => { handlers(box()).onChange?.({ target: { value: "Range: 0~100 kPa g" } }); });
+  ok("...so a second word can follow it", value.startsWith("Range: 0~100 kPa g\n"), value);
+  act(() => { handlers(box()).onChange?.({ target: { value: "" } }); });
+  ok("a box emptied while retyping stays on the screen", removes().length === 3 && box().value === "");
+  act(() => { handlers(box()).onChange?.({ target: { value: "Span: 0~200" } }); });
+  ok("...and what is typed into it is kept", value === "Span: 0~200\nOutput: 4-20mA\nBody: SS316", value);
   act(() => { rootP.unmount(); });
   hostP.remove();
 }
