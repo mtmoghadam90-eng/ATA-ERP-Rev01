@@ -514,7 +514,7 @@ export const TRIGGER_ENTITY: Record<
  */
 export const WORKFLOW_ACTION_TYPES = [
   { value: "create_task", label: "ایجاد وظیفه" },
-  { value: "send_notification", label: "ارسال اعلان به مسئول ماژول" },
+  { value: "send_notification", label: "ارسال اعلان" },
   { value: "send_message", label: "ارسال پیام به مشتری (پیامک/بله/ایمیل)" },
 ] as const satisfies readonly { value: WorkflowRule["actions"][number]["type"]; label: string }[];
 
@@ -783,6 +783,52 @@ export const WORKFLOW_ASSIGNEE_TOKENS: readonly AssigneeToken[] = [
   })),
 ];
 
+/**
+ * Who a «ارسال اعلان» action reaches.
+ *
+ * It only ever reached a module's responsible, which cannot say «به خود مسئول
+ * این وظیفه یک روز قبل از سررسید خبر بده» — the person is a fact about the
+ * record, not about a module. Absent is `MODULE_RESPONSIBLE`, so every rule
+ * saved before this keeps its behaviour.
+ */
+export const NOTIFICATION_RECIPIENTS = [
+  { value: "MODULE_RESPONSIBLE", label: "مسئول ماژول" },
+  { value: "RECORD_ASSIGNEE", label: "مسئول / ارجاع‌شوندهٔ همین رکورد" },
+  { value: "RECORD_REQUESTER", label: "ایجادکننده / ارجاع‌دهندهٔ همین رکورد" },
+  { value: "SYSTEM_ADMINS", label: "مدیران سیستم" },
+  { value: "USER", label: "کاربر مشخص" },
+] as const;
+
+export type NotificationRecipient = (typeof NOTIFICATION_RECIPIENTS)[number]["value"];
+
+export function isNotificationRecipient(value: unknown): value is NotificationRecipient {
+  return NOTIFICATION_RECIPIENTS.some((r) => r.value === value);
+}
+
+/**
+ * The account a record-bound recipient names, read off the payload.
+ *
+ * A task carries `assignedToUserId`/`createdByUserId`, a referral
+ * `assignedToUserId`/`assignedByUserId` — the same two people under two
+ * spellings. Null when the payload names nobody, which the engine answers by
+ * telling the system administrators rather than dropping the notice.
+ */
+export function recordRecipientId(
+  recipient: NotificationRecipient,
+  payload: Record<string, unknown>,
+): string | null {
+  const pick = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = String(payload[key] ?? "").trim();
+      if (value) return value;
+    }
+    return null;
+  };
+  if (recipient === "RECORD_ASSIGNEE") return pick("assignedToUserId");
+  if (recipient === "RECORD_REQUESTER") return pick("createdByUserId", "assignedByUserId");
+  return null;
+}
+
 /** True when the string is one of the dynamic tokens rather than a person. */
 export function isAssigneeToken(value: string): boolean {
   return WORKFLOW_ASSIGNEE_TOKENS.some((t) => t.value === value);
@@ -959,7 +1005,7 @@ export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
         + "«تأیید نهایی خرید» یا «موکول به تاریخ دیگر». دقیقاً همان نوشتهٔ فهرست "
         + "را بنویس، وگرنه شرط هیچ‌وقت برقرار نمی‌شود.",
     },
-    { value: "priority", label: "اولویت پیگیری", options: TASK_PRIORITIES },
+    { value: "priority", label: "اولویت", options: TASK_PRIORITIES },
     {
       value: "proformaId", label: "به پیش‌فاکتور وصل است", derived: true,
       hint: "شناسهٔ پیش‌فاکتوری که این پیگیری روی آن ثبت شده. معمولاً شرطی روی آن "
@@ -997,6 +1043,37 @@ export const SCHEDULE_MODEL_FIELDS: Record<string, readonly TriggerField[]> = {
       hint: "true یعنی «نسخه جدید همین پیش‌فاکتور» صادر شده؛ سندی که این پیگیری "
         + "روی آن ثبت شده دیگر آن چیزی نیست که روی میز مشتری است.",
     },
+    /*
+     * «سررسید وظیفه» — the fields a deadline rule asks about and prints.
+     */
+    {
+      value: "taskOpen", label: "وظیفه هنوز انجام نشده", options: ["true", "false"],
+      derived: true,
+      hint: "true یعنی وظیفه انجام‌شده یا کنسل‌شده نیست. هر یادآوری سررسید باید "
+        + "شرط «برابر با true» داشته باشد، وگرنه برای کاری که تمام شده هم اعلان می‌رود.",
+    },
+    { value: "status", label: "وضعیت وظیفه", options: TASK_STATUS_OPTIONS },
+    { value: "title", label: "عنوان وظیفه" },
+    { value: "dueDateJalali", label: "تاریخ سررسید" },
+    { value: "assignedToName", label: "مسئول وظیفه" },
+    { value: "createdByName", label: "ایجادکنندهٔ وظیفه" },
+    { value: "relatedToName", label: "مرتبط با" },
+  ],
+  /*
+   * «مهلت انجام ارجاع».
+   */
+  projectReferral: [
+    {
+      value: "referralOpen", label: "ارجاع هنوز انجام نشده", options: ["true", "false"],
+      derived: true,
+      hint: "true یعنی ارجاع هنوز «اتمام کار» نشده. یادآوری مهلت باید شرط "
+        + "«برابر با true» داشته باشد.",
+    },
+    { value: "status", label: "وضعیت ارجاع", options: REFERRAL_STATUSES },
+    { value: "actionRequired", label: "متن ارجاع" },
+    { value: "dueDateJalali", label: "مهلت انجام" },
+    { value: "assignedToName", label: "ارجاع‌شونده" },
+    { value: "assignedByName", label: "ارجاع‌دهنده" },
   ],
 };
 
@@ -1156,6 +1233,7 @@ export const SCHEDULE_MODEL_PAYLOAD_KEYS: Record<string, readonly string[]> = {
    * triggers above have no equivalent of.
    */
   task: ["taskId", "proformaId", "projectId"],
+  projectReferral: ["referralId", "projectId"],
 };
 
 /**

@@ -1,7 +1,8 @@
 import type { WorkflowRule } from "../types";
 import { TASK_PRIORITIES } from "./moduleStatuses";
 import {
-  ENRICHED_PAYLOAD_VARIABLES, RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS,
+  ENRICHED_PAYLOAD_VARIABLES, NOTIFICATION_RECIPIENTS, RESPONSIBLE_MODULES, SCHEDULE_MODEL_FIELDS,
+  isNotificationRecipient,
   WORKFLOW_ACTION_TYPES, WORKFLOW_OPERATORS,
   TRIGGER_ENTITY, TriggerField,
   WORKFLOW_ASSIGNEE_TOKENS, WORKFLOW_TRIGGERS, isAssigneeToken, isResponsibleModule,
@@ -165,8 +166,12 @@ export function workflowCatalogue(templates: readonly { id: string; name: string
     `    channel (${ALL_CHANNELS.join(" | ")} یا نیامده = ترجیح پروژه), delayDays, sendAtTime`,
     "    delayDays: عدد صحیح نامنفی — «۲ روز بعد» برای یک پیام یعنی همین، نه dueDaysOffset",
     "      (آن مال وظیفه است).",
-    "  send_notification — اعلان داخلی برای مسئول یک ماژول. notificationConfig:",
-    "    titleTemplate, descTemplate, module",
+    "  send_notification — اعلان داخلی. notificationConfig:",
+    "    titleTemplate, descTemplate, module, recipient",
+    `    recipient: ${NOTIFICATION_RECIPIENTS.filter((r) => r.value !== "USER").map((r) => r.value).join(" | ")}`,
+    "      (نیامده = MODULE_RESPONSIBLE). RECORD_ASSIGNEE یعنی مسئول/ارجاع‌شوندهٔ همان وظیفه یا ارجاع،",
+    "      RECORD_REQUESTER ایجادکننده/ارجاع‌دهنده — برای سررسید وظیفه (task_due) و مهلت ارجاع (referral_due).",
+    "      «۱ روز قبل از سررسید به خودش خبر بده» = task_due + before + 1 + taskOpen = true + RECORD_ASSIGNEE.",
     "",
     "## مقادیر مجاز notificationConfig.module (شناسه ماژول، نه نام فارسی)",
     modules,
@@ -759,10 +764,16 @@ export function sanitizeDraftedRule(raw: unknown, ctx: DraftContext): DraftResul
       );
     }
 
+    // A specific account cannot be named by a model, so USER is not accepted.
+    const recipient = isNotificationRecipient(config.recipient) && config.recipient !== "USER"
+      ? config.recipient : undefined;
     actions.push({
       id,
       type: "send_notification",
-      notificationConfig: { titleTemplate, descTemplate, module: keptModule },
+      notificationConfig: {
+        titleTemplate, descTemplate, module: keptModule,
+        ...(recipient ? { recipient } : {}),
+      },
     });
   }
 

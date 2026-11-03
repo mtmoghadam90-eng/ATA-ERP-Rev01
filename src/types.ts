@@ -1700,6 +1700,10 @@ export interface WorkflowRule {
       titleTemplate: string;
       descTemplate: string;
       module: string;
+      /** Who receives it; absent is the module's responsible. See `NOTIFICATION_RECIPIENTS`. */
+      recipient?: 'MODULE_RESPONSIBLE' | 'RECORD_ASSIGNEE' | 'RECORD_REQUESTER' | 'SYSTEM_ADMINS' | 'USER';
+      /** The account, when `recipient` is `USER`. */
+      userId?: string;
     };
     /**
      * Writes a message to the customer into the outbox.

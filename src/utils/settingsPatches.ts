@@ -34,7 +34,7 @@
  * against an edited document.
  */
 
-import type { ERPSettings } from "../types";
+import type { ERPSettings, WorkflowRule } from "../types";
 import {
   REQUEST_REVIEW_CATEGORY, REQUEST_REVIEW_CATEGORY_ID, findRequestReviewCategory,
 } from "./requestReview";
@@ -412,7 +412,57 @@ export const SETTINGS_PATCHES: SettingsPatch[] = [
       };
     },
   },
+  {
+    id: "due-reminder-rules-1",
+    describe: "چهار قانون ورک‌فلو برای یادآوری سررسید وظیفه و مهلت ارجاع (جایگزین یادآوری ثابت در کد)",
+    /*
+     * The deadline reminders used to be a hardcoded pass; they are workflow
+     * rules now, so the days and the recipients are the company's to change.
+     * These four are what that pass did — a day before, to the assignee; a day
+     * after, to whoever asked — so moving it out of the code changes nothing
+     * until somebody edits them. Appended only; ids never reused.
+     */
+    apply: (settings) => {
+      const existing = settings.workflows ?? [];
+      const wanted = DUE_REMINDER_RULES.filter((r) => !existing.some((e) => e.id === r.id));
+      if (wanted.length === 0) return null;
+      return { ...settings, workflows: [...existing, ...wanted] };
+    },
+  },
 ];
+
+/** The four rules `due-reminder-rules-1` seeds. Exported for `test:rules`. */
+export const DUE_REMINDER_RULES: WorkflowRule[] = [
+  dueRule("wf-due-task-soon", "یادآوری سررسید وظیفه به مسئول", "task_due", "before", "taskOpen",
+    "RECORD_ASSIGNEE", "سررسید وظیفه نزدیک است: {title}",
+    "وظیفهٔ «{title}» تا {dueDateJalali} مهلت دارد."),
+  dueRule("wf-due-task-overdue", "اعلان سررسید گذشتهٔ وظیفه به ایجادکننده", "task_due", "after", "taskOpen",
+    "RECORD_REQUESTER", "سررسید وظیفه گذشت: {title}",
+    "وظیفهٔ «{title}» که به {assignedToName} سپرده بودید تا {dueDateJalali} انجام نشده است."),
+  dueRule("wf-due-referral-soon", "یادآوری مهلت ارجاع به ارجاع‌شونده", "referral_due", "before", "referralOpen",
+    "RECORD_ASSIGNEE", "مهلت ارجاع نزدیک است",
+    "ارجاع «{actionRequired}» تا {dueDateJalali} مهلت دارد."),
+  dueRule("wf-due-referral-overdue", "اعلان مهلت گذشتهٔ ارجاع به ارجاع‌دهنده", "referral_due", "after", "referralOpen",
+    "RECORD_REQUESTER", "مهلت ارجاع گذشت",
+    "ارجاع «{actionRequired}» که به {assignedToName} داده بودید تا {dueDateJalali} انجام نشده است."),
+];
+
+function dueRule(
+  id: string, name: string, subject: string, direction: "before" | "after", openField: string,
+  recipient: "RECORD_ASSIGNEE" | "RECORD_REQUESTER", titleTemplate: string, descTemplate: string,
+): WorkflowRule {
+  return {
+    id, name, active: true,
+    triggerType: "time_elapsed",
+    schedule: { subject, days: 1, direction },
+    conditions: [{ field: openField, operator: "equals", value: "true" }],
+    actions: [{
+      id: `${id}-act`,
+      type: "send_notification",
+      notificationConfig: { titleTemplate, descTemplate, module: "tasks", recipient },
+    }],
+  } as WorkflowRule;
+}
 
 /**
  * The settings document with every patch it has not yet had.
