@@ -121,6 +121,7 @@ import { computeProformaTotals } from "../utils/proformaTotals";
 import type { useCategoryCompletion } from "../api/useCategoryCompletion";
 import { REQUEST_REVIEW_CATEGORY } from "../utils/requestReview";
 import { PROJECT_STATUSES } from "../utils/moduleStatuses";
+import { roundInCurrency, sellingFromCost, skuCostCalcSeed, skuProfitPct } from "../utils/skuCostPricing";
 
 // Helper functions for dynamic delivery time notes generation
 /**
@@ -1628,8 +1629,9 @@ export default function ProformasView({
         brand: prod?.brand || '',
         quantity: line.quantity,
         unit: defaultUnitFor(prod?.unit),
-        unitPriceRIYAL: prod ? getProductOrVariantPriceInProformaCurrency(prod, variant) : 0,
-        ...costPatchFor(prod, variant),
+        ...(prod
+          ? catalogueLinePricing(prod, variant)
+          : { unitPriceRIYAL: 0, ...costPatchFor(prod, variant) }),
         techSpecs: describeProduct(prod, variant),
         deliveryRange: '۳-۴',
         deliveryUnit: 'هفته' as const,
@@ -2089,6 +2091,54 @@ export default function ProformasView({
     };
   };
 
+  /**
+   * A catalogue line's price, cost and calculator working, in one place.
+   *
+   * **A SKU's warehouse price is its cost** (`skuCostPricing.ts`): when the
+   * chosen SKU carries one it becomes «بهای تمام‌شده», the selling price is that
+   * cost marked up by the calculator's default margin, and the line's own
+   * `priceCalc` is seeded with the same cost so the calculator opens where the
+   * line stands. A SKU with no price, or no SKU at all, is priced as before.
+   */
+  const catalogueLinePricing = (
+    product: Product,
+    variant?: ProductVariant,
+  ): Pick<ProformaItem, "unitPriceRIYAL" | "unitCost" | "costCurrency" | "costSource" | "priceCalc"> => {
+    const hasSkuPrice = !!variant
+      && ((Number(variant.priceForeign) || 0) > 0 || (Number(variant.priceRIYAL) || 0) > 0);
+    if (!variant || !hasSkuPrice) {
+      return {
+        unitPriceRIYAL: getProductOrVariantPriceInProformaCurrency(product, variant),
+        ...costPatchFor(product, variant),
+        priceCalc: null,
+      };
+    }
+
+    const isRial = (currency || "ریال") === "ریال";
+    const cost = roundInCurrency(getProductOrVariantPriceInProformaCurrency(product, variant), isRial);
+    const profitPct = skuProfitPct(variant);
+
+    // The calculator works in the SKU's own currency, the one it is stored in.
+    const skuCurrency = product.currencyForeign || variant.currencyForeign || "یورو";
+    const skuEng = mapPersianCurrencyToEnglish(skuCurrency);
+    const skuRate = (skuEng ? exchangeRates?.find((r) => r.currency === skuEng)?.rateToRIYAL : 0) || 0;
+    const costForeign = (Number(variant.priceForeign) || 0) > 0
+      ? Number(variant.priceForeign)
+      : skuRate > 0 ? Math.round(((Number(variant.priceRIYAL) || 0) / skuRate) * 10_000) / 10_000 : 0;
+
+    return {
+      unitPriceRIYAL: sellingFromCost(cost, profitPct, isRial),
+      unitCost: cost,
+      costCurrency: currency || "ریال",
+      costSource: COST_SOURCES.PRICE_CALCULATOR,
+      // Without a rate the cost cannot be stated in the SKU's currency, so the
+      // calculator falls back to the catalogue's own working.
+      priceCalc: skuRate > 0 && costForeign > 0
+        ? skuCostCalcSeed({ costForeign, currency: skuCurrency, rate: skuRate, profitPct })
+        : null,
+    };
+  };
+
   /** The line whose price was just published, so the button can say so. */
   const [publishedPriceIdx, setPublishedPriceIdx] = useState<number | null>(null);
 
@@ -2111,13 +2161,15 @@ export default function ProformasView({
     const prod = products.find((p) => p.id === item?.productId);
     if (!item || !prod) return;
 
-    const price = Number(item.unitPriceRIYAL) || 0;
+    const variant = item.variantId ? prod.variants?.find((v) => v.id === item.variantId) : undefined;
+
+    // A SKU's warehouse price is its cost, so a SKU line publishes the line's
+    // «بهای تمام‌شده»; a product with no SKU still publishes its selling price.
+    const price = variant ? Number(item.unitCost) || 0 : Number(item.unitPriceRIYAL) || 0;
     if (price <= 0) {
-      alert('ابتدا بهای واحد این ردیف را وارد کنید.');
+      alert(variant ? 'ابتدا بهای تمام‌شده این ردیف را وارد کنید.' : 'ابتدا بهای واحد این ردیف را وارد کنید.');
       return;
     }
-
-    const variant = item.variantId ? prod.variants?.find((v) => v.id === item.variantId) : undefined;
 
     /*
      * To rial at the document's own rate.
@@ -2153,7 +2205,7 @@ export default function ProformasView({
       ? (variant.priceRIYAL ?? 0)
       : (prod.basePriceRIYAL ?? 0);
     const confirmed = window.confirm(
-      `قیمت فروش «${target}» در انبار به‌روزرسانی شود؟\n\n`
+      `${variant ? 'قیمت تمام‌شده' : 'قیمت فروش'} «${target}» در انبار به‌روزرسانی شود؟\n\n`
       + `قیمت فعلی انبار: ${formatMoney(Math.round(current))} ریال\n`
       + `قیمت جدید: ${formatMoney(priceRial)} ریال`
       + (priceForWarehouse === null
@@ -2268,19 +2320,18 @@ export default function ProformasView({
 
     const newTechSpecs = describeProduct(prod, variant, item.techSpecs);
 
-    const variantPrice = getProductOrVariantPriceInProformaCurrency(prod, variant);
-
     newItems[index] = {
       ...item,
       variantId: variant.id,
       productCode: variant.sku,
       quantity: currentQty,
       supplyMethod: effectiveSupplyType === "ORDER" ? "ORDER" : "INVENTORY",
-      unitPriceRIYAL: variantPrice || item.unitPriceRIYAL,
-      ...costPatchFor(prod, variant),
       // The previous SKU's working priced a different item: the new one's
-      // price came from the catalogue, so the calculator reopens on that.
-      priceCalc: null,
+      // cost comes from the catalogue, and so does the calculator's seed.
+      ...(() => {
+        const pricing = catalogueLinePricing(prod, variant);
+        return pricing.unitPriceRIYAL ? pricing : { ...pricing, unitPriceRIYAL: item.unitPriceRIYAL };
+      })(),
       techSpecs: newTechSpecs,
     };
     setItems(newItems);
@@ -5615,7 +5666,7 @@ export default function ProformasView({
                                   `showCosts`: a sale price is what the company
                                   charges, and the warehouse needs it.
                                 */}
-                                {item.productId && (
+                                {item.productId && (!item.variantId || showCosts) && (
                                   <button
                                     type="button"
                                     onClick={() => publishPriceToWarehouse(idx)}
@@ -5624,7 +5675,9 @@ export default function ProformasView({
                                         ? 'text-emerald-600 border-emerald-200'
                                         : 'text-slate-500 hover:bg-slate-50 hover:text-slate-700 border-slate-200'
                                     }`}
-                                    title="ثبت این قیمت به‌عنوان قیمت فروش کالا در انبار"
+                                    title={item.variantId
+                                      ? "ثبت بهای تمام‌شده این ردیف به‌عنوان قیمت تمام‌شده SKU در انبار"
+                                      : "ثبت این قیمت به‌عنوان قیمت فروش کالا در انبار"}
                                   >
                                     {publishedPriceIdx === idx
                                       ? <CheckCircle2 size={13} />
@@ -6549,6 +6602,20 @@ export default function ProformasView({
                 ? { currencyForeign: warehouseCurrency }
                 : { priceForeign: priceForWarehouse, currencyForeign: warehouseCurrency };
 
+              /*
+               * A SKU's warehouse price is its **cost** (`skuCostPricing.ts`),
+               * so the SKU receives the landed figure the calculator worked out,
+               * never the selling price — written the other way, the next line
+               * priced from this SKU would add the margin on top of a price that
+               * already carried it.
+               */
+              const costForWarehouse = priceInWarehouseCurrency(
+                landed.landedForeign, landed.landedRial, appliedCurrency, warehouseCurrency, rateFor,
+              );
+              const warehouseCost = costForWarehouse === null
+                ? { currencyForeign: warehouseCurrency }
+                : { priceForeign: costForWarehouse, currencyForeign: warehouseCurrency };
+
               // Persist to the variant (or product if no variant). The
               // mutation runs against the loaded record, not the picker
               // projection this screen holds.
@@ -6562,8 +6629,8 @@ export default function ProformasView({
                     v.id === variant.id
                       ? {
                           ...v,
-                          priceRIYAL: Math.round(sellingRial),
-                          ...warehousePrice,
+                          priceRIYAL: Math.round(landed.landedRial),
+                          ...warehouseCost,
                           ...details,
                         }
                       : v,
@@ -6633,8 +6700,7 @@ export default function ProformasView({
                     newItems[itemIdx].variantId = matchedVariantId;
                     if (variant) {
                         newItems[itemIdx].productCode = variant.sku;
-                        newItems[itemIdx].unitPriceRIYAL = getProductOrVariantPriceInProformaCurrency(productForItem, variant);
-                        Object.assign(newItems[itemIdx], costPatchFor(productForItem, variant));
+                        Object.assign(newItems[itemIdx], catalogueLinePricing(productForItem, variant));
                         const effectiveSupplyType = variant.stockLevel === 0 ? "ORDER" : (productForItem.supplyType || "INVENTORY");
                         newItems[itemIdx].supplyMethod = effectiveSupplyType === "ORDER" ? "ORDER" : "INVENTORY";
                     }

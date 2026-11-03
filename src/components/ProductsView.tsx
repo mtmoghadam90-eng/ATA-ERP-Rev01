@@ -2709,7 +2709,7 @@ export default function ProductsView({
                                 
                                 <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 gap-3 items-end">
                                   <div className="space-y-1">
-                                    <label className="text-[11px] text-slate-500 font-medium block">قیمت ارزی یکسان</label>
+                                    <label className="text-[11px] text-slate-500 font-medium block">قیمت تمام‌شده ارزی یکسان</label>
                                     <input
                                       type="number"
                                       min="0"
@@ -2738,7 +2738,7 @@ export default function ProductsView({
                                   </div>
 
                                   <div className="space-y-1">
-                                    <label className="text-[11px] text-slate-500 font-medium block">قیمت فروش یکسان (ریال)</label>
+                                    <label className="text-[11px] text-slate-500 font-medium block">قیمت تمام‌شده یکسان (ریال)</label>
                                     <input
                                       type="text"
                                       value={bulkPriceRIYAL !== "" ? formatMoney(bulkPriceRIYAL) : ""}
@@ -2841,8 +2841,9 @@ export default function ProductsView({
                                     <th className="w-56 min-w-[220px] py-2 px-3 text-xs font-semibold text-slate-600">کد SKU</th>
                                     <th className="py-2 px-3 text-xs font-semibold text-slate-600">ترکیب</th>
                                     {supplyType === 'INVENTORY' && <th className="py-2 px-3 text-xs font-semibold text-slate-600">موجودی اولیه</th>}
-                                    <th className="py-2 px-3 text-xs font-semibold text-slate-600">قیمت ارزی</th>
-                                    <th className="py-2 px-3 text-xs font-semibold text-slate-600">قیمت فروش (ریال)</th>
+                                    {/* A SKU's price is its cost: a proforma line priced from it marks it up by the calculator's margin (`skuCostPricing.ts`). */}
+                                    <th className="py-2 px-3 text-xs font-semibold text-slate-600">قیمت تمام‌شده ارزی</th>
+                                    <th className="py-2 px-3 text-xs font-semibold text-slate-600">قیمت تمام‌شده (ریال)</th>
                                     <th className="py-2 px-3 text-xs font-semibold text-slate-600">عملیات</th>
                                   </tr>
                                 </thead>
