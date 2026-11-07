@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarDays, CheckCircle2, ClipboardList, Clock, FileText, Loader2, MapPin, Paperclip,
   Plus, Search, Trash2, Users, X, AlertTriangle, Lock, Printer, ListChecks,
@@ -551,6 +551,8 @@ interface TopicDraft {
   projectLabel: string;
   discussion: string;
   conclusion: string;
+  /** This topic's own files, apart from the meeting's. */
+  attachments: ActivityAttachment[];
   items: ItemDraft[];
 }
 
@@ -558,7 +560,7 @@ let keySeq = 0;
 const newKey = () => `item-${++keySeq}`;
 
 const newTopic = (projectId = '', projectLabel = ''): TopicDraft => ({
-  key: newKey(), id: null, title: '', projectId, projectLabel, discussion: '', conclusion: '', items: [],
+  key: newKey(), id: null, title: '', projectId, projectLabel, discussion: '', conclusion: '', attachments: [], items: [],
 });
 
 function topicsFromRow(m: MeetingRow): TopicDraft[] {
@@ -571,6 +573,7 @@ function topicsFromRow(m: MeetingRow): TopicDraft[] {
     projectLabel: t.projectCode ? `${t.projectCode} — ${t.projectName ?? ''}` : '',
     discussion: t.discussion ?? '',
     conclusion: t.conclusion ?? '',
+    attachments: t.attachments ?? [],
     items: t.items.map((i) => ({
       key: newKey(), id: i.id, text: i.text, kind: i.kind, assignees: i.assignees,
       dueDate: i.dueDateJalali, state: i.state,
@@ -603,7 +606,6 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
   const [topics, setTopics] = useState<TopicDraft[]>(
     meeting ? topicsFromRow(meeting) : [newTopic(fixedProjectId ?? '', fixedProjectLabel ?? '')]);
   const [busy, setBusy] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -667,6 +669,7 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
       projectId: t.projectId || null,
       discussion: t.discussion || null,
       conclusion: t.conclusion || null,
+      attachments: t.attachments,
       items: t.items.map((i) => ({
         id: i.id ?? null, text: i.text, kind: i.kind,
         assignees: i.kind === 'ACTION' ? i.assignees : [],
@@ -731,26 +734,6 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
     } catch (err) {
       setError((err as Error).message || 'حذف انجام نشد.');
       setBusy(false);
-    }
-  };
-
-  const onFiles = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    setUploading(true);
-    try {
-      // Required at call time: `imageUtils` pulls `file-saver`, which a test
-      // renderer cannot load, so a static import would make the form unmountable.
-      const { uploadFile } = await import('../imageUtils');
-      const added: ActivityAttachment[] = [];
-      for (const file of Array.from(files)) {
-        const url = await uploadFile(file, 'meeting-files');
-        added.push({ name: file.name, size: formatFileSize(file.size), url });
-      }
-      setAttachments((prev) => [...prev, ...added]);
-    } catch (err) {
-      setError((err as Error).message || 'بارگذاری فایل انجام نشد.');
-    } finally {
-      setUploading(false);
     }
   };
 
@@ -845,6 +828,7 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
                   onItems={(fn) => updateItems(topic.key, fn)}
                   onMove={(step) => moveTopic(topic.key, step)}
                   onRemove={() => setTopics((prev) => prev.filter((t) => t.key !== topic.key))}
+                  onError={setError}
                 />
               ))}
               {!readOnly && (
@@ -856,26 +840,14 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
               <ShamsiDatePicker label="تاریخ جلسه بعدی" value={nextMeetingDate} onChange={setNextMeetingDate} />
-              <div className="text-sm">
-                <span className="text-slate-600 flex items-center gap-1"><Paperclip size={12} /> پیوست‌ها</span>
-                <ul className="mt-1 space-y-1">
-                  {attachments.map((a, i) => (
-                    <li key={a.url} className="flex items-center gap-2 text-xs">
-                      <a href={a.url} target="_blank" rel="noreferrer" className="text-sky-700 hover:underline truncate">{a.name}</a>
-                      <span className="text-slate-400">{a.size}</span>
-                      {!readOnly && (
-                        <button type="button" onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))} className="text-slate-400 hover:text-rose-600"><X size={12} /></button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-                {!readOnly && (
-                  <label className="mt-1 inline-flex items-center gap-1 text-xs text-sky-700 cursor-pointer">
-                    {uploading ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} افزودن فایل
-                    <input type="file" multiple className="hidden" onChange={(e) => { void onFiles(e.target.files); e.target.value = ''; }} />
-                  </label>
-                )}
-              </div>
+              <AttachmentField
+                label="پیوست‌های جلسه"
+                value={attachments}
+                onChange={setAttachments}
+                readOnly={readOnly}
+                onError={setError}
+                dataKey="meeting"
+              />
             </div>
           </fieldset>
 
@@ -927,6 +899,82 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
 /* ---------------------------------- a topic ---------------------------------- */
 
 /**
+ * A list of files with an «افزودن فایل» button, for the meeting and for each
+ * topic. The picked files are copied out of the input **before** anything is
+ * awaited: an `<input type="file">`'s `files` is live, and clearing the input
+ * (so the same file can be picked again) empties it — the first version read
+ * it after an `await` and so uploaded nothing, every time, without a word.
+ */
+export function AttachmentField({
+  label, value, onChange, readOnly, onError, dataKey, upload,
+}: {
+  label: string;
+  value: ActivityAttachment[];
+  onChange: (next: ActivityAttachment[]) => void;
+  readOnly: boolean;
+  onError: (message: string) => void;
+  dataKey: string;
+  /** The uploader; absent is the application's own `uploadFile`. */
+  upload?: (file: File, folder: string) => Promise<string>;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const latest = useRef(value);
+  latest.current = value;
+  const onFiles = async (picked: File[]) => {
+    if (picked.length === 0) return;
+    setUploading(true);
+    try {
+      // Required at call time: `imageUtils` pulls `file-saver`, which a test
+      // renderer cannot load, so a static import would make the form unmountable.
+      const uploadFile = upload ?? (await import('../imageUtils')).uploadFile;
+      const added: ActivityAttachment[] = [];
+      for (const file of picked) {
+        const url = await uploadFile(file, 'meeting-files');
+        added.push({ name: file.name, size: formatFileSize(file.size), url });
+      }
+      onChange([...latest.current, ...added]);
+    } catch (err) {
+      onError((err as Error).message || 'بارگذاری فایل انجام نشد.');
+    } finally {
+      setUploading(false);
+    }
+  };
+  if (readOnly && value.length === 0) return null;
+  return (
+    <div className="text-sm" data-attachments={dataKey}>
+      <span className="text-slate-600 flex items-center gap-1"><Paperclip size={12} /> {label}</span>
+      <ul className="mt-1 space-y-1">
+        {value.map((a, i) => (
+          <li key={a.url} className="flex items-center gap-2 text-xs">
+            <a href={a.url} target="_blank" rel="noreferrer" className="text-sky-700 hover:underline truncate">{a.name}</a>
+            <span className="text-slate-400">{a.size}</span>
+            {!readOnly && (
+              <button type="button" onClick={() => onChange(value.filter((_, j) => j !== i))} className="text-slate-400 hover:text-rose-600" aria-label="حذف فایل"><X size={12} /></button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {!readOnly && (
+        <label className="mt-1 inline-flex items-center gap-1 text-xs text-sky-700 cursor-pointer">
+          {uploading ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} افزودن فایل
+          <input
+            type="file"
+            multiple
+            className="hidden"
+            data-attachment-input={dataKey}
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []);
+              e.target.value = '';
+              void onFiles(picked);
+            }}
+          />
+        </label>
+      )}
+    </div>
+  );
+}
+
+/**
  * One subject on the agenda: its title, the project it belongs to (or
  * internal), what was discussed, what was concluded, and its items — plus, for
  * a project, the actions still open from that project's earlier meetings.
@@ -935,7 +983,7 @@ export function MeetingFormModal({ meeting, currentUser, fixedProjectId, fixedPr
  * carry-over read, and those are hooks.
  */
 function TopicCard({
-  topic, index, count, readOnly, fixedProjectId, meetingId, userOptions, onChange, onItems, onMove, onRemove,
+  topic, index, count, readOnly, fixedProjectId, meetingId, userOptions, onChange, onItems, onMove, onRemove, onError,
 }: {
   topic: TopicDraft;
   index: number;
@@ -948,6 +996,7 @@ function TopicCard({
   onItems: (fn: (items: ItemDraft[]) => ItemDraft[]) => void;
   onMove: (step: -1 | 1) => void;
   onRemove: () => void;
+  onError: (message: string) => void;
 }) {
   const picker = useEntitySearch<ProjectRow>({
     path: '/api/projects', limit: 25, params: { withSummary: 'false' },
@@ -1037,6 +1086,14 @@ function TopicCard({
         <span className="text-slate-600">نتیجه‌گیری</span>
         <textarea data-topic-conclusion value={topic.conclusion} onChange={(e) => onChange({ conclusion: e.target.value })} rows={2} placeholder="جمع‌بندی و تصمیم نهایی درباره این موضوع" className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white dark:bg-slate-800" />
       </label>
+      <AttachmentField
+        label="پیوست‌های این موضوع"
+        value={topic.attachments}
+        onChange={(next) => onChange({ attachments: next })}
+        readOnly={readOnly}
+        onError={onError}
+        dataKey="topic"
+      />
 
       {carryOver.length > 0 && (
         <div className="border border-amber-200 bg-amber-50/60 rounded-xl p-3" data-meeting-carry-over>

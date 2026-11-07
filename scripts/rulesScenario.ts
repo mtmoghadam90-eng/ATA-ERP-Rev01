@@ -24652,6 +24652,28 @@ head("A packing line carries the product's specification, read from the won prof
     && !/setOverrideShowBrand\(!!settings\.showProductBrandInDocuments\)/.test(view));
 }
 
+head("A meeting topic carries its own files");
+{
+  const msvcT = await import("../src/server/services/meetingService");
+  const [withFiles] = msvcT.parseTopics({ topics: [{ title: "نقشه‌ها", items: [],
+    attachments: [{ name: "a.pdf", size: "1 KB", url: "/uploads/meeting-files/a.pdf" }] }] } as never, "جلسه");
+  ok("a topic's files are stored as the attachment column", JSON.parse(withFiles.attachments ?? "[]")[0]?.url === "/uploads/meeting-files/a.pdf");
+  const [noKey] = msvcT.parseTopics({ topics: [{ title: "x", items: [] }] } as never, "جلسه");
+  ok("a caller that sends no files edits none (absent is not empty)", noKey.attachments === undefined);
+  const [emptied] = msvcT.parseTopics({ topics: [{ title: "x", items: [], attachments: [] }] } as never, "جلسه");
+  ok("an emptied list clears them", emptied.attachments === null);
+  const svcT = readFileSync("src/server/services/meetingService.ts", "utf8");
+  ok("the topic read selects them and the row parses them", /discussion: true, conclusion: true, attachments: true,/.test(svcT)
+    && /attachments: parseAttachmentList\(t\.attachments\),/.test(svcT));
+  ok("the topic write stores them", /conclusion: topic\.conclusion \?\? null,\s*attachments: topic\.attachments,/.test(svcT));
+  ok("the column exists", /attachments String\? @db\.NVarChar\(Max\)\s*\n\s*\n\s*@@index\(\[meetingId\]\)/.test(readFileSync("prisma/schema.prisma", "utf8")));
+  const mvT = readFileSync("src/components/MeetingsView.tsx", "utf8");
+  ok("the form sends each topic's files", /conclusion: t\.conclusion \|\| null,\s*attachments: t\.attachments,/.test(mvT));
+  ok("the picker copies the live FileList before clearing the input",
+    /const picked = Array\.from\(e\.target\.files \?\? \[\]\);\s*e\.target\.value = '';\s*void onFiles\(picked\);/.test(mvT));
+  ok("both the meeting and each topic draw the field", (mvT.match(/<AttachmentField/g) ?? []).length === 2);
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
