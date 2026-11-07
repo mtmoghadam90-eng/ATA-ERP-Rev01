@@ -13,7 +13,7 @@ import {
   shouldRetry,
 } from "../../../utils/messaging";
 import { BaleChatsResult, BaleConfig, baleRecentChats, SendResult, sendThrough } from "./drivers";
-import { addresseeOf, namePrefixFor } from "../../../utils/honorific";
+import { messageAddressee, namePrefixFor } from "../../../utils/honorific";
 import { WHATSAPP_PER_PASS, whatsappGapMs } from "../../../utils/whatsapp";
 import { TELEGRAM_PER_PASS, telegramGapMs } from "../../../utils/telegram";
 import { replannedTime } from "../../../utils/messageReplan";
@@ -1339,7 +1339,8 @@ export async function messageVariables(
      * with the space in between only when there is something on both sides.
      */
     values.namePrefix = namePrefixFor(addressee.gender);
-    values.addressee = addresseeOf(addressee.gender, name);
+    // The honorific and the family name only: «جناب آقای مهندس رضایی».
+    values.addressee = messageAddressee(addressee.gender, addressee);
   }
 
   return values;

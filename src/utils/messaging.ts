@@ -359,7 +359,7 @@ export interface MessageVariable {
 
 export const MESSAGE_VARIABLES: MessageVariable[] = [
   { key: "namePrefix", label: "پیشوند نام بر اساس جنسیت", sample: "جناب آقای مهندس" },
-  { key: "addressee", label: "پیشوند به همراه نام مخاطب", sample: "جناب آقای مهندس رضایی" },
+  { key: "addressee", label: "پیشوند به همراه نام خانوادگی مخاطب", sample: "جناب آقای مهندس رضایی" },
   { key: "customerName", label: "نام مشتری", sample: "شرکت پتروشیمی نمونه" },
   { key: "contactName", label: "نام مخاطب پیام", sample: "علی رضایی" },
   { key: "projectCode", label: "کد پروژه", sample: "PRJ-1405-018" },

@@ -87,6 +87,27 @@ export function addresseeOf(
 }
 
 /**
+ * `{addressee}` in a customer message: the honorific and the **family name**
+ * alone — «جناب آقای مهندس رضایی», never «جناب آقای مهندس علی رضایی», which is
+ * how a letter here is addressed.
+ *
+ * The family name is the stored `lastName` and is never guessed out of a
+ * joined name. Without an honorific the whole name stays — a bare «رضایی عزیز»
+ * reads as curt — and without a `lastName` the whole name stays too, as does a
+ * company's name.
+ */
+export function messageAddressee(
+  gender: string | null | undefined,
+  record: { firstName?: string | null; lastName?: string | null; companyName?: string | null },
+): string {
+  const lastName = String(record.lastName ?? "").trim();
+  const person = `${String(record.firstName ?? "").trim()} ${lastName}`.trim();
+  const name = person || String(record.companyName ?? "").trim();
+  if (person && lastName && namePrefixFor(gender)) return addresseeOf(gender, lastName);
+  return addresseeOf(gender, name);
+}
+
+/**
  * The staff register of the same join — «آقای علی رضایی», or the bare name.
  *
  * The whole name and not a surname: a surname would have to be guessed out of
