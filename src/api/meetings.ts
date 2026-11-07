@@ -66,6 +66,8 @@ export interface MeetingTopicRow {
   customerName: string | null;
   discussion: string | null;
   conclusion: string | null;
+  /** This topic's own files, apart from the meeting's. */
+  attachments: ActivityAttachment[];
   items: MeetingItemRow[];
 }
 
@@ -83,6 +85,7 @@ export interface MeetingTopicInput {
   projectId?: string | null;
   discussion?: string | null;
   conclusion?: string | null;
+  attachments?: ActivityAttachment[];
   items: MeetingItemInput[];
 }
 

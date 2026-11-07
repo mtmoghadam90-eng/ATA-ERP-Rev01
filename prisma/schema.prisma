@@ -2621,6 +2621,8 @@ model MeetingTopic {
   project    Project? @relation(fields: [projectId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   discussion String?  @db.NVarChar(Max)
   conclusion String?  @db.NVarChar(Max)
+  /// This topic's own files, `[{name,size,url}]`, apart from the meeting's.
+  attachments String? @db.NVarChar(Max)
 
   @@index([meetingId])
   @@index([projectId])

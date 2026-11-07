@@ -106,7 +106,10 @@ function parseItems(raw: unknown): MeetingItemDraft[] {
  * The topics as posted, or — for a caller that sends none — the flat items
  * wrapped in one topic titled as the meeting.
  */
-export function parseTopics(input: MeetingInput, meetingTitle: string | null): MeetingTopicDraft[] {
+/** A posted topic, with its files already in the form the column stores. */
+export type ParsedTopic = MeetingTopicDraft & { attachments?: string | null };
+
+export function parseTopics(input: MeetingInput, meetingTitle: string | null): ParsedTopic[] {
   if (Array.isArray(input.topics)) {
     return input.topics.map((entry) => {
       const e = (entry ?? {}) as Record<string, unknown>;
@@ -116,6 +119,10 @@ export function parseTopics(input: MeetingInput, meetingTitle: string | null): M
         projectId: toNullableString(e.projectId, 36),
         discussion: toNullableString(e.discussion),
         conclusion: toNullableString(e.conclusion),
+        // Absent is «not edited»: a caller that never sends the files (n8n,
+        // an older tab) must not detach the ones a topic already has.
+        attachments: Array.isArray(e.attachments)
+          ? attachmentListColumn(e.attachments as ActivityAttachment[]) : undefined,
         items: parseItems(e.items),
       };
     });
@@ -152,6 +159,7 @@ export interface MeetingTopicRow {
   customerName: string | null;
   discussion: string | null;
   conclusion: string | null;
+  attachments: ActivityAttachment[];
   /** Present on a detail read and on every list row (the counts need them). */
   items: MeetingItemRow[];
 }
@@ -202,7 +210,7 @@ const ROW_SELECT = {
   finalizedByName: true, createdAt: true,
   topics: {
     select: {
-      id: true, lineNo: true, title: true, projectId: true, discussion: true, conclusion: true,
+      id: true, lineNo: true, title: true, projectId: true, discussion: true, conclusion: true, attachments: true,
       project: TOPIC_PROJECT_SELECT,
     },
     orderBy: { lineNo: "asc" as const },
@@ -272,6 +280,7 @@ function toRow(
     customerName: t.project?.customer?.companyName ?? null,
     discussion: t.discussion,
     conclusion: t.conclusion,
+    attachments: parseAttachmentList(t.attachments),
     items: [],
   }));
   /*
@@ -287,7 +296,7 @@ function toRow(
       if (topics.length === 0) {
         topics.push({
           id: "", lineNo: 1, title: m.title, projectId: null, projectCode: null, projectName: null,
-          customerName: null, discussion: null, conclusion: null, items: [],
+          customerName: null, discussion: null, conclusion: null, attachments: [], items: [],
         });
       }
       home = topics[0];
@@ -936,6 +945,7 @@ export async function saveMeeting(
         projectId: topic.projectId ?? null,
         discussion: topic.discussion ?? null,
         conclusion: topic.conclusion ?? null,
+        attachments: topic.attachments,
       };
       let topicId: string;
       if (topic.id && prevTopicIds.has(topic.id)) {

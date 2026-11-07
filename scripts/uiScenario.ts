@@ -67,7 +67,7 @@ import ReferralsView from "../src/components/ReferralsView";
 import NoteFollowUpBar from "../src/components/NoteFollowUpBar";
 import ProjectFollowUpTab from "../src/components/ProjectFollowUpTab";
 import AdEffectivenessView from "../src/components/AdEffectivenessView";
-import MeetingsView, { MeetingItemTrailModal } from "../src/components/MeetingsView";
+import MeetingsView, { MeetingItemTrailModal, AttachmentField } from "../src/components/MeetingsView";
 import HolidayCalendarTab from "../src/components/HolidayCalendarTab";
 import { invalidateUserDirectory } from "../src/api/useUserDirectory";
 import { LANE_LABELS } from "../src/utils/workBoard";
@@ -5382,6 +5382,41 @@ head("A packing line's specification is edited line by line");
   ok("...and what is typed into it is kept", value === "Span: 0~200\nOutput: 4-20mA\nBody: SS316", value);
   act(() => { rootP.unmount(); });
   hostP.remove();
+}
+
+head("A meeting's file picker uploads what was picked");
+{
+  const uploads: string[] = [];
+  const upload = async (file: File, folder: string) => {
+    uploads.push(`${folder}/${file.name}`);
+    return `/uploads/${folder}/f${uploads.length}.pdf`;
+  };
+  let value: { name: string; size: string; url: string }[] = [];
+  let errorA = "";
+  const hostA = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  const rootA = createRoot(hostA);
+  const draw = () => act(() => {
+    rootA.render(React.createElement(AttachmentField, {
+      label: "پیوست‌های این موضوع", value, readOnly: false, onError: (m: string) => { errorA = m; }, dataKey: "topic", upload,
+      onChange: (next: typeof value) => { value = next; draw(); },
+    }));
+  });
+  draw();
+  const input = hostA.querySelector("[data-attachment-input]") as HTMLInputElement;
+  ok("each topic draws its own file input", !!input);
+  // An input's FileList is live: clearing the value empties it, which is what
+  // made the old picker upload nothing.
+  let files: unknown[] = [new dom.window.File(["a"], "نقشه.pdf"), new dom.window.File(["b"], "datasheet.pdf")];
+  const target = { get files() { return files; }, set value(_: string) { files = []; }, get value() { return ""; } };
+  await act(async () => { handlers(input).onChange?.({ target }); });
+  for (let i = 0; i < 40 && value.length < 2 && !errorA; i++) {
+    await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
+  }
+  ok("both files reach the server although the input was cleared", uploads.length === 2, uploads.join(",") + errorA);
+  ok("...to the meeting folder", uploads.every((u) => u.startsWith("meeting-files/")));
+  ok("...and are listed on the topic", value.length === 2 && value[0].name === "نقشه.pdf", JSON.stringify(value));
+  act(() => { rootA.unmount(); });
+  hostA.remove();
 }
 
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
