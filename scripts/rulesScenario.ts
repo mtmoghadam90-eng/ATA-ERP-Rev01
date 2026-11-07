@@ -24674,6 +24674,18 @@ head("A meeting topic carries its own files");
   ok("both the meeting and each topic draw the field", (mvT.match(/<AttachmentField/g) ?? []).length === 2);
 }
 
+head("{addressee} names the family name only");
+{
+  const { messageAddressee } = await import("../src/utils/honorific");
+  eq("a man: honorific and family name", messageAddressee("مرد", { firstName: "علی", lastName: "رضایی" }), "جناب آقای مهندس رضایی");
+  eq("a woman: the same", messageAddressee("زن", { firstName: "مریم", lastName: "کاظمی نسب" }), "سرکار خانم مهندس کاظمی نسب");
+  eq("no honorific keeps the whole name", messageAddressee(null, { firstName: "علی", lastName: "رضایی" }), "علی رضایی");
+  eq("no stored family name keeps the whole name", messageAddressee("مرد", { firstName: "علی رضایی", lastName: "" }), "جناب آقای مهندس علی رضایی");
+  eq("a company keeps its name", messageAddressee("", { companyName: "شرکت نمونه" }), "شرکت نمونه");
+  const ms = readFileSync("src/server/services/messaging/messageService.ts", "utf8");
+  ok("the message variables use it", /values\.addressee = messageAddressee\(addressee\.gender, addressee\);/.test(ms));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
