@@ -11,7 +11,8 @@ import {
   Maximize2,
   Minimize2,
   Loader2,
-  Paperclip
+  Paperclip,
+  GitMerge
 } from 'lucide-react';
 import { Supplier, ERPSettings, User } from '../types';
 import CustomFieldsForm from './CustomFieldsForm';
@@ -22,6 +23,7 @@ import SaveWithNextActionButton from './SaveWithNextActionButton';
 import { NextActionPrompt } from './NextActionModal';
 import { isFieldRequired, renderFieldLabelWithAsterisk } from '../utils/requiredFields';
 import ConfirmModal from './ConfirmModal';
+import SupplierMergeModal from './SupplierMergeModal';
 import { ApiError } from '../api/client';
 import { detailToSupplier, rowToSupplier, suppliersApi, supplierToWriteInput } from '../api/suppliers';
 import { useSupplierList } from '../api/useSupplierList';
@@ -107,6 +109,8 @@ export default function SuppliersView({
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [supplierToDeleteId, setSupplierToDeleteId] = useState<string | null>(null);
   const [supplierToDeleteName, setSupplierToDeleteName] = useState<string>('');
+  // «ادغام»: the duplicate being folded into another record.
+  const [mergeSource, setMergeSource] = useState<{ id: string; name: string } | null>(null);
 
   // Form states
   const [name, setName] = useState('');
@@ -570,6 +574,14 @@ export default function SuppliersView({
                       >
                         <Trash2 size={14} />
                       </button>
+                      <button
+                        onClick={() => setMergeSource({ id: supp.id, name: supp.name })}
+                        className="p-1.5 hover:bg-sky-50 text-slate-600 hover:text-sky-600 rounded transition"
+                        title="ادغام این تأمین‌کننده تکراری در تأمین‌کننده دیگر"
+                        data-supplier-merge-open
+                      >
+                        <GitMerge size={14} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -924,6 +936,14 @@ export default function SuppliersView({
         nothing is a card nobody can trace back.
       */}
       <NextActionPrompt next={nextAction} kinds={settings.dropdownItems?.nextActionKinds} categories={settings.activityCategories} />
+
+      {mergeSource && (
+        <SupplierMergeModal
+          source={mergeSource}
+          onClose={() => setMergeSource(null)}
+          onMerged={(message) => { setMergeSource(null); list.refresh(); alert(message); }}
+        />
+      )}
 
       {/* Confirm Delete Modal */}
       <ConfirmModal

@@ -24726,6 +24726,37 @@ head("The «new inquiry» notice names the project and the supplier");
     && !svc.includes("`استعلام جدید ثبت شد برای پروژه`"));
 }
 
+head("A supplier cannot be registered twice, and a duplicate can be merged");
+{
+  const { supplierNameKey, duplicateSupplier, mergedSupplierFields, unionBy } = await import("../src/utils/supplierDuplicates");
+  eq("case, spacing and punctuation fold away", supplierNameKey("Ningbo  Sanmin Co."), supplierNameKey("ningbo sanmin co"));
+  eq("ی/ي and ک/ك fold away", supplierNameKey("كيان صنعت"), supplierNameKey("کیان‌صنعت"));
+  const rows = [{ id: "a", name: "Ningbo Sanmin" }, { id: "b", name: "فراسو" }];
+  eq("a second Ningbo Sanmin is refused", duplicateSupplier("ningbo sanmin", rows)?.id, "a");
+  eq("...but saving the record itself is not", duplicateSupplier("Ningbo Sanmin", rows, "a"), null);
+  eq("a blank name matches nothing", duplicateSupplier("  ", rows), null);
+  eq("the kept record's values win; only its blanks are filled",
+    JSON.stringify(mergedSupplierFields({ phone: "021", email: "" }, { phone: "0912", email: "a@b.c", city: "Ningbo" })),
+    JSON.stringify({ city: "Ningbo", email: "a@b.c" }));
+  eq("categories are a union", unionBy(["فلو", "فشار"], ["فشار", "دما"], (x) => x).join("|"), "فلو|فشار|دما");
+
+  const route = readFileSync("src/server/routes/suppliers.ts", "utf8");
+  ok("create and edit both refuse a duplicate name",
+    (route.match(/await findDuplicateSupplier\(/g) ?? []).length === 2 && /findDuplicateSupplier\(input\.name, req\.params\.id\)/.test(route));
+  ok("...an edit is checked only when the name changes, so existing duplicates stay editable",
+    /supplierNameKey\(stored\?\.name\) !== supplierNameKey\(String\(input\.name \?\? ""\)\)/.test(route));
+  ok("the merge endpoint exists", /app\.post\("\/api\/suppliers\/merge"/.test(route));
+  const svc = readFileSync("src/server/services/supplierService.ts", "utf8");
+  // Every model that points at a supplier must be moved, or the delete at the end dies on its key.
+  const schema = readFileSync("prisma/schema.prisma", "utf8");
+  const pointing = [...schema.matchAll(/model (\w+) \{[^}]*?\bsupplier\s+Supplier\??\s+@relation/g)].map((m) => m[1]);
+  ok("every model pointing at a supplier is moved by the merge",
+    pointing.length >= 3 && pointing.every((m) => svc.includes(`tx.${m[0].toLowerCase()}${m.slice(1)}.updateMany({ where: { supplierId: sourceId }`)), pointing.join(","));
+  ok("tasks about the supplier move too", /tx\.task\.updateMany\(\{\s*where: \{ relatedToType: \{ in: SUPPLIER_RELATION_SPELLINGS \}, relatedToId: sourceId \}/.test(svc));
+  ok("...the duplicate is deleted inside the same transaction", /await tx\.supplier\.delete\(\{ where: \{ id: sourceId \} \}\);/.test(svc));
+  ok("the screen offers the merge", /<SupplierMergeModal/.test(readFileSync("src/components/SuppliersView.tsx", "utf8")));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");

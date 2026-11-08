@@ -3,9 +3,10 @@ import { parseListQuery } from "../listing";
 import { RouteDeps, sendError } from "./types";
 import {
   SUPPLIER_FILTERABLE, SUPPLIER_SORTABLE, SupplierInput,
-  countSupplierReferences, createSupplier, deleteSupplier, getSupplier,
-  listSuppliers, updateSupplier,
+  countSupplierReferences, createSupplier, deleteSupplier, findDuplicateSupplier, getSupplier,
+  listSuppliers, mergeSuppliers, updateSupplier,
 } from "../services/supplierService";
+import { duplicateSupplierRefusal, supplierNameKey } from "../../utils/supplierDuplicates";
 import { getTodayShamsi } from "../../dateUtils";
 
 const WRITABLE: (keyof SupplierInput)[] = [
@@ -67,6 +68,24 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
     }
   });
 
+  // Registered before `/api/suppliers/:id` routes that could read «merge» as an id.
+  app.post("/api/suppliers/merge", async (req, res) => {
+    const user = await deps.requireKeyAccess(req, res, KEY, "write");
+    if (!user) return;
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const outcome = await mergeSuppliers(
+        String(body.sourceId ?? ""), String(body.targetId ?? ""), user, getTodayShamsi());
+      if (!outcome.ok) {
+        res.status(outcome.status).json({ success: false, error: outcome.error });
+        return;
+      }
+      res.json({ success: true, moved: outcome.moved });
+    } catch (err) {
+      sendError(res, err, "POST /api/suppliers/merge");
+    }
+  });
+
   app.post("/api/suppliers", async (req, res) => {
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
@@ -74,6 +93,13 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
       const input = pickInput(req.body);
       if (!input.name || !String(input.name).trim()) {
         res.status(400).json({ success: false, error: "نام تأمین‌کننده الزامی است." });
+        return;
+      }
+      // One company, one record: a second «Ningbo Sanmin» splits its history
+      // in two and cannot be deleted once anything points at it.
+      const dup = await findDuplicateSupplier(input.name);
+      if (dup) {
+        res.status(409).json({ success: false, code: "DUPLICATE", error: duplicateSupplierRefusal(dup.name), duplicateId: dup.id });
         return;
       }
       const supplier = await createSupplier(input, user, getTodayShamsi());
@@ -88,7 +114,18 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
     const user = await deps.requireKeyAccess(req, res, KEY, "write");
     if (!user) return;
     try {
-      const supplier = await updateSupplier(req.params.id, pickInput(req.body), user, getTodayShamsi());
+      const input = pickInput(req.body);
+      // Only a *changed* name is checked: two duplicates already on disk must
+      // stay editable (a phone number corrected) until somebody merges them.
+      const stored = "name" in input ? await getSupplier(req.params.id, user) : null;
+      if ("name" in input && supplierNameKey(stored?.name) !== supplierNameKey(String(input.name ?? ""))) {
+        const dup = await findDuplicateSupplier(input.name, req.params.id);
+        if (dup) {
+          res.status(409).json({ success: false, code: "DUPLICATE", error: duplicateSupplierRefusal(dup.name), duplicateId: dup.id });
+          return;
+        }
+      }
+      const supplier = await updateSupplier(req.params.id, input, user, getTodayShamsi());
       if (!supplier) {
         res.status(404).json({ success: false, error: "تأمین‌کننده یافت نشد." });
         return;
@@ -113,7 +150,7 @@ export function registerSupplierRoutes(app: express.Express, deps: RouteDeps): v
         res.status(409).json({
           success: false,
           code: "IN_USE",
-          error: "این تأمین‌کننده در سفارش خرید، استعلام یا تراکنش استفاده شده و قابل حذف نیست.",
+          error: "این تأمین‌کننده در سفارش خرید، استعلام یا تراکنش استفاده شده و قابل حذف نیست. اگر رکورد تکراری است، با دکمهٔ «ادغام» آن را در تأمین‌کنندهٔ اصلی ادغام کنید.",
           references: await countSupplierReferences(req.params.id),
         });
         return;
