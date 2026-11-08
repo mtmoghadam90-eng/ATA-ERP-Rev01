@@ -24686,6 +24686,19 @@ head("{addressee} names the family name only");
   ok("the message variables use it", /values\.addressee = messageAddressee\(addressee\.gender, addressee\);/.test(ms));
 }
 
+head("A project exempted from automated messages is saved as exempted");
+{
+  const on = projectToWriteInput({ suppressAutoMessages: true } as never) as { suppressAutoMessages?: unknown };
+  ok("the form's «no automated messages» box reaches the write", on.suppressAutoMessages === true);
+  const off = projectToWriteInput({ suppressAutoMessages: false } as never) as { suppressAutoMessages?: unknown };
+  ok("...and unticking it is sent too", off.suppressAutoMessages === false);
+  const absent = JSON.parse(JSON.stringify(projectToWriteInput({} as never)));
+  ok("a caller that never read it edits nothing", !("suppressAutoMessages" in absent));
+  ok("the route accepts it", /"suppressAutoMessages"/.test(readFileSync("src/server/routes/projects.ts", "utf8")));
+  ok("the queue refuses a rule's message on such a project",
+    /if \(input\.workflowRuleId && project\?\.suppressAutoMessages\)/.test(readFileSync("src/server/services/messaging/messageService.ts", "utf8")));
+}
+
 console.log(`\n${"─".repeat(56)}\n${pass} checks passed, ${fails.length} failed`);
 if (fails.length) {
   console.log("Failures:");
