@@ -30,7 +30,7 @@
  */
 
 import {
-  INQUIRY_SENT, INQUIRY_WINNER, PROFORMA_SENT_STATUS, PROFORMA_TECHNICAL_TYPE,
+  INQUIRY_FINAL_OFFER, INQUIRY_WINNER, PROFORMA_SENT_STATUS, PROFORMA_TECHNICAL_TYPE,
   PURCHASE_ORDER_STATUSES,
 } from "./moduleStatuses";
 
@@ -300,7 +300,16 @@ export function deriveProjectStage(facts: StageFacts): ProjectStage {
      */
     const inquiries = facts.supplierInquiries ?? [];
     const undecided = inquiries.filter((i) => i.status !== INQUIRY_WINNER);
-    if (undecided.some((i) => i.status === INQUIRY_SENT)) {
+    /*
+     * Waiting until the offer is **finally confirmed** («تأیید نهایی»), not
+     * merely until a price is typed in. A first price is usually the opening
+     * of a negotiation — the supplier still owes the revised offer — so the
+     * job is still waiting on them; it moves to «بررسی پیشنهاد تأمین‌کننده»
+     * the moment somebody ticks the final confirmation (or picks the inquiry
+     * as the winner). Written as «not final, not winner», so a status this
+     * build does not know holds the job here rather than moving it on.
+     */
+    if (undecided.some((i) => i.status !== INQUIRY_FINAL_OFFER)) {
       return "در انتظار پاسخ تأمین‌کننده";
     }
 
