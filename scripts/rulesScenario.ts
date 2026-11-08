@@ -13956,11 +13956,23 @@ head("Stuck work: the dwell report");
       projectStatus: "جدید",
       supplierInquiries: [{ status: INQUIRY_SENT }],
     }), "در انتظار پاسخ تأمین‌کننده");
-  eq("...and an offer that has come back moves it on",
+  // A first price is not the answer: the job waits until the offer is finally confirmed.
+  eq("...and a first price does not release it",
     deriveProjectStage({
       projectStatus: "جدید",
       supplierInquiries: [{ status: INQUIRY_INITIAL_OFFER }],
+    }), "در انتظار پاسخ تأمین‌کننده");
+  eq("...the final confirmation is what moves it on",
+    deriveProjectStage({
+      projectStatus: "جدید",
+      supplierInquiries: [{ status: INQUIRY_FINAL_OFFER }],
     }), "بررسی پیشنهاد تأمین‌کننده");
+  eq("...and every inquiry has to be confirmed",
+    deriveProjectStage({
+      supplierInquiries: [{ status: INQUIRY_FINAL_OFFER }, { status: INQUIRY_INITIAL_OFFER }],
+    }), "در انتظار پاسخ تأمین‌کننده");
+  eq("...a status this build does not know holds the job too",
+    deriveProjectStage({ supplierInquiries: [{ status: "وضعیت ناشناخته" }] }), "در انتظار پاسخ تأمین‌کننده");
   // The least-advanced open thing wins here as it does in the chain below.
   eq("one answer does not release a job still waiting on another",
     deriveProjectStage({
@@ -14063,7 +14075,7 @@ head("Stuck work: the dwell report");
       deriveProjectStage({
         projectStatus: "جدید",
         proformas: [tech("پیش‌نویس")],
-        supplierInquiries: [{ status: INQUIRY_INITIAL_OFFER }],
+        supplierInquiries: [{ status: INQUIRY_FINAL_OFFER }],
       }), "بررسی پیشنهاد تأمین‌کننده");
 
     // A service quotation is priced, so it is an ordinary document here.
@@ -14092,7 +14104,7 @@ head("Stuck work: the dwell report");
   ok("the stage source survived having its comments stripped",
     stageSrc.includes("deriveProjectStage"));
   ok("the supplier stages read `inquiryWorkflowStatus`'s own values",
-    stageSrc.includes("INQUIRY_SENT") && stageSrc.includes("INQUIRY_WINNER"));
+    stageSrc.includes("INQUIRY_FINAL_OFFER") && stageSrc.includes("INQUIRY_WINNER"));
   ok("...and never a price or a flag of their own",
     !/priceRial|priceForeign|isWinner|offerConfirmed/.test(stageSrc));
 
